@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 150 |
-| covered by the new corpus (>= Asserted) | 135 |
-| verdict `stronger` | 130 |
-| verdict `equal` | 20 |
+| surfaces | 155 |
+| covered by the new corpus (>= Asserted) | 138 |
+| verdict `stronger` | 133 |
+| verdict `equal` | 22 |
 | verdict `weaker` | 0 |
-| corpus units | 76 |
-| stdlib modules (denominator) | 88 |
-| stdlib entries (denominator) | 1815 |
+| corpus units | 80 |
+| stdlib modules (denominator) | 91 |
+| stdlib entries (denominator) | 1862 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 6 | 6.8% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 807 | 44.5% |
-| symbols unreferenced under the generous rule | 726 | 40.0% |
+| stdlib modules imported by nothing | 6 | 6.6% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 822 | 44.1% |
+| symbols unreferenced under the generous rule | 739 | 39.7% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -46,6 +46,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.console-serve`
 - `cli.fmt`
 - `cli.lsp`
+- `cli.spa-partition`
 - `cli.upgrade-claude`
 - `cli.verify`
 - `stdlib.Sky.Core.Io`
@@ -58,10 +59,10 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 16 |
+| stdlib modules owned by exactly one `examples/*` | 19 |
 | stdlib modules owned by exactly one unit of any role | 14 |
 | sky.toml sections owned by exactly one unit | 2 |
-| **lost if `examples/` retired** — modules | **2** |
+| **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
 
 ### Modules lost if `examples/` is retired
@@ -69,6 +70,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | module | sole owner |
 |---|---|
 | `Sky.Core.Process` | `examples/17-skymon` |
+| `Std.Bundle` | `examples/64-spa-native` |
 | `Std.Cli` | `examples/20-cli-counter` |
 
 ### Config sections lost if `examples/` is retired
@@ -107,6 +109,8 @@ None.
 | `cli.migrate` | cli | None | Falsified | stronger |
 | `cli.remove` | cli | None | Falsified | stronger |
 | `cli.run` | cli | None | Falsified | stronger |
+| `cli.spa-partition` | cli | None | None | equal |
+| `cli.spa-split` | cli | None | Falsified | stronger |
 | `cli.test` | cli | None | Falsified | stronger |
 | `cli.update` | cli | None | Falsified | stronger |
 | `cli.upgrade` | cli | None | Falsified | stronger |
@@ -189,6 +193,7 @@ None.
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Bundle` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Cache` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Cli` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Cmd` | stdlib | Asserted | Falsified | stronger |
@@ -215,7 +220,9 @@ None.
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Native` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Spa` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |
@@ -225,7 +232,7 @@ None.
 | `stdlib.Std.Ui.Background` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Border` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Chart` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Ui.Events` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ui.Events` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Font` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Grid` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Input` | stdlib | Asserted | Falsified | stronger |

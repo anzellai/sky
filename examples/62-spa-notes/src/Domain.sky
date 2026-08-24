@@ -1,0 +1,31 @@
+module Domain exposing (Note, noteCodec, noteListCodec)
+
+-- The PURE wire contract — the `Note` record and its hand-written `Codec.object`
+-- codec. This module reaches no effect, so the auto-split copies it VERBATIM
+-- into BOTH trees (wasm frontend + native backend): one type, one codec, one
+-- wire shape, no drift. `Shared.sky` (generated) imports this module for the
+-- per-RPC request/response codecs rather than re-declaring `Note`.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+-- `id` is assigned by the database (a serial primary key); the client never
+-- invents ids.
+type alias Note =
+    { id : Int
+    , title : String
+    , body : String
+    }
+
+
+noteCodec : Codec Note
+noteCodec =
+    Codec.object Note |> Codec.field "id" .id Codec.int
+        |> Codec.field "title" .title Codec.string
+        |> Codec.field "body" .body Codec.string
+        |> Codec.buildObject
+
+
+noteListCodec : Codec (List Note)
+noteListCodec =
+    Codec.list noteCodec

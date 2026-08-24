@@ -247,6 +247,15 @@ pub enum GoTypeDef {
     IotaEnum(Vec<String>),
     /// `type Name struct { … }` (record `_R`).
     Struct(Vec<(String, GoTy)>),
+    /// `type Name = <rt.Type>` — a transparent alias to a runtime struct whose
+    /// fields are identical to this record's (e.g. `Sky.Core.Http.HttpResponse`
+    /// → `rt.HttpResponse`). Lets a value the runtime kernel produces as the
+    /// `rt` type narrow to the emitted type by a reflection-free
+    /// `v.(rt.Type)` assertion, rather than the reflect `ConvertibleTo` the
+    /// distinct-struct form forces (TinyGo cannot run that). The ctor is still
+    /// emitted as a `Raw` item (the alias is transparent, so building by field
+    /// name works). Mirrors `AdtAlias` for records.
+    RuntimeAlias(String),
     /// `type Name = Underlying` transparent alias.
     Alias(GoTy),
 }

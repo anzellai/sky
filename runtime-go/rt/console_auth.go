@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Pro+ Console auth — token-gated /_sky/console for production.

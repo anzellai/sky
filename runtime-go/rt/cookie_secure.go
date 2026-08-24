@@ -1,3 +1,5 @@
+//go:build !js
+
 // cookie_secure.go — ONE decision about the `Secure` cookie attribute,
 // used by every Set-Cookie mint site in the runtime.
 //

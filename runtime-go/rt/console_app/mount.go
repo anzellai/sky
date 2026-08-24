@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package console_app holds the Std.Ui Sky.Live console UI, translated
 // to Go ONCE at compiler-release time by scripts/regenerate-console.sh
 // and committed alongside the rest of the runtime.

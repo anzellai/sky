@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — Std.Db.Schema runtime: render a typed Table definition into the
 // DIALECT-CORRECT DDL for the connection's backend (SQLite or Postgres) and
 // execute it. The portable → dialect type mapping (below) is what lets ONE

@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Garbage-collector defaults derived from the machine the app is running on.

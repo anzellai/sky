@@ -1,0 +1,84 @@
+-- | Shared — the ONE wire contract compiled into BOTH the Sky.Spa wasm client
+-- and the stateless Sky.Http.Server backend. This SAME file is symlinked into
+-- `client/src/` and `server/src/`, so it is literally one source of truth: the
+-- backend encodes with these codecs, the client decodes with the SAME codecs.
+-- Change a field here and BOTH client and server stop compiling — one type, one
+-- codec, one wire shape, no OpenAPI/TS drift.
+--
+-- SECURITY NOTE: these are transport types, not trust. The client runs on the
+-- user's machine and is untrusted; the backend re-validates every request
+-- (trims + length-clamps titles, ignores unknown ids) and re-reads the
+-- authoritative list from its own SQLite store before answering. A client may
+-- never dictate durable state directly.
+module Shared exposing
+    ( Todo
+    , todoCodec
+    , todoListCodec
+    , NewTodo
+    , newTodoCodec
+    , IdReq
+    , idReqCodec
+    , RenameReq
+    , renameReqCodec
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+-- | A todo item as it lives in the server's store and travels the wire. `id` is
+-- assigned by the server (a serial primary key); the client never invents ids.
+type alias Todo =
+    { id : Int
+    , title : String
+    , done : Bool
+    }
+
+
+todoCodec : Codec Todo
+todoCodec =
+    Codec.object Todo |> Codec.field "id" .id Codec.int
+        |> Codec.field "title" .title Codec.string
+        |> Codec.field "done" .done Codec.bool
+        |> Codec.buildObject
+
+
+-- | The server answers every mutation with the FULL authoritative list, so the
+-- client replaces its cached projection wholesale — the server is the source of
+-- truth, the client caches it.
+todoListCodec : Codec (List Todo)
+todoListCodec =
+    Codec.list todoCodec
+
+-- | Add payload — just the title. The server assigns the id and the initial
+-- `done = False`; it never trusts a client-sent id or done flag on create.
+type alias NewTodo =
+    { title : String }
+
+
+newTodoCodec : Codec NewTodo
+newTodoCodec =
+    Codec.object NewTodo |> Codec.field "title" .title Codec.string
+        |> Codec.buildObject
+
+-- | Toggle / delete payload — the id of the row to act on. The server looks the
+-- row up in its own store; an unknown id is a no-op, not an error.
+type alias IdReq =
+    { id : Int }
+
+
+idReqCodec : Codec IdReq
+idReqCodec =
+    Codec.object IdReq |> Codec.field "id" .id Codec.int |> Codec.buildObject
+
+-- | Rename payload — the id plus the new title (re-validated server-side).
+type alias RenameReq =
+    { id : Int
+    , title : String
+    }
+
+
+renameReqCodec : Codec RenameReq
+renameReqCodec =
+    Codec.object RenameReq |> Codec.field "id" .id Codec.int
+        |> Codec.field "title" .title Codec.string
+        |> Codec.buildObject

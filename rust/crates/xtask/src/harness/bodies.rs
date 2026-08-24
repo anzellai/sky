@@ -31,7 +31,10 @@ use std::process::Command;
 // ---------------------------------------------------------------------------
 
 /// `.sky` files under `examples/`, excluding generated dirs. Measured.
-pub const ROUNDTRIP_EXPECTED: u64 = 173;
+/// **178 since 2026-08-22**: `examples/60-spa-todos` (the Sky.Spa example) added
+/// its client/server `Main.sky` + `shared/Shared.sky` + the two symlinked
+/// `Shared.sky` (+5); all reprint byte-exact with zero ERROR nodes.
+pub const ROUNDTRIP_EXPECTED: u64 = 178;
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -608,7 +611,9 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// `shared-world` gate has been reporting `126/125` — the gate itself PASSES
 /// (126 items, identical verdicts); only the harness census was behind. 68
 /// reject-corpus files + 58 `examples/` directories = 126.
-pub const SHARED_WORLD_EXPECTED: u64 = 126;
+/// **127 since 2026-08-22**: `examples/60-spa-todos` (the Sky.Spa example) added
+/// one `examples/` directory → 59 dirs + 68 reject = 127; verdicts identical.
+pub const SHARED_WORLD_EXPECTED: u64 = 127;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -2963,7 +2968,15 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// 151 -> 153: `sky config migrate` shipped — a new CLI verb and a new
 /// registered `config-migrate` gate — which added two surfaces (`surfaces_total`
 /// 147 -> 149), so `surfaces.len() + 4` is now 153.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 154;
+///
+/// 154 -> 155: the Sky.Spa partition landed the `Std.Spa` stdlib module
+/// (`sky-stdlib/Std/Spa.sky`, config/app), which adds one surface
+/// (`surfaces_total` 150 -> 151), so `surfaces.len() + 4` is now 155. The new
+/// surface is registered-gate-uncovered by design — `Std.Spa` is config/Task-
+/// shaped (see the DARK_MODULE_CEILING note in `corpus/stdlib.rs`) and is
+/// covered instead by the Sky.Spa examples (`examples/60-spa-todos` …
+/// `64-spa-native`, built to wasm) and the kernel-surface gate.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 155;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

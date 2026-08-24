@@ -1,3 +1,5 @@
+//go:build !js
+
 // inline-console mount shim — back-compat stub (v0.16.1 PR10-G).
 //
 // PR 1 (v0.16.0) introduced this hook so console_app could register

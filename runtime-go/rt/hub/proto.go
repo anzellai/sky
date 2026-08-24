@@ -1,3 +1,5 @@
+//go:build !js
+
 package hub
 
 // OTLP/HTTP decoder. We accept both `application/x-protobuf` (the

@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — migration op renderer. Turns dialect-NEUTRAL typed migration ops
 // (the JSON committed in db/migrations/) into dialect-correct SQL, so one
 // migration file applies to SQLite AND Postgres. Apply reuses the existing

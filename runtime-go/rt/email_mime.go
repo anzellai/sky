@@ -1,3 +1,5 @@
+//go:build !js
+
 // email_mime.go — the RFC 5322 / MIME message `Std.Email` puts on the wire.
 //
 // # Why this file exists

@@ -127,6 +127,38 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
    side. It is closed in the other direction instead: rejected at check
    time, so it can no longer reach the runtime at all.
 
+## Sky.Spa
+
+Sky.Spa (client-side TEA compiled to wasm) is a supported feature; these are its
+current scope boundaries — documented so they are not mistaken for bugs. Full
+context: `docs/skyspa/overview.md` + `docs/skyspa/design.md`.
+
+* **Web bundle weight → desktop/mobile-embed only.** A real Sky.Spa app is a
+  standard Go→wasm bundle of ~9.5 MB raw / ~2.5 MB gzip
+  (`examples/60-spa-todos`, measured) — fine for a one-time desktop/mobile-embed
+  download, **too heavy for production web** (Elm ≈30 KB). Inherent to Sky's
+  reflection-native dispatch (`sky_call` / `reflect.MakeFunc`).
+
+* **Production web (TinyGo / Sky→JS) = v2.** TinyGo cannot compile
+  `reflect.MakeFunc`, so shrinking the bundle needs a reflection-free core or a
+  Sky→JS backend — both are v2, not built (`docs/skyspa/design.md` §0/§9).
+
+* **Auto-derived client/server split = v2.** v1's boundary is **explicit**
+  (author-declared `Std.Spa.getJson` / `postJson` over a shared `Std.Codec`). The
+  compiler-derived split ("no hand-written API routes") is the v2 target
+  (`docs/skyspa/auto-split.md`); v1-dialect apps are forward-compatible.
+
+* **Client effect surface is bounded.** Client effects run through a
+  single-threaded wasm interpreter: `Cmd.perform` (sync kernels inline; async
+  `Http` via `fetch`) and `Sub.every` timers only. `Cmd.publish` is a documented
+  client no-op (no session bus in a single tab); `Sub.subscribeTopic` / stream /
+  websocket subscriptions are not wired on the client in v1; client
+  `HttpResponse` carries status + body (headers empty).
+
+* **Browser pixel-check pending.** The loop, renderer, and full round-trip are
+  proven **headlessly** (Node + DOM shim); the in-browser *visual* confirmation
+  awaits a connected browser extension (confirmation, not a new risk).
+
 ## Roadmap (not active bugs, just deferred)
 
 * **Install-time Go-binding generation deferral.** `sky install`

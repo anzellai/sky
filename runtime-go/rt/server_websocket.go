@@ -1,3 +1,5 @@
+//go:build !js
+
 // server_websocket.go — Sky.Http.Server.WebSocket — server-side
 // WebSocket upgrade for v0.15.46.
 //
@@ -131,17 +133,6 @@ var pendingWebSocketCfgs sync.Map // map[string]webSocketUpgradeCfg
 var pendingWebSocketTokenSeq atomic.Int64
 
 const pendingWebSocketSentinelPrefix = "__sky_ws:"
-
-// webSocketUpgradeCfg packs everything the upgrade dispatcher needs
-// from the user's Sky-side cfg record.
-type webSocketUpgradeCfg struct {
-	onConnect       any
-	onMessage       any
-	onClose         any
-	onError         any
-	maxMessageBytes int
-	originPatterns  []string
-}
 
 func registerPendingWebSocketCfg(cfg webSocketUpgradeCfg) string {
 	id := pendingWebSocketTokenSeq.Add(1)

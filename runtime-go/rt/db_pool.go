@@ -1,3 +1,5 @@
+//go:build !js
+
 // db_pool.go — connection-pool sizing and transaction isolation for
 // Std.Db.
 //

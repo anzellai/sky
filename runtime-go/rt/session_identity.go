@@ -1,3 +1,5 @@
+//go:build !js
+
 // v0.16.5 #493 — session identity threading for Sky.Live sub-apps.
 //
 // Background: when a Sky.Live sub-app is mounted behind an auth gate

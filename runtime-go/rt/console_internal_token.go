@@ -1,3 +1,5 @@
+//go:build !js
+
 // console_internal_token.go — closes F1 (the loopback-auth bypass).
 //
 // The in-process console sub-app calls the parent's /_sky/console/api/* over

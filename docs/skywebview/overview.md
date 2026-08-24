@@ -102,6 +102,30 @@ main =
         |> Task.run
 ```
 
+## `Webview.url` — native shell around a web app (the Sky.Spa desktop/mobile shell)
+
+`Webview.app` runs the TEA loop **in-process**. `Webview.url` instead opens a
+native window that **loads an existing web app at a URL** — it runs no Sky loop
+of its own:
+
+```elm
+main =
+    Webview.url "http://127.0.0.1:8951/"
+        (Webview.defaultWindow
+            |> Webview.withTitle "Sky.Spa Todos"
+            |> Webview.withSize 480 760
+        )
+```
+
+This is the native shell for a **[Sky.Spa](../skyspa/overview.md)** client: the
+Sky TEA loop compiled to wasm, served over HTTP by its own stateless backend,
+runs **inside** the webview. The exact same client that powers the web build
+becomes a desktop app — the client and server stay **separate**; only the shell
+is native. A **mobile-embed** webview (iOS `WKWebView` / Android `WebView`) does
+the identical thing with the same URL, so one Sky.Spa app spans web, desktop, and
+mobile with no per-platform app logic. Worked example:
+[`examples/60-spa-todos/desktop`](../../examples/60-spa-todos/desktop).
+
 ## Platform requirements
 
 | OS | What you need | v0.1 |

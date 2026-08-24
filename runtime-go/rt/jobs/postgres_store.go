@@ -1,3 +1,5 @@
+//go:build !js
+
 package jobs
 
 // Postgres-backed job store. Phase 1.3.x — gives multi-host Sky

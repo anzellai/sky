@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package hub — bridge from hub.Store → rt.HubStoreReader.
 //
 // v0.16.4 Option B B4. `rt/` declares the interface (see

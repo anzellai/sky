@@ -39,6 +39,10 @@ That's enough — every other field has a sensible default.
 | `[env]`              | Env-var namespace prefix (v0.11.5+)                  |
 | `[security]`         | CSRF opt-out                                         |
 
+> **Cross-platform packaging (app name, bundle id, icon) is NOT in `sky.toml`.**
+> It lives in code, as an optional `bundle` binding built with `Std.Bundle`'s
+> `withX` API, so `sky.toml` stays lean — see [`## Packaging identity`](#packaging-identity--std-bundle) below.
+
 > **There is no `[auth]` section.** `Std.Auth` is a library, not a framework
 > layer — it takes the JWT secret and TTL as Sky arguments — so there is nothing
 > to seed. The block was parsed, seeded and read by nothing for four minor
@@ -154,6 +158,17 @@ Connection-status banner config is env-only (not in sky.toml):
 (default `500`), `<PREFIX>_LIVE_RETRY_MAX_MS` (default `16000`),
 `<PREFIX>_LIVE_RETRY_MAX_ATTEMPTS` (default `10`),
 `<PREFIX>_LIVE_QUEUE_MAX` (default `50`).
+
+**Cross-instance pub/sub broker.** `<PREFIX>_LIVE_BROKER_URL` (unset →
+in-process) points `Cmd.publish` at a shared **Redis** broker so a publish on
+replica A reaches subscribers on replica B — required for multi-replica
+`Cmd.publish` / cross-device fan-out. The broker is app-scoped, not
+store-scoped, so it works even with a non-Redis session store (e.g. Postgres
+sessions + Redis pub/sub). Set it in code with the builder
+`Sky.Config.withLiveBroker "redis://host:6379"` (operator env still wins); for
+the Sky.Spa auto-split backend, bake it with `sky spa-split --broker <url>`
+(env still overrides). `<PREFIX>_LIVE_BROKER=inprocess` forces the local
+registry back for a single-instance Redis deploy.
 
 ---
 
@@ -664,6 +679,68 @@ reads `FENCE_HOST`.
 
 ---
 
+## Packaging identity — `Std.Bundle` *(v0.21+)*
+
+The cross-platform app identity used by `sky build --target ios|android|desktop`
+— display name, reverse-DNS id, icon, version — **is not a `sky.toml` section**.
+It lives in code, so `sky.toml` stays lean and packaging sits next to the app.
+Declare an optional top-level `bundle` binding with the `Std.Bundle` `withX`
+builder:
+
+```elm
+-- doc-example: skip  (illustrative — init/update/view/subscriptions elided)
+module Main exposing (main, bundle)
+
+import Std.Bundle as Bundle exposing (Bundle)
+
+bundle : Bundle
+bundle =
+    Bundle.default                          -- name = project dir, default Sky icon
+        |> Bundle.withId "com.acme.notes"   -- YOUR reverse-DNS id (a domain you own)
+        |> Bundle.withIcon "assets/icon.png"
+        |> Bundle.withVersion "2.3.0"
+
+main =
+    Spa.app (Spa.config { init = init, update = update, view = view, subscriptions = subscriptions })
+```
+
+`sky build --target …` reads those `withX` values *from the source* (no runtime
+eval, no `sky.toml`) to fill the generated iOS `Info.plist`, the Android manifest
+(`package` + `versionName` + `versionCode`), and the desktop window title.
+
+| `withX`       | Default (when unset)              | Maps to |
+|---------------|-----------------------------------|---------|
+| `withName`    | project directory name            | CFBundleDisplayName · `android:label` · desktop title |
+| `withId`      | `sky.spa.<sanitised-dir-name>` (dev) | CFBundleIdentifier · Android `package` |
+| `withVersion` | `1.0`                             | CFBundleShortVersionString · `android:versionName` |
+| `withIcon`    | platform default icon             | app icon — a source PNG rendered into the iOS AppIcon set + Android mipmaps (needs macOS `sips`) |
+
+Rules:
+
+- **A `bundle` binding is optional.** With none, a `--target` build still
+  packages, under the dev-default id and the directory name.
+- **`withId` must be reverse-DNS** — two or more dot-separated segments, each
+  starting with a letter (e.g. `com.example.myapp`). A malformed id fails the
+  build rather than shipping under a wrong identifier. The dev default works for
+  local / simulator / sideload, and every `--target` build prints a note that a
+  real id (tied to a domain you own) is required before a store submission.
+- **The executable / `.app` basename** is the capitalised last `id` segment
+  (`com.acme.notes` → `Notes`), because the display name may contain spaces or
+  emoji the filesystem and Swift/Java toolchains reject.
+- For an **auto-split** app, run `--target` inside `.split/frontend/` after
+  `sky spa-split`; for a **client-only** app, `--target` runs on the project
+  directly.
+
+Full API: `sky doc Std.Bundle`.
+
+> Roadmap: per-platform overrides, a `Bundle.assetBytes` reader (bytes, not just
+> a URL), a shipped default icon, native permissions, and release
+> signing/notarization. `--target ios` still builds for the **simulator** and
+> `--target android` signs with the **debug** keystore — neither is store-ready
+> yet.
+
+---
+
 ## Precedence
 
 Configuration values resolve in this order (highest priority
@@ -731,8 +808,9 @@ fallback). Where a setting has both a `Sky.Config.withX` and a more-specific
 `Live.withStore`/`withStorePath`), the app-shape `Live.withX` wins.
 
 The full surface — `default`, `withLog`, `withDatabase`, `withSessions`,
-`withJobs`, `withCsrf`, `withTelemetry`, and the strategy ADTs — is the live
-API: **`sky doc Sky.Config`** (generated from source, never drifts). The design
+`withJobs`, `withCsrf`, `withTelemetry`, `withLiveBroker`, and the strategy
+ADTs — is the live API: **`sky doc Sky.Config`** (generated from source, never
+drifts). The design
 of record is [config-architecture.md](tooling/config-architecture.md).
 
 > Console / telemetry **tokens** are deliberately NOT builders — a secret

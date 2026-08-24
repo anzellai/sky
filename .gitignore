@@ -149,3 +149,7 @@ tests/conformance/sky-out*
 isolated-target
 isolated-target/
 *-target/
+
+# Sky.Spa spike build artifacts
+docs/skyspa/spike/main.wasm
+docs/skyspa/spike/wasm_exec.js

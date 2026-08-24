@@ -12,17 +12,13 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
 	"net/url"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
@@ -1199,6 +1195,16 @@ func pipelineApply(acc any, arg any) any {
 	if f, ok := acc.(func(any) any); ok {
 		return f(arg)
 	}
+	// 2-arg apply-lambda — the codec applicative `\f a -> f a`, emitted
+	// uniformly as `func(func(any) any, any) any`. Partially applying it to its
+	// first (function) argument is reflection-free, so a Sky.Spa/TinyGo client
+	// (whose only multi-arg pipeline use is the codec) never reaches the reflect
+	// path below. Server behaviour is identical to the reflect partial.
+	if f2, ok := acc.(func(func(any) any, any) any); ok {
+		if fa, ok2 := arg.(func(any) any); ok2 {
+			return func(b any) any { return f2(fa, b) }
+		}
+	}
 	// Multi-arg Go function via reflect: take arg and produce a partial
 	rv := reflect.ValueOf(acc)
 	if rv.Kind() != reflect.Func {
@@ -1308,179 +1314,21 @@ type HttpResponse struct {
 	Headers map[string]string
 }
 
-// HTTP client safety defaults. Each outbound request gets these limits so
-// a hostile or misconfigured server can't hang a Sky process forever.
-// Users can bring their own *http.Client via Http.request when they need
-// custom limits.
-// skyHTTPClient — the shared outbound client, built ONCE on first use.
-//
-// It used to be `var skyHttpClient = newSkyHttpClient()`, evaluated at package
-// init — before `dotenv.go`'s `init()` loads `.env`, and two call levels away
-// from the `os.Getenv` that made that matter (`newSkyHttpClient` ->
-// `httpEnvTimeout` -> `os.Getenv`). So `SKY_HTTP_CLIENT_TIMEOUT` in a `.env`
-// did nothing: every outbound request stayed pinned at the 30s default, and
-// stdlib_extra.go:1562 copied that stale value into per-request derived
-// clients, so the staleness fanned out.
-//
-// Built once rather than per call, because the client owns the connection
-// pool — rebuilding it per request would silently disable keep-alive. First
-// use is an outbound HTTP request, which is necessarily after every `init()`,
-// so `.env` has been applied by the time the timeout is read.
-var skyHTTPClientOnce = sync.OnceValue(newSkyHttpClient)
-
-func skyHTTPClient() *http.Client { return skyHTTPClientOnce() }
-
-// skyHTTPClientTimeout — the whole-request deadline for outbound HTTP,
-// resolved from the environment at the moment it is asked for.
-//
-// Separate from the client so it is testable without the one-shot build:
-// asserting on a cached client can only observe whichever test ran first.
-func skyHTTPClientTimeout() time.Duration {
-	// 30s default; overridable via SKY_HTTP_CLIENT_TIMEOUT (e.g. "180s",
-	// "5m", or "0" to disable). Apps that call slow upstreams — LLM APIs
-	// especially — routinely need more than 30s.
-	return httpEnvTimeout("SKY_HTTP_CLIENT_TIMEOUT", 30*time.Second)
-}
-
-func newSkyHttpClient() *http.Client {
-	return &http.Client{
-		Timeout: skyHTTPClientTimeout(),
-		// Bound redirect chains.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("stopped after 10 redirects")
-			}
-			return nil
-		},
-	}
-}
-
-// Maximum response body size (64 MiB). Beyond this we truncate + error.
-const clientMaxBodyBytes = 64 << 20
-
-func readBoundedBody(body io.ReadCloser) (string, error) {
-	defer body.Close()
-	limited := io.LimitReader(body, clientMaxBodyBytes+1)
-	buf, err := io.ReadAll(limited)
-	if err != nil {
-		return "", err
-	}
-	if int64(len(buf)) > clientMaxBodyBytes {
-		return "", fmt.Errorf("response body exceeds %d bytes", clientMaxBodyBytes)
-	}
-	return string(buf), nil
-}
+// The net/http outbound client (skyHTTPClient, newSkyHttpClient,
+// readBoundedBody, Http_getT, Http_request, httpClientFor, applyHttpHeaders)
+// moved to stdlib_http_server.go (//go:build !js) so the Sky.Spa client does
+// not import net/http — TinyGo cannot compile it. The client issues HTTP via
+// the browser `fetch` (Http_get / Http_post in http_wasm.go).
 
 // Http.get : String -> Task String HttpResponse
-func Http_get(url any) any {
-	u := fmt.Sprintf("%v", url)
-	return func() any {
-		return WithHTTPClientSpan("GET", u, func() any {
-			req, err := http.NewRequest("GET", u, nil)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.get: " + err.Error()))
-			}
-			// Carry the current trace context + inject W3C traceparent
-			// so the downstream service nests under this client span.
-			req = req.WithContext(CurrentTraceContext())
-			InjectTraceHeaders(req)
-			resp, err := skyHTTPClient().Do(req)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.get: " + err.Error()))
-			}
-			body, err := readBoundedBody(resp.Body)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.get read: " + err.Error()))
-			}
-			hdrs := map[string]string{}
-			for k, v := range resp.Header {
-				if len(v) > 0 {
-					hdrs[k] = v[0]
-				}
-			}
-			return Ok[any, any](HttpResponse{
-				Status:  resp.StatusCode,
-				Body:    body,
-				Headers: hdrs,
-			})
-		})
-	}
-}
+// Http_get / Http_post (the untyped `Http.get`/`Http.post` kernels) are
+// build-split: the net/http host implementation is in http_notjs.go
+// (//go:build !js); the browser-`fetch` client implementation is in
+// http_wasm.go (//go:build js). Both return the identical Sky shape.
 
-// P8/Http typed companion — Task-shaped string in, HttpResponse out.
-func Http_getT(url string) func() SkyResult[string, HttpResponse] {
-	return func() SkyResult[string, HttpResponse] {
-		resp, err := skyHTTPClient().Get(url)
-		if err != nil {
-			return Err[string, HttpResponse]("http.get: " + err.Error())
-		}
-		body, err := readBoundedBody(resp.Body)
-		if err != nil {
-			return Err[string, HttpResponse]("http.get read: " + err.Error())
-		}
-		hdrs := map[string]string{}
-		for k, v := range resp.Header {
-			if len(v) > 0 {
-				hdrs[k] = v[0]
-			}
-		}
-		return Ok[string, HttpResponse](HttpResponse{
-			Status:  resp.StatusCode,
-			Body:    body,
-			Headers: hdrs,
-		})
-	}
-}
+// Http_getT (typed net/http companion) moved to stdlib_http_server.go
+// (//go:build !js) — see the note above.
 
-// Http.post : String -> String -> Task String HttpResponse
-// (url, body)
-func Http_post(url any, body any) any {
-	u := fmt.Sprintf("%v", url)
-	b := fmt.Sprintf("%v", body)
-	return func() any {
-		return WithHTTPClientSpan("POST", u, func() any {
-			req, err := http.NewRequest("POST", u, strings.NewReader(b))
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.post: " + err.Error()))
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req = req.WithContext(CurrentTraceContext())
-			InjectTraceHeaders(req)
-			resp, err := skyHTTPClient().Do(req)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.post: " + err.Error()))
-			}
-			rb, err := readBoundedBody(resp.Body)
-			if err != nil {
-				return Err[any, any](ErrNetwork("http.post read: " + err.Error()))
-			}
-			hdrs := map[string]string{}
-			for k, v := range resp.Header {
-				if len(v) > 0 {
-					hdrs[k] = v[0]
-				}
-			}
-			return Ok[any, any](HttpResponse{
-				Status:  resp.StatusCode,
-				Body:    rb,
-				Headers: hdrs,
-			})
-		})
-	}
-}
-
-// Http.request supports two calling shapes:
-//
-//   - Positional (legacy): `Http.request method url body headers` →
-//     `Http_request(method, url, body, headers)`
-//   - Record (Elm-style): `Http.request { method, url, headers, body }`
-//     — single Sky record argument. This is the documented form in
-//     templates/CLAUDE.md and matches Elm's `Http.request` API.
-//
-// The codegen emits a single-arg call when the user passes a record,
-// so the first-arg typeswitch below picks up the record and ignores
-// the variadic tail. The positional four-arg form falls through to
-// the variadic path.
 // Http.parseQuery : String -> Dict String String
 // Parses a URL query string ("a=1&b=2") into a Dict via Go's
 // net/url.ParseQuery — proper percent-decoding, no hand-rolled
@@ -1499,105 +1347,8 @@ func Http_parseQuery(raw any) any {
 	return out
 }
 
-func Http_request(firstArg any, rest ...any) any {
-	var method, url, body string
-	var headers any
-	// v0.15.44: per-request timeout / redirect overrides.
-	timeoutMs := -1 // -1 = inherit skyHttpClient default
-	followRedirects := true
-	maxRedirects := 10
-	if isRecordArg(firstArg) {
-		method = fmt.Sprintf("%v", recordField(firstArg, "Method", "method"))
-		url = fmt.Sprintf("%v", recordField(firstArg, "Url", "url"))
-		body = fmt.Sprintf("%v", recordField(firstArg, "Body", "body"))
-		headers = recordField(firstArg, "Headers", "headers")
-		if t := recordField(firstArg, "Timeout", "timeout"); t != nil {
-			timeoutMs = AsInt(t)
-		}
-		if fr := recordField(firstArg, "FollowRedirects", "followRedirects"); fr != nil {
-			if b, ok := fr.(bool); ok {
-				followRedirects = b
-			}
-		}
-		if mr := recordField(firstArg, "MaxRedirects", "maxRedirects"); mr != nil {
-			maxRedirects = AsInt(mr)
-			if maxRedirects <= 0 {
-				maxRedirects = 10
-			}
-		}
-	} else {
-		method = fmt.Sprintf("%v", firstArg)
-		if len(rest) >= 1 {
-			url = fmt.Sprintf("%v", rest[0])
-		}
-		if len(rest) >= 2 {
-			body = fmt.Sprintf("%v", rest[1])
-		}
-		if len(rest) >= 3 {
-			headers = rest[2]
-		}
-	}
-	if method == "" {
-		method = "GET"
-	}
-	return func() any {
-		req, err := http.NewRequest(method, url, strings.NewReader(body))
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.request: " + err.Error()))
-		}
-		applyHttpHeaders(req, headers)
-		client := skyHTTPClient()
-		if timeoutMs >= 0 || !followRedirects || maxRedirects != 10 {
-			client = httpClientFor(timeoutMs, followRedirects, maxRedirects)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.request do: " + err.Error()))
-		}
-		rb, err := readBoundedBody(resp.Body)
-		if err != nil {
-			return Err[any, any](ErrNetwork("http.request read: " + err.Error()))
-		}
-		hdrs := map[string]string{}
-		for k, v := range resp.Header {
-			if len(v) > 0 {
-				hdrs[k] = v[0]
-			}
-		}
-		return Ok[any, any](HttpResponse{
-			Status:  resp.StatusCode,
-			Body:    rb,
-			Headers: hdrs,
-		})
-	}
-}
-
-// httpClientFor returns a *http.Client that honours per-request
-// overrides on top of the shared skyHttpClient transport. timeoutMs<0
-// inherits the env default; ==0 disables. followRedirects=false
-// returns the first response (resp.Body must still be read & closed).
-func httpClientFor(timeoutMs int, followRedirects bool, maxRedirects int) *http.Client {
-	timeout := skyHTTPClient().Timeout
-	if timeoutMs == 0 {
-		timeout = 0
-	} else if timeoutMs > 0 {
-		timeout = time.Duration(timeoutMs) * time.Millisecond
-	}
-	check := func(req *http.Request, via []*http.Request) error {
-		if !followRedirects {
-			return http.ErrUseLastResponse
-		}
-		if len(via) >= maxRedirects {
-			return fmt.Errorf("stopped after %d redirects", maxRedirects)
-		}
-		return nil
-	}
-	return &http.Client{
-		Transport:     skyHTTPClient().Transport,
-		Timeout:       timeout,
-		CheckRedirect: check,
-	}
-}
+// Http_request + httpClientFor (net/http) moved to stdlib_http_server.go
+// (//go:build !js) — see the note above.
 
 // isRecordArg reports whether v is a Sky record (map-based or struct-
 // based) rather than a positional scalar. Typed codegen emits
@@ -1639,38 +1390,8 @@ func recordField(v any, goName, skyName string) any {
 	return nil
 }
 
-// applyHttpHeaders: Sky-side headers can arrive as `[(k, v), ...]`
-// (list of tuples — the Elm convention, what users write in the
-// record literal), `map[string]any` (legacy), or nil.
-func applyHttpHeaders(req *http.Request, headers any) {
-	if headers == nil {
-		return
-	}
-	if hm, ok := headers.(map[string]any); ok {
-		for k, v := range hm {
-			req.Header.Set(k, fmt.Sprintf("%v", v))
-		}
-		return
-	}
-	rv := reflect.ValueOf(headers)
-	if rv.Kind() == reflect.Slice {
-		for i := 0; i < rv.Len(); i++ {
-			item := rv.Index(i).Interface()
-			iv := reflect.ValueOf(item)
-			if iv.Kind() != reflect.Struct {
-				continue
-			}
-			v0 := iv.FieldByName("V0")
-			v1 := iv.FieldByName("V1")
-			if v0.IsValid() && v1.IsValid() {
-				req.Header.Set(
-					fmt.Sprintf("%v", v0.Interface()),
-					fmt.Sprintf("%v", v1.Interface()),
-				)
-			}
-		}
-	}
-}
+// applyHttpHeaders (net/http) moved to stdlib_http_server.go (//go:build !js)
+// — see the note above.
 
 // Keep encoding/json referenced
 var _ = json.Marshal

@@ -1197,6 +1197,17 @@ main =
 
 Routing: `get`, `post`, `put`, `delete`, `any`, `static`, `group` (prefix), `use` (middleware), `listen`.
 
+`static` serves a directory (path-traversal-safe, with MIME detection,
+`Last-Modified`, and `Range` support). Compressible assets — `.wasm`, JS, CSS,
+JSON, SVG, and any `text/*` — are **gzipped on the wire automatically** for a
+client that sends `Accept-Encoding: gzip` (a plain `GET`, `200`, no `Range`);
+already-compressed media (images, video, fonts) and partial/`206` responses pass
+through untouched. This matters most for a Sky.Spa client `.wasm`: a standard-Go
+wasm bundle is multi-MB raw but ~¼ of that gzipped, and the browser downloads the
+raw bytes unless the server compresses. `Vary: Accept-Encoding` is always set so
+shared caches key on it. The same compression applies to the Sky.Live and
+Sky.Webview static mounts.
+
 Extractors (Layer 3 Sky source — `Sky.Http.Server.sky`): `param`
 (path `:id`), `queryParam`, `header`, `getCookie`. Kernel-side
 extras: `formValue`, `body`, `path`, `method`.

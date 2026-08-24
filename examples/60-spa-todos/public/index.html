@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sky.Spa Todos</title>
+  </head>
+  <body>
+    <!-- The Sky.Spa client mounts its whole UI into #app. Everything below is
+         painted by the wasm TEA loop; there is no server-rendered markup. -->
+    <div id="app"></div>
+    <script src="/wasm_exec.js"></script>
+    <script>
+      // Standard Go wasm bootstrap. Same-origin: the client's fetch("/api/...")
+      // hits this same backend, so no CORS is involved.
+      const go = new Go();
+      WebAssembly.instantiateStreaming(fetch("/main.wasm"), go.importObject).then((res) => {
+        go.run(res.instance);
+      });
+    </script>
+  </body>
+</html>

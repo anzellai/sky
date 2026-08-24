@@ -1,0 +1,492 @@
+module Main exposing (main, bundle)
+
+-- Sky.Spa — Native capability playground.
+--
+-- Every button drives a `Std.Native.*` CLIENT capability through the ordinary
+-- TEA loop: `Cmd.perform (Native.<cap> …) OnResult`. Each capability is a
+-- `Task Error a`, so a denial / unavailable API is a clean `Err` shown in the
+-- log, never a crash. Because the ONLY effects are native (client) ones,
+-- `sky spa-split` keeps the whole app in the wasm frontend — the generated
+-- backend just serves the static bundle.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.Math as Math
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+import Std.Ui.Font as Font
+import Std.Ui.Border as Border
+import Std.Ui.Background as Background
+import Std.Native as Native exposing (Coords)
+import Std.Bundle as Bundle exposing (Bundle)
+
+
+-- Declares the OS-level notification permission so `Native.notify` can post a
+-- real system notification through the generated mobile shells' native bridge
+-- (iOS UNUserNotificationCenter / Android POST_NOTIFICATIONS + NotificationManager).
+bundle : Bundle
+bundle =
+    Bundle.default |> Bundle.withName "Sky Native"
+        |> Bundle.withPermission Bundle.Notifications
+        |> Bundle.withPermission Bundle.Camera
+
+-- MODEL
+type alias Model =
+    { draft : String
+    , clip : String
+    , stored : String
+    , where_ : String
+    , online : String
+    , lang : String
+    , theme : String
+    , battery : String
+    , picked : String
+    , preview : String
+    , log : String
+    }
+
+
+init : () -> ( Model, Cmd.Cmd Msg )
+init _ =
+    ( { draft = "Hello from Sky"
+      , clip = "—"
+      , stored = "—"
+      , where_ = "—"
+      , online = "—"
+      , lang = "—"
+      , theme = "—"
+      , battery = "—"
+      , picked = "—"
+      , preview = ""
+      , log = "ready"
+      }
+    , Cmd.none
+    )
+
+-- UPDATE
+type Msg
+    = DraftChanged String
+    | Copy
+    | Paste
+    | Pasted (Result Error String)
+    | Save
+    | Load
+    | Loaded (Result Error (Maybe String))
+    | Forget
+    | Locate
+    | Located (Result Error Coords)
+    | Buzz
+    | Share
+    | CheckOnline
+    | OnlineGot (Result Error Bool)
+    | DetectLang
+    | LangGot (Result Error String)
+    | Retitle
+    | CheckTheme
+    | ThemeGot (Result Error Bool)
+    | CheckBattery
+    | BatteryGot (Result Error Native.BatteryStatus)
+    | OpenSite
+    | Notify
+    | PickImg
+    | PickAny
+    | CapturePhoto
+    | Picked (Result Error Native.PickedFile)
+    | CallBridge
+    | Bridged (Result Error String)
+    | Did String (Result Error ())
+
+
+update : Msg -> Model -> ( Model, Cmd.Cmd Msg )
+update msg model =
+    case msg of
+
+        DraftChanged s ->
+            ( { model | draft = s }, Cmd.none )
+
+        Copy ->
+            ( model
+            , Cmd.perform (Native.clipboardWrite model.draft) (Did "copied")
+            )
+
+        Paste ->
+            ( model, Cmd.perform (Native.clipboardRead ()) Pasted )
+
+        Pasted (Ok t) ->
+            ( { model | clip = t, log = "pasted from clipboard" }, Cmd.none )
+
+        Pasted (Err e) ->
+            ( { model | log = "paste failed: " ++ Error.toString e }, Cmd.none )
+
+        Save ->
+            ( model
+            , Cmd.perform
+                  (Native.storageSet "sky.demo.note" model.draft)
+                  (Did "saved")
+            )
+
+        Load ->
+            ( model, Cmd.perform (Native.storageGet "sky.demo.note") Loaded )
+
+        Loaded (Ok (Just v)) ->
+            ( { model | stored = v, log = "loaded from storage" }, Cmd.none )
+
+        Loaded (Ok Nothing) ->
+            ( { model | stored = "(nothing saved yet)", log = "storage empty" }
+            , Cmd.none
+            )
+
+        Loaded (Err e) ->
+            ( { model | log = "load failed: " ++ Error.toString e }, Cmd.none )
+
+        Forget ->
+            ( { model | stored = "—" }
+            , Cmd.perform (Native.storageRemove "sky.demo.note") (Did "cleared")
+            )
+
+        Locate ->
+            ( model, Cmd.perform (Native.geolocation ()) Located )
+
+        Located (Ok c) ->
+            ( { model | where_ =
+                  String.fromFloat c.lat ++ ", " ++ String.fromFloat c.lng
+              , log = "located (±" ++ String.fromFloat c.accuracy ++ "m)"
+              }
+            , Cmd.none
+            )
+
+        Located (Err e) ->
+            ( { model | log = "locate failed: " ++ Error.toString e }
+            , Cmd.none
+            )
+
+        Buzz ->
+            ( model, Cmd.perform (Native.vibrate 60) (Did "buzzed") )
+
+        Share ->
+            ( model
+            , Cmd.perform
+                  (Native.share
+                      { title = "Sky"
+                      , text = model.draft
+                      , url = "https://sky-lang.org"
+                      })
+                  (Did "shared")
+            )
+
+        CheckOnline ->
+            ( model, Cmd.perform (Native.isOnline ()) OnlineGot )
+
+        OnlineGot (Ok True) ->
+            ( { model | online = "online", log = "checked connectivity" }
+            , Cmd.none
+            )
+
+        OnlineGot (Ok False) ->
+            ( { model | online = "offline", log = "checked connectivity" }
+            , Cmd.none
+            )
+
+        OnlineGot (Err e) ->
+            ( { model | log = "connectivity check failed: " ++ Error.toString e
+              }
+            , Cmd.none
+            )
+
+        DetectLang ->
+            ( model, Cmd.perform (Native.language ()) LangGot )
+
+        LangGot (Ok l) ->
+            ( { model | lang = l, log = "detected language" }, Cmd.none )
+
+        LangGot (Err e) ->
+            ( { model | log = "language failed: " ++ Error.toString e }
+            , Cmd.none
+            )
+
+        Retitle ->
+            ( model
+            , Cmd.perform
+                  (Native.setTitle ("Sky · " ++ model.draft))
+                  (Did "retitled")
+            )
+
+        CheckTheme ->
+            ( model, Cmd.perform (Native.prefersDarkMode ()) ThemeGot )
+
+        ThemeGot (Ok True) ->
+            ( { model | theme = "dark", log = "read colour scheme" }, Cmd.none )
+
+        ThemeGot (Ok False) ->
+            ( { model | theme = "light", log = "read colour scheme" }
+            , Cmd.none
+            )
+
+        ThemeGot (Err e) ->
+            ( { model | log = "theme failed: " ++ Error.toString e }, Cmd.none )
+
+        CheckBattery ->
+            ( model, Cmd.perform (Native.batteryStatus ()) BatteryGot )
+
+        BatteryGot (Ok b) ->
+            ( { model | battery =
+                  String.fromInt (Math.round (b.level * 100.0)) ++ "%"
+                      ++ (if b.charging then
+                             " (charging)"
+
+                         else
+                             "")
+              , log = "read battery"
+              }
+            , Cmd.none
+            )
+
+        BatteryGot (Err e) ->
+            ( { model | log = "battery failed: " ++ Error.toString e }
+            , Cmd.none
+            )
+
+        OpenSite ->
+            ( model
+            , Cmd.perform
+                  (Native.openUrl "https://sky-lang.org")
+                  (Did "opened link")
+            )
+
+        Notify ->
+            ( model
+            , Cmd.perform (Native.notify "Sky" model.draft) (Did "notified")
+            )
+
+        PickImg ->
+            ( model, Cmd.perform (Native.pickImage ()) Picked )
+
+        PickAny ->
+            ( model, Cmd.perform (Native.pickFile ()) Picked )
+
+        CapturePhoto ->
+            ( model, Cmd.perform (Native.capturePhoto ()) Picked )
+
+        Picked (Ok f) ->
+            ( { model | picked = f.name ++ " (" ++ f.mime ++ ")"
+              , preview =
+                  if String.startsWith "image/" f.mime then
+                      f.dataUrl
+
+                  else
+                      ""
+              , log = "picked a file"
+              }
+            , Cmd.none
+            )
+
+        Picked (Err e) ->
+            ( { model | log = "pick failed: " ++ Error.toString e }, Cmd.none )
+
+        CallBridge ->
+            ( model
+            , Cmd.perform
+                  (Native.bridge "echo" ("{\"draft\":\"" ++ model.draft ++ "\"}"))
+                  Bridged
+            )
+
+        Bridged (Ok reply) ->
+            ( { model | log = "bridge replied: " ++ reply }, Cmd.none )
+
+        Bridged (Err e) ->
+            ( { model | log = "bridge: " ++ Error.toString e }, Cmd.none )
+
+        Did what (Ok _) ->
+            ( { model | log = what }, Cmd.none )
+
+        Did what (Err e) ->
+            ( { model | log = what ++ " failed: " ++ Error.toString e }
+            , Cmd.none
+            )
+
+
+-- VIEW
+ink : Ui.Color
+ink =
+    Ui.rgb255 30 34 42
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb255 66 99 235
+
+
+card : Ui.Color
+card =
+    Ui.rgb255 245 246 250
+
+
+view : Model -> Ui.Html Msg
+view model =
+    Ui.layout [ Background.color (Ui.rgb255 236 238 244), Font.color ink ]
+        <| Ui.column
+               [ Ui.spacing 18
+               , Ui.padding 24
+               , Ui.width (Ui.maximum 560 Ui.fill)
+               , Ui.centerX
+               ]
+               [ Ui.column
+                     [ Ui.spacing 4 ]
+                     [ Ui.el
+                           [ Font.size 26, Font.bold ]
+                           (Ui.text "Native capabilities")
+                     , Ui.el
+                           [ Font.size 14, Font.color (Ui.rgb255 110 116 128) ]
+                           (Ui.text
+                               "Std.Native — every button is a Task Error, run client-side in wasm.")
+                     ]
+               , Input.text
+                     []
+                     { onChange = DraftChanged
+                     , text = model.draft
+                     , placeholder =
+                         Just
+                             (Input.placeholder
+                                 []
+                                 (Ui.text "type something to copy / save / share"))
+                     , label =
+                         Input.labelAbove [ Font.size 13 ] (Ui.text "Draft")
+                     }
+               , section
+                     "Clipboard"
+                     [ btn "Copy draft" Copy, btn "Paste" Paste ]
+                     ("clipboard: " ++ model.clip)
+               , section
+                     "Local storage"
+                     [ btn "Save" Save, btn "Load" Load, btn "Clear" Forget ]
+                     ("stored: " ++ model.stored)
+               , section
+                     "Device"
+                     [ btn "Locate" Locate
+                     , btn "Online?" CheckOnline
+                     , btn "Language" DetectLang
+                     , btn "Theme" CheckTheme
+                     , btn "Battery" CheckBattery
+                     ]
+                     ("where: " ++ model.where_ ++ "   ·   net: " ++ model.online
+                         ++ "   ·   lang: "
+                         ++ model.lang
+                         ++ "   ·   theme: "
+                         ++ model.theme
+                         ++ "   ·   battery: "
+                         ++ model.battery)
+               , section
+                     "Platform"
+                     [ btn "Vibrate" Buzz
+                     , btn "Share" Share
+                     , btn "Notify" Notify
+                     , btn "Open site" OpenSite
+                     , btn "Set tab title" Retitle
+                     ]
+                     ""
+               , filesSection model
+               , Ui.el
+                     [ Font.size 13
+                     , Font.color accent
+                     , Ui.paddingXY 12 8
+                     , Background.color card
+                     , Border.rounded 8
+                     , Ui.width Ui.fill
+                     , Ui.htmlAttribute "id" "log"
+                     ]
+                     (Ui.text ("log: " ++ model.log))
+               ]
+
+
+filesSection : Model -> Element Msg
+filesSection model =
+    Ui.column
+        [ Ui.spacing 10
+        , Ui.padding 16
+        , Ui.width Ui.fill
+        , Background.color (Ui.rgb255 255 255 255)
+        , Border.rounded 12
+        , Border.width 1
+        , Border.color (Ui.rgb255 226 229 236)
+        ]
+        [ Ui.el [ Font.size 15, Font.bold ] (Ui.text "Files, photos & camera")
+        , Ui.wrappedRow
+              [ Ui.spacing 8 ]
+              [ btn "Pick image" PickImg
+              , btn "Pick file" PickAny
+              , btn "Camera" CapturePhoto
+              ]
+        , Ui.el
+              [ Font.size 13, Font.color (Ui.rgb255 90 96 108) ]
+              (Ui.text ("picked: " ++ model.picked))
+        , if model.preview == "" then
+              Ui.none
+
+          else
+              Ui.image
+                  [ Ui.width (Ui.maximum 200 Ui.fill), Border.rounded 8 ]
+                  { src = model.preview, description = "picked image" }
+        , Ui.el
+              [ Font.size 15, Font.bold ]
+              (Ui.text "Custom capability (Native.bridge)")
+        , Ui.el
+              [ Font.size 13, Font.color (Ui.rgb255 90 96 108) ]
+              (Ui.text
+                  "Calls a handler the app registers itself — the extension point for payments, biometrics, …")
+        , Ui.wrappedRow [ Ui.spacing 8 ] [ btn "Call \"echo\"" CallBridge ]
+        ]
+
+
+section : String -> List (Element Msg) -> String -> Element Msg
+section title buttons readout =
+    Ui.column
+        [ Ui.spacing 10
+        , Ui.padding 16
+        , Ui.width Ui.fill
+        , Background.color (Ui.rgb255 255 255 255)
+        , Border.rounded 12
+        , Border.width 1
+        , Border.color (Ui.rgb255 226 229 236)
+        ]
+        [ Ui.el [ Font.size 15, Font.bold ] (Ui.text title)
+        , Ui.wrappedRow [ Ui.spacing 8 ] buttons
+        , if readout == "" then
+              Ui.none
+
+          else
+              Ui.el
+                  [ Font.size 13, Font.color (Ui.rgb255 90 96 108) ]
+                  (Ui.text readout)
+        ]
+
+
+btn : String -> Msg -> Element Msg
+btn label msg =
+    Ui.button
+        [ Background.color accent
+        , Font.color (Ui.rgb255 255 255 255)
+        , Ui.paddingXY 14 9
+        , Border.rounded 8
+        , Font.size 14
+        ]
+        { onPress = Just msg, label = Ui.text label }
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

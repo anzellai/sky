@@ -201,4 +201,7 @@ commit = "2771303a"
 # ## Current state
 #
 # No authorised rises. Every count in config-surface.json is at or below the
-# value it was first measured at.
+# value it was first measured at. (The `[bundle]` packaging identity moved OUT of
+# sky.toml into a `Std.Bundle` `withX` binding read from source, so it is no
+# longer a pre-binary config read at all — see rust/crates/sky/src/main.rs
+# resolve_bundle_identity / scan_bundle_call.)

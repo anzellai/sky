@@ -1,3 +1,5 @@
+//go:build !js
+
 // Sky.Tui — runtime warning sink for Std.Ui features the terminal
 // can't faithfully render.
 //

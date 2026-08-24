@@ -171,6 +171,17 @@ func Config_withTelemetrySynchronousCommit(mode, cfg any) any {
 	return configSetStr(cfg, "TelemetrySynchronousCommit", mode)
 }
 
+// Config_withLiveBroker sets the Sky.Live cross-instance pub/sub broker URL
+// (the `<PREFIX>_LIVE_BROKER_URL` suffix — same name `maybeOverrideBroker`
+// reads through `skyGetenv("LIVE_BROKER_URL")`). ApplyConfig writes it into the
+// env before live.go builds the broker, so `effectiveBrokerUrl("")` there reads
+// it back; an operator's own `SKY_LIVE_BROKER_URL` still wins (applyConfigValue
+// defers to it). The auto-split backend takes the URL as a baked arg instead
+// (no Sky.Config), resolved through the same `effectiveBrokerUrl`.
+func Config_withLiveBroker(url, cfg any) any {
+	return configSetStr(cfg, "LiveBroker", url)
+}
+
 // ── Application into the env namespace ──────────────────────────────────────
 
 // configKeyToEnvSuffix maps a Sky.Config map key to the internal env SUFFIX the
@@ -188,6 +199,12 @@ var configKeyToEnvSuffix = map[string]string{
 	"JobsStore":     "JOBS_STORE",
 	"JobsStorePath": "JOBS_STORE_PATH",
 	"Csrf":          "CSRF",
+	// LIVE_BROKER_URL is not seeded from sky.toml (there is no `[live] broker`
+	// key), so isSeededDefault is always false for it and it never appears in
+	// the legacy-migration notice — but it IS a prefixed suffix read via
+	// skyGetenv, so ApplyConfig must resolve it through skyEnvName like the
+	// others (not a verbatim configKeyToLiteralEnv name).
+	"LiveBroker": "LIVE_BROKER_URL",
 }
 
 // configKeyToLiteralEnv maps a Sky.Config map key to a LITERAL env var name
@@ -225,6 +242,7 @@ var configKeyToBuilder = map[string]string{
 	"JobsStore":     "Sky.Config.withJobs",
 	"JobsStorePath": "Sky.Config.withJobs",
 	"Csrf":          "Sky.Config.withCsrf",
+	"LiveBroker":    "Sky.Config.withLiveBroker",
 }
 
 // legacyMigrationNotices lists the legacy `sky.toml` runtime settings that

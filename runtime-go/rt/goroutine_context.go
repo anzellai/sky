@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Goroutine-local trace-context propagation.

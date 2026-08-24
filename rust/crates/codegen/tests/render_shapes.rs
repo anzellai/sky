@@ -213,7 +213,15 @@ fn renders_coerce_task_result_maybe_wrappers() {
         },
         GoTy::Any,
     );
-    assert_eq!(render_expr(&res), "/* generic erase */ rt.ResultCoerce[E, string](r)");
+    // A `Result e a` with a concrete (non-`any`) Ok payload narrows reflection-
+    // free: the Result is reconstructed by typed assertion (`ResultCoerceOk`) and
+    // the Ok value by the payload's own narrow (`rt.AsString` for `string`),
+    // rather than reflect-narrowing the whole Result. Produces the identical
+    // `SkyResult[E, string]` value.
+    assert_eq!(
+        render_expr(&res),
+        "/* generic erase */ rt.ResultCoerceOk[E, string](r, func(_v any) string { return rt.AsString(_v) })"
+    );
     let may = GoExpr::new(
         GoExprKind::Coerce {
             inner: Box::new(ident("m")),

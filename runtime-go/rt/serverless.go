@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Serverless / edge-runtime mode detection. Sky's observability and

@@ -54,6 +54,13 @@ pub struct BuildOptions {
     /// library every gate and harness builds through — none of which should be
     /// able to reach the network as a side effect of compiling.
     pub embed_bundle: Option<PathBuf>,
+    /// `sky build --wasm`: compile the emitted Go for `GOOS=js GOARCH=wasm`
+    /// (a Sky.Spa client) instead of a native binary, and drop the matching
+    /// `wasm_exec.js` beside it. The output is `<out>/main.wasm` +
+    /// `<out>/wasm_exec.js` rather than the native `<out>/<bin>`. The native
+    /// cgo-detection path is skipped: a wasm client links no system webview and
+    /// must not flip to cgo.
+    pub wasm: bool,
 }
 
 #[derive(Default)]
@@ -608,6 +615,16 @@ fn build_inner(
     // the oracle (`app/Main.hs`) + CLAUDE.md §"Sky.Webview" cgo-detect note.
     // Output binary name honours the sky.toml `bin` key (default `app`).
     let bin_name = configured_bin_name(&opts.example_dir);
+    // `--wasm`: compile the client for the browser (GOOS=js GOARCH=wasm) and
+    // drop the matching wasm_exec.js. The native cgo-detection path is skipped —
+    // a Sky.Spa client imports `syscall/js` and must NOT native-build.
+    if opts.wasm {
+        match run_wasm_build(&out_dir) {
+            Ok(()) => report.go_build_ok = true,
+            Err(e) => report.go_build_stderr = e,
+        }
+        return report;
+    }
     match run_go_build_detecting_cgo(&out_dir, &source, &bin_name) {
         Ok(outcome) => {
             report.go_build_ok = outcome.ok;
@@ -660,6 +677,49 @@ struct GoBuildOutcome {
     cgo_note: Option<String>,
 }
 
+/// `sky build --wasm`: compile `out_dir` for `GOOS=js GOARCH=wasm` into
+/// `out_dir/main.wasm`, then copy the toolchain's `wasm_exec.js` beside it — the
+/// browser loader the emitted client is paired with (a loader from a different
+/// toolchain, e.g. TinyGo, fails with a WebAssembly LinkError). Standard-Go wasm
+/// has full reflect, so no de-reflection is needed; the bundle is larger but runs
+/// in any browser / WKWebView / Android WebView.
+fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
+    // `-ldflags=-s -w` strips the symbol table (`-s`) and DWARF (`-w`). A
+    // browser never reads either, and for GOARCH=wasm they are pure download
+    // weight — the client is delivered over the wire, so this is the one target
+    // where stripping is unambiguously right. (Passed as a SINGLE argv element
+    // so `-s -w` is the flag VALUE, not two separate build flags.)
+    let out = Command::new("go")
+        .current_dir(out_dir)
+        .env("GOOS", "js")
+        .env("GOARCH", "wasm")
+        .args(["build", "-ldflags=-s -w", "-o", "main.wasm", "."])
+        .output()
+        .map_err(|e| format!("failed to run `go build` (GOOS=js GOARCH=wasm): {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+    }
+    let goroot = Command::new("go")
+        .args(["env", "GOROOT"])
+        .output()
+        .map_err(|e| format!("`go env GOROOT`: {e}"))?;
+    let goroot = String::from_utf8_lossy(&goroot.stdout).trim().to_string();
+    // Go 1.21+ ships wasm_exec.js under lib/wasm; older toolchains, misc/wasm.
+    let candidates = [
+        Path::new(&goroot).join("lib").join("wasm").join("wasm_exec.js"),
+        Path::new(&goroot).join("misc").join("wasm").join("wasm_exec.js"),
+    ];
+    let src = candidates.iter().find(|p| p.exists()).ok_or_else(|| {
+        format!("wasm_exec.js not found under GOROOT ({goroot}); looked in lib/wasm and misc/wasm")
+    })?;
+    let dest = out_dir.join("wasm_exec.js");
+    // The GOROOT copy is read-only (0444); a prior build left a read-only dest,
+    // so overwriting it would EPERM. Remove it first (best-effort).
+    let _ = std::fs::remove_file(&dest);
+    std::fs::copy(src, &dest).map_err(|e| format!("copy wasm_exec.js -> {}: {e}", dest.display()))?;
+    Ok(())
+}
+
 /// Run `go build` with static-first cgo detection. `source` is the emitted
 /// `main.go` text; its containing `rt.Webview_app` reference is the signal that
 /// the project links the system webview and MUST build with cgo.
@@ -671,7 +731,7 @@ fn run_go_build_detecting_cgo(
     // Sky.Webview: the stub (`webview_stub.go`, `!cgo || !darwin`) compiles fine
     // under CGO=0, producing a binary that silently no-ops on `Webview.app`.
     // Force cgo up front so the real WKWebView-backed `webview.go` links.
-    if source.contains("rt.Webview_app") {
+    if source.contains("rt.Webview_app") || source.contains("rt.Webview_url") {
         let attempt = run_go_build_once(out_dir, "1", bin_name)?;
         return Ok(GoBuildOutcome {
             ok: attempt.status_ok,
@@ -1899,7 +1959,62 @@ fn prune_stale_rt(
 /// dropped here so they can never be mistaken for — nor shadow — the consuming
 /// example's entry point. Enumeration is sorted (via `load_dir`) so the result
 /// is deterministic. Absent `.skydeps/` → empty (the common no-deps case).
-fn load_skydeps(
+/// Assemble a read-only source db for `example_dir`: stdlib + fetched `.skydeps`
+/// + the project's own `src/`, each registered as a module. Returns the db, the
+/// entry module id, and the app (check) module ids — the same load path
+/// [`assemble_and_emit_with`] uses, stopping BEFORE type-check / lower / emit.
+/// Used by read-only analyses (`sky spa-partition`) that need the resolved world
+/// without building. Reuses the SAME loader primitives (`load_dir` /
+/// `load_skydeps` / `configured_source_root`), never a parallel discovery.
+pub(crate) fn load_source_db(
+    repo_root: &Path,
+    example_dir: &Path,
+    entry_module: Option<&str>,
+) -> Result<(skydb::SkyDatabase, base::ModuleId, Vec<base::ModuleId>), String> {
+    let mut db = skydb::SkyDatabase::with_kernel();
+    let mut next_id: u32 = 0;
+    let stdlib = load_dir(&db, &mut next_id, &repo_root.join("sky-stdlib"));
+    if stdlib.is_empty() {
+        return Err("no stdlib under sky-stdlib".into());
+    }
+    for (n, file, _p) in stdlib {
+        db.add_module(&n, file);
+    }
+    for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
+        let slug = path.replace('/', "_");
+        if !example_dir.join(".skydeps").join(&slug).is_dir() {
+            return Err(format!("Sky dependency {path} not fetched — run 'sky install'"));
+        }
+    }
+    for (n, file) in load_skydeps(&db, &mut next_id, &example_dir.join(".skydeps")) {
+        db.add_module(&n, file);
+    }
+    let source_root = configured_source_root(example_dir);
+    let locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
+    if locals.is_empty() {
+        return Err(format!("no .sky under {source_root}/"));
+    }
+    let mut entry = None;
+    let mut check_ids: Vec<base::ModuleId> = Vec::new();
+    for (n, file, _p) in locals {
+        let id = db.add_module(&n, file);
+        check_ids.push(id);
+        let is_entry = match entry_module {
+            Some(want) => n == want,
+            None => n == "Main" || n.ends_with(".Main") || n == "main",
+        };
+        if is_entry {
+            entry = Some(id);
+        }
+    }
+    let entry = entry.ok_or_else(|| match entry_module {
+        Some(want) => format!("no entry module named {want}"),
+        None => "no entry module named Main".into(),
+    })?;
+    Ok((db, entry, check_ids))
+}
+
+pub(crate) fn load_skydeps(
     sdb: &skydb::SkyDatabase,
     next_id: &mut u32,
     skydeps: &Path,
@@ -2011,7 +2126,7 @@ fn collect_sky_unfiltered(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn load_dir(
+pub(crate) fn load_dir(
     sdb: &skydb::SkyDatabase,
     next_id: &mut u32,
     dir: &Path,

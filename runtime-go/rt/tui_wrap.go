@@ -1,3 +1,5 @@
+//go:build !js
+
 // Sky.Tui — word-wrap engine.
 //
 // Pure functions used by paragraph / wrappedRow / textColumn renderers

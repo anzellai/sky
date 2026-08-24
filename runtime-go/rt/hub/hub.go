@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package hub implements `sky console-serve` — the Sky Console Hub
 // daemon. v0.16.4 Chunks 2+3 land the OTLP/HTTP receiver and the
 // SQLite hot store. The UI ships in Chunks 4-6.

@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Sky observability — `/_sky/{healthz,readyz,metrics,buildinfo}`

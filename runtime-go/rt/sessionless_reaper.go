@@ -1,3 +1,5 @@
+//go:build !js
+
 // sessionless_reaper.go — the backstop that keeps the two sessionless
 // registries (sessionlessStreams in http_stream.go, sessionlessSockets in
 // websocket.go) from growing without bound.

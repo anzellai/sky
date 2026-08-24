@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — Std.Analytics runtime kernels.
 //
 // P1+ (capture core): render a tracked event to a structured `[analytics]`

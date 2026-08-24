@@ -1,0 +1,498 @@
+module Main exposing (main)
+
+-- Sky.Spa CHAT — a REAL-TIME group chat written as ONE Sky.Spa project with
+-- effects INLINE (the auto-split TIER). It is NOT built directly:
+-- `sky spa-split src/Main.sky --out .split --build` derives three normal Sky
+-- projects from this source tree —
+--
+--   * frontend/  — the wasm client: the whole `view` + the PURE update branches
+--                  run 100% in the browser (compose/rename/receive are zero-network
+--                  local transitions). Each effectful branch is rewritten to an
+--                  RPC call; the effectful `Persist` module is NEVER emitted into
+--                  the bundle, so no store, connection, or secret reaches it.
+--   * backend/   — the native Sky.Http.Server: it owns the SQLite store, runs each
+--                  effectful branch behind a generated `POST /_rpc/<Msg>` (reusing
+--                  this file's own `init` + `update` server-side), AND fans every
+--                  `Cmd.publish` out over SSE to every subscribed client.
+--   * shared/    — the wire contract (per-RPC req/resp records + codecs);
+--                  `Domain` (the pure `Message` type + codecs) is shared unchanged.
+--
+-- ─── The real-time push (the whole point) ──────────────────────────────
+-- A message sent by ANY client appears live on EVERY connected client. The
+-- auto-split wires this from two ordinary stdlib calls, with NO plumbing written
+-- by hand (docs/skyspa/auto-split.md §16):
+--
+--   * `update`'s `Send` branch persists the line, then returns
+--       `Cmd.publish "room:main" (Codec.toJson messageCodec saved)`.
+--   * `subscriptions` returns
+--       `Sub.subscribeTopic "room:main" onPush`.
+--
+-- Seeing publish + subscribeTopic, the generator mounts `GET /_sky/sub` (SSE) and
+-- a shared broker on the backend, and the wasm frontend opens an `EventSource` to
+-- it. `Send` does NOT append locally — it lets the publish ECHO back through the
+-- broker so the sender and every other client append the same authoritative row
+-- exactly once (deduped on the DB id).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Error as Error exposing (Error)
+import Std.Codec as Codec
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Domain exposing (Message)
+import Persist
+
+
+
+-- ─── Model + Msg ───────────────────────────────────────────────────
+
+
+type alias Model =
+    { messages : List Message
+    , name : String
+    , draft : String
+    }
+
+
+type Msg
+    = -- PURE (client-local, zero round-trip)
+      Compose String
+    | SetName String
+    | Received Message
+    | Ignore
+      -- SERVER (Persist effect → generated RPC)
+    | Load
+    | Send
+
+
+
+-- ─── Pure helpers (client-safe) ────────────────────────────────────
+
+
+-- Whether a message was written by THIS client — drives own-vs-other styling.
+isMine : Model -> Message -> Bool
+isMine model msg =
+    msg.author == model.name
+
+
+-- A HH:MM clock label from the server-stamped millisecond timestamp (UTC). Kept
+-- as PURE integer math on purpose: `Sky.Core.Time.format` is classified as a
+-- server kernel by the split's taint analysis (Time is an effect surface), and
+-- the clock is drawn in the client `view`, so any `Time.*` call here would taint
+-- the whole view. Plain arithmetic keeps the frontend 100% pure.
+clock : Int -> String
+clock ts =
+    let
+        totalMinutes =
+            ts // 60000
+
+        hours =
+            modBy 24 (totalMinutes // 60)
+
+        minutes =
+            modBy 60 totalMinutes
+    in
+    pad2 hours ++ ":" ++ pad2 minutes
+
+
+pad2 : Int -> String
+pad2 n =
+    if n < 10 then
+        "0" ++ String.fromInt n
+
+    else
+        String.fromInt n
+
+
+-- The composer only sends when there is a non-blank line to send.
+canSend : Model -> Bool
+canSend model =
+    not (String.isEmpty (String.trim model.draft))
+
+
+-- Decode an SSE-pushed payload back into a `Message`. The frame's payload is the
+-- JSON STRING the server published (`Codec.toJson messageCodec saved`), so this
+-- round-trips through the same codec. A malformed frame is ignored rather than
+-- crashing the client.
+onPush : String -> Msg
+onPush raw =
+    case Codec.fromJson Domain.messageCodec raw of
+        Ok msg ->
+            Received msg
+
+        Err _ ->
+            Ignore
+
+
+
+-- ─── init ──────────────────────────────────────────────────────────
+-- Pure — starts empty, then fires `Load` once. `Cmd.perform` over a PURE
+-- `Task.succeed` is client-safe (it dispatches a Msg; it is not an effect), so
+-- it survives verbatim into the wasm frontend; the `Load` branch it triggers is
+-- the effect, and that becomes a boot RPC (`POST /_rpc/Load`).
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { messages = []
+      , name = "guest"
+      , draft = ""
+      }
+    , Cmd.perform (Task.succeed ()) (\_ -> Load)
+    )
+
+
+
+-- ─── update ────────────────────────────────────────────────────────
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        -- PURE — edit the composer draft in memory. Zero network.
+        Compose s ->
+            ( { model | draft = s }, Cmd.none )
+
+        -- PURE — edit the display name in memory.
+        SetName s ->
+            ( { model | name = s }, Cmd.none )
+
+        -- PURE — a pushed message arrived over SSE. Append it, deduped on the DB
+        -- id, so the sender's own echo (and any duplicate frame after a reconnect)
+        -- lands exactly once.
+        Received incoming ->
+            if List.any (\m -> m.id == incoming.id) model.messages then
+                ( model, Cmd.none )
+
+            else
+                ( { model | messages = model.messages ++ [ incoming ] }, Cmd.none )
+
+        -- PURE — a frame we could not decode. Do nothing.
+        Ignore ->
+            ( model, Cmd.none )
+
+        -- SERVER — boot: re-read the authoritative, ordered history.
+        Load ->
+            ( { model | messages = Persist.loadHistory () }, Cmd.none )
+
+        -- SERVER — persist the drafted line, clear the composer, and PUBLISH the
+        -- durable row to the room. We deliberately do NOT append it here: the
+        -- publish echoes back through the broker as a `Received`, so this client
+        -- appends it via the exact same path as every other client (one code
+        -- path, one dedup, no double-append).
+        Send ->
+            let
+                saved =
+                    Persist.appendMessage model.name model.draft
+            in
+            ( { model | draft = "" }
+            , Cmd.publish "room:main" (Codec.toJson Domain.messageCodec saved)
+            )
+
+
+
+-- ─── Palette ───────────────────────────────────────────────────────
+
+
+pageBg : Ui.Color
+pageBg =
+    Ui.rgb255 241 245 249
+
+
+headerBg : Ui.Color
+headerBg =
+    Ui.rgb255 17 24 39
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb255 79 70 229
+
+
+accentSoft : Ui.Color
+accentSoft =
+    Ui.rgb255 224 231 255
+
+
+bubbleOther : Ui.Color
+bubbleOther =
+    Ui.rgb255 255 255 255
+
+
+borderCol : Ui.Color
+borderCol =
+    Ui.rgb255 226 232 240
+
+
+textDark : Ui.Color
+textDark =
+    Ui.rgb255 17 24 39
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb255 100 116 139
+
+
+white : Ui.Color
+white =
+    Ui.rgb255 255 255 255
+
+
+online : Ui.Color
+online =
+    Ui.rgb255 52 211 153
+
+
+
+-- ─── view (rich Std.Ui, cross-platform Element) ────────────────────
+
+
+hid : String -> Ui.Attribute msg
+hid v =
+    Ui.htmlAttribute "id" v
+
+
+header : Model -> Element Msg
+header model =
+    Ui.row
+        [ hid "header"
+        , Ui.width Ui.fill
+        , Ui.paddingXY 22 16
+        , Ui.spacing 12
+        , Background.color headerBg
+        , Border.shadow
+            { offsetX = 0
+            , offsetY = 1
+            , blur = 3
+            , spread = 0
+            , color = Ui.rgba 0 0 0 0.25
+            }
+        ]
+        [ Ui.el [ Font.size 19, Font.bold, Font.color white ] (Ui.text "Sky Chat")
+        , Ui.el
+            [ hid "room-label", Font.size 13, Font.color (Ui.rgb255 148 163 184) ]
+            (Ui.text "#main")
+        , Ui.el [ Ui.width Ui.fill ] Ui.none
+        , Ui.el [ Font.size 15, Font.color online ] (Ui.text "●")
+        , Ui.el
+            [ Font.size 13, Font.color (Ui.rgb255 203 213 225) ]
+            (Ui.text (String.fromInt (List.length model.messages) ++ " messages"))
+        ]
+
+
+bubble : Model -> Message -> Element Msg
+bubble model msg =
+    let
+        mine =
+            isMine model msg
+
+        cardBg =
+            if mine then
+                accentSoft
+
+            else
+                bubbleOther
+
+        edge =
+            if mine then
+                accent
+
+            else
+                borderCol
+
+        align =
+            if mine then
+                Ui.alignRight
+
+            else
+                Ui.alignLeft
+    in
+    Ui.column
+        [ hid ("msg-" ++ String.fromInt msg.id)
+        , align
+        , Ui.width (Ui.maximum 460 Ui.shrink)
+        , Ui.padding 12
+        , Ui.spacing 4
+        , Background.color cardBg
+        , Border.width 1
+        , Border.color edge
+        , Border.rounded 12
+        ]
+        [ Ui.row [ Ui.width Ui.fill, Ui.spacing 10 ]
+            [ Ui.el
+                [ Font.size 13, Font.semiBold, Font.color accent ]
+                (Ui.text msg.author)
+            , Ui.el
+                [ Ui.alignRight, Font.size 11, Font.color textMuted ]
+                (Ui.text (clock msg.ts))
+            ]
+        , Ui.paragraph
+            [ Font.size 15, Font.color textDark ]
+            [ Ui.text msg.body ]
+        ]
+
+
+emptyState : Element Msg
+emptyState =
+    Ui.el
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 16 48
+        , Font.center
+        , Font.size 14
+        , Font.color textMuted
+        ]
+        (Ui.text "No messages yet — say hello 👋")
+
+
+messagesPanel : Model -> Element Msg
+messagesPanel model =
+    -- The history SCROLLS inside this panel (height fill + scrollbarY), not the
+    -- page: a long conversation never grows the viewport, and the composer stays
+    -- pinned below.
+    Ui.column
+        [ hid "messages"
+        , Ui.width Ui.fill
+        , Ui.height Ui.fill
+        , Ui.scrollbarY
+        , Ui.spacing 12
+        , Ui.paddingXY 20 18
+        ]
+        (if List.isEmpty model.messages then
+            [ emptyState ]
+
+         else
+            List.map (bubble model) model.messages
+        )
+
+
+composer : Model -> Element Msg
+composer model =
+    Ui.row
+        [ hid "composer"
+        , Ui.width Ui.fill
+        , Ui.paddingXY 16 14
+        , Ui.spacing 10
+        , Background.color white
+        , Border.widthEach { top = 1, right = 0, bottom = 0, left = 0 }
+        , Border.color borderCol
+        ]
+        [ -- `Input.text` is the CONTROLLED single-line field: its `text =` value is
+          -- reconciled from `model.draft` on every render (the idiomatic partner of
+          -- `Input.multiline`). After Send, `model.draft` is cleared, so the button
+          -- correctly refuses a blank re-send.
+          Input.text
+            [ hid "name-input"
+            , Ui.width (Ui.px 130)
+            , Ui.paddingXY 12 11
+            , Font.size 14
+            , Font.semiBold
+            , Font.color textDark
+            , Background.color pageBg
+            , Border.width 1
+            , Border.color borderCol
+            , Border.rounded 10
+            ]
+            { onChange = SetName
+            , text = model.name
+            , placeholder = Just (Input.placeholder [] (Ui.text "Your name"))
+            , label = Input.labelHidden "Display name"
+            }
+        , Input.text
+            [ hid "message-input"
+            , Ui.width Ui.fill
+            , Ui.paddingXY 14 11
+            , Font.size 15
+            , Font.color textDark
+            , Background.color white
+            , Border.width 1
+            , Border.color borderCol
+            , Border.rounded 10
+            ]
+            { onChange = Compose
+            , text = model.draft
+            , placeholder = Just (Input.placeholder [] (Ui.text "Message #main"))
+            , label = Input.labelHidden "Message"
+            }
+        , Ui.button
+            [ hid "send-btn"
+            , Ui.paddingXY 22 12
+            , Font.semiBold
+            , Font.color white
+            , Background.color accent
+            , Border.rounded 10
+            , Background.hoverColor (Ui.rgb255 67 56 202)
+            ]
+            { onPress =
+                if canSend model then
+                    Just Send
+
+                else
+                    Nothing
+            , label = Ui.text "Send"
+            }
+        ]
+
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column
+            [ hid "app-shell"
+            , Ui.width Ui.fill
+
+            -- `height fill` (not `vh 100 + clip`): fills the viewport so the
+            -- message panel owns the scrolling when the history is long, but lets
+            -- the shell grow and the page scroll on a short phone viewport rather
+            -- than clipping the composer off the bottom — `vh 100 + clip` pinned
+            -- the height and cut the composer off below the fold.
+            , Ui.height Ui.fill
+            , Background.color pageBg
+            , Font.family "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+            , Font.color textDark
+            ]
+            [ header model
+
+            -- RESPONSIVE: the panel + composer already stack top-to-bottom; the
+            -- mobile breakpoint just tightens the header padding so the title bar
+            -- reads compact on a phone. A real @media rule injected by the
+            -- renderer — no reset workaround of any kind: the wasm renderer ships
+            -- the base CSS reset and runs the style injections (commit 57fcd63f).
+            , Ui.breakpoint Ui.mobile
+                [ Ui.width Ui.fill, Ui.height Ui.fill, Ui.paddingXY 0 0 ]
+                (messagesPanel model)
+            , composer model
+            ]
+        )
+
+
+
+-- ─── subscriptions ─────────────────────────────────────────────────
+-- The real-time INBOUND half: subscribe to the room topic. The generator turns
+-- this leaf into an `EventSource("/_sky/sub?topic=room:main")` in the wasm
+-- client, and each pushed frame runs `onPush` → `Received`.
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.subscribeTopic "room:main" onPush
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

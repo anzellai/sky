@@ -301,7 +301,7 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         }
     };
 
-    diff_and_gate(&counts, &no_emit, &golden, &only, verbose, &corpus_report(root))
+    diff_and_gate(&counts, &no_emit, &golden, &only, verbose, skip_requested(), &corpus_report(root))
 }
 
 /// The CORPUS denominator — discovered on disk, independent of the golden.
@@ -903,6 +903,11 @@ fn diff_and_gate(
     golden: &BTreeMap<String, Classed>,
     only: &Option<Vec<String>>,
     verbose: bool,
+    // Whether an UNMEASURABLE golden row is downgraded to a loud UNMEASURED block
+    // (true) or fails the gate (false). Passed in — NOT read from SKY_LIVE_TESTS
+    // here — so this stays a pure function the unit tests control; the env read
+    // lives at the CLI edge (see the `run` entry).
+    skip: bool,
     corpus: &CorpusReport,
 ) -> i32 {
     println!(
@@ -1299,7 +1304,7 @@ fn diff_and_gate(
     // A `--only` run intentionally measures a subset, so the shortfall there is
     // the point rather than a defect.
     if !unmeasured.is_empty() && !subset {
-        if skip_requested() {
+        if skip {
             println!(
                 "\ncoerce-floor: {} golden row(s) UNMEASURED, and \
                  SKY_LIVE_TESTS=skip was set, so this is not a failure.\n  \
@@ -1779,7 +1784,7 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             "`Github.Com.Google.Uuid` has no generated FFI surface".to_string(),
         )];
         assert_eq!(
-            diff_and_gate(&partial, &no_emit, &golden, &None, false, &corpus_of(&["emits", "blocked"])),
+            diff_and_gate(&partial, &no_emit, &golden, &None, false, false, &corpus_of(&["emits", "blocked"])),
             1,
             "a run that measured 1 of 2 golden rows must NOT report PASS: the \
              unchecked row's floor is unratcheted for the whole run"
@@ -1791,10 +1796,20 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             measured("blocked", golden["blocked"]),
         ]);
         assert_eq!(
-            diff_and_gate(&full, &[], &golden, &None, false, &corpus_of(&["emits", "blocked"])),
+            diff_and_gate(&full, &[], &golden, &None, false, false, &corpus_of(&["emits", "blocked"])),
             0,
             "with the whole corpus measured and every class at its floor, the \
              gate must pass — the coverage clause keys on the SHORTFALL"
+        );
+
+        // With skip=true (the SKY_LIVE_TESTS=skip escape) the SAME half-measured
+        // run is downgraded to a loud UNMEASURED and does NOT fail — the opt-out
+        // path. Threading `skip` as a param is what makes this assertable AND
+        // keeps the require-mode test above hermetic (it no longer reads the env).
+        assert_eq!(
+            diff_and_gate(&partial, &no_emit, &golden, &None, false, true, &corpus_of(&["emits", "blocked"])),
+            0,
+            "SKY_LIVE_TESTS=skip downgrades an unmeasurable row to UNMEASURED, not a failure"
         );
     }
 
@@ -1837,7 +1852,7 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         // CONTROL: the corpus is exactly the golden's key. Every golden row
         // measured, every discovered project declared → PASS.
         assert_eq!(
-            diff_and_gate(&counts, &[], &golden, &None, false, &corpus_of(&["a"])),
+            diff_and_gate(&counts, &[], &golden, &None, false, false, &corpus_of(&["a"])),
             0,
             "a fully declared, fully measured corpus must pass, or the assertion \
              below is about something else"
@@ -1851,6 +1866,7 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
                 &[("b".to_string(), "no FFI surface here".to_string())],
                 &golden,
                 &None,
+                false,
                 false,
                 &corpus_of(&["a", "b"]),
             ),
@@ -1873,7 +1889,7 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         )]);
         let mut corpus = corpus_of(&["a"]);
         corpus.stale_exclusions = vec!["examples/long-gone".to_string()];
-        assert_eq!(diff_and_gate(&counts, &[], &golden, &None, false, &corpus), 1);
+        assert_eq!(diff_and_gate(&counts, &[], &golden, &None, false, false, &corpus), 1);
     }
 
     /// The discovery walk must find the projects the old one-level `read_dir`
@@ -1927,7 +1943,7 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         )]);
         let no_emit = vec![("b".to_string(), "filtered out".to_string())];
         assert_eq!(
-            diff_and_gate(&counts, &no_emit, &golden, &only, false, &corpus_of(&["a", "b"])),
+            diff_and_gate(&counts, &no_emit, &golden, &only, false, false, &corpus_of(&["a", "b"])),
             0,
             "--only names the subset the operator wants; that is not a hole"
         );

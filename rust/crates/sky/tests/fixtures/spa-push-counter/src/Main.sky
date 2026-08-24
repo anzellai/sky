@@ -1,0 +1,96 @@
+module Main exposing (main)
+
+-- Auto-split INPUT with server->client PUSH: a SHARED COUNTER. One project,
+-- effects inline in `update`. Fed to `sky spa-split`, which emits a wasm
+-- frontend (pure branches local, effectful branches -> RPC) + a native backend
+-- (runs the effects behind generated RPC endpoints AND fans each returned
+-- broadcast out over SSE to every subscribed client).
+--
+--   * `Increment` is a SERVER branch: it writes count+1 to disk (an inline
+--     effect) and returns a broadcast of the new count. The backend runs the
+--     effect and streams the broadcast over `/_sky/sub`.
+--   * `GotCount n` is a PURE client branch: it folds a pushed count into the
+--     model.
+--   * `subscriptions` subscribes to the "count" topic, so every client is
+--     pushed the new count whenever ANY client increments.
+--
+-- Not built directly (disk writes can't run in the wasm client) -- that is the
+-- whole point of the split.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { count : Int
+    }
+
+
+type Msg
+    = Increment
+    | GotCount Int
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+-- server effect (File): persist the new count to disk.
+saveCount : Int -> Task Error String
+saveCount n =
+    File.writeFile "count.txt" (String.fromInt n)
+        |> Task.map (\_ -> "saved")
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            -- EFFECTFUL (File) -> server; read-set {count}, write-set {count}.
+            -- Persist inline, then broadcast the new count to every subscriber.
+            let
+                _ =
+                    Task.run (saveCount (model.count + 1))
+            in
+            ( { model | count = model.count + 1 }
+            , Cmd.publish "count" (model.count + 1)
+            )
+
+        GotCount n ->
+            -- PURE -> client-local; fold a pushed count into the model.
+            ( { model | count = n }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8 ]
+            [ Ui.text ("count = " ++ String.fromInt model.count)
+            , Ui.button [] { onPress = Just Increment, label = Ui.text "Increment" }
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.subscribeTopic "count" GotCount
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

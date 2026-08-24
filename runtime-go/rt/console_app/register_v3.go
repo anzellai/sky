@@ -1,3 +1,5 @@
+//go:build !js
+
 // register_v3.go — console_app side of the v0.16.1 PR10-E cfg-provider
 // shim. Registers a Sky.Live-cfg-shaped factory into rt's slot so
 // rt.MountEmbeddedConsole can mount the inline console via the

@@ -1,3 +1,5 @@
+//go:build !js
+
 // subapp_inprocess.go — in-process Sky.Live sub-app mounting (v0.16.1 PR10-B/C).
 //
 // `MountLiveSubAppInProcess(parentMux, prefix, cfg)` lets a host
@@ -501,7 +503,7 @@ func registerSubAppRoutes(
 		if !strings.HasSuffix(sp, "/") {
 			sp += "/"
 		}
-		fileHandler := http.StripPrefix(sp, http.FileServer(http.Dir(app.staticDir)))
+		fileHandler := gzipStatic(http.StripPrefix(sp, http.FileServer(http.Dir(app.staticDir))))
 		if gate == nil {
 			parentMux.Handle(sp, fileHandler)
 		} else {

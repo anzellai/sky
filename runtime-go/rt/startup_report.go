@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // What the runtime decided, said at startup, where an operator will read it.

@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package rt — Std.Db.Table: a reflection-based record↔row mapper.
 //
 // One `Db.Table a` value (carrying a zero-value witness of the record type +

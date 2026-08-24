@@ -274,6 +274,19 @@ pub const MIGRATIONS: &[MigrationEntry] = &[
         detail: "|> Sky.Config.withTelemetrySynchronousCommit False",
         kind: MigrationKind::BornInCode,
     },
+    // Born in code: the Sky.Live cross-instance pub/sub broker URL. No legacy
+    // sky.toml key (there is no `[live] broker`). It IS a prefixed suffix
+    // (configKeyToEnvSuffix["LiveBroker"] = "LIVE_BROKER_URL", read via
+    // skyGetenv), so its `env` is the SUFFIX the coverage gate matches — not a
+    // verbatim SKY_ name like the telemetry storage knobs. Operator env still
+    // wins over the builder.
+    MigrationEntry {
+        from: None,
+        env: "LIVE_BROKER_URL",
+        builder: "Sky.Config.withLiveBroker",
+        detail: "|> Sky.Config.withLiveBroker \"redis://host:6379\"  (or `sky spa-split --broker <url>` for the auto-split backend)",
+        kind: MigrationKind::BornInCode,
+    },
 ];
 
 /// Look up the migration row for a legacy `(section, key)`, if any.

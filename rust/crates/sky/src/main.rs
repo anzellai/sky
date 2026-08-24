@@ -91,6 +91,8 @@ fn main() -> ExitCode {
         // tree (`console`/`console-serve`/`doc --serve`/`doc --tui`).
         Some("console") => cmd_console(&args[1..]),
         Some("console-serve") => cmd_console_serve(&args[1..]),
+        Some("spa-partition") => cmd_spa_partition(&args[1..]),
+        Some("spa-split") => cmd_spa_split(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
@@ -730,9 +732,223 @@ fn entry_module_name(file: &Path) -> Option<String> {
     None
 }
 
+/// `sky spa-partition <file.sky>` — READ-ONLY Sky.Spa auto-split analysis
+/// (Phase 1). Infers and prints which `update` branches would run client-side
+/// vs server-side, plus the server-tainted top-level bindings. No codegen, no
+/// emission — it reads the resolved + typed HIR and prints a report.
+fn cmd_spa_partition(args: &[String]) -> ExitCode {
+    let (positional, _out) = parse_out(args);
+    let file = match resolve_entry_arg(
+        &positional,
+        "usage: sky spa-partition <file.sky>  (or run inside a Sky.Spa project directory)",
+    ) {
+        Ok(f) => f,
+        Err(code) => return code,
+    };
+    let file = file.as_path();
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    match project::spa_partition::analyze(
+        &repo_root,
+        &project_dir,
+        entry_module_name(file).as_deref(),
+    ) {
+        Ok(report) => {
+            print!("{}", report.render());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky spa-partition: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `sky spa-split <entry.sky> --out <dir>` — the Sky.Spa auto-split GENERATOR.
+/// Reads one Sky.Spa project with inline effects and emits two buildable Sky
+/// projects (a wasm frontend + a native backend) plus the shared wire contract.
+/// Source-to-source; no compiler-IR change. See `project::spa_split`.
+fn cmd_spa_split(args: &[String]) -> ExitCode {
+    let (positional, out) = parse_out(args);
+    // `--build` (or `--target <t>`, which implies build): after generating, build
+    // both projects — backend native, frontend for the given delivery surface
+    // (web/desktop/ios/android/tablet; default web) — so ONE command produces the
+    // whole running app. `--target` for the FRONTEND shell is checked up front.
+    let split_target = args
+        .iter()
+        .position(|a| a == "--target")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    if let Some(t) = &split_target {
+        if !matches!(t.as_str(), "web" | "desktop" | "ios" | "android" | "tablet") {
+            eprintln!(
+                "sky spa-split --target: unknown target `{t}`\n  \
+                 supported: web · desktop · ios · android · tablet (= responsive web)"
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+    let do_build = split_target.is_some() || args.iter().any(|a| a == "--build");
+    // `--broker <url>` bakes a cross-instance pub/sub broker URL into the
+    // generated backend (the auto-split analogue of Sky.Config.withLiveBroker,
+    // which the stateless backend cannot use). SKY_LIVE_BROKER_URL still
+    // overrides it at runtime. Absent → in-process (env still applies).
+    let broker_url = args
+        .iter()
+        .position(|a| a == "--broker")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    if args.iter().any(|a| a == "--broker") && broker_url.as_deref().unwrap_or("").is_empty() {
+        eprintln!("sky spa-split: --broker requires a URL, e.g. --broker redis://host:6379");
+        return ExitCode::from(2);
+    }
+    let file = match resolve_entry_arg(
+        &positional,
+        "usage: sky spa-split <file.sky> --out <dir> [--build] [--target <t>] [--broker <url>]  (or run inside a Sky.Spa project directory)",
+    ) {
+        Ok(f) => f,
+        Err(code) => return code,
+    };
+    let out_dir = match out {
+        Some(o) => PathBuf::from(o),
+        None => {
+            eprintln!("sky spa-split: --out <dir> is required (where to write shared/ backend/ frontend/)");
+            return ExitCode::from(2);
+        }
+    };
+    let file = file.as_path();
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    match project::spa_split::generate(
+        &repo_root,
+        &project_dir,
+        entry_module_name(file).as_deref(),
+        &out_dir,
+        broker_url.as_deref(),
+    ) {
+        Ok(report) => {
+            println!("sky spa-split → {}", report.out_dir);
+            println!(
+                "  server branches (→ RPC): {}",
+                if report.server_branches.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    report.server_branches.join(", ")
+                }
+            );
+            println!(
+                "  client branches (local): {}",
+                if report.client_branches.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    report.client_branches.join(", ")
+                }
+            );
+            println!(
+                "  excluded from frontend (server-tainted): {}",
+                if report.excluded.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    report.excluded.join(", ")
+                }
+            );
+            for f in &report.files {
+                println!("  wrote {f}");
+            }
+            for n in &report.notes {
+                println!("  note: {n}");
+            }
+            if !do_build {
+                println!("\nBuild: (cd {} && sky build --target web frontend/src/Main.sky) && (cd {} && sky build backend/src/Main.sky)", report.out_dir, report.out_dir);
+                println!("  or re-run with --build (native backend + web frontend) / --target <t> (frontend shell).");
+                return ExitCode::SUCCESS;
+            }
+            // --build / --target: build both projects with THIS compiler.
+            let target = split_target.as_deref().unwrap_or("web");
+            let sky = match std::env::current_exe() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("sky spa-split: locate the sky binary: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let od = PathBuf::from(&report.out_dir);
+            println!("\n== building backend (native) ==");
+            let backend_ok = Command::new(&sky)
+                .arg("build")
+                .arg("src/Main.sky")
+                .current_dir(od.join("backend"))
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !backend_ok {
+                eprintln!("sky spa-split --build: backend failed to build");
+                return ExitCode::FAILURE;
+            }
+            println!("\n== building frontend (--target {target}) ==");
+            let frontend_ok = Command::new(&sky)
+                .args(["build", "--target", target, "src/Main.sky"])
+                .current_dir(od.join("frontend"))
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !frontend_ok {
+                eprintln!("sky spa-split --build: frontend failed to build");
+                return ExitCode::FAILURE;
+            }
+            println!(
+                "\nBuilt: backend/sky-out/app (native) + frontend for `{target}`.\n  \
+                 Run the backend (it serves the frontend + /_rpc + /_sky/sub); \
+                 for desktop/ios/android also launch the generated shell under frontend/sky-out/."
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky spa-split: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let (positional, out_override) = parse_out(args);
     let embed = args.iter().any(|a| a == "--embed");
+    // Sky.Spa client build: `--wasm` compiles the emitted Go for the browser
+    // (GOOS=js GOARCH=wasm) + drops wasm_exec.js; `--target <t>` bundles that
+    // client for a delivery surface (web / desktop / ios / android). See
+    // `cmd_build_target`.
+    let wasm = args.iter().any(|a| a == "--wasm");
+    let target = args
+        .iter()
+        .position(|a| a == "--target")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    if let Some(t) = &target {
+        if !matches!(t.as_str(), "web" | "desktop" | "ios" | "android" | "tablet") {
+            eprintln!(
+                "sky build --target: unknown target `{t}`\n  \
+                 supported: web · desktop · ios · android · tablet (= responsive web)"
+            );
+            return ExitCode::FAILURE;
+        }
+        // Every Sky.Spa delivery target is a wasm client under a native/browser
+        // shell, so --target implies --wasm.
+        //
+        // Verify the platform toolchain BEFORE the (slower) wasm build, so a
+        // missing SDK is the first thing the user sees — not a half-built bundle.
+        let toolchain = match t.as_str() {
+            "ios" => detect_ios_toolchain(),
+            "android" => detect_android_toolchain(),
+            _ => Ok(()),
+        };
+        if let Err(hint) = toolchain {
+            eprintln!("{hint}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let wasm = wasm || target.is_some();
     let file = match resolve_entry_arg(
         &positional,
         &format!(
@@ -794,6 +1010,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         entry_module: entry_module_name(file),
         progress: true,
         embed_bundle,
+        wasm,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -811,7 +1028,14 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         eprintln!("sky {}: {}", verb(check_only), report.note);
         return ExitCode::FAILURE;
     }
-    println!("Running go build...");
+    println!(
+        "{}",
+        if wasm {
+            "Building wasm client (GOOS=js GOARCH=wasm)..."
+        } else {
+            "Running go build..."
+        }
+    );
     if !report.go_build_ok {
         if check_only {
             eprintln!(
@@ -820,6 +1044,8 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
                  program but Go did not.\n\nGo errors:\n{}",
                 report.go_build_stderr
             );
+        } else if wasm {
+            eprintln!("wasm build failed:\n{}", report.go_build_stderr);
         } else {
             eprintln!("go build failed:\n{}", report.go_build_stderr);
         }
@@ -830,12 +1056,1656 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     }
     if check_only {
         println!("No errors found.");
+        return ExitCode::SUCCESS;
+    }
+    println!("Compilation successful");
+    let out_dir = opts
+        .out_dir_abs
+        .clone()
+        .unwrap_or_else(|| project_dir.join(&out_dir_name));
+    if wasm {
+        println!("Build complete: {out_dir_name}/main.wasm  (+ {out_dir_name}/wasm_exec.js)");
     } else {
-        println!("Compilation successful");
         let bin_name = project::configured_bin_name(&project_dir);
         println!("Build complete: {out_dir_name}/{bin_name}");
     }
+    // `--target`: bundle the freshly-built wasm client for a delivery surface.
+    if let Some(t) = &target {
+        return cmd_build_target(t, &project_dir, &out_dir);
+    }
     ExitCode::SUCCESS
+}
+
+/// `sky build --target <t>`: take the freshly-built wasm client (`out_dir`) and
+/// stage a servable web bundle in `<project>/dist/` (index.html + main.wasm +
+/// wasm_exec.js), then, per delivery surface, either finish (web/tablet), point
+/// the user at the native shell (desktop), or — for ios/android — verify the
+/// platform toolchain is installed, warning + exiting if it is not.
+fn cmd_build_target(target: &str, project_dir: &Path, out_dir: &Path) -> ExitCode {
+    // (Platform toolchains for ios/android were verified in cmd_build before the
+    // build ran — see the --target parse block there.)
+    // Stage the servable bundle (shared by every surface).
+    let dist = project_dir.join("dist");
+    if let Err(e) = stage_web_bundle(out_dir, &dist) {
+        eprintln!("sky build --target {target}: {e}");
+        return ExitCode::FAILURE;
+    }
+    // Shipped assets declared via Bundle.withAsset / withAssetDir → dist/assets/.
+    if let Err(e) = stage_bundle_assets(project_dir, &dist) {
+        eprintln!("sky build --target {target}: {e}");
+        return ExitCode::FAILURE;
+    }
+    let dist_name = "dist";
+    println!("Bundled web client → {dist_name}/ (index.html + main.<hash>.wasm + wasm_exec.js)");
+
+    match target {
+        "web" | "tablet" => {
+            println!(
+                "\nServe it with any static host, or from a Sky backend:\n  \
+                 Server.static \"/\" \"../{dist_name}\"   -- serves the client same-origin with your /api routes\n\
+                 (tablet == responsive web — Std.Ui adapts to the viewport)"
+            );
+        }
+        "desktop" => {
+            // Generate a tiny Sky.Webview shell and build it to a native binary.
+            match build_desktop_shell(project_dir, out_dir) {
+                Ok(bin) => println!(
+                    "\nDesktop app built → {}\n  \
+                     A native window over the SAME wasm client. Start your backend\n  \
+                     (serving the dist/ bundle on PORT, default 8951), then run the binary.",
+                    bin.display()
+                ),
+                Err(e) => {
+                    eprintln!("sky build --target desktop: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        "ios" => {
+            // Generate a SwiftUI + WKWebView shell + build it for the simulator.
+            match build_ios_app(project_dir, out_dir) {
+                Ok(app) => println!(
+                    "\niOS app built → {}\n  \
+                     Install:  xcrun simctl install booted {}\n  \
+                     A WKWebView over the SAME client. The simulator shares the host\n  \
+                     network, so it loads http://localhost:8951/ — start your backend first.",
+                    app.display(),
+                    app.display()
+                ),
+                Err(e) => {
+                    eprintln!("sky build --target ios: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        "android" => {
+            // Generate a WebView shell project + build a signed APK.
+            match build_android_apk(project_dir, out_dir) {
+                Ok(apk) => println!(
+                    "\nAndroid APK built → {}\n  \
+                     Install:  adb install -r {}\n  \
+                     A WebView over the SAME client. It loads http://10.0.2.2:8951/\n  \
+                     (the emulator's alias for the host) — start your backend on the host first.",
+                    apk.display(),
+                    apk.display()
+                ),
+                Err(e) => {
+                    eprintln!("sky build --target android: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        _ => {}
+    }
+    ExitCode::SUCCESS
+}
+
+/// Stage a servable web bundle in `dist/`: `wasm_exec.js`, a CONTENT-HASHED
+/// `main.<hash>.wasm`, and an `index.html` that references it.
+///
+/// The wasm filename carries a hash of its bytes so a redeploy is never served a
+/// stale copy: browsers and webviews cache `/main.wasm` aggressively by URL, so
+/// two builds (or two apps) at the same path collide — a new build's users keep
+/// running the old wasm until they hard-refresh, and a shared dev host can serve
+/// one app's wasm to another. A content-addressed name changes whenever the bytes
+/// change, so the cache is always correct (and the file can be cached forever).
+/// `index.html` is regenerated every build to point at the current hash.
+fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dist).map_err(|e| format!("create {}: {e}", dist.display()))?;
+
+    // wasm_exec.js — the Go runtime glue; copy as-is (it changes only with the
+    // toolchain). Remove the prior copy first: GOROOT ships it read-only (0444),
+    // so a second `--target` build in the same dir would EPERM on the overwrite.
+    let exec_src = out_dir.join("wasm_exec.js");
+    if !exec_src.exists() {
+        return Err(format!(
+            "wasm_exec.js not found in {} — did the wasm build run? (internal error)",
+            out_dir.display()
+        ));
+    }
+    let exec_dest = dist.join("wasm_exec.js");
+    let _ = std::fs::remove_file(&exec_dest);
+    std::fs::copy(&exec_src, &exec_dest).map_err(|e| format!("copy wasm_exec.js: {e}"))?;
+
+    // main.wasm — content-hash the filename.
+    let wasm_src = out_dir.join("main.wasm");
+    if !wasm_src.exists() {
+        return Err(format!(
+            "main.wasm not found in {} — did the wasm build run? (internal error)",
+            out_dir.display()
+        ));
+    }
+    let wasm_bytes = std::fs::read(&wasm_src).map_err(|e| format!("read main.wasm: {e}"))?;
+    let hash = &db_provision::sha256_hex(&wasm_bytes)[..12];
+    let wasm_name = format!("main.{hash}.wasm");
+
+    // Drop any previous wasm (hashed or the legacy `main.wasm`) so dist/ does not
+    // accumulate stale bundles across rebuilds.
+    if let Ok(rd) = std::fs::read_dir(dist) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("main.") && n.ends_with(".wasm") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    std::fs::write(dist.join(&wasm_name), &wasm_bytes)
+        .map_err(|e| format!("write {wasm_name}: {e}"))?;
+
+    // index.html — always regenerated so it references the current hashed wasm.
+    std::fs::write(
+        dist.join("index.html"),
+        WASM_INDEX_HTML.replace("{{WASM}}", &wasm_name),
+    )
+    .map_err(|e| format!("write index.html: {e}"))?;
+    Ok(())
+}
+
+/// Generate a Sky.Webview desktop shell for the freshly-built client and build
+/// it to a native binary, returning the binary path. The shell is NOT a second
+/// copy of the app: it opens a native system-webview window over the SAME wasm
+/// client the web build serves, talking to the SAME stateless backend — only the
+/// window is native. Built by shelling out to THIS `sky` binary so it reuses the
+/// full cgo/WebKit build path (`Webview.url` → cgo).
+fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+    let id = resolve_bundle_identity(project_dir)?;
+    let app = &id.display_name;
+    // The shell PROJECT is generated in a temp dir, NOT under `out_dir`: the
+    // project resolver refuses a sky.toml nested inside a `sky-out/` build tree
+    // ("no .sky under src/"). Build there, then copy the binary into `out_dir`
+    // so the user's project tree stays clean and the artifact lands under
+    // sky-out with everything else.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let shell = std::env::temp_dir().join(format!("sky-desktop-shell-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(shell.join("src"))
+        .map_err(|e| format!("create {}: {e}", shell.display()))?;
+    let shell_name = format!("{}-desktop", sanitize_pkg_segment(app));
+    std::fs::write(
+        shell.join("sky.toml"),
+        format!("name = \"{shell_name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
+    )
+    .map_err(|e| format!("write sky.toml: {e}"))?;
+    // `app` (the display name) goes into a Sky string literal — escape it so a
+    // name containing `"` or `\` can't break the generated source.
+    let title = sky_str_escape(&format!("{app} — Desktop"));
+    std::fs::write(
+        shell.join("src").join("Main.sky"),
+        DESKTOP_SHELL_MAIN.replace("{{TITLE}}", &title),
+    )
+    .map_err(|e| format!("write Main.sky: {e}"))?;
+
+    // Build the shell with THIS compiler (cgo-WebKit path via Webview.url).
+    let sky = std::env::current_exe().map_err(|e| format!("locate the sky binary: {e}"))?;
+    let entry = shell.join("src").join("Main.sky");
+    let status = Command::new(&sky)
+        .arg("build")
+        .arg(&entry)
+        .status()
+        .map_err(|e| format!("run `sky build` on the desktop shell: {e}"))?;
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(&shell);
+        return Err("the desktop shell failed to build (see the errors above)".to_string());
+    }
+    let bin_name = project::configured_bin_name(&shell);
+    let built = shell.join("sky-out").join(&bin_name);
+    let dest_dir = out_dir.join("desktop");
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("create {}: {e}", dest_dir.display()))?;
+    let dest = dest_dir.join(&bin_name);
+    let _ = std::fs::remove_file(&dest);
+    std::fs::copy(&built, &dest)
+        .map_err(|e| format!("copy the desktop binary to {}: {e}", dest.display()))?;
+    let _ = std::fs::remove_dir_all(&shell);
+    Ok(dest)
+}
+
+/// Desktop shell template. `{{TITLE}}` is substituted with the app's window
+/// title. Reads `PORT` (default 8951) for the backend it points the window at,
+/// matching the web-served bundle's origin.
+const DESKTOP_SHELL_MAIN: &str = r#"module Main exposing (main)
+
+-- Native desktop shell for a Sky.Spa client (generated by `sky build --target
+-- desktop`). It opens a system-webview window over the SAME wasm client the web
+-- build serves, talking to the SAME stateless backend over the SAME typed
+-- shared-codec boundary. One client, one server; only the window is native.
+--
+-- Start the backend first (serving the dist/ bundle on PORT, default 8951),
+-- then run this binary.
+
+import Std.Webview as Webview
+import Sky.Core.System as System
+
+
+main : Task Error ()
+main =
+    let
+        port =
+            System.getenvOr "PORT" "8951"
+
+        appUrl =
+            "http://127.0.0.1:" ++ port ++ "/"
+    in
+    Webview.url appUrl
+        (Webview.defaultWindow
+            |> Webview.withTitle "{{TITLE}}"
+            |> Webview.withSize 480 760
+        )
+"#;
+
+/// Lowercase-alnum sanitisation for a Java/Android package segment; empty →
+/// "app". Package segments cannot start with a digit, so a leading digit is
+/// prefixed with `a`.
+fn sanitize_pkg_segment(name: &str) -> String {
+    let mut s: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if s.is_empty() {
+        s = "app".to_string();
+    }
+    if s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        s.insert(0, 'a');
+    }
+    s
+}
+
+/// The cross-platform packaging identity for a `--target` build. Every field is
+/// resolved from the optional `[bundle]` section of sky.toml (with per-platform
+/// `[bundle.ios|android|desktop]` overrides), and falls back to the project
+/// directory name when a field is absent — so an app with no `[bundle]` section
+/// builds exactly as before. Read ONLY by `sky build --target …`, never by the
+/// runtime (see `is_externally_consumed_section` in the project crate).
+#[derive(Debug)]
+struct BundleIdentity {
+    /// Human display name — CFBundleDisplayName / `android:label` / window title.
+    display_name: String,
+    /// Executable / `.app` / package-safe base name (capitalised, sanitised).
+    exe_name: String,
+    /// Reverse-DNS identifier — CFBundleIdentifier / the Android `package`.
+    bundle_id: String,
+    /// Marketing version — CFBundleShortVersionString / `android:versionName`.
+    short_version: String,
+    /// Build number — CFBundleVersion / `android:versionCode`.
+    build_number: String,
+    /// App-icon source PNG (`Bundle.withIcon`), relative to the project. `None`
+    /// leaves the platform default icon in place.
+    icon: Option<String>,
+}
+
+/// XML-escape a value going into a plist / AndroidManifest / strings.xml (as
+/// element text OR an attribute value). Covers all five predefined entities, so
+/// an app name like `Ben & Jerry's <Beta>` or one containing `"`/`</string>`
+/// cannot break — or inject into — the generated XML. `&apos;` also satisfies
+/// aapt2, which rejects a bare apostrophe in an Android string resource.
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Escape a value for embedding in a Sky (or Swift/JSON) double-quoted string
+/// literal — backslash + quote + the control chars a raw newline/tab would break.
+fn sky_str_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Java/Kotlin reserved words that cannot be a package-name segment — a bundle id
+/// like `com.native.app` or `com.int.thing` is valid reverse-DNS but makes the
+/// generated `package …;` (and the Java source dir) fail to compile.
+const JVM_RESERVED_SEGMENTS: &[&str] = &[
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const",
+    "continue", "default", "do", "double", "else", "enum", "extends", "final", "finally", "float",
+    "for", "goto", "if", "implements", "import", "instanceof", "int", "interface", "long", "native",
+    "new", "package", "private", "protected", "public", "return", "short", "static", "strictfp",
+    "super", "switch", "synchronized", "this", "throw", "throws", "transient", "try", "void",
+    "volatile", "while", "true", "false", "null", "fun", "val", "var", "object", "when", "is", "in",
+];
+
+/// A syntactically valid reverse-DNS / Android package id: two or more
+/// dot-separated segments, each starting with a letter, otherwise alphanumeric
+/// or `_`, and not a JVM reserved word (Android rejects anything else outright,
+/// and a reserved-word segment breaks the generated Java `package`; iOS is looser
+/// but we hold both to the same bar so one `id` works on every target).
+fn valid_bundle_id(id: &str) -> bool {
+    let segs: Vec<&str> = id.split('.').collect();
+    segs.len() >= 2
+        && segs.iter().all(|s| {
+            let mut cs = s.chars();
+            cs.next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !JVM_RESERVED_SEGMENTS.contains(&s.to_ascii_lowercase().as_str())
+        })
+}
+
+/// Read the project's entry `.sky` source (sky.toml `entry`, default
+/// `src/Main.sky`) — the file whose optional `bundle = Bundle.default |> …`
+/// binding declares the packaging identity.
+fn read_entry_source(project_dir: &Path) -> Option<String> {
+    let toml = std::fs::read_to_string(project_dir.join("sky.toml")).ok();
+    let entry = toml
+        .as_deref()
+        .and_then(parse_toml_entry)
+        .unwrap_or_else(|| "src/Main.sky".to_string());
+    std::fs::read_to_string(project_dir.join(entry)).ok()
+}
+
+/// Is the byte offset `at` inside a `--` line comment? (True if a `--` precedes
+/// it on the same source line.) A conservative guard so a `withX` mentioned in a
+/// comment is not read as a real declaration.
+fn in_line_comment(src: &str, at: usize) -> bool {
+    let line_start = src[..at].rfind('\n').map(|n| n + 1).unwrap_or(0);
+    src[line_start..at].contains("--")
+}
+
+/// If `s` starts with a `"…"` string literal, return its (unescaped) contents;
+/// else `None`. Char-based so multi-byte names survive, with `\"`/`\\` handled —
+/// so the argument is read as the IMMEDIATE literal, never a forward scan.
+fn string_literal_prefix(s: &str) -> Option<String> {
+    let mut chars = s.chars();
+    if chars.next() != Some('"') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut escaped = false;
+    for c in chars {
+        if escaped {
+            out.push(c);
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == '"' {
+            return Some(out);
+        } else {
+            out.push(c);
+        }
+    }
+    None // unterminated literal
+}
+
+/// Every string-literal argument of a `Std.Bundle` `withX` call in the entry
+/// source, in order — `Bundle.withId "com.acme.app"` → `["com.acme.app"]`.
+///
+/// Deliberately a source scan, not a `sky.toml` read: keeping the packaging
+/// identity in code (the `withX` builder) is what lets `sky.toml` stay lean, and
+/// a source scan is not a pre-binary config read so it never touches the
+/// config-surface census. It resolves the IMMEDIATE string literal after the
+/// call (skipping only whitespace / an opening paren) — a computed value, or a
+/// call inside a `--` comment, is ignored rather than reaching forward to an
+/// unrelated quote elsewhere in the file. `func` is matched on word boundaries so
+/// `withId` does not match `withIdentifier`. (A full HIR-based resolver is the
+/// tracked ideal; this bounded, comment-aware scan closes the practical gaps.)
+fn scan_bundle_calls_all(src: &str, func: &str) -> Vec<String> {
+    let bytes = src.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = src[from..].find(func) {
+        let at = from + rel;
+        from = at + func.len();
+        let after = at + func.len();
+        let before_ok = at == 0 || !is_word(bytes[at - 1]);
+        let after_ok = bytes.get(after).map(|b| !is_word(*b)).unwrap_or(true);
+        if !before_ok || !after_ok || in_line_comment(src, at) {
+            continue;
+        }
+        // The argument must be a string literal IMMEDIATELY after the call name
+        // (only whitespace / an opening paren may intervene).
+        let arg = src[after..].trim_start_matches([' ', '\t', '(']);
+        if let Some(lit) = string_literal_prefix(arg) {
+            out.push(lit);
+        }
+    }
+    out
+}
+
+/// The first `withX` string-literal argument (the singular identity fields:
+/// name / id / icon / version). See [`scan_bundle_calls_all`].
+fn scan_bundle_call(src: &str, func: &str) -> Option<String> {
+    scan_bundle_calls_all(src, func).into_iter().next()
+}
+
+/// Recursively copy the CONTENTS of `src` into `dest`, preserving the relative
+/// structure (so `src/sub/x.png` lands at `dest/sub/x.png`).
+fn copy_dir_contents(src: &Path, dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| format!("create {}: {e}", dest.display()))?;
+    let rd = std::fs::read_dir(src).map_err(|e| format!("read {}: {e}", src.display()))?;
+    for entry in rd {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let name = entry.file_name();
+        // Skip dot-files (a `.DS_Store`, editor cruft) — never ship hidden files.
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let from = entry.path();
+        let to = dest.join(&name);
+        if from.is_dir() {
+            copy_dir_contents(&from, &to)?;
+        } else {
+            let _ = std::fs::remove_file(&to);
+            std::fs::copy(&from, &to).map_err(|e| format!("copy {}: {e}", from.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Stage the app's declared shipped assets (`Bundle.withAsset` / `withAssetDir`
+/// in the entry source) into `dist/assets/`, so they are served same-origin at
+/// `/assets/…` — exactly what `Bundle.assetUrl` resolves to. A missing declared
+/// file/dir fails the build (a broken asset reference should not ship silently).
+fn stage_bundle_assets(project_dir: &Path, dist: &Path) -> Result<(), String> {
+    let src = read_entry_source(project_dir).unwrap_or_default();
+    let file_assets = scan_bundle_calls_all(&src, "withAsset"); // word-boundary: excludes withAssetDir
+    let dir_assets = scan_bundle_calls_all(&src, "withAssetDir");
+    if file_assets.is_empty() && dir_assets.is_empty() {
+        return Ok(());
+    }
+    let assets_out = dist.join("assets");
+    std::fs::create_dir_all(&assets_out)
+        .map_err(|e| format!("create {}: {e}", assets_out.display()))?;
+
+    for d in &dir_assets {
+        let dir = project_dir.join(d);
+        if !dir.is_dir() {
+            return Err(format!(
+                "Bundle.withAssetDir \"{d}\": no such directory at {}",
+                dir.display()
+            ));
+        }
+        copy_dir_contents(&dir, &assets_out)?;
+    }
+    for f in &file_assets {
+        let file = project_dir.join(f);
+        if !file.is_file() {
+            return Err(format!(
+                "Bundle.withAsset \"{f}\": no such file at {}",
+                file.display()
+            ));
+        }
+        let base = file
+            .file_name()
+            .ok_or_else(|| format!("Bundle.withAsset \"{f}\": not a file path"))?;
+        let to = assets_out.join(base);
+        let _ = std::fs::remove_file(&to);
+        std::fs::copy(&file, &to).map_err(|e| format!("copy asset {f}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// The native permissions the app declares via `Bundle.withPermission <P>`, as
+/// their constructor names (`Location` / `Camera` / `Microphone` /
+/// `Notifications`), deduped in declaration order. Matches `withPermission`
+/// followed by the constructor identifier (with an optional `Bundle.` qualifier).
+fn scan_bundle_permissions(src: &str) -> Vec<String> {
+    let bytes = src.as_bytes();
+    let func = "withPermission";
+    let known = ["Location", "Camera", "Microphone", "Notifications"];
+    let mut out: Vec<String> = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = src[from..].find(func) {
+        let at = from + rel;
+        from = at + func.len();
+        let before_ok = at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        if !before_ok || in_line_comment(src, at) {
+            continue;
+        }
+        let rest = src[at + func.len()..].trim_start();
+        let ident: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+            .collect();
+        let name = ident.rsplit('.').next().unwrap_or(&ident).to_string();
+        if known.contains(&name.as_str()) && !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// How one declared permission maps onto each platform's manifest + shell.
+struct PermSpec {
+    /// iOS Info.plist usage-description key (None → no plist key needed).
+    ios_plist_key: Option<&'static str>,
+    /// The usage-description text shown in the OS prompt.
+    ios_usage: &'static str,
+    /// Android `<uses-permission>` names.
+    android_perms: &'static [&'static str],
+    /// Needs location plumbing (CLLocationManager / setGeolocationEnabled).
+    location: bool,
+    /// Needs media-capture plumbing (WKUIDelegate / onPermissionRequest).
+    media: bool,
+}
+
+fn perm_spec(name: &str) -> Option<PermSpec> {
+    match name {
+        "Location" => Some(PermSpec {
+            ios_plist_key: Some("NSLocationWhenInUseUsageDescription"),
+            ios_usage: "Uses your location.",
+            android_perms: &[
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION",
+            ],
+            location: true,
+            media: false,
+        }),
+        "Camera" => Some(PermSpec {
+            ios_plist_key: Some("NSCameraUsageDescription"),
+            ios_usage: "Uses the camera.",
+            android_perms: &["android.permission.CAMERA"],
+            location: false,
+            media: true,
+        }),
+        "Microphone" => Some(PermSpec {
+            ios_plist_key: Some("NSMicrophoneUsageDescription"),
+            ios_usage: "Uses the microphone.",
+            android_perms: &["android.permission.RECORD_AUDIO"],
+            location: false,
+            media: true,
+        }),
+        "Notifications" => Some(PermSpec {
+            ios_plist_key: None,
+            ios_usage: "",
+            android_perms: &["android.permission.POST_NOTIFICATIONS"],
+            location: false,
+            media: false,
+        }),
+        _ => None,
+    }
+}
+
+/// The declared permissions + whether any needs location / media plumbing, for
+/// one project's entry source.
+fn resolve_permissions(project_dir: &Path) -> (Vec<PermSpec>, bool, bool) {
+    let src = read_entry_source(project_dir).unwrap_or_default();
+    let specs: Vec<PermSpec> = scan_bundle_permissions(&src)
+        .iter()
+        .filter_map(|n| perm_spec(n))
+        .collect();
+    let location = specs.iter().any(|s| s.location);
+    let media = specs.iter().any(|s| s.media);
+    (specs, location, media)
+}
+
+/// The `requestPermissions(...)` call for any runtime-dangerous declared perms.
+fn android_runtime_request(perms: &[PermSpec]) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let dangerous: Vec<&str> = perms
+        .iter()
+        .flat_map(|s| s.android_perms.iter().copied())
+        .filter(|p| {
+            p.contains("LOCATION")
+                || p.contains("CAMERA")
+                || p.contains("RECORD_AUDIO")
+                || p.contains("POST_NOTIFICATIONS")
+        })
+        .filter(|p| seen.insert(*p))
+        .collect();
+    if dangerous.is_empty() {
+        return String::new();
+    }
+    let arr = dangerous
+        .iter()
+        .map(|p| format!("\"{p}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("        requestPermissions(new String[]{{{arr}}}, 1);\n")
+}
+
+/// Build the MainActivity Java for the declared permissions: (extra imports, the
+/// WebChromeClient + geolocation-enable block, the runtime permission request).
+/// A WebChromeClient is only needed for location/media (the in-page prompts);
+/// notifications need just the manifest permission + the runtime request.
+fn android_permission_java(
+    perms: &[PermSpec],
+    want_location: bool,
+    want_media: bool,
+) -> (String, String, String) {
+    if !want_location && !want_media {
+        return (String::new(), String::new(), android_runtime_request(perms));
+    }
+    let mut imports = String::from("\nimport android.webkit.WebChromeClient;");
+    let mut overrides = String::new();
+    if want_location {
+        imports.push_str("\nimport android.webkit.GeolocationPermissions;");
+        overrides.push_str(
+            "\n            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {\n                callback.invoke(origin, true, false);\n            }",
+        );
+    }
+    if want_media {
+        imports.push_str("\nimport android.webkit.PermissionRequest;");
+        overrides.push_str(
+            "\n            @Override public void onPermissionRequest(final PermissionRequest request) {\n                request.grant(request.getResources());\n            }",
+        );
+    }
+    let mut webchrome =
+        format!("        web.setWebChromeClient(new WebChromeClient() {{{overrides}\n        }});\n");
+    if want_location {
+        webchrome.push_str("        s.setGeolocationEnabled(true);\n");
+    }
+    (imports, webchrome, android_runtime_request(perms))
+}
+
+/// Whether macOS `sips` (the built-in image tool used to resize app icons) is on
+/// PATH. When absent (non-macOS), icon generation is skipped with a note and the
+/// platform default icon is used.
+fn sips_available() -> bool {
+    Command::new("sips")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Resize a square source PNG to `size`×`size` into `dest` via `sips`.
+fn sips_resize(src: &Path, size: u32, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    let status = Command::new("sips")
+        .args(["-z", &size.to_string(), &size.to_string()])
+        .arg(src)
+        .arg("--out")
+        .arg(dest)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("run sips: {e}"))?;
+    if !status.success() {
+        return Err(format!("sips could not resize {} to {size}px", src.display()));
+    }
+    Ok(())
+}
+
+/// The Info.plist `CFBundleIcons` block that names the iPhone home-screen icon
+/// (60pt, whose @2x/@3x PNGs `generate_ios_app_icons` writes into the `.app`).
+const IOS_ICON_PLIST: &str = "\n    <key>CFBundleIcons</key>\n    \
+    <dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconFiles</key>\
+    <array><string>AppIcon60x60</string></array></dict></dict>";
+
+/// Render the app icon into the iOS `.app` at the iPhone home-screen sizes
+/// (60pt @2x = 120px, @3x = 180px), named as `CFBundleIconFiles` expects.
+fn generate_ios_app_icons(icon_src: &Path, app_dir: &Path) -> Result<(), String> {
+    sips_resize(icon_src, 120, &app_dir.join("AppIcon60x60@2x.png"))?;
+    sips_resize(icon_src, 180, &app_dir.join("AppIcon60x60@3x.png"))?;
+    Ok(())
+}
+
+/// Render the app icon into the Android res tree as `mipmap-<density>/ic_launcher.png`
+/// at each launcher density.
+fn generate_android_icons(icon_src: &Path, res_root: &Path) -> Result<(), String> {
+    for (density, size) in [
+        ("mdpi", 48u32),
+        ("hdpi", 72),
+        ("xhdpi", 96),
+        ("xxhdpi", 144),
+        ("xxxhdpi", 192),
+    ] {
+        let dest = res_root.join(format!("mipmap-{density}")).join("ic_launcher.png");
+        sips_resize(icon_src, size, &dest)?;
+    }
+    Ok(())
+}
+
+/// The resolved app-icon source PNG to render, or `None` (after a note) when
+/// there is nothing to render: no `withIcon` declared, the declared file is
+/// missing, or `sips` is unavailable. Keeps the "should we generate icons?"
+/// decision (and its user-facing notes) in one place for iOS and Android.
+fn bundle_icon_source(project_dir: &Path, id: &BundleIdentity) -> Option<PathBuf> {
+    let icon = id.icon.as_ref()?;
+    let path = project_dir.join(icon);
+    if !path.is_file() {
+        eprintln!(
+            "  note: Bundle.withIcon \"{icon}\" — no such file at {}; using the platform default icon.",
+            path.display()
+        );
+        return None;
+    }
+    if !sips_available() {
+        eprintln!(
+            "  note: app-icon generation needs macOS `sips` (absent here); using the platform default icon."
+        );
+        return None;
+    }
+    Some(path)
+}
+
+/// Resolve the packaging identity from the app's optional `bundle` binding
+/// (`Std.Bundle` `withX` in the entry source), falling back to the project
+/// name / version for any field left unset. Errors only when a user-SUPPLIED
+/// `Bundle.withId` is not valid reverse-DNS (a silent fallback there would ship
+/// under the wrong identifier). Prints a one-line note when the id is defaulted,
+/// because a store submission needs an id tied to a domain the user owns.
+fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String> {
+    let src = read_entry_source(project_dir).unwrap_or_default();
+    let nonblank = |v: String| if v.trim().is_empty() { None } else { Some(v) };
+    let name_cfg = scan_bundle_call(&src, "withName").and_then(nonblank);
+    let id_cfg = scan_bundle_call(&src, "withId").and_then(nonblank);
+    let version_cfg = scan_bundle_call(&src, "withVersion").and_then(nonblank);
+
+    let dir_name = project_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".to_string());
+    // "the sky app name IS the app name": default the display name to the project
+    // directory name (which `sky init` makes equal to the project's own `name`).
+    // Read from the directory rather than sky.toml's `name` on purpose — a
+    // sky.toml read would be a new pre-binary config surface for a value that is
+    // already to hand; `Bundle.withName` is the override when they differ.
+    let display_name = name_cfg.unwrap_or_else(|| dir_name.clone());
+    let seg = sanitize_pkg_segment(&display_name);
+
+    let bundle_id = match id_cfg {
+        Some(id) => {
+            let id = id.trim().to_string();
+            if !valid_bundle_id(&id) {
+                return Err(format!(
+                    "Bundle.withId \"{id}\" is not a valid reverse-DNS identifier \
+                     (need two or more dot-separated segments, each starting with a \
+                     letter — e.g. \"com.example.myapp\")."
+                ));
+            }
+            id
+        }
+        None => {
+            let dev_id = format!("sky.spa.{seg}");
+            eprintln!(
+                "  note: using a default bundle id `{dev_id}` — set your own with \
+                 Bundle.withId \"com.you.app\" (a reverse-DNS id you own) before \
+                 publishing to a store."
+            );
+            dev_id
+        }
+    };
+
+    // Executable / .app basename: capitalise the last id segment (id is the
+    // stable identity; the display name may contain spaces/emoji the filesystem
+    // and Swift/Java would choke on).
+    let exe_seg = bundle_id.rsplit('.').next().unwrap_or(&seg);
+    let exe_name = {
+        let mut c = exe_seg.chars();
+        match c.next() {
+            Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
+            None => "App".to_string(),
+        }
+    };
+
+    // Default to "1.0" (a literal, not a sky.toml read — keeping bundle out of
+    // the pre-binary config surface entirely); `Bundle.withVersion` sets a real
+    // one, which you do for a release anyway.
+    let short_version = version_cfg.unwrap_or_else(|| "1.0".to_string());
+    // versionCode (Android) has no `withX` yet; a marketing string cannot be one,
+    // so it stays 1 until a `Bundle.withBuild` lands.
+    let build_number = "1".to_string();
+    let icon = scan_bundle_call(&src, "withIcon").and_then(nonblank);
+
+    Ok(BundleIdentity {
+        display_name,
+        exe_name,
+        bundle_id,
+        short_version,
+        build_number,
+        icon,
+    })
+}
+
+/// Generate a native Android WebView shell for the client and build a signed,
+/// installable APK, returning its path. Not a second copy of the app: a thin
+/// WebView over the SAME wasm client, loading it from the backend (client and
+/// server stay separate; only the shell is native). Uses the SDK tools directly
+/// (aapt2 → javac → d8 → zipalign → apksigner) via a generated build script — no
+/// Gradle, no Android Studio. Requires the SDK (checked before the build ran)
+/// plus a JDK on PATH.
+fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+    let id = resolve_bundle_identity(project_dir)?;
+    let package = &id.bundle_id;
+    let pkg_path = package.replace('.', "/");
+    // versionCode must be an integer; a marketing "1.2.0" cannot be one, so map a
+    // non-integer build number to 1 (the user can set `[bundle] build = 7`).
+    let version_code = id.build_number.trim().parse::<u32>().unwrap_or(1).to_string();
+
+    let root = out_dir.join("android");
+    let java_dir = root.join("app/src/main/java").join(&pkg_path);
+    let res_root = root.join("app/src/main/res");
+    let res_dir = res_root.join("values");
+    std::fs::create_dir_all(&java_dir).map_err(|e| format!("create {}: {e}", java_dir.display()))?;
+    std::fs::create_dir_all(&res_dir).map_err(|e| format!("create {}: {e}", res_dir.display()))?;
+
+    // App icon → mipmap-<density>/ic_launcher.png; the manifest points at it only
+    // when we actually generated the mipmaps (else Android uses its default).
+    let icon_attr = match bundle_icon_source(project_dir, &id) {
+        Some(icon) => {
+            generate_android_icons(&icon, &res_root)?;
+            "\n        android:icon=\"@mipmap/ic_launcher\""
+        }
+        None => "",
+    };
+
+    // Native permissions (Bundle.withPermission): manifest <uses-permission> +
+    // the WebView plumbing that grants the in-page prompt + a runtime request.
+    let (perms, want_location, want_media) = resolve_permissions(project_dir);
+    let mut seen = std::collections::HashSet::new();
+    let mut manifest_perms: String = perms
+        .iter()
+        .flat_map(|s| s.android_perms.iter())
+        .filter(|p| seen.insert(**p))
+        .map(|p| format!("\n    <uses-permission android:name=\"{p}\" />"))
+        .collect();
+    // A native/android/permissions.xml fragment from the project or a lib — extra
+    // <uses-permission …/> lines (or other manifest-root nodes) a capability needs.
+    let ext_perms = collect_native_fragment(project_dir, "android", "permissions.xml");
+    if !ext_perms.trim().is_empty() {
+        manifest_perms.push('\n');
+        manifest_perms.push_str(ext_perms.trim_end());
+    }
+    let (perm_imports, webchrome, runtime_request) = android_permission_java(&perms, want_location, want_media);
+
+    std::fs::write(
+        root.join("app/src/main/AndroidManifest.xml"),
+        ANDROID_MANIFEST
+            .replace("{{PACKAGE}}", package)
+            .replace("{{LABEL}}", &xml_escape(&id.display_name))
+            .replace("{{VERSION_NAME}}", &xml_escape(&id.short_version))
+            .replace("{{VERSION_CODE}}", &version_code)
+            .replace("{{ICON_ATTR}}", icon_attr)
+            .replace("{{USES_PERMISSIONS}}", &manifest_perms),
+    )
+    .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
+    std::fs::write(
+        res_dir.join("strings.xml"),
+        ANDROID_STRINGS.replace("{{LABEL}}", &xml_escape(&id.display_name)),
+    )
+    .map_err(|e| format!("write strings.xml: {e}"))?;
+    std::fs::write(
+        java_dir.join("MainActivity.java"),
+        ANDROID_MAIN_ACTIVITY
+            .replace("{{PACKAGE}}", package)
+            .replace("{{PERMISSION_IMPORTS}}", &perm_imports)
+            .replace("{{WEBCHROME}}", &webchrome)
+            .replace("{{RUNTIME_REQUEST}}", &runtime_request),
+    )
+    .map_err(|e| format!("write MainActivity.java: {e}"))?;
+
+    // Native extensions (Std.Native.bridge): the registry + installer + each
+    // injected native/android/*.java from the project + its Sky deps, all in
+    // package sky.nativeext (javac globs app/src/main/java, so they compile).
+    let ext_java_dir = root.join("app/src/main/java/sky/nativeext");
+    std::fs::create_dir_all(&ext_java_dir)
+        .map_err(|e| format!("create {}: {e}", ext_java_dir.display()))?;
+    std::fs::write(ext_java_dir.join("SkyRegistry.java"), ANDROID_EXT_REGISTRY)
+        .map_err(|e| format!("write SkyRegistry.java: {e}"))?;
+    let java_exts = collect_native_files(project_dir, "android", "java");
+    for (stem, path) in &java_exts {
+        std::fs::copy(path, ext_java_dir.join(format!("{stem}.java")))
+            .map_err(|e| format!("copy native/android/{stem}.java: {e}"))?;
+    }
+    let install_calls: String = java_exts
+        .iter()
+        .map(|(stem, _)| format!("        {stem}.register();\n"))
+        .collect();
+    std::fs::write(
+        ext_java_dir.join("SkyNativeExtInstall.java"),
+        format!(
+            "package sky.nativeext;\n\npublic final class SkyNativeExtInstall {{\n    \
+             public static void installAll() {{\n{install_calls}    }}\n}}\n"
+        ),
+    )
+    .map_err(|e| format!("write SkyNativeExtInstall.java: {e}"))?;
+    if !java_exts.is_empty() {
+        eprintln!(
+            "  native/android: linked {} extension file(s): {}",
+            java_exts.len(),
+            java_exts.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    }
+
+    let apk_name = format!("{}.apk", sanitize_pkg_segment(&id.exe_name));
+    std::fs::write(
+        root.join("build-apk.sh"),
+        ANDROID_BUILD_APK.replace("{{APK}}", &apk_name),
+    )
+    .map_err(|e| format!("write build-apk.sh: {e}"))?;
+
+    let status = Command::new("bash")
+        .arg("build-apk.sh")
+        .current_dir(&root)
+        .status()
+        .map_err(|e| format!("run build-apk.sh: {e}"))?;
+    if !status.success() {
+        return Err("the APK build failed (see the errors above)".to_string());
+    }
+    Ok(root.join("build").join(&apk_name))
+}
+
+/// Generate a SwiftUI + WKWebView iOS shell for the client and build it for the
+/// SIMULATOR with swiftc (no .xcodeproj), returning the `.app` bundle path. A
+/// thin WKWebView over the SAME wasm client, loading it from the backend; only
+/// the shell is native. Requires full Xcode + the simulator SDK (checked before
+/// the build ran). The simulator shares the host network, so it points at
+/// `http://localhost:8951/`.
+/// All `native/<platform>/` directories that contribute native code to the
+/// generated shell: the project's own, plus each fetched Sky dependency's
+/// (`.skydeps/<slug>/native/<platform>/`). This is how a LIBRARY ships native
+/// code — the app and every lib it imports merge their `native/` trees.
+fn collect_native_dirs(project_dir: &Path, platform: &str) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let own = project_dir.join("native").join(platform);
+    if own.is_dir() {
+        dirs.push(own);
+    }
+    if let Ok(rd) = std::fs::read_dir(project_dir.join(".skydeps")) {
+        let mut slugs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        slugs.sort();
+        for slug in slugs {
+            let d = slug.join("native").join(platform);
+            if d.is_dir() {
+                dirs.push(d);
+            }
+        }
+    }
+    dirs
+}
+
+/// Every `*.<ext>` source across the native dirs for `platform`, as
+/// `(file_stem, path)`, sorted + deduped by stem (a project file wins over a
+/// dep's on a stem clash, since the project dir is scanned first).
+fn collect_native_files(project_dir: &Path, platform: &str, ext: &str) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for dir in collect_native_dirs(project_dir, platform) {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        files.sort();
+        for p in files {
+            if p.extension().and_then(|s| s.to_str()) == Some(ext) {
+                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                    if !out.iter().any(|(s, _)| s == stem) {
+                        out.push((stem.to_string(), p));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Concatenate a named fragment file (`Info.plist.append`, manifest appends,
+/// entitlements) across the project + its deps' `native/<platform>/` dirs.
+fn collect_native_fragment(project_dir: &Path, platform: &str, file: &str) -> String {
+    let mut out = String::new();
+    for dir in collect_native_dirs(project_dir, platform) {
+        if let Ok(s) = std::fs::read_to_string(dir.join(file)) {
+            out.push_str(s.trim_end());
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The Swift registry the shell's `skyNative` handler consults for custom
+/// `Native.bridge` capabilities. Always emitted; the installer body is filled
+/// from the injected `native/ios/*.swift` files (each defines `register<Stem>`).
+/// The Java registry an injected `native/android/*.java` lib registers into. The
+/// MainActivity's bridge `call()` dispatches to it. Always emitted (empty
+/// installer when no libs), so the shell compiles either way.
+const ANDROID_EXT_REGISTRY: &str = r#"package sky.nativeext;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/** Registry of custom native capabilities (Std.Native.bridge). An injected
+ *  native/android/&lt;Name&gt;.java file (package sky.nativeext) defines
+ *  `public static void register()` and calls SkyRegistry.register("type", …). */
+public final class SkyRegistry {
+    public interface Reply { void ok(String json); void err(String message); }
+    public interface Handler { void handle(String payload, Reply reply); }
+    private static final Map<String, Handler> HANDLERS = new HashMap<>();
+    public static void register(String name, Handler h) { HANDLERS.put(name, h); }
+    public static boolean has(String name) { return HANDLERS.containsKey(name); }
+    public static void dispatch(String name, String payload, Reply reply) {
+        Handler h = HANDLERS.get(name);
+        if (h != null) { h.handle(payload, reply); }
+        else { reply.err("no native handler for '" + name + "'"); }
+    }
+}
+"#;
+
+const IOS_EXT_REGISTRY: &str = r#"import Foundation
+
+/// Registry of custom native capabilities (Std.Native.bridge). Each injected
+/// native/ios/<Name>.swift file defines `func register<Name>(_ reg: SkyNativeRegistry)`
+/// and calls `reg.on("yourType") { payload, reply in … }`; the build wires them
+/// into installSkyNativeExtensions() below.
+final class SkyNativeRegistry {
+    typealias Reply = (String?, String?) -> Void      // (jsonReply, errorMessage)
+    typealias Handler = (String, @escaping Reply) -> Void
+    var handlers: [String: Handler] = [:]
+    func on(_ name: String, _ handler: @escaping Handler) { handlers[name] = handler }
+}
+
+let skyNativeRegistry = SkyNativeRegistry()
+"#;
+
+fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+    let id = resolve_bundle_identity(project_dir)?;
+    let name = &id.exe_name;
+    let icon_src = bundle_icon_source(project_dir, &id);
+    let do_icons = icon_src.is_some();
+    let (perms, want_location, _want_media) = resolve_permissions(project_dir);
+    let plist_perms: String = perms
+        .iter()
+        .filter_map(|s| {
+            s.ios_plist_key
+                .map(|k| format!("\n    <key>{k}</key><string>{}</string>", s.ios_usage))
+        })
+        .collect();
+    let (loc_import, loc_manager, loc_onappear) = if want_location {
+        (
+            "import CoreLocation\n",
+            "    static let locationManager = CLLocationManager()\n",
+            "\n                .onAppear { Self.locationManager.requestWhenInUseAuthorization() }",
+        )
+    } else {
+        ("", "", "")
+    };
+
+    let root = out_dir.join("ios");
+    let src = root.join(name);
+    std::fs::create_dir_all(&src).map_err(|e| format!("create {}: {e}", src.display()))?;
+    std::fs::write(
+        src.join("App.swift"),
+        IOS_APP_SWIFT
+            .replace("{{NAME}}", name)
+            .replace("{{LOCATION_IMPORT}}", loc_import)
+            .replace("{{LOCATION_MANAGER}}", loc_manager)
+            .replace("{{LOCATION_ONAPPEAR}}", loc_onappear),
+    )
+    .map_err(|e| format!("write App.swift: {e}"))?;
+    std::fs::write(src.join("WebView.swift"), IOS_WEBVIEW_SWIFT)
+        .map_err(|e| format!("write WebView.swift: {e}"))?;
+
+    // Native extensions (Std.Native.bridge): copy each native/ios/*.swift from
+    // the project + its Sky deps into the shell, and generate the registry
+    // installer that calls each file's `register<Stem>` — so a library ships a
+    // Swift handler and the app just imports it.
+    let swift_exts = collect_native_files(project_dir, "ios", "swift");
+    for (stem, path) in &swift_exts {
+        std::fs::copy(path, src.join(format!("{stem}.swift")))
+            .map_err(|e| format!("copy native/ios/{stem}.swift: {e}"))?;
+    }
+    let installer_calls: String = swift_exts
+        .iter()
+        .map(|(stem, _)| format!("    register{stem}(skyNativeRegistry)\n"))
+        .collect();
+    std::fs::write(
+        src.join("SkyNativeExt.swift"),
+        format!("{IOS_EXT_REGISTRY}\nfunc installSkyNativeExtensions() {{\n{installer_calls}}}\n"),
+    )
+    .map_err(|e| format!("write SkyNativeExt.swift: {e}"))?;
+    if !swift_exts.is_empty() {
+        eprintln!(
+            "  native/ios: linked {} extension file(s): {}",
+            swift_exts.len(),
+            swift_exts.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    }
+
+    // Merge any native/ios/Info.plist.append fragments (extra plist keys a lib
+    // needs) alongside the permission keys, and write an .entitlements file from
+    // native/ios/app.entitlements (applied at codesign time — the simulator build
+    // is unsigned, so an entitlement like in-app-payments needs a real signed
+    // device build; the file is emitted so a signed build can use it).
+    let ext_plist = collect_native_fragment(project_dir, "ios", "Info.plist.append");
+    let entitlements = collect_native_fragment(project_dir, "ios", "app.entitlements");
+    std::fs::write(
+        src.join("Info.plist"),
+        IOS_INFO_PLIST
+            .replace("{{NAME}}", name)
+            .replace("{{DISPLAY}}", &xml_escape(&id.display_name))
+            .replace("{{BUNDLE_ID}}", &id.bundle_id)
+            .replace("{{SHORT_VERSION}}", &xml_escape(&id.short_version))
+            .replace("{{BUILD_NUMBER}}", &xml_escape(&id.build_number))
+            .replace("{{ICONS}}", if do_icons { IOS_ICON_PLIST } else { "" })
+            .replace("{{PERMISSIONS}}", &format!("{plist_perms}{ext_plist}")),
+    )
+    .map_err(|e| format!("write Info.plist: {e}"))?;
+    if !entitlements.trim().is_empty() {
+        std::fs::write(root.join(format!("{name}.entitlements")), &entitlements)
+            .map_err(|e| format!("write entitlements: {e}"))?;
+        eprintln!(
+            "  native/ios: wrote {name}.entitlements — apply it with a SIGNED device build \
+             (the simulator build is unsigned, so signing entitlements are not active here)."
+        );
+    }
+    std::fs::write(
+        root.join("build-app.sh"),
+        IOS_BUILD_APP.replace("{{NAME}}", name),
+    )
+    .map_err(|e| format!("write build-app.sh: {e}"))?;
+
+    let status = Command::new("bash")
+        .arg("build-app.sh")
+        .current_dir(&root)
+        .status()
+        .map_err(|e| format!("run build-app.sh: {e}"))?;
+    if !status.success() {
+        return Err("the iOS app failed to build (see the errors above)".to_string());
+    }
+    let app = root.join("build").join(format!("{name}.app"));
+    if let Some(icon) = &icon_src {
+        generate_ios_app_icons(icon, &app)?;
+    }
+    Ok(app)
+}
+
+const IOS_APP_SWIFT: &str = r#"import SwiftUI
+{{LOCATION_IMPORT}}
+// Native iOS/iPadOS shell for a Sky.Spa client (generated by
+// `sky build --target ios`). A thin WKWebView over the SAME wasm client the web
+// / desktop / Android builds use, served over HTTP by its own stateless backend.
+// Client and server stay separate; only the shell is native.
+//
+// The iOS SIMULATOR shares the host network, so http://localhost:8951/ (a dev
+// backend on the host) works as-is. A REAL device cannot see the host's
+// localhost — point appURL at the deployed backend over https.
+@main
+struct {{NAME}}App: App {
+    static let appURL = URL(string: "http://localhost:8951/")!
+{{LOCATION_MANAGER}}
+    var body: some Scene {
+        WindowGroup {
+            // Respect the device safe area (status bar / notch at the top, home
+            // indicator at the bottom) so the app's header sits below the clock
+            // and a bottom button/composer row is not clipped by the home
+            // indicator. Only the KEYBOARD safe area is ignored, so the web view
+            // keeps its own height when the keyboard appears (the page scrolls
+            // its own content) rather than being shoved upward.
+            WebView(url: Self.appURL)
+                .ignoresSafeArea(.keyboard, edges: .bottom){{LOCATION_ONAPPEAR}}
+        }
+    }
+}
+"#;
+
+const IOS_WEBVIEW_SWIFT: &str = r#"import SwiftUI
+import WebKit
+import UserNotifications
+
+/// SwiftUI wrapper over WKWebView. JS + WebAssembly run by default. A
+/// WKUIDelegate grants in-page media-capture requests (getUserMedia for the
+/// camera / microphone), so a Sky app that declares `Bundle.withPermission
+/// Camera` / `Microphone` works; iOS still shows its own permission prompt the
+/// first time. Geolocation is handled by the app's CLLocationManager (App.swift).
+///
+/// The Coordinator ALSO installs the `skyNative` native bridge: a
+/// WKScriptMessageHandlerWithReply the wasm client calls as
+/// `window.webkit.messageHandlers.skyNative.postMessage({type:"notify",…})`.
+/// This is how `Std.Native.notify` shows a REAL local notification on iOS, where
+/// the Web Notification API is disabled — the handler drives
+/// `UNUserNotificationCenter`, and its reply resolves/rejects the JS Promise so
+/// the Sky `Task` gets Ok / Err. As the center's delegate it also presents the
+/// banner while the app is in the foreground.
+struct WebView: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> WKWebView {
+        let cfg = WKWebViewConfiguration()
+        cfg.userContentController.addScriptMessageHandler(
+            context.coordinator, contentWorld: .page, name: "skyNative")
+        let web = WKWebView(frame: .zero, configuration: cfg)
+        web.uiDelegate = context.coordinator
+        UNUserNotificationCenter.current().delegate = context.coordinator
+        installSkyNativeExtensions()   // register any native/ios/* bridge handlers
+        web.load(URLRequest(url: url))
+        return web
+    }
+
+    func updateUIView(_ web: WKWebView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, WKUIDelegate, WKScriptMessageHandlerWithReply,
+        UNUserNotificationCenterDelegate {
+        @available(iOS 15.0, *)
+        func webView(_ webView: WKWebView,
+                     requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                     initiatedByFrame frame: WKFrameInfo,
+                     type: WKMediaCaptureType,
+                     decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+            decisionHandler(.grant)
+        }
+
+        // The native bridge. Each message is `{ type, ... }`; reply(nil, nil) is
+        // success, reply(nil, "msg") rejects the JS Promise with an error.
+        func userContentController(_ ucc: WKUserContentController,
+                                   didReceive message: WKScriptMessage,
+                                   replyHandler: @escaping (Any?, String?) -> Void) {
+            guard let dict = message.body as? [String: Any],
+                  let type = dict["type"] as? String else {
+                replyHandler(nil, "skyNative: malformed message"); return
+            }
+            switch type {
+            case "notify":
+                let title = dict["title"] as? String ?? ""
+                let body = dict["body"] as? String ?? ""
+                let center = UNUserNotificationCenter.current()
+                center.requestAuthorization(options: [.alert, .sound]) { granted, err in
+                    if let err = err { replyHandler(nil, err.localizedDescription); return }
+                    if !granted { replyHandler(nil, "notifications not authorized"); return }
+                    let content = UNMutableNotificationContent()
+                    content.title = title
+                    content.body = body
+                    content.sound = .default
+                    let req = UNNotificationRequest(
+                        identifier: UUID().uuidString, content: content,
+                        trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+                    center.add(req) { addErr in
+                        if let addErr = addErr { replyHandler(nil, addErr.localizedDescription) }
+                        else { replyHandler(nil, nil) }
+                    }
+                }
+            default:
+                // A custom Std.Native.bridge capability registered by an injected
+                // native/ios/*.swift file (e.g. a payments library). The build
+                // links those files + fills SkyNativeExt.swift's installer.
+                let payload = dict["payload"] as? String ?? ""
+                if let handler = skyNativeRegistry.handlers[type] {
+                    handler(payload) { reply, err in replyHandler(reply, err) }
+                } else {
+                    replyHandler(nil, "skyNative: no native handler for '\(type)'")
+                }
+            }
+        }
+
+        // Show the banner even while the app is in the foreground.
+        func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                    willPresent notification: UNNotification,
+                                    withCompletionHandler completionHandler:
+                                        @escaping (UNNotificationPresentationOptions) -> Void) {
+            completionHandler([.banner, .sound, .list])
+        }
+    }
+}
+"#;
+
+const IOS_INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>{{NAME}}</string>
+    <key>CFBundleDisplayName</key><string>{{DISPLAY}}</string>
+    <key>CFBundleIdentifier</key><string>{{BUNDLE_ID}}</string>
+    <key>CFBundleExecutable</key><string>{{NAME}}</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>{{SHORT_VERSION}}</string>
+    <key>CFBundleVersion</key><string>{{BUILD_NUMBER}}</string>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>MinimumOSVersion</key><string>17.0</string>
+    <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+    <key>UILaunchScreen</key><dict/>{{ICONS}}{{PERMISSIONS}}
+    <!-- Dev only: allow cleartext to the local backend (localhost). Production
+         uses https, so remove this. -->
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+</dict>
+</plist>
+"#;
+
+const IOS_BUILD_APP: &str = r#"#!/usr/bin/env bash
+# Build a SwiftUI + WKWebView shell for the iOS SIMULATOR with swiftc — no
+# .xcodeproj. Requires full Xcode (not just Command Line Tools).
+#   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./build-app.sh
+set -euo pipefail
+cd "$(dirname "$0")"
+: "${DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"; export DEVELOPER_DIR; unset SDKROOT || true
+SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+rm -rf build && mkdir -p "build/{{NAME}}.app"
+xcrun --sdk iphonesimulator swiftc -sdk "$SDK" -target arm64-apple-ios17.0-simulator \
+  -parse-as-library {{NAME}}/*.swift \
+  -o "build/{{NAME}}.app/{{NAME}}"
+cp {{NAME}}/Info.plist "build/{{NAME}}.app/Info.plist"
+echo "OK -> build/{{NAME}}.app"
+"#;
+
+const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="{{PACKAGE}}"
+    android:versionCode="{{VERSION_CODE}}"
+    android:versionName="{{VERSION_NAME}}">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.INTERNET" />{{USES_PERMISSIONS}}
+
+    <application
+        android:label="{{LABEL}}"{{ICON_ATTR}}
+        android:usesCleartextTraffic="true"
+        android:supportsRtl="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+"#;
+
+const ANDROID_STRINGS: &str = r#"<resources>
+    <string name="app_name">{{LABEL}}</string>
+</resources>
+"#;
+
+const ANDROID_MAIN_ACTIVITY: &str = r#"package {{PACKAGE}};
+
+import android.app.Activity;
+import android.graphics.Insets;
+import android.os.Bundle;
+import android.view.View;
+import android.view.WindowInsets;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.webkit.JavascriptInterface;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.content.Context;{{PERMISSION_IMPORTS}}
+
+/**
+ * Native Android WebView shell for a Sky.Spa client (generated by
+ * `sky build --target android`). A thin WebView over the SAME wasm client the
+ * web + desktop builds use, served over HTTP by its own stateless backend.
+ * Client and server stay separate; only the shell is native.
+ *
+ * 10.0.2.2 is the emulator's alias for the host's localhost, so this loads a
+ * backend started on the host (default port 8951). For a real device /
+ * production, point APP_URL at the deployed backend over https.
+ */
+public class MainActivity extends Activity {
+
+    private static final String APP_URL = "http://10.0.2.2:8951/";
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        WebView web = new WebView(this);
+        WebSettings s = web.getSettings();
+        s.setJavaScriptEnabled(true);   // the wasm bootstrap needs JS
+        s.setDomStorageEnabled(true);
+        if (android.os.Build.VERSION.SDK_INT >= 19) {
+            WebView.setWebContentsDebuggingEnabled(true);  // dev: chrome://inspect
+        }
+        web.setWebViewClient(new WebViewClient());  // keep navigation inside the WebView
+{{WEBCHROME}}
+        // Android 15 (targetSdk 35) draws edge-to-edge by default, so the WebView
+        // would render UNDER the status bar (header/clock overlap) and the
+        // gesture navigation bar (a bottom button row clipped). Pad the WebView by
+        // the system-bar insets so its content stays within the safe area — the
+        // Android counterpart of the iOS safe-area handling.
+        web.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override
+            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
+                    v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                } else {
+                    v.setPadding(
+                        insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
+                        insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+                }
+                return insets;
+            }
+        });
+
+        setContentView(web);
+{{RUNTIME_REQUEST}}
+        // The `skyNative` native bridge: the wasm client calls
+        // `window.SkyNative.notify(title, body)` and this shows a REAL system
+        // notification via NotificationManager. Std.Native.notify prefers this
+        // over the Web Notification API. @JavascriptInterface methods run on a
+        // background thread and may return a value synchronously to JS.
+        web.addJavascriptInterface(new SkyNativeBridge(this, web), "SkyNative");
+        sky.nativeext.SkyNativeExtInstall.installAll();   // register native/android/* handlers
+        web.loadUrl(APP_URL);
+    }
+
+    /** JS-reachable native capabilities. Method names are the JS API. */
+    public static class SkyNativeBridge {
+        private final Activity act;
+        private final WebView web;
+        private static final String CHANNEL = "sky_native";
+
+        SkyNativeBridge(Activity a, WebView w) { this.act = a; this.web = w; }
+
+        private Context ctx() { return act; }
+
+        // Std.Native.bridge → here. Dispatch a custom capability `name` with a JSON
+        // `payload`, then resolve the JS Task by calling back
+        // window.__skyBridgeCb[cbId](ok, jsonReply). The work may be async; call
+        // reply() when done. EXTENSION POINT: add your capability to handleBridge.
+        @JavascriptInterface
+        public void call(String name, String payload, final String cbId) {
+            // A capability registered by an injected native/android/*.java lib
+            // (via sky.nativeext.SkyRegistry) — may reply asynchronously.
+            if (sky.nativeext.SkyRegistry.has(name)) {
+                sky.nativeext.SkyRegistry.dispatch(name, payload, new sky.nativeext.SkyRegistry.Reply() {
+                    @Override public void ok(String json) { replyOk(cbId, json); }
+                    @Override public void err(String msg) { replyErr(cbId, msg); }
+                });
+                return;
+            }
+            String reply = handleBridge(name, payload);
+            if (reply != null) {
+                replyOk(cbId, reply);
+            } else {
+                replyErr(cbId, "no native handler for '" + name + "'");
+            }
+        }
+
+        // EXTENSION POINT — return a JSON reply for `name`, or null if unhandled
+        // (add e.g. a Google Pay case here). Runs on a background thread; for UI
+        // work post to `act`. For an ASYNC capability, return null here, keep the
+        // cbId, do the work, then call replyOk(cbId, json) / replyErr(cbId, msg).
+        protected String handleBridge(String name, String payload) {
+            return null;
+        }
+
+        protected void replyOk(String cbId, String jsonReply) { reply(cbId, true, jsonReply); }
+        protected void replyErr(String cbId, String message) { reply(cbId, false, message); }
+
+        private void reply(String cbId, boolean ok, String data) {
+            final String js = "window.__skyBridgeCb && window.__skyBridgeCb['" + cbId
+                + "'] && window.__skyBridgeCb['" + cbId + "']("
+                + (ok ? "true" : "false") + "," + jsonString(data) + ")";
+            act.runOnUiThread(new Runnable() {
+                @Override public void run() { web.evaluateJavascript(js, null); }
+            });
+        }
+
+        // Encode an arbitrary Java string as a JS string literal (safe to embed).
+        private static String jsonString(String s) {
+            StringBuilder b = new StringBuilder("\"");
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"': b.append("\\\""); break;
+                    case '\\': b.append("\\\\"); break;
+                    case '\n': b.append("\\n"); break;
+                    case '\r': b.append("\\r"); break;
+                    case '\t': b.append("\\t"); break;
+                    default:
+                        if (c < 0x20) { b.append(String.format("\\u%04x", (int) c)); }
+                        else { b.append(c); }
+                }
+            }
+            return b.append("\"").toString();
+        }
+
+        @JavascriptInterface
+        public boolean notify(String title, String body) {
+            try {
+                NotificationManager nm =
+                    (NotificationManager) ctx().getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm == null) return false;
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    nm.createNotificationChannel(new NotificationChannel(
+                        CHANNEL, "Sky", NotificationManager.IMPORTANCE_DEFAULT));
+                }
+                Notification n;
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    n = new Notification.Builder(ctx(), CHANNEL)
+                        .setContentTitle(title).setContentText(body)
+                        .setSmallIcon(android.R.drawable.ic_dialog_info).build();
+                } else {
+                    n = new Notification.Builder(ctx())
+                        .setContentTitle(title).setContentText(body)
+                        .setSmallIcon(android.R.drawable.ic_dialog_info).build();
+                }
+                nm.notify((int) (System.currentTimeMillis() & 0x7fffffff), n);
+                return true;
+            } catch (Throwable t) {
+                return false;
+            }
+        }
+    }
+}
+"#;
+
+const ANDROID_BUILD_APK: &str = r#"#!/usr/bin/env bash
+# Build + sign a WebView shell APK with the Android SDK tools directly
+# (aapt2 -> javac -> d8 -> zipalign -> apksigner) — no Gradle, no Studio.
+# Requires: ANDROID_HOME (SDK with build-tools + a platform), a JDK (javac),
+# and ~/.android/debug.keystore (generated here if missing).
+set -euo pipefail
+cd "$(dirname "$0")"
+
+: "${ANDROID_HOME:=$HOME/Library/Android/sdk}"
+BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+PLAT="$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)/android.jar"
+KS="$HOME/.android/debug.keystore"
+[ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass android -keypass android \
+  -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=Android Debug,O=Android,C=US"
+
+rm -rf build && mkdir -p build/gen build/classes
+"$BT/aapt2" compile --dir app/src/main/res -o build/res.zip
+"$BT/aapt2" link -o build/base.apk -I "$PLAT" \
+  --manifest app/src/main/AndroidManifest.xml -R build/res.zip --java build/gen \
+  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
+javac --release 11 -cp "$PLAT" -d build/classes \
+  $(find build/gen -name '*.java') $(find app/src/main/java -name '*.java')
+"$BT/d8" --lib "$PLAT" --min-api 24 --output build/ $(find build/classes -name '*.class')
+( cd build && zip -q base.apk classes.dex )
+"$BT/zipalign" -f 4 build/base.apk build/aligned.apk
+"$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
+  --min-sdk-version 24 --out build/{{APK}} build/aligned.apk
+"$BT/apksigner" verify build/{{APK}} && echo "OK -> build/{{APK}}"
+"#;
+
+const WASM_INDEX_HTML: &str = r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sky.Spa</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="wasm_exec.js"></script>
+    <script>
+      const go = new Go();
+      WebAssembly.instantiateStreaming(fetch("{{WASM}}"), go.importObject).then((res) => {
+        go.run(res.instance);
+      });
+    </script>
+  </body>
+</html>
+"#;
+
+/// Verify an iOS build toolchain is present (full Xcode + the iPhone Simulator
+/// SDK), returning an actionable install message otherwise.
+fn detect_ios_toolchain() -> Result<(), String> {
+    let ok = Command::new("xcrun")
+        .args(["--sdk", "iphonesimulator", "--show-sdk-path"])
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        Err("sky build --target ios: no iOS toolchain found.\n  \
+             Install the full Xcode (the App Store) — Command Line Tools alone is not\n  \
+             enough — then run `xcodebuild -downloadPlatform iOS` once for the simulator\n  \
+             runtime. (`xcrun --sdk iphonesimulator --show-sdk-path` must succeed.)"
+            .to_string())
+    }
+}
+
+/// Verify an Android build toolchain is present (the SDK, via ANDROID_HOME /
+/// ANDROID_SDK_ROOT or `adb` on PATH), returning an actionable install message.
+fn detect_android_toolchain() -> Result<(), String> {
+    let has_sdk = std::env::var_os("ANDROID_HOME").is_some()
+        || std::env::var_os("ANDROID_SDK_ROOT").is_some()
+        || Command::new("adb")
+            .arg("version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    if has_sdk {
+        Ok(())
+    } else {
+        Err("sky build --target android: no Android SDK found.\n  \
+             Install Android Studio (or the command-line tools) and set ANDROID_HOME to\n  \
+             the SDK path (e.g. ~/Library/Android/sdk). `adb` should be on your PATH."
+            .to_string())
+    }
 }
 
 fn verb(check_only: bool) -> &'static str {
@@ -919,6 +2789,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         entry_module: entry_module_name(file),
         progress: true,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -2233,6 +4104,7 @@ fn build_temp_db_entry(
         entry_module: Some(module.to_string()),
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
@@ -2947,6 +4819,7 @@ fn cmd_db(args: &[String]) -> ExitCode {
         entry_module: entry_module_name(file),
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -3235,6 +5108,7 @@ fn watch_build_and_spawn(
         entry_module: entry_module_name(file),
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     for w in &report.warnings {
@@ -4013,6 +5887,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             entry_module: None,
             progress: false,
             embed_bundle: None,
+            wasm: false,
         };
         let report = build_example(&opts);
         if !report.emitted {
@@ -4128,6 +6003,7 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         entry_module: None,
         progress: false,
         embed_bundle: None,
+        wasm: false,
     };
     let report = build_example(&opts);
     if report.emitted && report.go_build_ok {
@@ -4709,6 +6585,16 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
         match a.as_str() {
             "--out" | "-o" => out = it.next().cloned(),
             s if s.starts_with("--out=") => out = Some(s["--out=".len()..].to_string()),
+            // `--target <value>` (sky build): consume the value so it is not
+            // mistaken for the entry file. cmd_build reads --target from `args`.
+            "--target" => {
+                it.next();
+            }
+            // `--broker <value>` (sky spa-split): same — consume the URL value so
+            // it is not mistaken for the entry file. cmd_spa_split reads it.
+            "--broker" => {
+                it.next();
+            }
             s if s.starts_with('-') => { /* ignore unknown flags for forward-compat */ }
             s => positional.push(s.to_string()),
         }
@@ -4752,6 +6638,8 @@ fn print_help() {
          USAGE:\n  sky <command> [args]\n\n\
          WIRED COMMANDS:\n\
          \x20 build <file>     compile → sky-out/ + go build (--embed bundles PostgreSQL)\n\
+         \x20                   --wasm compiles the Sky.Spa client for the browser (GOOS=js);\n\
+         \x20                   --target <web|desktop|ios|android|tablet> bundles that client\n\
          \x20 check <file>     type-check + go build (no binary run)\n\
          \x20 run   <file>     build + execute\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
@@ -4775,6 +6663,8 @@ fn print_help() {
          \x20 doctor [--fix] [-v]  diagnose project / environment health\n\
          \x20 upgrade-claude       refresh ./CLAUDE.md from the embedded template\n\
          \x20 verify [target]      build + run each example / the project\n\
+         \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
+         \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );
@@ -4783,6 +6673,19 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_pkg_segment_yields_a_valid_android_segment() {
+        // lowercased, alnum-only
+        assert_eq!(sanitize_pkg_segment("Spa-Todos"), "spatodos");
+        assert_eq!(sanitize_pkg_segment("my client!"), "myclient");
+        // empty / all-punctuation → the "app" fallback
+        assert_eq!(sanitize_pkg_segment(""), "app");
+        assert_eq!(sanitize_pkg_segment("---"), "app");
+        // a leading digit is not a legal package-segment start → prefixed
+        assert_eq!(sanitize_pkg_segment("2048"), "a2048");
+        assert_eq!(sanitize_pkg_segment("3d-viewer"), "a3dviewer");
+    }
 
     #[test]
     fn parse_semver_handles_v_prefix_and_suffixes() {
@@ -5190,5 +7093,408 @@ mod tests {
         // profiling on.
         let (_rest, prof) = parse_profile(&sw("app.sky --profile-dir out"));
         assert!(prof.is_some());
+    }
+
+    // ---- [bundle] cross-platform identity (Phase 1) ----------------------
+
+    fn bundle_scratch(name: &str, toml: &str, main_sky: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-bundle-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("sky.toml"), toml).unwrap();
+        std::fs::write(dir.join("src").join("Main.sky"), main_sky).unwrap();
+        dir
+    }
+
+    #[test]
+    fn valid_bundle_id_accepts_reverse_dns_and_rejects_junk() {
+        assert!(valid_bundle_id("com.acme.app"));
+        assert!(valid_bundle_id("dev.sky.my_app"));
+        assert!(valid_bundle_id("io.a.b.c"));
+        assert!(!valid_bundle_id("nodots")); // single segment
+        assert!(!valid_bundle_id("com.9acme.app")); // segment starts with digit
+        assert!(!valid_bundle_id("com..app")); // empty segment
+        assert!(!valid_bundle_id("com.acme app")); // space
+        assert!(!valid_bundle_id("com.acme-app")); // hyphen
+        assert!(!valid_bundle_id("")); // empty
+        // JVM reserved words as segments break the generated `package …;`.
+        assert!(!valid_bundle_id("com.native.app"));
+        assert!(!valid_bundle_id("com.int.thing"));
+        assert!(!valid_bundle_id("com.acme.new"));
+        assert!(!valid_bundle_id("com.Class.app")); // case-insensitive
+        assert!(valid_bundle_id("com.acme.internal")); // near-miss is fine
+    }
+
+    /// An ordinary app name with XML-significant characters must NOT break — or
+    /// inject into — the generated plist / manifest / strings.xml. Regression for
+    /// the unescaped-`withName` codegen defect.
+    #[test]
+    fn xml_escape_neutralises_dangerous_app_names() {
+        assert_eq!(xml_escape("Ben & Jerry's"), "Ben &amp; Jerry&apos;s");
+        assert_eq!(xml_escape("Café <Beta>"), "Café &lt;Beta&gt;");
+        // The attribute-injection attempt becomes inert text, not a new attribute.
+        let evil = "x\" android:debuggable=\"true";
+        let escaped = xml_escape(evil);
+        assert!(!escaped.contains('"'), "quotes must be escaped: {escaped}");
+        assert!(escaped.contains("&quot;"));
+        // The plist-injection attempt can't close the <string>.
+        assert!(!xml_escape("a</string><key>hax</key><string>b").contains("</string>"));
+    }
+
+    /// The bundle-source scan reads the IMMEDIATE string literal only, skips
+    /// comments, and ignores computed args — never reaching forward to an
+    /// unrelated quote. Regression for the byte-scan fragility.
+    #[test]
+    fn scan_bundle_call_is_bounded_and_comment_aware() {
+        // Normal literal.
+        assert_eq!(
+            scan_bundle_call("bundle = Bundle.default |> Bundle.withId \"com.acme.app\"", "withId"),
+            Some("com.acme.app".to_string())
+        );
+        // A computed (non-literal) arg must NOT grab a distant quote (e.g. a URL).
+        let computed = "bundle = Bundle.withName appName\nx = Http.get \"https://evil/\"";
+        assert_eq!(scan_bundle_call(computed, "withName"), None);
+        // A call inside a `--` comment is ignored.
+        let commented = "-- old: Bundle.withId \"com.old.id\"\nbundle = Bundle.withId \"com.new.id\"";
+        assert_eq!(scan_bundle_call(commented, "withId"), Some("com.new.id".to_string()));
+        // Escaped quotes inside the literal are handled.
+        assert_eq!(
+            scan_bundle_call("Bundle.withName \"A \\\"B\\\" C\"", "withName"),
+            Some("A \"B\" C".to_string())
+        );
+        // Word boundary: withId must not match withIdentifier.
+        assert_eq!(scan_bundle_call("Bundle.withIdentifier \"nope\"", "withId"), None);
+        // A withPermission in a comment is not a real declaration.
+        let perm = "-- Bundle.withPermission Bundle.Camera\nbundle = Bundle.withPermission Bundle.Location";
+        assert_eq!(scan_bundle_permissions(perm), vec!["Location".to_string()]);
+    }
+
+    #[test]
+    fn scan_bundle_call_extracts_literals_on_word_boundaries() {
+        let src = "bundle = Bundle.default |> Bundle.withId \"com.acme.app\" |> Bundle.withName \"Cool App\"";
+        assert_eq!(scan_bundle_call(src, "withId").as_deref(), Some("com.acme.app"));
+        assert_eq!(scan_bundle_call(src, "withName").as_deref(), Some("Cool App"));
+        assert_eq!(scan_bundle_call(src, "withIcon"), None);
+        // Word boundary: `withId` must not match inside `withIdentifier`.
+        let decoy = "x |> withIdentifier \"nope\" |> Bundle.withId \"com.real.id\"";
+        assert_eq!(scan_bundle_call(decoy, "withId").as_deref(), Some("com.real.id"));
+    }
+
+    #[test]
+    fn bundle_identity_defaults_to_dir_name_with_no_binding() {
+        let dir = bundle_scratch(
+            "nofield",
+            "name = \"proj\"\nversion = \"1.2.3\"\n",
+            "module Main exposing (main)\nmain = 0\n",
+        );
+        let dir_name = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let dir_seg = sanitize_pkg_segment(&dir_name);
+        let id = resolve_bundle_identity(&dir).unwrap();
+        assert_eq!(id.display_name, dir_name); // the project directory name
+        assert_eq!(id.bundle_id, format!("sky.spa.{dir_seg}")); // dev-default id
+        assert_eq!(id.short_version, "1.0"); // literal default (no sky.toml read)
+        assert_eq!(id.build_number, "1"); // default
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bundle_identity_reads_the_bundle_binding() {
+        let main_sky = "module Main exposing (main, bundle)\n\n\
+                        import Std.Bundle as Bundle exposing (Bundle)\n\n\
+                        bundle : Bundle\n\
+                        bundle =\n    Bundle.default\n\
+                        \x20       |> Bundle.withName \"Sky Notes Pro\"\n\
+                        \x20       |> Bundle.withId \"com.acme.notes\"\n\
+                        \x20       |> Bundle.withVersion \"2.3.0\"\n\n\
+                        main = 0\n";
+        let dir = bundle_scratch("binding", "name = \"proj\"\nversion = \"1.0.0\"\n", main_sky);
+
+        let id = resolve_bundle_identity(&dir).unwrap();
+        assert_eq!(id.display_name, "Sky Notes Pro");
+        assert_eq!(id.bundle_id, "com.acme.notes");
+        assert_eq!(id.exe_name, "Notes"); // capitalised last id segment
+        assert_eq!(id.short_version, "2.3.0"); // withVersion wins over project
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stage_web_bundle_content_hashes_the_wasm() {
+        let base = std::env::temp_dir().join(format!(
+            "sky-stage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let out = base.join("out");
+        let dist = base.join("dist");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("main.wasm"), b"AAAA-wasm-bytes").unwrap();
+        std::fs::write(out.join("wasm_exec.js"), b"// go glue").unwrap();
+
+        stage_web_bundle(&out, &dist).unwrap();
+
+        let wasm_name = |d: &std::path::Path| -> String {
+            std::fs::read_dir(d)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
+                .expect("a hashed wasm")
+        };
+        let n1 = wasm_name(&dist);
+        // main.<12 hex>.wasm
+        assert!(n1.starts_with("main.") && n1.ends_with(".wasm"));
+        let hash = &n1["main.".len()..n1.len() - ".wasm".len()];
+        assert_eq!(hash.len(), 12, "12-char content hash: {n1}");
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        // index.html references exactly that file, and wasm_exec.js is present.
+        let index = std::fs::read_to_string(dist.join("index.html")).unwrap();
+        assert!(index.contains(&format!("fetch(\"{n1}\")")), "index must fetch {n1}");
+        assert!(dist.join("wasm_exec.js").is_file());
+
+        // Different bytes → different name, and the old wasm is removed (no
+        // accumulation): exactly one main.*.wasm remains.
+        std::fs::write(out.join("main.wasm"), b"BBBB-different").unwrap();
+        stage_web_bundle(&out, &dist).unwrap();
+        let n2 = wasm_name(&dist);
+        assert_ne!(n1, n2, "changed content must change the hashed name");
+        let count = std::fs::read_dir(&dist)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with("main.") && n.ends_with(".wasm")
+            })
+            .count();
+        assert_eq!(count, 1, "old hashed wasm must be pruned");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn scan_bundle_calls_all_collects_files_and_excludes_dir_variant() {
+        let src = "bundle = Bundle.default \
+                   |> Bundle.withAsset \"a.png\" |> Bundle.withAsset \"b.css\" \
+                   |> Bundle.withAssetDir \"assets\"";
+        // withAsset must NOT match inside withAssetDir (word boundary).
+        assert_eq!(scan_bundle_calls_all(src, "withAsset"), vec!["a.png", "b.css"]);
+        assert_eq!(scan_bundle_calls_all(src, "withAssetDir"), vec!["assets"]);
+    }
+
+    #[test]
+    fn stage_bundle_assets_copies_declared_files_and_dirs() {
+        let dir = bundle_scratch(
+            "assets",
+            "name = \"proj\"\n",
+            "module Main exposing (main, bundle)\n\
+             bundle = Bundle.default \
+             |> Bundle.withAssetDir \"assets\" |> Bundle.withAsset \"extra/note.txt\"\n\
+             main = 0\n",
+        );
+        std::fs::create_dir_all(dir.join("assets/sub")).unwrap();
+        std::fs::write(dir.join("assets/logo.png"), b"png").unwrap();
+        std::fs::write(dir.join("assets/sub/deep.svg"), b"svg").unwrap();
+        std::fs::write(dir.join("assets/.DS_Store"), b"cruft").unwrap();
+        std::fs::create_dir_all(dir.join("extra")).unwrap();
+        std::fs::write(dir.join("extra/note.txt"), b"hi").unwrap();
+
+        let dist = dir.join("dist");
+        stage_bundle_assets(&dir, &dist).unwrap();
+
+        assert!(dist.join("assets/logo.png").is_file(), "dir asset staged");
+        assert!(dist.join("assets/sub/deep.svg").is_file(), "nested dir asset staged");
+        assert!(dist.join("assets/note.txt").is_file(), "single file asset staged by basename");
+        assert!(!dist.join("assets/.DS_Store").exists(), "hidden files must not ship");
+
+        // A missing declared asset fails the build rather than shipping broken.
+        let bad = bundle_scratch(
+            "badasset",
+            "name = \"p\"\n",
+            "module Main exposing (main, bundle)\n\
+             bundle = Bundle.default |> Bundle.withAsset \"nope.png\"\nmain = 0\n",
+        );
+        assert!(stage_bundle_assets(&bad, &bad.join("dist")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&bad);
+    }
+
+    #[test]
+    fn scan_bundle_permissions_collects_known_constructors() {
+        let src = "bundle = Bundle.default \
+                   |> Bundle.withPermission Bundle.Location \
+                   |> Bundle.withPermission Camera \
+                   |> Bundle.withPermission Bundle.Notifications";
+        assert_eq!(
+            scan_bundle_permissions(src),
+            vec!["Location", "Camera", "Notifications"]
+        );
+        // An unknown constructor is ignored (not every withPermission is valid).
+        assert!(scan_bundle_permissions("withPermission Nonsense").is_empty());
+        // Deduped.
+        assert_eq!(
+            scan_bundle_permissions("withPermission Location\nwithPermission Location"),
+            vec!["Location"]
+        );
+    }
+
+    #[test]
+    fn android_permission_java_wires_location_media_and_notifications() {
+        let lm: Vec<PermSpec> = ["Location", "Camera"].iter().filter_map(|n| perm_spec(n)).collect();
+        let (imports, webchrome, runtime) = android_permission_java(&lm, true, true);
+        assert!(imports.contains("GeolocationPermissions") && imports.contains("PermissionRequest"));
+        assert!(webchrome.contains("setGeolocationEnabled") && webchrome.contains("onPermissionRequest"));
+        assert!(runtime.contains("ACCESS_FINE_LOCATION") && runtime.contains("CAMERA"));
+
+        // Notifications-only: no WebChromeClient plumbing, just the runtime request.
+        let notif: Vec<PermSpec> = perm_spec("Notifications").into_iter().collect();
+        let (i2, wc2, rt2) = android_permission_java(&notif, false, false);
+        assert!(i2.is_empty() && wc2.is_empty());
+        assert!(rt2.contains("POST_NOTIFICATIONS"));
+    }
+
+    /// Both mobile shells must install the `skyNative` native notification bridge
+    /// so `Std.Native.notify` shows a REAL local notification — essential on iOS,
+    /// where the Web Notification API is disabled in WKWebView. Regression: pins
+    /// the bridge wiring in the shell templates so it can't be dropped.
+    #[test]
+    fn mobile_shells_wire_the_native_notification_bridge() {
+        // iOS: a WKScriptMessageHandlerWithReply named "skyNative" driving
+        // UNUserNotificationCenter, presenting in the foreground.
+        for needle in [
+            "import UserNotifications",
+            "WKScriptMessageHandlerWithReply",
+            "name: \"skyNative\"",
+            "UNUserNotificationCenter.current()",
+            "UNMutableNotificationContent()",
+            "willPresent notification",
+        ] {
+            assert!(
+                IOS_WEBVIEW_SWIFT.contains(needle),
+                "iOS shell must wire the notification bridge: missing `{needle}`"
+            );
+        }
+        // Android: an @JavascriptInterface object "SkyNative" with notify(), driving
+        // NotificationManager.
+        for needle in [
+            "addJavascriptInterface(new SkyNativeBridge(this, web), \"SkyNative\")",
+            "@JavascriptInterface",
+            "public boolean notify(String title, String body)",
+            "NotificationManager",
+            "NotificationChannel",
+        ] {
+            assert!(
+                ANDROID_MAIN_ACTIVITY.contains(needle),
+                "Android shell must wire the notification bridge: missing `{needle}`"
+            );
+        }
+    }
+
+    /// Both mobile shells must expose the user-extensible `Native.bridge`
+    /// extension point (iOS default case → handler; Android SkyNative.call →
+    /// handleBridge + __skyBridgeCb callback) so an app can add a native
+    /// capability (payments, biometrics…) without changing the compiler.
+    #[test]
+    fn mobile_shells_expose_the_bridge_extension_point() {
+        // iOS: the default case consults the injected-handler registry + the
+        // shell installs it at startup.
+        for needle in [
+            "skyNativeRegistry.handlers[type]",
+            "installSkyNativeExtensions()",
+            "no native handler for",
+        ] {
+            assert!(
+                IOS_WEBVIEW_SWIFT.contains(needle),
+                "iOS shell must route custom bridge calls: missing `{needle}`"
+            );
+        }
+        // Android: call() dispatches to the injected registry + installs it.
+        for needle in [
+            "sky.nativeext.SkyRegistry.has(name)",
+            "sky.nativeext.SkyNativeExtInstall.installAll()",
+            "handleBridge",
+            "__skyBridgeCb",
+        ] {
+            assert!(
+                ANDROID_MAIN_ACTIVITY.contains(needle),
+                "Android shell must route custom bridge calls: missing `{needle}`"
+            );
+        }
+        // The registry sources compile-shaped: the Swift declares the registry,
+        // the Java declares the dispatch table.
+        assert!(IOS_EXT_REGISTRY.contains("class SkyNativeRegistry"));
+        assert!(ANDROID_EXT_REGISTRY.contains("public final class SkyRegistry")
+            && ANDROID_EXT_REGISTRY.contains("package sky.nativeext;"));
+    }
+
+    /// A library ships native code + fragments under `native/<platform>/`;
+    /// `collect_native_*` discovers them across the project AND its `.skydeps`
+    /// packages — the mechanism that lets an app import a lib's native handler.
+    #[test]
+    fn native_extension_files_are_discovered_from_project_and_deps() {
+        let dir = bundle_scratch("nativeext", "name = \"p\"\n", "module Main exposing (main)\nmain = 0\n");
+        // The project's own native file + a fragment.
+        std::fs::create_dir_all(dir.join("native/ios")).unwrap();
+        std::fs::write(dir.join("native/ios/AppOwn.swift"), "func registerAppOwn(_ r: Any) {}\n").unwrap();
+        std::fs::write(dir.join("native/ios/app.entitlements"), "<own/>\n").unwrap();
+        // A fetched Sky dependency shipping its own native file + fragment.
+        let dep = dir.join(".skydeps/github.com_acme_pay/native/ios");
+        std::fs::create_dir_all(&dep).unwrap();
+        std::fs::write(dep.join("ApplePay.swift"), "func registerApplePay(_ r: Any) {}\n").unwrap();
+        std::fs::write(dep.join("app.entitlements"), "<dep/>\n").unwrap();
+
+        let files = collect_native_files(&dir, "ios", "swift");
+        let stems: Vec<&str> = files.iter().map(|(s, _)| s.as_str()).collect();
+        assert!(
+            stems.contains(&"AppOwn") && stems.contains(&"ApplePay"),
+            "native files from BOTH the project and its deps must be discovered, got {stems:?}"
+        );
+        // Fragments concatenate across project + deps.
+        let ent = collect_native_fragment(&dir, "ios", "app.entitlements");
+        assert!(ent.contains("<own/>") && ent.contains("<dep/>"), "fragments merge, got:\n{ent}");
+        // A platform with no native dir yields nothing.
+        assert!(collect_native_files(&dir, "android", "java").is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bundle_icon_source_is_none_when_absent_or_missing() {
+        // No withIcon declared → nothing to render.
+        let dir = bundle_scratch("noicon", "name = \"p\"\n", "module Main exposing (main)\nmain = 0\n");
+        let id = resolve_bundle_identity(&dir).unwrap();
+        assert!(id.icon.is_none());
+        assert!(bundle_icon_source(&dir, &id).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // withIcon declared but the file is missing → None (a note, not a crash).
+        let dir2 = bundle_scratch(
+            "missingicon",
+            "name = \"p\"\n",
+            "module Main exposing (main, bundle)\n\
+             bundle = Bundle.default |> Bundle.withIcon \"nope.png\"\nmain = 0\n",
+        );
+        let id2 = resolve_bundle_identity(&dir2).unwrap();
+        assert_eq!(id2.icon.as_deref(), Some("nope.png"));
+        assert!(bundle_icon_source(&dir2, &id2).is_none());
+        let _ = std::fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn bundle_identity_rejects_a_malformed_user_supplied_id() {
+        let main_sky = "module Main exposing (main, bundle)\n\
+                        bundle = Bundle.default |> Bundle.withId \"notreversedns\"\n\
+                        main = 0\n";
+        let dir = bundle_scratch("badid", "name = \"proj\"\n", main_sky);
+        let err = resolve_bundle_identity(&dir).unwrap_err();
+        assert!(err.contains("reverse-DNS"), "error should explain the id rule: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -183,6 +183,9 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
         GoTypeDef::AdtAlias => {
             w.line(&format!("type {name} = rt.SkyADT"));
         }
+        GoTypeDef::RuntimeAlias(rt_ty) => {
+            w.line(&format!("type {name} = {rt_ty}"));
+        }
         GoTypeDef::SealedIface(variants) => {
             // The sealed interface every variant satisfies.
             w.line(&format!("type {name} interface {{"));
@@ -403,43 +406,7 @@ pub fn render_expr(e: &GoExpr) -> String {
                 return render_expr(inner);
             }
             let comment = format!("/* {} */ ", reason.comment());
-            let call = match to {
-                GoTy::Named(n, args) if n == "rt.SkyTask" && args.len() == 2 => format!(
-                    "rt.TaskCoerceT[{}, {}]({})",
-                    render_ty(&args[0]),
-                    render_ty(&args[1]),
-                    render_expr(inner)
-                ),
-                GoTy::Named(n, args) if n == "rt.SkyMaybe" && args.len() == 1 => {
-                    format!(
-                        "rt.MaybeCoerce[{}]({})",
-                        render_ty(&args[0]),
-                        render_expr(inner)
-                    )
-                }
-                GoTy::Named(n, args) if n == "rt.SkyResult" && args.len() == 2 => format!(
-                    "rt.ResultCoerce[{}, {}]({})",
-                    render_ty(&args[0]),
-                    render_ty(&args[1]),
-                    render_expr(inner)
-                ),
-                GoTy::Slice(t) => {
-                    format!("rt.AsListT[{}]({})", render_ty(t), render_expr(inner))
-                }
-                // A Sky `Dict k v` is `map[string]V` at runtime; narrow an `any`
-                // (`rt.Dict_empty()`, an untyped kernel return) via `rt.AsMapT[V]`,
-                // which REBUILDS the value-coerced `map[string]V` (matching the
-                // oracle). `rt.Coerce[map[…]…]` would assert the exact Go map type
-                // and panic (Go map types are invariant).
-                GoTy::Map(_, v) => {
-                    format!("rt.AsMapT[{}]({})", render_ty(v), render_expr(inner))
-                }
-                GoTy::Bare(Prim::Str) => format!("rt.AsString({})", render_expr(inner)),
-                GoTy::Bare(Prim::Int) => format!("rt.AsInt({})", render_expr(inner)),
-                GoTy::Bare(Prim::Bool) => format!("rt.AsBool({})", render_expr(inner)),
-                GoTy::Bare(Prim::Float) => format!("rt.AsFloat({})", render_expr(inner)),
-                other => format!("rt.Coerce[{}]({})", render_ty(other), render_expr(inner)),
-            };
+            let call = narrow_call(to, &render_expr(inner));
             format!("{comment}{call}")
         }
         GoExprKind::Widen(inner) => format!("any({})", render_expr(inner)),
@@ -564,6 +531,174 @@ fn render_tuple_ty(xs: &[GoTy]) -> String {
     }
 }
 
+/// Render a reflection-free narrow of an `any`-typed `inner` expression to the
+/// Go type `to`, choosing the typed fast-path helper per shape so emitted Go
+/// carries no `reflect.Value` for shapes whose element/field types are
+/// statically known here. Recurses into a struct target's fields. Falls back to
+/// the reflect helper `rt.Coerce[T]` only for shapes with no typed
+/// decomposition (and, inside the struct arm, only when the boxed source is
+/// neither the canonical all-`any` form nor already the target).
+fn narrow_call(to: &GoTy, inner: &str) -> String {
+    match to {
+        GoTy::Named(n, args) if n == "rt.SkyTask" && args.len() == 2 => format!(
+            "rt.TaskCoerceT[{}, {}]({})",
+            render_ty(&args[0]),
+            render_ty(&args[1]),
+            inner
+        ),
+        GoTy::Named(n, args) if n == "rt.SkyMaybe" && args.len() == 1 => {
+            format!("rt.MaybeCoerce[{}]({})", render_ty(&args[0]), inner)
+        }
+        GoTy::Named(n, args) if n == "rt.SkyResult" && args.len() == 2 => {
+            // A `Result e a` narrow reconstructs the Result by typed assertion
+            // (`rt.ResultCoerceOk`) and narrows the Ok value with the
+            // reflection-free narrow for `a` (e.g. `rt.AsListT[x]` for `List x`)
+            // instead of reflect-narrowing the whole Result. The err type stays
+            // `e`. An `a == any` payload needs no narrow — keep plain
+            // `rt.ResultCoerce`, whose `SkyResult[e, any]` fast path is already
+            // reflection-free.
+            match &args[1] {
+                GoTy::Any => format!(
+                    "rt.ResultCoerce[{}, {}]({})",
+                    render_ty(&args[0]),
+                    render_ty(&args[1]),
+                    inner
+                ),
+                ok => format!(
+                    "rt.ResultCoerceOk[{}, {}]({}, func(_v any) {} {{ return {} }})",
+                    render_ty(&args[0]),
+                    render_ty(&args[1]),
+                    inner,
+                    render_ty(ok),
+                    narrow_call(ok, "_v"),
+                ),
+            }
+        }
+        GoTy::Slice(t) => format!("rt.AsListT[{}]({})", render_ty(t), inner),
+        // A Sky `Dict k v` is `map[string]V` at runtime; narrow via `rt.AsMapT`,
+        // which REBUILDS the value-coerced `map[string]V` (Go map types are
+        // invariant, so `rt.Coerce[map[…]…]` would assert the exact type + panic).
+        GoTy::Map(_, v) => format!("rt.AsMapT[{}]({})", render_ty(v), inner),
+        GoTy::Bare(Prim::Str) => format!("rt.AsString({})", inner),
+        GoTy::Bare(Prim::Int) => format!("rt.AsInt({})", inner),
+        GoTy::Bare(Prim::Bool) => format!("rt.AsBool({})", inner),
+        GoTy::Bare(Prim::Float) => format!("rt.AsFloat({})", inner),
+        GoTy::Func(ps, r) if ps.len() == 1 => {
+            // Narrow to a 1-arg typed func target (a codec's `EncFields func(any)
+            // []T`, a decoder, …) reflection-free. Two boxed source shapes occur
+            // and both are handled by assertion, never `reflect.MakeFunc`:
+            //   * the exact target func type (a func value boxed into `any` keeps
+            //     its concrete Go func type) → return it directly;
+            //   * the canonical boxed `func(any) any` (from `Ctx::widen`) → wrap
+            //     it in an adapter that calls it and narrows the result to `R`.
+            // The fallback tail is `rt.CoerceFuncSlot` (NOT `rt.Coerce`): both the
+            // exact-shape and the canonical `func(any) any` branch above are
+            // reflection-free, so this tail is reached only by a genuinely
+            // divergent shape — a `reflect.MakeFunc` last resort. It carries a
+            // distinct name so the coerce-floor census does not count this dead
+            // switch-fallback as a live adapter (`rt.Coerce[func(…)]` == a live
+            // `reflect.MakeFunc` is the invariant the census locks); the runtime
+            // behaviour is identical to `rt.Coerce`.
+            let tgt = render_ty(to);
+            let p0 = render_ty(&ps[0]);
+            let rty = render_ty(r);
+            let narrowed = narrow_call(r, "_g(any(_a0))");
+            // `_s` binds through an explicit `any(...)` conversion: a boxed source
+            // reaches here as `any`, but a point-free monomorphic value keeps its
+            // CONCRETE Go func type (`rt.Basics_identity[any]` is `func(any) any`,
+            // not an interface), and `_s.(T)` on a non-interface is a Go compile
+            // error. The conversion is a no-op when `inner` is already `any`.
+            format!(
+                "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _g, _ok := _s.(func(any) any); _ok {{ return func(_a0 {p0}) {rty} {{ return {narrowed} }} }}; return rt.CoerceFuncSlot[{tgt}](_s) }}()"
+            )
+        }
+        GoTy::Func(ps, r) if ps.len() >= 2 => {
+            // A MULTI-arg func target (`func(A,B,C) R`, e.g. `Result.map3`'s
+            // uncurried callback slot). A function VALUE reaches here boxed as the
+            // canonical CURRIED `func(any) any` nest (`Ctx::widen` /
+            // `lower_ctor_value`: `func(_p0)(func(_p1)(func(_p2)…))`), but the slot
+            // is a FLAT N-ary Go func — the arity mismatch the reflect
+            // `adaptFuncValueWithCapture` used to (mis-)bridge. Uncurry it
+            // STATICALLY here — the target arity is known — so map3 calling
+            // `v_0(a,b,c)` threads all N args through the curried source
+            // reflection-free:
+            //   func(_a0 A,_a1 B,_a2 C) R {
+            //     return narrow_R( _c(any(_a0)).(func(any)any)(any(_a1)).(func(any)any)(any(_a2)) ) }
+            // The exact-shape assertion still short-circuits an already-flat
+            // source; reflect stays only as the last-resort divergent-shape path.
+            let tgt = render_ty(to);
+            let n = ps.len();
+            let params = ps
+                .iter()
+                .enumerate()
+                .map(|(i, p)| format!("_a{i} {}", render_ty(p)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut app = String::from("_c");
+            for i in 0..n {
+                if i == 0 {
+                    app = format!("{app}(any(_a0))");
+                } else {
+                    app = format!("({app}).(func(any) any)(any(_a{i}))");
+                }
+            }
+            let rty = render_ty(r);
+            let narrowed = narrow_call(r, &app);
+            format!(
+                "func() {tgt} {{ _s := any({inner}); if _f, _ok := _s.({tgt}); _ok {{ return _f }}; if _c, _ok := _s.(func(any) any); _ok {{ return func({params}) {rty} {{ return {narrowed} }} }}; return rt.CoerceFuncSlot[{tgt}](_s) }}()"
+            )
+        }
+        GoTy::Func(_, _) => {
+            // 0-arg func target (`func() T`): a curried nest never applies (only
+            // arity ≥ 1 boxes), so a direct assertion recovers the exact-shape
+            // boxed source reflection-free; the `rt.CoerceFuncSlot` fallback (a
+            // reflect last resort, distinct-named so the census does not count it
+            // as a live adapter — see the 1-arg arm) fires only for a divergent
+            // shape. `any(...)`: a concrete-typed func source is not an interface,
+            // so assert through an explicit box. No-op when `inner` is already
+            // `any`.
+            let tgt = render_ty(to);
+            format!(
+                "func() {tgt} {{ if _f, _ok := (any({})).({tgt}); _ok {{ return _f }}; return rt.CoerceFuncSlot[{tgt}]({}) }}()",
+                inner, inner
+            )
+        }
+        GoTy::Struct(fs) if !fs.is_empty() => {
+            // A structural (anonymous) record target — e.g. the applicative
+            // `Std.Codec` record `{Dec, Enc, Shp}` pulled from its ADT bag. Every
+            // anonymous record boxed into `any` is emitted as the canonical
+            // all-`any` struct with field names SORTED (lower::lower_record's
+            // all-`any` fallback), so narrow it with a reflection-free comma-ok
+            // assertion to that shape, then rebuild the typed target field-by-
+            // field (each field re-narrowed by this same function). Falls back to
+            // the reflect `rt.Coerce` for any other boxed shape, so correctness
+            // is preserved universally while the common codec/record path carries
+            // no `reflect.Value`. The reflect form is unimplemented under TinyGo;
+            // this closes it there.
+            let tgt = render_ty(to);
+            let mut sorted: Vec<&str> = fs.iter().map(|(n, _)| n.as_str()).collect();
+            sorted.sort();
+            let src_fields = sorted
+                .iter()
+                .map(|n| format!("{n} any"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let assigns = fs
+                .iter()
+                .map(|(n, t)| {
+                    let f = n.as_str();
+                    format!("{f}: {}", narrow_call(t, &format!("_m.{f}")))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "func(_s any) {tgt} {{ if _m, _ok := _s.(struct{{ {src_fields} }}); _ok {{ return {tgt}{{{assigns}}} }}; return rt.Coerce[{tgt}](_s) }}({inner})"
+            )
+        }
+        other => format!("rt.Coerce[{}]({})", render_ty(other), inner),
+    }
+}
+
 /// Port of `Builder.escapeGo` (doc 08 §4): Go strings are UTF-8; printable
 /// Unicode passes through, C0 controls escape.
 fn escape_go(s: &str) -> String {
@@ -602,5 +737,59 @@ mod tests {
             GoTy::Any,
         );
         assert_eq!(render_expr(&e), "rt.Log_println(\"hi\")");
+    }
+
+    // Regression (de-reflection 1430e4c0): a point-free MONOMORPHIC value keeps
+    // its CONCRETE Go func type (`rt.Basics_identity[any]` is `func(any) any`,
+    // not an interface), so the func-narrow adapter must bind `_s` through an
+    // explicit `any(...)` — `_s.(T)` on a non-interface fails `go build`
+    // ("invalid operation: _s ... is not an interface").
+    #[test]
+    fn narrow_to_func_boxes_source_through_any() {
+        let one = GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any));
+        let g1 = narrow_call(&one, "rt.Basics_identity[any]");
+        assert!(
+            g1.contains("_s := any(rt.Basics_identity[any])"),
+            "1-arg func narrow must box _s through any(): {g1}"
+        );
+        // 0-arg target: no curried nest applies, but still box before asserting.
+        let zero = GoTy::Func(vec![], Box::new(GoTy::Bare(Prim::Str)));
+        let g0 = narrow_call(&zero, "src");
+        assert!(
+            g0.contains("(any(src))."),
+            "0-arg func narrow must box through any(): {g0}"
+        );
+    }
+
+    // Regression (de-reflection 1430e4c0, surfaced by 06-json `Result.map3`): a
+    // function VALUE reaches a MULTI-arg callback slot boxed CURRIED
+    // (`func(any) any` nest), but the slot is a flat N-ary Go func. The narrow
+    // must UNCURRY statically at the target arity (reflection-free) — otherwise
+    // the reflect fallback mis-adapts and map3's `v_0(a,b,c)` yields a leftover
+    // `func(any) any` that panics `rt.Coerce[Profile]`.
+    #[test]
+    fn narrow_to_multiarg_func_uncurries_boxed_source() {
+        let to = GoTy::Func(
+            vec![GoTy::Any, GoTy::Any, GoTy::Any],
+            Box::new(GoTy::Any),
+        );
+        let g = narrow_call(&to, "boxedCtor");
+        assert!(
+            g.contains("_s.(func(any, any, any) any)"),
+            "exact-shape short-circuit for an already-flat source missing: {g}"
+        );
+        assert!(
+            g.contains("func(_a0 any, _a1 any, _a2 any) any"),
+            "uncurry closure at the target arity missing: {g}"
+        );
+        assert!(
+            g.contains(".(func(any) any)(any(_a1))")
+                && g.contains(".(func(any) any)(any(_a2))"),
+            "curried-application chain (apply each arg through the nest) missing: {g}"
+        );
+        assert!(
+            !g.contains("MakeFunc") && !g.contains("reflect."),
+            "the uncurry must be reflection-free: {g}"
+        );
     }
 }

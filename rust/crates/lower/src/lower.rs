@@ -1550,6 +1550,30 @@ fn builtin_ctor_arity(cname: &str) -> usize {
 /// first-appearance order (the Go generic param order `T1, T2, …`). `"any"` is
 /// the per-occurrence wildcard floor (`ty::is_polymorphic`), never a real
 /// generic parameter — a `{ onPress : msg, blob : any }` alias has arity 1.
+/// Stdlib records whose canonical representation IS a runtime struct with
+/// byte-identical fields, keyed by emitted Go name → the `rt` type to alias.
+/// Emitting `type <go_name> = <rt.Type>` (a transparent Go alias) lets a value
+/// the runtime kernel already produces as the `rt` type narrow to the emitted
+/// type by a reflection-free `v.(rt.Type)` assertion, avoiding the reflect
+/// `ConvertibleTo` the distinct-struct form forces (unimplemented under
+/// TinyGo). Extend only when the runtime struct's fields match the record's
+/// exactly (name + Go type); a mismatch would make the alias unsound.
+fn runtime_backed_record(go_name: &str) -> Option<&'static str> {
+    match go_name {
+        // rt.HttpResponse { Status int; Body string; Headers map[string]string }
+        "Sky_Core_Http_HttpResponse_R" => Some("rt.HttpResponse"),
+        // rt.NativeCoords { Lat float64; Lng float64; Accuracy float64 }
+        "Std_Native_Coords_R" => Some("rt.NativeCoords"),
+        // rt.ShareContent { Title string; Text string; Url string }
+        "Std_Native_ShareContent_R" => Some("rt.ShareContent"),
+        // rt.BatteryStatus { Charging bool; Level float64 }
+        "Std_Native_BatteryStatus_R" => Some("rt.BatteryStatus"),
+        // rt.PickedFile { Name string; Mime string; DataUrl string }
+        "Std_Native_PickedFile_R" => Some("rt.PickedFile"),
+        _ => None,
+    }
+}
+
 fn record_type_params(fields: &[(String, Ty)]) -> Vec<Name> {
     let mut out: Vec<Name> = Vec::new();
     for (_, t) in fields {
@@ -1608,14 +1632,6 @@ fn emit_type_decl(
 
             if param_vars.is_empty() {
                 // ---- non-generic (baseline, byte-identical) ----
-                let mut items = vec![GoItem::Type(
-                    decl.go_name.clone(),
-                    GoTypeDef::Struct(go_fields.clone()),
-                )];
-                items.push(GoItem::Raw(format!(
-                    "func init() {{ rt.RegisterGobType({}{{}}) }}",
-                    decl.go_name
-                )));
                 let ctor_name = decl.go_name.trim_end_matches("_R").to_string();
                 let params: Vec<String> = go_fields
                     .iter()
@@ -1627,6 +1643,44 @@ fn emit_type_decl(
                     .enumerate()
                     .map(|(i, (f, _))| format!("{f}: p{i}"))
                     .collect();
+                // A record whose canonical representation IS a runtime struct
+                // with identical fields (e.g. Sky.Core.Http.HttpResponse →
+                // rt.HttpResponse): emit a transparent Go alias so a value the
+                // runtime kernel produces as the `rt` type (Http_get returns
+                // `rt.HttpResponse`) narrows to the emitted type by a
+                // reflection-free `v.(rt.HttpResponse)` assertion. The distinct-
+                // struct form forces reflect `ConvertibleTo`, which TinyGo
+                // cannot run (the Sky.Spa/wasm client panics). The ctor + gob
+                // registration stay identical — the alias is transparent, so
+                // building/registering by field name is unchanged.
+                if let Some(rt_ty) = runtime_backed_record(&decl.go_name) {
+                    let items = vec![
+                        GoItem::Type(
+                            decl.go_name.clone(),
+                            GoTypeDef::RuntimeAlias(rt_ty.to_string()),
+                        ),
+                        GoItem::Raw(format!(
+                            "func init() {{ rt.RegisterGobType({}{{}}) }}",
+                            decl.go_name
+                        )),
+                        GoItem::Raw(format!(
+                            "func {ctor_name}({}) {} {{ return {}{{{}}} }}",
+                            params.join(", "),
+                            decl.go_name,
+                            decl.go_name,
+                            assigns.join(", ")
+                        )),
+                    ];
+                    return (items, more);
+                }
+                let mut items = vec![GoItem::Type(
+                    decl.go_name.clone(),
+                    GoTypeDef::Struct(go_fields.clone()),
+                )];
+                items.push(GoItem::Raw(format!(
+                    "func init() {{ rt.RegisterGobType({}{{}}) }}",
+                    decl.go_name
+                )));
                 items.push(GoItem::Raw(format!(
                     "func {ctor_name}({}) {} {{ return {}{{{}}} }}",
                     params.join(", "),
@@ -3298,7 +3352,7 @@ impl<'a> Ctx<'a> {
                 // function (`Result.map3 Profile …`, `List.map Piece …`): eta
                 // to a closure over its fields, same as a `Res::Ctor` value.
                 if self.record_ctor_name(d).is_some() {
-                    return self.lower_ctor_value(d, actual, None);
+                    return self.lower_ctor_value(d, actual, expected, None);
                 }
                 if let Some(raw) = self.kernel_alias.get(&d) {
                     // value-reference to a kernel-alias: use the runtime symbol.
@@ -3454,7 +3508,7 @@ impl<'a> Ctx<'a> {
             }
             Res::Ctor(cr) => {
                 let pin = self.pinned_union_go(cr.type_);
-                self.lower_ctor_value(cr.def, actual, pin)
+                self.lower_ctor_value(cr.def, actual, expected, pin)
             }
             Res::Foreign { package, name } => {
                 self.warnings.push(format!(
@@ -3567,7 +3621,13 @@ impl<'a> Ctx<'a> {
         Some(self.kernel_partial(go, &[], arity, expected))
     }
 
-    fn lower_ctor_value(&mut self, def: DefId, actual: &GoTy, pin: Option<String>) -> GoExpr {
+    fn lower_ctor_value(
+        &mut self,
+        def: DefId,
+        actual: &GoTy,
+        expected: &GoTy,
+        pin: Option<String>,
+    ) -> GoExpr {
         // A bare constructor reference used as a VALUE. For a nullary ctor this
         // is just the constructed value. For a ctor of arity ≥ 1 used as a
         // function value (`onInput UpdateDraft`, `onClick (Select room)` after
@@ -3603,6 +3663,77 @@ impl<'a> Ctx<'a> {
             }
             _ => (vec![GoTy::Any; arity], GoTy::Any),
         };
+        // Emit a constructor VALUE as a curried, uniformly `func(any) any` nest
+        // (the boxed-Sky-closure convention) rather than a flat/typed
+        // `func(T0, …, Tn) R`, in the two cases where the value is dispatched
+        // dynamically and the typed form forces reflect:
+        //   * arity ≥ 2 — a multi-arg ctor value is only ever applied through
+        //     the runtime's currying appliers (`pipelineApply` / `apply-N` /
+        //     `SkyCall`), never flat-called (Go cannot call a curried Sky
+        //     function directly). e.g. a `Std.Codec` record constructor.
+        //   * arity 1 into a BOXED-CLOSURE slot — an `any` slot, OR a
+        //     `func(any…) any` slot (a Sky higher-order param: `Cmd.perform
+        //     task GotTodos`, `getJson … GotTodos`, an event handler). Such a
+        //     slot dispatches the value via `SkyCall`/`pipelineApply`, whose
+        //     `func(any) any` fast path a typed `func(any) Msg` misses; matching
+        //     the slot's `func(any) any` shape hits it (and needs no coerce
+        //     bridge, which produced the un-fast-pathable shape before).
+        // The typed HOF path (a 1-arg ctor into a `func(A) B` slot with a
+        // CONCRETE param/return — `List.map Ctor xs`) keeps the flat typed form
+        // below, so the typed twin still type-checks. The reflect form these
+        // replace needs `reflect.Type.NumIn` to recover the arity, which TinyGo
+        // does not implement (the panic on a Sky.Spa client's non-empty record
+        // decode + task-completion dispatch).
+        let is_boxed_slot = |t: &GoTy| -> bool {
+            matches!(t, GoTy::Any)
+                || matches!(t, GoTy::Func(ps, r)
+                    if ps.iter().all(|p| *p == GoTy::Any) && **r == GoTy::Any)
+        };
+        let boxed_closure = arity >= 2 || (arity == 1 && is_boxed_slot(expected));
+        if boxed_closure {
+            let pnames: Vec<String> = (0..arity)
+                .map(|_| {
+                    let n = format!("_p{}", self.local_counter);
+                    self.local_counter += 1;
+                    n
+                })
+                .collect();
+            // ctor args: each `any` lambda param coerced to its field type
+            // (`rt.AsInt(_p0)`, …). `ctor_emit` widens/coerces per ctor kind.
+            let arg_exprs: Vec<GoExpr> = pnames
+                .iter()
+                .zip(param_tys.iter())
+                .map(|(pn, pty)| {
+                    let id = GoExpr::new(GoExprKind::Ident(pn.clone()), GoTy::Any);
+                    self.coerce_if_needed(id, pty)
+                })
+                .collect();
+            let ctor_val = self.ctor_emit(&cname, arg_exprs, &ret, pin.as_deref());
+            let ctor_val = self.coerce_if_needed(ctor_val, &ret);
+            // Wrap from the innermost param outward. Every lambda returns `any`
+            // (the constructed value, or the next lambda boxed) so its Go type is
+            // uniformly `func(any) any`.
+            let mut lambda: Option<GoExpr> = None;
+            for pn in pnames.iter().rev() {
+                let ret_body = match lambda.take() {
+                    None => self.widen(ctor_val.clone()),
+                    Some(inner) => self.widen(inner),
+                };
+                lambda = Some(GoExpr::new(
+                    GoExprKind::FuncLit(
+                        vec![GoParam {
+                            name: pn.clone(),
+                            ty: GoTy::Any,
+                        }],
+                        GoTy::Any,
+                        vec![GoStmt::Return(Some(ret_body))],
+                    ),
+                    GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any)),
+                ));
+            }
+            // Safe: `boxed_closure` guarantees arity ≥ 1 → ≥ 1 iteration.
+            return lambda.expect("curried ctor nest has ≥1 lambda");
+        }
         let mut gparams: Vec<GoParam> = Vec::new();
         let mut arg_exprs: Vec<GoExpr> = Vec::new();
         for pty in param_tys.iter().take(arity) {
@@ -3624,6 +3755,100 @@ impl<'a> Ctx<'a> {
             GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
             fn_ty,
         )
+    }
+
+    /// Widen a lowered expression to the `any` slot it crosses into.
+    ///
+    /// For a non-function value this is the identity `any(e)` wrap (`Widen`),
+    /// byte-identical to the historical free `widen`. For a FUNCTION VALUE whose
+    /// Go shape is not already the uniform all-`any` form, it emits a curried
+    /// `func(any) any` nest (the boxed-Sky-closure convention) instead of
+    /// `any(func(T0,…) R)`: the adapter calls `e` as a DIRECT typed Go call
+    /// (reflection-free) with each `any` param narrowed to `e`'s declared param
+    /// type, and its result re-widened.
+    ///
+    /// Why here: `widen` is invoked ONLY at an `any` slot, and a Sky function
+    /// value reaches the runtime's reflect appliers (`SkyCall` / `pipelineApply`
+    /// / `sky_call` / `performTask`) exactly once it has been erased to `any`.
+    /// Boxing at this boundary makes every dynamically-dispatched function value
+    /// hit one `func(any) any` fast path (reflection-free — TinyGo implements no
+    /// `reflect.Value.Call` / `reflect.Type.NumIn`), while every TYPED-slot
+    /// callback stays untouched: the typed HOF twin (`rt.List_mapT[A,B]`) passes
+    /// its `func(A) B` callback UN-widened, so this never regresses it. Mirrors
+    /// `lower_ctor_value`'s boxed nest; see doc 14 §5.1 (eta at the slot shape)
+    /// + §9.2 (the closeable `rt.SkyCall` dispatch population).
+    fn widen(&mut self, e: GoExpr) -> GoExpr {
+        if e.ty == GoTy::Any {
+            return e;
+        }
+        // Box a function value into the uniform `func(any) any` shape (callable),
+        // then wrap in the explicit `any(...)`. A non-function value boxes to
+        // itself, so this stays byte-identical (`any(e)`).
+        let boxed = self.box_func_value(e);
+        GoExpr::new(GoExprKind::Widen(Box::new(boxed)), GoTy::Any)
+    }
+
+    /// Box a function VALUE into the uniform curried `func(any) any` convention
+    /// and return the CALLABLE func value (NOT an `any(...)` wrap). A value that
+    /// is already the all-`any` shape, or not a function, is returned unchanged.
+    ///
+    /// The result is callable directly (`box(f)(x)`) AND upcasts to `any`
+    /// implicitly when stored, so `coerce_if_needed`'s Any path can box a func
+    /// crossing into an `any` slot WITHOUT breaking a caller that applies it as a
+    /// Go call (a pipeline `x |> f`); `widen` wraps this for an explicit slot.
+    fn box_func_value(&mut self, e: GoExpr) -> GoExpr {
+        let (ps, r) = match &e.ty {
+            GoTy::Func(ps, r)
+                if !ps.is_empty()
+                    && !(ps.iter().all(|p| *p == GoTy::Any) && **r == GoTy::Any) =>
+            {
+                (ps.clone(), (**r).clone())
+            }
+            _ => return e,
+        };
+        let arity = ps.len();
+        let pnames: Vec<String> = (0..arity)
+            .map(|_| {
+                let n = format!("_w{}", self.local_counter);
+                self.local_counter += 1;
+                n
+            })
+            .collect();
+        // Direct typed call `e(narrow(_w0), …)`, each `any` param narrowed to
+        // `e`'s declared param type — reflection-free after the landed
+        // ResultCoerceOk / narrow_call struct arm.
+        let call_args: Vec<GoExpr> = pnames
+            .iter()
+            .zip(ps.iter())
+            .map(|(pn, pty)| {
+                let id = GoExpr::new(GoExprKind::Ident(pn.clone()), GoTy::Any);
+                self.coerce_if_needed(id, pty)
+            })
+            .collect();
+        let call = GoExpr::new(GoExprKind::Call(Box::new(e), call_args), r);
+        // innermost body = the call result widened to `any` (recurses: a
+        // func-returning `e` boxes its result too).
+        let mut inner_body = Some(self.widen(call));
+        let mut lambda: Option<GoExpr> = None;
+        for pn in pnames.iter().rev() {
+            let ret_body = match lambda.take() {
+                None => inner_body.take().expect("innermost body set once"),
+                Some(inner) => self.widen(inner),
+            };
+            lambda = Some(GoExpr::new(
+                GoExprKind::FuncLit(
+                    vec![GoParam {
+                        name: pn.clone(),
+                        ty: GoTy::Any,
+                    }],
+                    GoTy::Any,
+                    vec![GoStmt::Return(Some(ret_body))],
+                ),
+                GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any)),
+            ));
+        }
+        // The outermost `func(any) any` lambda — returned CALLABLE (not wrapped).
+        lambda.expect("arity ≥ 1 → ≥ 1 lambda")
     }
 
     /// Lower a constructor application (0+ args). Handles builtin Ok/Err/Just/
@@ -4635,6 +4860,26 @@ impl<'a> Ctx<'a> {
     }
 
     fn kernel_call(&mut self, go: &str, args: &[ExprId], actual: &GoTy) -> GoExpr {
+        // Sky.Spa client dispatch de-reflection (docs/skyspa/prod-web.md Path A).
+        // `Spa.config { init, update, view, subscriptions }` normally lowers its
+        // record to an all-`any` anonymous struct the wasm driver
+        // reflect-dispatches (`sky_call`/`sky_call2` → `reflect.Value.Call`),
+        // which TinyGo cannot compile. For the Sky.Spa target emit an
+        // `rt.SpaFns{…}` of typed adapter CLOSURES that call the app's concrete
+        // `Main_update`/`Main_view`/… directly (type assertions, not reflect).
+        // The Sky.Live / Tui / Webview SERVER path lowers `Live.config` — a
+        // DIFFERENT kernel — so it is untouched and still emits the all-`any`
+        // reflect form. On any shape it cannot handle this returns to the normal
+        // path, which stays byte-identical (the runtime `Spa_config` keeps a
+        // reflect fallback for a non-literal config).
+        if go == "rt.Spa_config" && args.len() == 1 {
+            let saved = self.local_counter;
+            if let Some(fns) = self.try_lower_spa_fns(args[0]) {
+                let wfns = self.widen(fns);
+                return self.kernel_call_lowered(go, vec![wfns], actual);
+            }
+            self.local_counter = saved;
+        }
         // A Dict operation that lets the KEY out routes to the typed-key entry
         // point for that key type (`rt.Dict_toListIntKey` / `rt.Dict_foldlCharKey`
         // / …) so the key decodes back to its Sky type instead of leaking the
@@ -4671,17 +4916,162 @@ impl<'a> Ctx<'a> {
                 }
                 // Unproven: the erased call, byte-identically, over the argument
                 // already lowered above rather than lowered a second time.
-                return self.kernel_call_lowered(go, vec![widen(xs)], actual);
+                let wxs = self.widen(xs);
+                return self.kernel_call_lowered(go, vec![wxs], actual);
             }
         }
         let largs: Vec<GoExpr> = args
             .iter()
             .map(|a| {
                 let e = self.lower_expr(*a, &GoTy::Any);
-                widen(e)
+                self.widen(e)
             })
             .collect();
         self.kernel_call_lowered(go, largs, actual)
+    }
+
+    /// Build the reflect-free `rt.SpaFns{…}` client dispatch table from a
+    /// `Spa.config` record literal. Returns `None` (→ the caller keeps the
+    /// byte-identical all-`any` reflect path) when the argument is not a record
+    /// literal carrying the `init`/`update`/`view` TEA fields.
+    fn try_lower_spa_fns(&mut self, record_id: ExprId) -> Option<GoExpr> {
+        let fields = match &self.body.exprs[record_id] {
+            Expr::Record(fs) => fs.clone(),
+            _ => return None,
+        };
+        let find = |name: &str| {
+            fields
+                .iter()
+                .find(|(n, _)| n.as_str() == name)
+                .map(|(_, e)| *e)
+        };
+        let init = find("init")?;
+        let update = find("update")?;
+        let view = find("view")?;
+        let subs = find("subscriptions"); // optional (config omits ⇒ no subs)
+
+        let init_c = self.spa_adapter(init, 1, true)?;
+        let update_c = self.spa_adapter(update, 2, true)?;
+        let view_c = self.spa_adapter(view, 1, false)?;
+        let subs_c = match subs {
+            Some(s) => self.spa_adapter(s, 1, false)?,
+            None => GoExpr::new(GoExprKind::Nil, GoTy::Any),
+        };
+
+        Some(GoExpr::new(
+            GoExprKind::StructLit(
+                "rt.SpaFns".into(),
+                vec![
+                    ("Init".into(), init_c),
+                    ("Update".into(), update_c),
+                    ("View".into(), view_c),
+                    ("Subs".into(), subs_c),
+                ],
+            ),
+            GoTy::Named("rt.SpaFns".into(), vec![]),
+        ))
+    }
+
+    /// One typed adapter closure for a Sky.Spa config field. `arity` is the
+    /// number of leading `any` parameters the driver invokes it with (1 for
+    /// init/view/subscriptions, 2 for update). When `tuple_result` the
+    /// `( model, Cmd )` return is repacked into `rt.SkyTuple2` (so the driver
+    /// reads `.V0`/`.V1` without reflect); otherwise the result is widened to
+    /// `any` (view→Html, subscriptions→Sub). `None` when the field's lowered Go
+    /// type is not a function of the expected arity — the caller then falls back
+    /// to the reflect path.
+    fn spa_adapter(&mut self, field: ExprId, arity: usize, tuple_result: bool) -> Option<GoExpr> {
+        // Lower the field value; peel the `any(…)` widen a func-into-`any` slot
+        // adds so we see the concrete function value + its Go func type.
+        let mut target = self.lower_expr(field, &GoTy::Any);
+        while let GoExprKind::Widen(inner) = target.kind {
+            target = *inner;
+        }
+        // Determine param types + call style. An uncurried n-ary Go func
+        // (`func(A, B) R` — how 2-arg Sky funcs emit) is called in one go; a
+        // curried unary chain (`func(A) func(B) R`) is peeled arrow-by-arrow.
+        let (in_tys, uncurried) = match &target.ty {
+            GoTy::Func(ins, _) if ins.len() == arity => (ins.clone(), true),
+            _ => {
+                let mut ins = Vec::new();
+                let mut cur = target.ty.clone();
+                for _ in 0..arity {
+                    match cur {
+                        GoTy::Func(i, out) if i.len() == 1 => {
+                            ins.push(i[0].clone());
+                            cur = *out;
+                        }
+                        _ => return None,
+                    }
+                }
+                (ins, false)
+            }
+        };
+        if in_tys.len() != arity {
+            return None;
+        }
+
+        // Asserted argument for parameter i: `ai.(InTy)`, or bare `ai` when the
+        // parameter is already `any` (e.g. init's flags). Type assertions are
+        // typed dispatch, not reflect.
+        let arg = |i: usize, in_ty: &GoTy| -> GoExpr {
+            let a = GoExpr::new(GoExprKind::Ident(format!("a{i}")), GoTy::Any);
+            if *in_ty == GoTy::Any {
+                a
+            } else {
+                GoExpr::new(
+                    GoExprKind::TypeAssert(Box::new(a), in_ty.clone()),
+                    in_ty.clone(),
+                )
+            }
+        };
+
+        let call = if uncurried {
+            let cargs: Vec<GoExpr> = in_tys.iter().enumerate().map(|(i, t)| arg(i, t)).collect();
+            GoExpr::new(GoExprKind::Call(Box::new(target), cargs), GoTy::Any)
+        } else {
+            let mut acc = target;
+            for (i, t) in in_tys.iter().enumerate() {
+                acc = GoExpr::new(GoExprKind::Call(Box::new(acc), vec![arg(i, t)]), GoTy::Any);
+            }
+            acc
+        };
+
+        let params: Vec<GoParam> = (0..arity)
+            .map(|i| GoParam {
+                name: format!("a{i}"),
+                ty: GoTy::Any,
+            })
+            .collect();
+
+        let (ret, body) = if tuple_result {
+            // p := <call>; return rt.SkyTuple2{V0: any(p.V0), V1: any(p.V1)}
+            let p = || GoExpr::new(GoExprKind::Ident("p".into()), GoTy::Any);
+            let v0 = self.widen(GoExpr::new(
+                GoExprKind::Selector(Box::new(p()), "V0".into()),
+                GoTy::Any,
+            ));
+            let v1 = self.widen(GoExpr::new(
+                GoExprKind::Selector(Box::new(p()), "V1".into()),
+                GoTy::Any,
+            ));
+            let repack = GoExpr::new(
+                GoExprKind::StructLit(
+                    "rt.SkyTuple2".into(),
+                    vec![("V0".into(), v0), ("V1".into(), v1)],
+                ),
+                GoTy::Named("rt.SkyTuple2".into(), vec![]),
+            );
+            (
+                GoTy::Named("rt.SkyTuple2".into(), vec![]),
+                vec![GoStmt::Short("p".into(), call), GoStmt::Return(Some(repack))],
+            )
+        } else {
+            (GoTy::Any, vec![GoStmt::Return(Some(self.widen(call)))])
+        };
+
+        let fn_ty = GoTy::Func(vec![GoTy::Any; arity], Box::new(ret.clone()));
+        Some(GoExpr::new(GoExprKind::FuncLit(params, ret, body), fn_ty))
     }
 
     /// The typed dispatch for a two-argument kernel list HOF — doc 08 §6
@@ -4881,7 +5271,7 @@ impl<'a> Ctx<'a> {
         actual: &GoTy,
     ) -> GoExpr {
         let erased =
-            |s: &mut Self, f: GoExpr, xs: GoExpr| s.kernel_call_lowered(go, vec![widen(f), widen(xs)], actual);
+            |s: &mut Self, f: GoExpr, xs: GoExpr| { let wf = s.widen(f); let wx = s.widen(xs); s.kernel_call_lowered(go, vec![wf, wx], actual) };
 
         // The element type comes from the LIST, whose lowered slice type is the
         // one Go will index. `make_partial` hard-codes its remaining params to
@@ -4955,7 +5345,18 @@ impl<'a> Ctx<'a> {
                 let GoTy::Named(n, margs) = &*f_r else {
                     return erased(self, f, xs);
                 };
-                if f_ps.len() != 1 || n != "rt.SkyMaybe" || margs.len() != 1 || !provable(&margs[0])
+                // `B` may be `any` — a `List.filterMap : … -> List any` (the
+                // heterogeneous result of `Std.Ui.collectHtmlAttrs`, etc.). The
+                // typed twin `List_filterMapT[A, any]` still dispatches `fn`
+                // typed (`func(A) SkyMaybe[any]` — reflection-free), and `any` is
+                // a valid Go type argument; only a type-var / anonymous-struct
+                // `B` would be unrenderable. So allow `any` explicitly instead of
+                // falling to the reflect `List_filterMap` (which SkyCalls `fn`
+                // per element — the site TinyGo cannot run).
+                if f_ps.len() != 1
+                    || n != "rt.SkyMaybe"
+                    || margs.len() != 1
+                    || !(provable(&margs[0]) || margs[0] == GoTy::Any)
                 {
                     return erased(self, f, xs);
                 }
@@ -5105,7 +5506,8 @@ impl<'a> Ctx<'a> {
         }
         // Not a statically typed pair — the unchanged reflective call, built from
         // the argument already lowered above.
-        Some(self.kernel_call_lowered(go, vec![widen(t)], actual))
+        let wt = self.widen(t);
+        Some(self.kernel_call_lowered(go, vec![wt], actual))
     }
 
     /// A kernel applied to MORE arguments than its runtime symbol takes.
@@ -5173,7 +5575,7 @@ impl<'a> Ctx<'a> {
             .iter()
             .map(|a| {
                 let e = self.lower_expr(*a, &GoTy::Any);
-                widen(e)
+                self.widen(e)
             })
             .collect();
         let n_rest = arity - given.len();
@@ -5190,7 +5592,7 @@ impl<'a> Ctx<'a> {
                 ty: pty.clone(),
             });
             // The kernel symbol takes `any` params — widen the typed closure param.
-            arg_exprs.push(widen(GoExpr::new(GoExprKind::Ident(pname), pty.clone())));
+            arg_exprs.push(self.widen(GoExpr::new(GoExprKind::Ident(pname), pty.clone())));
         }
         let call = GoExpr::new(
             GoExprKind::Call(
@@ -5267,7 +5669,7 @@ impl<'a> Ctx<'a> {
                 // `rt.Concat` returns Go `any` (list `++`); type the node `Any`
                 // so the enclosing slot narrows via `rt.AsListT` rather than
                 // feeding `any` into a `[]T` slot.
-                call_rt("rt.Concat", vec![widen(l), widen(r)], GoTy::Any)
+                call_rt("rt.Concat", vec![self.widen(l), self.widen(r)], GoTy::Any)
             }
             "::" => {
                 let elem = actual.elem_ty();
@@ -5278,7 +5680,7 @@ impl<'a> Ctx<'a> {
                 // (`lower_expr`) coerces to the expected `[]T` via `rt.AsListT`.
                 // Typing it `[]T` here would suppress that coercion and feed an
                 // `any` value into a `[]T` slot (`go build` rejects it).
-                call_rt("rt.List_cons", vec![widen(l), widen(r)], GoTy::Any)
+                call_rt("rt.List_cons", vec![self.widen(l), self.widen(r)], GoTy::Any)
             }
             "|>" => {
                 // a |> f  ==  f a. Flatten when `f` is a partial application
@@ -5365,7 +5767,7 @@ impl<'a> Ctx<'a> {
                         ">=" => "rt.Gte",
                         _ => "rt.Add",
                     };
-                    call_rt(helper, vec![widen(l), widen(r)], GoTy::Any)
+                    call_rt(helper, vec![self.widen(l), self.widen(r)], GoTy::Any)
                 } else {
                     let rtname = match op {
                         "//" => "rt.IntDiv",
@@ -5382,7 +5784,7 @@ impl<'a> Ctx<'a> {
                     // the use site — matching the oracle. Typing it `actual`
                     // (e.g. `int`) is a lie: Go's `:=` infers `any` and the value
                     // then fails to satisfy an `int` slot.
-                    call_rt(rtname, vec![widen(l), widen(r)], GoTy::Any)
+                    call_rt(rtname, vec![self.widen(l), self.widen(r)], GoTy::Any)
                 }
             }
         }
@@ -6146,7 +6548,8 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .map(|(n, v)| {
                     let cap = capitalize(n.as_str());
-                    let lowered = widen(self.lower_expr(*v, &GoTy::Any));
+                    let inner = self.lower_expr(*v, &GoTy::Any);
+                    let lowered = self.widen(inner);
                     (format!("\"{cap}\""), lowered)
                 })
                 .collect();
@@ -6154,13 +6557,14 @@ impl<'a> Ctx<'a> {
                 GoExprKind::StructLit("map[string]any".to_string(), pairs),
                 GoTy::Any,
             );
+            let widen_b = self.widen(b);
             return GoExpr::new(
                 GoExprKind::Call(
                     Box::new(GoExpr::new(
                         GoExprKind::Ident("rt.RecordUpdate".into()),
                         GoTy::Any,
                     )),
-                    vec![widen(b), map_lit],
+                    vec![widen_b, map_lit],
                 ),
                 GoTy::Any,
             );
@@ -6247,7 +6651,10 @@ impl<'a> Ctx<'a> {
         }
         // arity ≥10 → `rt.SkyTupleN{ Vs: []any{…} }` (slice-backed, heterogeneous).
         let vs = GoExpr::new(
-            GoExprKind::SliceLit(GoTy::Any, args.into_iter().map(widen).collect()),
+            GoExprKind::SliceLit(
+                GoTy::Any,
+                args.into_iter().map(|a| self.widen(a)).collect(),
+            ),
             GoTy::Any,
         );
         GoExpr::new(
@@ -7583,13 +7990,6 @@ fn call_rt(name: &str, args: Vec<GoExpr>, ty: GoTy) -> GoExpr {
     )
 }
 
-fn widen(e: GoExpr) -> GoExpr {
-    if e.ty == GoTy::Any {
-        e
-    } else {
-        GoExpr::new(GoExprKind::Widen(Box::new(e)), GoTy::Any)
-    }
-}
 
 /// The PURE-SKY `Sky.Core.List` HOFs that have a fully-typed runtime twin a
 /// provable call site can be re-pointed at.

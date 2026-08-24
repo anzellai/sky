@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // HTTP observability middleware for Sky.Live + Sky.Http.Server.

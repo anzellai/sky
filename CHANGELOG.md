@@ -13,6 +13,32 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.22.0 — Sky.Spa: one language, every platform (2026-08-24)
+
+### Sky.Spa — client-side wasm apps, now a supported feature
+
+Sky.Spa graduates from preview to a supported part of the stdlib (`Std.Spa`). You
+write the same `Model / Msg / update / view` you would for Sky.Live, and the whole
+TEA loop compiles to `GOOS=js GOARCH=wasm` and runs on the client — pure `update`
+branches with zero round-trip. Highlights:
+
+- **Auto-split** — `sky spa-split <entry>` derives a wasm frontend + a stateless
+  native backend + a shared codec contract from one project; effectful branches
+  become typed RPCs, pure UI branches stay client-local.
+- **`Std.Native`** — 19 client device capabilities as typed effects
+  (`Task Error a`): clipboard, local storage, geolocation, share, vibrate,
+  notifications (native iOS/Android bridge), battery, online status, language,
+  dark-mode, open-URL, set-title, file/photo/camera pickers — plus `Native.bridge`,
+  a user-extensible primitive so an app (or a library) registers its OWN native
+  capability without a compiler change.
+- **`Std.Bundle`** — cross-platform packaging identity in code (`withName` / `withId`
+  / `withIcon` / `withVersion` / `withPermission` / `withAsset`), so `sky build
+  --target web|desktop|ios|android` fills the Info.plist / AndroidManifest / icons.
+- **Native libraries** — a Sky package may ship `native/ios/*.swift` /
+  `native/android/*.java` + entitlement/manifest fragments; `sky add --sky` +
+  `import` pulls in the Sky wrapper AND its native code, linked into the shell.
+- Examples `60-spa-todos` … `64-spa-native` (web + iOS + Android).
+
 ### ⚠ Breaking changes — Sky.Live config: what was silently ignored now takes effect
 
 Every Sky.Live setting (`port`, `store`, `storePath`, `ttl`, `idleEvict`) now

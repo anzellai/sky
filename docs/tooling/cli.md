@@ -26,6 +26,45 @@ Pipeline:
 3. Resolve modules, type-check, lower to Go under `sky-out/`.
 4. Invoke `go build` → `sky-out/app` (or the `bin` name set in `sky.toml`).
 
+**`--wasm`** compiles a **Sky.Spa client** for the browser (`GOOS=js
+GOARCH=wasm`) instead of a native binary, writing `sky-out/main.wasm` +
+`sky-out/wasm_exec.js` (the matching loader). Standard-Go wasm has full reflect,
+so it runs in any browser / WKWebView / Android WebView.
+
+```bash
+sky build --wasm src/Main.sky        # -> sky-out/main.wasm + wasm_exec.js
+```
+
+**`--target <t>`** builds the wasm client (implies `--wasm`), always stages the
+servable `dist/` bundle (index.html + main.wasm + wasm_exec.js), and then — for a
+native surface — **generates a shell and builds it** into a real artifact. Each
+shell is a thin native window over the SAME wasm client, loading it from your
+backend; client and server stay separate, only the shell is native.
+
+| `--target` | Produces | Notes |
+|---|---|---|
+| `web` / `tablet` | `dist/` ready to serve | serve statically, or same-origin via `Server.static "/" "../dist"`; tablet == responsive web |
+| `desktop` | `sky-out/desktop/<app>` (native binary) | generates a `Std.Webview.url` shell + builds it (cgo — WKWebView / WebView2 / webkit2gtk) |
+| `ios` | `sky-out/ios/build/<App>.app` | generates a SwiftUI + WKWebView shell + builds it for the Simulator (swiftc). **Requires full Xcode + the iOS Simulator runtime**; missing → warns + exits |
+| `android` | `sky-out/android/build/<app>.apk` (signed) | generates a WebView shell + builds a signed APK (aapt2 → javac → d8 → zipalign → apksigner, no Gradle). **Requires the Android SDK** (`ANDROID_HOME` / `adb`) + a JDK; missing → warns + exits |
+
+```bash
+sky build --target web src/Main.sky      # -> dist/ (serve it)
+sky build --target desktop src/Main.sky  # -> sky-out/desktop/<app>  (run after starting your backend)
+sky build --target ios src/Main.sky      # -> sky-out/ios/build/<App>.app  (xcrun simctl install booted …)
+sky build --target android src/Main.sky  # -> sky-out/android/build/<app>.apk  (adb install -r …)
+```
+
+The generated shells point at `http://127.0.0.1:8951/` (desktop, via `PORT`),
+`http://localhost:8951/` (iOS Simulator — shares the host network), and
+`http://10.0.2.2:8951/` (Android emulator's host alias) — start your backend
+first. For a real device / production, host the `dist/` bundle from your backend
+over https and point the shell there. For `ios` / `android` the platform
+toolchain is checked **before** the (slower) build, so a missing SDK fails fast
+with an install hint rather than half-building. The hand-written reference shells
+live in `examples/60-spa-todos/{mobile-ios,mobile-android,desktop}` if you want
+to eject and customize (icons, permissions, package id).
+
 **`--embed`** bundles a PostgreSQL distribution into the binary, so
 `./sky-out/app --embed` is a self-contained app *and* database on a bare host —
 one file, no system PostgreSQL, no `DATABASE_URL`.
@@ -52,6 +91,47 @@ sky build --embed src/Main.sky
   database or make the flag inert.
 
 `--embed` belongs on `sky build`, not on `sky run` — see below.
+
+### `sky spa-split <path> --out <dir> [--build | --target <t>]`
+
+The **Sky.Spa auto-split**: take ONE Sky.Spa project whose `update` runs effects
+inline, and generate a **wasm frontend + native stateless backend + a shared wire
+contract** — no hand-written API. The compiler infers the client/server split
+from effects (the rule is dead simple: **pure → client, any effect → server; the
+client is 100 % pure UI**), so a database/file/secret/auth value or function can
+**never** reach the browser — it is a build failure if it could (a fail-closed
+guard over every kernel family). Server branches become generated RPC endpoints;
+`Cmd.publish` fans out to subscribed clients over SSE (server→client push).
+
+- **bare** — generates `shared/`, `backend/`, `frontend/` and prints the build
+  commands.
+- **`--build`** — also builds both: backend native, frontend wasm (`--target web`).
+- **`--target <web|desktop|ios|android|tablet>`** — builds the frontend for that
+  delivery surface (implies `--build`); `desktop`/`ios`/`android` also produce the
+  native shell (WKWebView / WebView2 / webkit2gtk / Android WebView / SwiftUI)
+  over the same wasm client.
+
+```bash
+sky spa-split src/Main.sky --out dist/split                 # generate only
+sky spa-split src/Main.sky --out dist/split --build         # + build backend + web frontend
+sky spa-split src/Main.sky --out dist/split --target desktop # + native desktop shell
+```
+
+The generated backend serves the frontend, the `/_rpc/<Msg>` endpoints, and
+`GET /_sky/sub` (SSE). Client→server is HTTP RPC, server→client is SSE — same
+origin, so no CORS and a trivial `connect-src 'self'` CSP. Inspect the derived
+split first with [`sky spa-partition`](#sky-spa-partition-path) — it prints each
+branch CLIENT/SERVER with the reason. (In-process broker = single replica;
+`SKY_LIVE_BROKER_URL` gives cross-replica push, same as Sky.Live.) Design +
+internals: `docs/skyspa/auto-split.md`.
+
+### `sky spa-partition <path>`
+
+Read-only: prints the inferred client/server partition of a Sky.Spa `update` —
+each branch as CLIENT or SERVER with the taint reason, each server branch's RPC
+inputs/outputs, and the server-tainted top-level bindings. Answers "what runs
+where, and why" before you generate anything with `sky spa-split`. Nothing is
+hidden: the split is inferred but always inspectable.
 
 ### `sky run [path]`
 

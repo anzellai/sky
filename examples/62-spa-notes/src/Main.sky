@@ -1,0 +1,527 @@
+module Main exposing (main)
+
+-- Sky.Spa NOTES — a real-world knowledge-base app written as ONE Sky.Spa
+-- project with effects INLINE (the auto-split TIER). It is NOT built directly:
+-- `sky spa-split src/Main.sky --out .split --build` derives three normal Sky
+-- projects from this source tree —
+--
+--   * frontend/  — the wasm client: the whole `view` + the PURE update branches
+--                  run 100% in the browser (select/edit/search are zero-network
+--                  local transitions). Each effectful branch is rewritten to an
+--                  RPC call; the effectful `Persist` module is NEVER emitted into
+--                  the bundle, so no store, connection, or secret reaches it.
+--   * backend/   — the native Sky.Http.Server: it owns the SQLite store and runs
+--                  each effectful branch behind a generated `POST /_rpc/<Msg>`
+--                  (reusing this file's own `init` + `update` server-side), and
+--                  serves the frontend's static assets same-origin.
+--   * shared/    — the wire contract (per-RPC req/resp records + codecs);
+--                  `Domain` (the pure `Note` type + codecs) is shared unchanged.
+--
+-- The split is INFERRED: `pure -> client, ANY effect -> server`. The four
+-- persistence branches (Load/Create/Save/Delete) reach the `Persist` module so
+-- they become RPCs; the four UI branches (Select/DraftTitle/DraftBody/Search)
+-- stay client-local.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Error as Error exposing (Error)
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Events as Ev
+import Std.Ui.Input as Input
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Domain exposing (Note)
+import Persist
+
+
+
+-- ─── Model + Msg ───────────────────────────────────────────────────
+
+
+type alias Model =
+    { notes : List Note
+    , selected : Int
+    , draftTitle : String
+    , draftBody : String
+    , query : String
+    }
+
+
+type Msg
+    = -- PURE (client-local, zero round-trip)
+      Select Int
+    | DraftTitle String
+    | DraftBody String
+    | Search String
+      -- SERVER (Persist effect → generated RPC)
+    | Load
+    | Create
+    | Save
+    | Delete Int
+
+
+
+-- ─── Pure helpers (client-safe) ────────────────────────────────────
+
+
+findNote : Int -> List Note -> Maybe Note
+findNote id notes =
+    List.find (\n -> n.id == id) notes
+
+
+visibleNotes : Model -> List Note
+visibleNotes model =
+    let
+        q =
+            String.toLower (String.trim model.query)
+    in
+    if String.isEmpty q then
+        model.notes
+
+    else
+        List.filter
+            (\n -> String.contains q (String.toLower (n.title ++ " " ++ n.body)))
+            model.notes
+
+
+cardTitle : Note -> String
+cardTitle note =
+    if String.isEmpty (String.trim note.title) then
+        "Untitled"
+
+    else
+        note.title
+
+
+snippet : String -> String
+snippet body =
+    let
+        one =
+            String.trim body
+    in
+    if String.isEmpty one then
+        "No content yet"
+
+    else
+        String.left 52 one
+
+
+
+-- ─── init ──────────────────────────────────────────────────────────
+-- Pure — starts empty, then fires `Load` once. `Cmd.perform` over a PURE
+-- `Task.succeed` is client-safe (it dispatches a Msg; it is not an effect), so
+-- it survives verbatim into the wasm frontend; the `Load` branch it triggers is
+-- the effect, and that becomes a boot RPC (`POST /_rpc/Load`).
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { notes = []
+      , selected = 0
+      , draftTitle = ""
+      , draftBody = ""
+      , query = ""
+      }
+    , Cmd.perform (Task.succeed ()) (\_ -> Load)
+    )
+
+
+
+-- ─── update ────────────────────────────────────────────────────────
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        -- PURE — pick a note into the editor. Zero network.
+        Select id ->
+            case findNote id model.notes of
+                Just n ->
+                    ( { model
+                        | selected = id
+                        , draftTitle = n.title
+                        , draftBody = n.body
+                      }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( { model | selected = id }, Cmd.none )
+
+        -- PURE — edit the draft title/body in memory.
+        DraftTitle s ->
+            ( { model | draftTitle = s }, Cmd.none )
+
+        DraftBody s ->
+            ( { model | draftBody = s }, Cmd.none )
+
+        -- PURE — filter the list in memory.
+        Search q ->
+            ( { model | query = q }, Cmd.none )
+
+        -- SERVER — re-read the authoritative list (boot + refresh).
+        Load ->
+            ( { model | notes = Persist.loadNotes () }, Cmd.none )
+
+        -- SERVER — insert a new note from the drafts, return the fresh list.
+        Create ->
+            ( { model
+                | notes = Persist.createNote model.draftTitle model.draftBody
+                , draftTitle = ""
+                , draftBody = ""
+                , selected = 0
+              }
+            , Cmd.none
+            )
+
+        -- SERVER — update the selected note with the drafts.
+        Save ->
+            ( { model
+                | notes =
+                    Persist.updateNote model.selected model.draftTitle model.draftBody
+              }
+            , Cmd.none
+            )
+
+        -- SERVER — delete a note by id, return the fresh list.
+        Delete id ->
+            ( { model
+                | notes = Persist.deleteNote id
+                , selected = 0
+                , draftTitle = ""
+                , draftBody = ""
+              }
+            , Cmd.none
+            )
+
+
+
+-- ─── Palette ───────────────────────────────────────────────────────
+
+
+pageBg : Ui.Color
+pageBg =
+    Ui.rgb255 243 244 246
+
+
+panelBg : Ui.Color
+panelBg =
+    Ui.rgb255 255 255 255
+
+
+headerBg : Ui.Color
+headerBg =
+    Ui.rgb255 17 24 39
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb255 79 70 229
+
+
+accentSoft : Ui.Color
+accentSoft =
+    Ui.rgb255 238 242 255
+
+
+borderCol : Ui.Color
+borderCol =
+    Ui.rgb255 226 232 240
+
+
+textDark : Ui.Color
+textDark =
+    Ui.rgb255 17 24 39
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb255 100 116 139
+
+
+white : Ui.Color
+white =
+    Ui.rgb255 255 255 255
+
+
+danger : Ui.Color
+danger =
+    Ui.rgb255 220 38 38
+
+
+
+-- ─── view (rich Std.Ui, cross-platform Element) ────────────────────
+
+
+hid : String -> Ui.Attribute msg
+hid v =
+    Ui.htmlAttribute "id" v
+
+
+header : Model -> Element Msg
+header model =
+    Ui.row
+        [ hid "header"
+        , Ui.width Ui.fill
+        , Ui.paddingXY 22 16
+        , Ui.spacing 12
+        , Background.color headerBg
+        , Border.shadow
+            { offsetX = 0
+            , offsetY = 1
+            , blur = 3
+            , spread = 0
+            , color = Ui.rgba 0 0 0 0.25
+            }
+        ]
+        [ Ui.el [ Font.size 19, Font.bold, Font.color white ] (Ui.text "Sky Notes")
+        , Ui.el
+            [ Font.size 13, Font.color (Ui.rgb255 148 163 184) ]
+            (Ui.text (String.fromInt (List.length model.notes) ++ " saved"))
+        ]
+
+
+noteCard : Model -> Note -> Element Msg
+noteCard model note =
+    let
+        isSel =
+            note.id == model.selected
+
+        cardBg =
+            if isSel then
+                accentSoft
+
+            else
+                panelBg
+
+        edge =
+            if isSel then
+                accent
+
+            else
+                borderCol
+    in
+    Ui.column
+        [ hid ("note-" ++ String.fromInt note.id)
+        , Ui.width Ui.fill
+        , Ui.padding 12
+        , Ui.spacing 4
+        , Background.color cardBg
+        , Border.width 1
+        , Border.color edge
+        , Border.rounded 10
+        , Ui.pointer
+        , Ev.onClick (Select note.id)
+        ]
+        [ Ui.el
+            [ Font.size 15
+            , Font.semiBold
+            , Font.color
+                (if isSel then
+                    accent
+
+                 else
+                    textDark
+                )
+            ]
+            (Ui.text (cardTitle note))
+        , Ui.el [ Font.size 12, Font.color textMuted ] (Ui.text (snippet note.body))
+        ]
+
+
+sidebar : Model -> Element Msg
+sidebar model =
+    Ui.column
+        [ hid "sidebar"
+        , Ui.width (Ui.minimum 260 (Ui.fillPortion 1))
+        , Ui.height Ui.fill
+        , Background.color panelBg
+        , Border.widthEach { top = 0, right = 1, bottom = 0, left = 0 }
+        , Border.color borderCol
+        , Ui.clip
+        ]
+        [ -- search box
+          Ui.el [ Ui.width Ui.fill, Ui.paddingXY 12 12 ]
+            (Ui.input
+                [ hid "search-input"
+                , Ui.width Ui.fill
+                , Ui.paddingXY 12 10
+                , Font.size 14
+                , Background.color pageBg
+                , Border.width 1
+                , Border.color borderCol
+                , Border.rounded 8
+                , Ui.htmlAttribute "value" model.query
+                , Ui.htmlAttribute "placeholder" "Search notes"
+                , Ev.onInput Search
+                ]
+            )
+
+        -- the note list SCROLLS inside the sidebar (not the page): height fill +
+        -- scrollbarY, so a long list never grows the viewport.
+        , Ui.column
+            [ hid "note-list"
+            , Ui.width Ui.fill
+            , Ui.height Ui.fill
+            , Ui.scrollbarY
+            , Ui.spacing 8
+            , Ui.paddingXY 12 4
+            ]
+            (List.map (noteCard model) (visibleNotes model))
+
+        -- "New note" button pinned at the bottom of the sidebar.
+        , Ui.el [ Ui.width Ui.fill, Ui.padding 12 ]
+            (Ui.button
+                [ hid "new-btn"
+                , Ui.width Ui.fill
+                , Ui.paddingXY 16 12
+                , Font.center
+                , Font.semiBold
+                , Font.color white
+                , Background.color accent
+                , Border.rounded 10
+                , Background.hoverColor (Ui.rgb255 67 56 202)
+                ]
+                { onPress = Just Create, label = Ui.text "+  New note" }
+            )
+        ]
+
+
+editor : Model -> Element Msg
+editor model =
+    Ui.column
+        [ hid "editor"
+        , Ui.width (Ui.minimum 380 (Ui.fillPortion 3))
+        , Ui.height Ui.fill
+        , Ui.padding 24
+        , Ui.spacing 16
+        ]
+        [ Ui.input
+            [ hid "title-input"
+            , Ui.width Ui.fill
+            , Ui.paddingXY 14 12
+            , Font.size 22
+            , Font.semiBold
+            , Font.color textDark
+            , Background.color white
+            , Border.width 1
+            , Border.color borderCol
+            , Border.rounded 10
+            , Ui.htmlAttribute "value" model.draftTitle
+            , Ui.htmlAttribute "placeholder" "Note title"
+            , Ev.onInput DraftTitle
+            ]
+
+        -- the body is a real multi-line <textarea> that GROWS to fill the editor
+        -- and scrolls its own overflow (scrollbarY), not the page.
+        , Input.multiline
+            [ hid "body-input"
+            , Ui.width Ui.fill
+            , Ui.height Ui.fill
+            , Ui.padding 14
+            , Font.size 15
+            , Font.color textDark
+            , Background.color white
+            , Border.width 1
+            , Border.color borderCol
+            , Border.rounded 10
+            , Ui.scrollbarY
+            ]
+            { onChange = DraftBody
+            , text = model.draftBody
+            , placeholder = Nothing
+            , label = Input.labelHidden "Note body"
+            , spellcheck = True
+            }
+
+        , Ui.row [ Ui.spacing 12 ]
+            [ Ui.button
+                [ hid "save-btn"
+                , Ui.paddingXY 22 12
+                , Font.semiBold
+                , Font.color white
+                , Background.color accent
+                , Border.rounded 10
+                , Background.hoverColor (Ui.rgb255 67 56 202)
+                ]
+                { onPress = Just Save, label = Ui.text "Save" }
+            , Ui.button
+                [ hid "delete-btn"
+                , Ui.paddingXY 22 12
+                , Font.semiBold
+                , Font.color danger
+                , Background.color white
+                , Border.width 1
+                , Border.color borderCol
+                , Border.rounded 10
+                ]
+                { onPress = Just (Delete model.selected), label = Ui.text "Delete" }
+            ]
+        ]
+
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column
+            [ hid "app-shell"
+            , Ui.width Ui.fill
+
+            -- `height fill` (not `vh 100 + clip`) fills the viewport when content
+            -- is short — the base CSS makes the app root at least 100vh — but LETS
+            -- THE SHELL GROW and the page scroll when it isn't: on a phone the
+            -- sidebar + editor stack and together exceed the viewport, so the
+            -- Save/Delete row must stay reachable. `vh 100 + clip` pinned the
+            -- height and cut the buttons off below the fold.
+            , Ui.height Ui.fill
+            , Background.color pageBg
+            , Font.family "system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+            , Font.color textDark
+            ]
+            [ header model
+
+            -- Sidebar + editor. RESPONSIVE DECISION: a `wrappedRow` with two
+            -- fill-PORTION panes (sidebar 1 : editor 3) that each carry a
+            -- min-width. On a desktop the mins both fit, so the portions split
+            -- the row ~25/75 — a narrow note list beside a wide editor. On a
+            -- phone the two mins (260 + 380) exceed the viewport, so the row
+            -- flex-WRAPS: each pane drops onto its own line and — because it
+            -- still has a fill portion — grows to the FULL width of that line.
+            -- That is why neither the sidebar nor the editor leaves a side
+            -- gutter when stacked, and why no per-breakpoint width override is
+            -- needed: the same fill portions that size the desktop columns also
+            -- fill each wrapped mobile row. `Std.Ui` maps this straight onto CSS
+            -- flexbox (flex-grow + flex-wrap), so it is one layout, no @media.
+            , Ui.wrappedRow
+                [ hid "main"
+                , Ui.width Ui.fill
+                , Ui.height Ui.fill
+                ]
+                [ sidebar model
+                , editor model
+                ]
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

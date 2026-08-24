@@ -20,7 +20,7 @@
 -- alwaysOnTop / transparent / decorated windows, voice intents,
 -- Windows / Linux smoke testing (the runtime is build-tagged for
 -- all three OSes; v0.1 only validates macOS).
-module Std.Webview exposing (app, WindowCfg, AppCfg, defaultWindow, withTitle, withSize)
+module Std.Webview exposing (app, url, WindowCfg, AppCfg, defaultWindow, withTitle, withSize)
 
 import Sky.Ffi as Ffi
 
@@ -90,3 +90,25 @@ type alias AppCfg model msg =
 app : AppCfg model msg -> Task Error ()
 app =
     Ffi.kernel "Webview_app"
+
+
+-- | Open a native desktop window that LOADS AN EXISTING WEB APP at `url`,
+-- instead of running an in-process TEA loop. This is the native shell for a
+-- Sky.Spa client: the TEA loop compiled to wasm, served over HTTP by its own
+-- stateless backend, runs INSIDE the webview — so the exact same client that
+-- powers the web app becomes a desktop app, with the client and server still
+-- SEPARATE. The same mechanism is what a mobile-embed webview does. Blocks
+-- until the window closes, like `app`.
+--
+-- ```elm
+-- main =
+--     Webview.url "http://127.0.0.1:8951/"
+--         (Webview.defaultWindow
+--             |> Webview.withTitle "Sky.Spa Todos"
+--             |> Webview.withSize 480 720
+--         )
+--         |> Task.run
+-- ```
+url : String -> WindowCfg -> Task Error ()
+url =
+    Ffi.kernel "Webview_url"

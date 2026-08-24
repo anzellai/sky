@@ -1,0 +1,33 @@
+module Main exposing (main)
+
+-- Desktop shell for the Sky.Spa Todos client.
+--
+-- This is NOT a second copy of the app. It opens a native system webview
+-- window pointed at the SAME client the web build serves — the Sky TEA loop
+-- (Model / Msg / update / view) compiled to wasm — talking to the SAME
+-- stateless backend over the SAME typed shared-codec boundary. One app, one
+-- client, one server; only the shell is native. The identical mechanism is
+-- what a mobile-embed webview does, so this file is also the template for the
+-- mobile shell.
+--
+-- Run the backend first (`./run.sh` builds the client + starts the server on
+-- TODOS_PORT, default 8951), then run this binary to open the desktop window.
+
+import Std.Webview as Webview
+import Sky.Core.System as System
+
+
+main : Task Error ()
+main =
+    let
+        port =
+            System.getenvOr "TODOS_PORT" "8951"
+
+        appUrl =
+            "http://127.0.0.1:" ++ port ++ "/"
+    in
+    Webview.url appUrl
+        (Webview.defaultWindow
+            |> Webview.withTitle "Sky.Spa Todos — Desktop"
+            |> Webview.withSize 480 760
+        )

@@ -1,3 +1,5 @@
+//go:build !js
+
 // server_stream.go — Sky.Http.Server.Stream server-side streaming
 // HTTP response runtime (Cycle 4 HS-Server).
 //
@@ -345,6 +347,15 @@ func serveStreamingResponse(w http.ResponseWriter, req *http.Request, resp SkyRe
 	// buffered path).
 	if resp.ContentType != "" {
 		w.Header().Set("Content-Type", resp.ContentType)
+	}
+	// SSE-friendly defaults: for a text/event-stream response, keep proxies from
+	// buffering or transforming the byte stream (parity with Sky.Live's SSE
+	// endpoint headers, live.go). Set before the head flush below — a handler
+	// (e.g. Sky.Spa's Spa_streamTopic) cannot add these once the head is out.
+	if strings.HasPrefix(resp.ContentType, "text/event-stream") {
+		w.Header().Set("Cache-Control", "no-cache, no-transform")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
 	}
 	applySkyResponseHeaders(w.Header(), req, resp)
 	setSecurityHeaders(w.Header())

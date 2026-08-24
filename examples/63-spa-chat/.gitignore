@@ -1,0 +1,11 @@
+# Derived output of `sky spa-split` (frontend + backend + shared projects).
+.split/
+# Build + runtime artefacts.
+sky-out/
+.skycache/
+.skydeps/
+sky-ffi/
+.sky/
+*.db
+*.db-wal
+*.db-shm

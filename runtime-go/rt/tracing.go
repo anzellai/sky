@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // High-level tracing helpers for Sky runtime — Phase 1.1a Step 7.

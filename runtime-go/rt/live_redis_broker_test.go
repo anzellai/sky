@@ -319,8 +319,9 @@ func TestBrokerSelection_DefaultRedis(t *testing.T) {
 }
 
 func TestBrokerSelection_OverrideUnsetIsNoop(t *testing.T) {
+	t.Setenv("SKY_LIVE_BROKER_URL", "")
 	fallback := newTopicRegistry(0)
-	if got := maybeOverrideBroker(fallback); got != fallback {
+	if got := maybeOverrideBroker(fallback, ""); got != Broker(fallback) {
 		t.Fatalf("unset SKY_LIVE_BROKER_URL must return the fallback unchanged")
 	}
 }
@@ -336,7 +337,7 @@ func TestBrokerSelection_OverrideSkipsWhenAlreadyRedis(t *testing.T) {
 	defer rb.Close()
 
 	t.Setenv("SKY_LIVE_BROKER_URL", "redis://localhost:6379")
-	if got := maybeOverrideBroker(rb); got != rb {
+	if got := maybeOverrideBroker(rb, ""); got != Broker(rb) {
 		t.Fatalf("override must not replace an existing cross-instance broker")
 	}
 }
@@ -379,5 +380,34 @@ func TestPubSubPayloadRoundTrip_SkyShapes(t *testing.T) {
 				t.Fatalf("round-trip mismatch:\n want %#v\n  got %#v", tc.val, got)
 			}
 		})
+	}
+}
+
+// Test_effectiveBrokerUrl_precedence pins the ONE resolution rule the config
+// layer promises for the pub/sub broker URL: an operator's SKY_LIVE_BROKER_URL
+// wins over the in-code value (Sky.Config.withLiveBroker / spa-split --broker);
+// with no env, the in-code value is used; with neither, it is empty (in-process).
+func Test_effectiveBrokerUrl_precedence(t *testing.T) {
+	t.Setenv("SKY_LIVE_BROKER_URL", "redis://from-env:6379")
+	if got := effectiveBrokerUrl("redis://from-config:6379"); got != "redis://from-env:6379" {
+		t.Fatalf("env must win over the in-code value; got %q", got)
+	}
+
+	t.Setenv("SKY_LIVE_BROKER_URL", "")
+	if got := effectiveBrokerUrl("redis://from-config:6379"); got != "redis://from-config:6379" {
+		t.Fatalf("with no env, the in-code value must be used; got %q", got)
+	}
+	if got := effectiveBrokerUrl("  redis://spaced:6379  "); got != "redis://spaced:6379" {
+		t.Fatalf("the in-code value must be trimmed; got %q", got)
+	}
+	if got := effectiveBrokerUrl(""); got != "" {
+		t.Fatalf("with neither env nor in-code value, the result must be empty; got %q", got)
+	}
+
+	// A whitespace-only operator var is treated as unset, so the in-code value
+	// still applies (env "wins" only when it names a real URL).
+	t.Setenv("SKY_LIVE_BROKER_URL", "   ")
+	if got := effectiveBrokerUrl("redis://from-config:6379"); got != "redis://from-config:6379" {
+		t.Fatalf("a blank env var must not shadow the in-code value; got %q", got)
 	}
 }

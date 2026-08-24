@@ -1,0 +1,284 @@
+module Std.Native exposing
+    ( Coords
+    , geolocation
+    , clipboardWrite
+    , clipboardRead
+    , vibrate
+    , ShareContent
+    , share
+    , storageSet
+    , storageGet
+    , storageRemove
+    , isOnline
+    , language
+    , setTitle
+    , prefersDarkMode
+    , openUrl
+    , notify
+    , BatteryStatus
+    , batteryStatus
+    , PickedFile
+    , pickFile
+    , pickImage
+    , capturePhoto
+    , bridge
+    )
+
+-- | `Std.Native` — typed access to native device capabilities from a Sky.Spa
+-- client (running as wasm in a browser or a mobile/desktop webview). Every
+-- capability is an ordinary EFFECT — a `Task Error a` you run through `update` /
+-- `Cmd.perform` — so a denial, a timeout, or an unavailable API is a clean
+-- `Err`, never a crash. The client stays pure; the capability is the effect.
+--
+-- The mobile shells must DECLARE the matching permission so the OS grants it:
+-- `Bundle.withPermission Bundle.Location` wires the iOS
+-- `NSLocationWhenInUseUsageDescription` + the Android `ACCESS_FINE_LOCATION`
+-- permission and the webview's permission prompt. Without it the OS denies the
+-- request and the Task returns `Err`.
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | A geographic fix: `lat`/`lng` in degrees, `accuracy` in metres.
+type alias Coords =
+    { lat : Float
+    , lng : Float
+    , accuracy : Float
+    }
+
+
+-- | Ask the device for the current location. A function (not a bare `Task`) so
+-- each call fetches a FRESH fix rather than memoising one. `Err` on denial,
+-- timeout, or when no location service is available.
+--
+--     update msg model =
+--         case msg of
+--             Locate ->
+--                 ( model, Cmd.perform (Native.geolocation ()) Located )
+--
+--             Located (Ok c) ->
+--                 ( { model | here = Just c }, Cmd.none )
+--
+--             Located (Err _) ->
+--                 ( { model | here = Nothing }, Cmd.none )
+geolocation : () -> Task Error Coords
+geolocation =
+    Ffi.kernel "Native_geolocation"
+
+
+-- | Copy text to the device clipboard — the "Copy link" / "Copy code" gesture.
+-- `Err` if the user (or the OS) denies clipboard access, or the runtime has no
+-- clipboard (a bare server build).
+--
+--     Copied url ->
+--         ( model, Cmd.perform (Native.clipboardWrite url) Announced )
+clipboardWrite : String -> Task Error ()
+clipboardWrite =
+    Ffi.kernel "Native_clipboardWrite"
+
+
+-- | Read the text currently on the device clipboard — the "Paste" gesture. A
+-- function (not a bare `Task`) so each call reads the CURRENT contents rather
+-- than memoising the first read. `Err` on denial or when the clipboard holds no
+-- text.
+clipboardRead : () -> Task Error String
+clipboardRead =
+    Ffi.kernel "Native_clipboardRead"
+
+
+-- | Vibrate the device for `ms` milliseconds — a haptic tap on a phone. On
+-- hardware that cannot vibrate (a desktop browser, most laptops) it is a clean
+-- no-op that still yields `Ok`, so a UI can fire it unconditionally.
+vibrate : Int -> Task Error ()
+vibrate =
+    Ffi.kernel "Native_vibrate"
+
+-- | What to hand to the platform share sheet. Any field may be empty; a real
+-- share usually sets `url` (a link) with a short `title`/`text`.
+type alias ShareContent =
+    { title : String
+    , text : String
+    , url : String
+    }
+
+
+-- | Open the platform share sheet (iOS/Android native sheet, or the browser's
+-- Web Share sheet where present). `Err` if the user dismisses it, or the runtime
+-- has no share sheet — most desktop browsers — so a UI should offer a
+-- copy-to-clipboard fallback on `Err`.
+--
+--     Share ->
+--         ( model
+--         , Cmd.perform
+--             (Native.share { title = "Sky", text = "", url = model.link })
+--             Shared
+--         )
+share : ShareContent -> Task Error ()
+share =
+    Ffi.kernel "Native_share"
+
+
+-- | Persist a `value` under a `key` in the device's local storage (the browser /
+-- webview `localStorage`) — survives reloads on the same origin. `Err` if storage
+-- is unavailable or full (a quota error, or a private-mode block).
+--
+--     SaveDraft ->
+--         ( model, Cmd.perform (Native.storageSet "draft" model.text) Saved )
+storageSet : String -> String -> Task Error ()
+storageSet =
+    Ffi.kernel "Native_storageSet"
+
+
+-- | Read the value stored under a `key`, `Nothing` if the key was never set. A
+-- function (not a bare `Task`) so each call reads the CURRENT value. `Err` only
+-- on a storage failure — a MISSING key is `Ok Nothing`, not an error.
+--
+--     Loaded (Ok (Just text)) -> ( { model | text = text }, Cmd.none )
+--     Loaded (Ok Nothing)     -> ( model, Cmd.none )
+storageGet : String -> Task Error (Maybe String)
+storageGet =
+    Ffi.kernel "Native_storageGet"
+
+
+-- | Delete the value stored under a `key` (a no-op `Ok` if it was never set).
+storageRemove : String -> Task Error ()
+storageRemove =
+    Ffi.kernel "Native_storageRemove"
+
+
+-- | Whether the device currently reports a network connection
+-- (`navigator.onLine`). A function so each call reads the CURRENT status. Note it
+-- reports the OS link state, not reachability of any particular server.
+isOnline : () -> Task Error Bool
+isOnline =
+    Ffi.kernel "Native_isOnline"
+
+
+-- | The device's preferred UI language as a BCP-47 tag (`"en-US"`, `"fr"`, …),
+-- for choosing a locale. A function so each call reads the CURRENT setting.
+language : () -> Task Error String
+language =
+    Ffi.kernel "Native_language"
+
+
+-- | Set the document / window title (the browser tab label, the webview window
+-- title) — e.g. to reflect the current route or unread count.
+setTitle : String -> Task Error ()
+setTitle =
+    Ffi.kernel "Native_setTitle"
+
+
+-- | Whether the device is currently in dark mode (the `prefers-color-scheme:
+-- dark` media query) — read it to pick a matching theme. A function so each call
+-- reads the CURRENT setting.
+prefersDarkMode : () -> Task Error Bool
+prefersDarkMode =
+    Ffi.kernel "Native_prefersDarkMode"
+
+
+-- | Open a URL in a new tab / the system browser (`window.open`) — use it to
+-- leave the app for an external link. `Err` if the runtime blocks it (a
+-- suppressed popup). For in-app navigation use `sky-nav`, not this.
+openUrl : String -> Task Error ()
+openUrl =
+    Ffi.kernel "Native_openUrl"
+
+
+-- | Show a system notification with a `title` and `body`. Requests permission on
+-- first use; `Err` if the user denies it. On the generated iOS/Android shells
+-- this goes through a NATIVE bridge (iOS `UNUserNotificationCenter`, Android
+-- `NotificationManager`), so it posts a real local notification even where the
+-- Web Notification API is unavailable (e.g. iOS WKWebView); in a browser it uses
+-- the Web Notification API. Declare `Bundle.withPermission Bundle.Notifications`
+-- for the Android runtime permission.
+notify : String -> String -> Task Error ()
+notify =
+    Ffi.kernel "Native_notify"
+
+-- | The device battery: `charging` (on external power) and `level` (0.0 empty →
+-- 1.0 full). Read it to warn on low power or pause heavy work.
+type alias BatteryStatus =
+    { charging : Bool
+    , level : Float
+    }
+
+
+-- | Read the current `BatteryStatus`. A function so each call reads the CURRENT
+-- charge. `Err` where the runtime exposes no battery API (many desktop browsers).
+batteryStatus : () -> Task Error BatteryStatus
+batteryStatus =
+    Ffi.kernel "Native_batteryStatus"
+
+-- | A file the user chose: its `name`, `mime` type, and `dataUrl` — the bytes as
+-- a base64 `data:` URL, usable straight as an `Ui.image` source or decoded with
+-- `Encoding.base64Decode`.
+type alias PickedFile =
+    { name : String
+    , mime : String
+    , dataUrl : String
+    }
+
+
+-- | Open the device file picker and read the chosen file. `Err` on cancel — the
+-- Task never hangs. A function so each call opens a fresh picker.
+pickFile : () -> Task Error PickedFile
+pickFile =
+    Ffi.kernel "Native_pickFile"
+
+
+-- | Open the photo gallery / image picker (files filtered to images). Same
+-- `PickedFile` result — the `dataUrl` drops straight into `Ui.image`. `Err` on
+-- cancel.
+pickImage : () -> Task Error PickedFile
+pickImage =
+    Ffi.kernel "Native_pickImage"
+
+
+-- | Take a photo with the device camera (on mobile; a file picker on desktop).
+-- Needs `Bundle.withPermission Bundle.Camera` on the mobile shells. Same
+-- `PickedFile` result. `Err` on cancel or when no camera is available.
+capturePhoto : () -> Task Error PickedFile
+capturePhoto =
+    Ffi.kernel "Native_capturePhoto"
+
+
+-- | Call a CUSTOM native capability the app registers itself — the extension
+-- point for anything `Std.Native` doesn't ship (payments, biometrics, contacts,
+-- push, …). `name` selects the handler; `payload` is a JSON string handed to it;
+-- the result is the handler's JSON reply. Encode/decode with `Std.Codec` /
+-- `Std.Json`. Register a handler per platform (all optional):
+--
+--   * Web / desktop — a JS function on `window.skyNativeHandlers`:
+--
+--         window.skyNativeHandlers = window.skyNativeHandlers || {}
+--         window.skyNativeHandlers["pay"] = async (payloadJson) => {
+--             const req = JSON.parse(payloadJson)
+--             // … drive the Payment Request API / your PSP …
+--             return JSON.stringify({ token })   // resolve the Task with this
+--         }
+--
+--   * iOS — a `native/ios/<Name>.swift` file (in the app OR a library) that
+--     defines `func register<Name>(_ reg: SkyNativeRegistry)` and calls
+--     `reg.on("pay") { payload, reply in … }` (drive PassKit, reply the JSON).
+--     `sky build --target ios` links it + fills the installer automatically.
+--   * Android — a `native/android/<Name>.java` (package `sky.nativeext`) that
+--     defines `public static void register()` calling
+--     `SkyRegistry.register("pay", …)` (drive Google Pay, reply the JSON).
+--
+-- Because these live under `native/<platform>/`, a LIBRARY can ship them: an app
+-- that `sky add --sky`s the library gets the Sky wrapper AND its native handler,
+-- entitlements (`native/ios/app.entitlements`) and manifest entries
+-- (`native/android/permissions.xml`) merged into the build — no compiler change.
+--
+-- `Err` when no handler is registered for `name` — the Task never hangs. This is
+-- how a Sky app adds a native capability WITHOUT changing the compiler:
+--
+--     Pay ->
+--         ( model
+--         , Cmd.perform
+--             (Native.bridge "pay" (Codec.toJson payReqCodec req))
+--             Paid
+--         )
+bridge : String -> String -> Task Error String
+bridge =
+    Ffi.kernel "Native_bridge"

@@ -27,7 +27,7 @@ errors, batteries-included stdlib.
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
 Haskell compiler lives under `legacy-haskell-compiler/` and serves as a
 **differential oracle** (`sky-out/sky`) the Rust output is checked against
-byte-for-byte. Current line: **v0.21.x**.
+byte-for-byte. Current line: **v0.22.x**.
 
 ## Language essentials
 
@@ -270,6 +270,7 @@ tier calls for it*.
 | User wants | Use | Entry point |
 |---|---|---|
 | Web app (forms, real-time, UI state) | **Sky.Live** | `Live.app cfg` |
+| Client-rendered SPA / cross-platform client loop | **Sky.Spa** | `Spa.app cfg` |
 | HTTP/JSON API (no browser UI) | **Sky.Http.Server** | `Server.listen 8000 [...]` |
 | Background job / cron | **Sky.Cli** | `main = Task.run work` |
 | Terminal UI | **Sky.Tui** | `Tui.app cfg` |
@@ -587,6 +588,7 @@ before assuming a limitation still holds.
 | Runtime narrowing — origins, levers, **the floor authority** | `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` |
 | Stdlib correctness (algebraic laws, invariants) | `docs/architecture/sky-stdlib-correctness.md` |
 | Sky.Live runtime + architecture | `docs/skylive/overview.md`, `docs/skylive/architecture.md` |
+| Sky.Spa — client-side TEA in wasm | `docs/skyspa/overview.md` (design: `docs/skyspa/design.md`, `docs/skyspa/auto-split.md`) |
 | `Std.Ui` layout DSL | `docs/skyui/overview.md` |
 | Sky.Tui / Sky.Webview | `docs/skytui/`, `docs/skywebview/` |
 | `Std.Auth` | `docs/skyauth/overview.md` |
