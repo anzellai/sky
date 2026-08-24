@@ -1506,6 +1506,159 @@ fn stage_bundle_assets(project_dir: &Path, dist: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The native permissions the app declares via `Bundle.withPermission <P>`, as
+/// their constructor names (`Location` / `Camera` / `Microphone` /
+/// `Notifications`), deduped in declaration order. Matches `withPermission`
+/// followed by the constructor identifier (with an optional `Bundle.` qualifier).
+fn scan_bundle_permissions(src: &str) -> Vec<String> {
+    let bytes = src.as_bytes();
+    let func = "withPermission";
+    let known = ["Location", "Camera", "Microphone", "Notifications"];
+    let mut out: Vec<String> = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = src[from..].find(func) {
+        let at = from + rel;
+        from = at + func.len();
+        let before_ok = at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        if !before_ok {
+            continue;
+        }
+        let rest = src[at + func.len()..].trim_start();
+        let ident: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+            .collect();
+        let name = ident.rsplit('.').next().unwrap_or(&ident).to_string();
+        if known.contains(&name.as_str()) && !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// How one declared permission maps onto each platform's manifest + shell.
+struct PermSpec {
+    /// iOS Info.plist usage-description key (None → no plist key needed).
+    ios_plist_key: Option<&'static str>,
+    /// The usage-description text shown in the OS prompt.
+    ios_usage: &'static str,
+    /// Android `<uses-permission>` names.
+    android_perms: &'static [&'static str],
+    /// Needs location plumbing (CLLocationManager / setGeolocationEnabled).
+    location: bool,
+    /// Needs media-capture plumbing (WKUIDelegate / onPermissionRequest).
+    media: bool,
+}
+
+fn perm_spec(name: &str) -> Option<PermSpec> {
+    match name {
+        "Location" => Some(PermSpec {
+            ios_plist_key: Some("NSLocationWhenInUseUsageDescription"),
+            ios_usage: "Uses your location.",
+            android_perms: &[
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION",
+            ],
+            location: true,
+            media: false,
+        }),
+        "Camera" => Some(PermSpec {
+            ios_plist_key: Some("NSCameraUsageDescription"),
+            ios_usage: "Uses the camera.",
+            android_perms: &["android.permission.CAMERA"],
+            location: false,
+            media: true,
+        }),
+        "Microphone" => Some(PermSpec {
+            ios_plist_key: Some("NSMicrophoneUsageDescription"),
+            ios_usage: "Uses the microphone.",
+            android_perms: &["android.permission.RECORD_AUDIO"],
+            location: false,
+            media: true,
+        }),
+        "Notifications" => Some(PermSpec {
+            ios_plist_key: None,
+            ios_usage: "",
+            android_perms: &["android.permission.POST_NOTIFICATIONS"],
+            location: false,
+            media: false,
+        }),
+        _ => None,
+    }
+}
+
+/// The declared permissions + whether any needs location / media plumbing, for
+/// one project's entry source.
+fn resolve_permissions(project_dir: &Path) -> (Vec<PermSpec>, bool, bool) {
+    let src = read_entry_source(project_dir).unwrap_or_default();
+    let specs: Vec<PermSpec> = scan_bundle_permissions(&src)
+        .iter()
+        .filter_map(|n| perm_spec(n))
+        .collect();
+    let location = specs.iter().any(|s| s.location);
+    let media = specs.iter().any(|s| s.media);
+    (specs, location, media)
+}
+
+/// The `requestPermissions(...)` call for any runtime-dangerous declared perms.
+fn android_runtime_request(perms: &[PermSpec]) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let dangerous: Vec<&str> = perms
+        .iter()
+        .flat_map(|s| s.android_perms.iter().copied())
+        .filter(|p| {
+            p.contains("LOCATION")
+                || p.contains("CAMERA")
+                || p.contains("RECORD_AUDIO")
+                || p.contains("POST_NOTIFICATIONS")
+        })
+        .filter(|p| seen.insert(*p))
+        .collect();
+    if dangerous.is_empty() {
+        return String::new();
+    }
+    let arr = dangerous
+        .iter()
+        .map(|p| format!("\"{p}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("        requestPermissions(new String[]{{{arr}}}, 1);\n")
+}
+
+/// Build the MainActivity Java for the declared permissions: (extra imports, the
+/// WebChromeClient + geolocation-enable block, the runtime permission request).
+/// A WebChromeClient is only needed for location/media (the in-page prompts);
+/// notifications need just the manifest permission + the runtime request.
+fn android_permission_java(
+    perms: &[PermSpec],
+    want_location: bool,
+    want_media: bool,
+) -> (String, String, String) {
+    if !want_location && !want_media {
+        return (String::new(), String::new(), android_runtime_request(perms));
+    }
+    let mut imports = String::from("\nimport android.webkit.WebChromeClient;");
+    let mut overrides = String::new();
+    if want_location {
+        imports.push_str("\nimport android.webkit.GeolocationPermissions;");
+        overrides.push_str(
+            "\n            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {\n                callback.invoke(origin, true, false);\n            }",
+        );
+    }
+    if want_media {
+        imports.push_str("\nimport android.webkit.PermissionRequest;");
+        overrides.push_str(
+            "\n            @Override public void onPermissionRequest(final PermissionRequest request) {\n                request.grant(request.getResources());\n            }",
+        );
+    }
+    let mut webchrome =
+        format!("        web.setWebChromeClient(new WebChromeClient() {{{overrides}\n        }});\n");
+    if want_location {
+        webchrome.push_str("        s.setGeolocationEnabled(true);\n");
+    }
+    (imports, webchrome, android_runtime_request(perms))
+}
+
 /// Whether macOS `sips` (the built-in image tool used to resize app icons) is on
 /// PATH. When absent (non-macOS), icon generation is skipped with a note and the
 /// platform default icon is used.
@@ -1703,6 +1856,18 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
         None => "",
     };
 
+    // Native permissions (Bundle.withPermission): manifest <uses-permission> +
+    // the WebView plumbing that grants the in-page prompt + a runtime request.
+    let (perms, want_location, want_media) = resolve_permissions(project_dir);
+    let mut seen = std::collections::HashSet::new();
+    let manifest_perms: String = perms
+        .iter()
+        .flat_map(|s| s.android_perms.iter())
+        .filter(|p| seen.insert(**p))
+        .map(|p| format!("\n    <uses-permission android:name=\"{p}\" />"))
+        .collect();
+    let (perm_imports, webchrome, runtime_request) = android_permission_java(&perms, want_location, want_media);
+
     std::fs::write(
         root.join("app/src/main/AndroidManifest.xml"),
         ANDROID_MANIFEST
@@ -1710,7 +1875,8 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
             .replace("{{LABEL}}", &id.display_name)
             .replace("{{VERSION_NAME}}", &id.short_version)
             .replace("{{VERSION_CODE}}", &version_code)
-            .replace("{{ICON_ATTR}}", icon_attr),
+            .replace("{{ICON_ATTR}}", icon_attr)
+            .replace("{{USES_PERMISSIONS}}", &manifest_perms),
     )
     .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
     std::fs::write(
@@ -1720,7 +1886,11 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
     .map_err(|e| format!("write strings.xml: {e}"))?;
     std::fs::write(
         java_dir.join("MainActivity.java"),
-        ANDROID_MAIN_ACTIVITY.replace("{{PACKAGE}}", package),
+        ANDROID_MAIN_ACTIVITY
+            .replace("{{PACKAGE}}", package)
+            .replace("{{PERMISSION_IMPORTS}}", &perm_imports)
+            .replace("{{WEBCHROME}}", &webchrome)
+            .replace("{{RUNTIME_REQUEST}}", &runtime_request),
     )
     .map_err(|e| format!("write MainActivity.java: {e}"))?;
     let apk_name = format!("{}.apk", sanitize_pkg_segment(&id.exe_name));
@@ -1752,12 +1922,36 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
     let name = &id.exe_name;
     let icon_src = bundle_icon_source(project_dir, &id);
     let do_icons = icon_src.is_some();
+    let (perms, want_location, _want_media) = resolve_permissions(project_dir);
+    let plist_perms: String = perms
+        .iter()
+        .filter_map(|s| {
+            s.ios_plist_key
+                .map(|k| format!("\n    <key>{k}</key><string>{}</string>", s.ios_usage))
+        })
+        .collect();
+    let (loc_import, loc_manager, loc_onappear) = if want_location {
+        (
+            "import CoreLocation\n",
+            "    static let locationManager = CLLocationManager()\n",
+            "\n                .onAppear { Self.locationManager.requestWhenInUseAuthorization() }",
+        )
+    } else {
+        ("", "", "")
+    };
 
     let root = out_dir.join("ios");
     let src = root.join(name);
     std::fs::create_dir_all(&src).map_err(|e| format!("create {}: {e}", src.display()))?;
-    std::fs::write(src.join("App.swift"), IOS_APP_SWIFT.replace("{{NAME}}", name))
-        .map_err(|e| format!("write App.swift: {e}"))?;
+    std::fs::write(
+        src.join("App.swift"),
+        IOS_APP_SWIFT
+            .replace("{{NAME}}", name)
+            .replace("{{LOCATION_IMPORT}}", loc_import)
+            .replace("{{LOCATION_MANAGER}}", loc_manager)
+            .replace("{{LOCATION_ONAPPEAR}}", loc_onappear),
+    )
+    .map_err(|e| format!("write App.swift: {e}"))?;
     std::fs::write(src.join("WebView.swift"), IOS_WEBVIEW_SWIFT)
         .map_err(|e| format!("write WebView.swift: {e}"))?;
     std::fs::write(
@@ -1768,7 +1962,8 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
             .replace("{{BUNDLE_ID}}", &id.bundle_id)
             .replace("{{SHORT_VERSION}}", &id.short_version)
             .replace("{{BUILD_NUMBER}}", &id.build_number)
-            .replace("{{ICONS}}", if do_icons { IOS_ICON_PLIST } else { "" }),
+            .replace("{{ICONS}}", if do_icons { IOS_ICON_PLIST } else { "" })
+            .replace("{{PERMISSIONS}}", &plist_perms),
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
     std::fs::write(
@@ -1793,7 +1988,7 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
 }
 
 const IOS_APP_SWIFT: &str = r#"import SwiftUI
-
+{{LOCATION_IMPORT}}
 // Native iOS/iPadOS shell for a Sky.Spa client (generated by
 // `sky build --target ios`). A thin WKWebView over the SAME wasm client the web
 // / desktop / Android builds use, served over HTTP by its own stateless backend.
@@ -1805,7 +2000,7 @@ const IOS_APP_SWIFT: &str = r#"import SwiftUI
 @main
 struct {{NAME}}App: App {
     static let appURL = URL(string: "http://localhost:8951/")!
-
+{{LOCATION_MANAGER}}
     var body: some Scene {
         WindowGroup {
             // Respect the device safe area (status bar / notch at the top, home
@@ -1815,7 +2010,7 @@ struct {{NAME}}App: App {
             // keeps its own height when the keyboard appears (the page scrolls
             // its own content) rather than being shoved upward.
             WebView(url: Self.appURL)
-                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .ignoresSafeArea(.keyboard, edges: .bottom){{LOCATION_ONAPPEAR}}
         }
     }
 }
@@ -1824,18 +2019,35 @@ struct {{NAME}}App: App {
 const IOS_WEBVIEW_SWIFT: &str = r#"import SwiftUI
 import WebKit
 
-/// SwiftUI wrapper over WKWebView. WKWebView runs JavaScript and WebAssembly by
-/// default, so the Sky.Spa wasm client boots with no extra configuration.
+/// SwiftUI wrapper over WKWebView. JS + WebAssembly run by default. A
+/// WKUIDelegate grants in-page media-capture requests (getUserMedia for the
+/// camera / microphone), so a Sky app that declares `Bundle.withPermission
+/// Camera` / `Microphone` works; iOS still shows its own permission prompt the
+/// first time. Geolocation is handled by the app's CLLocationManager (App.swift).
 struct WebView: UIViewRepresentable {
     let url: URL
 
     func makeUIView(context: Context) -> WKWebView {
         let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        web.uiDelegate = context.coordinator
         web.load(URLRequest(url: url))
         return web
     }
 
     func updateUIView(_ web: WKWebView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, WKUIDelegate {
+        @available(iOS 15.0, *)
+        func webView(_ webView: WKWebView,
+                     requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                     initiatedByFrame frame: WKFrameInfo,
+                     type: WKMediaCaptureType,
+                     decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+            decisionHandler(.grant)
+        }
+    }
 }
 "#;
 
@@ -1853,7 +2065,7 @@ const IOS_INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>17.0</string>
     <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
-    <key>UILaunchScreen</key><dict/>{{ICONS}}
+    <key>UILaunchScreen</key><dict/>{{ICONS}}{{PERMISSIONS}}
     <!-- Dev only: allow cleartext to the local backend (localhost). Production
          uses https, so remove this. -->
     <key>NSAppTransportSecurity</key>
@@ -1885,7 +2097,7 @@ const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
     android:versionName="{{VERSION_NAME}}">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
-    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.INTERNET" />{{USES_PERMISSIONS}}
 
     <application
         android:label="{{LABEL}}"{{ICON_ATTR}}
@@ -1919,7 +2131,7 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.webkit.WebViewClient;{{PERMISSION_IMPORTS}}
 
 /**
  * Native Android WebView shell for a Sky.Spa client (generated by
@@ -1943,7 +2155,7 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);   // the wasm bootstrap needs JS
         s.setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient());  // keep navigation inside the WebView
-
+{{WEBCHROME}}
         // Android 15 (targetSdk 35) draws edge-to-edge by default, so the WebView
         // would render UNDER the status bar (header/clock overlap) and the
         // gesture navigation bar (a bottom button row clipped). Pad the WebView by
@@ -1965,6 +2177,7 @@ public class MainActivity extends Activity {
         });
 
         setContentView(web);
+{{RUNTIME_REQUEST}}
         web.loadUrl(APP_URL);
     }
 }
@@ -6626,6 +6839,40 @@ mod tests {
         assert!(stage_bundle_assets(&bad, &bad.join("dist")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&bad);
+    }
+
+    #[test]
+    fn scan_bundle_permissions_collects_known_constructors() {
+        let src = "bundle = Bundle.default \
+                   |> Bundle.withPermission Bundle.Location \
+                   |> Bundle.withPermission Camera \
+                   |> Bundle.withPermission Bundle.Notifications";
+        assert_eq!(
+            scan_bundle_permissions(src),
+            vec!["Location", "Camera", "Notifications"]
+        );
+        // An unknown constructor is ignored (not every withPermission is valid).
+        assert!(scan_bundle_permissions("withPermission Nonsense").is_empty());
+        // Deduped.
+        assert_eq!(
+            scan_bundle_permissions("withPermission Location\nwithPermission Location"),
+            vec!["Location"]
+        );
+    }
+
+    #[test]
+    fn android_permission_java_wires_location_media_and_notifications() {
+        let lm: Vec<PermSpec> = ["Location", "Camera"].iter().filter_map(|n| perm_spec(n)).collect();
+        let (imports, webchrome, runtime) = android_permission_java(&lm, true, true);
+        assert!(imports.contains("GeolocationPermissions") && imports.contains("PermissionRequest"));
+        assert!(webchrome.contains("setGeolocationEnabled") && webchrome.contains("onPermissionRequest"));
+        assert!(runtime.contains("ACCESS_FINE_LOCATION") && runtime.contains("CAMERA"));
+
+        // Notifications-only: no WebChromeClient plumbing, just the runtime request.
+        let notif: Vec<PermSpec> = perm_spec("Notifications").into_iter().collect();
+        let (i2, wc2, rt2) = android_permission_java(&notif, false, false);
+        assert!(i2.is_empty() && wc2.is_empty());
+        assert!(rt2.contains("POST_NOTIFICATIONS"));
     }
 
     #[test]

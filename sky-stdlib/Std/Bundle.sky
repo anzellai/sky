@@ -8,6 +8,8 @@ module Std.Bundle exposing
     , withAsset
     , withAssetDir
     , assetUrl
+    , Permission(..)
+    , withPermission
     )
 
 -- | `Std.Bundle` — everything a Sky app ships WITH: its cross-platform identity
@@ -49,6 +51,7 @@ type Bundle
 , icon : Maybe String
 , version : Maybe String
 , assets : List String
+, permissions : List Permission
 }
 
 
@@ -63,6 +66,7 @@ default =
         , icon = Nothing
         , version = Nothing
         , assets = []
+        , permissions = []
         }
 
 
@@ -122,3 +126,23 @@ withAssetDir dir (Bundle fields) =
 assetUrl : String -> String
 assetUrl path =
     "/assets/" ++ path
+
+-- | A native device permission an app needs. Declaring one with
+-- `withPermission` makes the packager wire the OS-level plumbing so a
+-- `Std.Native` capability can actually be granted on a mobile shell: the iOS
+-- usage-description key + `CLLocationManager`/`WKUIDelegate`, the Android
+-- `<uses-permission>` + `WebChromeClient` prompt. In a plain browser these are a
+-- no-op (the browser owns the prompt).
+type Permission
+    = Location
+    | Camera
+    | Microphone
+    | Notifications
+
+
+-- | Declare that the app needs a native `Permission` (e.g.
+-- `Bundle.withPermission Bundle.Location` for `Std.Native.geolocation`). Without
+-- it the OS denies the request and the capability's `Task` returns `Err`.
+withPermission : Permission -> Bundle -> Bundle
+withPermission perm (Bundle fields) =
+    Bundle { fields | permissions = fields.permissions ++ [ perm ] }
