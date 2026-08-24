@@ -153,3 +153,23 @@ func TestResultCoerceNestedSkyMaybeNothing(t *testing.T) {
 		t.Fatalf("expected inner Nothing tag, got %d", coerced.OkValue.Tag)
 	}
 }
+
+// Regression (T2 corpus stdlib_edge/nominal-money): a `Result Error ()` FFI
+// return lowers through ResultCoerceOk to Coerce[struct{}](okPayload), and the
+// Unit payload is nil — coercing ANYTHING to Unit must succeed, never panic.
+func TestCoerceToUnitNeverPanics(t *testing.T) {
+	// nil (the actual failure: a Result Error () Ok payload)
+	_ = Coerce[struct{}](nil)
+	// a non-nil, non-struct{} value
+	_ = Coerce[struct{}](42)
+	_ = Coerce[struct{}]("x")
+	// the exact ResultCoerceOk path Std.Money.setRate emits (E is the
+	// Sky_Core_Error_Error codegen alias = SkyADT; `any` stands in here).
+	res := SkyResult[any, any]{Tag: 0, OkValue: nil}
+	out := ResultCoerceOk[any, struct{}](res, func(v any) struct{} {
+		return Coerce[struct{}](v)
+	})
+	if out.Tag != 0 {
+		t.Fatalf("ResultCoerceOk over a Unit Ok must stay Ok, got Tag %d", out.Tag)
+	}
+}

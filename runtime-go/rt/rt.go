@@ -6080,6 +6080,16 @@ func Coerce[T any](v any) T {
 	if t, ok := v.(T); ok {
 		return t
 	}
+	// Unit (`struct{}`) is the zero-information type — coercing ANY value to it
+	// is trivially valid, there is nothing to narrow. In particular a
+	// `Result Error ()` FFI return (e.g. `Std.Money.setRate`) lowers through
+	// ResultCoerceOk to `Coerce[struct{}](okPayload)`, and that payload is `nil`
+	// (Unit carries no value) — so without this the Unit case would panic on
+	// well-typed Sky code. Return the unit value.
+	var unitZero T
+	if _, isUnit := any(unitZero).(struct{}); isUnit {
+		return unitZero
+	}
 	// Fix A for docs/parametric-record-aliases-bugs.md Surface 2:
 	// function-targeted Coerce must always go via makeFuncAdapter
 	// when the source signature differs from T. Go function types
