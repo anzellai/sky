@@ -1,3 +1,5 @@
+//go:build cgo && darwin
+
 package rt
 
 import "testing"

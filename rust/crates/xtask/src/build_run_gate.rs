@@ -83,6 +83,11 @@ enum Shape {
     Http,
     Tui,
     Webview,
+    /// A Sky.Spa client (`Spa.app`) — the TEA loop compiles to wasm and runs on
+    /// the client (web / desktop / iOS / Android); the native binary is not a
+    /// stdout CLI. Build-only here, like Webview — codegen is exercised, the
+    /// wasm + auto-split behaviour is covered by `spa_split_flow` + the examples.
+    Spa,
     Ffi,
 }
 
@@ -94,6 +99,7 @@ impl Shape {
             Shape::Http => "http",
             Shape::Tui => "tui",
             Shape::Webview => "webview",
+            Shape::Spa => "spa",
             Shape::Ffi => "ffi",
         }
     }
@@ -104,6 +110,7 @@ impl Shape {
             "http" => Some(Shape::Http),
             "tui" => Some(Shape::Tui),
             "webview" => Some(Shape::Webview),
+            "spa" => Some(Shape::Spa),
             "ffi" => Some(Shape::Ffi),
             _ => None,
         }
@@ -361,6 +368,9 @@ fn shape_of_segment(seg: &str) -> Option<Shape> {
     }
     if seg.contains("Tui.app") || seg.contains("Tui.program") {
         return Some(Shape::Tui);
+    }
+    if seg.contains("Spa.app") {
+        return Some(Shape::Spa);
     }
     if seg.contains("Live.app") {
         return Some(Shape::Live);
@@ -669,6 +679,15 @@ fn verify_one(
                 run_kind = "n/a";
                 if blocker.is_empty() {
                     blocker = "macOS GUI — build-only".into();
+                }
+            }
+            Shape::Spa => {
+                // A Sky.Spa client — the native binary is not a stdout CLI; the
+                // TEA loop runs as wasm. Build proves codegen; wasm + auto-split
+                // behaviour is covered by spa_split_flow + the examples.
+                run_kind = "n/a";
+                if blocker.is_empty() {
+                    blocker = "wasm/webview client — build-only".into();
                 }
             }
             Shape::Ffi => {
