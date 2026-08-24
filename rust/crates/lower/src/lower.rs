@@ -1566,6 +1566,8 @@ fn runtime_backed_record(go_name: &str) -> Option<&'static str> {
         "Std_Native_Coords_R" => Some("rt.NativeCoords"),
         // rt.ShareContent { Title string; Text string; Url string }
         "Std_Native_ShareContent_R" => Some("rt.ShareContent"),
+        // rt.BatteryStatus { Charging bool; Level float64 }
+        "Std_Native_BatteryStatus_R" => Some("rt.BatteryStatus"),
         _ => None,
     }
 }

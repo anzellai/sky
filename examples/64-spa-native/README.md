@@ -18,8 +18,8 @@ the effect.
 |---|---|---|---|
 | Clipboard | Copy / Paste | `clipboardWrite` / `clipboardRead` | `String -> Task Error ()` · `() -> Task Error String` |
 | Local storage | Save / Load / Clear | `storageSet` / `storageGet` / `storageRemove` | `String -> String -> Task Error ()` · `String -> Task Error (Maybe String)` · `String -> Task Error ()` |
-| Device | Locate / Online? / Language | `geolocation` / `isOnline` / `language` | `() -> Task Error Coords` · `() -> Task Error Bool` · `() -> Task Error String` |
-| Platform | Vibrate / Share / Set tab title | `vibrate` / `share` / `setTitle` | `Int -> Task Error ()` · `ShareContent -> Task Error ()` · `String -> Task Error ()` |
+| Device | Locate / Online? / Language / Theme / Battery | `geolocation` / `isOnline` / `language` / `prefersDarkMode` / `batteryStatus` | `() -> Task Error Coords` · `() -> Task Error Bool` · `() -> Task Error String` · `() -> Task Error Bool` · `() -> Task Error BatteryStatus` |
+| Platform | Vibrate / Share / Notify / Open site / Set tab title | `vibrate` / `share` / `notify` / `openUrl` / `setTitle` | `Int -> Task Error ()` · `ShareContent -> Task Error ()` · `String -> String -> Task Error ()` · `String -> Task Error ()` · `String -> Task Error ()` |
 
 Note the effect-boundary discipline: a **write** returns `Task Error ()`, a
 **read** returns `Task Error <value>`, and a read that can legitimately find

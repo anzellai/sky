@@ -12,6 +12,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error exposing (Error)
 import Sky.Core.String as String
+import Sky.Core.Math as Math
 import Std.Spa as Spa
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -30,6 +31,8 @@ type alias Model =
     , where_ : String
     , online : String
     , lang : String
+    , theme : String
+    , battery : String
     , log : String
     }
 
@@ -42,6 +45,8 @@ init _ =
       , where_ = "—"
       , online = "—"
       , lang = "—"
+      , theme = "—"
+      , battery = "—"
       , log = "ready"
       }
     , Cmd.none
@@ -66,6 +71,12 @@ type Msg
     | DetectLang
     | LangGot (Result Error String)
     | Retitle
+    | CheckTheme
+    | ThemeGot (Result Error Bool)
+    | CheckBattery
+    | BatteryGot (Result Error Native.BatteryStatus)
+    | OpenSite
+    | Notify
     | Did String (Result Error ())
 
 
@@ -183,6 +194,53 @@ update msg model =
                   (Did "retitled")
             )
 
+        CheckTheme ->
+            ( model, Cmd.perform (Native.prefersDarkMode ()) ThemeGot )
+
+        ThemeGot (Ok True) ->
+            ( { model | theme = "dark", log = "read colour scheme" }, Cmd.none )
+
+        ThemeGot (Ok False) ->
+            ( { model | theme = "light", log = "read colour scheme" }
+            , Cmd.none
+            )
+
+        ThemeGot (Err e) ->
+            ( { model | log = "theme failed: " ++ Error.toString e }, Cmd.none )
+
+        CheckBattery ->
+            ( model, Cmd.perform (Native.batteryStatus ()) BatteryGot )
+
+        BatteryGot (Ok b) ->
+            ( { model | battery =
+                  String.fromInt (Math.round (b.level * 100.0)) ++ "%"
+                      ++ (if b.charging then
+                             " (charging)"
+
+                         else
+                             "")
+              , log = "read battery"
+              }
+            , Cmd.none
+            )
+
+        BatteryGot (Err e) ->
+            ( { model | log = "battery failed: " ++ Error.toString e }
+            , Cmd.none
+            )
+
+        OpenSite ->
+            ( model
+            , Cmd.perform
+                  (Native.openUrl "https://sky-lang.org")
+                  (Did "opened link")
+            )
+
+        Notify ->
+            ( model
+            , Cmd.perform (Native.notify "Sky" model.draft) (Did "notified")
+            )
+
         Did what (Ok _) ->
             ( { model | log = what }, Cmd.none )
 
@@ -252,14 +310,22 @@ view model =
                      [ btn "Locate" Locate
                      , btn "Online?" CheckOnline
                      , btn "Language" DetectLang
+                     , btn "Theme" CheckTheme
+                     , btn "Battery" CheckBattery
                      ]
                      ("where: " ++ model.where_ ++ "   ·   net: " ++ model.online
                          ++ "   ·   lang: "
-                         ++ model.lang)
+                         ++ model.lang
+                         ++ "   ·   theme: "
+                         ++ model.theme
+                         ++ "   ·   battery: "
+                         ++ model.battery)
                , section
                      "Platform"
                      [ btn "Vibrate" Buzz
                      , btn "Share" Share
+                     , btn "Notify" Notify
+                     , btn "Open site" OpenSite
                      , btn "Set tab title" Retitle
                      ]
                      ""

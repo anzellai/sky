@@ -87,3 +87,31 @@ func Native_setTitle(_ any) any {
 			"Native.setTitle is a client-only capability (no document in this runtime)"))
 	}
 }
+
+func Native_prefersDarkMode(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.prefersDarkMode is a client-only capability (no media queries in this runtime)"))
+	}
+}
+
+func Native_openUrl(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.openUrl is a client-only capability (no window in this runtime)"))
+	}
+}
+
+func Native_notify(_ any, _ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.notify is a client-only capability (no notifications in this runtime)"))
+	}
+}
+
+func Native_batteryStatus(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.batteryStatus is a client-only capability (no battery API in this runtime)"))
+	}
+}

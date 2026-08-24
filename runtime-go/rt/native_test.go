@@ -41,6 +41,16 @@ func TestShareContentShape(t *testing.T) {
 	}
 }
 
+// BatteryStatus must keep the field order + types the codegen alias relies on
+// (Std_Native_BatteryStatus_R → rt.BatteryStatus). Positional construction is the
+// compile-time guard.
+func TestBatteryStatusShape(t *testing.T) {
+	b := BatteryStatus{true, 0.85}
+	if b.Charging != true || b.Level != 0.85 {
+		t.Error("BatteryStatus fields are Charging, Level in that order")
+	}
+}
+
 // Every Std.Native capability is client-only: off a client build each must
 // return a Task that yields Err, never a silent zero-value or a panic.
 func TestNativeCapabilitiesAreErrOffClient(t *testing.T) {
@@ -57,6 +67,9 @@ func TestNativeCapabilitiesAreErrOffClient(t *testing.T) {
 		{"isOnline", Native_isOnline},
 		{"language", Native_language},
 		{"setTitle", Native_setTitle},
+		{"prefersDarkMode", Native_prefersDarkMode},
+		{"openUrl", Native_openUrl},
+		{"batteryStatus", Native_batteryStatus},
 	}
 	assertErrThunk := func(name string, v any) {
 		thunk, ok := v.(func() any)
@@ -74,6 +87,7 @@ func TestNativeCapabilitiesAreErrOffClient(t *testing.T) {
 	for _, c := range cases {
 		assertErrThunk(c.name, c.kernel(nil))
 	}
-	// storageSet is the sole 2-arg capability.
+	// The 2-arg capabilities.
 	assertErrThunk("storageSet", Native_storageSet(nil, nil))
+	assertErrThunk("notify", Native_notify(nil, nil))
 }

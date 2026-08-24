@@ -26,3 +26,14 @@ type ShareContent struct {
 	Text  string
 	Url   string
 }
+
+// BatteryStatus is the Go counterpart of Std.Native.BatteryStatus
+// (`{ charging : Bool, level : Float }`). Runtime-backed record
+// (Std_Native_BatteryStatus_R → rt.BatteryStatus, lower.rs), so the
+// Native_batteryStatus kernel's value narrows reflection-free. Field ORDER +
+// types MUST match the Sky record's declaration order (charging, level →
+// Charging bool, Level float64).
+type BatteryStatus struct {
+	Charging bool
+	Level    float64
+}

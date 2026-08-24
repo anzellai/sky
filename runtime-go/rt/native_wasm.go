@@ -294,3 +294,111 @@ func Native_setTitle(title any) any {
 		return Ok[any, any](struct{}{})
 	}
 }
+
+// Native_prefersDarkMode is the Std.Native.prefersDarkMode kernel
+// (`() -> Task Error Bool`) — reads the prefers-color-scheme media query.
+func Native_prefersDarkMode(_ any) any {
+	return func() any {
+		win := js.Global()
+		mm := win.Get("matchMedia")
+		if mm.Type() != js.TypeFunction {
+			return Err[any, any](ErrFfi("matchMedia: unavailable in this runtime"))
+		}
+		res, e := safeJsCall(win, "matchMedia", "(prefers-color-scheme: dark)")
+		if e != nil {
+			return Err[any, any](ErrFfi("matchMedia: " + e.Error()))
+		}
+		return Ok[any, any](res.Get("matches").Bool())
+	}
+}
+
+// Native_openUrl is the Std.Native.openUrl kernel (`String -> Task Error ()`) —
+// opens the URL in a new tab / the system browser. A suppressed popup (null
+// return) is Err.
+func Native_openUrl(url any) any {
+	u := fmt.Sprintf("%v", url)
+	return func() any {
+		win := js.Global()
+		if win.Get("open").Type() != js.TypeFunction {
+			return Err[any, any](ErrFfi("window.open: unavailable in this runtime"))
+		}
+		// `noopener` severs window.opener so the opened page can't drive our tab —
+		// but per the HTML spec it also makes window.open ALWAYS return null, so a
+		// null return is NOT a failure signal here. A genuinely blocked popup
+		// throws (or is silently dropped); we treat a non-throwing call as issued.
+		if _, e := safeJsCall(win, "open", u, "_blank", "noopener"); e != nil {
+			return Err[any, any](ErrFfi("window.open: " + e.Error()))
+		}
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// Native_notify is the Std.Native.notify kernel (`String -> String -> Task Error
+// ()`). Requests Notification permission if needed, then shows one. Denial /
+// absence is Err (e.g. an iOS WKWebView disables the Web Notification API).
+func Native_notify(title any, body any) any {
+	t := fmt.Sprintf("%v", title)
+	b := fmt.Sprintf("%v", body)
+	return func() any {
+		ctor := js.Global().Get("Notification")
+		if !ctor.Truthy() {
+			return Err[any, any](ErrFfi("notifications: unavailable in this runtime"))
+		}
+		show := func() SkyResult[any, any] {
+			opts := js.Global().Get("Object").New()
+			opts.Set("body", b)
+			// `new Notification(title, opts)` — js.Value.New is the `new` operator;
+			// it panics if the constructor throws, so guard it.
+			var built bool
+			func() {
+				defer func() { recover() }()
+				ctor.New(t, opts)
+				built = true
+			}()
+			if !built {
+				return Err[any, any](ErrFfi("notifications: could not be shown"))
+			}
+			return Ok[any, any](struct{}{})
+		}
+		perm := ctor.Get("permission").String()
+		switch perm {
+		case "granted":
+			return show()
+		case "denied":
+			return Err[any, any](ErrPermissionDenied("notifications: permission denied"))
+		default:
+			// "default" — request permission (Promise<string>), then show.
+			req := ctor.Get("requestPermission")
+			if req.Type() != js.TypeFunction {
+				return Err[any, any](ErrFfi("notifications: cannot request permission"))
+			}
+			return blockOnJsPromise(ctor.Call("requestPermission"), func(a []js.Value) SkyResult[any, any] {
+				if len(a) > 0 && a[0].Type() == js.TypeString && a[0].String() == "granted" {
+					return show()
+				}
+				return Err[any, any](ErrPermissionDenied("notifications: permission not granted"))
+			})
+		}
+	}
+}
+
+// Native_batteryStatus is the Std.Native.batteryStatus kernel
+// (`() -> Task Error BatteryStatus`). navigator.getBattery() returns a Promise.
+func Native_batteryStatus(_ any) any {
+	return func() any {
+		nav := js.Global().Get("navigator")
+		if !nav.Truthy() || nav.Get("getBattery").Type() != js.TypeFunction {
+			return Err[any, any](ErrFfi("battery: unavailable in this runtime"))
+		}
+		return blockOnJsPromise(nav.Call("getBattery"), func(a []js.Value) SkyResult[any, any] {
+			if len(a) == 0 || !a[0].Truthy() {
+				return Err[any, any](ErrFfi("battery: no status returned"))
+			}
+			bm := a[0]
+			return Ok[any, any](BatteryStatus{
+				Charging: bm.Get("charging").Bool(),
+				Level:    bm.Get("level").Float(),
+			})
+		})
+	}
+}

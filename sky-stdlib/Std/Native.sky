@@ -12,6 +12,11 @@ module Std.Native exposing
     , isOnline
     , language
     , setTitle
+    , prefersDarkMode
+    , openUrl
+    , notify
+    , BatteryStatus
+    , batteryStatus
     )
 
 -- | `Std.Native` — typed access to native device capabilities from a Sky.Spa
@@ -156,3 +161,42 @@ language =
 setTitle : String -> Task Error ()
 setTitle =
     Ffi.kernel "Native_setTitle"
+
+
+-- | Whether the device is currently in dark mode (the `prefers-color-scheme:
+-- dark` media query) — read it to pick a matching theme. A function so each call
+-- reads the CURRENT setting.
+prefersDarkMode : () -> Task Error Bool
+prefersDarkMode =
+    Ffi.kernel "Native_prefersDarkMode"
+
+
+-- | Open a URL in a new tab / the system browser (`window.open`) — use it to
+-- leave the app for an external link. `Err` if the runtime blocks it (a
+-- suppressed popup). For in-app navigation use `sky-nav`, not this.
+openUrl : String -> Task Error ()
+openUrl =
+    Ffi.kernel "Native_openUrl"
+
+
+-- | Show a system notification with a `title` and `body`. Requests permission on
+-- first use; `Err` if the user denies it or the runtime has no notifications
+-- (e.g. an iOS `WKWebView`, where the Web Notification API is disabled — a real
+-- iOS app needs a native push bridge instead).
+notify : String -> String -> Task Error ()
+notify =
+    Ffi.kernel "Native_notify"
+
+-- | The device battery: `charging` (on external power) and `level` (0.0 empty →
+-- 1.0 full). Read it to warn on low power or pause heavy work.
+type alias BatteryStatus =
+    { charging : Bool
+    , level : Float
+    }
+
+
+-- | Read the current `BatteryStatus`. A function so each call reads the CURRENT
+-- charge. `Err` where the runtime exposes no battery API (many desktop browsers).
+batteryStatus : () -> Task Error BatteryStatus
+batteryStatus =
+    Ffi.kernel "Native_batteryStatus"
