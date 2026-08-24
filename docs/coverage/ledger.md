@@ -27,15 +27,15 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 80 |
 | stdlib modules (denominator) | 91 |
-| stdlib entries (denominator) | 1857 |
+| stdlib entries (denominator) | 1861 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 7 | 7.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 823 | 44.3% |
-| symbols unreferenced under the generous rule | 741 | 39.9% |
+| stdlib modules imported by nothing | 6 | 6.6% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 820 | 44.1% |
+| symbols unreferenced under the generous rule | 737 | 39.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -50,7 +50,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.upgrade-claude`
 - `cli.verify`
 - `stdlib.Sky.Core.Io`
-- `stdlib.Std.Bundle`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
 
@@ -60,10 +59,10 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 18 |
-| stdlib modules owned by exactly one unit of any role | 13 |
+| stdlib modules owned by exactly one `examples/*` | 19 |
+| stdlib modules owned by exactly one unit of any role | 14 |
 | sky.toml sections owned by exactly one unit | 2 |
-| **lost if `examples/` retired** — modules | **2** |
+| **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
 
 ### Modules lost if `examples/` is retired
@@ -71,6 +70,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | module | sole owner |
 |---|---|
 | `Sky.Core.Process` | `examples/17-skymon` |
+| `Std.Bundle` | `examples/64-spa-native` |
 | `Std.Cli` | `examples/20-cli-counter` |
 
 ### Config sections lost if `examples/` is retired
@@ -193,7 +193,7 @@ None.
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Bundle` | stdlib | None | None | equal |
+| `stdlib.Std.Bundle` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Cache` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Cli` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Cmd` | stdlib | Asserted | Falsified | stronger |

@@ -28,6 +28,12 @@ the effect.
 | Local storage | Save / Load / Clear | `storageSet` / `storageGet` / `storageRemove` | `String -> String -> Task Error ()` · `String -> Task Error (Maybe String)` · `String -> Task Error ()` |
 | Device | Locate / Online? / Language / Theme / Battery | `geolocation` / `isOnline` / `language` / `prefersDarkMode` / `batteryStatus` | `() -> Task Error Coords` · `() -> Task Error Bool` · `() -> Task Error String` · `() -> Task Error Bool` · `() -> Task Error BatteryStatus` |
 | Platform | Vibrate / Share / Notify / Open site / Set tab title | `vibrate` / `share` / `notify` / `openUrl` / `setTitle` | `Int -> Task Error ()` · `ShareContent -> Task Error ()` · `String -> String -> Task Error ()` · `String -> Task Error ()` · `String -> Task Error ()` |
+| Files, photos & camera | Pick image / Pick file / Camera | `pickImage` / `pickFile` / `capturePhoto` | each `() -> Task Error PickedFile` — the chosen file as a base64 `data:` URL (drops into `Ui.image`) |
+
+`notify` uses a **native bridge** on the mobile shells (iOS `UNUserNotificationCenter`,
+Android `NotificationManager`) so it posts a real notification even where the Web
+Notification API is unavailable. The pickers use `<input type="file">`
+(`accept="image/*"` / `capture`), so on mobile they open the gallery / camera.
 
 Note the effect-boundary discipline: a **write** returns `Task Error ()`, a
 **read** returns `Task Error <value>`, and a read that can legitimately find

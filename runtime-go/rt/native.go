@@ -37,3 +37,16 @@ type BatteryStatus struct {
 	Charging bool
 	Level    float64
 }
+
+// PickedFile is the Go counterpart of Std.Native.PickedFile
+// (`{ name : String, mime : String, dataUrl : String }`) — a file the user chose
+// from the picker / camera / gallery, its bytes carried as a base64 `data:` URL
+// (usable directly as an `Ui.image` src or decoded with Encoding.base64Decode).
+// Runtime-backed record (Std_Native_PickedFile_R → rt.PickedFile, lower.rs);
+// field ORDER + types match the Sky record (name, mime, dataUrl → Name, Mime,
+// DataUrl string).
+type PickedFile struct {
+	Name    string
+	Mime    string
+	DataUrl string
+}

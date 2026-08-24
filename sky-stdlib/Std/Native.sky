@@ -17,6 +17,10 @@ module Std.Native exposing
     , notify
     , BatteryStatus
     , batteryStatus
+    , PickedFile
+    , pickFile
+    , pickImage
+    , capturePhoto
     )
 
 -- | `Std.Native` — typed access to native device capabilities from a Sky.Spa
@@ -180,9 +184,12 @@ openUrl =
 
 
 -- | Show a system notification with a `title` and `body`. Requests permission on
--- first use; `Err` if the user denies it or the runtime has no notifications
--- (e.g. an iOS `WKWebView`, where the Web Notification API is disabled — a real
--- iOS app needs a native push bridge instead).
+-- first use; `Err` if the user denies it. On the generated iOS/Android shells
+-- this goes through a NATIVE bridge (iOS `UNUserNotificationCenter`, Android
+-- `NotificationManager`), so it posts a real local notification even where the
+-- Web Notification API is unavailable (e.g. iOS WKWebView); in a browser it uses
+-- the Web Notification API. Declare `Bundle.withPermission Bundle.Notifications`
+-- for the Android runtime permission.
 notify : String -> String -> Task Error ()
 notify =
     Ffi.kernel "Native_notify"
@@ -200,3 +207,35 @@ type alias BatteryStatus =
 batteryStatus : () -> Task Error BatteryStatus
 batteryStatus =
     Ffi.kernel "Native_batteryStatus"
+
+-- | A file the user chose: its `name`, `mime` type, and `dataUrl` — the bytes as
+-- a base64 `data:` URL, usable straight as an `Ui.image` source or decoded with
+-- `Encoding.base64Decode`.
+type alias PickedFile =
+    { name : String
+    , mime : String
+    , dataUrl : String
+    }
+
+
+-- | Open the device file picker and read the chosen file. `Err` on cancel — the
+-- Task never hangs. A function so each call opens a fresh picker.
+pickFile : () -> Task Error PickedFile
+pickFile =
+    Ffi.kernel "Native_pickFile"
+
+
+-- | Open the photo gallery / image picker (files filtered to images). Same
+-- `PickedFile` result — the `dataUrl` drops straight into `Ui.image`. `Err` on
+-- cancel.
+pickImage : () -> Task Error PickedFile
+pickImage =
+    Ffi.kernel "Native_pickImage"
+
+
+-- | Take a photo with the device camera (on mobile; a file picker on desktop).
+-- Needs `Bundle.withPermission Bundle.Camera` on the mobile shells. Same
+-- `PickedFile` result. `Err` on cancel or when no camera is available.
+capturePhoto : () -> Task Error PickedFile
+capturePhoto =
+    Ffi.kernel "Native_capturePhoto"

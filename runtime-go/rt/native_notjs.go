@@ -115,3 +115,24 @@ func Native_batteryStatus(_ any) any {
 			"Native.batteryStatus is a client-only capability (no battery API in this runtime)"))
 	}
 }
+
+func Native_pickFile(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.pickFile is a client-only capability (no file picker in this runtime)"))
+	}
+}
+
+func Native_pickImage(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.pickImage is a client-only capability (no file picker in this runtime)"))
+	}
+}
+
+func Native_capturePhoto(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.capturePhoto is a client-only capability (no camera in this runtime)"))
+	}
+}

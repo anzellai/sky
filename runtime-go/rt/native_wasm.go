@@ -441,6 +441,105 @@ func Native_notify(title any, body any) any {
 	}
 }
 
+// nativePickFile drives an off-screen <input type="file"> and blocks until the
+// user picks a file (read as a base64 data: URL) or cancels. `accept` filters the
+// picker (e.g. "image/*" for the gallery); `capture` opens the camera on mobile.
+// A cancel returns Err (via the modern `cancel` event) rather than hanging — no
+// silent strand. MUST run on the perform goroutine so the block yields to the
+// event loop, like fetchBlocking. NOTE: opening a file picker needs a user
+// gesture; whether the TEA perform path preserves one is exercised e2e.
+func nativePickFile(accept string, capture bool) SkyResult[any, any] {
+	global := js.Global()
+	doc := global.Get("document")
+	if !doc.Truthy() {
+		return Err[any, any](ErrFfi("file picker: no document in this runtime"))
+	}
+	input := doc.Call("createElement", "input")
+	input.Set("type", "file")
+	if accept != "" {
+		input.Set("accept", accept)
+	}
+	if capture {
+		input.Call("setAttribute", "capture", "environment")
+	}
+	input.Get("style").Set("display", "none")
+	doc.Get("body").Call("appendChild", input)
+
+	ch := make(chan SkyResult[any, any], 1)
+	resolved := false
+	finish := func(r SkyResult[any, any]) {
+		if resolved {
+			return
+		}
+		resolved = true
+		input.Call("remove")
+		ch <- r
+	}
+	var funcs []js.Func
+	addFunc := func(fn func(args []js.Value)) js.Func {
+		f := js.FuncOf(func(this js.Value, args []js.Value) any {
+			fn(args)
+			return nil
+		})
+		funcs = append(funcs, f)
+		return f
+	}
+
+	onChange := addFunc(func(args []js.Value) {
+		files := input.Get("files")
+		if !files.Truthy() || files.Get("length").Int() == 0 {
+			finish(Err[any, any](ErrFfi("file picker: no file chosen")))
+			return
+		}
+		file := files.Index(0)
+		reader := global.Get("FileReader").New()
+		onLoad := addFunc(func(a []js.Value) {
+			finish(Ok[any, any](PickedFile{
+				Name:    file.Get("name").String(),
+				Mime:    file.Get("type").String(),
+				DataUrl: reader.Get("result").String(),
+			}))
+		})
+		onLoadErr := addFunc(func(a []js.Value) {
+			finish(Err[any, any](ErrFfi("file picker: could not read the file")))
+		})
+		reader.Set("onload", onLoad)
+		reader.Set("onerror", onLoadErr)
+		reader.Call("readAsDataURL", file)
+	})
+	onCancel := addFunc(func(args []js.Value) {
+		finish(Err[any, any](ErrPermissionDenied("file picker: cancelled")))
+	})
+	input.Call("addEventListener", "change", onChange)
+	input.Call("addEventListener", "cancel", onCancel)
+	input.Call("click")
+
+	result := <-ch
+	for _, f := range funcs {
+		f.Release()
+	}
+	return result
+}
+
+// Native_pickFile — Std.Native.pickFile (`() -> Task Error PickedFile`): pick any
+// file.
+func Native_pickFile(_ any) any {
+	return func() any { return nativePickFile("", false) }
+}
+
+// Native_pickImage — Std.Native.pickImage (`() -> Task Error PickedFile`): pick an
+// image from the gallery (accept="image/*").
+func Native_pickImage(_ any) any {
+	return func() any { return nativePickFile("image/*", false) }
+}
+
+// Native_capturePhoto — Std.Native.capturePhoto (`() -> Task Error PickedFile`):
+// take a photo with the camera on mobile (capture="environment"); a plain file
+// picker on desktop.
+func Native_capturePhoto(_ any) any {
+	return func() any { return nativePickFile("image/*", true) }
+}
+
 // Native_batteryStatus is the Std.Native.batteryStatus kernel
 // (`() -> Task Error BatteryStatus`). navigator.getBattery() returns a Promise.
 func Native_batteryStatus(_ any) any {

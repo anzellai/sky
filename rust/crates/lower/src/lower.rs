@@ -1568,6 +1568,8 @@ fn runtime_backed_record(go_name: &str) -> Option<&'static str> {
         "Std_Native_ShareContent_R" => Some("rt.ShareContent"),
         // rt.BatteryStatus { Charging bool; Level float64 }
         "Std_Native_BatteryStatus_R" => Some("rt.BatteryStatus"),
+        // rt.PickedFile { Name string; Mime string; DataUrl string }
+        "Std_Native_PickedFile_R" => Some("rt.PickedFile"),
         _ => None,
     }
 }

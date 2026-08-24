@@ -527,6 +527,7 @@
       },
       "stdlib_modules": {
         "Sky.Core.Process": "examples/17-skymon",
+        "Std.Bundle": "examples/64-spa-native",
         "Std.Cli": "examples/20-cli-counter"
       }
     },
@@ -536,6 +537,7 @@
       "Sky.Core.Regex": "examples/35-composite-generics",
       "Sky.Http.RateLimit": "examples/36-composite-server",
       "Sky.Http.Server.WebSocket": "examples/33-websocket-echo",
+      "Std.Bundle": "examples/64-spa-native",
       "Std.Cache": "examples/36-composite-server",
       "Std.Cli": "examples/20-cli-counter",
       "Std.Csv": "examples/36-composite-server",
@@ -593,6 +595,12 @@
           "apps:relay"
         ]
       },
+      "Std.Bundle": {
+        "path": "examples/64-spa-native",
+        "units": [
+          "examples/64-spa-native"
+        ]
+      },
       "Std.Cli": {
         "path": "examples/20-cli-counter",
         "units": [
@@ -639,7 +647,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1857,
+    "stdlib_entries": 1861,
     "stdlib_modules": 91,
     "surfaces_covered": 138,
     "surfaces_covered_pct": 89.0,
@@ -6893,14 +6901,26 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 2
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 2
       },
       "description": "the Std.Bundle public API",
       "id": "stdlib.Std.Bundle",
@@ -11762,17 +11782,16 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 7,
+      "count": 6,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
-        "Std.Bundle",
         "Std.Db.Migrate",
         "Std.Db.Table",
         "Std.Live.Console"
       ],
-      "pct_of_denominator": 7.7
+      "pct_of_denominator": 6.6
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -11783,7 +11802,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 13,
+      "count": 12,
       "surfaces": [
         "cli.check",
         "cli.config",
@@ -11795,7 +11814,6 @@
         "cli.upgrade-claude",
         "cli.verify",
         "stdlib.Sky.Core.Io",
-        "stdlib.Std.Bundle",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Live.Console"
       ]
@@ -12130,18 +12148,14 @@
           ]
         },
         "Std.Bundle": {
-          "count": 11,
+          "count": 7,
           "symbols": [
-            "Bundle",
             "Permission",
             "assetUrl",
-            "default",
             "withAsset",
             "withAssetDir",
             "withIcon",
             "withId",
-            "withName",
-            "withPermission",
             "withVersion"
           ]
         },
@@ -12899,8 +12913,8 @@
           ]
         }
       },
-      "count": 741,
-      "pct_of_denominator": 39.9
+      "count": 737,
+      "pct_of_denominator": 39.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13248,18 +13262,15 @@
           ]
         },
         "Std.Bundle": {
-          "count": 11,
+          "count": 8,
           "symbols": [
             "Bundle",
             "Permission",
             "assetUrl",
-            "default",
             "withAsset",
             "withAssetDir",
             "withIcon",
             "withId",
-            "withName",
-            "withPermission",
             "withVersion"
           ]
         },
@@ -14088,8 +14099,8 @@
           ]
         }
       },
-      "count": 823,
-      "pct_of_denominator": 44.3
+      "count": 820,
+      "pct_of_denominator": 44.1
     }
   },
   "units": [
@@ -15064,10 +15075,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/64-spa-native",
-      "modules_imported": 12,
+      "modules_imported": 13,
       "path": "examples/64-spa-native",
-      "refs_generous": 54,
-      "refs_qualified": 51,
+      "refs_generous": 64,
+      "refs_qualified": 60,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [

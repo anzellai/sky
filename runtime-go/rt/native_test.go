@@ -51,6 +51,15 @@ func TestBatteryStatusShape(t *testing.T) {
 	}
 }
 
+// PickedFile must keep the field order + types the codegen alias relies on
+// (Std_Native_PickedFile_R → rt.PickedFile).
+func TestPickedFileShape(t *testing.T) {
+	f := PickedFile{"a.png", "image/png", "data:image/png;base64,AAAA"}
+	if f.Name != "a.png" || f.Mime != "image/png" || f.DataUrl != "data:image/png;base64,AAAA" {
+		t.Error("PickedFile fields are Name, Mime, DataUrl in that order")
+	}
+}
+
 // Every Std.Native capability is client-only: off a client build each must
 // return a Task that yields Err, never a silent zero-value or a panic.
 func TestNativeCapabilitiesAreErrOffClient(t *testing.T) {
@@ -70,6 +79,9 @@ func TestNativeCapabilitiesAreErrOffClient(t *testing.T) {
 		{"prefersDarkMode", Native_prefersDarkMode},
 		{"openUrl", Native_openUrl},
 		{"batteryStatus", Native_batteryStatus},
+		{"pickFile", Native_pickFile},
+		{"pickImage", Native_pickImage},
+		{"capturePhoto", Native_capturePhoto},
 	}
 	assertErrThunk := func(name string, v any) {
 		thunk, ok := v.(func() any)

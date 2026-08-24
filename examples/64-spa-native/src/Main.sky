@@ -32,6 +32,7 @@ bundle : Bundle
 bundle =
     Bundle.default |> Bundle.withName "Sky Native"
         |> Bundle.withPermission Bundle.Notifications
+        |> Bundle.withPermission Bundle.Camera
 
 -- MODEL
 type alias Model =
@@ -43,6 +44,8 @@ type alias Model =
     , lang : String
     , theme : String
     , battery : String
+    , picked : String
+    , preview : String
     , log : String
     }
 
@@ -57,6 +60,8 @@ init _ =
       , lang = "—"
       , theme = "—"
       , battery = "—"
+      , picked = "—"
+      , preview = ""
       , log = "ready"
       }
     , Cmd.none
@@ -87,6 +92,10 @@ type Msg
     | BatteryGot (Result Error Native.BatteryStatus)
     | OpenSite
     | Notify
+    | PickImg
+    | PickAny
+    | CapturePhoto
+    | Picked (Result Error Native.PickedFile)
     | Did String (Result Error ())
 
 
@@ -251,6 +260,31 @@ update msg model =
             , Cmd.perform (Native.notify "Sky" model.draft) (Did "notified")
             )
 
+        PickImg ->
+            ( model, Cmd.perform (Native.pickImage ()) Picked )
+
+        PickAny ->
+            ( model, Cmd.perform (Native.pickFile ()) Picked )
+
+        CapturePhoto ->
+            ( model, Cmd.perform (Native.capturePhoto ()) Picked )
+
+        Picked (Ok f) ->
+            ( { model | picked = f.name ++ " (" ++ f.mime ++ ")"
+              , preview =
+                  if String.startsWith "image/" f.mime then
+                      f.dataUrl
+
+                  else
+                      ""
+              , log = "picked a file"
+              }
+            , Cmd.none
+            )
+
+        Picked (Err e) ->
+            ( { model | log = "pick failed: " ++ Error.toString e }, Cmd.none )
+
         Did what (Ok _) ->
             ( { model | log = what }, Cmd.none )
 
@@ -339,6 +373,7 @@ view model =
                      , btn "Set tab title" Retitle
                      ]
                      ""
+               , filesSection model
                , Ui.el
                      [ Font.size 13
                      , Font.color accent
@@ -350,6 +385,37 @@ view model =
                      ]
                      (Ui.text ("log: " ++ model.log))
                ]
+
+
+filesSection : Model -> Element Msg
+filesSection model =
+    Ui.column
+        [ Ui.spacing 10
+        , Ui.padding 16
+        , Ui.width Ui.fill
+        , Background.color (Ui.rgb255 255 255 255)
+        , Border.rounded 12
+        , Border.width 1
+        , Border.color (Ui.rgb255 226 229 236)
+        ]
+        [ Ui.el [ Font.size 15, Font.bold ] (Ui.text "Files, photos & camera")
+        , Ui.wrappedRow
+              [ Ui.spacing 8 ]
+              [ btn "Pick image" PickImg
+              , btn "Pick file" PickAny
+              , btn "Camera" CapturePhoto
+              ]
+        , Ui.el
+              [ Font.size 13, Font.color (Ui.rgb255 90 96 108) ]
+              (Ui.text ("picked: " ++ model.picked))
+        , if model.preview == "" then
+              Ui.none
+
+          else
+              Ui.image
+                  [ Ui.width (Ui.maximum 200 Ui.fill), Border.rounded 8 ]
+                  { src = model.preview, description = "picked image" }
+        ]
 
 
 section : String -> List (Element Msg) -> String -> Element Msg
