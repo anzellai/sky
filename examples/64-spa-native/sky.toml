@@ -1,0 +1,12 @@
+name = "spa-native"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+# A client-only Sky.Spa app: every effect is a `Std.Native.*` CLIENT capability
+# (clipboard, storage, geolocation, share, vibrate, online status, language,
+# title), so `sky spa-split` keeps ALL of them in the wasm frontend and the
+# generated backend only serves static assets — no `/_rpc/` endpoint. This is
+# the dedicated exercise + manual test harness for the native-capability surface.

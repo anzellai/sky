@@ -52,18 +52,28 @@ func TestNativeCapabilitiesAreErrOffClient(t *testing.T) {
 		{"clipboardRead", Native_clipboardRead},
 		{"vibrate", Native_vibrate},
 		{"share", Native_share},
+		{"storageGet", Native_storageGet},
+		{"storageRemove", Native_storageRemove},
+		{"isOnline", Native_isOnline},
+		{"language", Native_language},
+		{"setTitle", Native_setTitle},
 	}
-	for _, c := range cases {
-		thunk, ok := c.kernel(nil).(func() any)
+	assertErrThunk := func(name string, v any) {
+		thunk, ok := v.(func() any)
 		if !ok {
-			t.Fatalf("Native_%s must return a Task thunk, got %T", c.name, c.kernel(nil))
+			t.Fatalf("Native_%s must return a Task thunk, got %T", name, v)
 		}
 		res, ok := thunk().(SkyResult[any, any])
 		if !ok {
-			t.Fatalf("Native_%s task must yield a SkyResult, got %T", c.name, thunk())
+			t.Fatalf("Native_%s task must yield a SkyResult, got %T", name, thunk())
 		}
 		if res.Tag != 1 {
-			t.Errorf("off-client Native_%s must be Err (Tag 1), got Tag %d", c.name, res.Tag)
+			t.Errorf("off-client Native_%s must be Err (Tag 1), got Tag %d", name, res.Tag)
 		}
 	}
+	for _, c := range cases {
+		assertErrThunk(c.name, c.kernel(nil))
+	}
+	// storageSet is the sole 2-arg capability.
+	assertErrThunk("storageSet", Native_storageSet(nil, nil))
 }

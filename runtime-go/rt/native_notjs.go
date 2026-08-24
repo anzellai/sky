@@ -45,3 +45,45 @@ func Native_share(_ any) any {
 			"Native.share is a client-only capability (no share sheet in this runtime)"))
 	}
 }
+
+func Native_storageSet(_ any, _ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.storageSet is a client-only capability (no local storage in this runtime)"))
+	}
+}
+
+func Native_storageGet(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.storageGet is a client-only capability (no local storage in this runtime)"))
+	}
+}
+
+func Native_storageRemove(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.storageRemove is a client-only capability (no local storage in this runtime)"))
+	}
+}
+
+func Native_isOnline(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.isOnline is a client-only capability (no navigator in this runtime)"))
+	}
+}
+
+func Native_language(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.language is a client-only capability (no navigator in this runtime)"))
+	}
+}
+
+func Native_setTitle(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.setTitle is a client-only capability (no document in this runtime)"))
+	}
+}

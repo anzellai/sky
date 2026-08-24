@@ -49,14 +49,14 @@
     "database_drivers": {
       "sqlite": 12
     },
-    "paths_with_sky_toml": 54,
+    "paths_with_sky_toml": 55,
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
       "[database]": 12,
       "[dependencies]": 1,
       "[live]": 5,
-      "[source]": 50
+      "[source]": 51
     }
   },
   "gates": {
@@ -539,6 +539,7 @@
       "Std.Cache": "examples/36-composite-server",
       "Std.Cli": "examples/20-cli-counter",
       "Std.Csv": "examples/36-composite-server",
+      "Std.Native": "examples/64-spa-native",
       "Std.PubSub": "examples/36-composite-server",
       "Std.Ui.Animation": "examples/26-ui-showcase",
       "Std.Ui.Events": "examples/62-spa-notes",
@@ -622,12 +623,6 @@
           "apps:dispatch"
         ]
       },
-      "Std.Native": {
-        "path": "rust/crates/sky/tests",
-        "units": [
-          "apps:cli-verbs"
-        ]
-      },
       "Std.Trace": {
         "path": "apps/relay",
         "units": [
@@ -644,7 +639,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1846,
+    "stdlib_entries": 1852,
     "stdlib_modules": 91,
     "surfaces_covered": 138,
     "surfaces_covered_pct": 89.0,
@@ -654,12 +649,12 @@
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
-      "Example": 60,
+      "Example": 61,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 79
+    "units_total": 80
   },
   "surfaces": [
     {
@@ -3219,6 +3214,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -3356,6 +3356,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -5107,6 +5112,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -5364,6 +5374,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -7103,6 +7118,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Live (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -7230,6 +7250,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -9600,14 +9625,25 @@
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 2
       },
       "description": "the Std.Native public API",
       "id": "stdlib.Std.Native",
@@ -9670,6 +9706,11 @@
             "by": "examples/63-spa-chat (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
@@ -9689,6 +9730,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           }
@@ -9865,6 +9911,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Live (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -9997,6 +10048,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -10306,6 +10362,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -10383,6 +10444,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -10537,6 +10603,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -10609,6 +10680,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -10705,6 +10781,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -10767,6 +10848,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -10974,6 +11060,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -11051,6 +11142,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -11155,6 +11251,11 @@
             "strength": 2
           },
           {
+            "by": "examples/64-spa-native (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -11192,6 +11293,11 @@
           },
           {
             "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/64-spa-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -12456,13 +12562,9 @@
           ]
         },
         "Std.Native": {
-          "count": 5,
+          "count": 1,
           "symbols": [
-            "Coords",
-            "ShareContent",
-            "clipboardRead",
-            "geolocation",
-            "vibrate"
+            "ShareContent"
           ]
         },
         "Std.Spa": {
@@ -12787,8 +12889,8 @@
           ]
         }
       },
-      "count": 745,
-      "pct_of_denominator": 40.4
+      "count": 741,
+      "pct_of_denominator": 40.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13647,13 +13749,10 @@
           ]
         },
         "Std.Native": {
-          "count": 5,
+          "count": 2,
           "symbols": [
             "Coords",
-            "ShareContent",
-            "clipboardRead",
-            "geolocation",
-            "vibrate"
+            "ShareContent"
           ]
         },
         "Std.Spa": {
@@ -13979,8 +14078,8 @@
           ]
         }
       },
-      "count": 826,
-      "pct_of_denominator": 44.7
+      "count": 823,
+      "pct_of_denominator": 44.4
     }
   },
   "units": [
@@ -14948,6 +15047,20 @@
       "sky_files": 11,
       "sky_toml_sections": [
         "[database]",
+        "[source]"
+      ]
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "examples/64-spa-native",
+      "modules_imported": 11,
+      "path": "examples/64-spa-native",
+      "refs_generous": 47,
+      "refs_qualified": 44,
+      "role": "Example",
+      "sky_files": 1,
+      "sky_toml_sections": [
         "[source]"
       ]
     },

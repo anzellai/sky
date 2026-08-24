@@ -25,17 +25,17 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `stronger` | 133 |
 | verdict `equal` | 22 |
 | verdict `weaker` | 0 |
-| corpus units | 79 |
+| corpus units | 80 |
 | stdlib modules (denominator) | 91 |
-| stdlib entries (denominator) | 1846 |
+| stdlib entries (denominator) | 1852 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 7 | 7.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 826 | 44.7% |
-| symbols unreferenced under the generous rule | 745 | 40.4% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 823 | 44.4% |
+| symbols unreferenced under the generous rule | 741 | 40.0% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -60,8 +60,8 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 17 |
-| stdlib modules owned by exactly one unit of any role | 14 |
+| stdlib modules owned by exactly one `examples/*` | 18 |
+| stdlib modules owned by exactly one unit of any role | 13 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **2** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -220,7 +220,7 @@ None.
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Native` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Native` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Spa` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |

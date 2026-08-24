@@ -6,6 +6,12 @@ module Std.Native exposing
     , vibrate
     , ShareContent
     , share
+    , storageSet
+    , storageGet
+    , storageRemove
+    , isOnline
+    , language
+    , setTitle
     )
 
 -- | `Std.Native` — typed access to native device capabilities from a Sky.Spa
@@ -100,3 +106,53 @@ type alias ShareContent =
 share : ShareContent -> Task Error ()
 share =
     Ffi.kernel "Native_share"
+
+
+-- | Persist a `value` under a `key` in the device's local storage (the browser /
+-- webview `localStorage`) — survives reloads on the same origin. `Err` if storage
+-- is unavailable or full (a quota error, or a private-mode block).
+--
+--     SaveDraft ->
+--         ( model, Cmd.perform (Native.storageSet "draft" model.text) Saved )
+storageSet : String -> String -> Task Error ()
+storageSet =
+    Ffi.kernel "Native_storageSet"
+
+
+-- | Read the value stored under a `key`, `Nothing` if the key was never set. A
+-- function (not a bare `Task`) so each call reads the CURRENT value. `Err` only
+-- on a storage failure — a MISSING key is `Ok Nothing`, not an error.
+--
+--     Loaded (Ok (Just text)) -> ( { model | text = text }, Cmd.none )
+--     Loaded (Ok Nothing)     -> ( model, Cmd.none )
+storageGet : String -> Task Error (Maybe String)
+storageGet =
+    Ffi.kernel "Native_storageGet"
+
+
+-- | Delete the value stored under a `key` (a no-op `Ok` if it was never set).
+storageRemove : String -> Task Error ()
+storageRemove =
+    Ffi.kernel "Native_storageRemove"
+
+
+-- | Whether the device currently reports a network connection
+-- (`navigator.onLine`). A function so each call reads the CURRENT status. Note it
+-- reports the OS link state, not reachability of any particular server.
+isOnline : () -> Task Error Bool
+isOnline =
+    Ffi.kernel "Native_isOnline"
+
+
+-- | The device's preferred UI language as a BCP-47 tag (`"en-US"`, `"fr"`, …),
+-- for choosing a locale. A function so each call reads the CURRENT setting.
+language : () -> Task Error String
+language =
+    Ffi.kernel "Native_language"
+
+
+-- | Set the document / window title (the browser tab label, the webview window
+-- title) — e.g. to reflect the current route or unread count.
+setTitle : String -> Task Error ()
+setTitle =
+    Ffi.kernel "Native_setTitle"

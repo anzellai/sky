@@ -57,6 +57,21 @@ func nativeInt(v any) int {
 	}
 }
 
+// safeJsCall invokes a JS method that MAY throw (localStorage quota / private-mode
+// block, a security exception) and converts the thrown value into an error rather
+// than letting the panic escape. syscall/js turns a JS exception into a Go panic;
+// recovering it here is what keeps a well-typed Sky `Task` returning `Err` instead
+// of crashing the client.
+func safeJsCall(recv js.Value, method string, args ...any) (res js.Value, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	res = recv.Call(method, args...)
+	return
+}
+
 // Native_geolocation is the Std.Native.geolocation kernel. It returns a Task
 // thunk that, when forced on its perform goroutine, asks the platform's
 // Geolocation API for the current position and BLOCKS until it settles —
@@ -182,5 +197,100 @@ func Native_share(content any) any {
 		return blockOnJsPromise(nav.Call("share", data), func(a []js.Value) SkyResult[any, any] {
 			return Ok[any, any](struct{}{})
 		})
+	}
+}
+
+// Native_storageSet is the Std.Native.storageSet kernel
+// (`String -> String -> Task Error ()`). Writes to localStorage; a quota /
+// private-mode throw becomes Err (via safeJsCall), never a crash.
+func Native_storageSet(key any, val any) any {
+	k := fmt.Sprintf("%v", key)
+	v := fmt.Sprintf("%v", val)
+	return func() any {
+		ls := js.Global().Get("localStorage")
+		if !ls.Truthy() {
+			return Err[any, any](ErrFfi("localStorage: unavailable in this runtime"))
+		}
+		if _, e := safeJsCall(ls, "setItem", k, v); e != nil {
+			return Err[any, any](ErrFfi("localStorage.setItem: " + e.Error()))
+		}
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// Native_storageGet is the Std.Native.storageGet kernel
+// (`String -> Task Error (Maybe String)`). A missing key is Ok(Nothing), NOT an
+// error; only a storage failure is Err.
+func Native_storageGet(key any) any {
+	k := fmt.Sprintf("%v", key)
+	return func() any {
+		ls := js.Global().Get("localStorage")
+		if !ls.Truthy() {
+			return Err[any, any](ErrFfi("localStorage: unavailable in this runtime"))
+		}
+		val, e := safeJsCall(ls, "getItem", k)
+		if e != nil {
+			return Err[any, any](ErrFfi("localStorage.getItem: " + e.Error()))
+		}
+		// getItem returns a string for a present key, null for a missing one.
+		if val.Type() == js.TypeString {
+			return Ok[any, any](Just[any](val.String()))
+		}
+		return Ok[any, any](Nothing[any]())
+	}
+}
+
+// Native_storageRemove is the Std.Native.storageRemove kernel
+// (`String -> Task Error ()`). Removing an absent key is a no-op Ok.
+func Native_storageRemove(key any) any {
+	k := fmt.Sprintf("%v", key)
+	return func() any {
+		ls := js.Global().Get("localStorage")
+		if !ls.Truthy() {
+			return Err[any, any](ErrFfi("localStorage: unavailable in this runtime"))
+		}
+		if _, e := safeJsCall(ls, "removeItem", k); e != nil {
+			return Err[any, any](ErrFfi("localStorage.removeItem: " + e.Error()))
+		}
+		return Ok[any, any](struct{}{})
+	}
+}
+
+// Native_isOnline is the Std.Native.isOnline kernel (`() -> Task Error Bool`).
+func Native_isOnline(_ any) any {
+	return func() any {
+		nav := js.Global().Get("navigator")
+		if !nav.Truthy() {
+			return Err[any, any](ErrFfi("navigator: unavailable in this runtime"))
+		}
+		return Ok[any, any](nav.Get("onLine").Bool())
+	}
+}
+
+// Native_language is the Std.Native.language kernel (`() -> Task Error String`).
+func Native_language(_ any) any {
+	return func() any {
+		nav := js.Global().Get("navigator")
+		if !nav.Truthy() {
+			return Err[any, any](ErrFfi("navigator: unavailable in this runtime"))
+		}
+		lang := nav.Get("language")
+		if lang.Type() != js.TypeString {
+			return Ok[any, any]("en")
+		}
+		return Ok[any, any](lang.String())
+	}
+}
+
+// Native_setTitle is the Std.Native.setTitle kernel (`String -> Task Error ()`).
+func Native_setTitle(title any) any {
+	t := fmt.Sprintf("%v", title)
+	return func() any {
+		doc := js.Global().Get("document")
+		if !doc.Truthy() {
+			return Err[any, any](ErrFfi("document: unavailable in this runtime"))
+		}
+		doc.Set("title", t)
+		return Ok[any, any](struct{}{})
 	}
 }
