@@ -4372,11 +4372,6 @@
             "strength": 3
           },
           {
-            "by": "examples/63-spa-chat (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
             "by": "tests/Core (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -4451,11 +4446,6 @@
             "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
           },
           {
             "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
@@ -6419,16 +6409,6 @@
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/62-spa-notes (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/63-spa-chat (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
           }
         ],
         "strength": 4
@@ -6465,16 +6445,6 @@
             "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/62-spa-notes (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
           }
         ],
         "strength": 3
@@ -6507,11 +6477,6 @@
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/63-spa-chat (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
           }
         ],
         "strength": 4
@@ -6533,11 +6498,6 @@
             "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
-          },
-          {
-            "by": "examples/63-spa-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
           }
         ],
         "strength": 3
@@ -12077,14 +12037,15 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "Cookie",
             "Route",
             "Server",
             "body",
             "delete",
-            "put"
+            "put",
+            "static"
           ]
         },
         "Sky.Http.Server.WebSocket": {
@@ -12592,11 +12553,12 @@
           ]
         },
         "Std.Spa": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "Route",
             "getJson",
+            "postJson",
             "route",
             "routeInt",
             "withNotFound",
@@ -12913,8 +12875,8 @@
           ]
         }
       },
-      "count": 737,
-      "pct_of_denominator": 39.6
+      "count": 739,
+      "pct_of_denominator": 39.7
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13187,7 +13149,7 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 9,
+          "count": 10,
           "symbols": [
             "Cookie",
             "Handler",
@@ -13197,7 +13159,8 @@
             "Server",
             "body",
             "delete",
-            "put"
+            "put",
+            "static"
           ]
         },
         "Sky.Http.Server.WebSocket": {
@@ -13777,11 +13740,12 @@
           ]
         },
         "Std.Spa": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "Route",
             "getJson",
+            "postJson",
             "route",
             "routeInt",
             "withNotFound",
@@ -14099,8 +14063,8 @@
           ]
         }
       },
-      "count": 820,
-      "pct_of_denominator": 44.0
+      "count": 822,
+      "pct_of_denominator": 44.1
     }
   },
   "units": [
@@ -15043,12 +15007,12 @@
       ],
       "gate": null,
       "id": "examples/62-spa-notes",
-      "modules_imported": 19,
+      "modules_imported": 18,
       "path": "examples/62-spa-notes",
-      "refs_generous": 96,
-      "refs_qualified": 88,
+      "refs_generous": 82,
+      "refs_qualified": 77,
       "role": "Example",
-      "sky_files": 11,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[database]",
         "[source]"
@@ -15060,12 +15024,12 @@
       ],
       "gate": null,
       "id": "examples/63-spa-chat",
-      "modules_imported": 21,
+      "modules_imported": 18,
       "path": "examples/63-spa-chat",
-      "refs_generous": 101,
-      "refs_qualified": 92,
+      "refs_generous": 84,
+      "refs_qualified": 79,
       "role": "Example",
-      "sky_files": 11,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[database]",
         "[source]"
