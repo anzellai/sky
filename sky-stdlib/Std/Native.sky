@@ -1,0 +1,42 @@
+module Std.Native exposing (Coords, geolocation)
+
+-- | `Std.Native` — typed access to native device capabilities from a Sky.Spa
+-- client (running as wasm in a browser or a mobile/desktop webview). Every
+-- capability is an ordinary EFFECT — a `Task Error a` you run through `update` /
+-- `Cmd.perform` — so a denial, a timeout, or an unavailable API is a clean
+-- `Err`, never a crash. The client stays pure; the capability is the effect.
+--
+-- The mobile shells must DECLARE the matching permission so the OS grants it:
+-- `Bundle.withPermission Bundle.Location` wires the iOS
+-- `NSLocationWhenInUseUsageDescription` + the Android `ACCESS_FINE_LOCATION`
+-- permission and the webview's permission prompt. Without it the OS denies the
+-- request and the Task returns `Err`.
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | A geographic fix: `lat`/`lng` in degrees, `accuracy` in metres.
+type alias Coords =
+    { lat : Float
+    , lng : Float
+    , accuracy : Float
+    }
+
+
+-- | Ask the device for the current location. A function (not a bare `Task`) so
+-- each call fetches a FRESH fix rather than memoising one. `Err` on denial,
+-- timeout, or when no location service is available.
+--
+--     update msg model =
+--         case msg of
+--             Locate ->
+--                 ( model, Cmd.perform (Native.geolocation ()) Located )
+--
+--             Located (Ok c) ->
+--                 ( { model | here = Just c }, Cmd.none )
+--
+--             Located (Err _) ->
+--                 ( { model | here = Nothing }, Cmd.none )
+geolocation : () -> Task Error Coords
+geolocation =
+    Ffi.kernel "Native_geolocation"

@@ -638,13 +638,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1837,
-    "stdlib_modules": 90,
+    "stdlib_entries": 1839,
+    "stdlib_modules": 91,
     "surfaces_covered": 137,
-    "surfaces_covered_pct": 89.0,
-    "surfaces_equal": 22,
+    "surfaces_covered_pct": 88.4,
+    "surfaces_equal": 23,
     "surfaces_stronger": 132,
-    "surfaces_total": 154,
+    "surfaces_total": 155,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -9583,6 +9583,22 @@
     {
       "category": "stdlib",
       "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Native public API",
+      "id": "stdlib.Std.Native",
+      "verdict": "equal"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
         "class": "Falsified",
         "evidence": [
           {
@@ -11613,7 +11629,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 7,
+      "count": 8,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -11621,9 +11637,10 @@
         "Std.Bundle",
         "Std.Db.Migrate",
         "Std.Db.Table",
-        "Std.Live.Console"
+        "Std.Live.Console",
+        "Std.Native"
       ],
-      "pct_of_denominator": 7.8
+      "pct_of_denominator": 8.8
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -11634,7 +11651,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 13,
+      "count": 14,
       "surfaces": [
         "cli.check",
         "cli.config",
@@ -11648,7 +11665,8 @@
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Bundle",
         "stdlib.Std.Db.Table",
-        "stdlib.Std.Live.Console"
+        "stdlib.Std.Live.Console",
+        "stdlib.Std.Native"
       ]
     },
     "symbols_unreferenced_generous": {
@@ -12420,6 +12438,13 @@
             "zeroOf"
           ]
         },
+        "Std.Native": {
+          "count": 2,
+          "symbols": [
+            "Coords",
+            "geolocation"
+          ]
+        },
         "Std.Spa": {
           "count": 8,
           "symbols": [
@@ -12742,7 +12767,7 @@
           ]
         }
       },
-      "count": 738,
+      "count": 740,
       "pct_of_denominator": 40.2
     },
     "symbols_unreferenced_strict": {
@@ -13599,6 +13624,13 @@
             "zeroOf"
           ]
         },
+        "Std.Native": {
+          "count": 2,
+          "symbols": [
+            "Coords",
+            "geolocation"
+          ]
+        },
         "Std.Spa": {
           "count": 8,
           "symbols": [
@@ -13922,7 +13954,7 @@
           ]
         }
       },
-      "count": 819,
+      "count": 821,
       "pct_of_denominator": 44.6
     }
   },

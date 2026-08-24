@@ -1562,6 +1562,8 @@ fn runtime_backed_record(go_name: &str) -> Option<&'static str> {
     match go_name {
         // rt.HttpResponse { Status int; Body string; Headers map[string]string }
         "Sky_Core_Http_HttpResponse_R" => Some("rt.HttpResponse"),
+        // rt.NativeCoords { Lat float64; Lng float64; Accuracy float64 }
+        "Std_Native_Coords_R" => Some("rt.NativeCoords"),
         _ => None,
     }
 }
