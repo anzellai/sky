@@ -12,3 +12,36 @@ func Native_geolocation(_ any) any {
 			"Native.geolocation is a client-only capability (no location service in this runtime)"))
 	}
 }
+
+// The rest of Std.Native is likewise client-only: clipboard, vibration, and the
+// share sheet all live in the browser/webview. On a native (server/CLI) build
+// there is nothing to call, so each returns Err rather than pretend. The real
+// implementations are the wasm build (native_wasm.go).
+
+func Native_clipboardWrite(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.clipboardWrite is a client-only capability (no clipboard in this runtime)"))
+	}
+}
+
+func Native_clipboardRead(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.clipboardRead is a client-only capability (no clipboard in this runtime)"))
+	}
+}
+
+func Native_vibrate(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.vibrate is a client-only capability (no vibration hardware in this runtime)"))
+	}
+}
+
+func Native_share(_ any) any {
+	return func() any {
+		return Err[any, any](ErrNetwork(
+			"Native.share is a client-only capability (no share sheet in this runtime)"))
+	}
+}

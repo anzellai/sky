@@ -30,3 +30,40 @@ func TestNativeCoordsShape(t *testing.T) {
 		t.Error("NativeCoords fields are Lat, Lng, Accuracy in that order")
 	}
 }
+
+// ShareContent must keep the field order + types the codegen alias relies on
+// (Std_Native_ShareContent_R → rt.ShareContent). Constructing it positionally is
+// the compile-time guard.
+func TestShareContentShape(t *testing.T) {
+	s := ShareContent{"Sky", "check this out", "https://sky-lang.org"}
+	if s.Title != "Sky" || s.Text != "check this out" || s.Url != "https://sky-lang.org" {
+		t.Error("ShareContent fields are Title, Text, Url in that order")
+	}
+}
+
+// Every Std.Native capability is client-only: off a client build each must
+// return a Task that yields Err, never a silent zero-value or a panic.
+func TestNativeCapabilitiesAreErrOffClient(t *testing.T) {
+	cases := []struct {
+		name   string
+		kernel func(any) any
+	}{
+		{"clipboardWrite", Native_clipboardWrite},
+		{"clipboardRead", Native_clipboardRead},
+		{"vibrate", Native_vibrate},
+		{"share", Native_share},
+	}
+	for _, c := range cases {
+		thunk, ok := c.kernel(nil).(func() any)
+		if !ok {
+			t.Fatalf("Native_%s must return a Task thunk, got %T", c.name, c.kernel(nil))
+		}
+		res, ok := thunk().(SkyResult[any, any])
+		if !ok {
+			t.Fatalf("Native_%s task must yield a SkyResult, got %T", c.name, thunk())
+		}
+		if res.Tag != 1 {
+			t.Errorf("off-client Native_%s must be Err (Tag 1), got Tag %d", c.name, res.Tag)
+		}
+	}
+}

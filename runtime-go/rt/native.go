@@ -12,3 +12,17 @@ type NativeCoords struct {
 	Lng      float64
 	Accuracy float64
 }
+
+// ShareContent is the Go counterpart of Std.Native.ShareContent
+// (`{ title : String, text : String, url : String }`). Same alias mechanism as
+// NativeCoords, but in the ARGUMENT direction: the codegen aliases the emitted
+// `Std_Native_ShareContent_R` record struct to this type
+// (lower.rs runtime_backed_record), so the Sky record a caller builds arrives at
+// the Native_share kernel as a plain `rt.ShareContent` it narrows to by a
+// reflection-free assertion. Field ORDER + Go types MUST match the Sky record's
+// declaration order (title, text, url : String → Title, Text, Url string).
+type ShareContent struct {
+	Title string
+	Text  string
+	Url   string
+}

@@ -1,4 +1,12 @@
-module Std.Native exposing (Coords, geolocation)
+module Std.Native exposing
+    ( Coords
+    , geolocation
+    , clipboardWrite
+    , clipboardRead
+    , vibrate
+    , ShareContent
+    , share
+    )
 
 -- | `Std.Native` — typed access to native device capabilities from a Sky.Spa
 -- client (running as wasm in a browser or a mobile/desktop webview). Every
@@ -40,3 +48,55 @@ type alias Coords =
 geolocation : () -> Task Error Coords
 geolocation =
     Ffi.kernel "Native_geolocation"
+
+
+-- | Copy text to the device clipboard — the "Copy link" / "Copy code" gesture.
+-- `Err` if the user (or the OS) denies clipboard access, or the runtime has no
+-- clipboard (a bare server build).
+--
+--     Copied url ->
+--         ( model, Cmd.perform (Native.clipboardWrite url) Announced )
+clipboardWrite : String -> Task Error ()
+clipboardWrite =
+    Ffi.kernel "Native_clipboardWrite"
+
+
+-- | Read the text currently on the device clipboard — the "Paste" gesture. A
+-- function (not a bare `Task`) so each call reads the CURRENT contents rather
+-- than memoising the first read. `Err` on denial or when the clipboard holds no
+-- text.
+clipboardRead : () -> Task Error String
+clipboardRead =
+    Ffi.kernel "Native_clipboardRead"
+
+
+-- | Vibrate the device for `ms` milliseconds — a haptic tap on a phone. On
+-- hardware that cannot vibrate (a desktop browser, most laptops) it is a clean
+-- no-op that still yields `Ok`, so a UI can fire it unconditionally.
+vibrate : Int -> Task Error ()
+vibrate =
+    Ffi.kernel "Native_vibrate"
+
+-- | What to hand to the platform share sheet. Any field may be empty; a real
+-- share usually sets `url` (a link) with a short `title`/`text`.
+type alias ShareContent =
+    { title : String
+    , text : String
+    , url : String
+    }
+
+
+-- | Open the platform share sheet (iOS/Android native sheet, or the browser's
+-- Web Share sheet where present). `Err` if the user dismisses it, or the runtime
+-- has no share sheet — most desktop browsers — so a UI should offer a
+-- copy-to-clipboard fallback on `Err`.
+--
+--     Share ->
+--         ( model
+--         , Cmd.perform
+--             (Native.share { title = "Sky", text = "", url = model.link })
+--             Shared
+--         )
+share : ShareContent -> Task Error ()
+share =
+    Ffi.kernel "Native_share"

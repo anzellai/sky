@@ -45,10 +45,14 @@ enum KernelClass {
     /// secret / DB handle / env value can ever reach it — auditable at a glance,
     /// and no env/CORS/CSP semantics for the author to learn.
     ServerOnly,
-    /// Reserved: a client-side effect. v1 puts every effect on the server (see
-    /// `ServerOnly`), so nothing maps here yet — kept as the seam for a future
-    /// opt-in (e.g. a client-local uuid/time) rather than deleted.
-    #[allow(dead_code)]
+    /// A client-side effect — an effect that PHYSICALLY belongs in the browser /
+    /// webview and must run in the wasm client, never behind an RPC. Routing one
+    /// to the server would call its `//go:build !js` stub, which returns `Err`
+    /// (there is no clipboard / geolocation / share sheet on the server). The
+    /// first real inhabitant is [`CLIENT_EFFECT_KERNELS`] — `Std.Native.*`. A
+    /// branch whose only effect refs are `ClientEffect` has no
+    /// `direct_server_reason`, so it stays in the frontend and its kernel runs in
+    /// wasm.
     ClientEffect,
     /// Pure / plumbing — irrelevant to the partition.
     Neutral,
@@ -108,6 +112,19 @@ const KNOWN_PURE_KERNELS: &[&str] = &[
     "Ffi",
 ];
 
+/// **CLIENT-EFFECT** kernel families — effects that must run in the wasm CLIENT,
+/// never behind an RPC (maps to [`KernelClass::ClientEffect`]). These reach a
+/// browser/webview-only platform API (`navigator.clipboard`, `navigator.share`,
+/// `navigator.vibrate`, the Geolocation API); their `//go:build !js` counterpart
+/// is an `Err` stub, so routing them to the server — the fail-closed default for
+/// an unknown effect — would make every call fail. `Std.Native.*` is emitted as
+/// raw `Ffi.kernel "Native_<cap>"` symbols, so the family is the `Native_` symbol
+/// PREFIX, classified by [`record_ffi_symbol`] — "Native" is NOT a registered
+/// `hir::KERNEL_MODULES` pseudo-module, so it is not (and need not be) in the
+/// EFFECT/PURE exhaustiveness lists. Adding a family here is a deliberate
+/// statement that its effect is safe + correct to run client-side.
+const CLIENT_EFFECT_KERNELS: &[&str] = &["Native"];
+
 /// Classify a kernel pseudo-module + function. `module` is the pseudo name
 /// (`Db`, `Http`, `System`, …) as produced by the resolver's `Res::Kernel`, or
 /// an `Ffi.kernel "<Symbol>"` prefix (`Db`, `Http`, …).
@@ -121,6 +138,9 @@ const KNOWN_PURE_KERNELS: &[&str] = &[
 fn classify_kernel(module: &str, _func: &str) -> KernelClass {
     if EFFECT_KERNELS.contains(&module) {
         KernelClass::ServerOnly
+    } else if CLIENT_EFFECT_KERNELS.contains(&module) {
+        // A browser/webview-only effect — runs in the wasm client, not via RPC.
+        KernelClass::ClientEffect
     } else if KNOWN_PURE_KERNELS.contains(&module) {
         KernelClass::Neutral
     } else {
@@ -2040,17 +2060,49 @@ mod tests {
         // Known pure -> client (Neutral).
         assert_eq!(classify_kernel("String", "toUpper"), KernelClass::Neutral);
         assert_eq!(classify_kernel("List", "map"), KernelClass::Neutral);
+        // Client-effect family -> ClientEffect (stays in the wasm client, not RPC).
+        assert_eq!(classify_kernel("Native", "geolocation"), KernelClass::ClientEffect);
+        assert_eq!(classify_kernel("Native", "clipboardWrite"), KernelClass::ClientEffect);
         // Unknown family -> conservative SERVER (fail-closed), never Neutral.
         assert_eq!(classify_kernel("BrandNewEffect", "boom"), KernelClass::ServerOnly);
     }
 
-    /// EFFECT and KNOWN_PURE are disjoint — no kernel can be both server and pure.
+    /// A `Std.Native.*` FFI symbol (`Native_<cap>`) records as a CLIENT effect,
+    /// never a server kernel — so a branch using it has no `direct_server_reason`
+    /// and stays in the frontend wasm.
     #[test]
-    fn effect_and_pure_are_disjoint() {
+    fn native_ffi_symbol_is_a_client_effect() {
+        let mut acc = Refs::default();
+        record_ffi_symbol("Native_clipboardWrite", &mut acc);
+        record_ffi_symbol("Native_geolocation", &mut acc);
+        assert!(
+            acc.server_kernels.is_empty(),
+            "Std.Native must not record as a server kernel: {:?}",
+            acc.server_kernels
+        );
+        assert!(acc.direct_server_reason().is_none(), "no server reason for a client effect");
+        assert_eq!(acc.client_kernels.len(), 2, "both Native symbols land in client_kernels");
+        assert!(acc.client_effect_note().is_some(), "client-effect note is populated");
+    }
+
+    /// EFFECT, KNOWN_PURE, and CLIENT_EFFECT are pairwise disjoint — no kernel can
+    /// be classified two ways.
+    #[test]
+    fn effect_pure_and_client_effect_are_disjoint() {
         for m in EFFECT_KERNELS {
             assert!(
                 !KNOWN_PURE_KERNELS.contains(m),
                 "kernel `{m}` is in both EFFECT and KNOWN_PURE"
+            );
+            assert!(
+                !CLIENT_EFFECT_KERNELS.contains(m),
+                "kernel `{m}` is in both EFFECT and CLIENT_EFFECT"
+            );
+        }
+        for m in CLIENT_EFFECT_KERNELS {
+            assert!(
+                !KNOWN_PURE_KERNELS.contains(m),
+                "kernel `{m}` is in both CLIENT_EFFECT and KNOWN_PURE"
             );
         }
     }

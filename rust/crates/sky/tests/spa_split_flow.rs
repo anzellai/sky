@@ -63,6 +63,11 @@ fn clientonly_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-split-clientonly/src/Main.sky")
 }
 
+fn clientnative_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-split-clientnative/src/Main.sky")
+}
+
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
 /// rather than a fixed `main.wasm`.
 fn dist_has_wasm(dist: &std::path::Path) -> bool {
@@ -238,6 +243,55 @@ fn client_only_app_generates_a_buildable_static_only_backend() {
     assert!(
         out.join("backend/sky-out/app").is_file(),
         "backend build must produce sky-out/app"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A `Std.Native.*` effect is a CLIENT effect: it must stay in the wasm frontend,
+/// never become a server RPC. Native capabilities (`clipboardWrite`, `share`, …)
+/// reach a browser/webview-only platform API whose `//go:build !js` counterpart is
+/// an `Err` stub, so routing them server-side — the fail-closed default for an
+/// unknown effect — would make every call fail (this fixture's kernels once
+/// generated `/_rpc/Copy` + `/_rpc/Share`, and the round-trip hit the Err stubs).
+/// `classify_kernel` now maps the `Native_` family to `ClientEffect`, so the
+/// frontend keeps the kernel call and the backend generates NO RPC for it.
+#[test]
+fn native_effects_stay_client_side_not_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            clientnative_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed on a client-native app");
+
+    // The frontend KEEPS the native kernel calls in its `update` — they run in the
+    // wasm client. (Both are inside a `Cmd.perform (Native.… ) Done`.)
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    assert!(
+        front.contains("Native.clipboardWrite") && front.contains("Native.share"),
+        "frontend must keep the Std.Native kernel calls (they run client-side)"
+    );
+
+    // The definitive proof it was NOT server-routed: the backend generates NO RPC
+    // ENDPOINT for the native effects (a server-routed effect emits
+    // `Server.api "POST /_rpc/<Msg>"`). It must still serve the static assets.
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    assert!(
+        !back.contains("POST /_rpc/"),
+        "a client-native effect must NOT generate an RPC endpoint on the backend"
+    );
+    assert!(
+        back.contains("Server.static \"/\" \"../frontend/dist\""),
+        "backend must still serve the frontend's static assets"
     );
 
     let _ = std::fs::remove_dir_all(&out);

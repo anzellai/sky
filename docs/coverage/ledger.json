@@ -622,6 +622,12 @@
           "apps:dispatch"
         ]
       },
+      "Std.Native": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Trace": {
         "path": "apps/relay",
         "units": [
@@ -638,12 +644,12 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1841,
+    "stdlib_entries": 1846,
     "stdlib_modules": 91,
-    "surfaces_covered": 137,
-    "surfaces_covered_pct": 88.4,
-    "surfaces_equal": 23,
-    "surfaces_stronger": 132,
+    "surfaces_covered": 138,
+    "surfaces_covered_pct": 89.0,
+    "surfaces_equal": 22,
+    "surfaces_stronger": 133,
     "surfaces_total": 155,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -3064,6 +3070,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -9583,9 +9594,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -9594,7 +9611,7 @@
       },
       "description": "the Std.Native public API",
       "id": "stdlib.Std.Native",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -11629,7 +11646,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 8,
+      "count": 7,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -11637,10 +11654,9 @@
         "Std.Bundle",
         "Std.Db.Migrate",
         "Std.Db.Table",
-        "Std.Live.Console",
-        "Std.Native"
+        "Std.Live.Console"
       ],
-      "pct_of_denominator": 8.8
+      "pct_of_denominator": 7.7
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -11651,7 +11667,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 14,
+      "count": 13,
       "surfaces": [
         "cli.check",
         "cli.config",
@@ -11665,8 +11681,7 @@
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Bundle",
         "stdlib.Std.Db.Table",
-        "stdlib.Std.Live.Console",
-        "stdlib.Std.Native"
+        "stdlib.Std.Live.Console"
       ]
     },
     "symbols_unreferenced_generous": {
@@ -12441,10 +12456,13 @@
           ]
         },
         "Std.Native": {
-          "count": 2,
+          "count": 5,
           "symbols": [
             "Coords",
-            "geolocation"
+            "ShareContent",
+            "clipboardRead",
+            "geolocation",
+            "vibrate"
           ]
         },
         "Std.Spa": {
@@ -12769,8 +12787,8 @@
           ]
         }
       },
-      "count": 742,
-      "pct_of_denominator": 40.3
+      "count": 745,
+      "pct_of_denominator": 40.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13629,10 +13647,13 @@
           ]
         },
         "Std.Native": {
-          "count": 2,
+          "count": 5,
           "symbols": [
             "Coords",
-            "geolocation"
+            "ShareContent",
+            "clipboardRead",
+            "geolocation",
+            "vibrate"
           ]
         },
         "Std.Spa": {
@@ -13958,7 +13979,7 @@
           ]
         }
       },
-      "count": 823,
+      "count": 826,
       "pct_of_denominator": 44.7
     }
   },
@@ -13979,12 +14000,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 13,
+      "modules_imported": 15,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 40,
-      "refs_qualified": 37,
+      "refs_generous": 44,
+      "refs_qualified": 40,
       "role": "Layer2",
-      "sky_files": 10,
+      "sky_files": 11,
       "sky_toml_sections": []
     },
     {

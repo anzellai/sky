@@ -21,21 +21,21 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 155 |
-| covered by the new corpus (>= Asserted) | 137 |
-| verdict `stronger` | 132 |
-| verdict `equal` | 23 |
+| covered by the new corpus (>= Asserted) | 138 |
+| verdict `stronger` | 133 |
+| verdict `equal` | 22 |
 | verdict `weaker` | 0 |
 | corpus units | 79 |
 | stdlib modules (denominator) | 91 |
-| stdlib entries (denominator) | 1841 |
+| stdlib entries (denominator) | 1846 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 8 | 8.8% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 823 | 44.7% |
-| symbols unreferenced under the generous rule | 742 | 40.3% |
+| stdlib modules imported by nothing | 7 | 7.7% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 826 | 44.7% |
+| symbols unreferenced under the generous rule | 745 | 40.4% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -53,7 +53,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `stdlib.Std.Bundle`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
-- `stdlib.Std.Native`
 
 ## Sole ownership
 
@@ -62,7 +61,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 17 |
-| stdlib modules owned by exactly one unit of any role | 13 |
+| stdlib modules owned by exactly one unit of any role | 14 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **2** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -221,7 +220,7 @@ None.
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Native` | stdlib | None | None | equal |
+| `stdlib.Std.Native` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Spa` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |

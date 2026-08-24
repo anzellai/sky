@@ -1,0 +1,86 @@
+module Main exposing (main)
+
+-- Auto-split INPUT whose only effects are `Std.Native.*` CLIENT effects. Unlike a
+-- Db/Http/File effect (which the split routes to a server RPC), a native
+-- capability physically belongs in the browser/webview and MUST stay in the wasm
+-- client — its non-js counterpart is an Err stub, so an RPC round-trip would
+-- fail every call. This is the regression fixture proving `classify_kernel`
+-- treats the `Native_` family as a ClientEffect: the frontend keeps the kernel
+-- call and the generated backend has NO `/_rpc/` endpoint for it.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Std.Native as Native
+
+type alias Model =
+    { status : String }
+
+type Msg
+    = Copy
+    | Share
+    | Done (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "ready" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Copy ->
+            ( { model | status = "copying" }
+            , Cmd.perform (Native.clipboardWrite "hello") Done
+            )
+
+        Share ->
+            ( model
+            , Cmd.perform
+                  (Native.share
+                      { title = "Sky"
+                      , text = "hi"
+                      , url = "https://sky-lang.org"
+                      })
+                  Done
+            )
+
+        Done (Ok _) ->
+            ( { model | status = "ok" }, Cmd.none )
+
+        Done (Err _) ->
+            ( { model | status = "err" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("status: " ++ model.status)
+            , Ui.button [] { onPress = Just Copy, label = Ui.text "Copy" }
+            , Ui.button [] { onPress = Just Share, label = Ui.text "Share" }
+            ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })
