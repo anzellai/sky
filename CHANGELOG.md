@@ -13,6 +13,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.22.0 — Sky.Spa: one language, every platform (2026-08-24)
+
 ### Sky.Spa — client-side wasm apps, now a supported feature
 
 Sky.Spa graduates from preview to a supported part of the stdlib (`Std.Spa`). You

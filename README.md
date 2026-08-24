@@ -2,19 +2,21 @@
 
 [sky-lang.org](https://sky-lang.org) · [Docs & tour](https://anzellai.github.io/sky/) · [Examples](examples/)
 
-> **Status: v0.21.x** — public APIs are stable for the
+> **Status: v0.22.x** — public APIs are stable for the
 > v1.0 line; minor versions ship features additively. Internals can
-> still change between minor versions. The compiler is now written in
+> still change between minor versions. The compiler is written in
 > Rust (cargo workspace at `rust/`) — the typed-Go output and the
 > "if it compiles, it works" guarantee carry over unchanged. The
 > retired Haskell compiler stays under `legacy-haskell-compiler/` as
-> the differential oracle.
+> the differential oracle. **New in v0.22: [Sky.Spa](docs/skyspa/overview.md)** —
+> the *same* app compiled to wasm and shipped to web, desktop, iOS, and Android.
 
 Sky is a **fullstack functional language that compiles to typed Go**.
 You write Elm-style syntax — explicit types, exhaustive pattern matching,
 no runtime exceptions — and ship a single static binary with a
 batteries-included stdlib, observability built in, and any Go package
-just an `import` away.
+just an `import` away. One `init / update / view` runs it **server-side**
+(Sky.Live) or **client-side in wasm** (Sky.Spa) — same source, different reach.
 
 ```elm
 module Main exposing (main)
@@ -36,10 +38,12 @@ sky init hello && cd hello && sky run src/Main.sky
   `sky check` invokes `go build` on the emitted Go so any shape
   mismatch surfaces at type-check time. There is no runtime null,
   no uncaught exception, no silent numeric coercion.
-- **One language, every shape.** The same `init / update / view /
-  subscriptions` source compiles to a server-rendered web app
-  (Sky.Live), a terminal UI (Sky.Tui), or a native desktop window
-  (Sky.Webview).
+- **One language, every shape — including cross-platform.** The same
+  `init / update / view / subscriptions` source compiles to a
+  server-rendered web app (Sky.Live), a terminal UI (Sky.Tui), a native
+  desktop window (Sky.Webview), or a **wasm client** (Sky.Spa) shipped to
+  **web, desktop, iOS, and Android** from one codebase. One `Std.Ui`
+  `Element` view paints to the DOM, to ANSI cells, or to a native webview.
 - **Batteries included.** Auth, database, HTTP client + server,
   WebSocket, JSON, JWT, CSV, email, encryption, observability —
   every primitive a real app needs is in the stdlib (`Std.Db`,
@@ -165,42 +169,46 @@ The `sky` binary embeds the runtime, stdlib, and Sky Console.
 End users only need `sky` on PATH and Go 1.21+ available for
 codegen.
 
-## Pick your shape
+## Pick your shape — when to use what
 
-Match the application to the right surface — every shape uses the
-same TEA-style `init / update / view / subscriptions`.
+Every shape is the same TEA-style `init / update / view / subscriptions`;
+pick by where the loop should run and how you ship it.
 
-| What you're building                    | Surface           | Entry point                     | Default deployment   |
-|-----------------------------------------|-------------------|---------------------------------|----------------------|
-| Web app (server-driven, real-time)      | **Sky.Live**      | `Live.app (Live.config {…})`    | Cloud Run / VM       |
-| HTTP / JSON API (no UI)                 | **Sky.Http.Server** | `Server.listen 8000 [...]`    | Cloud Run / VM     |
-| Terminal UI (TUI)                       | **Sky.Tui**       | `Tui.app (Tui.config {…})`      | `brew install` / CLI |
-| CLI tool (no UI loop)                   | **Sky.Cli**       | `main = Task.run ...`           | `brew install`       |
-| Native desktop app                      | **Sky.Webview**   | `Webview.app { … }`             | `.app` / `.exe`      |
+| You're building | Surface | Reach for it when | Entry point |
+|---|---|---|---|
+| **Interactive web app, server-driven** | **Sky.Live** | you want zero client build + instant first paint, server-owned state, and real-time updates over one SSE per session; the target is the browser today | `Live.app (Live.config {…})` |
+| **Cross-platform app** (web · desktop · iOS · Android) | **Sky.Spa** | pure UI transitions should be **instant + local** (client wasm, no round-trip), the backend is a stateless API, and you ship to a webview (desktop/mobile) | `Spa.app (Spa.config {…})` |
+| HTTP / JSON API (no UI) | **Sky.Http.Server** | you're serving JSON/REST with typed routes + middleware, no rendered UI | `Server.listen 8000 [...]` |
+| Terminal UI (TUI) | **Sky.Tui** | a rich terminal app — the *same* `Std.Ui` view, painted to ANSI cells | `Tui.app (Tui.config {…})` |
+| CLI tool / background job | **Sky.Cli** | a one-shot command or cron job, no UI loop | `main = Task.run ...` |
+| Native desktop window | **Sky.Webview** | a desktop `.app`/`.exe` wrapping your UI in a native window | `Webview.app { … }` |
 
-> ### ⚠ Upgrading from v0.18 → v0.19? `Live.app` is a breaking change
->
-> The TEA app config is now a **typed builder**, not a row-open record literal:
->
-> ```elm
-> -- v0.18 (old)                          -- v0.19 (new)
-> Live.app { init = …, update = …,        Live.app
->            view = …, subscriptions = …,      (Live.config { init = …, update = …
->            routes = [...], notFound = …,                    , view = …, subscriptions = …
->            head = headFor }                                 , routes = [...], notFound = … }
->                                                  |> Live.withHead headFor)
-> ```
->
-> The six required fields go in `Live.config { … }`; optional fields
-> (`head` / `guard` / `analytics` / …) attach with `|> withX`. Same for
-> `Tui.app` / `Tui.program` / `Cli.program`; `Webview.app` is unchanged. Raw
-> `api` endpoints are now `Request -> Task Error Response` (record request, Task
-> return) and live in the `routes` list. Full mechanical guide:
-> [`docs/v0.19/migration-builder-cfg.md`](docs/v0.19/migration-builder-cfg.md).
+**Sky.Live vs Sky.Spa — the two TEA runtimes.** Sky.Live keeps the loop on the
+**server** (per-user model, live SSE, a full re-render each interaction) — great
+for a browser web app with zero client build and instant first paint. Sky.Spa
+moves the loop to the **client** (compiled to wasm), so pure UI transitions are
+instant and local, the backend shrinks to a stateless API, and the *one* codebase
+ships to **web, desktop, iOS, and Android**. Same `Model / Msg / update / view`,
+same `Std.Ui` `Element` — you pick the runtime, not a rewrite.
 
 Every backend shares `Std.Ui` for layout, `Std.Auth` for sessions,
 `Std.Db` for persistence, `Std.Log` / `Std.Trace` for
 observability, and `Sky.Core.*` for pure primitives.
+
+### Cross-platform + native device APIs (Sky.Spa)
+
+`sky build --target web|desktop|ios|android` takes one Sky.Spa app to every
+platform, and **`sky spa-split`** derives a wasm frontend + a stateless backend +
+a shared codec contract from a single project. Native device capabilities are
+plain typed effects (`Task Error a`) via **`Std.Native`** — clipboard, local
+storage, geolocation, share, notifications, camera/photo/file pickers, battery,
+and more.
+
+> **Extending native platform APIs — experimental.** `Native.bridge` lets an app
+> (or a distributable Sky library, with `native/ios/*.swift` + `native/android/*.java`
+> and entitlement/manifest fragments) register its **own** native capability —
+> e.g. Apple Pay / Google Pay — with **no compiler change**. This extensibility
+> layer is an early, evolving feature; the API may change.
 
 ## What ships with Sky
 
@@ -211,6 +219,9 @@ A short tour. Full reference at `sky doc --serve` or
 |------------------------|-----------------------------------------------------------------------------------|
 | `Std.Ui`               | Typed no-CSS layout DSL (`row`/`column`/`el`/`button`/`input` + `Background`/`Border`/`Font`/`Region` subs). Renders to inline-styled HTML, ANSI cells, or native Webview from the same source. |
 | `Std.Live`             | Sky.Live runtime — TEA app + SSE patches + session stores (memory / sqlite / redis / postgres) + routing + cookies + auth gates. |
+| `Std.Spa`              | Sky.Spa runtime — the *same* TEA loop compiled to `GOOS=js GOARCH=wasm` and run on the client (web / desktop / iOS / Android). `sky spa-split` derives a wasm frontend + a stateless backend + a shared codec contract from one project. |
+| `Std.Native`           | Typed native device capabilities as `Task Error a` effects — clipboard, local storage, geolocation, share, notifications, camera / photo / file pickers, battery, online/language/theme. `Native.bridge` + `native/<platform>/` lets an app or library add its own (experimental). |
+| `Std.Bundle`           | Cross-platform packaging identity in code (`withName` / `withId` / `withIcon` / `withVersion` / `withPermission` / `withAsset`); `sky build --target` fills the Info.plist / AndroidManifest / icons / entitlements. |
 | `Sky.Http.Server`      | HTTP server with typed routes, middleware (CORS / logging / rate-limit / basic-auth), streaming responses, WebSocket upgrade. |
 | `Std.Auth`             | bcrypt password hashing, HS256 / RS256 JWT, register / login / roles. Typed secrets — never `fmt.Sprintf("%v", token)`. |
 | `Std.Db`               | SQLite + PostgreSQL via one interface. Connection pool, prepared statements, versioned migrations, `Db.RowDecoder`, `withTransaction`. Sky can also ship and supervise the PostgreSQL itself — see below. |
