@@ -44,6 +44,7 @@ use project::{
 use testrunner::run_test;
 
 mod bundled;
+mod target;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -162,7 +163,6 @@ fn cmd_upgrade_install(
     is_dev: bool,
     current_tuple: Option<(u32, u32, u32)>,
 ) -> ExitCode {
-
     let Some(artifact) = platform_artifact() else {
         eprintln!(
             "sky upgrade: no prebuilt binary is published for this platform ({}/{}).\n\
@@ -199,7 +199,9 @@ fn cmd_upgrade_install(
     // forced dev upgrade always proceeds so `--force` is never a silent no-op).
     let latest = format!("sky v{}", tag.trim_start_matches('v'));
     if !is_dev && ver == latest {
-        println!("Already up to date ({ver}). Run `sky upgrade --notes` to review recent release notes.");
+        println!(
+            "Already up to date ({ver}). Run `sky upgrade --notes` to review recent release notes."
+        );
         return ExitCode::SUCCESS;
     }
 
@@ -360,7 +362,11 @@ fn print_release_notes(releases: &[GhRelease], from: Option<(u32, u32, u32)>, to
         if n == 1 { "" } else { "s" }
     );
     for r in in_range {
-        println!("\n### {}{}", r.tag_name, if r.prerelease { "  (pre-release)" } else { "" });
+        println!(
+            "\n### {}{}",
+            r.tag_name,
+            if r.prerelease { "  (pre-release)" } else { "" }
+        );
         if body_has_breaking(&r.body) {
             println!("⚠  contains BREAKING changes / a migration section — read before deploying.");
         }
@@ -433,7 +439,9 @@ fn read_update_cache() -> Option<UpdateCache> {
 }
 
 fn write_update_cache(c: &UpdateCache) {
-    let Some(path) = update_cache_path() else { return };
+    let Some(path) = update_cache_path() else {
+        return;
+    };
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -492,9 +500,17 @@ fn maybe_notify_update(cmd: Option<&str>) {
     }
     match cmd {
         // Skip: stdio-protocol / machine output / self-referential / no-op.
-        Some("lsp") | Some("fmt") | Some("upgrade") | Some("--version") | Some("-V")
-        | Some("version") | Some("--help") | Some("-h") | Some("help")
-        | Some("__update-check") | None => return,
+        Some("lsp")
+        | Some("fmt")
+        | Some("upgrade")
+        | Some("--version")
+        | Some("-V")
+        | Some("version")
+        | Some("--help")
+        | Some("-h")
+        | Some("help")
+        | Some("__update-check")
+        | None => return,
         _ => {}
     }
     let ver = version_string();
@@ -777,7 +793,10 @@ fn cmd_spa_partition(args: &[String]) -> ExitCode {
 /// with the split on a user's entry without the sub-builds recursing.
 fn is_spa_app_entry(entry_file: &Path) -> bool {
     std::fs::read_to_string(entry_file)
-        .map(|src| src.lines().any(|l| l.trim_start().starts_with("import Std.Spa")))
+        .map(|src| {
+            src.lines()
+                .any(|l| l.trim_start().starts_with("import Std.Spa"))
+        })
         .unwrap_or(false)
 }
 
@@ -813,19 +832,14 @@ fn spa_split_and_build(
     embed: bool,
     do_build: bool,
 ) -> Result<PathBuf, ExitCode> {
-    let report = match project::spa_split::generate(
-        repo_root,
-        project_dir,
-        entry_module,
-        out_dir,
-        broker,
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("sky spa-split: {e}");
-            return Err(ExitCode::FAILURE);
-        }
-    };
+    let report =
+        match project::spa_split::generate(repo_root, project_dir, entry_module, out_dir, broker) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("sky spa-split: {e}");
+                return Err(ExitCode::FAILURE);
+            }
+        };
     println!("sky spa-split → {}", report.out_dir);
     let joined = |v: &[String]| {
         if v.is_empty() {
@@ -834,8 +848,14 @@ fn spa_split_and_build(
             v.join(", ")
         }
     };
-    println!("  server branches (→ RPC): {}", joined(&report.server_branches));
-    println!("  client branches (local): {}", joined(&report.client_branches));
+    println!(
+        "  server branches (→ RPC): {}",
+        joined(&report.server_branches)
+    );
+    println!(
+        "  client branches (local): {}",
+        joined(&report.client_branches)
+    );
     println!(
         "  excluded from frontend (server-tainted): {}",
         joined(&report.excluded)
@@ -862,7 +882,10 @@ fn spa_split_and_build(
     // skips any project carrying the `[spa] generated = true` marker (both trees
     // this generator wrote have it), and the backend is a `Sky.Http.Server` with no
     // `Std.Spa` import anyway.
-    println!("\n== building backend (native{}) ==", if embed { ", --embed" } else { "" });
+    println!(
+        "\n== building backend (native{}) ==",
+        if embed { ", --embed" } else { "" }
+    );
     let mut backend = Command::new(&sky);
     backend.arg("build");
     if embed {
@@ -912,15 +935,31 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
         .position(|a| a == "--target")
         .and_then(|i| args.get(i + 1))
         .cloned();
-    if let Some(t) = &split_target {
-        if !matches!(t.as_str(), "web" | "desktop" | "ios" | "android" | "tablet") {
-            eprintln!(
-                "sky spa-split --target: unknown target `{t}`\n  \
-                 supported: web · desktop · ios · android · tablet (= responsive web)"
-            );
-            return ExitCode::FAILURE;
+    // Same target model + normalisation as `sky build` (see cmd_build): parse
+    // `family[:variant]`, reject a non-frontend-shell target, rebind to the
+    // legacy shell string for the split engine.
+    let split_target = if let Some(t) = &split_target {
+        let tgt = match target::Target::parse(t) {
+            Ok(tgt) => tgt,
+            Err(msg) => {
+                eprintln!("{msg}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match tgt.frontend_shell() {
+            Some(shell) => Some(shell.to_string()),
+            None => {
+                eprintln!(
+                    "sky spa-split --target: `{}` is not a frontend-shell target\n  \
+                     supported families: web · desktop · tablet · mobile",
+                    tgt.canonical()
+                );
+                return ExitCode::FAILURE;
+            }
         }
-    }
+    } else {
+        None
+    };
     let do_build = split_target.is_some() || args.iter().any(|a| a == "--build");
     // `--broker <url>` bakes a cross-instance pub/sub broker URL into the
     // generated backend (the auto-split analogue of Sky.Config.withLiveBroker,
@@ -994,20 +1033,34 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         .position(|a| a == "--target")
         .and_then(|i| args.get(i + 1))
         .cloned();
-    if let Some(t) = &target {
-        if !matches!(t.as_str(), "web" | "desktop" | "ios" | "android" | "tablet") {
+    // Parse `--target family[:variant]` through the one target model
+    // (`target::Target`), then normalise to the legacy frontend-shell string
+    // (`web`/`desktop`/`ios`/`android`/`tablet`) the downstream build path
+    // expects, so new spellings (`mobile:ios`, `desktop:mac`, `web:app`) and the
+    // legacy flat ones (`ios`, `android`) both flow through unchanged.
+    let target = if let Some(t) = &target {
+        let tgt = match target::Target::parse(t) {
+            Ok(tgt) => tgt,
+            Err(msg) => {
+                eprintln!("{msg}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let Some(shell) = tgt.frontend_shell() else {
             eprintln!(
-                "sky build --target: unknown target `{t}`\n  \
-                 supported: web · desktop · ios · android · tablet (= responsive web)"
+                "sky build --target: `{}` is not a frontend-shell target\n  \
+                 supported families: web · desktop · tablet · mobile\n  \
+                 (terminal apps build without --target)",
+                tgt.canonical()
             );
             return ExitCode::FAILURE;
-        }
+        };
         // Every Sky.Spa delivery target is a wasm client under a native/browser
         // shell, so --target implies --wasm.
         //
         // Verify the platform toolchain BEFORE the (slower) wasm build, so a
         // missing SDK is the first thing the user sees — not a half-built bundle.
-        let toolchain = match t.as_str() {
+        let toolchain = match shell {
             "ios" => detect_ios_toolchain(),
             "android" => detect_android_toolchain(),
             _ => Ok(()),
@@ -1016,7 +1069,10 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             eprintln!("{hint}");
             return ExitCode::FAILURE;
         }
-    }
+        Some(shell.to_string())
+    } else {
+        None
+    };
     let wasm = wasm || target.is_some();
     let file = match resolve_entry_arg(
         &positional,
@@ -1062,7 +1118,11 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     // `.split/frontend/src/Main.sky` directly. The backend is a `Sky.Http.Server`
     // (no `Std.Spa` import), so it is never a candidate here.
     let explicit_wasm = args.iter().any(|a| a == "--wasm");
-    if !check_only && !explicit_wasm && is_spa_app_entry(file) && !is_generated_split_project(&project_dir) {
+    if !check_only
+        && !explicit_wasm
+        && is_spa_app_entry(file)
+        && !is_generated_split_project(&project_dir)
+    {
         let out_dir = project_dir.join(out_override.as_deref().unwrap_or(".split"));
         let fe_target = target.as_deref().unwrap_or("web");
         return match spa_split_and_build(
@@ -1076,7 +1136,10 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             true,
         ) {
             Ok(od) => {
-                let entry = positional.first().map(String::as_str).unwrap_or("src/Main.sky");
+                let entry = positional
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("src/Main.sky");
                 println!(
                     "\nBuilt Sky.Spa app → {}/backend/sky-out/app  (serves the wasm frontend + /_rpc same-origin).",
                     od.display()
@@ -1350,7 +1413,8 @@ fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, St
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let shell = std::env::temp_dir().join(format!("sky-desktop-shell-{}-{stamp}", std::process::id()));
+    let shell =
+        std::env::temp_dir().join(format!("sky-desktop-shell-{}-{stamp}", std::process::id()));
     std::fs::create_dir_all(shell.join("src"))
         .map_err(|e| format!("create {}: {e}", shell.display()))?;
     let shell_name = format!("{}-desktop", sanitize_pkg_segment(app));
@@ -1438,7 +1502,11 @@ fn sanitize_pkg_segment(name: &str) -> String {
     if s.is_empty() {
         s = "app".to_string();
     }
-    if s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    if s.chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
         s.insert(0, 'a');
     }
     s
@@ -1508,12 +1576,66 @@ fn sky_str_escape(s: &str) -> String {
 /// like `com.native.app` or `com.int.thing` is valid reverse-DNS but makes the
 /// generated `package …;` (and the Java source dir) fail to compile.
 const JVM_RESERVED_SEGMENTS: &[&str] = &[
-    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const",
-    "continue", "default", "do", "double", "else", "enum", "extends", "final", "finally", "float",
-    "for", "goto", "if", "implements", "import", "instanceof", "int", "interface", "long", "native",
-    "new", "package", "private", "protected", "public", "return", "short", "static", "strictfp",
-    "super", "switch", "synchronized", "this", "throw", "throws", "transient", "try", "void",
-    "volatile", "while", "true", "false", "null", "fun", "val", "var", "object", "when", "is", "in",
+    "abstract",
+    "assert",
+    "boolean",
+    "break",
+    "byte",
+    "case",
+    "catch",
+    "char",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extends",
+    "final",
+    "finally",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "implements",
+    "import",
+    "instanceof",
+    "int",
+    "interface",
+    "long",
+    "native",
+    "new",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "short",
+    "static",
+    "strictfp",
+    "super",
+    "switch",
+    "synchronized",
+    "this",
+    "throw",
+    "throws",
+    "transient",
+    "try",
+    "void",
+    "volatile",
+    "while",
+    "true",
+    "false",
+    "null",
+    "fun",
+    "val",
+    "var",
+    "object",
+    "when",
+    "is",
+    "in",
 ];
 
 /// A syntactically valid reverse-DNS / Android package id: two or more
@@ -1699,7 +1821,8 @@ fn scan_bundle_permissions(src: &str) -> Vec<String> {
     while let Some(rel) = src[from..].find(func) {
         let at = from + rel;
         from = at + func.len();
-        let before_ok = at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        let before_ok =
+            at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
         if !before_ok || in_line_comment(src, at) {
             continue;
         }
@@ -1831,8 +1954,9 @@ fn android_permission_java(
             "\n            @Override public void onPermissionRequest(final PermissionRequest request) {\n                request.grant(request.getResources());\n            }",
         );
     }
-    let mut webchrome =
-        format!("        web.setWebChromeClient(new WebChromeClient() {{{overrides}\n        }});\n");
+    let mut webchrome = format!(
+        "        web.setWebChromeClient(new WebChromeClient() {{{overrides}\n        }});\n"
+    );
     if want_location {
         webchrome.push_str("        s.setGeolocationEnabled(true);\n");
     }
@@ -1867,7 +1991,10 @@ fn sips_resize(src: &Path, size: u32, dest: &Path) -> Result<(), String> {
         .status()
         .map_err(|e| format!("run sips: {e}"))?;
     if !status.success() {
-        return Err(format!("sips could not resize {} to {size}px", src.display()));
+        return Err(format!(
+            "sips could not resize {} to {size}px",
+            src.display()
+        ));
     }
     Ok(())
 }
@@ -1896,7 +2023,9 @@ fn generate_android_icons(icon_src: &Path, res_root: &Path) -> Result<(), String
         ("xxhdpi", 144),
         ("xxxhdpi", 192),
     ] {
-        let dest = res_root.join(format!("mipmap-{density}")).join("ic_launcher.png");
+        let dest = res_root
+            .join(format!("mipmap-{density}"))
+            .join("ic_launcher.png");
         sips_resize(icon_src, size, &dest)?;
     }
     Ok(())
@@ -2017,13 +2146,19 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
     let pkg_path = package.replace('.', "/");
     // versionCode must be an integer; a marketing "1.2.0" cannot be one, so map a
     // non-integer build number to 1 (the user can set `[bundle] build = 7`).
-    let version_code = id.build_number.trim().parse::<u32>().unwrap_or(1).to_string();
+    let version_code = id
+        .build_number
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(1)
+        .to_string();
 
     let root = out_dir.join("android");
     let java_dir = root.join("app/src/main/java").join(&pkg_path);
     let res_root = root.join("app/src/main/res");
     let res_dir = res_root.join("values");
-    std::fs::create_dir_all(&java_dir).map_err(|e| format!("create {}: {e}", java_dir.display()))?;
+    std::fs::create_dir_all(&java_dir)
+        .map_err(|e| format!("create {}: {e}", java_dir.display()))?;
     std::fs::create_dir_all(&res_dir).map_err(|e| format!("create {}: {e}", res_dir.display()))?;
 
     // App icon → mipmap-<density>/ic_launcher.png; the manifest points at it only
@@ -2053,7 +2188,8 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
         manifest_perms.push('\n');
         manifest_perms.push_str(ext_perms.trim_end());
     }
-    let (perm_imports, webchrome, runtime_request) = android_permission_java(&perms, want_location, want_media);
+    let (perm_imports, webchrome, runtime_request) =
+        android_permission_java(&perms, want_location, want_media);
 
     std::fs::write(
         root.join("app/src/main/AndroidManifest.xml"),
@@ -2110,7 +2246,11 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
         eprintln!(
             "  native/android: linked {} extension file(s): {}",
             java_exts.len(),
-            java_exts.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(", ")
+            java_exts
+                .iter()
+                .map(|(s, _)| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
@@ -2167,7 +2307,9 @@ fn collect_native_dirs(project_dir: &Path, platform: &str) -> Vec<PathBuf> {
 fn collect_native_files(project_dir: &Path, platform: &str, ext: &str) -> Vec<(String, PathBuf)> {
     let mut out: Vec<(String, PathBuf)> = Vec::new();
     for dir in collect_native_dirs(project_dir, platform) {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
         files.sort();
         for p in files {
@@ -2300,7 +2442,11 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
         eprintln!(
             "  native/ios: linked {} extension file(s): {}",
             swift_exts.len(),
-            swift_exts.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(", ")
+            swift_exts
+                .iter()
+                .map(|(s, _)| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
@@ -2847,7 +2993,10 @@ fn cmd_run(args: &[String]) -> ExitCode {
     // conventional src/Main.sky) — the real entry error is reported later.
     let run_entry_is_spa = {
         let (pos, _) = parse_out(args);
-        let f = pos.first().cloned().unwrap_or_else(|| "src/Main.sky".to_string());
+        let f = pos
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "src/Main.sky".to_string());
         let p = PathBuf::from(f);
         p.is_file() && is_spa_app_entry(&p)
     };
@@ -3027,7 +3176,11 @@ fn cmd_run(args: &[String]) -> ExitCode {
     }
     // Run the requested DB steps before serving. Each re-invokes this binary's
     // own `sky db <op>` in the project dir; a failure aborts the run.
-    for (flag, op) in [(db_push, "push"), (db_migrate, "migrate"), (db_seed, "seed")] {
+    for (flag, op) in [
+        (db_push, "push"),
+        (db_migrate, "migrate"),
+        (db_seed, "seed"),
+    ] {
         if !flag {
             continue;
         }
@@ -3319,8 +3472,7 @@ fn cmd_init(args: &[String]) -> ExitCode {
     // `.skydata/` holds the local PostgreSQL cluster `sky db start` supervises —
     // a whole data directory, WAL included. Committing it would put a binary
     // database (and its `postmaster.pid`) into git.
-    let gitignore =
-        "sky-out/\n.skycache/\n.skydeps/\n.skydata/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
+    let gitignore = "sky-out/\n.skycache/\n.skydeps/\n.skydata/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
 
     // docker-compose.yml — always scaffolded so the production path is one command
     // away, whether or not you start on Postgres. Host port 5433 avoids clashing
@@ -3438,7 +3590,9 @@ fn cmd_init(args: &[String]) -> ExitCode {
         println!("Next: cd {name} && sky run src/Main.sky   # SQLite + in-memory, zero setup");
         println!();
         println!("Going to production / need to scale? See the commented block in sky.toml +");
-        println!("docker-compose.yml, or scaffold Postgres from day 1: sky init {name} --production");
+        println!(
+            "docker-compose.yml, or scaffold Postgres from day 1: sky init {name} --production"
+        );
     }
     ExitCode::SUCCESS
 }
@@ -3509,8 +3663,12 @@ fn cmd_doc(args: &[String]) -> ExitCode {
             eprintln!("sky doc --export: could not render landing page: {e}");
             return ExitCode::FAILURE;
         }
-        let guides = std::fs::read_dir(out.join("guide")).map(|d| d.count()).unwrap_or(0);
-        let lessons = std::fs::read_dir(out.join("learn")).map(|d| d.count()).unwrap_or(0);
+        let guides = std::fs::read_dir(out.join("guide"))
+            .map(|d| d.count())
+            .unwrap_or(0);
+        let lessons = std::fs::read_dir(out.join("learn"))
+            .map(|d| d.count())
+            .unwrap_or(0);
         println!(
             "Exported Sky doc-site to {dir}/ (landing + reference + m/*.html + {} guide page(s) + {lessons}-lesson tour)",
             guides.saturating_sub(1)
@@ -3930,7 +4088,10 @@ fn prompt_line(prompt: &str) -> String {
 
 fn cmd_db_gen(args: &[String]) -> ExitCode {
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
-    let name = positional.first().map(|s| s.as_str()).unwrap_or("migration");
+    let name = positional
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("migration");
     let file = Path::new("src/Main.sky");
     let entry_module = entry_module_name(file).unwrap_or_else(|| "Main".into());
 
@@ -3995,7 +4156,10 @@ fn cmd_db_gen(args: &[String]) -> ExitCode {
             let hint = if dec.rename_candidates.is_empty() {
                 String::new()
             } else {
-                format!(" (new column(s) here: {})", dec.rename_candidates.join(", "))
+                format!(
+                    " (new column(s) here: {})",
+                    dec.rename_candidates.join(", ")
+                )
             };
             println!("\nColumn {}.{} was removed{hint}.", dec.table, dec.column);
             let ans = prompt_line("  (r)enamed, (d)ropped for good, or (s)kip [s]? ");
@@ -4161,9 +4325,12 @@ report applied =
     // 3. Synthesise + build it. Routed through the shared helper so it lands in
     // a scratch dir — this used to build into the project's real `sky-out/`,
     // replacing the app binary with `SkyDbApply`.
-    let Some((bin, project_dir, _scratch)) =
-        build_temp_db_entry("sky db migrate", "SkyDbApply", "_skydbapply.sky", apply_code)
-    else {
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry(
+        "sky db migrate",
+        "SkyDbApply",
+        "_skydbapply.sky",
+        apply_code,
+    ) else {
         let _ = std::fs::remove_file(&apply_path);
         return ExitCode::FAILURE;
     };
@@ -4288,7 +4455,10 @@ fn build_temp_db_entry(
     };
     let report = build_project(&opts, &[scratch.clone()], Some(module));
     if !(report.emitted && report.go_build_ok) {
-        eprintln!("{label}: build failed\n{}\n{}", report.note, report.go_build_stderr);
+        eprintln!(
+            "{label}: build failed\n{}\n{}",
+            report.note, report.go_build_stderr
+        );
         let _ = std::fs::remove_dir_all(&scratch);
         return None;
     }
@@ -4341,7 +4511,8 @@ printApplied ids =
     in
     Task.succeed ()
 "#;
-    let Some((bin, project_dir, _scratch)) = build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", code)
+    let Some((bin, project_dir, _scratch)) =
+        build_temp_db_entry("sky db status", "SkyDbStatus", "_skydbstatus.sky", code)
     else {
         return ExitCode::FAILURE;
     };
@@ -4375,7 +4546,11 @@ printApplied ids =
     println!("migrations (db/migrations) — {} applied:", applied.len());
     let mut pending = 0;
     for p in &files {
-        let id = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let id = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
         let has_destructive = std::fs::read_to_string(p)
             .ok()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
@@ -4435,7 +4610,8 @@ done _ =
     Task.succeed ()
 "#
     );
-    let Some((bin, project_dir, _scratch)) = build_temp_db_entry("sky db seed", "SkyDbSeed", "_skydbseed.sky", &code)
+    let Some((bin, project_dir, _scratch)) =
+        build_temp_db_entry("sky db seed", "SkyDbSeed", "_skydbseed.sky", &code)
     else {
         eprintln!(
             "sky db seed: your entry module must define + expose `seed : Db -> Task Error ()`."
@@ -4488,7 +4664,8 @@ report applied =
     Task.succeed ()
 "#
     );
-    let Some((bin, project_dir, _scratch)) = build_temp_db_entry("sky db push", "SkyDbPush", "_skydbpush.sky", &code)
+    let Some((bin, project_dir, _scratch)) =
+        build_temp_db_entry("sky db push", "SkyDbPush", "_skydbpush.sky", &code)
     else {
         eprintln!("sky db push: your entry module must expose `db : Store.Project`.");
         return ExitCode::FAILURE;
@@ -4537,7 +4714,11 @@ fn db_driver_label() -> String {
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
-            section = line.trim_matches(['[', ']']).trim().trim_matches('"').to_string();
+            section = line
+                .trim_matches(['[', ']'])
+                .trim()
+                .trim_matches('"')
+                .to_string();
             continue;
         }
         let Some((k, v)) = line.split_once('=') else {
@@ -4576,7 +4757,10 @@ fn is_production_env() -> bool {
         .ok()
         .or_else(|| std::env::var("SKY_ENV").ok())
         .unwrap_or_default();
-    matches!(raw.to_lowercase().as_str(), "production" | "prod" | "staging")
+    matches!(
+        raw.to_lowercase().as_str(),
+        "production" | "prod" | "staging"
+    )
 }
 
 /// `sky db reset [table]` / `sky db drop [table]` — destructive data/schema
@@ -4602,7 +4786,9 @@ fn cmd_db_reset_drop(args: &[String], op: DbDestructive) -> ExitCode {
             }
             s => {
                 if table.is_some() {
-                    eprintln!("sky db {verb}: too many arguments (expected at most one table name)");
+                    eprintln!(
+                        "sky db {verb}: too many arguments (expected at most one table name)"
+                    );
                     return ExitCode::from(2);
                 }
                 if !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || s.is_empty() {
@@ -4618,16 +4804,30 @@ fn cmd_db_reset_drop(args: &[String], op: DbDestructive) -> ExitCode {
 
     // Determine the table count for the prompt. Single-table → 1. All-tables →
     // build the entry once and run it in info mode to read the project's count.
-    let entry_module = entry_module_name(Path::new("src/Main.sky")).unwrap_or_else(|| "Main".into());
+    let entry_module =
+        entry_module_name(Path::new("src/Main.sky")).unwrap_or_else(|| "Main".into());
     let single = table.is_some();
     let code = gen_db_reset_drop_entry(op, &entry_module, table.as_deref());
-    let module = if op == DbDestructive::Reset { "SkyDbReset" } else { "SkyDbDrop" };
-    let filename = if op == DbDestructive::Reset { "_skydbreset.sky" } else { "_skydbdrop.sky" };
+    let module = if op == DbDestructive::Reset {
+        "SkyDbReset"
+    } else {
+        "SkyDbDrop"
+    };
+    let filename = if op == DbDestructive::Reset {
+        "_skydbreset.sky"
+    } else {
+        "_skydbdrop.sky"
+    };
     let label = format!("sky db {verb}");
-    let Some((bin, project_dir, _scratch)) = build_temp_db_entry(&label, module, filename, &code) else {
+    let Some((bin, project_dir, _scratch)) = build_temp_db_entry(&label, module, filename, &code)
+    else {
         eprintln!(
             "sky db {verb}: your entry module must expose `db : Store.Project`{}.",
-            if single { " (or pass a table name)" } else { "" }
+            if single {
+                " (or pass a table name)"
+            } else {
+                ""
+            }
         );
         return ExitCode::FAILURE;
     };
@@ -4652,9 +4852,7 @@ fn cmd_db_reset_drop(args: &[String], op: DbDestructive) -> ExitCode {
     // Production guard + confirmation.
     if !assume_yes {
         if is_production_env() {
-            eprintln!(
-                "sky db {verb}: refusing to run in production (ENV/SKY_ENV) without --yes."
-            );
+            eprintln!("sky db {verb}: refusing to run in production (ENV/SKY_ENV) without --yes.");
             return ExitCode::FAILURE;
         }
         if !std::io::stdin().is_terminal() {
@@ -4763,7 +4961,11 @@ report applied =
     in
     Task.succeed ()
 "#,
-                module = if op == DbDestructive::Reset { "SkyDbReset" } else { "SkyDbDrop" },
+                module = if op == DbDestructive::Reset {
+                    "SkyDbReset"
+                } else {
+                    "SkyDbDrop"
+                },
             )
         }
         None => {
@@ -4813,7 +5015,11 @@ report applied =
     in
     Task.succeed ()
 "#,
-                module = if op == DbDestructive::Reset { "SkyDbReset" } else { "SkyDbDrop" },
+                module = if op == DbDestructive::Reset {
+                    "SkyDbReset"
+                } else {
+                    "SkyDbDrop"
+                },
             )
         }
     }
@@ -4837,7 +5043,9 @@ fn cmd_config(args: &[String]) -> ExitCode {
             ExitCode::from(2)
         }
         None => {
-            eprintln!("sky config: missing subcommand. Usage: `sky config migrate [--dry-run|--check]`.");
+            eprintln!(
+                "sky config: missing subcommand. Usage: `sky config migrate [--dry-run|--check]`."
+            );
             ExitCode::from(2)
         }
     }
@@ -4890,7 +5098,10 @@ fn cmd_config_migrate(args: &[String]) -> ExitCode {
     }
 
     if dry_run {
-        println!("sky config migrate --dry-run — {} legacy key(s), no files written:\n", outcome.legacy_count);
+        println!(
+            "sky config migrate --dry-run — {} legacy key(s), no files written:\n",
+            outcome.legacy_count
+        );
         for line in &outcome.summary {
             println!("{line}");
         }
@@ -4899,12 +5110,17 @@ fn cmd_config_migrate(args: &[String]) -> ExitCode {
     }
 
     // Apply.
-    println!("sky config migrate — moved {} legacy key(s) into typed config:", outcome.legacy_count);
+    println!(
+        "sky config migrate — moved {} legacy key(s) into typed config:",
+        outcome.legacy_count
+    );
     for line in &outcome.summary {
         println!("{line}");
     }
     if outcome.wrote {
-        println!("\nWrote sky.toml and the entry module. Review with `git diff`, then `sky check`.");
+        println!(
+            "\nWrote sky.toml and the entry module. Review with `git diff`, then `sky check`."
+        );
     }
     ExitCode::SUCCESS
 }
@@ -5062,9 +5278,13 @@ fn cmd_watch(args: &[String]) -> ExitCode {
     // app must not cycle its database underneath it. Held until the loop ends.
     // Unlike `sky run`, the cluster is taken before the first build, because a
     // watch session survives a failing build and keeps watching.
-    let cluster = match db_cluster::check_run_config(&project_dir, "sky watch")
-        .and_then(|on| if on { db_cluster::acquire_for_run(&project_dir).map(Some) } else { Ok(None) })
-    {
+    let cluster = match db_cluster::check_run_config(&project_dir, "sky watch").and_then(|on| {
+        if on {
+            db_cluster::acquire_for_run(&project_dir).map(Some)
+        } else {
+            Ok(None)
+        }
+    }) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("{e}");
@@ -5170,7 +5390,8 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         // Build-error policy: only replace the running child when the rebuild
         // produced a fresh binary. A failing rebuild returns None → the old
         // binary keeps running.
-        if let Some(fresh) = watch_build_and_spawn(&repo_root, &project_dir, file, no_run, &app_envs)
+        if let Some(fresh) =
+            watch_build_and_spawn(&repo_root, &project_dir, file, no_run, &app_envs)
         {
             if let Some(old) = child.take() {
                 terminate_child(old, opts.kill_timeout_ms);
@@ -6160,10 +6381,7 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
     if unformatted.is_empty() {
         println!("  ✓ fmt      ({} file(s) clean)", files.len());
     } else {
-        println!(
-            "  ✗ fmt      {} file(s) need `sky fmt`:",
-            unformatted.len()
-        );
+        println!("  ✗ fmt      {} file(s) need `sky fmt`:", unformatted.len());
         for f in unformatted.iter().take(10) {
             println!("             {}", rel_display(dir, f));
         }
@@ -6272,7 +6490,10 @@ fn walk_sky(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if p.is_dir() {
-            if !matches!(name, "sky-out" | "sky-out-rust" | ".skycache" | ".skydeps" | ".git") {
+            if !matches!(
+                name,
+                "sky-out" | "sky-out-rust" | ".skycache" | ".skydeps" | ".git"
+            ) {
                 walk_sky(&p, out);
             }
         } else if name.ends_with(".sky") {
@@ -6282,10 +6503,7 @@ fn walk_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn rel_display(base: &Path, p: &Path) -> String {
-    p.strip_prefix(base)
-        .unwrap_or(p)
-        .display()
-        .to_string()
+    p.strip_prefix(base).unwrap_or(p).display().to_string()
 }
 
 /// Resolve the set of project dirs to verify from `cwd` + an optional target:
@@ -6751,10 +6969,7 @@ fn parse_profile(args: &[String]) -> (Vec<String>, Option<ProfileOpts>) {
             other => rest.push(other.to_string()),
         }
     }
-    (
-        rest,
-        enabled.then_some(ProfileOpts { dir, timeout }),
-    )
+    (rest, enabled.then_some(ProfileOpts { dir, timeout }))
 }
 
 fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
@@ -6891,7 +7106,10 @@ mod tests {
             "Spa.sky",
             b"module Main exposing (main)\n\nimport Std.Spa as Spa\n\nmain = Spa.app cfg\n",
         );
-        assert!(is_spa_app_entry(&spa), "an `import Std.Spa` entry is a Spa app");
+        assert!(
+            is_spa_app_entry(&spa),
+            "an `import Std.Spa` entry is a Spa app"
+        );
 
         // The generated backend — must be false, else the split's backend rebuild
         // would recurse.
@@ -6908,7 +7126,10 @@ mod tests {
             "Live.sky",
             b"module Main exposing (main)\n\nimport Std.Live as Live\n\nmain = Live.app cfg\n",
         );
-        assert!(!is_spa_app_entry(&live), "a Sky.Live entry is NOT a Spa app");
+        assert!(
+            !is_spa_app_entry(&live),
+            "a Sky.Live entry is NOT a Spa app"
+        );
 
         // Indentation-tolerant (trims leading whitespace before matching).
         let indented = write(
@@ -6954,12 +7175,18 @@ mod tests {
             "frontend",
             b"name = \"app-frontend\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n\n[spa]\ngenerated = true\nrole = \"frontend\"\n",
         );
-        assert!(is_generated_split_project(&fe), "a generated frontend is marked");
+        assert!(
+            is_generated_split_project(&fe),
+            "a generated frontend is marked"
+        );
         let be = mk(
             "backend",
             b"name = \"app-backend\"\nversion = \"0.1.0\"\n\n[spa]\ngenerated = true\nrole = \"backend\"\n",
         );
-        assert!(is_generated_split_project(&be), "a generated backend is marked");
+        assert!(
+            is_generated_split_project(&be),
+            "a generated backend is marked"
+        );
 
         // A hand-written source project (no [spa] marker) is NOT — so it auto-splits.
         let src = mk(
@@ -7007,14 +7234,21 @@ mod tests {
     #[test]
     fn nudge_line_shows_versions_when_newer() {
         let day = NUDGE_INTERVAL_SECS;
-        let cache = UpdateCache { last_check: 0, last_nudge: 0, latest: Some("0.19.0".into()) };
+        let cache = UpdateCache {
+            last_check: 0,
+            last_nudge: 0,
+            latest: Some("0.19.0".into()),
+        };
         let msg = nudge_line((0, 18, 10), "v0.18.10", &cache, day).expect("should nudge");
         assert!(msg.contains("v0.18.10") && msg.contains("0.19.0"));
         assert!(msg.contains("sky upgrade"));
         // already current → no line
         assert!(nudge_line((0, 19, 0), "v0.19.0", &cache, day).is_none());
         // newer but nudged recently → no line
-        let recent = UpdateCache { last_nudge: day, ..cache.clone() };
+        let recent = UpdateCache {
+            last_nudge: day,
+            ..cache.clone()
+        };
         assert!(nudge_line((0, 18, 10), "v0.18.10", &recent, day + 1).is_none());
         // no cached latest → no line
         let empty = UpdateCache::default();
@@ -7066,7 +7300,11 @@ mod tests {
         std::fs::write(dir.join(".skycache/c.sky"), "x\n").unwrap();
         let mut out = Vec::new();
         walk_sky(&dir, &mut out);
-        assert_eq!(out.len(), 1, "only src/Main.sky, not generated dirs: {out:?}");
+        assert_eq!(
+            out.len(),
+            1,
+            "only src/Main.sky, not generated dirs: {out:?}"
+        );
         assert!(out[0].ends_with("Main.sky"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -7363,8 +7601,7 @@ mod tests {
 
     #[test]
     fn parse_profile_dir_and_timeout_space_and_eq_forms() {
-        let (rest, prof) =
-            parse_profile(&sw("app.sky --profile-dir /tmp/p --profile-timeout 30s"));
+        let (rest, prof) = parse_profile(&sw("app.sky --profile-dir /tmp/p --profile-timeout 30s"));
         let p = prof.unwrap();
         assert_eq!(p.dir.as_deref(), Some("/tmp/p"));
         assert_eq!(p.timeout.as_deref(), Some("30s"));
@@ -7413,7 +7650,7 @@ mod tests {
         assert!(!valid_bundle_id("com.acme app")); // space
         assert!(!valid_bundle_id("com.acme-app")); // hyphen
         assert!(!valid_bundle_id("")); // empty
-        // JVM reserved words as segments break the generated `package …;`.
+                                       // JVM reserved words as segments break the generated `package …;`.
         assert!(!valid_bundle_id("com.native.app"));
         assert!(!valid_bundle_id("com.int.thing"));
         assert!(!valid_bundle_id("com.acme.new"));
@@ -7444,22 +7681,32 @@ mod tests {
     fn scan_bundle_call_is_bounded_and_comment_aware() {
         // Normal literal.
         assert_eq!(
-            scan_bundle_call("bundle = Bundle.default |> Bundle.withId \"com.acme.app\"", "withId"),
+            scan_bundle_call(
+                "bundle = Bundle.default |> Bundle.withId \"com.acme.app\"",
+                "withId"
+            ),
             Some("com.acme.app".to_string())
         );
         // A computed (non-literal) arg must NOT grab a distant quote (e.g. a URL).
         let computed = "bundle = Bundle.withName appName\nx = Http.get \"https://evil/\"";
         assert_eq!(scan_bundle_call(computed, "withName"), None);
         // A call inside a `--` comment is ignored.
-        let commented = "-- old: Bundle.withId \"com.old.id\"\nbundle = Bundle.withId \"com.new.id\"";
-        assert_eq!(scan_bundle_call(commented, "withId"), Some("com.new.id".to_string()));
+        let commented =
+            "-- old: Bundle.withId \"com.old.id\"\nbundle = Bundle.withId \"com.new.id\"";
+        assert_eq!(
+            scan_bundle_call(commented, "withId"),
+            Some("com.new.id".to_string())
+        );
         // Escaped quotes inside the literal are handled.
         assert_eq!(
             scan_bundle_call("Bundle.withName \"A \\\"B\\\" C\"", "withName"),
             Some("A \"B\" C".to_string())
         );
         // Word boundary: withId must not match withIdentifier.
-        assert_eq!(scan_bundle_call("Bundle.withIdentifier \"nope\"", "withId"), None);
+        assert_eq!(
+            scan_bundle_call("Bundle.withIdentifier \"nope\"", "withId"),
+            None
+        );
         // A withPermission in a comment is not a real declaration.
         let perm = "-- Bundle.withPermission Bundle.Camera\nbundle = Bundle.withPermission Bundle.Location";
         assert_eq!(scan_bundle_permissions(perm), vec!["Location".to_string()]);
@@ -7468,12 +7715,21 @@ mod tests {
     #[test]
     fn scan_bundle_call_extracts_literals_on_word_boundaries() {
         let src = "bundle = Bundle.default |> Bundle.withId \"com.acme.app\" |> Bundle.withName \"Cool App\"";
-        assert_eq!(scan_bundle_call(src, "withId").as_deref(), Some("com.acme.app"));
-        assert_eq!(scan_bundle_call(src, "withName").as_deref(), Some("Cool App"));
+        assert_eq!(
+            scan_bundle_call(src, "withId").as_deref(),
+            Some("com.acme.app")
+        );
+        assert_eq!(
+            scan_bundle_call(src, "withName").as_deref(),
+            Some("Cool App")
+        );
         assert_eq!(scan_bundle_call(src, "withIcon"), None);
         // Word boundary: `withId` must not match inside `withIdentifier`.
         let decoy = "x |> withIdentifier \"nope\" |> Bundle.withId \"com.real.id\"";
-        assert_eq!(scan_bundle_call(decoy, "withId").as_deref(), Some("com.real.id"));
+        assert_eq!(
+            scan_bundle_call(decoy, "withId").as_deref(),
+            Some("com.real.id")
+        );
     }
 
     #[test]
@@ -7503,7 +7759,11 @@ mod tests {
                         \x20       |> Bundle.withId \"com.acme.notes\"\n\
                         \x20       |> Bundle.withVersion \"2.3.0\"\n\n\
                         main = 0\n";
-        let dir = bundle_scratch("binding", "name = \"proj\"\nversion = \"1.0.0\"\n", main_sky);
+        let dir = bundle_scratch(
+            "binding",
+            "name = \"proj\"\nversion = \"1.0.0\"\n",
+            main_sky,
+        );
 
         let id = resolve_bundle_identity(&dir).unwrap();
         assert_eq!(id.display_name, "Sky Notes Pro");
@@ -7547,7 +7807,10 @@ mod tests {
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
         // index.html references exactly that file, and wasm_exec.js is present.
         let index = std::fs::read_to_string(dist.join("index.html")).unwrap();
-        assert!(index.contains(&format!("fetch(\"{n1}\")")), "index must fetch {n1}");
+        assert!(
+            index.contains(&format!("fetch(\"{n1}\")")),
+            "index must fetch {n1}"
+        );
         assert!(dist.join("wasm_exec.js").is_file());
 
         // Different bytes → different name, and the old wasm is removed (no
@@ -7574,7 +7837,10 @@ mod tests {
                    |> Bundle.withAsset \"a.png\" |> Bundle.withAsset \"b.css\" \
                    |> Bundle.withAssetDir \"assets\"";
         // withAsset must NOT match inside withAssetDir (word boundary).
-        assert_eq!(scan_bundle_calls_all(src, "withAsset"), vec!["a.png", "b.css"]);
+        assert_eq!(
+            scan_bundle_calls_all(src, "withAsset"),
+            vec!["a.png", "b.css"]
+        );
         assert_eq!(scan_bundle_calls_all(src, "withAssetDir"), vec!["assets"]);
     }
 
@@ -7599,9 +7865,18 @@ mod tests {
         stage_bundle_assets(&dir, &dist).unwrap();
 
         assert!(dist.join("assets/logo.png").is_file(), "dir asset staged");
-        assert!(dist.join("assets/sub/deep.svg").is_file(), "nested dir asset staged");
-        assert!(dist.join("assets/note.txt").is_file(), "single file asset staged by basename");
-        assert!(!dist.join("assets/.DS_Store").exists(), "hidden files must not ship");
+        assert!(
+            dist.join("assets/sub/deep.svg").is_file(),
+            "nested dir asset staged"
+        );
+        assert!(
+            dist.join("assets/note.txt").is_file(),
+            "single file asset staged by basename"
+        );
+        assert!(
+            !dist.join("assets/.DS_Store").exists(),
+            "hidden files must not ship"
+        );
 
         // A missing declared asset fails the build rather than shipping broken.
         let bad = bundle_scratch(
@@ -7636,10 +7911,18 @@ mod tests {
 
     #[test]
     fn android_permission_java_wires_location_media_and_notifications() {
-        let lm: Vec<PermSpec> = ["Location", "Camera"].iter().filter_map(|n| perm_spec(n)).collect();
+        let lm: Vec<PermSpec> = ["Location", "Camera"]
+            .iter()
+            .filter_map(|n| perm_spec(n))
+            .collect();
         let (imports, webchrome, runtime) = android_permission_java(&lm, true, true);
-        assert!(imports.contains("GeolocationPermissions") && imports.contains("PermissionRequest"));
-        assert!(webchrome.contains("setGeolocationEnabled") && webchrome.contains("onPermissionRequest"));
+        assert!(
+            imports.contains("GeolocationPermissions") && imports.contains("PermissionRequest")
+        );
+        assert!(
+            webchrome.contains("setGeolocationEnabled")
+                && webchrome.contains("onPermissionRequest")
+        );
         assert!(runtime.contains("ACCESS_FINE_LOCATION") && runtime.contains("CAMERA"));
 
         // Notifications-only: no WebChromeClient plumbing, just the runtime request.
@@ -7719,8 +8002,10 @@ mod tests {
         // The registry sources compile-shaped: the Swift declares the registry,
         // the Java declares the dispatch table.
         assert!(IOS_EXT_REGISTRY.contains("class SkyNativeRegistry"));
-        assert!(ANDROID_EXT_REGISTRY.contains("public final class SkyRegistry")
-            && ANDROID_EXT_REGISTRY.contains("package sky.nativeext;"));
+        assert!(
+            ANDROID_EXT_REGISTRY.contains("public final class SkyRegistry")
+                && ANDROID_EXT_REGISTRY.contains("package sky.nativeext;")
+        );
     }
 
     /// A library ships native code + fragments under `native/<platform>/`;
@@ -7728,15 +8013,27 @@ mod tests {
     /// packages — the mechanism that lets an app import a lib's native handler.
     #[test]
     fn native_extension_files_are_discovered_from_project_and_deps() {
-        let dir = bundle_scratch("nativeext", "name = \"p\"\n", "module Main exposing (main)\nmain = 0\n");
+        let dir = bundle_scratch(
+            "nativeext",
+            "name = \"p\"\n",
+            "module Main exposing (main)\nmain = 0\n",
+        );
         // The project's own native file + a fragment.
         std::fs::create_dir_all(dir.join("native/ios")).unwrap();
-        std::fs::write(dir.join("native/ios/AppOwn.swift"), "func registerAppOwn(_ r: Any) {}\n").unwrap();
+        std::fs::write(
+            dir.join("native/ios/AppOwn.swift"),
+            "func registerAppOwn(_ r: Any) {}\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("native/ios/app.entitlements"), "<own/>\n").unwrap();
         // A fetched Sky dependency shipping its own native file + fragment.
         let dep = dir.join(".skydeps/github.com_acme_pay/native/ios");
         std::fs::create_dir_all(&dep).unwrap();
-        std::fs::write(dep.join("ApplePay.swift"), "func registerApplePay(_ r: Any) {}\n").unwrap();
+        std::fs::write(
+            dep.join("ApplePay.swift"),
+            "func registerApplePay(_ r: Any) {}\n",
+        )
+        .unwrap();
         std::fs::write(dep.join("app.entitlements"), "<dep/>\n").unwrap();
 
         let files = collect_native_files(&dir, "ios", "swift");
@@ -7747,7 +8044,10 @@ mod tests {
         );
         // Fragments concatenate across project + deps.
         let ent = collect_native_fragment(&dir, "ios", "app.entitlements");
-        assert!(ent.contains("<own/>") && ent.contains("<dep/>"), "fragments merge, got:\n{ent}");
+        assert!(
+            ent.contains("<own/>") && ent.contains("<dep/>"),
+            "fragments merge, got:\n{ent}"
+        );
         // A platform with no native dir yields nothing.
         assert!(collect_native_files(&dir, "android", "java").is_empty());
 
@@ -7757,7 +8057,11 @@ mod tests {
     #[test]
     fn bundle_icon_source_is_none_when_absent_or_missing() {
         // No withIcon declared → nothing to render.
-        let dir = bundle_scratch("noicon", "name = \"p\"\n", "module Main exposing (main)\nmain = 0\n");
+        let dir = bundle_scratch(
+            "noicon",
+            "name = \"p\"\n",
+            "module Main exposing (main)\nmain = 0\n",
+        );
         let id = resolve_bundle_identity(&dir).unwrap();
         assert!(id.icon.is_none());
         assert!(bundle_icon_source(&dir, &id).is_none());
@@ -7783,7 +8087,10 @@ mod tests {
                         main = 0\n";
         let dir = bundle_scratch("badid", "name = \"proj\"\n", main_sky);
         let err = resolve_bundle_identity(&dir).unwrap_err();
-        assert!(err.contains("reverse-DNS"), "error should explain the id rule: {err}");
+        assert!(
+            err.contains("reverse-DNS"),
+            "error should explain the id rule: {err}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
