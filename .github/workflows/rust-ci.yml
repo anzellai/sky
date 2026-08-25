@@ -515,7 +515,12 @@ jobs:
     # runs its OWN workspace build + the runtime gates over ITS half (warm cache),
     # and `build_run_gate`'s `shards_are_disjoint_and_total` proves the two halves
     # union to the whole corpus with no example gated twice or dropped.
-    timeout-minutes: 12
+    #
+    # 12 -> 18: a shard measured 729s (>720s = 12 min) and was KILLED by the
+    # timeout, failing ci-green. The fixed per-job costs (workspace build + cache
+    # restore + the four runtime gates) do not shard, so a shard is ~600-730s, not
+    # the naive half of 844s. 18 restores the ~1.5x margin the whole job had.
+    timeout-minutes: 18
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -568,7 +573,9 @@ jobs:
   # space) — the same reason repro/repro-2 + macos-determinism/-2 are separate.
   build-corpus-2:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # 18, matching build-corpus: a shard is ~600-730s (the fixed costs do not
+    # shard), and 12 killed a 729s run.
+    timeout-minutes: 18
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
