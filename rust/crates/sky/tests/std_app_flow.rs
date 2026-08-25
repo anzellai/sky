@@ -22,6 +22,12 @@ use live_gate::{required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
+// Every test here `go build`s (some build a full spa split). Cargo runs them in
+// parallel by default; several concurrent `go build`s contend and intermittently
+// fail under load (same class as the db_cluster / spa_split flakes). Serialize the
+// build bodies through one lock — only one compiles at a time.
+static BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn have_go() -> bool {
     Command::new("go")
         .arg("version")
@@ -64,6 +70,7 @@ fn all_five_runners_typecheck_and_build_off_one_app_value() {
     if !required(Need::Go, have_go()) {
         return;
     }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
     let out = Command::new(SKY)
         .arg("check")
         .arg(fixture_entry())
@@ -90,6 +97,7 @@ fn a_dispatched_entry_checks_target_scoped() {
     if !required(Need::Go, have_go()) {
         return;
     }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
     let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "check");
     let out = Command::new(SKY)
         .arg("check")
@@ -112,6 +120,7 @@ fn a_terminal_only_app_checks_and_builds_without_a_fallback() {
     if !required(Need::Go, have_go()) {
         return;
     }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
     let dir = copy_fixture_to_temp(terminal_fixture_dir(), "term");
     let checked = Command::new(SKY)
         .arg("check")
@@ -148,6 +157,7 @@ fn web_without_a_fallback_gives_a_clean_error_not_a_phantom_leak() {
     if !required(Need::Go, have_go()) {
         return;
     }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
     let dir = copy_fixture_to_temp(terminal_fixture_dir(), "webfail");
     let out = Command::new(SKY)
         .arg("build")
@@ -182,6 +192,7 @@ fn a_std_app_entry_builds_web_app_via_synthesized_spa() {
     if !required(Need::Go, have_go()) {
         return;
     }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
     let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "webapp");
     let out = Command::new(SKY)
         .arg("build")
@@ -210,6 +221,7 @@ fn a_dispatched_entry_builds_terminal_cli_and_dce_prunes_other_backends() {
     if !required(Need::Go, have_go()) {
         return;
     }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
     let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "cli");
     let out = Command::new(SKY)
         .arg("build")
@@ -245,6 +257,7 @@ fn a_dispatched_entry_defaults_to_web_without_a_target() {
     if !required(Need::Go, have_go()) {
         return;
     }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
     let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "default");
     let out = Command::new(SKY)
         .arg("build")

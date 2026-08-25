@@ -30,6 +30,7 @@ module Std.App exposing
     , withInput
     , run
     , runLive
+    , runLiveWindow
     , runSpa
     , runTui
     , runCli
@@ -40,6 +41,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Task as Task
+import Sky.Core.Time as Time
 import Std.Cli as Cli
 import Std.Live as Live
 import Std.Spa as Spa
@@ -231,9 +233,8 @@ runCli (App a) =
         Cli.program withLine
 
 
--- | Run as a native desktop window (`--target desktop`, = Sky.Webview).
--- `seed` is pinned to unit — Webview's `init` takes `()`, so a desktop build
--- cannot read a Live request from `init`.
+-- | Run as a native desktop window (`--target desktop:<os>` is native wasm; this
+-- is the standalone Sky.Webview form). `seed` is pinned to unit.
 runWebview : App fallback () page model msg -> Task Error ()
 runWebview (App a) =
     Webview.app
@@ -243,6 +244,26 @@ runWebview (App a) =
         , subscriptions = a.subscriptions
         , window = a.window
         }
+
+
+-- | Run as **Sky.Live in a native window** (`--target desktop`): serve the Live
+-- app AND open a native webview onto it — the desktop delivery of a server-driven
+-- app. Requires a fallback page (it runs `runLive`). The window opens shortly
+-- after the server starts.
+runLiveWindow : App HasFallback seed page model msg -> Task Error ()
+runLiveWindow (App a) =
+    Task.map
+        (\_ -> ())
+        (Task.parallel [ runLive (App a), openLiveWindow_ a.window ])
+
+
+openLiveWindow_ : { title : String
+, size : ( Int, Int )
+} -> Task Error ()
+openLiveWindow_ window =
+    Task.andThen
+        (\_ -> Webview.url "http://localhost:8000" window)
+        (Time.sleep 800)
 
 
 -- ─── Element → text (best-effort, for terminal:cli) ───

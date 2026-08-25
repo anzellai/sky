@@ -860,13 +860,16 @@ fn rewrite_app_run(src: &str, runner: &str) -> String {
 /// Sky.Spa auto-split. This is the single place the `--target family[:variant]`
 /// axis is turned into a backend for a unified entry.
 fn std_app_runner(tgt: target::Target) -> (&'static str, StdAppBuild) {
-    use target::Target::*;
+    use target::{DesktopOs, TabletOs, TermRenderer, Target::*};
     match tgt {
+        // Bare family = a Sky.Live delivery; a named platform = native (Spa).
         Web => ("runLive", StdAppBuild::Direct),
-        Terminal(target::TermRenderer::Tui) => ("runTui", StdAppBuild::Direct),
-        Terminal(target::TermRenderer::Cli) => ("runCli", StdAppBuild::Direct),
-        Desktop(_) => ("runWebview", StdAppBuild::Direct),
-        WebApp | Mobile(_) | Tablet(_) => ("runSpa", StdAppBuild::Spa),
+        Tablet(TabletOs::Any) => ("runLive", StdAppBuild::Direct),
+        Desktop(DesktopOs::Host) => ("runLiveWindow", StdAppBuild::Direct),
+        Terminal(TermRenderer::Tui) => ("runTui", StdAppBuild::Direct),
+        Terminal(TermRenderer::Cli) => ("runCli", StdAppBuild::Direct),
+        // Native platforms → wasm client (auto-split), each under its shell.
+        WebApp | Mobile(_) | Desktop(_) | Tablet(_) => ("runSpa", StdAppBuild::Spa),
     }
 }
 
@@ -929,12 +932,15 @@ fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf,
 /// GENERATED code the user never wrote. Detect that and reprint the actionable
 /// hint pointing at the user's own `app`. Returns true if it fired.
 fn remap_fallback_error(output: &str, tgt: target::Target) -> bool {
-    let is_web = matches!(tgt, target::Target::Web);
-    if is_web && output.contains("HasFallback") && output.contains("NoFallback") {
+    // The `HasFallback vs NoFallback` mismatch only arises for the Live-based
+    // runners (`runLive`/`runLiveWindow`, which `web` / bare `desktop` / bare
+    // `tablet` use), so its presence IS the signal — no need to gate on target.
+    if output.contains("HasFallback") && output.contains("NoFallback") {
         eprintln!(
-            "sky: target 'web' requires a fallback page.\n  \
-             Live routing is total, so a `web` app must set a not-found page:\n  \
-             add `|> App.withNotFound <page>` to your `app`."
+            "sky: target '{}' requires a fallback page.\n  \
+             Live routing is total, so a server-driven app must set a not-found\n  \
+             page: add `|> App.withNotFound <page>` to your `app`.",
+            tgt.canonical()
         );
         return true;
     }

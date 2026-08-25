@@ -18,17 +18,14 @@ One extendible axis, `family[:variant]`: the bare family is the simplest deliver
 naming a platform opts into a true native build. Invalid combinations are rejected
 at parse time (`web:ios` → *"did you mean `mobile:ios`?"*):
 
+Bare family = a Sky.Live delivery; a named platform = a native (wasm) build:
+
 | `--target` | delivery | backend |
 |---|---|---|
-| `web` | server-driven HTML + SSE | **Sky.Live** |
-| `desktop[:mac\|windows\|linux]` | native window | **Sky.Webview** |
+| `web` · `tablet` | server-driven HTML + SSE (responsive) | **Sky.Live** |
+| `desktop` | Sky.Live in a native window (server + webview) | **Sky.Live** + webview |
 | `terminal:tui` (or bare `terminal`) · `terminal:cli` | full-screen ANSI · line text | **Sky.Tui / Sky.Cli** |
-| `web:app` · `mobile:ios\|android` · `tablet:*` | client wasm (auto-split) | **Sky.Spa** — see [client targets](#client-targets) |
-
-> The fuller taxonomy — bare `desktop`/`tablet` delivering Sky.Live and every
-> named platform (`desktop:mac`, `tablet:ipados`, …) a native wasm build — is the
-> confirmed design; see `docs/design/unified-app-builder.md`. The table above is
-> what the current build resolves.
+| `web:app` · `desktop:mac\|windows\|linux` · `tablet:ipad\|android` · `mobile:ios\|android` | client wasm (auto-split) + native shell | **Sky.Spa** — see [client targets](#client-targets) |
 
 ## The entry — `main = App.run app`
 

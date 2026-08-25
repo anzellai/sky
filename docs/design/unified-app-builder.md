@@ -372,18 +372,29 @@ distinct app model.
 **Steps (all ADDITIVE — none edits `spa_partition`, so existing Std.Spa/Live apps
 and their split path are untouched):**
 
-1. **`main = App.run app` + optional `--target`.** `App.run` is a real function;
-   the build rewrites `App.run` → `App.run<Backend>` for the resolved target
-   (DCE still prunes). Replaces the magic no-`main` dispatched form.
-2. **Taxonomy remap** in `std_app_runner`: the table above. Bare `desktop`/`tablet`
-   → Live; platforms → Spa. `desktop` (bare) additionally needs the new
-   **Live-in-a-native-window** shell (Electron-style: server + embedded webview).
-3. **Spa subsumption.** For the Spa targets, the build **synthesises a `Spa.app`
-   entry from the `App.app` value at HIR level** and feeds it to the EXISTING,
-   UNCHANGED auto-split. This closes the client-target gap without touching the
-   proven splitter — the risk the user fenced off for live apps.
-4. **`App.withRequest`.** Make `init`'s seed portable: the Live HTTP request
-   becomes an explicit web-only capability, so `init` never pins the app to web.
+1. **`main = App.run app` + optional `--target`** — SHIPPED. `App.run` is a real
+   function; the build rewrites `App.run` → `App.run<Backend>` for the resolved
+   target (DCE still prunes). Replaces the magic no-`main` dispatched form.
+2. **Taxonomy remap** — SHIPPED. `std_app_runner` maps the table above: bare
+   `web`/`tablet` → `runLive`, bare `desktop` → **`runLiveWindow`** (the new
+   Live-in-a-native-window mode — `Task.parallel [runLive, sleep → Webview.url
+   localhost]`, so the app is served AND shown in a native window), named
+   platforms (`desktop:os` / `tablet:os` / `mobile:os` / `web:app`) → `runSpa`.
+   `runLiveWindow` is build-verified (it needs a display to run; DCE links
+   `rt.Live_app` + `rt.Webview_url`).
+3. **Spa subsumption** — SHIPPED. For the Spa targets, the build **synthesises a
+   `Spa.app` entry from the `App.app` value** and feeds the EXISTING, UNCHANGED
+   auto-split — closing the client-target gap without touching the proven
+   splitter (the risk the user fenced off for live apps).
+4. **`App.withRequest`** — DEFERRED (needs a `Std.Live` change). Intent: make
+   `init`'s seed portable, the Live HTTP request an explicit capability. But
+   `Std.Live` delivers the request ONLY via `init`'s seed, so decoupling it
+   requires `Std.Live`/its runtime to deliver the request outside `init` (e.g. an
+   `onRequest` config field firing a `Cmd`). That touches the **live-traffic web
+   runtime** — the same risk class as the splitter — so it is left for an
+   explicit, separately-authorised change. Today's model already suffices:
+   `init : a -> …` that IGNORES its seed is portable across every target; an
+   `init : Request -> …` that reads the request is web-only (it pins the seed).
 
 ## Capability model — mandatory config, type-enforced (phantom flag)
 
