@@ -8,7 +8,10 @@
 >
 > **The whole design in one screen (no mental overhead):**
 > - **Value:** `App.withX v` in code; `SKY_X` env overrides it at deploy. Env wins.
-> - **Secret:** `App.withXFromEnv "VAR"` — never a literal; the value lives in env.
+> - **Your secret:** `Secret.fromEnv "VAR"` → a typed handle you use in code
+>   (never a `String`, boot-validated, no unregistered-access API).
+> - **Sky's built-in secret** (console/metrics/auth token, DSN): `App.withXFromEnv
+>   "VAR"` — names the env var, never a literal.
 > - **Precedence, always:** `SKY_* env  >  App.withX  >  built-in default`.
 > - **`sky.toml`:** project metadata only (runtime sections retired into the above).
 
@@ -65,29 +68,68 @@ framings that sound opposed:
   wins here: **env is the escape hatch, and an escape hatch that can't override is
   not one.**
 
-### Secrets — the `withXFromEnv "VAR"` convention (DECIDED)
+### Secrets — a typed `Secret` HANDLE, not a string lookup (DECIDED)
 
-The existing rule ("secrets are typed, never in code") becomes **one consistent
-convention: a secret is wired by a `…FromEnv` builder that NAMES the env var to
-read — the value never appears as a literal.** This is the single thing to
-remember for every secret, so there is no per-secret mental overhead:
+The question that shaped this: if a secret builder just *declares* "read env var
+X" and you then read X directly in code, the builder buys nothing — why not read
+env directly? And can "using an unregistered secret" be a compile error?
 
-- **Sky's built-in secrets** get a named builder, each defaulting to a canonical
-  `SKY_*` and accepting a custom var name:
-  - `App.withConsoleTokenFromEnv "SKY_CONSOLE_TOKEN"` (or `App.withConsoleToken`
-    for the default var)
-  - `App.withMetricsTokenFromEnv "SKY_ADMIN_TOKEN"`
-  - `App.withAuthSecretFromEnv "SKY_AUTH_TOKEN_SECRET"`
-  - `App.withDatabaseFromEnv "DATABASE_URL"`
-- **Your own secrets** use the generic `App.withSecretFromEnv "MY_APP_KEY"` (or a
-  `Secret.fromEnv "MY_APP_KEY" : Task Error Secret` helper), returning a **typed
-  `Secret`** — never a `String`, so it can't be logged or `++`-concatenated by
-  accident.
+**A true compile error is impossible** — env names are runtime strings and Sky's
+HM has no type-level string keys, so "you may only read a *registered* string key"
+can't be enforced at compile time. But the *intent* is better served by a
+**handle**, which sidesteps the string entirely:
 
-The rule: **`FromEnv` in the name ⇒ the value lives in the environment, always.**
-No secret literal is ever accepted (there is no `App.withConsoleToken "abc123"`
-taking a raw string). `SKY_CONSOLE_TOKEN`, `SKY_ADMIN_TOKEN`,
-`SKY_AUTH_TOKEN_SECRET`, `DATABASE_URL` stay env-sourced by construction.
+```elm
+-- Declare ONCE at top level. Returns a typed `Secret` handle AND registers the
+-- var for boot validation (a kernel registry, like the anonRecords precedent).
+stripeKey : Secret
+stripeKey =
+    Secret.fromEnv "MY_STRIPE_KEY"
+
+-- Use the HANDLE where the secret is needed — never the string again.
+-- Trusted APIs consume a `Secret` without exposing its String:
+authedRequest =
+    Http.withBearer stripeKey request
+```
+
+Why this beats a direct `System.getenvOr "MY_STRIPE_KEY"`, point by point:
+
+1. **Typed `Secret`, not `String`.** A `Secret` has no `toString`/`++`/log path —
+   it can only be *consumed* by a trusted API (`Http.withBearer`,
+   `Auth.signToken`, …). A `getenvOr` returns a `String` that leaks the moment
+   someone logs it. This is the "secrets are typed, never in code" rule made
+   structural.
+2. **Boot-time fail-fast.** Creating the handle registers the var; at startup the
+   runtime checks every registered secret is present and **refuses to boot**
+   naming a missing one — instead of an empty string silently reaching production
+   and "authenticating" with `""` at first use. A `getenvOr "X" ""` defers the
+   failure to the worst possible moment.
+3. **No unregistered-access API exists.** You use the `stripeKey` *handle*, not a
+   `Secret.get "MY_STRIPE_KEY"` string lookup — so there is simply no way to
+   reference a secret you didn't declare. That is *stronger* than a compile error
+   on a string: the unsafe shape isn't in the API at all.
+4. **A manifest.** Because handles register, `sky doctor` / the deploy gate can
+   enumerate exactly which secrets the app needs — impossible with scattered
+   `getenvOr` calls.
+
+So the rule for **user secrets** is: `Secret.fromEnv "VAR"` at top level → a typed
+handle you thread where needed. No `App.withSecretFromEnv` builder is needed (the
+handle carries everything); no secret string literal is ever accepted.
+
+**Sky's own built-in secrets** — the console/metrics/auth tokens and the DB DSN,
+which the *runtime itself* consumes (not user code) — are wired through the
+builder, each defaulting to a canonical `SKY_*` var and accepting an override:
+`App.withConsoleTokenFromEnv "SKY_CONSOLE_TOKEN"`,
+`App.withMetricsTokenFromEnv "SKY_ADMIN_TOKEN"`,
+`App.withAuthSecretFromEnv "SKY_AUTH_TOKEN_SECRET"`,
+`App.withDatabaseFromEnv "DATABASE_URL"`. These take a **var name**, never a
+literal, and feed the same typed-`Secret` path internally.
+
+**Non-secret config still reads env freely** — a plain config string
+(`System.getenvOr "SOME_FLAG" "default"`) is fine; the `Secret` machinery is only
+for values that must never be logged or leaked. Values you configure through the
+app use `withX` + `SKY_X` (env-wins); secrets use the handle. Two shapes, and
+which one applies is never ambiguous.
 
 ## 3. Target-awareness — config is a capability, like the builders
 
@@ -162,9 +204,12 @@ a `Std.App` user. In this model:
   the escape hatch that fills gaps *and* overrides for deploy. Resolved
   **centrally** in the runtime (one place applies the layering) so it can't drift
   per builder.
-- **Secrets: the `withXFromEnv "VAR"` convention** (§2). Named builders for Sky's
-  built-ins, generic `withSecretFromEnv` for user secrets, always returning a
-  typed `Secret`. No secret literal is ever accepted.
+- **Secrets: a typed `Secret` handle** (§2). User secrets are `Secret.fromEnv
+  "VAR"` → a handle (typed, boot-validated, no string-keyed accessor, so
+  unregistered access is impossible by construction — stronger than a compile
+  error, which HM can't give on a runtime string). Sky's built-in secrets use
+  `App.withXFromEnv "VAR"` (names the var, never a literal). No secret literal is
+  ever accepted anywhere.
 - **Port: `SKY_PORT`** — a deliberate one-off canonical name (also accept bare
   `PORT` for Cloud Run, `SKY_PORT` canonical). Not every value gets a bespoke env;
   port earns one because it's the single most-overridden deploy value.
