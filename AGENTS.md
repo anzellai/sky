@@ -352,9 +352,20 @@ sky db start | stop [--all] | ps [--all]                       # local PostgreSQ
 sky db provision --embed                                       # fetch + pin a PostgreSQL bundle
 sky db provision --shared [--service] [--app <name>]           # one host cluster, role-per-app
 sky build --embed src/Main.sky   # bundle PostgreSQL INTO the binary; ./sky-out/app --embed
+sky spa-split src/Main.sky --out .split --build   # explicit Sky.Spa split (advanced)
 sky add <go/module> | remove | install | update                # Go FFI deps
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
+
+**Sky.Spa entries auto-split.** `sky build src/Main.sky` on a `Spa.app` app
+derives + builds the wasm frontend + native backend under `.split/` (no manual
+`spa-split`); `sky run src/Main.sky` then runs the backend, which serves the
+frontend + `/_rpc` same-origin. `--target desktop|ios|android` (frontend shell)
+and `--embed` (bundle PostgreSQL into the backend) COMPOSE with the split, they
+do not disable it. `sky check` type-checks the shared source directly; `sky
+spa-split <entry> --out <dir>` is the explicit form when you want the artefacts
+kept at a chosen path. (Recursion is impossible: the generated projects carry a
+`[spa] generated = true` marker that `sky build`/`sky run` never re-split.)
 
 **Embedded PostgreSQL — dev/prod engine parity.** `Std.Db` is dialect-safe
 across SQLite and Postgres, and that gap is a real tax: `Codec.auto` cannot

@@ -32,10 +32,12 @@ export PORT
 # The backend runs with cwd=.split/backend, so the SQLite file lands there.
 export SKY_DB_PATH="${SKY_DB_PATH:-$(pwd)/.split/backend/notes.db}"
 
-echo "==> deriving frontend + backend from src/ via sky spa-split"
+# `sky run` on a Spa.app entry AUTO-SPLITS (wasm frontend + native backend under
+# .split/) and runs the backend — it serves the frontend + /_rpc same-origin.
+# (The explicit form is `sky spa-split src/Main.sky --out .split --build` then
+# `cd .split/backend && ./sky-out/app`.)
 rm -rf .split
-"$SKY" spa-split src/Main.sky --out .split --build
-
+echo "==> sky run auto-splits src/ and runs the backend"
 echo ""
 echo "==> open  http://localhost:${PORT}/  in your browser"
 echo "    - select/edit/search are pure client-local (zero network — watch DevTools)"
@@ -43,4 +45,4 @@ echo "    - New note / Save / Delete round-trip to POST /_rpc/<Msg> and persist 
 echo "    - the note list survives a server restart AND a page reload (boot Load RPC)"
 echo "    (Ctrl-C to stop)"
 echo ""
-cd .split/backend && exec ./sky-out/app
+exec "$SKY" run src/Main.sky

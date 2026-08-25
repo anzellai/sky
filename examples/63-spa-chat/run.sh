@@ -48,9 +48,13 @@ export PORT
 # The backend runs with cwd=.split/backend, so the SQLite file lands there.
 export SKY_DB_PATH="${SKY_DB_PATH:-$(pwd)/.split/backend/chat.db}"
 
-echo "==> deriving frontend + backend from src/ via sky spa-split"
+# `sky run` on a Spa.app entry AUTO-SPLITS (wasm frontend + native backend under
+# .split/) and runs the backend — it serves the frontend + /_rpc + /_sky/sub
+# same-origin. (Explicit form: `sky spa-split src/Main.sky --out .split --build`
+# — add `--broker redis://…` there for multi-instance SSE fan-out — then
+# `cd .split/backend && ./sky-out/app`.)
 rm -rf .split
-"$SKY" spa-split src/Main.sky --out .split --build
+echo "==> sky run auto-splits src/ and runs the backend"
 
 echo ""
 echo "==> open  http://localhost:${PORT}/  in TWO browser tabs"
@@ -60,4 +64,4 @@ echo "    - compose/rename are pure client-local (zero network — watch DevTool
 echo "    - the history survives a server restart AND a page reload (boot Load RPC)"
 echo "    (Ctrl-C to stop)"
 echo ""
-cd .split/backend && exec ./sky-out/app
+exec "$SKY" run src/Main.sky

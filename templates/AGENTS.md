@@ -374,6 +374,15 @@ sky watch src/Main.sky       # rebuild + restart on save
 sky add <go/pkg> | remove | install | update   # Go FFI deps
 ```
 
+**Sky.Spa entries auto-split.** If `main` is a `Spa.app` (the entry imports
+`Std.Spa`), `sky build src/Main.sky` derives + builds a wasm frontend + native
+backend under `.split/` (no manual `sky spa-split`), and `sky run src/Main.sky`
+runs the backend — it serves the frontend + `/_rpc` same-origin. `--target
+desktop|ios|android` (frontend shell) and `--embed` (bundle PostgreSQL into the
+backend) COMPOSE with the split. `sky check` type-checks the shared source
+without splitting; `sky spa-split <entry> --out <dir>` is the explicit form when
+you want the split trees kept at a path.
+
 Run `sky verify` before you consider a change done — it runs fmt-clean +
 type-check + production build + every `tests/*.sky` suite, and exits non-zero on
 any failure.

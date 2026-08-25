@@ -25,9 +25,13 @@ require_fresh_compiler "$SKY" "$ROOT"
 PORT="${PORT:-8951}"
 export PORT
 
-echo "==> deriving frontend + backend from src/ via sky spa-split"
+# `sky run` on a Spa.app entry AUTO-SPLITS (wasm frontend + native backend under
+# .split/) and runs the backend. Here every effect is a client-native one, so the
+# split keeps ALL branches in the wasm frontend and the backend just serves the
+# static bundle (no /_rpc). (Explicit form: `sky spa-split src/Main.sky --out
+# .split --build` then `cd .split/backend && ./sky-out/app`.)
 rm -rf .split
-"$SKY" spa-split src/Main.sky --out .split --build
+echo "==> sky run auto-splits src/ and runs the backend"
 
 echo ""
 echo "==> open  http://localhost:${PORT}/  in a browser"
@@ -35,4 +39,4 @@ echo "    Copy→Paste, Save→Load, Locate (grant location), Online?/Language,"
 echo "    Vibrate + Share (best on a phone), Set tab title — results in the log."
 echo "    (Ctrl-C to stop)"
 echo ""
-cd .split/backend && exec ./sky-out/app
+exec "$SKY" run src/Main.sky

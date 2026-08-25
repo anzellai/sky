@@ -727,9 +727,11 @@ Rules:
 - **The executable / `.app` basename** is the capitalised last `id` segment
   (`com.acme.notes` → `Notes`), because the display name may contain spaces or
   emoji the filesystem and Swift/Java toolchains reject.
-- For an **auto-split** app, run `--target` inside `.split/frontend/` after
-  `sky spa-split`; for a **client-only** app, `--target` runs on the project
-  directly.
+- `--target` **composes with the auto-split**: `sky build --target ios
+  src/Main.sky` on a `Spa.app` entry splits and builds the frontend for that
+  shell (the backend native alongside). For a **client-only** app it runs on the
+  project directly. (The explicit `sky spa-split … --target` form still works if
+  you keep the split trees at a chosen path.)
 
 Full API: `sky doc Std.Bundle`.
 
