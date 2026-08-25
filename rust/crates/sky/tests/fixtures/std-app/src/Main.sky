@@ -1,0 +1,81 @@
+-- Std.App regression fixture: ONE `App` value must feed ALL FIVE runners.
+--
+-- This is the type-unification proof (grill G1) — if a future stdlib/compiler
+-- change breaks the shared `App seed page model msg` type or any runner's
+-- backend-config construction, `allBackends` stops type-checking and this
+-- fixture (via tests/std_app_flow.rs) goes red.
+module Main exposing (main, allBackends)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Sub exposing (Sub)
+import Std.Ui as Ui
+
+type Page
+    = Home
+
+type alias Model =
+    { n : Int }
+
+type Msg
+    = Tick
+    | Line String
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Tick ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        Line _ ->
+            ( model, Cmd.none )
+
+
+view : Model -> Ui.Element Msg
+view _ =
+    Ui.text "hello from Std.App"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+myApp : App.App a Page Model Msg
+myApp =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ ( "/", Home ) ]
+        |> App.withNotFound Home
+        |> App.withWindow "Std.App fixture" 640 480
+        |> App.withInput Line
+
+
+-- Every runner must typecheck off the SAME `myApp` — including runWebview,
+-- which pins `seed` to unit.
+allBackends : List (Task Error ())
+allBackends =
+    [ App.runLive myApp
+    , App.runSpa myApp
+    , App.runTui myApp
+    , App.runCli myApp
+    , App.runWebview myApp
+    ]
+
+
+main : Task Error ()
+main =
+    App.runTui myApp

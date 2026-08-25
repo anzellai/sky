@@ -1,0 +1,242 @@
+-- | Std.App — the unified app builder.
+--
+-- One `App.app { init, update, view, subscriptions }` describes a program
+-- once; the same value runs on every backend. The five `run<Backend>`
+-- functions each adapt the single `view : model -> Element msg` to that
+-- backend's slot and delegate to the existing kernel entry (Std.Live,
+-- Std.Spa, Std.Tui, Std.Cli, Std.Webview) — Std.App *composes* them, it does
+-- not reimplement them. The build picks a runner from `--target`
+-- (`family[:variant]`); until that lands, call a runner directly:
+--
+--     main = App.runTui (App.app { init = init, update = update, view = view, subscriptions = subs })
+--
+-- Type: `App seed page model msg`. `seed` is `init`'s argument (Live passes a
+-- request record; the native backends pass unit — so a portable app's `init`
+-- must NOT read its seed, or it pins `seed` and only builds for `web`).
+-- `page` is the routing page type (unconstrained when there are no routes).
+--
+-- See docs/design/unified-app-builder.md.
+module Std.App exposing
+    ( App
+    , app
+    , withRoutes
+    , withNotFound
+    , withWindow
+    , withInput
+    , runLive
+    , runSpa
+    , runTui
+    , runCli
+    , runWebview
+    )
+
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Cli as Cli
+import Std.Live as Live
+import Std.Spa as Spa
+import Std.Tui as Tui
+import Std.Ui as Ui exposing (Element(..))
+import Std.Webview as Webview
+
+-- | An app described once, runnable on any backend. Built by [`app`] and
+-- refined by the `with…` builders; consumed by a `run<Backend>` runner.
+type App seed page model msg
+    = App { init : seed -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> Element msg
+, subscriptions : model -> Sub msg
+, routes : List ( String, page )
+, notFound : Maybe page
+, window : { title : String
+      , size : ( Int, Int )
+      }
+, onInput : Maybe (String -> msg)
+}
+
+
+-- | Describe an app from the shared TEA core. Routing, a window title, and
+-- input are added by the `with…` builders below (each is target-relevant and
+-- ignored by targets that have no use for it).
+app : { init : seed -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> Element msg
+, subscriptions : model -> Sub msg
+} -> App seed page model msg
+app cfg =
+    App
+        { init = cfg.init
+        , update = cfg.update
+        , view = cfg.view
+        , subscriptions = cfg.subscriptions
+        , routes = []
+        , notFound = Nothing
+        , window = { title = "Sky", size = ( 800, 600 ) }
+        , onInput = Nothing
+        }
+
+
+-- | Attach URL routes as `(path, page)` pairs (web targets). Pair with
+-- [`withNotFound`] — the `web` target requires a fallback page.
+withRoutes : List ( String, page ) -> App seed page model msg -> App seed page model msg
+withRoutes routes (App a) =
+    App { a | routes = routes }
+
+
+-- | Set the fallback page for an unmatched route (web targets).
+withNotFound : page -> App seed page model msg -> App seed page model msg
+withNotFound page_ (App a) =
+    App { a | notFound = Just page_ }
+
+
+-- | Set the desktop window title + initial size (desktop targets).
+withWindow : String -> Int -> Int -> App seed page model msg -> App seed page model msg
+withWindow title width height (App a) =
+    App { a | window = { title = title, size = ( width, height ) } }
+
+
+-- | Wire a line/text input handler (terminal targets). The payload is the
+-- entered line; a terminal renderer maps its input to it.
+withInput : (String -> msg) -> App seed page model msg -> App seed page model msg
+withInput onLine (App a) =
+    App { a | onInput = Just onLine }
+
+
+-- ─── Runners — one per backend, target → runner is resolved by the build ───
+-- | Run as server-driven HTML + SSE (`--target web`, = Sky.Live). Requires a
+-- fallback page ([`withNotFound`]) because Live routing is total.
+runLive : App seed page model msg -> Task Error ()
+runLive (App a) =
+    case a.notFound of
+
+        Just fallback ->
+            Live.app
+                (Live.config
+                    { init = a.init
+                    , update = a.update
+                    , view = \model -> Ui.layout [] (a.view model)
+                    , subscriptions = a.subscriptions
+                    , routes =
+                        List.map
+                            (\( path, page_ ) -> Live.route path page_)
+                            a.routes
+                    , notFound = fallback
+                    })
+
+        Nothing ->
+            Task.fail
+                (Error.invalidInput
+                    "target 'web' requires a fallback page — add `|> App.withNotFound <page>`")
+
+
+-- | Run as a client wasm SPA (`--target web:app` / `mobile:*` / `tablet:*`,
+-- = Sky.Spa). Effects auto-split to a backend at build time.
+runSpa : App seed page model msg -> Task Error ()
+runSpa (App a) =
+    let
+        base =
+            Spa.config
+                { init = a.init
+                , update = a.update
+                , view = \model -> Ui.layout [] (a.view model)
+                , subscriptions = a.subscriptions
+                }
+        routed =
+            Spa.withRoutes
+                (List.map (\( path, page_ ) -> Spa.route path page_) a.routes)
+                base
+        withFallback =
+            case a.notFound of
+
+                Just fallback ->
+                    Spa.withNotFound fallback routed
+
+                Nothing ->
+                    routed
+    in
+        Spa.app withFallback
+
+
+-- | Run as a full-screen terminal UI (`--target terminal:tui`, = Sky.Tui).
+-- The `Element` view renders directly to ANSI cells.
+runTui : App seed page model msg -> Task Error ()
+runTui (App a) =
+    Tui.app
+        (Tui.config
+            { init = a.init
+            , update = a.update
+            , view = a.view
+            , subscriptions = a.subscriptions
+            })
+
+
+-- | Run as a line-based CLI (`--target terminal:cli`, = Sky.Cli). The
+-- `Element` view is flattened to text (best-effort — see [`elementToText`]);
+-- `Std.Cli.program` stays the escape hatch for a hand-authored `String` view.
+runCli : App seed page model msg -> Task Error ()
+runCli (App a) =
+    let
+        base =
+            Cli.config
+                { init = a.init
+                , update = a.update
+                , view = \model -> elementToText (a.view model)
+                , subscriptions = a.subscriptions
+                }
+        withLine =
+            case a.onInput of
+
+                Just onLine ->
+                    Cli.withOnLine onLine base
+
+                Nothing ->
+                    base
+    in
+        Cli.program withLine
+
+
+-- | Run as a native desktop window (`--target desktop`, = Sky.Webview).
+-- `seed` is pinned to unit — Webview's `init` takes `()`, so a desktop build
+-- cannot read a Live request from `init`.
+runWebview : App () page model msg -> Task Error ()
+runWebview (App a) =
+    Webview.app
+        { init = a.init
+        , update = a.update
+        , view = \model -> Ui.layout [] (a.view model)
+        , subscriptions = a.subscriptions
+        , window = a.window
+        }
+
+
+-- ─── Element → text (best-effort, for terminal:cli) ───
+-- | Flatten an `Element` tree to text: `Text` leaves are kept, block children
+-- are newline-joined, and `Raw` (an opaque Std.Html node) becomes empty —
+-- 2-D layout has no lossless text form, so this is deliberately best-effort.
+elementToText : Element msg -> String
+elementToText element =
+    case element of
+
+        Empty ->
+            ""
+
+        Text content ->
+            content
+
+        Node _ _ children ->
+            joinChildren children
+
+        TaggedNode _ _ _ children ->
+            joinChildren children
+
+        Raw _ ->
+            ""
+
+
+joinChildren : List (Element msg) -> String
+joinChildren children =
+    String.join
+        "\n"
+        (List.filter (\line -> line /= "") (List.map elementToText children))
