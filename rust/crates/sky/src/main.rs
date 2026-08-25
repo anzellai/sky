@@ -1688,7 +1688,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let file = match resolve_entry_arg(
         &positional,
         &format!(
-            "usage: sky {} <file.sky> [--out <dir>]  (or run inside a project directory with a sky.toml)",
+            "usage: sky {} <file.sky> [--target <family[:variant]>] [--out <dir>]  (or run inside a project directory with a sky.toml)",
             verb(check_only)
         ),
     ) {
@@ -1724,6 +1724,12 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     if !check_only && is_std_app_dispatched_entry(file) {
         // `--target` is optional — it defaults to `web` (Sky.Live), the primary
         // delivery. `family[:variant]` picks any other backend.
+        if parsed_target.is_none() {
+            println!(
+                "tip: Std.App entry — building `web` (Sky.Live) by default. Pick a backend with\n     \
+                 --target: terminal:tui · terminal:cli · desktop · web:app · mobile:ios · …"
+            );
+        }
         let tgt = parsed_target.unwrap_or(target::Target::Web);
         return build_std_app(
             &repo_root,
@@ -3694,7 +3700,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let (positional, out_override) = parse_out(&args);
     let file = match resolve_entry_arg(
         &positional,
-        "usage: sky run <file.sky> [--profile [--profile-dir <dir>] [--profile-timeout <dur>]]  (or run inside a project directory with a sky.toml)",
+        "usage: sky run <file.sky> [--target <family[:variant]>] [--profile [--profile-dir <dir>] [--profile-timeout <dur>]]  (or run inside a project directory with a sky.toml)",
     ) {
         Ok(f) => f,
         Err(code) => return code,
@@ -7730,13 +7736,16 @@ fn print_help() {
          USAGE:\n  sky <command> [args]\n\n\
          WIRED COMMANDS:\n\
          \x20 build <file>     compile → sky-out/ + go build (--embed bundles PostgreSQL)\n\
-         \x20                   a Sky.Spa (Spa.app) entry AUTO-SPLITS → wasm frontend +\n\
-         \x20                   native backend under .split/ (--out to override);\n\
-         \x20                   --wasm compiles the Sky.Spa client for the browser (GOOS=js);\n\
-         \x20                   --target <web|desktop|ios|android|tablet> bundles that client\n\
-         \x20 check <file>     type-check + go build (no binary run)\n\
-         \x20 run   <file>     build + execute (a Sky.Spa entry auto-splits, then runs the\n\
-         \x20                   backend — it serves the frontend + /_rpc same-origin)\n\
+         \x20                   a Std.App entry (`main = App.run app`) picks its backend from\n\
+         \x20                   --target (below); a Sky.Spa entry AUTO-SPLITS → wasm frontend\n\
+         \x20                   + native backend under .split/ (--out to override)\n\
+         \x20 check <file>     type-check + go build (no binary run; --target scopes a backend)\n\
+         \x20 run   <file>     build + execute (--target selects the backend; a Sky.Spa entry\n\
+         \x20                   auto-splits, then runs the backend, serving the frontend + /_rpc)\n\
+         \x20 --target <t>     the app target for a Std.App/Sky.Spa entry (optional → web):\n\
+         \x20                   web · tablet (Sky.Live) · desktop (Live in a window) ·\n\
+         \x20                   terminal:tui|cli · web:app · desktop:mac|windows|linux ·\n\
+         \x20                   tablet:ipad|android · mobile:ios|android (native wasm)\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
          \x20 test  <file>     run a Sky.Test suite\n\
          \x20 lsp              launch the sky-lsp server (stdio)\n\

@@ -280,19 +280,22 @@ tier calls for it*.
 | SSE / token stream | **Sky.Http.Server.Stream** | `Server.Stream.emit` |
 | One source, many targets (web/terminal/desktop) | **Std.App** | `App.app { init, update, view, subscriptions }` + `--target` |
 
-**`Std.App` — the unified builder.** For an app that should run across several of
-the shapes above from ONE source, write `App.app { init, update, view :
-model -> Element msg, subscriptions }` (expose it as `app`, no `main`) and let a
-build-time `--target family[:variant]` pick the backend: `web` (= Sky.Live) ·
-`terminal:tui` (= Sky.Tui) · `terminal:cli` (= Sky.Cli) · `desktop` (=
-Sky.Webview). `sky build`/`sky run --target <t>` stage a derived entry and DCE
-prune the unused backends; `sky check` type-checks against *every* backend at
-once. Invalid `--target` combos are rejected at parse time (`web:ios` → *"did you
-mean `mobile:ios`?"*). Client-wasm targets (`web:app` / `mobile:*` / `tablet:*`)
-still use a **Sky.Spa** entry (auto-split needs the `update` visible to the
-splitter); the `--target` grammar is shared across both. The named modules
-(`Live.app`, `Tui.app`, …) stay for the "I know exactly which shape I want" case.
-See `docs/skyapp/overview.md` + `sky doc Std.App`.
+**`Std.App` — the unified builder (the cross-platform default; `Std.Ui` view).**
+For an app that should run across several shapes from ONE source, write
+`app = App.app { init, update, view : model -> Element msg, subscriptions }
+|> App.withNotFound … |> …` and `main = App.run app`; a build-time `--target
+family[:variant]` picks the backend (optional — bare defaults to `web`). You never
+import `Std.Live`/`Spa`/`Tui`/`Cli`/`Webview` yourself. Delivery = family, native =
+platform: `web` · `tablet` → **Sky.Live**; `desktop` → Sky.Live in a native
+window; `terminal:tui|cli` → **Sky.Tui/Cli**; `web:app` · `desktop:mac|windows|
+linux` · `tablet:ipad|android` · `mobile:ios|android` → **Sky.Spa** (client wasm).
+The build rewrites `App.run` → the target's `run<Backend>` (DCE prunes the rest)
+and, for the Spa targets, **synthesises a `Spa.app` from your `App.app`** and feeds
+the existing auto-split — so client targets need **no** separate `Std.Spa` entry.
+`web` requires `App.withNotFound` (compile-enforced). Invalid combos are rejected
+at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` type-checks
+the core (target-scoped for a specific backend). `Std.Html` views → use `Sky.Live`
+directly. See `docs/skyapp/overview.md` + `sky doc Std.App`.
 
 ### Pinned defaults — the preferred way to write Sky
 

@@ -1,9 +1,16 @@
-# Exploration: one `App`, `target × renderer` — unifying Sky.Live / Sky.Spa / Sky.Tui / Sky.Webview
+# Design: `Std.App` — one builder, one `--target`, unifying Sky.Live / Sky.Spa / Sky.Tui / Sky.Cli / Sky.Webview
 
-> Status: **exploration / RFC**, not shipped. Written 2026-08-25 against v0.22.1.
-> The question: can the app-shape variants become ONE app builder whose target
-> and renderer are a *build* choice (`--target`, `--html`/`--wasm`), instead of a
-> *code* choice (which module you import)?
+> Status: **SHIPPED** on branch `feat/unified-app-builder` (2026-08-25). This
+> document is the design record — early sections retain the exploration (including
+> superseded ideas like `--html`/`--wasm`, which the single extendible `--target`
+> replaced; and the 2-param `App` sketch, superseded by `App fallback seed page
+> model msg`). **For the current, live API, read `docs/skyapp/overview.md` and
+> `sky doc Std.App`.** The "Implementation status" + "roadmap" sections below track
+> what shipped vs what remains (`App.withRequest`).
+>
+> The question it answered: can the app-shape variants become ONE app builder
+> whose target is a *build* choice (`--target family[:variant]`), instead of a
+> *code* choice (which module you import)? Yes.
 
 ## 1. The problem — too many front doors
 
