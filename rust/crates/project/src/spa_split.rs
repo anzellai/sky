@@ -797,7 +797,7 @@ pub fn generate(
                 "server->client PUSH enabled: mounted `GET /_sky/sub` (SSE) + a shared broker; RPC handlers fan their returned Cmd.publish through it. Cross-replica broker BAKED via --broker ({url}); SKY_LIVE_BROKER_URL still overrides it."
             )),
             None => notes.push(
-                "server->client PUSH enabled: mounted `GET /_sky/sub` (SSE) + a shared broker; RPC handlers fan their returned Cmd.publish through it. In-process broker (single replica); pass --broker <url> (or set SKY_LIVE_BROKER_URL) for cross-replica fan-out, same as Sky.Live.".into(),
+                "server->client PUSH enabled: mounted `GET /_sky/sub` (SSE) + a shared broker; RPC handlers fan their returned Cmd.publish through it. In-process broker (single replica); pass --broker <url> (or set SKY_LIVE_BROKER_URL) for cross-replica fan-out.".into(),
             ),
         }
     } else if broker_url.is_some() {

@@ -1387,11 +1387,8 @@ fn build_std_app(
             return ExitCode::FAILURE;
         }
     };
-    println!(
-        "== building Std.App entry for --target {} (backend: App.{}) ==",
-        tgt.canonical(),
-        runner
-    );
+    let _ = runner;
+    println!("== building Std.App entry (--target {}) ==", tgt.canonical());
     let mut cmd = Command::new(&sky);
     cmd.arg("build");
     if embed {
@@ -1477,7 +1474,7 @@ fn spa_split_and_build(
                 return Err(ExitCode::FAILURE);
             }
         };
-    println!("sky spa-split → {}", report.out_dir);
+    println!("client/server split → {}", report.out_dir);
     let joined = |v: &[String]| {
         if v.is_empty() {
             "(none)".to_string()
@@ -1726,7 +1723,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         // delivery. `family[:variant]` picks any other backend.
         if parsed_target.is_none() {
             println!(
-                "tip: Std.App entry — building `web` (Sky.Live) by default. Pick a backend with\n     \
+                "tip: Std.App entry — building `web` by default. Pick a target with\n     \
                  --target: terminal:tui · terminal:cli · desktop · web:app · mobile:ios · …"
             );
         }

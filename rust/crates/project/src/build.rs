@@ -1231,6 +1231,12 @@ fn is_externally_consumed_section(section: &str) -> bool {
         | "dependencies"
         | "go.dependencies"
         | "lib"
+        // Build-time markers, not runtime config: `[spa]` (`generated`, `role`)
+        // is written by `sky spa-split` / the Std.App client synthesis into the
+        // generated frontend/backend sky.toml as the recursion guard
+        // (`is_generated_split_project`). It is consumed by the build, never the
+        // runtime, so an inert-key warning about it is noise.
+        | "spa"
     )
 }
 
