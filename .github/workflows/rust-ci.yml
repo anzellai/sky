@@ -287,10 +287,18 @@ jobs:
   # NOT repeated (test-rest's `--all-targets` clippy and `--workspace --doc`
   # already cover sky). Setup-dependent (needs: setup) — NOT in
   # SETUP_INDEPENDENT_JOBS.
+  # SHARD 0 of 2. `cargo test -p sky` was the slowest setup-DEPENDENT job (~604s)
+  # and, once build-corpus was sharded, the thing that bounds the T1 tier. Its
+  # cost is the integration binaries under rust/crates/sky/tests/ (several spin up
+  # PostgreSQL), so it is sharded across this job + `test-sky-2` the same way
+  # build-corpus shards the example corpus. `scripts/ci/sky-test-shard.sh I N`
+  # emits the `--test` targets for shard I (interleaved by sorted name so the
+  # db_*_flow tests spread evenly; shard 0 also carries `--lib`);
+  # `sky_test_shards_are_total.rs` proves the two shards union to the whole set.
   test-sky:
     needs: setup
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -323,11 +331,62 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - name: Tests — sky crate (postgres-live + db_*_flow integration)
+      - name: Tests — sky crate shard 0/2 (postgres-live + db_*_flow integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo test -p sky --locked
+        run: cargo test -p sky --locked $(bash scripts/ci/sky-test-shard.sh 0 2)
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── test-sky SHARD 1 of 2 (fan-out sibling of test-sky) ─────────────────────
+  # Byte-identical to test-sky but `sky-test-shard.sh 1 2` (no --lib). Separate
+  # job, not a matrix — same job-name exact-match reason as build-corpus-2.
+  test-sky-2:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-test-sky-2-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: |
+            go-test-sky-2-
+            go-test-sky-
+      - name: PostgreSQL + sqlite3 for the live tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Tests — sky crate shard 1/2 (postgres-live + db_*_flow integration)
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked $(bash scripts/ci/sky-test-shard.sh 1 2)
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1154,6 +1213,7 @@ jobs:
       - test-ty
       - test-rest
       - test-sky
+      - test-sky-2
       - parity-accept
       - parity-reject
       - repro
