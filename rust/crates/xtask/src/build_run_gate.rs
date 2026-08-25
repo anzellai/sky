@@ -216,6 +216,46 @@ fn preflight_disk_guard() -> Result<(), String> {
     Ok(())
 }
 
+/// Parse `--shard=I/N`: gate only slice `I` of `N`, interleaved by index. Mirrors
+/// `repro_gate`'s flag so a fan-out reads the same everywhere. Rejects a malformed
+/// or out-of-range spec by aborting — a shard that silently gates nothing (or the
+/// wrong slice) is how a fan-out reports PASS over a corpus it never checked.
+fn parse_shard(args: &[String]) -> Option<(usize, usize)> {
+    let spec = args.iter().find_map(|a| a.strip_prefix("--shard="))?;
+    let (i, n) = spec
+        .split_once('/')
+        .unwrap_or_else(|| panic!("build-run: --shard expects I/N (e.g. 0/2), got {spec:?}"));
+    let i: usize = i
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("build-run: --shard index not a number: {i:?}"));
+    let n: usize = n
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("build-run: --shard count not a number: {n:?}"));
+    if n == 0 || i >= n {
+        panic!("build-run: --shard=I/N requires 0 <= I < N (got {i}/{n})");
+    }
+    Some((i, n))
+}
+
+/// Keep only slice `I` of `N` (interleaved by index, stride `N`) when `shard` is
+/// set. Interleave rather than a contiguous split so the few heavy examples
+/// (19-skyforum, 26-ui-showcase, 13-skyshop …) spread across shards and they
+/// finish in roughly equal wall-clock. Pure + separate from `run` so its
+/// disjoint-and-total property is unit-tested.
+fn apply_shard(names: Vec<String>, shard: Option<(usize, usize)>) -> Vec<String> {
+    match shard {
+        Some((i, n)) => names
+            .into_iter()
+            .enumerate()
+            .filter(|(idx, _)| idx % n == i)
+            .map(|(_, name)| name)
+            .collect(),
+        None => names,
+    }
+}
+
 pub fn run(args: &[String], root: &Path) -> i32 {
     if let Err(msg) = preflight_disk_guard() {
         eprintln!("BUILD-RUN GATE: ABORTED — {msg}");
@@ -246,11 +286,24 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     let golden = args.iter().any(|a| a == "--golden");
     let bless = args.iter().any(|a| a == "--bless");
 
-    let names: Vec<String> = match &only {
+    let shard = parse_shard(args);
+    let mut names: Vec<String> = match &only {
         Some(n) => n.clone(),
         None if all || shape_filter.is_some() => corpus(root),
         None => CLI_FAMILY.iter().map(|s| s.to_string()).collect(),
     };
+    // `--shard=I/N`: CI-level fan-out. The dominant cost of this gate is the
+    // per-example `go build`, bounded by one runner's cores, so splitting the
+    // corpus across N sibling jobs is the only lever that adds real hardware
+    // parallelism. Sharded BEFORE the shape filter, on the sorted name list, so
+    // each shape's slice is disjoint across shards and their union is the whole
+    // shape — `--shape live --run --shard=0/2` ∪ `--shard=1/2` runs every live
+    // example exactly once. `corpus()` is already sorted; sort defensively for the
+    // `--only`/CLI-family paths too so the partition is deterministic everywhere.
+    if shard.is_some() {
+        names.sort();
+    }
+    let names = apply_shard(names, shard);
 
     // The examples this invocation will actually touch, resolved up front so the
     // work can be handed out and the table still printed in corpus order.
@@ -2444,6 +2497,35 @@ mod gate_result_verdict_tests {
     /// measuring the hello-world check instead of the new one.
     fn hello_ok() -> Row {
         row("01-hello-world", Shape::Cli, Some(true), Some(true))
+    }
+
+    #[test]
+    fn shards_are_disjoint_and_total() {
+        // For every corpus size and shard count, the union of all shards is the
+        // whole set and no example lands in two shards. A drop is a false-green:
+        // an example no shard gates is silently unbuilt/unrun across the fan-out.
+        let names = |total: usize| -> Vec<String> {
+            (0..total).map(|i| format!("{i:03}-ex")).collect()
+        };
+        for total in [0usize, 1, 2, 3, 7, 60, 61] {
+            for n in 1..=4usize {
+                let full = names(total);
+                let mut union: Vec<String> = Vec::new();
+                for i in 0..n {
+                    union.extend(apply_shard(full.clone(), Some((i, n))));
+                }
+                union.sort();
+                let mut expect = full.clone();
+                expect.sort();
+                assert_eq!(union.len(), expect.len(), "size={total} n={n}: overlap or drop");
+                assert_eq!(union, expect, "size={total} n={n}: union != corpus");
+            }
+        }
+        // `--shard=I/N` guardrails: I>=N and N==0 must abort, not silently gate 0.
+        assert!(std::panic::catch_unwind(|| parse_shard(&["--shard=2/2".into()])).is_err());
+        assert!(std::panic::catch_unwind(|| parse_shard(&["--shard=0/0".into()])).is_err());
+        assert_eq!(parse_shard(&["--shard=1/3".into()]), Some((1, 3)));
+        assert_eq!(parse_shard(&["--all".into()]), None);
     }
 
     #[test]

@@ -505,9 +505,17 @@ jobs:
     # It is listed in `SETUP_INDEPENDENT_JOBS` so the budget assertion accounts
     # for it correctly.
     runs-on: ubuntu-latest
-    # ~76s workspace build + ~59s cache restore + ~544s build-run + the four
-    # runtime gates (~90s WARM, which is why they are here) ≈ 13 min. 1.5x = 20.
-    timeout-minutes: 18
+    # SHARD 0 of 2. The whole corpus was ~76s workspace build + ~59s cache restore
+    # + ~544s build-run + the four runtime gates (~90s WARM) ≈ 13 min — the slowest
+    # setup-independent job, and the one whose per-example `go build` variance kept
+    # tripping the T1 tier ceiling (measured 844-1034s across runs). Sharded across
+    # this job + `build-corpus-2` (the `repro`/`macos-determinism` fan-out pattern),
+    # the corpus's dominant `go build` cost is halved onto two runners, so the
+    # slowest setup-independent job drops off the critical path. Each shard still
+    # runs its OWN workspace build + the runtime gates over ITS half (warm cache),
+    # and `build_run_gate`'s `shards_are_disjoint_and_total` proves the two halves
+    # union to the whole corpus with no example gated twice or dropped.
+    timeout-minutes: 12
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -532,22 +540,69 @@ jobs:
           shared-key: sky-linux
           save-if: 'false'
       - run: cargo build --workspace --locked
-      - name: Gate — build-run (emit + go build every example; FFI skipped)
-        run: cargo run -q -p xtask -- build-run --all
+      - name: Gate — build-run shard 0/2 (emit + go build; FFI skipped)
+        run: cargo run -q -p xtask -- build-run --all --shard=0/2
       # The runtime gates live HERE, with `build-run --all`, and that placement
       # is load-bearing rather than tidy. They re-run the SAME examples, so the
-      # `go build` cache the step above just filled is what makes them cheap.
-      # Splitting them from it measured, on a real run:
-      #     live 27s -> 425s · golden 33s -> 174s · http 9s -> 76s
-      # +613s of rebuilds to save 544s of step. Keep them together.
-      - name: Gate — golden (runtime-correctness, CLI subset)
-        run: cargo run -q -p xtask -- build-run --shape cli --run --golden
-      - name: Gate — live runtime (Sky.Live examples start + serve, no panic)
-        run: cargo run -q -p xtask -- build-run --shape live --run
-      - name: Gate — http runtime (Sky.Http.Server examples start + serve)
-        run: cargo run -q -p xtask -- build-run --shape http --run
-      - name: Gate — tui runtime (Sky.Tui examples start + run, no panic)
-        run: cargo run -q -p xtask -- build-run --shape tui --run
+      # `go build` cache the step above just filled is what makes them cheap
+      # (splitting them off measured +613s of cold rebuilds to save 544s). They
+      # take the SAME `--shard` so each gate covers this shard's half; the union
+      # across both jobs is every example.
+      - name: Gate — golden (runtime-correctness, CLI subset), shard 0/2
+        run: cargo run -q -p xtask -- build-run --shape cli --run --golden --shard=0/2
+      - name: Gate — live runtime (Sky.Live start + serve, no panic), shard 0/2
+        run: cargo run -q -p xtask -- build-run --shape live --run --shard=0/2
+      - name: Gate — http runtime (Sky.Http.Server start + serve), shard 0/2
+        run: cargo run -q -p xtask -- build-run --shape http --run --shard=0/2
+      - name: Gate — tui runtime (Sky.Tui start + run, no panic), shard 0/2
+        run: cargo run -q -p xtask -- build-run --shape tui --run --shard=0/2
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── build-corpus SHARD 1 of 2 (fan-out sibling of build-corpus) ─────────────
+  # Byte-identical to build-corpus but `--shard=1/2`. Kept a separate job (not a
+  # `matrix`) because `assert-tier-budget.sh` exact-matches job names in
+  # SETUP_INDEPENDENT_JOBS, and a matrix leg reports as "build-corpus (1)" (with a
+  # space) — the same reason repro/repro-2 + macos-determinism/-2 are separate.
+  build-corpus-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-linux-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - run: cargo build --workspace --locked
+      - name: Gate — build-run shard 1/2 (emit + go build; FFI skipped)
+        run: cargo run -q -p xtask -- build-run --all --shard=1/2
+      - name: Gate — golden (runtime-correctness, CLI subset), shard 1/2
+        run: cargo run -q -p xtask -- build-run --shape cli --run --golden --shard=1/2
+      - name: Gate — live runtime (Sky.Live start + serve, no panic), shard 1/2
+        run: cargo run -q -p xtask -- build-run --shape live --run --shard=1/2
+      - name: Gate — http runtime (Sky.Http.Server start + serve), shard 1/2
+        run: cargo run -q -p xtask -- build-run --shape http --run --shard=1/2
+      - name: Gate — tui runtime (Sky.Tui start + run, no panic), shard 1/2
+        run: cargo run -q -p xtask -- build-run --shape tui --run --shard=1/2
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1105,6 +1160,7 @@ jobs:
       - repro-2
       - codegen-build
       - build-corpus
+      - build-corpus-2
       - behaviour-docs
       - config-gates
       - lsp-fuzz
@@ -1164,7 +1220,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-behaviour build-corpus licence-gate-linux licence-gate-macos'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-behaviour build-corpus build-corpus-2 licence-gate-linux licence-gate-macos'
         run: |
           set -euo pipefail
           gh api \
