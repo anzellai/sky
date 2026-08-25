@@ -109,3 +109,23 @@ terminal:tui|cli→Tui/Cli. Std.Ui→Std.App (cross-platform); Std.Html→Sky.Li
 Live-in-webview [NEW runtime mode], desktop:os/tablet:os→Spa, tablet bare→Live);
 App.withRequest (portable init seed). Both additive. LITERAL goal now essentially
 met (Std.App covers every target from one source); pending re-Judge + the remap.
+
+## Update 3 (2026-08-25) — taxonomy remap DONE; App.withRequest deferred; sweep
+
+Gap-1 Judge: ACHIEVED+VERIFIED (splitter hash-identical to main; web:app build+run
+HTTP 200). Then user asked for the 2 roadmap items + a CLI/doc/LSP sweep.
+- **Taxonomy remap SHIPPED (a6e54937)**: std_app_runner → web/tablet(bare)=runLive,
+  desktop(bare)=runLiveWindow (NEW: Task.parallel [runLive, sleep→Webview.url
+  localhost] = Live-in-a-native-window), desktop:os/tablet:os/mobile/web:app=runSpa.
+  remap_fallback_error fires for any Live-based target. std_app_flow 7/7 (added
+  BUILD_LOCK for concurrent-go-build flake). runLiveWindow build-verified (needs a
+  display to run; DCE links rt.Live_app+rt.Webview_url).
+- **App.withRequest DEFERRED**: needs Std.Live to deliver the request outside
+  init's seed (live-traffic-runtime change = fenced-off risk). Current init : a ->
+  (ignore seed = portable) suffices. Documented.
+- **Sweep (d1b4225c)**: LSP VERIFIED WORKING (hover type-sigs App.app/withNotFound/
+  run; clean diagnostics; sky-lsp 38/0 — no changes needed). Fixed: sky --help
+  --target section (full grammar); build/check/run usages show --target; bare
+  Std.App build prints a --target tip; AGENTS.md+templates stale prose (App.run,
+  synthesised-Spa-no-Std.Spa-entry, target-scoped check); design doc marked SHIPPED.
+Gates: census green, doc-examples 14/14, example-sweep+harness re-running.
