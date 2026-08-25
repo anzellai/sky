@@ -11,6 +11,11 @@
 > The question it answered: can the app-shape variants become ONE app builder
 > whose target is a *build* choice (`--target family[:variant]`), instead of a
 > *code* choice (which module you import)? Yes.
+>
+> **Long-term:** once `Std.App` is complete and rolled out, the per-shape front
+> doors (`Live.app`, `Spa.app`, …) are deprecated in favour of `Std.App` alone —
+> see `docs/design/std-app-consolidation-roadmap.md` (a gated PLAN; nothing is
+> deprecated yet).
 
 ## 1. The problem — too many front doors
 
