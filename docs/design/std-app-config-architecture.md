@@ -131,6 +131,26 @@ for values that must never be logged or leaked. Values you configure through the
 app use `withX` + `SKY_X` (env-wins); secrets use the handle. Two shapes, and
 which one applies is never ambiguous.
 
+### How you USE a `Secret` — trusted consumers + one loud `reveal` (DECIDED)
+
+A `Secret` has to become bytes *somewhere* — the question is *where*, and by whom.
+The answer: **inside a trusted native library, never in user code.**
+
+- **Trusted Sky APIs take a `Secret` directly** and do the extraction at the FFI
+  boundary: `Http.withBearer : Secret -> Request -> Request`,
+  `Auth.signToken : Secret -> String -> …`, `Db.connect` (DSN). Your code passes
+  the *handle*; the library reads the bytes internally and never hands you a
+  `String`. This covers the common cases without any exposure.
+- **Custom need → one deliberate escape:** `Secret.reveal : Secret -> String`,
+  explicitly named so extracting the raw value is a *visible, intentional* act
+  (greppable in review, flaggable by `sky doctor`), and — because it consumes a
+  `Secret` — callable **only server-side** (the split keeps it off the client).
+  There is exactly one way to turn a `Secret` into a `String`, and it announces
+  itself.
+
+So there is no silent path from `Secret` to `String`: either a trusted library
+consumes it, or you write `Secret.reveal` and own that decision.
+
 ### `Secret` is BACKEND-ONLY on split — the type guarantees it (DECIDED)
 
 This is the property that makes the `Secret` type earn its keep in the unified
@@ -151,6 +171,46 @@ So the same `Secret` type that stops a secret from being logged (§ above) *also
 stops it from being shipped to the browser — one type, both guarantees. A user
 never has to reason about "will this leak into the client"; the split refuses to
 build one that would.
+
+### All env is read on the BACKEND; the client gets public config FROM it (DECIDED)
+
+The Stripe publishable key makes the model click: a **publishable** key is *public
+config*, not a `Secret` — it's *designed* to sit in the browser. So it is a plain
+value, and it reaches the client the one consistent way anything reaches the
+client — **from the backend**. The wasm frontend has no environment to read; every
+env value is read on the backend, and the frontend receives the *public* subset it
+needs via the rendered page / initial model, or via RPC.
+
+```elm
+-- BACKEND reads env (it's the only place with an environment):
+stripePublishable : String                       -- PUBLIC → a plain String, not a Secret
+stripePublishable =
+    System.getenvOr "STRIPE_PUBLISHABLE_KEY" ""
+
+stripeSecret : Secret                            -- SECRET → a handle, backend-only
+stripeSecret =
+    Secret.fromEnv "STRIPE_SECRET_KEY"
+
+-- The PUBLIC key flows to the client in the model — the split ships this:
+init _ =
+    ( { stripeKey = stripePublishable, … }, Cmd.none )
+
+-- view (client) uses model.stripeKey freely — it's public.
+-- stripeSecret is used ONLY in a backend effect (Http.withBearer stripeSecret …);
+-- putting it in the model or view is a split-time error.
+```
+
+So the classification the user makes is the honest one — *publishable = public,
+secret = `Secret`* — and each type carries its own guarantee: the public value can
+flow to the client (via the backend, explicitly, in the model), the `Secret`
+cannot. Consistency: **there is exactly one place env is read (the backend), and
+the client is handed only what the app decided to hand it.** A wasm client never
+"reaches for an env var" — there is nothing to reach.
+
+(If you *mistype* a secret as a plain `getenvOr` String and put it in the model,
+you lose the protection — the type helps but can't force correct classification.
+`sky doctor` can flag `getenvOr` reads of `*_SECRET*`/`*_KEY*`-shaped names as a
+lint, guiding you to `Secret.fromEnv`; that's a nicety, not the guarantee.)
 
 ### Loading values — `.env` / `.env.<profile>` (DECIDED)
 
@@ -267,9 +327,17 @@ a `Std.App` user. In this model:
   NOT have a `withX`.
 - **`sky.toml` runtime sections are retired** into `withX` + env; `sky.toml` ends
   as project metadata only (phased, per the consolidation roadmap).
+- **`Secret` is consumed by trusted native APIs** (`Http.withBearer`,
+  `Auth.signToken`, `Db.connect`) that extract the bytes at the FFI boundary; the
+  ONLY way to a raw `String` is `Secret.reveal` — explicit, greppable,
+  server-only. No silent `Secret → String`.
 - **`Secret` is backend-only on split** — server-tainted by construction, so it
   is partitioned to the backend and a `Secret` in a client path (`view`) is a
-  split-time error. One type stops both logging AND shipping-to-browser.
+  split-time error. One type stops logging, `++`, AND shipping-to-browser.
+- **All env is read on the backend; the client gets only the PUBLIC subset the
+  app hands it** (via the model/render or RPC). A publishable key is *public
+  config* (a plain `String`), not a `Secret`; it flows to the client from the
+  backend like anything else. The wasm client has no env to read.
 - **`.env` / `.env.<profile>` are loaded at startup** (dotenv), git-ignored,
   never embedded. They are a *source* of env, not a new precedence layer: real
   env > `.env*` > `withX` > default. Boot validation still fires on a missing
