@@ -27,6 +27,24 @@ session, no SSE.
   full-stack Sky.Spa Todos app (wasm client + stateless SQLite backend + one
   shared wire contract).
 
+## Build & run — one command
+
+A `Spa.app` entry (it imports `Std.Spa`) is auto-split by the normal verbs — you
+do not run the generator by hand:
+
+```bash
+sky run src/Main.sky              # split → build wasm frontend + native backend → run it
+sky build src/Main.sky            # split + build both (artefacts under .split/)
+sky build --embed --target ios …  # flags COMPOSE: --embed → backend PostgreSQL, --target → frontend shell
+```
+
+`sky run` starts the backend, which serves the frontend + `/_rpc` + the dev
+console + metrics same-origin (one binary) — open the printed
+`http://localhost:<port>/`. `sky check` type-checks the shared source without
+splitting. The explicit generator (`sky spa-split <entry> --out <dir>`) is for
+when you want the `frontend/`/`backend/`/`shared/` trees kept at a chosen path;
+see [`docs/tooling/cli.md`](../tooling/cli.md) and [auto-split.md](auto-split.md).
+
 ## When to use Sky.Spa vs Sky.Live
 
 Sky.Live keeps the loop on the server: per-user `Model`, a live SSE per session,
