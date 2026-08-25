@@ -350,6 +350,49 @@ runtime differences are mechanical:
    adapter per backend (`§ Implementation`). `Std.Html` stays the escape hatch for
    raw markup, not a second app model.
 
+## Capability model — mandatory config, type-enforced (phantom flag)
+
+The DX goal: a **minimal shared core**, **uniform mix-and-match `withX` builders**,
+and *mandatory* per-target config enforced by the type — while optional config
+stays optional. Today there is exactly one mandatory capability: **Live requires a
+`notFound` fallback page** (`Std.Live.config` demands it, with no constructible
+default; every other backend field is optional or has a default). So:
+
+- `App.app { init, update, view, subscriptions }` — the minimal core (4 fields).
+- The `App` type carries a **phantom capability flag**:
+  `type App fallback seed page model msg = App { … }` where `fallback` is phantom
+  (`NoFallback` | `HasFallback`), not in the record.
+- Uniform builders: `withRoutes`/`withWindow`/`withInput : … -> App f … -> App f …`
+  **preserve** the flag (optional); `withNotFound : page -> App f … -> App
+  HasFallback …` **flips** it.
+- `runLive : App HasFallback seed page model msg -> Task Error ()` — Live (web)
+  DEMANDS a fallback, so `App.runLive` on an app that never called `withNotFound`
+  is a **compile error**. `runSpa`/`runTui`/`runCli`/`runWebview : App f … ->
+  Task` accept any flag (SPA's `notFound` is optional; terminal/desktop need none).
+
+Empirically validated in Sky: the flag threads + flips through a builder chain with
+**no type annotations** (HM generalises it), and a missing flag is a clean
+`type mismatch: HasFallback vs NoFallback` at the call site.
+
+**Two consequences the design must handle (both resolved):**
+
+1. **`sky check` is target-scoped.** A dispatched entry's bare `sky check` verifies
+   the core via the least-demanding runner (`runTui`, accepts any flag) so a
+   terminal-only app is NOT forced to add `notFound`; `sky check --target web`
+   verifies web (via `runLive`, enforcing the fallback). Without this, an
+   all-backends check would force `notFound` on every app.
+2. **The dispatched `--target web` build gives a clean error.** If a dispatched
+   app lacks `withNotFound`, the generated `main = App.runLive …` fails to
+   type-check; the build captures that and reprints
+   *"target 'web' requires a fallback page — add `|> App.withNotFound <page>`"*
+   rather than surfacing `HasFallback vs NoFallback` from generated code.
+
+**Extension pattern (why this is maintainable):** a new *optional* capability =
+a record field + a flag-preserving `withX` + use in the runner(s); a new
+*mandatory* capability = one more phantom flag + a flag-flipping `withX` + require
+it in the runner(s) that need it. Only mandatory capabilities touch the type, one
+flag each; there is exactly one today.
+
 ## Namespace — the builder is `Std.App`, not `Sky.App`
 
 The `Sky.*` / `Std.*` split is load-bearing and the new module must land on the

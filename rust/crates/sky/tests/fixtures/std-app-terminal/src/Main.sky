@@ -1,0 +1,48 @@
+-- A TERMINAL-ONLY dispatched Std.App entry: it never calls `withNotFound`, so
+-- its `app` is `App NoFallback …`. The phantom capability model must let it
+-- `sky check` + `sky build --target terminal:*` WITHOUT forcing a fallback page
+-- (only `--target web` requires one). Exercised by tests/std_app_flow.rs.
+module Main exposing (app)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Sub exposing (Sub)
+import Std.Ui as Ui
+
+type alias Model =
+    { n : Int }
+
+type Msg
+    = Tick
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ model =
+    ( model, Cmd.none )
+
+
+view : Model -> Ui.Element Msg
+view _ =
+    Ui.text "terminal only"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+-- No `withNotFound` → NoFallback. `runLive` would reject this at compile time.
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }

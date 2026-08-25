@@ -33,18 +33,20 @@ import Std.App as App
 import Std.Ui as Ui
 
 
-app : App.App a Page Model Msg
 app =
     App.app { init = init, update = update, view = view, subscriptions = subscriptions }
         |> App.withRoutes [ ( "/", Home ) ]
         |> App.withNotFound NotFound
 ```
 
+(No type annotation needed — inference handles the `App` type, including the
+capability flag below.)
+
 ```bash
 sky run   --target web           # server-driven web (Sky.Live)
 sky build --target terminal:tui  # a TUI
 sky build --target desktop       # a native window
-sky check                        # type-checks against EVERY backend at once
+sky check                        # type-checks the core (target-scoped for a backend)
 ```
 
 The build stages a derived entry `main = App.run<Backend> Main.app` under
@@ -71,12 +73,20 @@ main =
 ## Capability builders
 
 Each `with…` builder adds a capability a target may require; targets that don't
-use it ignore it:
+use it ignore it. The builders are uniform (`… -> App … -> App …`), so you
+mix-and-match — pre-inject whatever your targets need:
 
-- `App.withRoutes [ ( path, page ) ]` + `App.withNotFound page` — routing (**web
-  requires a fallback page**; without it the `web` build fails with a fix-it).
+- `App.withRoutes [ ( path, page ) ]` + `App.withNotFound page` — routing.
 - `App.withWindow title width height` — desktop window.
 - `App.withInput onLine` — a terminal line/text input handler.
+
+**`notFound` is mandatory for `web`, enforced by the type.** `App.withNotFound`
+flips a phantom capability flag on the `App` (`NoFallback` → `HasFallback`), and
+`App.runLive` (the web backend) requires `HasFallback` — so building a `web` app
+without a fallback page is a **compile error**, reprinted as *"target 'web'
+requires a fallback page — add `|> App.withNotFound <page>`"*. A terminal-only app
+(`NoFallback`) is never forced to add one; it just can't target `web` until it
+does. Everything else (`routes`, `window`, `input`) stays optional.
 
 ## View adapter
 

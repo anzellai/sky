@@ -10,7 +10,10 @@
 --
 --     main = App.runTui (App.app { init = init, update = update, view = view, subscriptions = subs })
 --
--- Type: `App seed page model msg`. `seed` is `init`'s argument (Live passes a
+-- Type: `App fallback seed page model msg`. `fallback` is a phantom capability
+-- flag — `withNotFound` flips it to `HasFallback`, and `runLive` (web) requires
+-- it, so a web app with no fallback page is a COMPILE error (users never write
+-- the type; inference handles it). `seed` is `init`'s argument (Live passes a
 -- request record; the native backends pass unit — so a portable app's `init`
 -- must NOT read its seed, or it pins `seed` and only builds for `web`).
 -- `page` is the routing page type (unconstrained when there are no routes).
@@ -18,6 +21,8 @@
 -- See docs/design/unified-app-builder.md.
 module Std.App exposing
     ( App
+    , NoFallback
+    , HasFallback
     , app
     , withRoutes
     , withNotFound
@@ -41,9 +46,26 @@ import Std.Tui as Tui
 import Std.Ui as Ui exposing (Element(..))
 import Std.Webview as Webview
 
+-- | Phantom capability markers for the `App` `fallback` parameter. `app` starts
+-- at `NoFallback`; [`withNotFound`] flips it to `HasFallback`. [`runLive`]
+-- (Live/web) requires `HasFallback`, so building a web app with no fallback page
+-- is a COMPILE error — the other runners accept either. These carry no data;
+-- they exist only in types.
+type NoFallback
+    = NoFallback
+
+type HasFallback
+    = HasFallback
+
 -- | An app described once, runnable on any backend. Built by [`app`] and
 -- refined by the `with…` builders; consumed by a `run<Backend>` runner.
-type App seed page model msg
+--
+-- `fallback` is a phantom capability flag (`NoFallback` / `HasFallback`) — it
+-- tracks whether [`withNotFound`] has supplied the fallback page that Live
+-- requires; it is not stored in the record. Users never write the `App` type
+-- (inference handles the flag); it surfaces only when [`runLive`] rejects an app
+-- that lacks a fallback.
+type App fallback seed page model msg
     = App { init : seed -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> Element msg
@@ -64,7 +86,7 @@ app : { init : seed -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> Element msg
 , subscriptions : model -> Sub msg
-} -> App seed page model msg
+} -> App NoFallback seed page model msg
 app cfg =
     App
         { init = cfg.init
@@ -80,26 +102,26 @@ app cfg =
 
 -- | Attach URL routes as `(path, page)` pairs (web targets). Pair with
 -- [`withNotFound`] — the `web` target requires a fallback page.
-withRoutes : List ( String, page ) -> App seed page model msg -> App seed page model msg
+withRoutes : List ( String, page ) -> App fallback seed page model msg -> App fallback seed page model msg
 withRoutes routes (App a) =
     App { a | routes = routes }
 
 
 -- | Set the fallback page for an unmatched route (web targets).
-withNotFound : page -> App seed page model msg -> App seed page model msg
+withNotFound : page -> App fallback seed page model msg -> App HasFallback seed page model msg
 withNotFound page_ (App a) =
     App { a | notFound = Just page_ }
 
 
 -- | Set the desktop window title + initial size (desktop targets).
-withWindow : String -> Int -> Int -> App seed page model msg -> App seed page model msg
+withWindow : String -> Int -> Int -> App fallback seed page model msg -> App fallback seed page model msg
 withWindow title width height (App a) =
     App { a | window = { title = title, size = ( width, height ) } }
 
 
 -- | Wire a line/text input handler (terminal targets). The payload is the
 -- entered line; a terminal renderer maps its input to it.
-withInput : (String -> msg) -> App seed page model msg -> App seed page model msg
+withInput : (String -> msg) -> App fallback seed page model msg -> App fallback seed page model msg
 withInput onLine (App a) =
     App { a | onInput = Just onLine }
 
@@ -107,7 +129,7 @@ withInput onLine (App a) =
 -- ─── Runners — one per backend, target → runner is resolved by the build ───
 -- | Run as server-driven HTML + SSE (`--target web`, = Sky.Live). Requires a
 -- fallback page ([`withNotFound`]) because Live routing is total.
-runLive : App seed page model msg -> Task Error ()
+runLive : App HasFallback seed page model msg -> Task Error ()
 runLive (App a) =
     case a.notFound of
 
@@ -133,7 +155,7 @@ runLive (App a) =
 
 -- | Run as a client wasm SPA (`--target web:app` / `mobile:*` / `tablet:*`,
 -- = Sky.Spa). Effects auto-split to a backend at build time.
-runSpa : App seed page model msg -> Task Error ()
+runSpa : App fallback seed page model msg -> Task Error ()
 runSpa (App a) =
     let
         base =
@@ -161,7 +183,7 @@ runSpa (App a) =
 
 -- | Run as a full-screen terminal UI (`--target terminal:tui`, = Sky.Tui).
 -- The `Element` view renders directly to ANSI cells.
-runTui : App seed page model msg -> Task Error ()
+runTui : App fallback seed page model msg -> Task Error ()
 runTui (App a) =
     Tui.app
         (Tui.config
@@ -175,7 +197,7 @@ runTui (App a) =
 -- | Run as a line-based CLI (`--target terminal:cli`, = Sky.Cli). The
 -- `Element` view is flattened to text (best-effort — see [`elementToText`]);
 -- `Std.Cli.program` stays the escape hatch for a hand-authored `String` view.
-runCli : App seed page model msg -> Task Error ()
+runCli : App fallback seed page model msg -> Task Error ()
 runCli (App a) =
     let
         base =
@@ -200,7 +222,7 @@ runCli (App a) =
 -- | Run as a native desktop window (`--target desktop`, = Sky.Webview).
 -- `seed` is pinned to unit — Webview's `init` takes `()`, so a desktop build
 -- cannot read a Live request from `init`.
-runWebview : App () page model msg -> Task Error ()
+runWebview : App fallback () page model msg -> Task Error ()
 runWebview (App a) =
     Webview.app
         { init = a.init

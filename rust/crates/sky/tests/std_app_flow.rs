@@ -1,11 +1,14 @@
 //! Acceptance test for `Std.App` — the unified app builder (Phase 2a).
 //!
-//! The fragile guarantee this locks: ONE `App seed page model msg` value must
-//! feed ALL FIVE backend runners (`runLive`/`runSpa`/`runTui`/`runCli`/
-//! `runWebview`). The fixture `tests/fixtures/std-app` builds that one value and
-//! lists all five runners in `allBackends` — so if a stdlib or compiler change
-//! breaks the shared type, a view adapter, or a runner's backend-config
-//! construction, the type-check fails here (grill G1 regression).
+//! The fragile guarantees this locks:
+//!   * ONE `App fallback seed page model msg` value feeds ALL FIVE backend
+//!     runners (`runLive`/`runSpa`/`runTui`/`runCli`/`runWebview`) — the
+//!     `std-app` fixture lists all five in `allBackends`, so a break in the
+//!     shared type, a view adapter, or a runner's backend-config construction
+//!     fails the type-check here (grill G1 regression).
+//!   * The phantom capability flag: `web` (Live) requires `withNotFound`
+//!     (`HasFallback`) at compile time, while terminal-only apps (`NoFallback`)
+//!     are NOT forced to add one — verified target-scoped below.
 //!
 //! `sky check` type-checks AND runs `go build` on the emitted Go, so it gates on
 //! the Go toolchain via `live_gate` (loud skip, never silent).
@@ -37,18 +40,22 @@ fn dispatch_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-dispatch")
 }
 
-/// Copy the dispatch fixture to a fresh temp dir so per-target derived build
-/// trees (`.skyapp/`) never land in the repo. Returns the temp project dir.
-fn copy_dispatch_fixture_to_temp(tag: &str) -> PathBuf {
+fn terminal_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-terminal")
+}
+
+/// Copy a fixture to a fresh temp dir so per-target derived build trees
+/// (`.skyapp/`) never land in the repo. Returns the temp project dir.
+fn copy_fixture_to_temp(fixture: PathBuf, tag: &str) -> PathBuf {
     let dst = std::env::temp_dir().join(format!("sky-stdapp-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dst);
     let status = Command::new("cp")
         .arg("-R")
-        .arg(dispatch_fixture_dir())
+        .arg(&fixture)
         .arg(&dst)
         .status()
         .expect("cp -R fixture");
-    assert!(status.success(), "failed to stage dispatch fixture to {}", dst.display());
+    assert!(status.success(), "failed to stage fixture to {}", dst.display());
     dst
 }
 
@@ -76,13 +83,14 @@ fn all_five_runners_typecheck_and_build_off_one_app_value() {
 }
 
 #[test]
-fn a_dispatched_entry_checks_across_all_backends() {
-    // `sky check` on a dispatched entry (exposes `app`, no `main`) generates the
-    // all-runners check module and checks it — so a break in ANY backend fails.
+fn a_dispatched_entry_checks_target_scoped() {
+    // Bare `sky check` on a dispatched entry (exposes `app`, no `main`) checks
+    // the three view-adapter runners (runTui/runCli/runSpa) — none of which force
+    // a capability — so a well-formed app passes without a fallback page.
     if !required(Need::Go, have_go()) {
         return;
     }
-    let dir = copy_dispatch_fixture_to_temp("check");
+    let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "check");
     let out = Command::new(SKY)
         .arg("check")
         .arg(dir.join("src/Main.sky"))
@@ -93,7 +101,75 @@ fn a_dispatched_entry_checks_across_all_backends() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(
         out.status.success() && (stdout.contains("Types OK") || stdout.contains("No errors")),
-        "sky check on a dispatched Std.App entry should verify all backends:\n{stdout}\n{stderr}"
+        "sky check on a dispatched Std.App entry should verify the core:\n{stdout}\n{stderr}"
+    );
+}
+
+#[test]
+fn a_terminal_only_app_checks_and_builds_without_a_fallback() {
+    // The phantom capability model must NOT force `notFound` on an app that never
+    // targets web. A NoFallback app: bare check passes; terminal:cli builds.
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = copy_fixture_to_temp(terminal_fixture_dir(), "term");
+    let checked = Command::new(SKY)
+        .arg("check")
+        .arg(dir.join("src/Main.sky"))
+        .output()
+        .expect("sky check terminal-only");
+    assert!(
+        checked.status.success(),
+        "terminal-only (NoFallback) app must pass bare `sky check`:\n{}\n{}",
+        String::from_utf8_lossy(&checked.stdout),
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let built = Command::new(SKY)
+        .arg("build")
+        .arg("--target")
+        .arg("terminal:cli")
+        .arg(dir.join("src/Main.sky"))
+        .output()
+        .expect("sky build terminal-only");
+    let ok = built.status.success();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        ok,
+        "terminal-only (NoFallback) app must build for terminal:cli:\n{}\n{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
+    );
+}
+
+#[test]
+fn web_without_a_fallback_gives_a_clean_error_not_a_phantom_leak() {
+    // `--target web` on an app with no `withNotFound` must reprint the actionable
+    // hint and SUPPRESS the raw `HasFallback vs NoFallback` from generated code.
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = copy_fixture_to_temp(terminal_fixture_dir(), "webfail");
+    let out = Command::new(SKY)
+        .arg("build")
+        .arg("--target")
+        .arg("web")
+        .arg(dir.join("src/Main.sky"))
+        .output()
+        .expect("sky build --target web terminal-only");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!out.status.success(), "web build without a fallback must fail");
+    assert!(
+        combined.contains("requires a fallback page") && combined.contains("withNotFound"),
+        "expected the clean fallback hint:\n{combined}"
+    );
+    assert!(
+        !combined.contains("HasFallback") && !combined.contains("NoFallback"),
+        "the raw phantom-type error must be suppressed (points at generated code):\n{combined}"
     );
 }
 
@@ -105,7 +181,7 @@ fn a_dispatched_entry_builds_terminal_cli_and_dce_prunes_other_backends() {
     if !required(Need::Go, have_go()) {
         return;
     }
-    let dir = copy_dispatch_fixture_to_temp("cli");
+    let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "cli");
     let out = Command::new(SKY)
         .arg("build")
         .arg("--target")
@@ -135,7 +211,7 @@ fn a_dispatched_entry_builds_terminal_cli_and_dce_prunes_other_backends() {
 #[test]
 fn a_dispatched_entry_without_a_target_errors_helpfully() {
     // No Go needed — this fails before any build.
-    let dir = copy_dispatch_fixture_to_temp("notarget");
+    let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "notarget");
     let out = Command::new(SKY)
         .arg("build")
         .arg(dir.join("src/Main.sky"))

@@ -5,6 +5,7 @@ module Main exposing (app)
 
 import Sky.Core.Prelude exposing (..)
 import Std.App as App
+import Std.App exposing (HasFallback)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Sub exposing (Sub)
@@ -47,7 +48,7 @@ subscriptions _ =
     Sub.none
 
 
-app : App.App a Page Model Msg
+app : App.App HasFallback a Page Model Msg
 app =
     App.app
         { init = init
