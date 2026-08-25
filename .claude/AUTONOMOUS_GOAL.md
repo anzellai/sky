@@ -75,3 +75,17 @@ is adjacent to the fenced-off split path. Shipped scope = the agreed design
 (web:app = Sky.Spa, established in design §6). Awaiting user direction: pursue the
 larger client-subsumption + build-time-capability work (accepting the effort +
 split-path risk), or accept the documented boundary as the merge scope.
+
+## Update (2026-08-25) — GAP 2 CLOSED, user-designed capability model
+
+User directed the capability model (their design: minimal core + uniform withX +
+mandatory config enforced by the ADT). Implemented a phantom `fallback` flag →
+`withNotFound` mandatory for web at COMPILE time (Phase 3, commit 00520e55).
+Second independent Judge: **GAP 2 = ACHIEVED + VERIFIED** (runLive rejects
+NoFallback, runTui accepts; terminal-only not forced; clean error; 6/6 tests;
+kernels byte-identical; census green; zero annotation burden).
+
+**LITERAL goal now = 1 gap remaining: gap 1 (client-wasm subsumed by Std.App).**
+That is the fenced-off spa_partition work the user forbids risking for live apps;
+it remains the documented Sky.Spa boundary. Everything else (criteria 1,3,4,5,6,7)
+holds and is verified. Branch is mergeable for the shipped scope.
