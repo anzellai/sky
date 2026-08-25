@@ -209,19 +209,27 @@ fn a_dispatched_entry_builds_terminal_cli_and_dce_prunes_other_backends() {
 }
 
 #[test]
-fn a_dispatched_entry_without_a_target_errors_helpfully() {
-    // No Go needed — this fails before any build.
-    let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "notarget");
+fn a_dispatched_entry_defaults_to_web_without_a_target() {
+    // `--target` is optional: `main = App.run app` with no target builds `web`
+    // (Sky.Live). The dispatch fixture is HasFallback (it calls withNotFound), so
+    // the default web build succeeds.
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "default");
     let out = Command::new(SKY)
         .arg("build")
         .arg(dir.join("src/Main.sky"))
         .output()
         .expect("sky build dispatched entry without --target");
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(!out.status.success(), "a dispatched entry without --target must fail");
     assert!(
-        stderr.contains("needs a target"),
-        "expected a 'needs a target' hint, got:\n{stderr}"
+        out.status.success() && combined.contains("--target web"),
+        "a dispatched entry with no --target should default to web:\n{combined}"
     );
 }

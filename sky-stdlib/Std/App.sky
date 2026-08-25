@@ -28,6 +28,7 @@ module Std.App exposing
     , withNotFound
     , withWindow
     , withInput
+    , run
     , runLive
     , runSpa
     , runTui
@@ -124,6 +125,17 @@ withWindow title width height (App a) =
 withInput : (String -> msg) -> App fallback seed page model msg -> App fallback seed page model msg
 withInput onLine (App a) =
     App { a | onInput = Just onLine }
+
+
+-- | The unified entry: `main = App.run app`. The build resolves `--target` and
+-- REWRITES this call to the matching `run<Backend>` (so dead-code elimination
+-- still prunes the unused backends). You never pick a backend in source — this
+-- is the whole point of `Std.App`. When built without a target it defaults to
+-- `web` (Sky.Live). The body here is a placeholder the build replaces; it is
+-- never the compiled entry.
+run : App fallback seed page model msg -> Task Error ()
+run =
+    runTui
 
 
 -- ─── Runners — one per backend, target → runner is resolved by the build ───

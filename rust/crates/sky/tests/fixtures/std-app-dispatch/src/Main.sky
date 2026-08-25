@@ -1,7 +1,7 @@
--- A DISPATCHED Std.App entry: exposes `app` (no top-level `main`), so
--- `--target family[:variant]` picks the backend at build time. Built by
--- tests/std_app_flow.rs for the dispatch + DCE-prune + check-all-backends legs.
-module Main exposing (app)
+-- A DISPATCHED Std.App entry: `main = App.run app`, so `--target` picks the
+-- backend at build time (default web). Built by tests/std_app_flow.rs for the
+-- dispatch + DCE-prune + target-scoped-check legs.
+module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Std.App as App
@@ -59,3 +59,8 @@ app =
         |> App.withRoutes [ ( "/", Home ) ]
         |> App.withNotFound Home
         |> App.withInput Line
+
+
+main : Task Error ()
+main =
+    App.run app

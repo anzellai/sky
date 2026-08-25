@@ -1,33 +1,43 @@
 # Std.App — one builder, one `--target`
 
-`Std.App` describes an app **once** and builds it for many targets. You write the
-shared TEA core (`init` / `update` / `view` / `subscriptions`) with a single
-`view : model -> Element msg`, and a build-time `--target family[:variant]` picks
-the backend. It *composes* the existing shape frameworks (Sky.Live / Sky.Tui /
-Sky.Cli / Sky.Webview) — it does not replace them; each stays available for the
-"I know exactly which shape I want" case.
+`Std.App` describes an app **once** with a single `Std.Ui.Element` view and builds
+it for many targets. You write the shared TEA core (`init` / `update` / `view` /
+`subscriptions`), and a build-time `--target family[:variant]` picks the backend —
+you never import or choose `Std.Live` / `Std.Spa` / `Std.Tui` / `Std.Cli` /
+`Std.Webview` yourself. `Std.App` *composes* them.
+
+> **`Std.Ui` vs `Std.Html`.** `Std.App` is for the **cross-platform, `Std.Ui`**
+> world — one `Element` view that renders to web, native (wasm), and terminal. If
+> you build views with **raw `Std.Html`** for a server-rendered web (or a desktop
+> app that is just that web app in a window), use **`Std.Live`** directly — that's
+> the `web` / `desktop` bare targets below.
 
 ## The target axis
 
-One extendible axis, `family[:variant]`, where the variant is the single
-irreducible choice a family can't infer for you. Invalid combinations are rejected
+One extendible axis, `family[:variant]`: the bare family is the simplest delivery;
+naming a platform opts into a true native build. Invalid combinations are rejected
 at parse time (`web:ios` → *"did you mean `mobile:ios`?"*):
 
-| `--target` | runs as | = framework |
+| `--target` | delivery | backend |
 |---|---|---|
-| `web` | server-driven HTML + SSE | Sky.Live |
-| `terminal:tui` (or bare `terminal`) | full-screen ANSI | Sky.Tui |
-| `terminal:cli` | line-based text | Sky.Cli |
-| `desktop[:mac\|windows\|linux]` | native window | Sky.Webview |
+| `web` | server-driven HTML + SSE | **Sky.Live** |
+| `desktop[:mac\|windows\|linux]` | native window | **Sky.Webview** |
+| `terminal:tui` (or bare `terminal`) · `terminal:cli` | full-screen ANSI · line text | **Sky.Tui / Sky.Cli** |
 | `web:app` · `mobile:ios\|android` · `tablet:*` | client wasm (auto-split) | **Sky.Spa** — see [client targets](#client-targets) |
 
-## Two entry forms
+> The fuller taxonomy — bare `desktop`/`tablet` delivering Sky.Live and every
+> named platform (`desktop:mac`, `tablet:ipados`, …) a native wasm build — is the
+> confirmed design; see `docs/design/unified-app-builder.md`. The table above is
+> what the current build resolves.
 
-**Dispatched** — expose `app` (no `main`); `--target` picks the backend:
+## The entry — `main = App.run app`
+
+Describe `app` once, run it with `App.run`; `--target` (optional, defaults to
+`web`) picks the backend:
 
 ```elm
 -- doc-example: skip  (illustrative fragment; Page/Model/Msg/init/update/view/subscriptions elided)
-module Main exposing (app)
+module Main exposing (main)
 
 import Std.App as App
 import Std.Ui as Ui
@@ -37,19 +47,25 @@ app =
     App.app { init = init, update = update, view = view, subscriptions = subscriptions }
         |> App.withRoutes [ ( "/", Home ) ]
         |> App.withNotFound NotFound
+
+
+main : Task Error ()
+main =
+    App.run app
 ```
 
-(No type annotation needed — inference handles the `App` type, including the
-capability flag below.)
+(No `App`-type annotation needed — inference handles it, including the capability
+flag below.)
 
 ```bash
-sky run   --target web           # server-driven web (Sky.Live)
+sky run                          # defaults to web (Sky.Live)
 sky build --target terminal:tui  # a TUI
-sky build --target desktop       # a native window
+sky build --target desktop       # Sky.Live in a native window
 sky check                        # type-checks the core (target-scoped for a backend)
 ```
 
-The build stages a derived entry `main = App.run<Backend> Main.app` under
+The build resolves `--target`, rewrites `App.run` → the target's `run<Backend>`
+under
 `.skyapp/<target>/` and builds it; dead-code elimination prunes the four unused
 backends, so a `terminal:cli` binary never links the web or desktop runtimes.
 

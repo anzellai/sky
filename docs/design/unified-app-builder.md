@@ -350,6 +350,41 @@ runtime differences are mechanical:
    adapter per backend (`§ Implementation`). `Std.Html` stays the escape hatch for
    raw markup, not a second app model.
 
+## Full unification roadmap (confirmed 2026-08-25 with @anzel)
+
+The endgame: the user writes ONE `Std.App` app and NEVER imports or chooses
+`Std.Live` / `Std.Spa` / `Std.Tui` / `Std.Cli` / `Std.Webview`. Entry form is an
+explicit `main = App.run app`; `--target` (optional) picks the backend.
+
+**Confirmed target → backend map** ("delivery = family, native = platform"):
+
+| `--target` | backend | build |
+|---|---|---|
+| `web` · `tablet` | Sky.Live (server / responsive) | plain binary |
+| `desktop` | Sky.Live + a native window (webview shell over the server) | plain + shell |
+| `web:app` · `desktop:{mac,windows,linux}` · `tablet:{ipados,android}` · `mobile:{ios,android}` | Sky.Spa (wasm, auto-split) + native shell | spa-split |
+| `terminal:tui` · `terminal:cli` | Sky.Tui / Sky.Cli | plain binary |
+
+So bare-family = a Live/web-like delivery; naming a platform = a true native
+build. Almost everything is Live or Spa; Webview becomes a *shell*, not a
+distinct app model.
+
+**Steps (all ADDITIVE — none edits `spa_partition`, so existing Std.Spa/Live apps
+and their split path are untouched):**
+
+1. **`main = App.run app` + optional `--target`.** `App.run` is a real function;
+   the build rewrites `App.run` → `App.run<Backend>` for the resolved target
+   (DCE still prunes). Replaces the magic no-`main` dispatched form.
+2. **Taxonomy remap** in `std_app_runner`: the table above. Bare `desktop`/`tablet`
+   → Live; platforms → Spa. `desktop` (bare) additionally needs the new
+   **Live-in-a-native-window** shell (Electron-style: server + embedded webview).
+3. **Spa subsumption.** For the Spa targets, the build **synthesises a `Spa.app`
+   entry from the `App.app` value at HIR level** and feeds it to the EXISTING,
+   UNCHANGED auto-split. This closes the client-target gap without touching the
+   proven splitter — the risk the user fenced off for live apps.
+4. **`App.withRequest`.** Make `init`'s seed portable: the Live HTTP request
+   becomes an explicit web-only capability, so `init` never pins the app to web.
+
 ## Capability model — mandatory config, type-enforced (phantom flag)
 
 The DX goal: a **minimal shared core**, **uniform mix-and-match `withX` builders**,
