@@ -1,9 +1,16 @@
 # Design: how a `Std.App` app configures itself — `withX` + `SKY_*` env
 
-> **Status: DESIGN / deep-dive — not implemented.** Written to answer "what's the
-> right config story for Sky apps going forward, now that everything unifies on
-> `Std.App`?" (@anzel, 2026-08-25). Companion to
-> `docs/design/unified-app-builder.md` and `std-app-consolidation-roadmap.md`.
+> **Status: DESIGN — decisions LOCKED (§7), not yet implemented.** Answers "what's
+> the right config story for Sky apps going forward, now that everything unifies on
+> `Std.App`?" (@anzel, 2026-08-25). The direction is agreed; implementation is
+> additive and phased with `std-app-consolidation-roadmap.md`. Companion to
+> `docs/design/unified-app-builder.md`.
+>
+> **The whole design in one screen (no mental overhead):**
+> - **Value:** `App.withX v` in code; `SKY_X` env overrides it at deploy. Env wins.
+> - **Secret:** `App.withXFromEnv "VAR"` — never a literal; the value lives in env.
+> - **Precedence, always:** `SKY_* env  >  App.withX  >  built-in default`.
+> - **`sky.toml`:** project metadata only (runtime sections retired into the above).
 
 ## 1. The problem — config comes from THREE systems
 
@@ -58,15 +65,29 @@ framings that sound opposed:
   wins here: **env is the escape hatch, and an escape hatch that can't override is
   not one.**
 
-### Secrets are the one exception — env-ONLY, never a `withX` literal
+### Secrets — the `withXFromEnv "VAR"` convention (DECIDED)
 
-The existing rule ("secrets are typed, never `fmt.Sprintf("%v", secret)`") extends
-here: **a secret never appears as a `withX` literal in source.** `Auth.signToken`
-already takes the secret as an *argument* the user reads from the environment
-(`System.getenvOr "…"`). So for secrets, `withX` (if offered at all) takes a
-value the app read from env — the value lives in env, the code just wires it.
-`SKY_CONSOLE_TOKEN`, `SKY_ADMIN_TOKEN`, `SKY_AUTH_TOKEN_SECRET`, `DATABASE_URL`
-stay env-first.
+The existing rule ("secrets are typed, never in code") becomes **one consistent
+convention: a secret is wired by a `…FromEnv` builder that NAMES the env var to
+read — the value never appears as a literal.** This is the single thing to
+remember for every secret, so there is no per-secret mental overhead:
+
+- **Sky's built-in secrets** get a named builder, each defaulting to a canonical
+  `SKY_*` and accepting a custom var name:
+  - `App.withConsoleTokenFromEnv "SKY_CONSOLE_TOKEN"` (or `App.withConsoleToken`
+    for the default var)
+  - `App.withMetricsTokenFromEnv "SKY_ADMIN_TOKEN"`
+  - `App.withAuthSecretFromEnv "SKY_AUTH_TOKEN_SECRET"`
+  - `App.withDatabaseFromEnv "DATABASE_URL"`
+- **Your own secrets** use the generic `App.withSecretFromEnv "MY_APP_KEY"` (or a
+  `Secret.fromEnv "MY_APP_KEY" : Task Error Secret` helper), returning a **typed
+  `Secret`** — never a `String`, so it can't be logged or `++`-concatenated by
+  accident.
+
+The rule: **`FromEnv` in the name ⇒ the value lives in the environment, always.**
+No secret literal is ever accepted (there is no `App.withConsoleToken "abc123"`
+taking a raw string). `SKY_CONSOLE_TOKEN`, `SKY_ADMIN_TOKEN`,
+`SKY_AUTH_TOKEN_SECRET`, `DATABASE_URL` stay env-sourced by construction.
 
 ## 3. Target-awareness — config is a capability, like the builders
 
@@ -135,21 +156,32 @@ a `Std.App` user. In this model:
    project metadata. The existing `unknown_config_keys` machinery already warns
    on stray sections; this repurposes it to guide the migration.
 
-## 7. Open questions (for the deep-dive, not yet decided)
+## 7. Decisions (LOCKED 2026-08-25 with @anzel)
 
-- **Naming**: `SKY_PORT` vs bare `PORT` (Cloud Run injects `PORT`). Support both,
-  `SKY_*` canonical? Same for `DATABASE_URL` (an ecosystem standard) vs
-  `SKY_DB_URL`.
-- **Central vs per-builder env application**: strongly lean central (one place
-  resolves `env > withX > default`), so precedence can't drift per builder.
-- **Does `withX` for a secret exist at all**, or is a secret strictly env + a
-  typed getter? Leaning env-only for the secret value; `withX` may name *where*
-  to read it, never the literal.
-- **Sub-app config** (an embedded console, a mounted sub-app) — does it inherit
-  the parent's `withX`, or configure independently?
-- **`ENV` stays env-only** — confirmed by the existing reasoning (an artifact is
-  promoted across environments); it is the one value that must NOT be a code
-  default.
+- **Precedence: `SKY_* env > App.withX > built-in default`.** Env always wins —
+  the escape hatch that fills gaps *and* overrides for deploy. Resolved
+  **centrally** in the runtime (one place applies the layering) so it can't drift
+  per builder.
+- **Secrets: the `withXFromEnv "VAR"` convention** (§2). Named builders for Sky's
+  built-ins, generic `withSecretFromEnv` for user secrets, always returning a
+  typed `Secret`. No secret literal is ever accepted.
+- **Port: `SKY_PORT`** — a deliberate one-off canonical name (also accept bare
+  `PORT` for Cloud Run, `SKY_PORT` canonical). Not every value gets a bespoke env;
+  port earns one because it's the single most-overridden deploy value.
+- **`DATABASE_URL` stays** the ecosystem-standard name (with `<PREFIX>_DB_PATH`
+  for the embedded/sqlite tier); it is not renamed to `SKY_DB_URL`.
+- **`ENV` stays env-only** — an artifact is promoted dev→staging→prod, so a
+  compile-time default can't be right for all three. It is the one value that must
+  NOT have a `withX`.
+- **`sky.toml` runtime sections are retired** into `withX` + env; `sky.toml` ends
+  as project metadata only (phased, per the consolidation roadmap).
+- **Log prefix goes neutral** (`[sky.live]`/`[sky.console]` → `[sky]`), driven by
+  `App.withLog`/`SKY_LOG`; the test/`verify.sh` coupling to `Sky.Live listening`
+  is updated in the same commit.
+
+Still genuinely open (small): whether an embedded sub-app (console, a mounted
+sub-app) inherits the parent's `withX` or configures independently — decide when
+sub-app config is actually wired.
 
 ## 8. Recommendation
 
