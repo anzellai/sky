@@ -89,3 +89,23 @@ kernels byte-identical; census green; zero annotation burden).
 That is the fenced-off spa_partition work the user forbids risking for live apps;
 it remains the documented Sky.Spa boundary. Everything else (criteria 1,3,4,5,6,7)
 holds and is verified. Branch is mergeable for the shipped scope.
+
+## Update 2 (2026-08-25) — GAP 1 CLOSED (user chose Spa subsumption)
+
+User directed: App.run explicit entry + optional --target (done, 26125c33), then
+Spa subsumption (fcaa596e). Client targets (web:app/mobile/tablet) now build from
+the ONE Std.App source: the build SYNTHESISES a Spa.app from the App.app value
+(extracts init/update/view/subs + withRoutes/withNotFound from the fmt'd form,
+references the user's fns DIRECTLY, view wrapped in Ui.layout []) and feeds the
+EXISTING UNCHANGED auto-split — so spa_partition sees `update`, the proven split
+path is NOT modified (the fenced-off risk avoided). Verified: build web:app →
+backend+wasm; run web:app → HTTP 200 SPA shell. std_app_flow 7/7.
+
+Confirmed taxonomy (delivery=family, native=platform): web/tablet→Live,
+desktop→Live+native-window, web:app/desktop:os/tablet:os/mobile:os→Spa,
+terminal:tui|cli→Tui/Cli. Std.Ui→Std.App (cross-platform); Std.Html→Sky.Live.
+
+**Still remaining (roadmap, not yet done):** taxonomy remap (desktop bare→
+Live-in-webview [NEW runtime mode], desktop:os/tablet:os→Spa, tablet bare→Live);
+App.withRequest (portable init seed). Both additive. LITERAL goal now essentially
+met (Std.App covers every target from one source); pending re-Judge + the remap.
