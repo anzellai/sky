@@ -813,6 +813,279 @@ fn is_generated_split_project(project_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// True when `entry_file` is a **dispatched `Std.App` entry**: it imports
+/// `Std.App` and defines NO top-level `main` binding — so it exposes an `app :
+/// App …` value and lets `--target` pick the backend at build time (Phase 2b).
+///
+/// An entry that imports `Std.App` but writes its own `main = App.runTui …`
+/// (the "I know my backend" form, Phase 2a) has a `main`, so it is NOT
+/// dispatched — it builds directly like any other entry. The generated derived
+/// entry this dispatch writes also has a `main`, so it is never re-dispatched
+/// (no recursion), and DCE prunes the four unused runners from it.
+fn is_std_app_dispatched_entry(entry_file: &Path) -> bool {
+    match std::fs::read_to_string(entry_file) {
+        Ok(src) => {
+            let imports_app = src
+                .lines()
+                .any(|l| l.trim_start().starts_with("import Std.App"));
+            let has_main = src
+                .lines()
+                .any(|l| l.starts_with("main ") || l.starts_with("main:") || l.starts_with("main="));
+            imports_app && !has_main
+        }
+        Err(_) => false,
+    }
+}
+
+/// Map a resolved [`target::Target`] to the `Std.App` runner that backs it and
+/// whether that runner builds directly (plain / cgo `go build`) or through the
+/// Sky.Spa auto-split. This is the single place the `--target family[:variant]`
+/// axis is turned into a backend for a unified entry.
+fn std_app_runner(tgt: target::Target) -> (&'static str, StdAppBuild) {
+    use target::Target::*;
+    match tgt {
+        Web => ("runLive", StdAppBuild::Direct),
+        Terminal(target::TermRenderer::Tui) => ("runTui", StdAppBuild::Direct),
+        Terminal(target::TermRenderer::Cli) => ("runCli", StdAppBuild::Direct),
+        Desktop(_) => ("runWebview", StdAppBuild::Direct),
+        WebApp | Mobile(_) | Tablet(_) => ("runSpa", StdAppBuild::Spa),
+    }
+}
+
+/// How a [`std_app_runner`] is built: `Direct` is a plain (or cgo, auto-detected
+/// for `runWebview`) `go build` of a derived entry; `Spa` routes through the
+/// Sky.Spa auto-split.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdAppBuild {
+    Direct,
+    Spa,
+}
+
+/// Copy a directory tree (files + subdirs) from `src` to `dst`, creating `dst`.
+/// Used to stage a derived `Std.App` build tree next to the user's project.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+/// Stage a derived `Std.App` build tree at `out_root`: a fresh copy of the
+/// user's `src/` plus their `sky.toml` verbatim (dependencies, `[database]`, …).
+/// Returns the derived `src/` dir (where the caller writes the derived entry).
+/// The derived entry is always built by explicit path, so the copied `sky.toml`
+/// `entry` field is left untouched.
+fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf, ExitCode> {
+    if out_root.exists() {
+        if let Err(e) = std::fs::remove_dir_all(out_root) {
+            eprintln!("sky build: clean {}: {e}", out_root.display());
+            return Err(ExitCode::FAILURE);
+        }
+    }
+    let src_to = out_root.join("src");
+    if let Err(e) = copy_dir_recursive(&project_dir.join("src"), &src_to) {
+        eprintln!("sky build: stage {}: {e}", src_to.display());
+        return Err(ExitCode::FAILURE);
+    }
+    let toml_src = project_dir.join("sky.toml");
+    if toml_src.exists() {
+        if let Err(e) = std::fs::copy(&toml_src, out_root.join("sky.toml")) {
+            eprintln!("sky build: stage sky.toml: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    }
+    Ok(src_to)
+}
+
+/// `sky check` a **dispatched `Std.App` entry**: because such an entry has no
+/// `main` (it exposes `app`), type-checking it directly fails at lowering. So we
+/// stage a derived module that references ALL FIVE runners off the one `app`
+/// value (the cross-backend guarantee — a change that breaks any backend fails
+/// here) plus a `main`, and `sky check` that.
+fn check_std_app(project_dir: &Path, entry_file: &Path) -> ExitCode {
+    let user_module = match entry_module_name(entry_file) {
+        Some(m) => m,
+        None => {
+            eprintln!("sky check: cannot find the `module` declaration in {}", entry_file.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let out_root = project_dir.join(".skyapp").join("check");
+    let src_to = match stage_std_app_derived(project_dir, &out_root) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+    let derived = format!(
+        "-- GENERATED by `sky check` from a Std.App entry: verifies `{m}.app`\n\
+         -- type-checks against EVERY backend runner (cross-backend guarantee).\n\
+         module SkyAppCheck exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.App as App\n\
+         import {m}\n\n\n\
+         allBackends : List (Task Error ())\n\
+         allBackends =\n    \
+         [ App.runLive {m}.app\n    \
+         , App.runSpa {m}.app\n    \
+         , App.runTui {m}.app\n    \
+         , App.runCli {m}.app\n    \
+         , App.runWebview {m}.app\n    \
+         ]\n\n\n\
+         main : Task Error ()\n\
+         main =\n    \
+         App.runTui {m}.app\n",
+        m = user_module,
+    );
+    let derived_entry = src_to.join("SkyAppCheck.sky");
+    if let Err(e) = std::fs::write(&derived_entry, derived) {
+        eprintln!("sky check: write derived check entry: {e}");
+        return ExitCode::FAILURE;
+    }
+    let sky = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("sky check: locate the sky binary: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let ok = Command::new(&sky)
+        .arg("check")
+        .arg(&derived_entry)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Build a **dispatched `Std.App` entry** for `tgt`: stage a derived tree under
+/// `.skyapp/<target>/`, write a derived entry `main = App.run<Backend>
+/// <UserModule>.app`, and build THAT with this compiler. Because the derived
+/// entry has a `main` and references exactly one runner, it takes the normal
+/// build path and DCE prunes the other backends (so a `terminal:cli` binary
+/// never links Webview/Spa).
+fn build_std_app(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_file: &Path,
+    tgt: target::Target,
+    embed: bool,
+    out_override: Option<&str>,
+    run: bool,
+) -> ExitCode {
+    let _ = repo_root;
+    let user_module = match entry_module_name(entry_file) {
+        Some(m) => m,
+        None => {
+            eprintln!("sky build: cannot find the `module` declaration in {}", entry_file.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let (runner, kind) = std_app_runner(tgt);
+
+    if kind == StdAppBuild::Spa {
+        eprintln!(
+            "sky build --target {}: client (wasm) targets for a Std.App entry are not wired yet.\n  \
+             For now build a `Std.Spa` entry for web:app / mobile / tablet; the unified\n  \
+             Std.App client dispatch (App.runSpa) lands in the next step.",
+            tgt.canonical()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    // Stage `.skyapp/<target>/` = a copy of the user's src + the derived entry.
+    let target_dir_name = tgt.canonical().replace(':', "-");
+    let out_root = project_dir
+        .join(out_override.unwrap_or(".skyapp"))
+        .join(&target_dir_name);
+    let src_to = match stage_std_app_derived(project_dir, &out_root) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+
+    let derived = format!(
+        "-- GENERATED by `sky build --target {tgt}` from a Std.App entry.\n\
+         -- Do not edit: the build regenerates it. It wraps `{user_module}.app`\n\
+         -- in the `App.{runner}` runner the target selected.\n\
+         module SkyAppEntry exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.App as App\n\
+         import {user_module}\n\n\n\
+         main : Task Error ()\n\
+         main =\n    \
+         App.{runner} {user_module}.app\n",
+        tgt = tgt.canonical(),
+        user_module = user_module,
+        runner = runner,
+    );
+    let derived_entry = src_to.join("SkyAppEntry.sky");
+    if let Err(e) = std::fs::write(&derived_entry, derived) {
+        eprintln!("sky build: write derived entry: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    // Sub-build the derived entry with THIS compiler. It has a `main`, so it is
+    // not re-dispatched; `runWebview` auto-forces cgo via build.rs's Go scan.
+    let sky = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("sky build: locate the sky binary: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "== building Std.App entry for --target {} (backend: App.{}) ==",
+        tgt.canonical(),
+        runner
+    );
+    let mut cmd = Command::new(&sky);
+    cmd.arg("build");
+    if embed {
+        cmd.arg("--embed");
+    }
+    cmd.arg(&derived_entry);
+    let ok = cmd.status().map(|s| s.success()).unwrap_or(false);
+    if !ok {
+        eprintln!("sky build --target {}: derived build failed", tgt.canonical());
+        return ExitCode::FAILURE;
+    }
+    let binary = out_root.join("sky-out").join("app");
+    println!(
+        "\nBuilt Std.App entry ({}) → {}",
+        tgt.canonical(),
+        binary.display()
+    );
+    if !run {
+        return ExitCode::SUCCESS;
+    }
+    // `sky run` — exec the freshly built binary, inheriting stdio (a terminal
+    // target needs the real TTY). `--embed` carries through to the process.
+    println!("== running ({}) ==", tgt.canonical());
+    let mut proc = Command::new(&binary);
+    if embed {
+        proc.arg("--embed");
+    }
+    match proc.status() {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(e) => {
+            eprintln!("sky run: launch {}: {e}", binary.display());
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// Generate the Sky.Spa split (wasm frontend + native backend + shared codec
 /// contract) under `out_dir`, print the branch report, and — when `do_build` —
 /// build both trees with THIS compiler (backend native, frontend for `target`).
@@ -1033,47 +1306,21 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         .position(|a| a == "--target")
         .and_then(|i| args.get(i + 1))
         .cloned();
-    // Parse `--target family[:variant]` through the one target model
-    // (`target::Target`), then normalise to the legacy frontend-shell string
-    // (`web`/`desktop`/`ios`/`android`/`tablet`) the downstream build path
-    // expects, so new spellings (`mobile:ios`, `desktop:mac`, `web:app`) and the
-    // legacy flat ones (`ios`, `android`) both flow through unchanged.
-    let target = if let Some(t) = &target {
-        let tgt = match target::Target::parse(t) {
-            Ok(tgt) => tgt,
+    // Parse `--target family[:variant]` through the one target model. Grammar
+    // validation only here (reject e.g. `web:ios`); the frontend-shell
+    // normalisation + toolchain check happens BELOW, after the Std.App dispatch,
+    // because a dispatched Std.App entry accepts the `terminal` targets the
+    // frontend-shell path rejects.
+    let parsed_target = match &target {
+        Some(t) => match target::Target::parse(t) {
+            Ok(tgt) => Some(tgt),
             Err(msg) => {
                 eprintln!("{msg}");
                 return ExitCode::FAILURE;
             }
-        };
-        let Some(shell) = tgt.frontend_shell() else {
-            eprintln!(
-                "sky build --target: `{}` is not a frontend-shell target\n  \
-                 supported families: web · desktop · tablet · mobile\n  \
-                 (terminal apps build without --target)",
-                tgt.canonical()
-            );
-            return ExitCode::FAILURE;
-        };
-        // Every Sky.Spa delivery target is a wasm client under a native/browser
-        // shell, so --target implies --wasm.
-        //
-        // Verify the platform toolchain BEFORE the (slower) wasm build, so a
-        // missing SDK is the first thing the user sees — not a half-built bundle.
-        let toolchain = match shell {
-            "ios" => detect_ios_toolchain(),
-            "android" => detect_android_toolchain(),
-            _ => Ok(()),
-        };
-        if let Err(hint) = toolchain {
-            eprintln!("{hint}");
-            return ExitCode::FAILURE;
-        }
-        Some(shell.to_string())
-    } else {
-        None
+        },
+        None => None,
     };
-    let wasm = wasm || target.is_some();
     let file = match resolve_entry_arg(
         &positional,
         &format!(
@@ -1101,6 +1348,66 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+
+    // Std.App unified entry: a DISPATCHED entry (imports Std.App, exposes `app`,
+    // no top-level `main`) picks its backend from `--target family[:variant]`.
+    // Generate a derived entry `main = App.run<Backend> <Mod>.app` and build that
+    // — it has a `main`, so it takes the normal path below and DCE prunes the four
+    // unused runners. `check` type-checks the shared source directly (no dispatch).
+    if check_only && is_std_app_dispatched_entry(file) {
+        return check_std_app(&project_dir, file);
+    }
+    if !check_only && is_std_app_dispatched_entry(file) {
+        let tgt = match parsed_target {
+            Some(x) => x,
+            None => {
+                eprintln!(
+                    "sky build: this Std.App entry needs a target — add `--target <family[:variant]>`\n  \
+                     e.g. web · terminal:tui · terminal:cli · desktop · web:app · mobile:ios"
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        return build_std_app(
+            &repo_root,
+            &project_dir,
+            file,
+            tgt,
+            embed,
+            out_override.as_deref(),
+            false,
+        );
+    }
+
+    // Non-Std.App path: normalise `--target` to the legacy frontend-shell string
+    // (web/desktop/ios/android/tablet) the spa + native build expects, rejecting a
+    // non-frontend-shell target (terminal) here, and verify the platform toolchain
+    // before the slower wasm build. Every delivery target is a wasm client under a
+    // native/browser shell, so `--target` implies `--wasm`.
+    let target = if let Some(tgt) = parsed_target {
+        let Some(shell) = tgt.frontend_shell() else {
+            eprintln!(
+                "sky build --target: `{}` is not a frontend-shell target\n  \
+                 supported families: web · desktop · tablet · mobile\n  \
+                 (terminal apps use a Std.App entry, built with --target terminal:tui|cli)",
+                tgt.canonical()
+            );
+            return ExitCode::FAILURE;
+        };
+        let toolchain = match shell {
+            "ios" => detect_ios_toolchain(),
+            "android" => detect_android_toolchain(),
+            _ => Ok(()),
+        };
+        if let Err(hint) = toolchain {
+            eprintln!("{hint}");
+            return ExitCode::FAILURE;
+        }
+        Some(shell.to_string())
+    } else {
+        None
+    };
+    let wasm = wasm || target.is_some();
 
     // Sky.Spa entry: `sky build src/Main.sky` on a `Spa.app` app AUTO-SPLITS into a
     // wasm frontend + native backend and builds both — the split a user would
@@ -2991,16 +3298,18 @@ fn cmd_run(args: &[String]) -> ExitCode {
     // auto-splits and runs the backend WITH embedded PostgreSQL (handled in the
     // Spa branch below), so let it through. Quiet check (first positional, or the
     // conventional src/Main.sky) — the real entry error is reported later.
-    let run_entry_is_spa = {
+    let run_entry_allows_embed = {
         let (pos, _) = parse_out(args);
         let f = pos
             .first()
             .cloned()
             .unwrap_or_else(|| "src/Main.sky".to_string());
         let p = PathBuf::from(f);
-        p.is_file() && is_spa_app_entry(&p)
+        // A Sky.Spa entry (`sky run --embed` = split + embedded backend) OR a
+        // dispatched Std.App entry (`--embed` carries to the built binary).
+        p.is_file() && (is_spa_app_entry(&p) || is_std_app_dispatched_entry(&p))
     };
-    if args.iter().any(|a| a == "--embed") && !run_entry_is_spa {
+    if args.iter().any(|a| a == "--embed") && !run_entry_allows_embed {
         eprintln!(
             "sky run: --embed is a `sky build` flag, not a `sky run` one.\n\
              \n\
@@ -3037,6 +3346,42 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    // Std.App dispatched entry: build the derived per-target entry and run it.
+    // `--target` selects the backend (required); the build is the same derived
+    // entry `sky build` produces, then the binary is exec'd with the real TTY.
+    if is_std_app_dispatched_entry(file) {
+        let tgt = match args
+            .iter()
+            .position(|a| a == "--target")
+            .and_then(|i| args.get(i + 1))
+        {
+            Some(t) => match target::Target::parse(t) {
+                Ok(x) => x,
+                Err(msg) => {
+                    eprintln!("{msg}");
+                    return ExitCode::FAILURE;
+                }
+            },
+            None => {
+                eprintln!(
+                    "sky run: this Std.App entry needs a target — add `--target <family[:variant]>`\n  \
+                     e.g. web · terminal:tui · terminal:cli · desktop · web:app · mobile:ios"
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        let embed = args.iter().any(|a| a == "--embed");
+        return build_std_app(
+            &repo_root,
+            &project_dir,
+            file,
+            tgt,
+            embed,
+            out_override.as_deref(),
+            true,
+        );
+    }
+
     // Sky.Spa entry: auto-split, build both, then run the native BACKEND (it serves
     // the wasm frontend + /_rpc same-origin — one binary). The split builds via
     // `sky build`, never `sky run`, so this does not recurse; the embedded-cluster /

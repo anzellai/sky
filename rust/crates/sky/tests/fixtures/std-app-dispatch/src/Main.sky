@@ -1,0 +1,60 @@
+-- A DISPATCHED Std.App entry: exposes `app` (no top-level `main`), so
+-- `--target family[:variant]` picks the backend at build time. Built by
+-- tests/std_app_flow.rs for the dispatch + DCE-prune + check-all-backends legs.
+module Main exposing (app)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Sub exposing (Sub)
+import Std.Ui as Ui
+
+type Page
+    = Home
+
+type alias Model =
+    { n : Int }
+
+type Msg
+    = Tick
+    | Line String
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Tick ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        Line _ ->
+            ( model, Cmd.none )
+
+
+view : Model -> Ui.Element Msg
+view _ =
+    Ui.text "hello from dispatched Std.App"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app : App.App a Page Model Msg
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ ( "/", Home ) ]
+        |> App.withNotFound Home
+        |> App.withInput Line

@@ -16,6 +16,9 @@ node_modules/
 # Sky compiler cache and deps (all projects including examples)
 .skycache/
 .skydeps/
+# Std.App per-target derived build trees (`sky build/run --target` on a
+# dispatched Std.App entry stages `main = App.run<Backend> …` here).
+.skyapp/
 
 # Environment and secrets
 .env
