@@ -137,10 +137,18 @@ A `Secret` has to become bytes *somewhere* — the question is *where*, and by w
 The answer: **inside a trusted native library, never in user code.**
 
 - **Trusted Sky APIs take a `Secret` directly** and do the extraction at the FFI
-  boundary: `Http.withBearer : Secret -> Request -> Request`,
-  `Auth.signToken : Secret -> String -> …`, `Db.connect` (DSN). Your code passes
-  the *handle*; the library reads the bytes internally and never hands you a
-  `String`. This covers the common cases without any exposure.
+  boundary — your code passes the *handle*, the library reads the bytes
+  internally and never hands you a `String`. The common ones:
+  - `Http.withBearer : Secret -> Request -> Request` — `Authorization: Bearer …`.
+  - `Http.withApiKey : String -> Secret -> Request -> Request` — a very common
+    need; the `String` is the *header name* (they vary: `X-API-Key`, `Api-Key`,
+    `X-Api-Token`, …), the `Secret` is the key: `Http.withApiKey "X-API-Key"
+    stripeKey`. **Header-only** — an API key never goes in a URL/query (URLs are
+    logged; and the privacy rule forbids secrets in query strings).
+  - `Auth.signToken : Secret -> String -> …` — HS256 signing.
+  - `Db.connect` — the DSN/password.
+
+  This covers the common cases with zero exposure.
 - **Custom need → one deliberate escape:** `Secret.reveal : Secret -> String`,
   explicitly named so extracting the raw value is a *visible, intentional* act
   (greppable in review, flaggable by `sky doctor`), and — because it consumes a
