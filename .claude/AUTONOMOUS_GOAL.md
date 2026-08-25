@@ -49,3 +49,29 @@ its own adversary (feedback_grill_every_phase).
   first. Only an independent adversarial Judge (fresh context, this verbatim
   goal) may return "100% achieved".
 - Local commits are checkpoints; do not push per-iteration.
+
+## Judge verdict (2026-08-25, branch @ 6b0dc094, independent adversarial)
+
+- **SHIPPED-SCOPE = ACHIEVED + VERIFIED**: one `App` value feeds all 5 runners
+  (cargo 4/4); web/terminal:tui/terminal:cli/desktop dispatch + build + DCE-prune;
+  mix-safety rejects bad combos with did-you-mean; the 5 kernels are byte-identical
+  to main (non-breaking); census gates + docs + templates green; client boundary
+  honest and never claimed done. Also verified separately: example-sweep 29/0,
+  harness 24/0, sky-suites 26/26, doc-examples 14/14.
+- **LITERAL (7 criteria incl. client targets subsumed by Std.App + build-time
+  capability model) = NOT ACHIEVED — 2 gaps**:
+  1. Client-wasm (web:app/mobile/tablet) NOT subsumed by Std.App — still needs a
+     Std.Spa entry. Wiring requires `spa_partition` to trace through the `App.app`
+     indirection (empirically: "no resolvable case msg of") — a substantial,
+     risky change ADJACENT TO the proven auto-split path the user has repeatedly
+     + explicitly forbidden risking for live-traffic apps (darraghstudio).
+  2. Capability validation is RUNTIME (runLive Task.fail), not build-time/
+     construction-level; `App.targets [...]` unbuilt. Build-time would need
+     HIR-level analysis of the App.app builder chain.
+
+**ESCALATION (per §0 rule 4 — ambiguous user-decision on scope + risk):** both
+remaining gaps need substantial HIR-level analysis of the App builder, and gap 1
+is adjacent to the fenced-off split path. Shipped scope = the agreed design
+(web:app = Sky.Spa, established in design §6). Awaiting user direction: pursue the
+larger client-subsumption + build-time-capability work (accepting the effort +
+split-path risk), or accept the documented boundary as the merge scope.
