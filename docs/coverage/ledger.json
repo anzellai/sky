@@ -595,6 +595,12 @@
           "apps:relay"
         ]
       },
+      "Std.App": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Bundle": {
         "path": "examples/64-spa-native",
         "units": [
@@ -647,13 +653,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1862,
-    "stdlib_modules": 91,
-    "surfaces_covered": 138,
-    "surfaces_covered_pct": 89.0,
-    "surfaces_equal": 22,
-    "surfaces_stronger": 133,
-    "surfaces_total": 155,
+    "stdlib_entries": 1873,
+    "stdlib_modules": 92,
+    "surfaces_covered": 140,
+    "surfaces_covered_pct": 89.7,
+    "surfaces_equal": 21,
+    "surfaces_stronger": 135,
+    "surfaces_total": 156,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -766,9 +772,15 @@
     {
       "category": "cli",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -777,7 +789,7 @@
       },
       "description": "`sky check`",
       "id": "cli.check",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -6781,6 +6793,28 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.App public API",
+      "id": "stdlib.Std.App",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
             "strength": 4
@@ -11751,7 +11785,7 @@
         "Std.Db.Table",
         "Std.Live.Console"
       ],
-      "pct_of_denominator": 6.6
+      "pct_of_denominator": 6.5
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -11762,9 +11796,8 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 12,
+      "count": 11,
       "surfaces": [
-        "cli.check",
         "cli.config",
         "cli.console",
         "cli.console-serve",
@@ -12876,7 +12909,7 @@
         }
       },
       "count": 739,
-      "pct_of_denominator": 39.7
+      "pct_of_denominator": 39.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -14064,7 +14097,7 @@
         }
       },
       "count": 822,
-      "pct_of_denominator": 44.1
+      "pct_of_denominator": 43.9
     }
   },
   "units": [
@@ -14084,12 +14117,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 15,
+      "modules_imported": 16,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 44,
-      "refs_qualified": 40,
+      "refs_generous": 55,
+      "refs_qualified": 52,
       "role": "Layer2",
-      "sky_files": 11,
+      "sky_files": 13,
       "sky_toml_sections": []
     },
     {

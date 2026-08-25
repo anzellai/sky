@@ -20,27 +20,26 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 155 |
-| covered by the new corpus (>= Asserted) | 138 |
-| verdict `stronger` | 133 |
-| verdict `equal` | 22 |
+| surfaces | 156 |
+| covered by the new corpus (>= Asserted) | 140 |
+| verdict `stronger` | 135 |
+| verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 80 |
-| stdlib modules (denominator) | 91 |
-| stdlib entries (denominator) | 1862 |
+| stdlib modules (denominator) | 92 |
+| stdlib entries (denominator) | 1873 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 6 | 6.6% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 822 | 44.1% |
-| symbols unreferenced under the generous rule | 739 | 39.7% |
+| stdlib modules imported by nothing | 6 | 6.5% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 822 | 43.9% |
+| symbols unreferenced under the generous rule | 739 | 39.5% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
 
-- `cli.check`
 - `cli.config`
 - `cli.console`
 - `cli.console-serve`
@@ -60,7 +59,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 19 |
-| stdlib modules owned by exactly one unit of any role | 14 |
+| stdlib modules owned by exactly one unit of any role | 15 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -94,7 +93,7 @@ None.
 | `auth.password-session` | auth | Asserted | Falsified | stronger |
 | `cli.add` | cli | None | Falsified | stronger |
 | `cli.build` | cli | Runs | Falsified | stronger |
-| `cli.check` | cli | None | None | equal |
+| `cli.check` | cli | None | Falsified | stronger |
 | `cli.clean` | cli | None | Falsified | stronger |
 | `cli.config` | cli | None | None | equal |
 | `cli.console` | cli | None | None | equal |
@@ -192,6 +191,7 @@ None.
 | `stdlib.Sky.Http.Server.WebSocket` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Runs | equal |
+| `stdlib.Std.App` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Bundle` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Cache` | stdlib | Asserted | Falsified | stronger |
