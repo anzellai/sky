@@ -322,12 +322,14 @@ runtime differences are mechanical:
 
 ## 7. Outliers and tensions (the honest part)
 
-1. **Cli is the genuine outlier.** Its `view` is string/text, not an `Element`
-   tree. Cleanest resolution: fold Tui + Cli into a single **terminal target** with
-   `--render ansi|text` — ANSI is the `Element`→cells renderer (Tui), text is the
-   string renderer (Cli). Cli's `readPassword`-style helpers stay as terminal-only
-   APIs. If that's too much for v1, keep Cli as a separate one-shot shape and unify
-   only the four `Element`-based builders.
+1. **Cli is the genuine outlier — resolved by an `Element`→text adapter.** The
+   wiring survey confirmed Cli/`Tui.program` consume a `String` view with no
+   `Element` path, while Tui consumes `Element` directly and Live/Spa/Webview
+   consume `Ui.layout [] element` (`Html`). To keep **one** user-facing view type
+   (`Element msg`) across every target, `Std.App` renders the `Element` per backend:
+   identity → Tui, `Ui.layout []` → the HTML family, and a small **`Element`→text**
+   walk → `terminal:cli`. The user always writes `view : model -> Element msg`;
+   `Std.Cli.program` (native `String` view) stays as the low-level escape hatch.
 2. **Effect-location parity is the main risk.** An app authored + tested under
    `--html` (effects server-side) and then built `--wasm` gets its effects split to
    RPC. Behaviour must be identical across the two. `spa-split` already guarantees
@@ -341,10 +343,12 @@ runtime differences are mechanical:
    pattern (`App.app core |> App.withRoutes … |> App.withWindow …`) keeps the core
    minimal and makes each optional field self-documenting + target-checked, rather
    than a wide record with half the fields ignored per target.
-5. **View type must be exactly one.** Unify on `Std.Ui.Element` as *the* view type
-   every renderer consumes (Live/Webview's `Html` is already the same tree; Tui's
-   `render` is the same tree to ANSI). `Std.Html` stays the escape hatch for raw
-   markup, not a second app model.
+5. **One user-facing view type, per-backend adapter inside.** The user writes
+   exactly one `view : model -> Element msg`. Internally the backends do NOT all
+   consume the same slot (survey): Tui takes the raw `Element`, Live/Spa/Webview
+   take `Ui.layout [] element` (`Html`), Cli takes text — so `Std.App` owns the
+   adapter per backend (`§ Implementation`). `Std.Html` stays the escape hatch for
+   raw markup, not a second app model.
 
 ## Namespace — the builder is `Std.App`, not `Sky.App`
 
@@ -368,28 +372,81 @@ right side of it:
   one genuine `Sky.*` app surface is `Sky.Http.Server` (`import Sky.Http.Server as
   Server`) — a kernel-level HTTP primitive, correctly under `Sky.`.
 
-## 8. Migration — strictly non-breaking
+## 8. Implementation architecture (grounded in the wiring survey)
 
-1. Introduce `Std.App` as the unified front door; it *is* the runtime, parameterised
-   by `target × mode`.
-2. `Std.Live` / `Std.Spa` / `Std.Tui` / `Std.Webview` become **thin aliases** over
-   `Std.App` with their target/mode pinned. Existing code keeps working unchanged;
-   the named modules remain as the "I know exactly which shape I want" form.
-3. `sky init` scaffolds `App.app`; the app-shape matrix in `AGENTS.md` collapses
-   from five rows to a `target × mode` table.
-4. `sky build`/`sky run` learn `--target` (Spa auto-split already added the
-   `--target` frontend-shell axis in v0.22 — the same flag generalises).
+The survey pinned two constraints the mechanism must respect:
 
-Nothing is deleted; the surface *shrinks* because the default path stops asking the
-user to choose a framework.
+- The five `app`/`program` functions are `Ffi.kernel`-backed and **freely callable
+  from pure Sky** (example 38 already calls three of them from one module) — so
+  `Std.App` delegates, it does not reimplement.
+- A **single binary cannot link all five**: a `Std.Spa` reference triggers the
+  auto-split, and a `Webview_app` reference forces cgo for the whole binary. So a
+  `--target` build must compile **only the selected backend**.
+
+### The mechanism: a per-target derived entry (generalises `spa-split`)
+
+1. **`Std.App` (pure Sky)** exposes the unified builder plus one runner per
+   backend, each applying that backend's view adapter and calling its kernel:
+   ```
+   App.app { init, update, view : model -> Element msg, subscriptions }
+       |> App.withRoutes [...]        -- capability (web)
+       |> App.withWindow (...)        -- capability (desktop)
+       |> App.withInput onEvent       -- capability (terminal)
+   -- runners (internal target → backend):
+   App.runLive  : App model msg -> Task Error ()   -- view |> Ui.layout []  → rt.Live_app
+   App.runSpa   : App model msg -> Task Error ()   -- view |> Ui.layout []  → rt.Spa_app
+   App.runWebview : App model msg -> Task Error () -- view |> Ui.layout []  → rt.Webview_app
+   App.runTui   : App model msg -> Task Error ()   -- view (Element direct) → rt.Tui_app
+   App.runCli   : App model msg -> Task Error ()   -- view |> Ui.toText     → rt.Cli_program
+   ```
+2. **The build resolves `--target` → a runner**, then (for a `Std.App` entry,
+   detected by an `import Std.App` scan like `is_spa_app_entry`) generates a tiny
+   derived entry `main = App.run<Backend> userApp` and builds THAT — so only the
+   selected backend is referenced, dodging the Spa/Webview link conflict:
+
+   | `--target` | runner | build path (all already exist) |
+   |---|---|---|
+   | `web` | `runLive` | plain `go build` (server) |
+   | `web:app` · `mobile:*` · `tablet:*` | `runSpa` | `spa_split_and_build` (client) |
+   | `desktop[:os]` | `runWebview` | cgo `go build` (or `runSpa` native shell) |
+   | `terminal` · `terminal:tui` | `runTui` | plain `go build` |
+   | `terminal:cli` | `runCli` | plain `go build` |
+
+   This is exactly where the **`web` = server / `web:app` = client** flip lives:
+   two different runners off the one target axis. `terminal` is now a first-class
+   build target (net-new — today Tui/Cli build with no `--target`).
+
+### Migration — strictly non-breaking, additive only
+
+- `Std.App` is **new**; nothing is deleted or rewritten. `Std.Live` / `Std.Spa` /
+  `Std.Tui` / `Std.Cli` / `Std.Webview` and their `app`/`program` functions stay
+  exactly as they are — `Std.App` *calls* them. A user who writes `Live.app cfg`
+  today is unaffected; a user who wants one-source-many-targets writes `App.app`.
+- `sky init` can scaffold `App.app`; `AGENTS.md`'s five-row matrix gains a unified
+  row. The named modules remain the "I know exactly which shape I want" form.
+
+### Delivery slices (each its own commit + Judge boundary)
+
+- **2a** — `Std/App.sky`: config + builder + capability builders + view adapters +
+  the five `run<Backend>` runners (+ `Ui.toText`). Proven by a hand-written
+  `main = App.runTui app` / `runLive` / `runCli` building & running per backend.
+  Pure Sky; no build changes; lowest risk.
+- **2b** — build `--target` dispatch: detect a `Std.App` entry, generate the
+  per-target derived entry, route to the right existing build path. Reuses
+  `spa-split`'s derived-project pattern.
+- **3** — capability validation: each target declares its required capabilities;
+  the build errors with a copy-pasteable fix when one is missing; optional
+  `App.targets [...]` enforces at `sky check`.
+- **4** — docs + templates + `sky doc` + AGENTS.md + sky-lang, and `sky init`.
 
 ## 9. Recommendation
 
-**Do it — incrementally, config-first.** The two hardest pieces already exist: the
-`Std.Ui.Element` view renders everywhere, and `spa-split` already solves the
-effect-location problem for client mode. The remaining work is mostly *surface*:
-one `Std.App` config + builder, a `target × mode` resolution table with strong
-defaults, invalid-combo rejection, and folding Cli/Tui into a terminal target.
+**Do it — incrementally, `Std.App`-first, reusing the kernels + `spa-split`.** The
+hard pieces exist: the `Element` view renders everywhere (with a per-backend
+adapter), the five `app` kernels are callable from Sky, and `spa-split` already
+solves client-mode effect location. The net-new work is bounded: one `Std.App`
+module, the `Element`→text adapter, and the per-target derived-entry build
+dispatch.
 
 Suggested first slice, provable on its own: **unify the config** — one `App.app`
 taking the shared core + optional builders, with `Std.Live`/`Std.Spa` reimplemented
