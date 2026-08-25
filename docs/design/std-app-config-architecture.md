@@ -151,6 +151,36 @@ The answer: **inside a trusted native library, never in user code.**
 So there is no silent path from `Secret` to `String`: either a trusted library
 consumes it, or you write `Secret.reveal` and own that decision.
 
+**`Secret`-only, not `Secret | String` (DECIDED).** The secret-implying slots take
+a `Secret` and nothing else — `Http.withBearer : Secret -> …`, `Auth.signToken :
+Secret -> …`. Accepting a `String` too would let a raw literal or `getenvOr` slip
+past the type and defeat the whole point (and Sky has no untagged `Secret | String`
+union anyway). The rare case of a genuinely *public* token in a header uses the
+generic `Http.withHeader "Authorization" (…)` — a `String` API, clearly distinct —
+so the safe path is the default for anything that reads as a secret, and the
+`String` escape is a visibly different call.
+
+**Go-side representation — a redacting struct, so the value is tainted (DECIDED).**
+A `Secret` lowers to a Go **struct with an unexported field**, not a bare `string`
+— so the value cannot leak by printing or logging, and only the runtime's own
+trusted functions reach it:
+
+```go
+type Secret struct { v string }                              // unexported → outside rt cannot read it
+func (Secret) String() string      { return "[REDACTED]" }   // fmt %v / %s
+func (Secret) GoString() string    { return "Secret(REDACTED)" } // %#v
+func (Secret) Format(f fmt.State, verb rune) { io.WriteString(f, "[REDACTED]") } // catch-all
+func (Secret) MarshalJSON() ([]byte, error)  { return []byte(`"[REDACTED]"`), nil } // json/log encoders
+// internal — the ONLY reader, used by rt.Http/rt.Auth and the Secret.reveal kernel:
+func secretReveal(s Secret) string { return s.v }
+```
+
+So even a `log.Printf("%v", secret)` or a `json.Marshal` of a struct that embeds
+one prints `[REDACTED]`; the real bytes are behind an unexported field only
+`rt`-internal code (and the explicit `Secret.reveal`) can reach. (Zeroizing `v`
+after use is a defensible add-on, not required.) This is what makes the type's
+guarantee hold all the way down to the runtime, not just in Sky source.
+
 ### `Secret` is BACKEND-ONLY on split — the type guarantees it (DECIDED)
 
 This is the property that makes the `Secret` type earn its keep in the unified
@@ -331,6 +361,12 @@ a `Std.App` user. In this model:
   `Auth.signToken`, `Db.connect`) that extract the bytes at the FFI boundary; the
   ONLY way to a raw `String` is `Secret.reveal` — explicit, greppable,
   server-only. No silent `Secret → String`.
+- **Secret slots are `Secret`-only, not `Secret | String`** — a `String` overload
+  would let a raw literal past the type. A genuinely public token uses the generic
+  `Http.withHeader` (`String`) instead.
+- **Go representation is a redacting struct** (unexported field; `String`/
+  `GoString`/`Format`/`MarshalJSON` all return `[REDACTED]`; a single `rt`-internal
+  reader) — so the taint holds at runtime, not just in Sky source.
 - **`Secret` is backend-only on split** — server-tainted by construction, so it
   is partitioned to the backend and a `Secret` in a client path (`view`) is a
   split-time error. One type stops logging, `++`, AND shipping-to-browser.
