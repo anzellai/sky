@@ -765,10 +765,117 @@ fn cmd_spa_partition(args: &[String]) -> ExitCode {
     }
 }
 
+/// True when `entry_file`'s source imports the `Std.Spa` framework — the reliable
+/// signal that its `main` is a `Spa.app`, so `sky build`/`sky run` should AUTO-SPLIT
+/// it (wasm frontend + native backend) rather than compile the entry directly.
+///
+/// `Std.Spa` is imported only by a Sky.Spa app entry. The two projects the split
+/// generates do NOT re-enter this path: the backend is a `Sky.Http.Server` (no
+/// `Std.Spa` import), and the generated frontend — itself a `Spa.app` — is rebuilt
+/// with `sky build --target web`, which the auto-split guard excludes.
+fn is_spa_app_entry(entry_file: &Path) -> bool {
+    std::fs::read_to_string(entry_file)
+        .map(|src| src.lines().any(|l| l.trim_start().starts_with("import Std.Spa")))
+        .unwrap_or(false)
+}
+
+/// Generate the Sky.Spa split (wasm frontend + native backend + shared codec
+/// contract) under `out_dir`, print the branch report, and — when `do_build` —
+/// build both trees with THIS compiler (backend native, frontend for `target`).
+/// Returns the split's out dir on success.
+///
+/// The single shared engine behind `sky spa-split` and the auto-split path of
+/// `sky build` / `sky run`. The frontend build re-invokes `sky build --target
+/// <target>` and the backend `sky build` — never `sky run`, and never a
+/// `Std.Spa`-importing entry without `--target`, so no caller recurses.
+fn spa_split_and_build(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    out_dir: &Path,
+    broker: Option<&str>,
+    target: &str,
+    do_build: bool,
+) -> Result<PathBuf, ExitCode> {
+    let report = match project::spa_split::generate(
+        repo_root,
+        project_dir,
+        entry_module,
+        out_dir,
+        broker,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("sky spa-split: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    println!("sky spa-split → {}", report.out_dir);
+    let joined = |v: &[String]| {
+        if v.is_empty() {
+            "(none)".to_string()
+        } else {
+            v.join(", ")
+        }
+    };
+    println!("  server branches (→ RPC): {}", joined(&report.server_branches));
+    println!("  client branches (local): {}", joined(&report.client_branches));
+    println!(
+        "  excluded from frontend (server-tainted): {}",
+        joined(&report.excluded)
+    );
+    for f in &report.files {
+        println!("  wrote {f}");
+    }
+    for n in &report.notes {
+        println!("  note: {n}");
+    }
+    let od = PathBuf::from(&report.out_dir);
+    if !do_build {
+        return Ok(od);
+    }
+    // --build / --target: build both projects with THIS compiler.
+    let sky = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("sky spa-split: locate the sky binary: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    println!("\n== building backend (native) ==");
+    let backend_ok = Command::new(&sky)
+        .arg("build")
+        .arg("src/Main.sky")
+        .current_dir(od.join("backend"))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !backend_ok {
+        eprintln!("sky spa-split --build: backend failed to build");
+        return Err(ExitCode::FAILURE);
+    }
+    println!("\n== building frontend (--target {target}) ==");
+    let frontend_ok = Command::new(&sky)
+        .args(["build", "--target", target, "src/Main.sky"])
+        .current_dir(od.join("frontend"))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !frontend_ok {
+        eprintln!("sky spa-split --build: frontend failed to build");
+        return Err(ExitCode::FAILURE);
+    }
+    Ok(od)
+}
+
 /// `sky spa-split <entry.sky> --out <dir>` — the Sky.Spa auto-split GENERATOR.
 /// Reads one Sky.Spa project with inline effects and emits two buildable Sky
 /// projects (a wasm frontend + a native backend) plus the shared wire contract.
 /// Source-to-source; no compiler-IR change. See `project::spa_split`.
+///
+/// `sky build` / `sky run` on a `Spa.app` entry call the same engine
+/// (`spa_split_and_build`) automatically; this verb is the explicit form that
+/// takes `--out`, `--broker` and a frontend `--target`.
 fn cmd_spa_split(args: &[String]) -> ExitCode {
     let (positional, out) = parse_out(args);
     // `--build` (or `--target <t>`, which implies build): after generating, build
@@ -821,95 +928,30 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
-    match project::spa_split::generate(
+    let target = split_target.as_deref().unwrap_or("web");
+    let od = match spa_split_and_build(
         &repo_root,
         &project_dir,
         entry_module_name(file).as_deref(),
         &out_dir,
         broker_url.as_deref(),
+        target,
+        do_build,
     ) {
-        Ok(report) => {
-            println!("sky spa-split → {}", report.out_dir);
-            println!(
-                "  server branches (→ RPC): {}",
-                if report.server_branches.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    report.server_branches.join(", ")
-                }
-            );
-            println!(
-                "  client branches (local): {}",
-                if report.client_branches.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    report.client_branches.join(", ")
-                }
-            );
-            println!(
-                "  excluded from frontend (server-tainted): {}",
-                if report.excluded.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    report.excluded.join(", ")
-                }
-            );
-            for f in &report.files {
-                println!("  wrote {f}");
-            }
-            for n in &report.notes {
-                println!("  note: {n}");
-            }
-            if !do_build {
-                println!("\nBuild: (cd {} && sky build --target web frontend/src/Main.sky) && (cd {} && sky build backend/src/Main.sky)", report.out_dir, report.out_dir);
-                println!("  or re-run with --build (native backend + web frontend) / --target <t> (frontend shell).");
-                return ExitCode::SUCCESS;
-            }
-            // --build / --target: build both projects with THIS compiler.
-            let target = split_target.as_deref().unwrap_or("web");
-            let sky = match std::env::current_exe() {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("sky spa-split: locate the sky binary: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            let od = PathBuf::from(&report.out_dir);
-            println!("\n== building backend (native) ==");
-            let backend_ok = Command::new(&sky)
-                .arg("build")
-                .arg("src/Main.sky")
-                .current_dir(od.join("backend"))
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if !backend_ok {
-                eprintln!("sky spa-split --build: backend failed to build");
-                return ExitCode::FAILURE;
-            }
-            println!("\n== building frontend (--target {target}) ==");
-            let frontend_ok = Command::new(&sky)
-                .args(["build", "--target", target, "src/Main.sky"])
-                .current_dir(od.join("frontend"))
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if !frontend_ok {
-                eprintln!("sky spa-split --build: frontend failed to build");
-                return ExitCode::FAILURE;
-            }
-            println!(
-                "\nBuilt: backend/sky-out/app (native) + frontend for `{target}`.\n  \
-                 Run the backend (it serves the frontend + /_rpc + /_sky/sub); \
-                 for desktop/ios/android also launch the generated shell under frontend/sky-out/."
-            );
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("sky spa-split: {e}");
-            ExitCode::FAILURE
-        }
+        Ok(od) => od,
+        Err(code) => return code,
+    };
+    if !do_build {
+        println!("\nBuild: (cd {} && sky build --target web frontend/src/Main.sky) && (cd {} && sky build backend/src/Main.sky)", od.display(), od.display());
+        println!("  or re-run with --build (native backend + web frontend) / --target <t> (frontend shell).");
+        return ExitCode::SUCCESS;
     }
+    println!(
+        "\nBuilt: backend/sky-out/app (native) + frontend for `{target}`.\n  \
+         Run the backend (it serves the frontend + /_rpc + /_sky/sub); \
+         for desktop/ios/android also launch the generated shell under frontend/sky-out/."
+    );
+    ExitCode::SUCCESS
 }
 
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
@@ -975,6 +1017,38 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             verb(check_only),
         );
         return ExitCode::FAILURE;
+    }
+
+    // Sky.Spa entry: `sky build src/Main.sky` on a `Spa.app` app AUTO-SPLITS into a
+    // wasm frontend + native backend and builds both — the split a user would
+    // otherwise run `sky spa-split --out .split --build` for by hand. `--target` (a
+    // specific delivery shell), `--wasm` (a raw client build) and `--embed` are the
+    // explicit escape hatches; `check` only type-checks the shared source (which
+    // compiles directly). Default out dir `.split`; `--out` overrides. The generated
+    // frontend rebuilds with `--target web` and the backend is a `Sky.Http.Server`,
+    // so neither re-enters here.
+    if !check_only && target.is_none() && !wasm && !embed && is_spa_app_entry(file) {
+        let out_dir = project_dir.join(out_override.as_deref().unwrap_or(".split"));
+        return match spa_split_and_build(
+            &repo_root,
+            &project_dir,
+            entry_module_name(file).as_deref(),
+            &out_dir,
+            None,
+            "web",
+            true,
+        ) {
+            Ok(od) => {
+                let entry = positional.first().map(String::as_str).unwrap_or("src/Main.sky");
+                println!(
+                    "\nBuilt Sky.Spa app → {}/backend/sky-out/app  (serves the wasm frontend + /_rpc same-origin).",
+                    od.display()
+                );
+                println!("  Run it:  sky run {entry}");
+                ExitCode::SUCCESS
+            }
+            Err(code) => code,
+        };
     }
 
     // `--embed` is resolved BEFORE anything is compiled. Acquiring the bundle
@@ -2766,6 +2840,44 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    // Sky.Spa entry: auto-split, build both, then run the native BACKEND (it serves
+    // the wasm frontend + /_rpc same-origin — one binary). The split builds via
+    // `sky build`, never `sky run`, so this does not recurse; the embedded-cluster /
+    // profile machinery below is for direct Live/Cli/Server apps and is skipped.
+    if is_spa_app_entry(file) {
+        let out_dir = project_dir.join(out_override.as_deref().unwrap_or(".split"));
+        let od = match spa_split_and_build(
+            &repo_root,
+            &project_dir,
+            entry_module_name(file).as_deref(),
+            &out_dir,
+            None,
+            "web",
+            true,
+        ) {
+            Ok(od) => od,
+            Err(code) => return code,
+        };
+        let backend = od.join("backend");
+        let app = backend.join("sky-out").join("app");
+        // The generated backend reads PORT (default 8951) — mirror that in the hint.
+        let port = std::env::var("PORT")
+            .ok()
+            .and_then(|p| p.trim().parse::<u16>().ok())
+            .unwrap_or(8951);
+        println!("\n== running Sky.Spa backend (serves the frontend + /_rpc) ==");
+        println!("  open  http://localhost:{port}/     (Ctrl-C to stop)");
+        return match Command::new(&app).current_dir(&backend).status() {
+            Ok(s) => propagate(s.code()),
+            Err(e) => {
+                eprintln!(
+                    "sky run: could not launch the Sky.Spa backend at {}: {e}",
+                    app.display()
+                );
+                ExitCode::FAILURE
+            }
+        };
+    }
     // The configuration is judged BEFORE the build: a project whose
     // `embedded = true` contradicts an explicit DSN is misconfigured, and making
     // the user sit through a compile to be told so is a worse way to learn it.
@@ -6638,10 +6750,13 @@ fn print_help() {
          USAGE:\n  sky <command> [args]\n\n\
          WIRED COMMANDS:\n\
          \x20 build <file>     compile → sky-out/ + go build (--embed bundles PostgreSQL)\n\
+         \x20                   a Sky.Spa (Spa.app) entry AUTO-SPLITS → wasm frontend +\n\
+         \x20                   native backend under .split/ (--out to override);\n\
          \x20                   --wasm compiles the Sky.Spa client for the browser (GOOS=js);\n\
          \x20                   --target <web|desktop|ios|android|tablet> bundles that client\n\
          \x20 check <file>     type-check + go build (no binary run)\n\
-         \x20 run   <file>     build + execute\n\
+         \x20 run   <file>     build + execute (a Sky.Spa entry auto-splits, then runs the\n\
+         \x20                   backend — it serves the frontend + /_rpc same-origin)\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
          \x20 test  <file>     run a Sky.Test suite\n\
          \x20 lsp              launch the sky-lsp server (stdio)\n\
@@ -6685,6 +6800,69 @@ mod tests {
         // a leading digit is not a legal package-segment start → prefixed
         assert_eq!(sanitize_pkg_segment("2048"), "a2048");
         assert_eq!(sanitize_pkg_segment("3d-viewer"), "a3dviewer");
+    }
+
+    // The signal `sky build` / `sky run` use to decide a `Spa.app` entry should be
+    // AUTO-SPLIT. Critically it must be FALSE for the two projects the split
+    // generates (a `Sky.Http.Server` backend + a `Std.Spa` frontend rebuilt with
+    // `--target`), or an auto-split build/run would recurse — the backend has no
+    // `Std.Spa` import (so it is false here), and the frontend is excluded by the
+    // `--target` guard in `cmd_build`, verified by the e2e sweep, not this unit.
+    #[test]
+    fn is_spa_app_entry_keys_on_the_std_spa_import() {
+        use std::io::Write as _;
+        let dir = std::env::temp_dir().join(format!("sky-spa-detect-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, body: &[u8]| {
+            let p = dir.join(name);
+            std::fs::File::create(&p).unwrap().write_all(body).unwrap();
+            p
+        };
+
+        let spa = write(
+            "Spa.sky",
+            b"module Main exposing (main)\n\nimport Std.Spa as Spa\n\nmain = Spa.app cfg\n",
+        );
+        assert!(is_spa_app_entry(&spa), "an `import Std.Spa` entry is a Spa app");
+
+        // The generated backend — must be false, else the split's backend rebuild
+        // would recurse.
+        let server = write(
+            "Server.sky",
+            b"module Main exposing (main)\n\nimport Sky.Http.Server as Server\n\nmain = Server.listen 8000 []\n",
+        );
+        assert!(
+            !is_spa_app_entry(&server),
+            "a Sky.Http.Server entry is NOT a Spa app"
+        );
+
+        let live = write(
+            "Live.sky",
+            b"module Main exposing (main)\n\nimport Std.Live as Live\n\nmain = Live.app cfg\n",
+        );
+        assert!(!is_spa_app_entry(&live), "a Sky.Live entry is NOT a Spa app");
+
+        // Indentation-tolerant (trims leading whitespace before matching).
+        let indented = write(
+            "Indented.sky",
+            b"module Main exposing (main)\n    import Std.Spa as Spa\n",
+        );
+        assert!(is_spa_app_entry(&indented));
+
+        // `Std.Spatula` (a hypothetical unrelated module) must NOT match `Std.Spa`
+        // — `starts_with("import Std.Spa")` would, so guard is by the exact prefix
+        // of the framework module; a real unrelated import would be `import
+        // Std.Foo`, which does not start with `import Std.Spa`.
+        let other = write(
+            "Other.sky",
+            b"module Main exposing (main)\n\nimport Std.Http as Http\n",
+        );
+        assert!(!is_spa_app_entry(&other));
+
+        // A missing/unreadable file is not a Spa app (no panic).
+        assert!(!is_spa_app_entry(&dir.join("nope.sky")));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

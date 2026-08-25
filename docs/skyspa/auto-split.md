@@ -463,6 +463,18 @@ fixture + acceptance test in `crates/sky/tests/spa_split_flow.rs` +
 verbatim slicing. **No compiler-IR change; the runtime-narrowing floor is
 untouched.**
 
+**Running it — one command (2026-08-25).** `sky build src/Main.sky` on a
+`Spa.app` entry AUTO-SPLITS (wasm frontend + native backend under `.split/`,
+`--out` to override) and builds both; `sky run src/Main.sky` does that and then
+runs the backend — which serves the wasm frontend + `/_rpc` same-origin, one
+binary. Detection keys on the entry's `import Std.Spa`
+(`crates/sky/src/main.rs`, `is_spa_app_entry` → `spa_split_and_build`; `sky
+check` type-checks the shared source directly, and `--target` / `--wasm` /
+`--embed` stay the explicit escape hatches so the generated frontend/backend
+never re-split). The explicit form remains `sky spa-split <entry> --out <dir>
+--build` (+ `--broker`, `--target`) then `cd <dir>/backend && ./sky-out/app` —
+reach for it when you want the split artefacts kept or a non-web frontend shell.
+
 **What it emits** (matching the `examples/60-spa-todos` client+server+shared
 target shape):
 - **shared/Shared.sky** — per SERVER branch `M`, `type alias MReq` (read-set) /
