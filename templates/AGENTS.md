@@ -34,6 +34,13 @@ memorise or inline signatures here — they drift; `sky doc` doesn't.
 | Terminal UI | **Sky.Tui** | `Tui.app (Tui.config {…})` |
 | Desktop app (macOS) | **Sky.Webview** | `Webview.app { … }` (closed record) |
 | One-shot CLI / cron | **Sky.Cli** | `main = Task.run cmd` |
+| One source across web/terminal/desktop | **Std.App** | `App.app { init, update, view, subscriptions }` + `--target` |
+
+`Std.App` builds ONE `App.app { … }` (view is a single `Std.Ui.Element`) for
+several shapes: `sky build/run --target web` (= Sky.Live) · `terminal:tui` (=
+Sky.Tui) · `terminal:cli` (= Sky.Cli) · `desktop` (= Sky.Webview). Client-wasm
+(`web:app` / `mobile:*` / `tablet:*`) still uses a **Sky.Spa** entry. See
+`sky doc Std.App`.
 
 Before scaffolding more than a proof of concept, confirm with the user:
 **persistence** (SQLite default / Postgres for multi-instance / none), **auth**

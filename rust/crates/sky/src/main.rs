@@ -996,9 +996,13 @@ fn build_std_app(
 
     if kind == StdAppBuild::Spa {
         eprintln!(
-            "sky build --target {}: client (wasm) targets for a Std.App entry are not wired yet.\n  \
-             For now build a `Std.Spa` entry for web:app / mobile / tablet; the unified\n  \
-             Std.App client dispatch (App.runSpa) lands in the next step.",
+            "sky build --target {}: client (wasm) targets use a `Std.Spa` entry, not `Std.App`.\n  \
+             Client delivery auto-splits your effects to a backend, which needs the\n  \
+             `update` visible to the splitter — a `Std.Spa` entry (`import Std.Spa`,\n  \
+             `main = Spa.app …`) provides that. Build it the same way:\n  \
+             sky build --target {} src/Main.sky\n  \
+             Std.App covers the non-split targets: web · terminal:tui · terminal:cli · desktop.",
+            tgt.canonical(),
             tgt.canonical()
         );
         return ExitCode::FAILURE;

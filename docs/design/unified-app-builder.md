@@ -425,6 +425,26 @@ The survey pinned two constraints the mechanism must respect:
 - `sky init` can scaffold `App.app`; `AGENTS.md`'s five-row matrix gains a unified
   row. The named modules remain the "I know exactly which shape I want" form.
 
+### Implementation status (branch `feat/unified-app-builder`)
+
+- **Phase 1 — the `--target family[:variant]` model** — SHIPPED. `target::Target`
+  with parse + did-you-mean + legacy compat; mix-safety by construction.
+- **Phase 2a — `Std.App` (module + 5 runners + view adapters)** — SHIPPED. One
+  `App` value feeds all five runners (proven); runLive serves 200, runCli renders.
+- **Phase 2b — build/run `--target` dispatch (direct targets)** — SHIPPED for
+  `web` · `terminal:tui` · `terminal:cli` · `desktop`. Derived-entry + DCE prune,
+  proven. `sky check` verifies all backends.
+- **Client targets (`web:app` / `mobile:*` / `tablet:*`)** — BOUNDARY: they use a
+  **Sky.Spa** entry. The auto-splitter partitions the `update` structurally and
+  cannot see it through the `App.app` indirection (verified: "no resolvable `case
+  msg of`"); wiring them into `Std.App` needs `spa_partition` to trace through the
+  builder — a larger change to the proven split path, deliberately not attempted
+  here. The `--target` grammar is shared across `Std.App` and `Std.Spa` entries.
+- **Phase 3 — build-time capability validation + `App.targets`** — PARTIAL: the
+  `web`-requires-`notFound` contract is enforced (runLive) and `sky check` proves
+  every backend type-checks; a dedicated per-target capability gate + `App.targets`
+  remains future.
+
 ### Delivery slices (each its own commit + Judge boundary)
 
 - **2a** — `Std/App.sky`: config + builder + capability builders + view adapters +

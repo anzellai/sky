@@ -278,6 +278,21 @@ tier calls for it*.
 | Desktop app | **Sky.Webview** | `Webview.app cfg` (macOS in v0.1) |
 | WebSocket feed | **Sky.Http.Server.WebSocket** | `Server.upgrade req` |
 | SSE / token stream | **Sky.Http.Server.Stream** | `Server.Stream.emit` |
+| One source, many targets (web/terminal/desktop) | **Std.App** | `App.app { init, update, view, subscriptions }` + `--target` |
+
+**`Std.App` — the unified builder.** For an app that should run across several of
+the shapes above from ONE source, write `App.app { init, update, view :
+model -> Element msg, subscriptions }` (expose it as `app`, no `main`) and let a
+build-time `--target family[:variant]` pick the backend: `web` (= Sky.Live) ·
+`terminal:tui` (= Sky.Tui) · `terminal:cli` (= Sky.Cli) · `desktop` (=
+Sky.Webview). `sky build`/`sky run --target <t>` stage a derived entry and DCE
+prune the unused backends; `sky check` type-checks against *every* backend at
+once. Invalid `--target` combos are rejected at parse time (`web:ios` → *"did you
+mean `mobile:ios`?"*). Client-wasm targets (`web:app` / `mobile:*` / `tablet:*`)
+still use a **Sky.Spa** entry (auto-split needs the `update` visible to the
+splitter); the `--target` grammar is shared across both. The named modules
+(`Live.app`, `Tui.app`, …) stay for the "I know exactly which shape I want" case.
+See `docs/skyapp/overview.md` + `sky doc Std.App`.
 
 ### Pinned defaults — the preferred way to write Sky
 
@@ -600,6 +615,7 @@ before assuming a limitation still holds.
 | Stdlib correctness (algebraic laws, invariants) | `docs/architecture/sky-stdlib-correctness.md` |
 | Sky.Live runtime + architecture | `docs/skylive/overview.md`, `docs/skylive/architecture.md` |
 | Sky.Spa — client-side TEA in wasm | `docs/skyspa/overview.md` (design: `docs/skyspa/design.md`, `docs/skyspa/auto-split.md`) |
+| `Std.App` — one builder, one `--target` | `docs/skyapp/overview.md` (design: `docs/design/unified-app-builder.md`) |
 | `Std.Ui` layout DSL | `docs/skyui/overview.md` |
 | Sky.Tui / Sky.Webview | `docs/skytui/`, `docs/skywebview/` |
 | `Std.Auth` | `docs/skyauth/overview.md` |
