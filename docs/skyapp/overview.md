@@ -112,22 +112,24 @@ Tui, and a best-effort `Element`→text flatten for `terminal:cli` (2-D layout h
 no lossless text form — `Std.Cli.program` stays the escape hatch for a
 hand-authored `String` view).
 
-## Client targets
+## Client targets — same source, no `Std.Spa` entry
 
-`web:app` / `mobile:*` / `tablet:*` deliver a **client wasm** build, which
-auto-splits your effects to a backend — and the splitter needs your `update`
-visible to it. That is exactly what a **Sky.Spa** entry provides (`import
-Std.Spa`, `main = Spa.app …`), so client targets use a Sky.Spa entry and the same
-`--target` grammar:
+`web:app` / `mobile:*` / `tablet:*` deliver a **client wasm** build that
+auto-splits your effects to a backend. From the **same `Std.App` source** — the
+build synthesises a `Spa.app` from your `App.app` value (referencing your
+`update`/`view`/… directly so the *existing, unchanged* auto-split can partition
+it), then splits + builds it:
 
 ```bash
-sky build --target web:app  src/Main.sky   # on a Std.Spa entry
-sky build --target mobile:ios src/Main.sky
+sky build --target web:app     src/Main.sky   # wasm client + backend (PWA / offline)
+sky run   --target web:app     src/Main.sky   # serves the wasm shell + /_rpc
+sky build --target mobile:ios  src/Main.sky   # native app (needs a Mac to sign)
 ```
 
-`Std.App` covers the four non-split families natively (`web` · `terminal:tui` ·
-`terminal:cli` · `desktop`); `Sky.Spa` covers the client-wasm families. The
-target axis is shared across both.
+So `Std.App` covers **every** target from one source — you never write or import
+`Std.Spa`. (The derivation reads the standard `sky fmt`'d `App.app { init = …,
+update = …, view = …, subscriptions = … }` form; if it can't, it says so and you
+can drop to a `Std.Spa` entry.)
 
 See also: `sky doc Std.App`, `docs/skylive/overview.md`, `docs/skyspa/overview.md`,
 and the design rationale in `docs/design/unified-app-builder.md`.

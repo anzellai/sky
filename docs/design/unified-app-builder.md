@@ -512,12 +512,15 @@ The survey pinned two constraints the mechanism must respect:
 - **Phase 2b — build/run `--target` dispatch (direct targets)** — SHIPPED for
   `web` · `terminal:tui` · `terminal:cli` · `desktop`. Derived-entry + DCE prune,
   proven. `sky check` verifies all backends.
-- **Client targets (`web:app` / `mobile:*` / `tablet:*`)** — BOUNDARY: they use a
-  **Sky.Spa** entry. The auto-splitter partitions the `update` structurally and
-  cannot see it through the `App.app` indirection (verified: "no resolvable `case
-  msg of`"); wiring them into `Std.App` needs `spa_partition` to trace through the
-  builder — a larger change to the proven split path, deliberately not attempted
-  here. The `--target` grammar is shared across `Std.App` and `Std.Spa` entries.
+- **Client targets (`web:app` / `mobile:*` / `tablet:*`)** — CLOSED. The build
+  **synthesises a `Spa.app` entry from the `App.app` value** (its
+  `init`/`update`/`view`/`subscriptions` referenced DIRECTLY, `view` wrapped in
+  `Ui.layout []`) and feeds the EXISTING, UNCHANGED auto-split — so `spa_partition`
+  sees `update` structurally, exactly as for a hand-written `Std.Spa` entry, and
+  the proven split path is untouched. `sky build/run --target web:app` on a
+  `Std.App` entry builds + serves (HTTP 200) from the one source. The derivation
+  reads the fmt'd `App.app { … }` form; a non-standard form gets a clear fallback
+  to a `Std.Spa` entry.
 - **Phase 3 — build-time capability validation + `App.targets`** — PARTIAL: the
   `web`-requires-`notFound` contract is enforced (runLive) and `sky check` proves
   every backend type-checks; a dedicated per-target capability gate + `App.targets`

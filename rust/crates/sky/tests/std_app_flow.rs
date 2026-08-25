@@ -174,6 +174,35 @@ fn web_without_a_fallback_gives_a_clean_error_not_a_phantom_leak() {
 }
 
 #[test]
+fn a_std_app_entry_builds_web_app_via_synthesized_spa() {
+    // Spa subsumption: `--target web:app` on a Std.App entry synthesises a Spa.app
+    // (init/update/view/subscriptions referenced directly) and feeds the EXISTING
+    // auto-split — so the client target builds from the ONE source, no Std.Spa
+    // entry. Produces a backend binary + a wasm frontend.
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = copy_fixture_to_temp(dispatch_fixture_dir(), "webapp");
+    let out = Command::new(SKY)
+        .arg("build")
+        .arg("--target")
+        .arg("web:app")
+        .arg(dir.join("src/Main.sky"))
+        .output()
+        .expect("sky build --target web:app");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let backend = dir.join(".skyapp/web-app/.split/backend/sky-out/app");
+    let wasm = dir.join(".skyapp/web-app/.split/frontend/sky-out/main.wasm");
+    let ok = out.status.success() && backend.exists() && wasm.exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        ok,
+        "Std.App web:app synthesis must build a backend + wasm frontend:\n{stdout}\n{stderr}"
+    );
+}
+
+#[test]
 fn a_dispatched_entry_builds_terminal_cli_and_dce_prunes_other_backends() {
     // The derived `terminal:cli` entry references only `runCli`, so DCE must keep
     // `rt.Cli_program` out of the OTHER backends — a `terminal:cli` binary that

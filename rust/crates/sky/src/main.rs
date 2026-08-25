@@ -1048,6 +1048,188 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: Option<target::Targ
     }
 }
 
+/// The `App.app { … } |> with…` fields the Spa synthesis needs. Values are the
+/// verbatim RHS expressions (usually top-level function names) so the synthesised
+/// `Spa.config` references the user's `update` DIRECTLY — which is what lets the
+/// existing, unchanged auto-split partition it.
+struct AppFields {
+    init: String,
+    update: String,
+    view: String,
+    subscriptions: String,
+    routes: Option<String>,
+    not_found: Option<String>,
+}
+
+/// Match a record field `{ field = VAL` or `, field = VAL` (the fmt'd form) and
+/// return `VAL`.
+fn match_record_field(trimmed: &str, field: &str) -> Option<String> {
+    for lead in ["{ ", ", "] {
+        if let Some(v) = trimmed.strip_prefix(&format!("{lead}{field} = ")) {
+            return Some(v.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Extract the `App.app` config fields + `withRoutes`/`withNotFound` args from a
+/// fmt'd Std.App source. `None` if the app is not in the standard (fmt) form —
+/// the caller then tells the user to run `sky fmt` or use a `Std.Spa` entry.
+fn extract_app_fields(src: &str) -> Option<AppFields> {
+    let (mut init, mut update, mut view, mut subscriptions) = (None, None, None, None);
+    let (mut routes, mut not_found) = (None, None);
+    for line in src.lines() {
+        let t = line.trim();
+        if let Some(v) = match_record_field(t, "init") {
+            init = Some(v);
+        } else if let Some(v) = match_record_field(t, "update") {
+            update = Some(v);
+        } else if let Some(v) = match_record_field(t, "view") {
+            view = Some(v);
+        } else if let Some(v) = match_record_field(t, "subscriptions") {
+            subscriptions = Some(v);
+        } else if let Some(v) = t.strip_prefix("|> App.withRoutes ") {
+            routes = Some(v.trim().to_string());
+        } else if let Some(v) = t.strip_prefix("|> App.withNotFound ") {
+            not_found = Some(v.trim().to_string());
+        }
+    }
+    Some(AppFields {
+        init: init?,
+        update: update?,
+        view: view?,
+        subscriptions: subscriptions?,
+        routes,
+        not_found,
+    })
+}
+
+/// Remove a top-level binding (its signature + definition) named `name` from a
+/// fmt'd source. A binding runs from a column-0 `name …` line until the next
+/// column-0 non-blank line.
+fn remove_top_level_binding(src: &str, name: &str) -> String {
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in src.lines() {
+        let starts = line == name || line.starts_with(&format!("{name} "));
+        if starts {
+            skipping = true;
+            continue;
+        }
+        if skipping {
+            if line.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
+                continue;
+            }
+            skipping = false;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// The name bound to the `App.app …` value: the argument of `App.run <name>`,
+/// else the top-level binding whose body starts with `App.app`.
+fn app_binding_name(src: &str) -> Option<String> {
+    for line in src.lines() {
+        if let Some(rest) = line.trim().strip_prefix("App.run ") {
+            let n = rest.trim().trim_end_matches(')').trim();
+            if !n.is_empty() {
+                return Some(n.to_string());
+            }
+        }
+    }
+    // no-`main` form: find `<name> =` whose next non-blank line is `App.app`.
+    let lines: Vec<&str> = src.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(name) = line.strip_suffix(" =") {
+            if !name.is_empty() && !name.starts_with(char::is_whitespace) {
+                if let Some(next) = lines.get(i + 1) {
+                    if next.trim().starts_with("App.app") {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Synthesise a `Spa.app` entry source from a Std.App source: keep the user's
+/// module (types + `init`/`update`/`view`/`subscriptions`), drop the `app` +
+/// `main` bindings, and add a `Spa.app` `main` that references those functions
+/// DIRECTLY (so the unchanged auto-split can partition `update`). `view` is
+/// wrapped in `Ui.layout []`. `None` if the app isn't in the standard form.
+fn synthesize_spa_source(src: &str) -> Option<String> {
+    let fields = extract_app_fields(src)?;
+    let app_name = app_binding_name(src)?;
+    let mut out = remove_top_level_binding(src, &app_name);
+    out = remove_top_level_binding(&out, "main");
+    // Ensure the imports the synthesised main needs.
+    if !out.contains("import Std.Spa") {
+        out = ensure_import(&out, "import Std.Spa as Spa");
+    }
+    if !out.contains("import Sky.Core.List") {
+        out = ensure_import(&out, "import Sky.Core.List as List");
+    }
+    let routes_line = match &fields.routes {
+        Some(r) => format!(
+            "\n            |> Spa.withRoutes (List.map (\\( p_, pg_ ) -> Spa.route p_ pg_) ({r}))"
+        ),
+        None => String::new(),
+    };
+    let not_found_line = match &fields.not_found {
+        Some(n) => format!("\n            |> Spa.withNotFound ({n})"),
+        None => String::new(),
+    };
+    out.push_str(&format!(
+        "\n\n-- GENERATED by `sky build --target <spa>`: a Sky.Spa entry synthesised\n\
+         -- from the Std.App value, fed to the existing auto-split.\n\
+         spaView_ : {view_ty}\n\
+         spaView_ model_ =\n    \
+         Ui.layout [] ({view} model_)\n\n\n\
+         main : Task Error ()\n\
+         main =\n    \
+         Spa.app\n        \
+         (Spa.config\n            \
+         {{ init = {init}\n            \
+         , update = {update}\n            \
+         , view = spaView_\n            \
+         , subscriptions = {subscriptions}\n            \
+         }}{routes_line}{not_found_line}\n        \
+         )\n",
+        view = fields.view,
+        init = fields.init,
+        update = fields.update,
+        subscriptions = fields.subscriptions,
+        routes_line = routes_line,
+        not_found_line = not_found_line,
+        view_ty = "model -> any",
+    ));
+    Some(out)
+}
+
+/// Insert `import_line` after the last existing `import …` line.
+fn ensure_import(src: &str, import_line: &str) -> String {
+    let mut out = String::new();
+    let mut last_import = 0usize;
+    let lines: Vec<&str> = src.lines().collect();
+    for (i, l) in lines.iter().enumerate() {
+        if l.starts_with("import ") {
+            last_import = i;
+        }
+    }
+    for (i, l) in lines.iter().enumerate() {
+        out.push_str(l);
+        out.push('\n');
+        if i == last_import {
+            out.push_str(import_line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Build a **dispatched `Std.App` entry** for `tgt`: stage a derived tree under
 /// `.skyapp/<target>/`, write a derived entry `main = App.run<Backend>
 /// <UserModule>.app`, and build THAT with this compiler. Because the derived
@@ -1074,25 +1256,82 @@ fn build_std_app(
 
     let (runner, kind) = std_app_runner(tgt);
 
-    if kind == StdAppBuild::Spa {
-        eprintln!(
-            "sky build --target {}: client (wasm) targets use a `Std.Spa` entry, not `Std.App`.\n  \
-             Client delivery auto-splits your effects to a backend, which needs the\n  \
-             `update` visible to the splitter — a `Std.Spa` entry (`import Std.Spa`,\n  \
-             `main = Spa.app …`) provides that. Build it the same way:\n  \
-             sky build --target {} src/Main.sky\n  \
-             Std.App covers the non-split targets: web · terminal:tui · terminal:cli · desktop.",
-            tgt.canonical(),
-            tgt.canonical()
-        );
-        return ExitCode::FAILURE;
-    }
-
     // Stage `.skyapp/<target>/` = a copy of the user's src + the derived entry.
     let target_dir_name = tgt.canonical().replace(':', "-");
     let out_root = project_dir
         .join(out_override.unwrap_or(".skyapp"))
         .join(&target_dir_name);
+
+    // CLIENT (wasm) targets: synthesise a `Spa.app` entry from the `App.app`
+    // value — `init`/`update`/`view`/`subscriptions` referenced DIRECTLY so the
+    // EXISTING, UNCHANGED auto-split can partition `update` — then split + build.
+    if kind == StdAppBuild::Spa {
+        let entry_src = std::fs::read_to_string(entry_file).unwrap_or_default();
+        let synthesized = match synthesize_spa_source(&entry_src) {
+            Some(s) => s,
+            None => {
+                eprintln!(
+                    "sky build --target {}: could not auto-derive a client build from your `App.app`.\n  \
+                     Run `sky fmt` (the derivation reads the standard `App.app {{ init = …, update = …,\n  \
+                     view = …, subscriptions = … }}` form), or use a `Std.Spa` entry directly.",
+                    tgt.canonical()
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        let src_to = match stage_std_app_derived(project_dir, &out_root) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        let entry_name = entry_file.file_name().unwrap_or_default();
+        let synth_entry = src_to.join(entry_name);
+        if let Err(e) = std::fs::write(&synth_entry, synthesized) {
+            eprintln!("sky build: write synthesised Spa entry: {e}");
+            return ExitCode::FAILURE;
+        }
+        let split_out = out_root.join(".split");
+        let fe_target = tgt.frontend_shell().unwrap_or("web");
+        return match spa_split_and_build(
+            repo_root,
+            &out_root,
+            entry_module_name(&synth_entry).as_deref(),
+            &split_out,
+            None,
+            fe_target,
+            embed,
+            true,
+        ) {
+            Ok(od) => {
+                let backend = od.join("backend").join("sky-out").join("app");
+                println!(
+                    "\nBuilt Std.App entry ({}) → {}  (wasm frontend + /_rpc).",
+                    tgt.canonical(),
+                    backend.display()
+                );
+                if !run {
+                    return ExitCode::SUCCESS;
+                }
+                println!("== running ({}) ==", tgt.canonical());
+                let mut proc = Command::new(&backend);
+                // The generated backend serves `../frontend/dist` RELATIVE to its
+                // own dir, so run it from there.
+                proc.current_dir(od.join("backend"));
+                if embed {
+                    proc.arg("--embed");
+                }
+                match proc.status() {
+                    Ok(s) if s.success() => ExitCode::SUCCESS,
+                    Ok(_) => ExitCode::FAILURE,
+                    Err(e) => {
+                        eprintln!("sky run: launch {}: {e}", backend.display());
+                        ExitCode::FAILURE
+                    }
+                }
+            }
+            Err(code) => code,
+        };
+    }
+
     let src_to = match stage_std_app_derived(project_dir, &out_root) {
         Ok(p) => p,
         Err(code) => return code,
