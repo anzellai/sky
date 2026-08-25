@@ -131,6 +131,53 @@ for values that must never be logged or leaked. Values you configure through the
 app use `withX` + `SKY_X` (env-wins); secrets use the handle. Two shapes, and
 which one applies is never ambiguous.
 
+### `Secret` is BACKEND-ONLY on split — the type guarantees it (DECIDED)
+
+This is the property that makes the `Secret` type earn its keep in the unified
+world: **a `Secret` can never reach the wasm client.** The Sky.Spa auto-split
+already partitions an app into a client (wasm) frontend and a backend, excluding
+*server-tainted* values (`File.`, `Db.`, `System.`) from the frontend. `Secret`
+(and `Secret.fromEnv`, which reads the environment) is **server-tainted by
+construction** — so:
+
+- Any code path that touches a `Secret` is partitioned to the **backend**; its
+  result reaches the client only through a typed RPC boundary (never the secret
+  itself).
+- Using a `Secret` in a **client-side** path — most importantly `view`, which
+  runs in the browser — is a **split-time error**, exactly as a `Db.query` in
+  `view` is today. You cannot compile a client that carries a secret.
+
+So the same `Secret` type that stops a secret from being logged (§ above) *also*
+stops it from being shipped to the browser — one type, both guarantees. A user
+never has to reason about "will this leak into the client"; the split refuses to
+build one that would.
+
+### Loading values — `.env` / `.env.<profile>` (DECIDED)
+
+Declaring every value in code is the wrong tax for an app with a long list of
+vars/secrets. Sky loads **dotenv** files at startup so the *values* live in a
+file, and code only references the ones it uses:
+
+- Load order (later wins, and a real process env var always wins over any file):
+  `.env` → `.env.<ENV>` (e.g. `.env.production`, keyed off the `ENV` gate) →
+  `.env.local` (git-ignored, personal overrides) → the actual process
+  environment. This keeps the precedence rule intact: **real env > `.env*` files
+  > `App.withX` > default** — the files are just a convenient *source* of env,
+  not a new layer above it.
+- `.env*` are **git-ignored by default** (a `sky init` `.gitignore` includes
+  them) and never staged into a build embed (the embed already drops dot-files),
+  so a secret in `.env` cannot be baked into a binary or committed.
+- The files populate the environment that `Secret.fromEnv "VAR"` and
+  `System.getenvOr "VAR"` read — so nothing about the two shapes changes; `.env`
+  just means you didn't have to `export` thirty vars by hand.
+- **Boot validation still applies**: a `Secret.fromEnv "VAR"` whose `VAR` is
+  absent from *both* the `.env*` files and the process env fails fast at startup,
+  naming it. So `.env` reduces typing without weakening the fail-fast guarantee.
+
+DX balance: a long list of vars/secrets goes in `.env` (values), a `.env.example`
+(committed, no values) documents the manifest, and code carries only the handles
+for the secrets it actually consumes — no upfront wall of declarations.
+
 ## 3. Target-awareness — config is a capability, like the builders
 
 The unified builder already treats `withRoutes`/`withWindow`/`withInput` as
@@ -220,6 +267,13 @@ a `Std.App` user. In this model:
   NOT have a `withX`.
 - **`sky.toml` runtime sections are retired** into `withX` + env; `sky.toml` ends
   as project metadata only (phased, per the consolidation roadmap).
+- **`Secret` is backend-only on split** — server-tainted by construction, so it
+  is partitioned to the backend and a `Secret` in a client path (`view`) is a
+  split-time error. One type stops both logging AND shipping-to-browser.
+- **`.env` / `.env.<profile>` are loaded at startup** (dotenv), git-ignored,
+  never embedded. They are a *source* of env, not a new precedence layer: real
+  env > `.env*` > `withX` > default. Boot validation still fires on a missing
+  declared secret. A committed `.env.example` documents the manifest.
 - **Log prefix goes neutral** (`[sky.live]`/`[sky.console]` → `[sky]`), driven by
   `App.withLog`/`SKY_LOG`; the test/`verify.sh` coupling to `Sky.Live listening`
   is updated in the same commit.
