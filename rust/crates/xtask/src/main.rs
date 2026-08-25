@@ -165,7 +165,19 @@ fn is_generated(path: &Path) -> bool {
     path.components().any(|c| {
         matches!(
             c.as_os_str().to_str(),
-            Some("sky-out") | Some(".skycache") | Some(".skydeps")
+            // Must match the coverage-ledger scanner's skip-set — a directory one
+            // scanner enters and the other skips makes the roundtrip count differ
+            // between a tree that has run the examples (so `.split/`, `sky-out-rust/`,
+            // `sky-ffi/` exist — `.split/` alone holds ~24 spa-split `.sky` files)
+            // and CI's fresh checkout. That drift showed up as roundtrip 203 local
+            // vs 187 on CI.
+            Some("sky-out")
+                | Some("sky-out-rust")
+                | Some(".skycache")
+                | Some(".skydeps")
+                | Some(".split")
+                | Some("sky-ffi")
+                | Some("node_modules")
         )
     })
 }

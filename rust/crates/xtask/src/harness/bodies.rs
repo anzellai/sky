@@ -34,7 +34,10 @@ use std::process::Command;
 /// **178 since 2026-08-22**: `examples/60-spa-todos` (the Sky.Spa example) added
 /// its client/server `Main.sky` + `shared/Shared.sky` + the two symlinked
 /// `Shared.sky` (+5); all reprint byte-exact with zero ERROR nodes.
-pub const ROUNDTRIP_EXPECTED: u64 = 178;
+/// **187 since 2026-08-24**: the v0.22.0 Sky.Spa release added examples
+/// `61-spa-kanban`, `62-spa-notes`, `63-spa-chat` and `64-spa-native` (+9 `.sky`
+/// files across their `src/`); all still reprint byte-exact with zero ERROR nodes.
+pub const ROUNDTRIP_EXPECTED: u64 = 187;
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -613,7 +616,10 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// reject-corpus files + 58 `examples/` directories = 126.
 /// **127 since 2026-08-22**: `examples/60-spa-todos` (the Sky.Spa example) added
 /// one `examples/` directory → 59 dirs + 68 reject = 127; verdicts identical.
-pub const SHARED_WORLD_EXPECTED: u64 = 127;
+/// **131 since 2026-08-24**: the v0.22.0 Sky.Spa release added examples
+/// `61-spa-kanban`, `62-spa-notes`, `63-spa-chat`, `64-spa-native` → 63 dirs +
+/// 68 reject = 131; verdicts still identical (shared + one full-rebuild fallback).
+pub const SHARED_WORLD_EXPECTED: u64 = 131;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -2976,7 +2982,13 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// shaped (see the DARK_MODULE_CEILING note in `corpus/stdlib.rs`) and is
 /// covered instead by the Sky.Spa examples (`examples/60-spa-todos` …
 /// `64-spa-native`, built to wasm) and the kernel-surface gate.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 155;
+///
+/// 155 -> 159: the rest of the v0.22.0 Sky.Spa surface landed — the `Std.Native`
+/// and `Std.Bundle` stdlib modules and the `spa-partition` / `spa-split` CLI
+/// verbs — adding four surfaces (`surfaces_total` 151 -> 155), so
+/// `surfaces.len() + 4` is now 159. The ratchet still holds (138 covered
+/// >= Asserted); the new surfaces are example/kernel-covered as above.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 159;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -3062,7 +3074,11 @@ pub fn config_matrix(ctx: &GateCtx) -> GateOutcome {
 /// is precisely the event this gate exists to force through the migration
 /// table. `reject.rs` shipped `>= 13` against an actual 63; an exact count is
 /// what stops a shrinking set passing green.
-pub const CONFIG_MIGRATION_EXPECTED: u64 = 48;
+/// **51 since 2026-08-24**: the v0.22.0 Sky.Spa/Bundle config surface added
+/// three migration-covered entries (+3), so the exact count moves 48 -> 51 —
+/// 9 suffixes + 6 literals covered, 9 builder labels matched, 18 legacy keys
+/// classified.
+pub const CONFIG_MIGRATION_EXPECTED: u64 = 51;
 
 /// `xtask config-migration`, run in-process. In-process for the same reason
 /// `config_surface` is: it recomputes the cross-language coverage from THIS

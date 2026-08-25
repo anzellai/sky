@@ -242,7 +242,7 @@
       "tier": "T1"
     },
     "config-migration": {
-      "expected_assertions": 48,
+      "expected_assertions": 51,
       "falsifier_mutation": "config-migration.drop-a-builder-label",
       "falsifier_proven": true,
       "summary": "the legacy→withX migration table covers every Sky.Config env target and every legacy key it names is one the compiler accepts",
@@ -377,7 +377,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 155,
+      "expected_assertions": 159,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -449,7 +449,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 178,
+      "expected_assertions": 187,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
@@ -460,7 +460,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 127,
+      "expected_assertions": 131,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
