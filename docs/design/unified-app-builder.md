@@ -346,6 +346,28 @@ runtime differences are mechanical:
    `render` is the same tree to ANSI). `Std.Html` stays the escape hatch for raw
    markup, not a second app model.
 
+## Namespace — the builder is `Std.App`, not `Sky.App`
+
+The `Sky.*` / `Std.*` split is load-bearing and the new module must land on the
+right side of it:
+
+- **`Sky.*` = the language kernel + runtime/platform primitives** — `Sky.Core.*`
+  (prelude, `Task`, `List`, the `Http` client…), `Sky.Http.*` (the server,
+  middleware, WebSocket), `Sky.Config`, `Sky.Test`. These are imported with the
+  `Sky.` prefix in real code.
+- **`Std.*` = the batteries standard library built on the kernel** — the five
+  app-shape frameworks (`Std.Live` / `Std.Spa` / `Std.Tui` / `Std.Cli` /
+  `Std.Webview`), `Std.Ui`, `Std.Db`, `Std.Auth`, `Std.Codec`, `Std.Native`, …
+- The unified builder **wraps the five `Std.*` app frameworks**, so it is
+  **`Std.App`** (`import Std.App as App`) — consistent with its siblings, *not*
+  `Sky.App`. `Sky.*` stays reserved for the kernel.
+- **Prose caveat:** "Sky.Live / Sky.Spa / Sky.Tui / Sky.Cli / Sky.Webview" are
+  *framework concept* names (as in AGENTS.md's app-shape matrix); the importable
+  *module* is `Std.Live` / `Std.Spa` / … There is no `Sky/Live.sky`. When writing
+  CODE or naming an import, use `Std.X`; the `Sky.X` spelling is prose only. The
+  one genuine `Sky.*` app surface is `Sky.Http.Server` (`import Sky.Http.Server as
+  Server`) — a kernel-level HTTP primitive, correctly under `Sky.`.
+
 ## 8. Migration — strictly non-breaking
 
 1. Introduce `Std.App` as the unified front door; it *is* the runtime, parameterised
