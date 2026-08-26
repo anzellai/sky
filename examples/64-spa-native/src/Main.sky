@@ -13,7 +13,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error exposing (Error)
 import Sky.Core.String as String
 import Sky.Core.Math as Math
-import Std.Spa as Spa
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
@@ -482,11 +482,17 @@ subscriptions _ =
 
 
 main : Task Error ()
+
+
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
 main =
-    Spa.app
-        (Spa.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            })
+    App.run appDef
