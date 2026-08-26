@@ -4409,12 +4409,71 @@ fn cmd_init(args: &[String]) -> ExitCode {
          # [\"go.dependencies\"]         # `sky add <pkg>` records these\n\
          # \"github.com/google/uuid\" = \"latest\"\n"
     );
-    let main_sky = format!(
-        "module Main exposing (main)\n\n\
-         import Sky.Core.Prelude exposing (..)\n\
-         import Std.Log exposing (println)\n\n\n\
-         main =\n    println \"Hello from {name}!\"\n"
-    );
+    // A minimal, runnable Std.App web app — the recommended unified way (one
+    // `App.app` runs on every backend via `--target`). A raw string with a
+    // `{name}` placeholder + `.replace` avoids escaping the Sky record braces.
+    let main_sky = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { count : Int }
+
+
+type Msg
+    = Increment
+    | Decrement
+
+
+type Page
+    = Home
+    | NotFound
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column []
+        [ Ui.text "Hello from {name}!"
+        , Ui.text ("Count: " ++ String.fromInt model.count)
+        , Ui.row []
+            [ Ui.el [ Ui.onClick Decrement ] (Ui.text "[ - ]")
+            , Ui.el [ Ui.onClick Increment ] (Ui.text "[ + ]")
+            ]
+        ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound NotFound
+
+
+main =
+    App.run app
+"#
+    .replace("{name}", &name);
     // `.skydata/` holds the local PostgreSQL cluster `sky db start` supervises —
     // a whole data directory, WAL included. Committing it would put a binary
     // database (and its `postmaster.pid`) into git.
