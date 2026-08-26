@@ -2677,6 +2677,25 @@ fn baseline_surface_strengths(base: &Value) -> BTreeMap<String, u8> {
 /// `None` means there is no checked-in ledger at all — the bootstrap run. See
 /// [`ratchet`] for why that one case is treated differently from every later
 /// one.
+/// The per-shape app front-door surfaces that `Std.App` deprecates and composes
+/// (`stdlib.Std.Live` / `Tui` / `Cli` / `Webview` / `Spa`). Their `cover_new` is
+/// ALLOWED to fall as in-repo consumers migrate onto `Std.App`: holding a module
+/// we steer users away from to a NON-decreasing coverage ratchet is
+/// self-contradictory — the deprecation IS the decision to cover it less
+/// directly. Mirrors `project::doc::is_deprecated_front_door`, keyed on the
+/// ledger surface id. (`Std.Live.Console` / `Std.Live.Head` are sub-modules, not
+/// the front door, and stay ratcheted.)
+fn is_deprecated_front_door_surface(id: &str) -> bool {
+    matches!(
+        id,
+        "stdlib.Std.Live"
+            | "stdlib.Std.Tui"
+            | "stdlib.Std.Cli"
+            | "stdlib.Std.Webview"
+            | "stdlib.Std.Spa"
+    )
+}
+
 fn baseline_weaker(base: Option<&Value>) -> Option<BTreeSet<String>> {
     let base = base?;
     Some(
@@ -2818,7 +2837,7 @@ fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) ->
     for s in &led.surfaces {
         let now = s.new_max() as u8;
         if let Some(was) = before.get(&s.id) {
-            if now < *was {
+            if now < *was && !is_deprecated_front_door_surface(&s.id) {
                 dropped.push(format!(
                     "  {} : cover_new {} -> {}",
                     s.id,
@@ -2829,7 +2848,7 @@ fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) ->
         }
     }
     for (id, was) in &before {
-        if !led.surfaces.iter().any(|s| &s.id == id) {
+        if !led.surfaces.iter().any(|s| &s.id == id) && !is_deprecated_front_door_surface(id) {
             dropped.push(format!(
                 "  {id} : cover_new {} -> (surface disappeared)",
                 Strength::from_u8(*was).label()
@@ -4091,6 +4110,51 @@ mod tests {
         assert_eq!(fails.len(), 1);
         assert!(fails[0].contains("COVER_NEW REGRESSED"), "{}", fails[0]);
         assert!(fails[0].contains("Falsified -> Asserted"), "{}", fails[0]);
+    }
+
+    #[test]
+    fn a_deprecated_front_door_cover_new_drop_is_exempt() {
+        let none = BTreeSet::new();
+        // A deprecated front door whose cover_new fell Falsified -> Runs — as its
+        // last direct consumer migrated to Std.App — does NOT fire the ratchet.
+        let dep = Ledger {
+            surfaces: vec![Surface {
+                id: "stdlib.Std.Webview".into(),
+                category: "stdlib".into(),
+                description: "d".into(),
+                today: vec![Ev::new("old", Strength::Runs)],
+                new: vec![Ev::new("new", Strength::Runs)],
+            }],
+            doc: json!({ "summary": { "surfaces_covered": 1 } }),
+        };
+        let dep_base = json!({
+            "summary": { "surfaces_covered": 1 },
+            "surfaces": [ { "id": "stdlib.Std.Webview", "cover_new": { "strength": 4 } } ]
+        });
+        assert!(
+            ratchet(&dep, Some(&dep_base), &none).is_empty(),
+            "a deprecated front door's cover_new fall must be exempt"
+        );
+        // The exemption is narrow: a NON-deprecated stdlib surface with the same
+        // drop still ratchets.
+        let other = Ledger {
+            surfaces: vec![Surface {
+                id: "stdlib.Std.Ui".into(),
+                category: "stdlib".into(),
+                description: "d".into(),
+                today: vec![Ev::new("old", Strength::Runs)],
+                new: vec![Ev::new("new", Strength::Runs)],
+            }],
+            doc: json!({ "summary": { "surfaces_covered": 1 } }),
+        };
+        let other_base = json!({
+            "summary": { "surfaces_covered": 1 },
+            "surfaces": [ { "id": "stdlib.Std.Ui", "cover_new": { "strength": 4 } } ]
+        });
+        assert!(
+            !ratchet(&other, Some(&other_base), &none).is_empty(),
+            "a non-deprecated surface's cover_new fall must still fail"
+        );
     }
 
     /// A surface that vanishes is a drop to nothing, not a free pass.

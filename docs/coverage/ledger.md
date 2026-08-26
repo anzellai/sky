@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 156 |
+| surfaces | 157 |
 | covered by the new corpus (>= Asserted) | 140 |
 | verdict `stronger` | 135 |
-| verdict `equal` | 21 |
+| verdict `equal` | 22 |
 | verdict `weaker` | 0 |
 | corpus units | 80 |
-| stdlib modules (denominator) | 92 |
-| stdlib entries (denominator) | 1900 |
+| stdlib modules (denominator) | 93 |
+| stdlib entries (denominator) | 1911 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 6 | 6.5% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 842 | 44.3% |
-| symbols unreferenced under the generous rule | 760 | 40.0% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 851 | 44.5% |
+| symbols unreferenced under the generous rule | 766 | 40.1% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -58,10 +58,10 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 20 |
-| stdlib modules owned by exactly one unit of any role | 14 |
+| stdlib modules owned by exactly one `examples/*` | 21 |
+| stdlib modules owned by exactly one unit of any role | 16 |
 | sky.toml sections owned by exactly one unit | 2 |
-| **lost if `examples/` retired** — modules | **3** |
+| **lost if `examples/` retired** — modules | **4** |
 | **lost if `examples/` retired** — config sections | **1** |
 
 ### Modules lost if `examples/` is retired
@@ -71,6 +71,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | `Sky.Core.Process` | `examples/17-skymon` |
 | `Std.Bundle` | `examples/64-app-native` |
 | `Std.Cli` | `examples/20-cli-counter` |
+| `Std.Webview` | `examples/31-webview-stopwatch-ui` |
 
 ### Config sections lost if `examples/` is retired
 
@@ -160,7 +161,7 @@ None.
 | `stdlib.Sky.Core.Encoding` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Error` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.File` | stdlib | None | Falsified | stronger |
-| `stdlib.Sky.Core.Http` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Sky.Core.Http` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Http.Stream` | stdlib | Runs | Runs | equal |
 | `stdlib.Sky.Core.Io` | stdlib | None | None | equal |
 | `stdlib.Sky.Core.Json.Decode` | stdlib | Asserted | Falsified | stronger |
@@ -176,6 +177,7 @@ None.
 | `stdlib.Sky.Core.Random` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Regex` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Result` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Sky.Core.Secret` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Set` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.String` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.System` | stdlib | Asserted | Falsified | stronger |
@@ -222,7 +224,7 @@ None.
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Native` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Spa` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |
@@ -242,7 +244,7 @@ None.
 | `stdlib.Std.Ui.Responsive` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Transform` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Transition` | stdlib | Runs | Falsified | stronger |
-| `stdlib.Std.Webview` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Webview` | stdlib | Runs | Runs | equal |
 | `ui.cross-backend` | ui | Asserted | Falsified | stronger |
 | `ui.tui` | ui | Runs | Falsified | stronger |
 | `ui.webview` | ui | Builds | Falsified | stronger |
