@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 )
 
 // Secret is the Go representation of a Sky `Sky.Core.Secret.Secret` — an opaque,
@@ -56,6 +57,26 @@ func Secret_fromString(s any) any { return Secret{v: AsString(s)} }
 
 // Secret_reveal returns the raw string — the one escape hatch (Secret.reveal).
 func Secret_reveal(v any) any { return secretReveal(v) }
+
+var (
+	// scheme://user:PASSWORD@host — keep the user, mask the password.
+	dsnURLPasswordRe = regexp.MustCompile(`(://[^:@/\s]+):[^@/\s]+@`)
+	// libpq/pgx keyword form: password=PASSWORD (quoted or bare, case-insensitive).
+	dsnKeywordPasswordRe = regexp.MustCompile(`(?i)(password\s*=\s*)('[^']*'|"[^"]*"|[^\s]+)`)
+)
+
+// redactSecretsInDSN masks the password in any Postgres/libpq DSN that appears
+// in a string — a connection error, a log line — in both the URL form
+// (postgres://user:pass@host/db) and the keyword form (password=pass). The
+// host / user / database stay visible for debugging; only the password is
+// replaced with [REDACTED]. A DSN's password is the one credential a `sql.Open`
+// / `Ping` error can echo, and pgx does not always redact it, so any DB-connect
+// error routed to a log or an `Err` runs through here first.
+func redactSecretsInDSN(s string) string {
+	s = dsnURLPasswordRe.ReplaceAllString(s, "$1:[REDACTED]@")
+	s = dsnKeywordPasswordRe.ReplaceAllString(s, "${1}[REDACTED]")
+	return s
+}
 
 // secretReveal extracts the raw value from a Secret. It also accepts a bare
 // string so that during the migration a caller still passing a plain String

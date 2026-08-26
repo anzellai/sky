@@ -814,10 +814,13 @@ func (s *pgSupervisor) probeReady() error {
 	}
 	db, err := sql.Open("pgx", s.dsn)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s", redactSecretsInDSN(err.Error()))
 	}
 	defer db.Close()
-	return db.Ping()
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("%s", redactSecretsInDSN(err.Error()))
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

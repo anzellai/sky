@@ -281,7 +281,7 @@ func Db_connect(path any) any {
 		}
 		conn, err := sql.Open(driver, dsn)
 		if err != nil {
-			return Err[any, any](ErrIo("db connect: " + err.Error()))
+			return Err[any, any](ErrIo("db connect: " + redactSecretsInDSN(err.Error())))
 		}
 		if err := conn.Ping(); err != nil {
 			// Do NOT freeze the memoised `db` handle to Err on a transient
@@ -294,8 +294,8 @@ func Db_connect(path any) any {
 			// ACCEPT connections). Instead: keep the live pool and warn — the
 			// next query after the database comes up connects transparently, and
 			// /_sky/readyz reports the outage window via the probe below.
-			rtWarn(fmt.Sprintf("db.connect: %s not reachable at boot (%v); connection pool "+
-				"is live and will (re)connect on demand once the database is available", driver, err))
+			rtWarn(redactSecretsInDSN(fmt.Sprintf("db.connect: %s not reachable at boot (%v); connection pool "+
+				"is live and will (re)connect on demand once the database is available", driver, err)))
 		}
 		// v0.17.10 — SQLite concurrency defaults. Without these, any
 		// Sky.Live app whose update() loop runs multiple Cmd.perform
