@@ -393,3 +393,97 @@ fn kernel_value_slots_behave_at_runtime() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ===========================================================================
+// Defect 3 — a bare CONSTRUCTOR wrapped by a builtin container ctor
+// (`Just`/`Ok`/`Err`) whose element type is a concrete function type.
+//
+// `ctor_call` lowered the wrapped argument at `GoTy::Any` (only sealed USER
+// ADTs got their field gotys threaded), while `ctor_emit` monomorphised the Go
+// type parameter to the concrete element — so a bare constructor, whose shape
+// is driven by the `Any` expected type, was emitted as the fully-erased
+// `func(_p0 any) any` into a `rt.Just[func(string) Main_Msg]` slot, which `go
+// build` rejects. The fix threads the concrete element type from the container
+// for Just/Ok/Err so the existing write-side eta adapter fires (as it already
+// does for list literals + cons).
+// ===========================================================================
+
+const CTOR_IN_CONTAINER: &str = "module Main exposing (main)\n\n\
+     import Sky.Core.Prelude exposing (..)\n\
+     import Std.Log exposing (println)\n\n\
+     type Msg =\n    Goto String\n\n\
+     inJust : Maybe (String -> Msg)\n\
+     inJust =\n    Just Goto\n\n\
+     inOk : Result Int (String -> Msg)\n\
+     inOk =\n    Ok Goto\n\n\
+     apply : Maybe (String -> Msg) -> String\n\
+     apply m =\n\
+     \x20   case m of\n\
+     \x20       Just f ->\n            (case f \"home\" of\n                Goto s ->\n                    s)\n\n\
+     \x20       Nothing ->\n            \"none\"\n\n\
+     applyR : Result Int (String -> Msg) -> String\n\
+     applyR r =\n\
+     \x20   case r of\n\
+     \x20       Ok f ->\n            (case f \"road\" of\n                Goto s ->\n                    s)\n\n\
+     \x20       Err _ ->\n            \"err\"\n\n\
+     main =\n    println (apply inJust ++ \"/\" ++ applyR inOk)\n";
+
+/// Emission leg — the constructor must NOT be emitted as the fully-erased
+/// `func(_p0 any) any` into the monomorphised container slot; it must be
+/// bridged by an eta adapter carrying the concrete param type.
+#[test]
+fn ctor_into_container_is_not_emitted_fully_erased() {
+    let dir = project("ctor-container-emit", CTOR_IN_CONTAINER);
+    let log = build(&dir);
+    let src = emitted_go(&dir, &log);
+    assert!(
+        !src.contains("rt.Just[func(string) Main_Msg](func(_p0 any) any"),
+        "a bare constructor into `Just` at a concrete function element type must be \
+         bridged by an eta adapter (`func(_e string) Main_Msg {{…}}`), not emitted as \
+         the erased `func(_p0 any) any` — which `go build` rejects. Emitted:\n{src}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Build leg — the contract: it type-checks, so it must `go build`.
+#[test]
+fn ctor_into_container_go_builds() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("ctor-container-build", CTOR_IN_CONTAINER);
+    let log = build(&dir);
+    assert!(
+        !log.contains("go build failed"),
+        "`sky check` ≡ `sky build`: `Just Goto` / `Ok Goto` at a concrete function \
+         element type type-checks, so the emitted Go must compile. Build log:\n{log}"
+    );
+    assert!(
+        dir.join("sky-out").join("app").is_file(),
+        "build must produce sky-out/app. Log:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Behaviour leg — it compiles AND runs correctly (a coercion that builds then
+/// mis-dispatches is the same defect class).
+#[test]
+fn ctor_into_container_runs_correctly() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("ctor-container-run", CTOR_IN_CONTAINER);
+    let log = build(&dir);
+    let bin = dir.join("sky-out").join("app");
+    assert!(bin.is_file(), "project must build (log:\n{log})");
+    let out = Command::new(&bin).current_dir(&dir).output().expect("run app");
+    let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
+    combined.push_str(&String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "app must run cleanly. Output:\n{combined}");
+    assert!(
+        combined.contains("home/road"),
+        "the bridged constructors must dispatch: apply inJust = \"home\", applyR inOk = \
+         \"road\". Output:\n{combined}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

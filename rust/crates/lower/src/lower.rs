@@ -3880,7 +3880,9 @@ impl<'a> Ctx<'a> {
         // field Go-type as the expected slot so the value lands typed and the
         // `coerce_if_needed` in `ctor_emit` elides — zero construction coerces in
         // the common (already-typed) case. Bag / builtin ctors keep `any`.
-        let field_tys = self.sealed_ctor_field_gotys(&cname, pin.as_deref());
+        let field_tys = self
+            .sealed_ctor_field_gotys(&cname, pin.as_deref())
+            .or_else(|| self.builtin_container_fn_field_gotys(&cname, actual));
         let lowered_args: Vec<GoExpr> = match &field_tys {
             Some(ftys) => args
                 .iter()
@@ -3907,6 +3909,29 @@ impl<'a> Ctx<'a> {
         self.ctor_field_gotys
             .get(&(go_type, cname.to_string()))
             .cloned()
+    }
+
+    /// The wrapped element Go-type for a builtin container ctor (`Just`/`Ok`/
+    /// `Err`), extracted from the concrete container `actual` — but ONLY when
+    /// that element is a FUNCTION type. That is the one shape a bare constructor
+    /// mis-lowers: `Just Goto` at a `Maybe (String -> Msg)` slot lowers the ctor
+    /// at `any` (below, the `None` arm) → `func(any) any`, while `ctor_emit`
+    /// monomorphises the Go type param to `rt.Just[func(string) Msg]`, which
+    /// `go build` rejects. Threading the concrete function element here lands the
+    /// arg at a concrete slot so the existing write-side eta adapter
+    /// (`coerce_if_needed`/`func_shape_eta`) fires — exactly as a list literal /
+    /// cons already does. Restricted to function elements on purpose: for
+    /// scalar / record / ADT payloads the arg stays `any`-lowered (byte-identical
+    /// to today), so `payload_from_arg`'s record-narrowing reconciliation in
+    /// `ctor_emit` is untouched (see codegen_subset_record_in_ok).
+    fn builtin_container_fn_field_gotys(&self, cname: &str, actual: &GoTy) -> Option<Vec<GoTy>> {
+        let elem = match (cname, actual) {
+            ("Just", GoTy::Named(n, ts)) if n == "rt.SkyMaybe" && ts.len() == 1 => &ts[0],
+            ("Ok", GoTy::Named(n, ts)) if n == "rt.SkyResult" && ts.len() == 2 => &ts[1],
+            ("Err", GoTy::Named(n, ts)) if n == "rt.SkyResult" && ts.len() == 2 => &ts[0],
+            _ => return None,
+        };
+        matches!(elem, GoTy::Func(_, _)).then(|| vec![elem.clone()])
     }
 
     /// Eta-expand a partially-applied constructor into a Go closure that applies

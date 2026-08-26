@@ -122,16 +122,21 @@ Why the function knobs stay builders — two reasons, either sufficient:
 1. **Type principle:** they thread `model`/`msg`/`page`, so a builder on the
    `App`-value (which already carries those params) is the natural home; a plain
    record field would pin the type vars early and muddy inference.
-2. **A hard codegen floor (verified 2026-08-26):** a function value placed into a
-   *generic container* — `Maybe (a -> b)` via `Just`, `List (a -> b)` via a
-   literal — **type-checks but fails `go build`** today (the fn is emitted erased
-   as `func(any) any`, but `rt.Just[func(string) T]` wants the concrete
-   signature). So a `head : Maybe (model -> List Html)` record field would be a
-   `sky check`-passes / `go build`-fails trap for users. The builder path stashes
-   the fn into the opaque config exactly as `Live.withOnKey` already does — proven
-   to work. (Bug logged: `codegen_maybe_of_function_erasure`; a no-deferral
-   regression-test-first fix is in the implementation plan. Even once fixed, the
-   ordering/validation/overlap knobs below still want builder semantics.)
+2. **A codegen edge (root-caused 2026-08-26):** a *bare constructor* wrapped by a
+   builtin container ctor — `Just Goto` / `Ok Goto` where the slot is
+   `Maybe (String -> Msg)` and `Msg` is concrete — **type-checks but fails
+   `go build`** today (the ctor is emitted erased as `func(any) any`, but
+   `rt.Just[func(string) Msg]` wants the concrete signature). It is *narrow*
+   (`Just up` with a named fn, lambdas, and list literals all work) and *latent*
+   (no shipped example hits it). The builder design **sidesteps it entirely**:
+   builders store the handler as a *bound polymorphic parameter* (`Just fn` with
+   `fn : String -> msg`, `msg` erased to `any`), which is exactly why
+   `Std/App.sky`'s `onInput` and `Std/Live.sky`'s `revokedCheck` fields compile
+   today. So this is not a blocker for the config design — but it IS a real
+   soundness hole for user code like `onInput = Just SetName`, so it's fixed on a
+   no-deferral track (regression-test-first; `codegen_maybe_of_function_erasure`).
+   Even were it fixed, the ordering/validation/overlap knobs below still want
+   builder semantics.
 
 **Builders that stay builders for semantics, not just type** (survey §"HARD"):
 `withRoutes`/`route`/`routeInt`/`api` (declaration ORDER is significant — literals
