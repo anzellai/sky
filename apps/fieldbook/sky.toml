@@ -5,9 +5,9 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
-[live]
-# NOTE: no `port` key here on purpose. The bind port is resolved at
-# runtime from the PORT environment variable (see Main.sky `livePort`)
-# and applied with `Live.withPort`. A literal in this file would be a
-# hardcoded bind port, which the Layer-2 corpus forbids.
-store = "memory"
+# NOTE: the Sky.Live session store lives in `src/Main.sky` now, on the
+# `Std.App` value: `|> App.withConfig (App.WebConfig { App.webDefaults |
+# port = livePort, store = Just "memory" })`. There is deliberately NO port
+# literal — `livePort` resolves the bind port from the PORT environment
+# variable at runtime (a literal here would be a hardcoded bind port, which
+# the Layer-2 corpus forbids).

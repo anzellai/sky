@@ -5,17 +5,12 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
-[live]
-# Default only. `SKY_LIVE_PORT` in the environment WINS — see
-# runtime-go/rt/live.go:3665 (`skyGetenv("LIVE_PORT")` is read AFTER the
-# config field) and runtime-go/rt/dotenv.go:29 (`SetPortDefault` →
-# `SetSkyDefault("LIVE_PORT", …)`, which is set-if-unset). There is no port
-# literal anywhere in src/ — the bind port is environment-driven.
-port = 8090
-# Session store. `SKY_LIVE_STORE` / `SKY_LIVE_STORE_PATH` override, so the
-# Postgres arm can run a shared session store from the same source.
-store = "memory"
-ttl = "30m"
+# NOTE: the Sky.Live port / session store / ttl live in `src/Main.sky` now,
+# on the `Std.App` value:
+#     |> App.withConfig (App.WebConfig { App.webDefaults | port = 8090, store = Just "memory", ttl = Just "30m" })
+# `SKY_LIVE_PORT` / `SKY_LIVE_STORE` in the environment still WIN over the
+# `withConfig` defaults (operator env > withConfig > 8080). There is no port
+# literal in bind position anywhere in src/ — the value above is a default.
 
 [database]
 # NOTE (verified 2026-08-10): `driver` is DECORATIVE. It is parsed at

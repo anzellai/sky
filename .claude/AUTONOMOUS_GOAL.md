@@ -53,8 +53,13 @@ Where "parked 1 / 2 / 3" refer to the assistant's preceding status message:
   stdlib smoke like `00-standard-libs`) **stay** on direct `Task.run` — they are
   not TEA apps and do not fit `App.app`.
 - **Rename the SPA examples to `app-*`.**
-- **`apps/` (Layer 2 real-world) stays on the direct front doors** — preserves
-  direct regression coverage of `Live.app`/`Tui.app`/etc. and the only Postgres
-  coverage. Std.App composes those modules; they are not deleted.
+- **`apps/` (Layer 2 real-world) MIGRATE to `Std.App` too** — SUPERSEDED
+  2026-08-26 by the user's explicit "migrate everything (apps/ too)" decision
+  when the front doors were deprecated. The earlier plan kept `apps/` on the
+  direct front doors for coverage; now they use `App.app`, which composes the
+  same backends (Live/Tui/Webview) — so the Postgres + session/SSE + cross-backend
+  surfaces are still exercised, just through `Std.App`. Direct `Live.app`/`Tui.app`
+  API coverage remains in the `rust/crates/sky/tests/*_flow.rs` fixtures. The
+  front-door modules are deprecated, not deleted.
 - Re-bless `coerce-floor` + stdout goldens where emission legitimately changes;
   verify byte-equivalence where the Direct/synthesised path should preserve it.

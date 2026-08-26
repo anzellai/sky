@@ -25,11 +25,10 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
-import Sky.Core.Task as Task
 import Sky.Core.System as System
 import Sky.Core.Error exposing (Error)
 import Sky.Ffi as Ffi
-import Std.Tui as Tui
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui
@@ -380,13 +379,15 @@ helpLine =
 -- ═══════════════════════════════════════════════════════════════════
 -- Main
 -- ═══════════════════════════════════════════════════════════════════
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withOnKey onKey
+
+
 main =
-    Tui.app
-        (Tui.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            }
-            |> Tui.withOnKey onKey)
-        |> Task.run
+    App.run appDef

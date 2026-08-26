@@ -5,13 +5,12 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
-[live]
-# Default only. `SKY_LIVE_PORT` in the environment WINS (set-if-unset via
-# `SetPortDefault`), so the harness chooses the port and there is no port
-# literal in bind position anywhere in src/.
-port = 8095
-store = "memory"
-ttl = "30m"
+# NOTE: the Sky.Live port / session store / ttl live in `src/Main.sky` now,
+# on the `Std.App` value:
+#     |> App.withConfig (App.WebConfig { App.webDefaults | port = 8095, store = Just "memory", ttl = Just "30m" })
+# `SKY_LIVE_PORT` in the environment still WINS over the `withConfig` default,
+# so the harness chooses the port; there is no port literal in bind position
+# anywhere in src/.
 
 [database]
 # `driver` is DECORATIVE — the real selection happens at connect time from the

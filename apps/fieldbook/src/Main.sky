@@ -2,13 +2,19 @@ module Main exposing (main)
 
 -- Fieldbook — member C of the Layer-2 CI corpus.
 --
--- ONE `Std.Ui` view (`View.viewElement`) rendered by four backends,
--- plus a structural dump mode that lets CI diff the Live lowering
--- against the Tui lowering.
+-- ONE `Std.Ui` view (`View.viewElement`) rendered by every backend through
+-- ONE `Std.App` value (`appDef`), plus a structural dump mode that lets CI
+-- diff the Live lowering against the Tui lowering.
 --
---   ./sky-out/app                     → Sky.Live  (PORT env, default 8000)
---   ./sky-out/app --tui               → Sky.Tui   (needs a real TTY)
---   ./sky-out/app --webview           → Sky.Webview (macOS + cgo)
+-- The backend is now a BUILD-time choice (`--target`), not a runtime argv
+-- flag — `Std.App` composes Sky.Live / Sky.Tui / Sky.Webview from `appDef`:
+--
+--   sky build --target web           src/Main.sky → Sky.Live (PORT env, dflt 8000)
+--   sky build --target terminal:tui  src/Main.sky → Sky.Tui  (needs a real TTY)
+--   sky build --target desktop       src/Main.sky → Sky.Live in a native window
+--
+-- The two one-shot argv utilities stay runtime modes on the built binary:
+--
 --   ./sky-out/app --export [path]     → Sky.Cli one-shot CSV export
 --   ./sky-out/app --dump-view live    → canonical structure, Live path
 --   ./sky-out/app --dump-view tui     → canonical structure, Tui path
@@ -30,18 +36,16 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.System as System
 import Sky.Core.Task as Task
+import Std.App as App
 import Std.Cmd as Cmd
-import Std.Live as Live
 import Std.Log as Log
 import Std.Sub as Sub
 import Std.Sub exposing (Sub)
-import Std.Tui as Tui
-import Std.Webview as Webview
 import Head
 import Model exposing (..)
 import Structure
 import Update exposing (update)
-import View exposing (view, viewElement)
+import View exposing (viewElement)
 
 
 -- ─── TEA wiring shared by every backend ─────────────────────────────
@@ -211,36 +215,51 @@ exitWith code =
     System.exit code
 
 
+-- ─── The one app ────────────────────────────────────────────────────
+-- ONE `Std.App` value feeds every backend; the build picks the backend
+-- from `--target` (web → Sky.Live, terminal:tui → Sky.Tui, desktop →
+-- Sky.Live-in-a-window). The single `Std.Ui` view (`viewElement`) renders
+-- on all of them, so there is no per-backend branch here anymore.
+--
+--   sky build --target web           src/Main.sky   → Sky.Live
+--   sky build --target terminal:tui  src/Main.sky   → Sky.Tui
+--   sky build --target desktop       src/Main.sky   → Sky.Live in a window
+--
+-- `withConfig (WebConfig …)` supplies the Live bind port + session store
+-- (the port still comes from the PORT env via `livePort`); `withWindow`
+-- carries the desktop window title/size; `withOnKey` the terminal keys.
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = viewElement
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" HomePage ]
+        |> App.withNotFound HomePage
+        |> App.withHead Head.headFor
+        |> App.withOnKey onKey
+        |> App.withWindow "Fieldbook" 1100 800
+        |> App.withConfig
+               (App.WebConfig
+                   { App.webDefaults | port = livePort, store = Just "memory" })
+
+
 -- ─── main ───────────────────────────────────────────────────────────
+-- The TEA backends run through `App.run appDef` (the build rewrites the
+-- bare `App.run` to the target's runner). The two one-shot argv utilities
+-- — `--export` (Sky.Cli CSV) and `--dump-view` (the CI structural diff) —
+-- stay as runtime modes on the same binary; every branch is a
+-- `Task Error ()`, which the runtime forces.
+main : Task Error ()
 main =
     case List.head argsList of
 
-        Just "--tui" ->
-            Tui.app
-                (Tui.config
-                    { init = init
-                    , update = update
-                    , view = viewElement
-                    , subscriptions = subscriptions
-                    }
-                    |> Tui.withOnKey onKey)
-                |> Task.run
-
-        Just "--webview" ->
-            Webview.app
-                { init = init
-                , update = update
-                , view = view
-                , subscriptions = subscriptions
-                , window = { title = "Fieldbook", size = ( 1100, 800 ) }
-                }
-                |> Task.run
-
         Just "--export" ->
-            Task.run (runExport ())
+            runExport ()
 
         Just "--dump-view" ->
-            Task.run (runDump ())
+            runDump ()
 
         _ ->
             let
@@ -253,16 +272,4 @@ main =
                         ("fieldbook: listening on "
                             ++ String.fromInt (bindPort ()))
             in
-                Live.app
-                    (Live.config
-                        { init = init
-                        , update = update
-                        , view = view
-                        , subscriptions = subscriptions
-                        , routes = [ Live.route "/" HomePage ]
-                        , notFound = HomePage
-                        }
-                        |> Live.withPort livePort
-                        |> Live.withStore "memory"
-                        |> Live.withHead Head.headFor)
-                    |> Task.run
+                App.run appDef
