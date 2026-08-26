@@ -9,7 +9,7 @@ import Sky.Core.Result as Result
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live as Live exposing (app, route)
+import Std.App as App
 import Std.Html.Events exposing (onClick, onInput)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -51,23 +51,26 @@ init _req =
         )
 
 
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.route "/" DashboardPage
+               , App.route "/status" StatusPage
+               , App.route "/settings" SettingsPage
+               , App.route "/alerts" AlertsPage
+               , App.route "/auth" AuthPage
+               ]
+        |> App.withNotFound NotFoundPage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8000 })
+
+
 main =
-    app
-        (Live.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes =
-                [ route "/" DashboardPage
-                , route "/status" StatusPage
-                , route "/settings" SettingsPage
-                , route "/alerts" AlertsPage
-                , route "/auth" AuthPage
-                ]
-            , notFound = NotFoundPage
-            }
-            |> Live.withPort 8000)
+    App.run appDef
 
 
 view : Model -> Html Msg
@@ -587,8 +590,8 @@ rowToAlert row =
     , enabled = row.enabled == 1
     }
 
+
 config : Config.Config
 config =
-    Config.default
-        |> Config.withDatabase (Sqlite "skymon.db")
+    Config.default |> Config.withDatabase (Sqlite "skymon.db")
         |> Config.withSessions (SessionsSqlite "skymon.db")

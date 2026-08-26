@@ -13,7 +13,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Std.Db as Db
 import Std.Codec as Codec
 import Std.Db.Store as Store exposing (Store)
-import Std.Live as Live exposing (app, route, config)
+import Std.App as App
 import Std.Html exposing (..)
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
@@ -441,14 +441,17 @@ view model =
             ]
 
 
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" DashboardPage ]
+        |> App.withNotFound DashboardPage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8000 })
+
+
 main =
-    app
-        (config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes = [ route "/" DashboardPage ]
-            , notFound = DashboardPage
-            }
-            |> Live.withPort 8000)
+    App.run appDef

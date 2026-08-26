@@ -23,7 +23,7 @@ import Sky.Core.Task as Task
 import Std.Cmd as Cmd
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
-import Std.Live exposing (app, route, config)
+import Std.App as App
 import Std.Log as Log
 import Std.Sub as Sub
 
@@ -111,13 +111,17 @@ subscriptions _model =
     Sub.every 3000 Tick
 
 
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" HomePage ]
+        |> App.withNotFound HomePage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8039 })
+
+
 main =
-    app
-        (config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes = [ route "/" HomePage ]
-            , notFound = HomePage
-            })
+    App.run appDef

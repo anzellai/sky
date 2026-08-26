@@ -7,7 +7,7 @@ import Std.Css exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Html.Events exposing (onClick)
-import Std.Live exposing (app, route, config)
+import Std.App as App
 import Std.Log as Log
 import Std.Sub as Sub
 
@@ -326,19 +326,22 @@ subscriptions _ =
     Sub.none
 
 
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.route "/" HostPage
+               , App.route "/billing" BillingPage
+               , App.route "/jobs" JobsPage
+               , App.route "/auth" AuthPage
+               ]
+        |> App.withNotFound HostPage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8034 })
+
+
 main =
-    app
-        (config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes =
-                [ route "/" HostPage
-                , route "/billing" BillingPage
-                , route "/jobs" JobsPage
-                , route "/auth" AuthPage
-                ]
-            , notFound = HostPage
-            }
-            |> Std.Live.withPort 8034)
+    App.run appDef

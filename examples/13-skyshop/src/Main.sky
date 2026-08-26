@@ -9,7 +9,7 @@ import Sky.Core.Dict as Dict
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live as Live exposing (app, route, withGuard)
+import Std.App as App
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -1194,37 +1194,41 @@ requireAdmin model =
 -- ══════════════════════════════════════════════════════
 -- APP
 -- ══════════════════════════════════════════════════════
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.route "/" HomePage
+               , App.route "/products" ProductsPage
+               , App.route "/product/:id" (ProductPage "")
+               , App.route "/cart" CartPage
+               , App.route "/orders" OrdersPage
+               , App.route "/order/:id" (OrderPage "")
+               , App.route "/order/:id/success" (OrderSuccessPage "")
+               , App.route "/auth/signin" AuthSignInPage
+               , App.route "/admin/products" AdminProductsPage
+               , App.route "/admin/products/new" AdminNewProductPage
+               , App.route "/admin/products/:id" (AdminEditProductPage "")
+               , App.route "/admin/orders" AdminOrdersPage
+               , App.route "/admin/orders/:id" (AdminOrderPage "")
+               , App.route "/privacy-policy" PrivacyPolicyPage
+               , App.route "/terms" TermsPage
+               ]
+        |> App.withNotFound NotFoundPage
+        |> App.withConfig
+               (App.WebConfig
+                   { App.webDefaults | port = 8000, static = Just "static" })
+        |> App.withGuard guard
+
+
 main =
-    app
-        (Live.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes =
-                [ route "/" HomePage
-                , route "/products" ProductsPage
-                , route "/product/:id" (ProductPage "")
-                , route "/cart" CartPage
-                , route "/orders" OrdersPage
-                , route "/order/:id" (OrderPage "")
-                , route "/order/:id/success" (OrderSuccessPage "")
-                , route "/auth/signin" AuthSignInPage
-                , route "/admin/products" AdminProductsPage
-                , route "/admin/products/new" AdminNewProductPage
-                , route "/admin/products/:id" (AdminEditProductPage "")
-                , route "/admin/orders" AdminOrdersPage
-                , route "/admin/orders/:id" (AdminOrderPage "")
-                , route "/privacy-policy" PrivacyPolicyPage
-                , route "/terms" TermsPage
-                ]
-            , notFound = NotFoundPage
-            }
-            |> Live.withPort 8000
-            |> Live.withStatic "static"
-            |> withGuard guard)
+    App.run appDef
+
 
 config : Config.Config
 config =
-    Config.default
-        |> Config.withSessions (SessionsSqlite "skyshop_sessions.db")
+    Config.default |> Config.withSessions (SessionsSqlite "skyshop_sessions.db")

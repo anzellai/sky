@@ -8,7 +8,7 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live as Live exposing (app, route)
+import Std.App as App
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -68,24 +68,27 @@ init _req =
 -- ======================================================
 -- APP (must be early -- parser drops last functions)
 -- ======================================================
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.route "/" BoardPage
+               , App.route "/submit" SubmitPage
+               , App.route "/auth/signin" SignInPage
+               , App.route "/auth/signup" SignUpPage
+               , App.route "/about" AboutPage
+               , App.route "/roadmap" RoadmapPage
+               ]
+        |> App.withNotFound NotFoundPage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8000 })
+
+
 main =
-    app
-        (Live.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes =
-                [ route "/" BoardPage
-                , route "/submit" SubmitPage
-                , route "/auth/signin" SignInPage
-                , route "/auth/signup" SignUpPage
-                , route "/about" AboutPage
-                , route "/roadmap" RoadmapPage
-                ]
-            , notFound = NotFoundPage
-            }
-            |> Live.withPort 8000)
+    App.run appDef
 
 
 -- ======================================================
@@ -513,8 +516,8 @@ handleSubmitIdea model =
         Nothing ->
             ( { model | page = SignInPage }, Cmd.none )
 
+
 config : Config.Config
 config =
-    Config.default
-        |> Config.withDatabase (Sqlite "skyvote.db")
+    Config.default |> Config.withDatabase (Sqlite "skyvote.db")
         |> Config.withSessions (SessionsSqlite "skyvote.db")

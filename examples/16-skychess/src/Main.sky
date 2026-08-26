@@ -9,7 +9,7 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
-import Std.Live as Live exposing (app, route)
+import Std.App as App
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -65,17 +65,20 @@ init _req =
         )
 
 
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" HomePage, App.route "/game" GamePage ]
+        |> App.withNotFound NotFoundPage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8000 })
+
+
 main =
-    app
-        (Live.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes = [ route "/" HomePage, route "/game" GamePage ]
-            , notFound = NotFoundPage
-            }
-            |> Live.withPort 8000)
+    App.run appDef
 
 
 view : Model -> Html Msg

@@ -29,8 +29,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.System as System
 import Sky.Core.Task as Task
-import Std.Tui as Tui
-import Std.Live as Live
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui
@@ -187,11 +186,6 @@ view model =
    block). Tui doesn't need this — it paints directly into cells.
    Same `viewBody` feeds both.
 -}
-viewLive : Model -> any
-viewLive model =
-    Ui.layout [] (viewBody model)
-
-
 headerSection : Element Msg
 headerSection =
     Ui.column
@@ -508,7 +502,6 @@ footerSection =
         [ Font.color (Ui.rgb 100 100 120), Ui.paddingXY 0 4 ]
         (Ui.text "End of kitchen sink — verify each section renders as expected.")
 
-
 -- ═══════════════════════════════════════════════════════════════════
 -- Main
 -- ═══════════════════════════════════════════════════════════════════
@@ -527,34 +520,21 @@ footerSection =
    meaningfully render a Std.Ui scene. Use Sky.Cli for line-driven
    programs (REPLs, scripts), not for UI showcases.
 -}
-argsList : List String
-argsList =
-    System.args () |> Task.run |> Result.withDefault []
-
 type Page
     = KitchenSink
 
 
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" KitchenSink ]
+        |> App.withNotFound KitchenSink
+        |> App.withOnKey onKey
+
+
 main =
-    case List.head argsList of
-
-        Just "live" ->
-            Live.app
-                (Live.config
-                    { init = init
-                    , update = update
-                    , view = viewLive
-                    , subscriptions = subscriptions
-                    , routes = [ Live.route "/" KitchenSink ]
-                    , notFound = KitchenSink
-                    })
-
-        _ ->
-            Tui.app
-                (Tui.config
-                    { init = init
-                    , update = update
-                    , view = view
-                    , subscriptions = subscriptions
-                    }
-                    |> Tui.withOnKey onKey)
+    App.run appDef

@@ -31,7 +31,7 @@ import Sky.Core.System as System
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Html.Events exposing (onSubmit)
-import Std.Live as Live exposing (app, route)
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Db as Db exposing (SqlValue(..))
@@ -453,17 +453,23 @@ messageRow me msg =
 
 
 -- ─── App wiring ──────────────────────────────────────────────────
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.route "/" LobbyPage
+               , App.routeParam "/chat/:room" RoomPage
+               ]
+        |> App.withNotFound LobbyPage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8000 })
+
+
 main =
-    app
-        (Live.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes = [ route "/" LobbyPage, route "/chat/:room" RoomPage ]
-            , notFound = LobbyPage
-            }
-            |> Live.withPort 8000)
+    App.run appDef
 
 
 -- ─── Styles ──────────────────────────────────────────────────────
@@ -500,8 +506,8 @@ pageStyles =
     .footer { margin-top: 2rem; color: #9ca3af; font-size: .8rem; text-align: center; }
     """
 
+
 config : Config.Config
 config =
-    Config.default
-        |> Config.withDatabase (Sqlite "chat.db")
+    Config.default |> Config.withDatabase (Sqlite "chat.db")
         |> Config.withSessions Memory

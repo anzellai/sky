@@ -5,7 +5,7 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Css exposing (..)
-import Std.Live exposing (app, route, config)
+import Std.App as App
 import Std.Html.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -74,17 +74,20 @@ update msg model =
 -- ======================================================
 -- APP
 -- ======================================================
+appDef =
+    App.web
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withRoutes [ App.route "/" MainPage ]
+        |> App.withNotFound MainPage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8000 })
+
+
 main =
-    app
-        (config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = \_ -> Sub.none
-            , routes = [ route "/" MainPage ]
-            , notFound = MainPage
-            }
-            |> Std.Live.withPort 8000)
+    App.run appDef
 
 
 -- ======================================================

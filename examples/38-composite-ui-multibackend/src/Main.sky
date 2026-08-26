@@ -22,15 +22,13 @@ import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Std.Cmd as Cmd
-import Std.Live as Live
+import Std.App as App
 import Std.Sub as Sub
 import Std.Sub exposing (Sub)
-import Std.Tui as Tui
-import Std.Webview as Webview
 import Head
 import State exposing (..)
 import Update exposing (update)
-import View exposing (view, viewElement)
+import View exposing (viewElement)
 import Sky.Config as Config exposing (Sessions(..))
 
 
@@ -79,50 +77,28 @@ currentMillis _ =
     Result.withDefault 0 (Task.run (Time.unixMillis ()))
 
 
--- The dispatch: read argv once and pick the right backend.
-argsList : List String
-argsList =
-    Result.withDefault [] (Task.run (System.args ()))
-
-
 -- ─── main ───────────────────────────────────────────────────────────
+-- ONE app value; the build's `--target` picks the backend (default web).
+--   sky build              → web (Sky.Live)
+--   sky build --target terminal:tui   → Sky.Tui
+--   sky build --target desktop         → Sky.Live in a native window
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = viewElement
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" HomePage ]
+        |> App.withNotFound HomePage
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8006 })
+        |> App.withHead Head.headFor
+        |> App.withOnKey onKey
+        |> App.withWindow "Sky Habits" 960 720
+
+
 main =
-    case List.head argsList of
-
-        Just "--tui" ->
-            Tui.app
-                (Tui.config
-                    { init = init
-                    , update = update
-                    , view = viewElement
-                    , subscriptions = subscriptions
-                    }
-                    |> Tui.withOnKey onKey)
-                |> Task.run
-
-        Just "--webview" ->
-            Webview.app
-                { init = init
-                , update = update
-                , view = view
-                , subscriptions = subscriptions
-                , window = { title = "Sky Habits", size = ( 960, 720 ) }
-                }
-                |> Task.run
-
-        _ ->
-            Live.app
-                (Live.config
-                    { init = init
-                    , update = update
-                    , view = view
-                    , subscriptions = subscriptions
-                    , routes = [ Live.route "/" HomePage ]
-                    , notFound = HomePage
-                    }
-                    |> Live.withPort 8006
-                    |> Live.withHead Head.headFor)
-                |> Task.run
+    App.run appDef
 
 -- Single page constructor — the Live branch uses Page (an ADT
 -- with one variant) so Live.app's `routes` field stays well-typed.
