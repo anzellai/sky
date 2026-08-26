@@ -1234,7 +1234,7 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
     }
     let routes_line = match &fields.routes {
         Some(r) => format!(
-            "\n            |> Spa.withRoutes (List.map App.spaRoute ({r}))"
+            "\n            |> Spa.withRoutes (List.concatMap App.spaRoute ({r}))"
         ),
         None => String::new(),
     };

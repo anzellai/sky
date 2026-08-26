@@ -47,6 +47,7 @@ module Std.App exposing
     , web
     , route
     , routeParam
+    , api
     , spaRoute
     , withRoutes
     , withNotFound
@@ -145,11 +146,13 @@ type Config
     | TerminalConfig TerminalOpts
 
 -- | Web-target (Sky.Live) scalar config. `port` defaults to 8080 and `csrf` to
--- `True`; the `Maybe` fields are unset by default. Maps to `Live.withPort` /
--- `withStatic` / `withStaticUrl` / `withTtl` / `withIdleEvict` /
--- `withMaxBodyBytes` / `withInput` (`inputMode`).
+-- `True`; the `Maybe` fields are unset by default. `store` is the session store
+-- (`"memory"` / `"sqlite:path"` / `"redis:url"` / `"postgres"`). Maps to
+-- `Live.withPort` / `withStore` / `withStatic` / `withStaticUrl` / `withTtl` /
+-- `withIdleEvict` / `withMaxBodyBytes` / `withInput` (`inputMode`).
 type alias WebOpts =
     { port : Int
+    , store : Maybe String
     , static : Maybe String
     , staticUrl : Maybe String
     , ttl : Maybe String
@@ -165,6 +168,7 @@ type alias WebOpts =
 webDefaults : WebOpts
 webDefaults =
     { port = 8080
+    , store = Nothing
     , static = Nothing
     , staticUrl = Nothing
     , ttl = Nothing
@@ -232,6 +236,7 @@ mobileDefaults =
 type AppRoute page
     = RouteStatic String page
     | RouteParam String (String -> page)
+    | RouteApi String (Request -> Task Error Response)
 
 
 -- | A static route: `route "/about" AboutPage`.
@@ -245,6 +250,17 @@ route path page_ =
 routeParam : String -> (String -> page) -> AppRoute page
 routeParam path make =
     RouteParam path make
+
+
+-- | A raw HTTP endpoint alongside the TEA routes: `api "/webhook" handler`,
+-- where `handler : Request -> Task Error Response` (JSON/webhook endpoints that
+-- return a `Response` directly, not a `page`). Attach it in [`withRoutes`].
+-- SERVER-side, for the `web`/`desktop` (Live) targets. The terminal backends
+-- drop it; the client (Spa) targets cannot carry it at all — the handler is
+-- server-side, so keep raw endpoints in a `web`-target app.
+api : String -> (Request -> Task Error Response) -> AppRoute page
+api path handler =
+    RouteApi path handler
 
 -- | The app's view, held as one of two shapes so both a `Std.Ui` view and a
 -- `Std.Html` view can flow through the same `App`. [`app`] wraps a
@@ -565,19 +581,27 @@ liveRoute_ r =
         RouteParam path make ->
             Live.route path make
 
+        RouteApi path handler ->
+            Live.api path handler
+
 
 -- | Lower an [`App`] [`Route`] to a `Sky.Spa` route (same erasure as Live).
 -- Exposed because the `--target <spa>` build synthesises a `Sky.Spa` entry that
--- maps the app's routes through it.
-spaRoute : AppRoute page -> Spa.Route
+-- maps the app's routes through it. A raw [`api`] endpoint yields the empty list
+-- — the client (Spa) backend has no server endpoints, so those are dropped
+-- (`List.concatMap`) rather than routed.
+spaRoute : AppRoute page -> List Spa.Route
 spaRoute r =
     case r of
 
         RouteStatic path page_ ->
-            Spa.route path page_
+            [ Spa.route path page_ ]
 
         RouteParam path make ->
-            Spa.route path make
+            [ Spa.route path make ]
+
+        RouteApi _ _ ->
+            []
 
 
 -- Build a `Sky.Http.Server.Request` from the request-shaped seed record the
@@ -672,14 +696,22 @@ runLiveBoot_ (App a) =
                         , routes = List.map liveRoute_ a.routes
                         , notFound = fallback
                         }
+                withStore_ =
+                    case w.store of
+
+                        Just s ->
+                            Live.withStore s base
+
+                        Nothing ->
+                            base
                 withStatic_ =
                     case w.static of
 
                         Just s ->
-                            Live.withStatic s base
+                            Live.withStatic s withStore_
 
                         Nothing ->
-                            base
+                            withStore_
                 withStaticUrl_ =
                     case w.staticUrl of
 
@@ -793,7 +825,7 @@ runSpaBoot_ (App a) =
                                 v model
                 , subscriptions = a.subscriptions
                 }
-        routed = Spa.withRoutes (List.map spaRoute a.routes) base
+        routed = Spa.withRoutes (List.concatMap spaRoute a.routes) base
         withFallback =
             case a.notFound of
 

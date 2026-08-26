@@ -24,26 +24,52 @@ sky doc --serve           # browsable HTML API at http://localhost:8080
 Reach for `sky doc <Module>` whenever you need an exact signature. Do not
 memorise or inline signatures here — they drift; `sky doc` doesn't.
 
-## Choose the app shape first
+## `Std.App` is the app builder — the per-shape modules are deprecated
 
-| You want… | Use | Entry |
-|---|---|---|
-| Web app (forms, real-time, UI state) | **Sky.Live** | `Live.app (Live.config {…})` |
-| Client-rendered SPA / cross-platform client loop | **Sky.Spa** | `Spa.app (Spa.config {…})` |
-| HTTP/JSON API (no browser UI) | **Sky.Http.Server** | `Server.listen 8000 [...]` |
-| Terminal UI | **Sky.Tui** | `Tui.app (Tui.config {…})` |
-| Desktop app (macOS) | **Sky.Webview** | `Webview.app { … }` (closed record) |
-| One-shot CLI / cron | **Sky.Cli** | `main = Task.run cmd` |
-| One source across web/terminal/desktop | **Std.App** | `App.app { init, update, view, subscriptions }` + `--target` |
+Write ONE `App.app { init, update, view, subscriptions } |> App.withNotFound …`
+(the view is a single `Std.Ui.Element`), run by `main = App.run app`, and pick
+the shape at BUILD time with `sky build/run --target` (optional, defaults to
+`web`). You never import `Std.Live`/`Spa`/`Tui`/`Cli`/`Webview` — `Std.App`
+composes them for you, and they are **deprecated for direct use**.
 
-`Std.App` builds ONE `App.app { … } |> App.withNotFound …` (view is a single
-`Std.Ui.Element`) run by `main = App.run app`, for EVERY target — you never import
-`Std.Live`/`Spa`/`Tui`/`Cli`/`Webview`. `sky build/run --target` (optional,
-defaults to `web`): `web`/`tablet` = Sky.Live · `desktop` = Sky.Live in a window ·
-`terminal:tui|cli` = Sky.Tui/Cli · `web:app`/`desktop:mac|…`/`tablet:ipad|…`/
-`mobile:ios|android` = Sky.Spa (the build synthesises the Spa app from `App.app` —
-no separate Sky.Spa entry). `web` needs `App.withNotFound` (compile-enforced).
-`Std.Html` views → use `Sky.Live` directly. See `sky doc Std.App`.
+| `--target` | Backend it composes |
+|---|---|
+| `web` (default) · `tablet` | Sky.Live (server-driven HTML + SSE) |
+| `desktop` | Sky.Live in a native window |
+| `terminal:tui` · `terminal:cli` | Sky.Tui / Sky.Cli |
+| `web:app` · `desktop:mac\|…` · `tablet:ipad\|…` · `mobile:ios\|android` | Sky.Spa (the build synthesises the Spa app from `App.app` — no separate entry) |
+
+`web` requires `App.withNotFound` (compile-enforced). A `Std.Html` view (raw
+markup) → use `App.web` instead of `App.app`. The only non-`Std.App` entry you
+still reach for directly is **`Sky.Http.Server`** (`Server.listen 8000 […]`) for
+a headless HTTP/JSON API with no TEA UI, and `main = Task.run cmd` for a one-shot
+job. See `sky doc Std.App`.
+
+### Migrating a deprecated front door → `Std.App`
+
+Turn `main = Live.app (Live.config { … })` into a named `appDef` refined by
+`with…` builders, run by `App.run`, and drop the `Std.Live`/`Tui`/`Webview`/`Spa`
+import. The mapping (build with the matching `--target`):
+
+| Deprecated | `Std.App` |
+|---|---|
+| `Live.app (Live.config { init, update, view, subscriptions })` | `App.app { init, update, view, subscriptions }` (a `Std.Html` view → `App.web`) |
+| `Live.route path page` (in `config.routes`) | `App.route path page` inside `\|> App.withRoutes [ … ]` |
+| `Live.api path handler` | `App.api path handler` inside `\|> App.withRoutes [ … ]` |
+| `Live.withHead …` | `\|> App.withHead …` |
+| `Live.withOnNavigate …` / `Live.withGuard …` | `\|> App.withOnNavigate …` / `\|> App.withGuard …` |
+| `Live.withPort n` / `Live.withStore …` | `\|> App.withConfig (App.WebConfig { App.webDefaults \| port = n, … })` |
+| `Live.withHead`-only page not-found | `\|> App.withNotFound <page>` (required for `web`) |
+| `Tui.app (Tui.config { … })` · `Tui.withOnKey f` | `App.app { … } \|> App.withOnKey f` + `--target terminal:tui` |
+| `Webview.app { …, window }` | `App.web { … } \|> App.withWindow title w h \|> App.withNotFound …` + `--target desktop` |
+| `Spa.app (Spa.config { … })` | `App.app { … } \|> App.withNotFound …` + `--target web:app` |
+| `main = Live.app cfg` | `appDef = App.app { … } \|> …` then `main = App.run appDef` |
+
+Cross-cutting config (log / database / telemetry) that was a top-level
+`Sky.Config` `config` binding becomes `\|> App.withBase { App.baseDefaults \|
+database = Just (Config.Sqlite "app.db"), … }` (`import Sky.Config` for the
+constructors). `main = App.run appDef` uses a NAMED `appDef` — the inline and
+multiline forms work too.
 
 Before scaffolding more than a proof of concept, confirm with the user:
 **persistence** (SQLite default / Postgres for multi-instance / none), **auth**
