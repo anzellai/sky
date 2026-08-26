@@ -13,7 +13,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Live exposing (app, route, config)
+import Std.App as App
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
@@ -201,13 +201,16 @@ subscriptions _ =
     Sub.none
 
 
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8000, inputMode = Just "debounce" })
+
+
 main =
-    app
-        (config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes = []
-            , notFound = ()
-            })
+    App.run appDef
