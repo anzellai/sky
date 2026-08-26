@@ -25,13 +25,26 @@ on a call to `Auth.signToken`, `Auth.verifyToken`, `Auth.signSlidingToken`, or
 | `Std.Auth.verifyToken` | `String -> String -> Result Error a` | `Secret -> String -> Result Error a` |
 | `Std.Auth.signSlidingToken` | `String -> a -> {…} -> …` | `Secret -> a -> {…} -> …` |
 | `Sky.Core.Jwt.hs256` | `String -> Algorithm` | `Secret -> Algorithm` |
+| `Sky.Core.Jwt.rs256` (RSA sign) | `String -> Algorithm` | `Secret -> Algorithm` |
+| `Sky.Core.Jwt.rs256Verify` (RSA verify) | *(new)* | `String -> Algorithm` |
+| `Crypto.aesGcmEncrypt`/`Decrypt`, `chacha20*` | `String -> String -> …` | `Secret -> String -> …` (key) |
+| `Crypto.aesKeyFromPassword`/`chachaKeyFromPassword` | `String -> String -> String` | `Secret -> String -> Secret` |
+| `Std.Cli.readPassword` | `() -> Task Error String` | `() -> Task Error Secret` |
 
-`Jwt.rs256` is unchanged (it takes a PEM key, which is public on the verify
-side; its private/public split is tracked separately). `Crypto.hmacSha256` is
-also unchanged — it is a general HMAC primitive whose "key" is not always a
-secret (domain-separation labels are a legitimate use), so the `Secret` opacity
-lives at the semantic layer (`Auth`, `Jwt.Algorithm`), and `Jwt.sign` reveals
-at the one crypto boundary where the bytes must enter the HMAC.
+**RSA (`RS256`) splits by direction.** Signing uses the PEM *private* key (a
+secret) → `Jwt.rs256 : Secret -> Algorithm`, passed to `encode`. Verifying uses
+the PEM *public* key (not secret) → `Jwt.rs256Verify : String -> Algorithm`,
+passed to `decode`. Handing `encode` a public key, or `decode` a private key, is
+a clear `Err` — the type no longer forces a public key to masquerade as a
+`Secret`.
+
+`Crypto.hmacSha256` is unchanged — it is a general HMAC primitive whose "key" is
+not always a secret (domain-separation labels are a legitimate use), so the
+`Secret` opacity lives at the semantic layer (`Auth`, `Jwt.Algorithm`), and
+`Jwt.sign` reveals at the one crypto boundary where the bytes must enter the
+HMAC. A DB **DSN** is likewise NOT a `Secret` (it is a compound value, mostly
+env-sourced and rarely in your code); the runtime instead redacts a DSN
+password wherever a connection error could echo it into a log.
 
 ## The fix
 

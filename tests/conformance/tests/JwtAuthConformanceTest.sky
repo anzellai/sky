@@ -243,6 +243,21 @@ tests =
     , Test.test "Jwt: non-base64 segments -> Err (not panic)"
         (\_ -> Test.err (Jwt.decode jwtAlg 1000 "!!!.@@@.###"))
 
+      -- RS256 key-DIRECTION guards: the private signing key is a Secret
+      -- (rs256), the public verifying key a String (rs256Verify). Handing
+      -- either to the wrong operation is a clear Err, never a silent bypass.
+    , Test.test "Jwt: encode with a public verifying key -> Err [DIRECTION]"
+        (\_ ->
+            Test.err
+                (Jwt.encode (Jwt.rs256Verify "-----PUBLIC-----") validClaims))
+    , Test.test "Jwt: decode with a private signing key -> Err [DIRECTION]"
+        (\_ ->
+            Test.err
+                (Jwt.decode
+                    (Jwt.rs256 (Secret.unsafeFromString "-----PRIVATE-----"))
+                    1000
+                    "a.b.c"))
+
       -- ══════════════ Std.Auth — token signing/verifying ══════════════
 
       -- Happy path: a signed token verifies under the same secret.

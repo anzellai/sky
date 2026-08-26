@@ -489,11 +489,17 @@ These apply to any Sky code you write or any compiler change you make:
   display-only lenient helpers.
 - **No raw `.(T)` assertions on any-typed thunks** — route via `rt.Coerce[T]`.
 - **Record field enumeration sorts by `_fieldIndex`** before order-dependent emission.
-- **Secrets are typed** — `Auth.signToken`/`verifyToken`/`signSlidingToken` and
-  `Jwt.hs256` take the opaque `Sky.Core.Secret.Secret`, never `String`/`any`. A
-  `Secret` redacts itself in every print/log/JSON path; wrap at the boundary
-  (`Secret.fromEnv "VAR"` / `Secret.fromString runtimeStr`) and unwrap only via
-  the greppable `Secret.reveal`. See `docs/security/secret-migration.md`.
+- **Secrets are typed** — every secret-bearing argument is the opaque
+  `Sky.Core.Secret.Secret`, never `String`/`any`: `Auth.signToken`/`verifyToken`/
+  `signSlidingToken`, `Jwt.hs256` and `Jwt.rs256` (the RSA *signing* key; the
+  public verify key is `Jwt.rs256Verify : String`), the `Crypto` AEAD keys
+  (`aesGcmEncrypt`/`Decrypt`, `chacha20*`, `aesKeyFromPassword` — which also
+  *returns* a `Secret`), and `Http.withBearer`/`withApiKey`. `Cli.readPassword`
+  *returns* a `Secret`. A `Secret` redacts itself in every print/log/JSON path;
+  wrap at the boundary (`Secret.fromEnv "VAR"` / `Secret.fromString runtimeStr`)
+  and unwrap only via the greppable `Secret.reveal`. `Crypto.hmacSha256` stays a
+  general `String`-keyed primitive (its key is not always a secret). See
+  `docs/security/secret-migration.md`.
 - **`sky check` ≡ `sky build`** — both invoke `go build` on the emitted Go.
 - **Root-cause fixes only.** Never suppress a type error or warning; a defensive
   cover-up that hides a contract violation IS a violation.

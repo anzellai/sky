@@ -17,6 +17,7 @@ module Sky.Core.Jwt exposing
     ( Algorithm
     , hs256
     , rs256
+    , rs256Verify
     , Claims
     , claims
     , withClaim
@@ -42,12 +43,20 @@ import Sky.Core.Json.Decode as JsonDec
 import Sky.Core.Error as Error exposing (Error)
 
 -- ─── Algorithm ─────────────────────────────────────────────────────
--- A signing/verifying algorithm with its key. For `RS256`, pass the
--- PEM *private* key to `encode` and the PEM *public* key to `decode`
--- (HMAC's `HS256` uses the same secret for both).
+-- A signing/verifying algorithm with its key. The key's SECRECY differs by
+-- direction, and the constructors make that honest:
+--
+--   - `HS256` is symmetric — the ONE shared HMAC secret signs AND verifies, so
+--     it holds a `Secret`.
+--   - `RS256` is asymmetric. Signing uses the PEM *private* key, which is a
+--     secret → `rs256 : Secret -> Algorithm` (pass to `encode`). Verifying uses
+--     the PEM *public* key, which is NOT secret → `rs256Verify : String ->
+--     Algorithm` (pass to `decode`). Handing `encode` a public key, or `decode`
+--     a private key, is a clear error — not a mislabelled `Secret`.
 type Algorithm
     = HS256 Secret
-    | RS256 String
+    | RS256 Secret
+    | RS256Pub String
 
 
 hs256 : Secret -> Algorithm
@@ -55,9 +64,19 @@ hs256 secret =
     HS256 secret
 
 
-rs256 : String -> Algorithm
-rs256 key =
-    RS256 key
+-- | `rs256 privateKeyPem` — the RSA SIGNING algorithm. The PEM private key is a
+-- secret; pass it to `encode`. To verify, build a separate algorithm from the
+-- public key with `rs256Verify`.
+rs256 : Secret -> Algorithm
+rs256 privateKey =
+    RS256 privateKey
+
+
+-- | `rs256Verify publicKeyPem` — the RSA VERIFYING algorithm. The PEM public
+-- key is not a secret; pass it to `decode`.
+rs256Verify : String -> Algorithm
+rs256Verify publicKey =
+    RS256Pub publicKey
 
 
 algName : Algorithm -> String
@@ -68,6 +87,9 @@ algName alg =
             "HS256"
 
         RS256 _ ->
+            "RS256"
+
+        RS256Pub _ ->
             "RS256"
 
 -- ─── Claims ────────────────────────────────────────────────────────
@@ -170,9 +192,17 @@ sign alg input =
                 (Encoding.hexDecode
                     (Crypto.hmacSha256 (Secret.reveal secret) input))
 
-        RS256 pemKey ->
-            -- rsaSha256Sign hands back standard base64.
-            Result.map standardToUrl (Crypto.rsaSha256Sign pemKey input)
+        RS256 privateKey ->
+            -- rsaSha256Sign hands back standard base64. The private key's bytes
+            -- cross into the signer via the one sanctioned `Secret.reveal`.
+            Result.map
+                standardToUrl
+                (Crypto.rsaSha256Sign (Secret.reveal privateKey) input)
+
+        RS256Pub _ ->
+            Err
+                (Error.unexpected
+                    "Jwt.encode: cannot sign with a public verifying key — build the algorithm with `Jwt.rs256 <privateKeyPem>`, not `Jwt.rs256Verify`")
 
 
 -- ─── decode + verify ───────────────────────────────────────────────
@@ -180,20 +210,28 @@ sign alg input =
 -- (unix seconds), returning the verified payload JSON.
 decode : Algorithm -> Int -> String -> Result Error String
 decode alg now token =
-    case String.split "." token of
+    case alg of
 
-        [h, p, s] ->
-            if not (verify alg (h ++ "." ++ p) s) then
-                Err
-                    (Error.unexpected "Jwt.decode: signature verification failed")
-
-            else
-                Result.andThen (validateTime now) (b64uDecode p)
-
-        _ ->
+        RS256 _ ->
             Err
                 (Error.unexpected
-                    "Jwt.decode: malformed token — expected three dot-separated segments")
+                    "Jwt.decode: cannot verify with a private signing key — build the algorithm with `Jwt.rs256Verify <publicKeyPem>` for decode")
+
+        _ ->
+            case String.split "." token of
+
+                [h, p, s] ->
+                    if not (verify alg (h ++ "." ++ p) s) then
+                        Err
+                            (Error.unexpected "Jwt.decode: signature verification failed")
+
+                    else
+                        Result.andThen (validateTime now) (b64uDecode p)
+
+                _ ->
+                    Err
+                        (Error.unexpected
+                            "Jwt.decode: malformed token — expected three dot-separated segments")
 
 
 verify : Algorithm -> String -> String -> Bool
@@ -209,8 +247,14 @@ verify alg input sig =
                 Err _ ->
                     False
 
-        RS256 pemKey ->
-            Crypto.rsaSha256Verify pemKey input (urlToStandard sig)
+        RS256Pub publicKey ->
+            Crypto.rsaSha256Verify publicKey input (urlToStandard sig)
+
+        RS256 _ ->
+            -- A private SIGNING key was handed to the verify path; `decode`
+            -- rejects this up front with a clear error, so this is unreachable
+            -- from `decode`. Fail closed regardless.
+            False
 
 
 -- Reject an expired or not-yet-valid token; absent claims are fine.
