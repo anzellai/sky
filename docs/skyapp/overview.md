@@ -101,6 +101,40 @@ requires a fallback page — add `|> App.withNotFound <page>`"*. A terminal-only
 (`NoFallback`) is never forced to add one; it just can't target `web` until it
 does. Everything else (`routes`, `window`, `input`) stays optional.
 
+## Configuration — `withBase` (shared) + `withConfig` (per-target)
+
+Two layers, both plain data you record-update from an exposed default:
+
+- **`App.withBase (BaseConfig)`** — cross-target settings applied at boot: the
+  structured log (`logFormat`/`logLevel`), an optional `database`, and optional
+  `telemetry`. The fields are the typed `Sky.Config` values, so `import Sky.Config`
+  for the constructors:
+
+  ```elm
+  import Sky.Config as Config
+
+  app { init, update, view, subscriptions }
+      |> App.withBase
+          { App.baseDefaults
+              | database = Just (Config.Sqlite "app.db")
+              , logLevel = Config.Debug
+          }
+      |> App.withNotFound NotFound
+  ```
+
+  It applies through the same `Sky.Config`/`ApplyConfig` path a top-level
+  `config` binding uses, so an operator's `SKY_*` env var still wins. One caveat:
+  a `database` set here is read lazily on first connect, so it works for a normal
+  DSN but NOT for `--embed` (the embedded cluster is decided at process start,
+  before the app runs) — with `--embed` the cluster provides the database, so
+  leave `database` unset.
+
+- **`App.withConfig (Config)`** — per-target settings whose variant name matches
+  the `--target` family (`WebConfig`, `DesktopConfig`, `TerminalConfig`, …), each
+  wrapping an `*Opts` record you record-update from `webDefaults` / `desktopDefaults`
+  / … (port, window size, canvas, static dir, …). Targets ignore a config that
+  isn't theirs.
+
 ## Reading the request — `App.withRequest`
 
 A web app often needs the incoming HTTP request at session start: an auth cookie

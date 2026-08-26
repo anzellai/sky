@@ -353,6 +353,21 @@ func clearConfigApplied(name string) {
 // value captured at package init (`logThreshold`, `logJSON`, …) picks up the
 // applied value — the same mechanism `SetSkyDefault` uses, and the reason a
 // value written here in `main` is still seen by a read cached in `init`.
+// Config_apply applies a Sky.Config value NOW and returns a Task producing Unit.
+// Backs `Sky.Config.apply`: the `Std.App` runners call it to apply an App's
+// `BaseConfig` at boot (folded into a Config via the `Config_*` builders). It is
+// ApplyConfig verbatim, so an operator's `SKY_*` env var still wins
+// (`applyConfigValue` defers to it) and the env-prefix hooks refresh cached
+// readers. NOTE: fields read at main-top before the runner Task runs — chiefly
+// an `--embed` database decision — are already settled by then; a top-level
+// `config` binding remains the way to set those.
+func Config_apply(cfg any) any {
+	return func() any {
+		ApplyConfig(cfg)
+		return Ok[any, any](struct{}{})
+	}
+}
+
 func ApplyConfig(cfg any) {
 	m, ok := cfg.(map[string]any)
 	if !ok || m == nil {

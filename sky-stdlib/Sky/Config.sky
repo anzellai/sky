@@ -43,6 +43,7 @@
 module Sky.Config exposing
     ( Config
     , default
+    , apply
     , LogFormat(..)
     , LogLevel(..)
     , withLog
@@ -152,6 +153,17 @@ type Capacity
 default : Config
 default =
     Ffi.kernel "Config_default"
+
+
+-- | `apply cfg` — apply a `Config`'s settings now, returning a `Task`. This is
+-- what the compiler runs for a top-level `config` binding
+-- (`rt.ApplyConfig(Main_config())`); `Std.App`'s runners call it explicitly to
+-- apply an `App.withBase` at boot. An operator's `SKY_*` env var still wins.
+-- Fields read at process start (an `--embed` database decision) are settled
+-- before a runner runs — set those via a top-level `config` binding.
+apply : Config -> Task Error ()
+apply =
+    Ffi.kernel "Config_apply"
 
 
 -- | Set the structured-log format and minimum level.

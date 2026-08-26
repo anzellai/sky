@@ -12,7 +12,8 @@
 --
 -- Config is layered in two pieces (see docs/design/std-app-config-dx.md):
 --
---   - [`withBase`] carries the cross-target [`BaseConfig`] (log, database, env).
+--   - [`withBase`] carries the cross-target [`BaseConfig`] (log, database,
+--     telemetry), applied at boot via `Sky.Config.apply`.
 --   - [`withConfig`] carries a per-target [`Config`] variant whose name matches
 --     the `--target` flag family — `WebConfig`, `DesktopConfig`, `TabletConfig`,
 --     `MobileConfig`, `TerminalConfig` — each an exposed `*Opts` record you
@@ -73,6 +74,7 @@ module Std.App exposing
     , runWebview
     )
 
+import Sky.Config as Config
 import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Http as Http
 import Sky.Core.List as List
@@ -100,22 +102,36 @@ type HasFallback
     = HasFallback
 
 -- | Cross-target config shared by every backend. Plain data — record-update it
--- from [`baseDefaults`] and attach with [`withBase`]. `logFormat` / `logLevel`
--- are simple strings for now (they map to `Sky.Config` later); `database` is an
--- optional DSN; `env` is the environment mode (`"dev"` / `"production"` / …).
+-- from [`baseDefaults`] and attach with [`withBase`]. The fields are the typed
+-- `Sky.Config` values, so import their constructors:
+--
+--     import Sky.Config as Config exposing (LogFormat(..), LogLevel(..), Database(..))
+--
+-- `logFormat` / `logLevel` set the structured log; `database` is an optional
+-- `Sqlite path` / `Postgres dsn`; `telemetry` an optional OTLP endpoint.
+-- (The constructors are NOT re-exported from `Std.App` — the compiler carries a
+-- re-exported type name but not its data constructors — so `import Sky.Config`
+-- for `Text` / `Debug` / `Sqlite …`.)
+--
+-- There is deliberately NO `env` field — the environment mode is
+-- operator-owned (`ENV=…`), not something the source sets (see `Sky.Config`).
 type alias BaseConfig =
-    { logFormat : String
-    , logLevel : String
-    , database : Maybe String
-    , env : String
+    { logFormat : Config.LogFormat
+    , logLevel : Config.LogLevel
+    , database : Maybe Config.Database
+    , telemetry : Maybe Config.Telemetry
     }
 
 
--- | The built-in [`BaseConfig`] default. Record-update it: `{ baseDefaults |
--- logLevel = "debug" }`.
+-- | The built-in [`BaseConfig`] default. Record-update it (with `Sky.Config`
+-- constructors in scope): `{ baseDefaults | logLevel = Debug }`.
 baseDefaults : BaseConfig
 baseDefaults =
-    { logFormat = "text", logLevel = "info", database = Nothing, env = "dev" }
+    { logFormat = Config.Text
+    , logLevel = Config.Info
+    , database = Nothing
+    , telemetry = Nothing
+    }
 
 -- | Per-target config. The variant name matches the `--target` flag family, so
 -- `--target desktop:mac` tells you to write `DesktopConfig`. Each variant wraps
@@ -240,7 +256,6 @@ type ViewImpl model msg
     = ViewUi (model -> Element msg)
     | ViewHtml (model -> Html msg)
 
-
 -- | An app described once, runnable on any backend. Built by [`app`] and
 -- refined by the `with…` builders; consumed by a `run<Backend>` runner.
 --
@@ -342,7 +357,11 @@ withNotFound page_ (App a) =
 -- for a [`DesktopConfig`] via [`withConfig`].
 withWindow : String -> Int -> Int -> App fallback seed page model msg key -> App fallback seed page model msg key
 withWindow title width height (App a) =
-    App { a | configs = DesktopConfig { title = title, width = width, height = height } :: a.configs }
+    App
+        { a | configs =
+            DesktopConfig { title = title, width = width, height = height }
+                :: a.configs
+        }
 
 
 -- | Wire a line/text input handler (terminal targets). The payload is the
@@ -352,11 +371,54 @@ withInput onLine (App a) =
     App { a | onInput = Just onLine }
 
 
--- | Attach the cross-target [`BaseConfig`] (log, database, env). Record-update
--- from [`baseDefaults`].
+-- | Attach the cross-target [`BaseConfig`] (log, database, telemetry).
+-- Record-update from [`baseDefaults`] (with `Sky.Config` constructors imported):
+--
+--     import Sky.Config as Config exposing (Database(..), LogLevel(..))
+--
+--     app { … }
+--         |> App.withBase { App.baseDefaults | database = Just (Sqlite "app.db"), logLevel = Debug }
+--
+-- The runner applies this base config as its FIRST effect at boot (via
+-- `Sky.Config.apply`), before it starts the backend — so it folds into the
+-- same `rt.ApplyConfig` layer a top-level `config` binding uses, and an
+-- operator's `SKY_*` env var still wins.
+--
+-- `--embed` caveat: an `--embed` app's database is decided at process start
+-- (`rt.MaybeStartEmbeddedPostgres`, before any runner Task runs), so setting
+-- `database` here has NO effect under `--embed` — the embedded cluster provides
+-- the DB. Do not set `database` in `withBase` for an embedded app.
 withBase : BaseConfig -> App fallback seed page model msg key -> App fallback seed page model msg key
 withBase base (App a) =
     App { a | base = base }
+
+
+-- | Fold a [`BaseConfig`] into a `Sky.Config.Config`, so a runner can `apply`
+-- it at boot through the proven `rt.ApplyConfig` path. Starts from
+-- `Config.default` and layers only the fields the base actually sets (the
+-- `Maybe` fields contribute nothing when `Nothing`). Private.
+baseToConfig_ : BaseConfig -> Config.Config
+baseToConfig_ b =
+    let
+        withLog_ = Config.withLog b.logFormat b.logLevel Config.default
+        withDb_ =
+            case b.database of
+
+                Just db ->
+                    Config.withDatabase db withLog_
+
+                Nothing ->
+                    withLog_
+        withTel_ =
+            case b.telemetry of
+
+                Just t ->
+                    Config.withTelemetry t withDb_
+
+                Nothing ->
+                    withDb_
+    in
+        withTel_
 
 
 -- | Attach a per-target [`Config`] variant. Call once per customised target;
@@ -526,15 +588,13 @@ spaRoute r =
 -- `Request` declares. This is the ONE bridge — [`withRequest`] delivers this
 -- `Request` to the app; `init` itself never sees the seed (it is called with
 -- `()`), which is what keeps the app portable.
-requestFromSeed_ :
-    { method : String
-    , path : String
-    , headers : Dict String String
-    , params : Dict String String
-    , query : String
-    , cookies : Dict String String
-    }
-    -> Request
+requestFromSeed_ : { method : String
+, path : String
+, headers : Dict String String
+, params : Dict String String
+, query : String
+, cookies : Dict String String
+} -> Request
 requestFromSeed_ s =
     { method = s.method
     , path = s.path
@@ -548,12 +608,30 @@ requestFromSeed_ s =
 
 
 -- ─── Runners — one per backend, target → runner is resolved by the build ───
+-- Sequence the base config's `apply` BEFORE a runner's own boot Task, so the
+-- log / database / telemetry from [`withBase`] land through the proven
+-- `rt.ApplyConfig` layer first (an operator's `SKY_*` env var still wins). Each
+-- runner delegates its body to a private `run<Backend>Boot_` and wraps it here,
+-- so [`withBase`] applies uniformly on every backend. Constructing a boot Task
+-- has no effect (it is a thunk); only `andThen` forcing it runs the backend, so
+-- `apply` is guaranteed to run first. Private.
+applyBase_ : BaseConfig -> Task Error () -> Task Error ()
+applyBase_ base boot =
+    Task.andThen (\_ -> boot) (Config.apply (baseToConfig_ base))
+
+
 -- | Run as server-driven HTML + SSE (`--target web`, = Sky.Live). Requires a
 -- fallback page ([`withNotFound`]) because Live routing is total. Folds the
 -- accumulated [`WebOpts`] + the `withHead`/`withGuard`/`withOnNavigate` builders
--- into the `Live.config` chain.
+-- into the `Live.config` chain. The [`BaseConfig`] applies first (see
+-- [`applyBase_`]).
 runLive : App HasFallback () page model msg key -> Task Error ()
 runLive (App a) =
+    applyBase_ a.base (runLiveBoot_ (App a))
+
+
+runLiveBoot_ : App HasFallback () page model msg key -> Task Error ()
+runLiveBoot_ (App a) =
     case a.notFound of
 
         Just fallback ->
@@ -567,9 +645,14 @@ runLive (App a) =
                                     ( m0, c0 ) = a.init ()
                                 in
                                     case a.onRequest of
+
                                         Just f ->
                                             let
-                                                ( m1, c1 ) = f (requestFromSeed_ liveSeed) m0
+                                                ( m1, c1 ) =
+                                                    f
+                                                        (requestFromSeed_
+                                                            liveSeed)
+                                                        m0
                                             in
                                                 ( m1, Cmd.batch [ c0, c1 ] )
 
@@ -646,13 +729,11 @@ runLive (App a) =
 
                         Nothing ->
                             withPort_
-                -- TODO(std-app-config): `w.csrf` has no `Std.Live` builder
-                -- (CSRF is a `Sky.Config` concern, and `Live.app` takes no
-                -- `Sky.Config`), so it is stored but not yet threaded.
-                -- TODO(std-app-config): `a.base` (log/database/env) likewise has
-                -- no `Live.app` hook yet; it is stored for the boot-time
-                -- resolution described in the design (§4) once `Sky.Config` is
-                -- wired through.
+                -- NOTE(std-app-config): `a.base` (log/database/telemetry) IS
+                -- now wired — [`runLive`] applies it at boot via [`applyBase_`]
+                -- through `rt.ApplyConfig`. `w.csrf` is still stored-but-not
+                -- threaded here: it maps to `Sky.Config.withCsrf`, which could be
+                -- folded into the same `applyBase_` path in a follow-up.
                 withHead_ =
                     case a.head of
 
@@ -691,6 +772,11 @@ runLive (App a) =
 -- Spa supports (routes + fallback); web-server-only knobs are ignored.
 runSpa : App fallback seed page model msg key -> Task Error ()
 runSpa (App a) =
+    applyBase_ a.base (runSpaBoot_ (App a))
+
+
+runSpaBoot_ : App fallback seed page model msg key -> Task Error ()
+runSpaBoot_ (App a) =
     let
         base =
             Spa.config
@@ -707,10 +793,7 @@ runSpa (App a) =
                                 v model
                 , subscriptions = a.subscriptions
                 }
-        routed =
-            Spa.withRoutes
-                (List.map spaRoute a.routes)
-                base
+        routed = Spa.withRoutes (List.map spaRoute a.routes) base
         withFallback =
             case a.notFound of
 
@@ -728,6 +811,11 @@ runSpa (App a) =
 -- canvas + the `withOnKey`/`withGuard` builders into the `Tui.config` chain.
 runTui : App fallback seed page model msg key -> Task Error ()
 runTui (App a) =
+    applyBase_ a.base (runTuiBoot_ (App a))
+
+
+runTuiBoot_ : App fallback seed page model msg key -> Task Error ()
+runTuiBoot_ (App a) =
     case a.viewImpl of
 
         ViewUi v ->
@@ -772,6 +860,11 @@ runTui (App a) =
 -- `Std.Cli.program` stays the escape hatch for a hand-authored `String` view.
 runCli : App fallback seed page model msg key -> Task Error ()
 runCli (App a) =
+    applyBase_ a.base (runCliBoot_ (App a))
+
+
+runCliBoot_ : App fallback seed page model msg key -> Task Error ()
+runCliBoot_ (App a) =
     case a.viewImpl of
 
         ViewUi v ->
@@ -805,6 +898,11 @@ runCli (App a) =
 -- taken from [`withWindow`] / a `DesktopConfig` via [`withConfig`].
 runWebview : App fallback () page model msg key -> Task Error ()
 runWebview (App a) =
+    applyBase_ a.base (runWebviewBoot_ (App a))
+
+
+runWebviewBoot_ : App fallback () page model msg key -> Task Error ()
+runWebviewBoot_ (App a) =
     let
         d = findDesktop a.configs
     in
@@ -838,7 +936,8 @@ runLiveWindow (App a) =
             (\_ -> ())
             (Task.parallel
                 [ runLive (App a)
-                , openLiveWindow_ { title = d.title, size = ( d.width, d.height ) }
+                , openLiveWindow_
+                      { title = d.title, size = ( d.width, d.height ) }
                 ])
 
 
