@@ -1427,6 +1427,19 @@ fn build_std_app(
         tgt.canonical(),
         binary.display()
     );
+    // Also expose the built binary at the STANDARD `<project>/sky-out/app` path,
+    // so tooling that expects a direct build's output location — example-sweep,
+    // the build-run gate, deploy scripts — finds a Std.App-built binary the same
+    // way. The per-target binary under `.skyapp/<target>/` stays the source of
+    // truth; this is a convenience copy of the just-built target.
+    let std_bin = project_dir.join("sky-out").join("app");
+    if std_bin != binary {
+        if let Some(parent) = std_bin.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::remove_file(&std_bin);
+        let _ = std::fs::copy(&binary, &std_bin);
+    }
     if !run {
         return ExitCode::SUCCESS;
     }

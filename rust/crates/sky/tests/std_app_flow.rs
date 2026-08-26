@@ -236,6 +236,14 @@ fn a_dispatched_entry_builds_terminal_cli_and_dce_prunes_other_backends() {
         out.status.success(),
         "dispatched terminal:cli build failed:\n{stdout}\n{stderr}"
     );
+    // The build also exposes the binary at the STANDARD `<project>/sky-out/app`,
+    // not only under `.skyapp/<target>/`, so tooling that expects a direct
+    // build's output path (example-sweep, the build-run gate, deploy) finds a
+    // Std.App-built binary. A regression here silently breaks the sweep.
+    assert!(
+        dir.join("sky-out/app").is_file(),
+        "Std.App build must copy the binary to the standard sky-out/app location"
+    );
     let main_go = dir.join(".skyapp/terminal-cli/sky-out/main.go");
     let go = std::fs::read_to_string(&main_go)
         .unwrap_or_else(|e| panic!("read {}: {e}", main_go.display()));
