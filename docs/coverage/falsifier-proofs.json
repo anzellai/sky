@@ -94,7 +94,7 @@
       "mutation": "config-migrate.hide-a-real-legacy-key",
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1787171793
+      "proven_at_unix": 1787788063
     },
     "config-migration": {
       "mutation": "config-migration.drop-a-builder-label",
@@ -142,7 +142,7 @@
       "mutation": "corpus-manifest.drift",
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1786349758
+      "proven_at_unix": 1787788682
     },
     "corpus-reject": {
       "mutation": "corpus-reject.break-the-twin",

@@ -259,6 +259,7 @@ pub const SURFACES: &[Surface] = &[
     sf("char", "Sky.Core.Char"),
     sf("encoding", "Sky.Core.Encoding"),
     sf("crypto", "Sky.Core.Crypto"),
+    sf("secret", "Sky.Core.Secret"),
     sf("math", "Sky.Core.Math"),
     sf("basics", "Sky.Core.Basics"),
     sf("tostring", "Sky.Core.ToString"),
@@ -575,6 +576,7 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Sky.Core.Path",
     "Sky.Core.Regex",
     "Sky.Core.Result",
+    "Sky.Core.Secret",
     "Sky.Core.Set",
     "Sky.Core.String",
     "Sky.Core.ToString",
@@ -627,7 +629,17 @@ pub const ASSERTED_MODULES: &[&str] = &[
 ///     by the `withX` builder, read at `sky build --target` time, not at runtime.
 ///     It has no runtime value semantics to assert; it is covered by the bundle
 ///     unit tests + `--target` build tests in `rust/crates/sky/src/main.rs`.
-pub const DARK_MODULE_CEILING: usize = 66;
+///
+/// Raised 66 → 67 (2026-08-27) for `Std.App` (unified-app-builder):
+///   * `Std.App` is the app builder — `App.app`/`web`/`cli`/`tui` produce an
+///     opaque `App` value, refined by `withX` builders, run by `App.run` to a
+///     `Task Error ()`; the view is an `Element`/`Html`/`String`. There is no
+///     pure value a Family-S corpus can assert. It is covered by the `--target`
+///     dispatch + view-adapter build/run tests (`rust/crates/sky` `*_flow.rs`,
+///     `check_std_app`) and the migrated example sweep, not here.
+///   * `Sky.Core.Secret`, added in the same window, is NOT dark — its
+///     `reveal ∘ fromString` boundary is a pure value assertion (`secret_battery`).
+pub const DARK_MODULE_CEILING: usize = 67;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
@@ -1082,6 +1094,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "char" => char_battery(edge),
         "encoding" => encoding_battery(edge),
         "crypto" => crypto_battery(edge),
+        "secret" => secret_battery(edge),
         "math" => math_battery(edge),
         "basics" => basics_battery(edge),
         "tostring" => tostring_battery(edge),
@@ -2498,6 +2511,40 @@ fn crypto_battery(edge: &str) -> Vec<Check> {
                 false,
             ),
         ],
+        _ => vec![],
+    }
+}
+
+// --- Sky.Core.Secret -------------------------------------------------------
+//
+// The wrap/reveal boundary is a pure, deterministic value crossing:
+// `reveal (fromString s) == s`. It is a real assertion end-to-end — it drives
+// the `Secret_fromString` + `Secret_reveal` FFI kernels through codegen and
+// proves the opaque wrapper is byte-transparent through the ONE greppable exit.
+// A String LITERAL to `fromString` is a compile error (the no-committed-secret
+// lint), so the corpus uses `unsafeFromString` — the lint-exempt test twin.
+fn secret_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Secret.reveal", "Secret.unsafeFromString"],
+                "Secret.reveal (Secret.unsafeFromString \"hunter2\")",
+                "hunter2",
+            ),
+            s(
+                &["Secret.reveal", "Secret.unsafeFromString"],
+                "Secret.reveal (Secret.unsafeFromString \"p@ss w0rd with spaces\")",
+                "p@ss w0rd with spaces",
+            ),
+        ],
+        // The empty secret still round-trips — the wrapper adds no framing, so
+        // the revealed string is length-0 (asserted as an Int so the expectation
+        // is non-empty, not the vacuous "" a raw reveal would produce).
+        "empty" => vec![i(
+            &["Secret.reveal", "Secret.unsafeFromString"],
+            "String.length (Secret.reveal (Secret.unsafeFromString \"\"))",
+            0,
+        )],
         _ => vec![],
     }
 }

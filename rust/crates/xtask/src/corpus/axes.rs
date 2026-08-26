@@ -158,7 +158,7 @@ pub const SURFACE: Axis = Axis::new(
     &[
         "string", "list", "dict", "set", "maybe", "result", "char", "encoding", "crypto", "math",
         "basics", "tostring", "path", "error", "decimal", "money", "csv", "regex", "json", "bytes",
-        "jwt", "codec", "markdown", "compression",
+        "jwt", "codec", "markdown", "compression", "secret",
     ],
 );
 

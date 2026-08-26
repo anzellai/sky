@@ -1,0 +1,20 @@
+# Dedicated fixture for the `config-migrate` gate's clause 4 (real-project,
+# zero-undeclared-changes). It stays DELIBERATELY on the legacy `[live]` config
+# + a `Live.config(…)` entry so `sky config migrate` always has something legacy
+# to dry-plan and the falsifier `config-migrate.hide-a-real-legacy-key` has a
+# unique `port =` site to rename.
+#
+# This used to be `examples/19-skyforum`, but the "migrate all examples to
+# Std.App" pass migrated that example's entry to `App.app` (removing its
+# `Live.config`), which is exactly the re-break the 2026-08-19 note predicted.
+# Moving the gate onto its own fixture frees every real example to migrate.
+name = "config-migrate-legacy"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+port = 8000
+input = "debounce"

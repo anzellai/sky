@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 481
+n_min = 483
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 480
+class_v = 482
 class_d = 1
-family_S = 130
+family_S = 132
 family_L = 206
 family_E = 10
 family_R = 135
@@ -4020,6 +4020,32 @@ axes       = { edge = "failure", surface = "compression" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "E|E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-secret"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "secret" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "hunter2|p@ss w0rd with spaces"
+
+[[case]]
+id         = "stdlib_edge/empty-secret"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "secret" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "0"
 
 [[case]]
 id         = "stdlib_import/plain-none"

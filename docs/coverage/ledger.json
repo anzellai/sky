@@ -544,6 +544,7 @@
       "Std.Live": "examples/19-skyforum",
       "Std.Native": "examples/64-app-native",
       "Std.PubSub": "examples/36-composite-server",
+      "Std.Spa": "examples/61-app-kanban",
       "Std.Ui.Animation": "examples/26-ui-showcase",
       "Std.Ui.Events": "examples/62-app-notes",
       "Std.Ui.Grid": "examples/26-ui-showcase",
@@ -630,12 +631,6 @@
         "path": "apps/dispatch",
         "units": [
           "apps:dispatch"
-        ]
-      },
-      "Std.Spa": {
-        "path": "rust/crates/sky/tests",
-        "units": [
-          "apps:cli-verbs"
         ]
       },
       "Std.Trace": {
@@ -9838,14 +9833,25 @@
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "examples/61-app-kanban (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/61-app-kanban (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 2
       },
       "description": "the Std.Spa public API",
       "id": "stdlib.Std.Spa",
@@ -12610,7 +12616,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 9,
+          "count": 8,
           "symbols": [
             "AppConfig",
             "Route",
@@ -12618,7 +12624,6 @@
             "postJson",
             "route",
             "routeInt",
-            "withNotFound",
             "withOnNavigate",
             "withRoutes"
           ]
@@ -12937,8 +12942,8 @@
           ]
         }
       },
-      "count": 774,
-      "pct_of_denominator": 40.5
+      "count": 773,
+      "pct_of_denominator": 40.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13839,7 +13844,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 9,
+          "count": 8,
           "symbols": [
             "AppConfig",
             "Route",
@@ -13847,7 +13852,6 @@
             "postJson",
             "route",
             "routeInt",
-            "withNotFound",
             "withOnNavigate",
             "withRoutes"
           ]
@@ -14167,7 +14171,7 @@
           ]
         }
       },
-      "count": 859,
+      "count": 858,
       "pct_of_denominator": 44.9
     }
   },
@@ -15093,10 +15097,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/61-app-kanban",
-      "modules_imported": 10,
+      "modules_imported": 11,
       "path": "examples/61-app-kanban",
-      "refs_generous": 60,
-      "refs_qualified": 58,
+      "refs_generous": 62,
+      "refs_qualified": 60,
       "role": "Example",
       "sky_files": 2,
       "sky_toml_sections": [

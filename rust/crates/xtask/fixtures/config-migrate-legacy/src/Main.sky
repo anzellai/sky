@@ -1,0 +1,25 @@
+module Main exposing (main)
+
+-- Deliberately the LEGACY front-door form (Std.Live + Live.config), not
+-- Std.App: this fixture is the config-migrate gate's real-project subject, so it
+-- must keep the shape `sky config migrate` rewrites — a `Live.config(…)` the
+-- planner attaches `.withPort` / `.withInput` builders to. Do not migrate it.
+import Std.Live as Live
+import Std.Ui as Ui
+
+
+main =
+    Live.app
+        (Live.config { init = init, update = update, view = view })
+
+
+init _ =
+    ( 0, Cmd.none )
+
+
+update _ model =
+    ( model, Cmd.none )
+
+
+view _ =
+    Ui.text "config-migrate legacy fixture"

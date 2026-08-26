@@ -1,7 +1,7 @@
 //! `xtask config-migrate` — proves `sky config migrate` actually migrates: a
 //! legacy fixture project is rewritten end-to-end (via the real
 //! `project::config_migrate` path) and the result asserted, and a COPY of the
-//! canonical multi-module Live app `examples/19-skyforum` is dry-planned to
+//! dedicated fixture `rust/crates/xtask/fixtures/config-migrate-legacy` is dry-planned to
 //! prove the rewriter proposes ZERO undeclared changes on a real project.
 //!
 //! # What it proves
@@ -15,13 +15,13 @@
 //!      settings become `<alias>.withX` in the `Live.config(…)` pipeline.
 //!   3. **A re-check is clean** — the migration is idempotent-complete.
 //!   4. **Zero undeclared changes on a real project.** Planning a migration of
-//!      `examples/19-skyforum` succeeds (its `[live] port`/`input` both have
+//!      the fixture succeeds (its `[live] port`/`input` both have
 //!      migration rows) and writes nothing — the self-check oracle passing IS
 //!      the "no undeclared move" guarantee.
 //!
 //! # The falsifier
 //!
-//! `examples/19-skyforum/sky.toml`'s `port = 8000` → `porto = 8000`: the real
+//! the fixture sky.toml's `port = 8000` → `porto = 8000`: the real
 //! project then carries only one migratable key, and clause 4's "the plan finds
 //! both port and input" assertion reddens. The gate reads that file at run time
 //! (it copies it), so the mutation is observable without a rebuild.
@@ -142,13 +142,19 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
     }
     let _ = std::fs::remove_dir_all(&dir);
 
-    // ── clause 4: zero undeclared changes on a real project ──────────────────
-    let forum = root.join("examples/19-skyforum");
+    // ── clause 4: zero undeclared changes on a real on-disk project ──────────
+    // The subject is a DEDICATED fixture, not a real example: the "migrate all
+    // examples to Std.App" pass migrated 19-skyforum's entry to `App.app`
+    // (removing its `Live.config`), which is exactly the re-break the 2026-08-19
+    // note predicted. The fixture keeps the legacy `[live]` + `Live.config` shape
+    // permanently so no future migration can pull the subject out from under the
+    // gate. It still exercises the real file-reading + planning path.
+    let forum = root.join("rust/crates/xtask/fixtures/config-migrate-legacy");
     let forum_toml = forum.join("sky.toml");
     let forum_main = forum.join("src/Main.sky");
     if !forum_toml.exists() || !forum_main.exists() {
         fails.push(format!(
-            "examples/19-skyforum is missing ({}) — the real-project clause cannot run",
+            "the config-migrate-legacy fixture is missing ({}) — the real-project clause cannot run",
             forum.display()
         ));
         return finish(a, fails);
@@ -170,13 +176,13 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
             check(
                 keys.contains(&("live".into(), "port".into()))
                     && keys.contains(&("live".into(), "input".into())),
-                "19-skyforum's [live] port + input must be recognised as migratable",
+                "the fixture's [live] port + input must be recognised as migratable",
                 &mut a,
                 &mut fails,
             );
             check(
                 plan.main_new.contains(".withPort 8000") && plan.main_new.contains(".withInput"),
-                "the plan must generate the Live builders for 19-skyforum",
+                "the plan must generate the Live builders for the fixture",
                 &mut a,
                 &mut fails,
             );
@@ -186,7 +192,7 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
         }
         Err(e) => {
             a += 1;
-            fails.push(format!("planning 19-skyforum failed (an undeclared/unsupported move?): {e}"));
+            fails.push(format!("planning the config-migrate-legacy fixture failed (an undeclared/unsupported move?): {e}"));
         }
     }
     let _ = std::fs::remove_dir_all(&copy);
@@ -199,7 +205,7 @@ fn finish(a: u64, fails: Vec<String>) -> (bool, u64, String) {
         (
             true,
             a,
-            format!("{a} assertions: fixture migrated end-to-end + 19-skyforum plans with 0 undeclared changes"),
+            format!("{a} assertions: fixture migrated end-to-end + the on-disk fixture plans with 0 undeclared changes"),
         )
     } else {
         (false, a, fails.join("\n"))

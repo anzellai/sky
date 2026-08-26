@@ -383,9 +383,10 @@ pub static GATES: &[Gate] = &[
                 // targets_a_real_unique_site` fails loudly when this literal no
                 // longer occurs — which is how the family-R `dict_composite_key`
                 // defect (+9 cases, 432 → 441) surfaced here, and the Family-S
-                // shape close (+40 cases, 441 → 481) after it.
-                from: "n_min = 481",
-                to: "n_min = 482",
+                // shape close (+40 cases, 441 → 481) after it, and the
+                // Sky.Core.Secret Family-S surface (+2 cases, 481 → 483).
+                from: "n_min = 483",
+                to: "n_min = 484",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -1324,10 +1325,12 @@ pub static GATES: &[Gate] = &[
         // catch: a runtime key the rewriter would fail to see.
         mutations: Mutations::new(&[Mutation {
             id: "config-migrate.hide-a-real-legacy-key",
-            description: "rename examples/19-skyforum's [live] port key so the rewriter no longer \
-                          sees it; the real-project plan clause must go red",
+            description: "rename the config-migrate-legacy fixture's [live] port key so the \
+                          rewriter no longer sees it; the real-project plan clause must go red",
+            // Was examples/19-skyforum, but that example migrated to `App.app`
+            // (no more `Live.config`), so the gate moved to a dedicated fixture.
             kind: MutationKind::ReplaceOnce {
-                path: "examples/19-skyforum/sky.toml",
+                path: "rust/crates/xtask/fixtures/config-migrate-legacy/sky.toml",
                 from: "port = 8000",
                 to: "porto = 8000",
             },
