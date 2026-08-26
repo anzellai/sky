@@ -17,6 +17,7 @@ import Sky.Core.Crypto as Crypto
 import Sky.Core.Task as Task
 import Sky.Core.Jwt as Jwt
 import Sky.Core.Secret as Secret
+import Sky.Core.Http as Http
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Json.Encode as JsonEnc
 import Sky.Core.Json.Decode as JsonDec
@@ -41,6 +42,7 @@ tests =
     , mathSuite
     , cryptoSuite
     , jwtSuite
+    , secretHttpSuite
     , encodingSuite
     , jsonSuite
     , decimalSuite
@@ -624,6 +626,41 @@ jwtDecodeOk secret now tok =
 
         Err _ ->
             False
+
+
+-- ─── Secret + Http header builders ─────────────────────────────────
+-- withBearer / withApiKey take an opaque Secret and reveal it INTERNALLY
+-- (inside the stdlib) into the outgoing header — the token never appears
+-- as a String in user code. This locks that the revealed value lands in
+-- the right header verbatim.
+secretHttpSuite : Test
+secretHttpSuite =
+    let
+        headerVal name req =
+            List.foldl
+                (\( k, v ) acc ->
+                    if k == name then
+                        v
+
+                    else
+                        acc)
+                "MISSING"
+                req.headers
+
+        reqWith =
+            Http.defaultRequest "https://api.example/x"
+                |> Http.withBearer (Secret.unsafeFromString "tok123")
+                |> Http.withApiKey "X-Api-Key" (Secret.unsafeFromString "key456")
+    in
+        Test.suite
+            "Secret+Http"
+            [ Test.test
+                  "withBearer sets Authorization: Bearer <revealed>"
+                  (\_ -> Test.equal "Bearer tok123" (headerVal "Authorization" reqWith))
+            , Test.test
+                  "withApiKey sets a custom header from the Secret"
+                  (\_ -> Test.equal "key456" (headerVal "X-Api-Key" reqWith))
+            ]
 
 
 jwtSuite : Test

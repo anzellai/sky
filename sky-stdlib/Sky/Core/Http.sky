@@ -15,6 +15,8 @@ module Sky.Core.Http exposing
     , withUrl
     , withBody
     , withHeader
+    , withBearer
+    , withApiKey
     , withTimeout
     , withFollowRedirects
     , withMaxRedirects
@@ -23,6 +25,7 @@ module Sky.Core.Http exposing
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Secret as Secret exposing (Secret)
 
 -- | The shape of an HTTP response.  Returned by every Sky.Core.Http
 -- call (`get`, `post`, `request`).  Maps 1:1 to `rt.HttpResponse`
@@ -103,6 +106,28 @@ withMethod m req =
 withHeader : String -> String -> HttpRequest -> HttpRequest
 withHeader name value req =
     { req | headers = ( name, value ) :: req.headers }
+
+
+-- | `withBearer secret req` — set `Authorization: Bearer <secret>` from
+-- an opaque `Secret`.  The token never appears as a `String` in your
+-- code: the reveal happens INSIDE the stdlib, at the one boundary where
+-- the bytes must reach the wire.  This is the intended path for a token
+-- you fetched at runtime and now send onward:
+--
+--     apiKey = Secret.fromString resp.body
+--     defaultRequest url |> withBearer apiKey |> request
+withBearer : Secret -> HttpRequest -> HttpRequest
+withBearer secret req =
+    withHeader "Authorization" ("Bearer " ++ Secret.reveal secret) req
+
+
+-- | `withApiKey headerName secret req` — set an arbitrary header (e.g.
+-- `"X-Api-Key"`) to a `Secret`'s value, revealing internally like
+-- `withBearer`.  Use when the API wants the raw key in a custom header
+-- rather than a `Bearer` scheme.
+withApiKey : String -> Secret -> HttpRequest -> HttpRequest
+withApiKey headerName secret req =
+    withHeader headerName (Secret.reveal secret) req
 
 
 -- | `withTimeout ms req` — replace the per-request timeout

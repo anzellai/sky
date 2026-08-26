@@ -78,17 +78,17 @@ fetchAndCall =
         |> Task.map (\resp -> Secret.fromString resp.body)
         |> Task.andThen
             (\apiKey ->
-                Http.post "https://api.example/thing"
-                    |> Http.withHeader "Authorization"
-                        ("Bearer " ++ Secret.reveal apiKey)
-                    |> Http.send
+                Http.defaultRequest "https://api.example/thing"
+                    |> Http.withBearer apiKey        -- takes a Secret; reveals internally
+                    |> Http.request
             )
 ```
 
-The `Secret.reveal` at the header boundary is the sanctioned escape — the
-bytes must reach the wire — and stays greppable. (A `Http.withBearer : Secret
--> …` helper that reveals internally is a natural follow-up so the reveal moves
-into the audited runtime; until it lands, reveal at the call site.)
+`Http.withBearer : Secret -> HttpRequest -> HttpRequest` (and
+`Http.withApiKey headerName : Secret -> …` for a custom header) reveal the
+secret INSIDE the stdlib, at the one boundary where the bytes must reach the
+wire — so the token never appears as a `String` in your own code. Prefer them
+over `withHeader "Authorization" ("Bearer " ++ Secret.reveal apiKey)`.
 
 ## Escaping opacity
 

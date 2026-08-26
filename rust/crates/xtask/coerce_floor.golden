@@ -67,7 +67,7 @@
 # closed adapters the golden still reserved slack for, and that slack is now
 # gone. The `narrow` fall is a decrease in SITE count and is not a speedup
 # measurement — nothing here weights a site by how often it runs.
-00-standard-libs	adapter=0	dispatch=0	narrow=218
+00-standard-libs	adapter=0	dispatch=0	narrow=221
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
 03-tea-external	adapter=0	dispatch=0	narrow=4
@@ -129,7 +129,7 @@ apps/dispatch	adapter=0	dispatch=0	narrow=575
 apps/fieldbook	adapter=0	dispatch=0	narrow=608
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=574
-apps/relay	adapter=0	dispatch=0	narrow=245
+apps/relay	adapter=0	dispatch=0	narrow=244
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=56
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=55
 examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=272
