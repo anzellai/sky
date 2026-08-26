@@ -1911,16 +1911,47 @@ impl<'a> Resolver<'a> {
                 self.body.expr(Expr::Record(fields))
             }
             ast::Expr::RecordUpdate(ru) => {
-                let base_name = cst::first_lower(ru.syntax()).unwrap_or_default();
-                let res =
-                    self.resolve_var(&base_name, Some(self.span_of(ru.syntax().text_range())));
-                if let Some(tok) = ru
+                // The base is the ident(.ident)* run BEFORE the `|`: a bare
+                // local (`{ x | … }`) or a QUALIFIED path (`{ App.webDefaults |
+                // … }`). Collect those ident tokens; a leading UpperIdent means
+                // the base is qualified and must resolve through the qualifier
+                // (`resolve_qual_var`), not by taking the final segment as a
+                // local (which would bind the wrong `webDefaults`, or nothing).
+                let base_toks: Vec<_> = ru
                     .syntax()
                     .children_with_tokens()
                     .filter_map(|e| e.into_token())
-                    .find(|t| t.kind() == SyntaxKind::LowerIdent)
-                {
-                    self.record_ref(tok.text_range(), res.clone());
+                    .take_while(|t| t.kind() != SyntaxKind::Pipe)
+                    .filter(|t| {
+                        matches!(t.kind(), SyntaxKind::UpperIdent | SyntaxKind::LowerIdent)
+                    })
+                    .collect();
+                let span = Some(self.span_of(ru.syntax().text_range()));
+                let has_qual = base_toks
+                    .iter()
+                    .any(|t| t.kind() == SyntaxKind::UpperIdent);
+                let res = if has_qual {
+                    let names: Vec<String> =
+                        base_toks.iter().map(|t| t.text().to_string()).collect();
+                    let (qual, name) = match names.split_last() {
+                        Some((last, rest)) if !rest.is_empty() => (rest.join("."), last.clone()),
+                        Some((last, _)) => (String::new(), last.clone()),
+                        None => (String::new(), String::new()),
+                    };
+                    self.resolve_qual_var(&qual, &name, span)
+                } else {
+                    let base_name = base_toks
+                        .first()
+                        .map(|t| t.text().to_string())
+                        .unwrap_or_default();
+                    self.resolve_var(&base_name, span)
+                };
+                // LSP go-to-def: record the ref over the base token run (for a
+                // qualified base, the whole `App.webDefaults` span; for a bare
+                // base, the single ident — identical to the pre-fix behaviour).
+                if let (Some(first), Some(last)) = (base_toks.first(), base_toks.last()) {
+                    let range = first.text_range().cover(last.text_range());
+                    self.record_ref(range, res.clone());
                 }
                 let base_id = self.body.expr(Expr::Var(res));
                 let mut fields = Vec::new();

@@ -919,10 +919,30 @@ fn record_expr(p: &mut Parser) -> CompletedMarker {
             p.bump();
             return RecordExpr;
         }
-        let update = p.at(LowerIdent) && p.nth(1) == Pipe;
+        // Update detection. The base is any value reference: a bare local
+        // (`{ x | … }`) or a QUALIFIED path (`{ App.webDefaults | … }`). Record
+        // FIELDS are always lowercase, so a leading UpperIdent is unambiguously
+        // a qualified-base update (or an error) — never a literal. The base is
+        // left as bare tokens in the CST (no wrapper node), exactly like the
+        // bare case, so existing record-update CST/fmt/roundtrip goldens are
+        // untouched.
+        let update = (p.at(LowerIdent) && p.nth(1) == Pipe) || p.at(UpperIdent);
         if update {
-            p.bump(); // record name
-            p.bump(); // |
+            if p.at(UpperIdent) {
+                // qualified base: `Upper(.Upper|.lower)*`, mirroring the atom
+                // parser's QualRefExpr path.
+                p.bump(); // Upper
+                while p.at(Dot)
+                    && !p.ws_before()
+                    && (p.nth(1) == LowerIdent || p.nth(1) == UpperIdent)
+                {
+                    p.bump(); // .
+                    p.bump(); // name
+                }
+            } else {
+                p.bump(); // bare record name
+            }
+            p.expect(Pipe); // |
         }
         loop {
             if p.at(RBrace) || p.at_end() {

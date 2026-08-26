@@ -109,6 +109,17 @@ fn record_update_and_field_access() {
 }
 
 #[test]
+fn record_update_with_qualified_base() {
+    // A qualified path used as the update base — `{ Mod.default | f = v }` — is
+    // a valid expression form (a qualified reference as the update base). The
+    // parser once rejected it with `expected LowerIdent` because update
+    // detection only recognised a bare LowerIdent base.
+    let src = "x =\n    { App.webDefaults | port = 9000 }\n";
+    let parse = assert_clean(src);
+    assert_eq!(count(&parse, SyntaxKind::RecordUpdate), 1);
+}
+
+#[test]
 fn cons_and_qualified_ctor_patterns() {
     let src = "\
 f xs =

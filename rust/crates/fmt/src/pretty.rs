@@ -1256,11 +1256,21 @@ fn record_fields(node: &SyntaxNode) -> Vec<(SyntaxToken, Option<Expr>)> {
 }
 
 fn record_update_base(node: &SyntaxNode) -> String {
-    node.children_with_tokens()
-        .filter_map(|e| e.into_token())
-        .find(|t| t.kind() == SyntaxKind::LowerIdent)
-        .map(|t| t.text().to_string())
-        .unwrap_or_default()
+    // The base is the ident(.ident)* run before the `|` — a bare local (`x`)
+    // or a qualified path (`App.webDefaults`). Reproduce it verbatim.
+    let mut s = String::new();
+    for elem in node.children_with_tokens() {
+        if let Some(t) = elem.as_token() {
+            match t.kind() {
+                SyntaxKind::Pipe => break,
+                SyntaxKind::UpperIdent | SyntaxKind::LowerIdent | SyntaxKind::Dot => {
+                    s.push_str(t.text())
+                }
+                _ => {}
+            }
+        }
+    }
+    s
 }
 
 fn record_pat_names(node: &SyntaxNode) -> Vec<String> {
