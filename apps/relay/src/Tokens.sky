@@ -31,12 +31,13 @@ import Sky.Core.String as String
 import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Json.Encode as JsonEnc
 import Sky.Core.Jwt as Jwt
+import Sky.Core.Secret exposing (Secret)
 import Std.Auth as Auth
 
 
 -- | `issue secret subject now ttl` — a signed HS256 token carrying
 -- iss/sub/iat/exp plus a `scope` custom claim.
-issue : String -> String -> Int -> Int -> Result Error String
+issue : Secret -> String -> Int -> Int -> Result Error String
 issue secret subject now ttl =
     Auth.signTokenWithClaims
         (Jwt.hs256 secret)
@@ -50,14 +51,14 @@ issue secret subject now ttl =
 
 
 -- | `verify secret now token` — returns the verified payload JSON.
-verify : String -> Int -> String -> Result Error String
+verify : Secret -> Int -> String -> Result Error String
 verify secret now token =
     Auth.verifyTokenWithAlgorithm (Jwt.hs256 secret) now token
 
 
 -- | `issueAdmin secret user ttl` — short-form `Std.Auth.signToken`
 -- over a `Dict String String` claim bag.
-issueAdmin : String -> String -> Int -> Result Error String
+issueAdmin : Secret -> String -> Int -> Result Error String
 issueAdmin secret user ttl =
     Auth.signToken secret (adminClaims user) ttl
 
@@ -72,7 +73,7 @@ adminClaims user =
 -- VALUES stay untouched inside the `Dict String any` the kernel hands
 -- back (JWT numeric claims are float-shaped there), so nothing is
 -- coerced out of `any`.
-adminRole : String -> String -> Result Error String
+adminRole : Secret -> String -> Result Error String
 adminRole secret token =
     case Auth.verifyToken secret token of
 

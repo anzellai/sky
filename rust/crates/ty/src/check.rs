@@ -169,6 +169,28 @@ fn builder_cfg_migration_hint(message: &str) -> Option<String> {
     }
 }
 
+/// When a `String` is supplied where a `Secret` is now required (or vice
+/// versa), the caller almost certainly wrote pre-Secret code passing a raw
+/// String secret to `Auth.signToken` / `Auth.verifyToken` / `Jwt.hs256` /
+/// `signSlidingToken`. Turn the bare `type mismatch: Secret vs String` into an
+/// actionable migration hint (rendered as `Try: …`).
+fn secret_migration_hint(message: &str) -> Option<String> {
+    if message.contains("Secret") && message.contains("String") {
+        Some(
+            "secret-bearing arguments are the opaque `Secret` type now, not \
+             `String` — a raw String secret can no longer leak into a log or a \
+             response. Wrap it at the boundary: `Secret.fromEnv \"MY_SECRET\"` \
+             (read from the environment), or `Secret.fromString someRuntimeString` \
+             when you already hold the value. `import Sky.Core.Secret as Secret \
+             exposing (Secret)`; the raw bytes come back only through \
+             `Secret.reveal`. See docs/security/secret-migration.md"
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 fn trim_leading_ws(src: &str, span: base::Span) -> base::Span {
     let start = span.range.0 as usize;
     let end = (span.range.1 as usize).min(src.len());
@@ -452,7 +474,8 @@ pub fn check_modules_with_world(
                             }]
                         })
                         .unwrap_or_default(),
-                    suggestion: builder_cfg_migration_hint(&err.message),
+                    suggestion: builder_cfg_migration_hint(&err.message)
+                        .or_else(|| secret_migration_hint(&err.message)),
                 });
             }
 
@@ -526,4 +549,35 @@ pub fn check_modules_with_world(
         (a.module.as_str(), a.name.as_str()).cmp(&(b.module.as_str(), b.name.as_str()))
     });
     out
+}
+
+#[cfg(test)]
+mod migration_hint_tests {
+    use super::{builder_cfg_migration_hint, secret_migration_hint};
+
+    #[test]
+    fn secret_hint_fires_on_secret_vs_string_mismatch() {
+        // The exact message shape the checker renders for a raw-String secret
+        // passed to Auth.signToken / Jwt.hs256 after the Secret migration.
+        let h = secret_migration_hint("type mismatch: `Secret` vs `String`")
+            .expect("Secret/String mismatch must produce a migration hint");
+        assert!(h.contains("Secret.fromEnv"), "hint names the fix: {h}");
+        assert!(h.contains("Secret.reveal"), "hint names the escape hatch: {h}");
+        // order-independent: String-vs-Secret must also fire.
+        assert!(secret_migration_hint("type mismatch: `String` vs `Secret`").is_some());
+    }
+
+    #[test]
+    fn secret_hint_silent_on_unrelated_mismatch() {
+        assert!(secret_migration_hint("type mismatch: `Int` vs `Bool`").is_none());
+        // A String-only mismatch (no Secret in play) must not misfire.
+        assert!(secret_migration_hint("type mismatch: `String` vs `Char`").is_none());
+    }
+
+    #[test]
+    fn builder_and_secret_hints_are_distinct_and_dont_cross_fire() {
+        assert!(builder_cfg_migration_hint("type mismatch: AppConfig _ _ vs record").is_some());
+        assert!(secret_migration_hint("type mismatch: AppConfig _ _ vs record").is_none());
+        assert!(builder_cfg_migration_hint("type mismatch: `Secret` vs `String`").is_none());
+    }
 }

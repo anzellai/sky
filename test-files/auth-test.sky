@@ -4,6 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Std.Db as Db
 import Std.Auth as Auth
+import Sky.Core.Secret as Secret
 import Std.Log exposing (println)
 import Sky.Core.Error as Error exposing (Error)
 
@@ -29,7 +30,7 @@ afterRegister db uid =
 
 
 tryToken =
-    case Auth.signToken "mysecret" { userId = 1 } 3600 of
+    case Auth.signToken (Secret.unsafeFromString "mysecret") { userId = 1 } 3600 of
 
         Ok tok ->
             verifyTok tok
@@ -39,7 +40,7 @@ tryToken =
 
 
 verifyTok tok =
-    case Auth.verifyToken "mysecret" tok of
+    case Auth.verifyToken (Secret.unsafeFromString "mysecret") tok of
 
         Ok _claims ->
             println "auth ok"

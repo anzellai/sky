@@ -5,6 +5,7 @@ module State exposing (..)
 -- (CLAUDE.md Limitation #17).
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Secret exposing (Secret)
 
 type alias User =
     { id : Int
@@ -30,7 +31,7 @@ type alias AuthClaims =
 type alias Config =
     { port : Int
     , dbPath : String
-    , jwtSecret : String
+    , jwtSecret : Secret
     , tokenTtlSeconds : Int
     , rateLimitCapacity : Int
     , rateLimitRefill : Int

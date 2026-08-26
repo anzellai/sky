@@ -1846,11 +1846,19 @@ const authSecretMinBytes = 32
 // the operator their secret needs to be larger) and reveals
 // nothing about the surrounding Sky binding's runtime shape.
 func coerceAuthSecret(v any, callerTag string) ([]byte, any) {
-	s, ok := v.(string)
-	if !ok {
+	// The typed surface now passes a Secret (Sky.Core.Secret); a bare string is
+	// still accepted during the migration (a not-yet-updated caller). Anything
+	// else is a boundary leak — reject it loudly rather than coerce.
+	var s string
+	switch x := v.(type) {
+	case Secret:
+		s = x.v
+	case string:
+		s = x
+	default:
 		logAuthBoundaryLeak(callerTag, v)
 		return nil, Err[any, any](ErrInvalidInput(
-			callerTag + ": expected String"))
+			callerTag + ": expected Secret"))
 	}
 	if len(s) < authSecretMinBytes {
 		return nil, Err[any, any](ErrInvalidInput(fmt.Sprintf(

@@ -13,6 +13,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Json.Decode as JsonDec
 import Sky.Core.Json.Encode as JsonEnc
 import Sky.Core.Jwt as Jwt
+import Sky.Core.Secret exposing (Secret)
 import Std.Auth as StdAuth
 import State exposing (AuthClaims)
 
@@ -36,7 +37,7 @@ verifyPassword password storedHash =
 -- the configured HS256 secret.  Uses Sky.Core.Jwt directly so the
 -- composite exercises the typed-builder surface alongside the
 -- short-form Std.Auth.signToken in the suite below.
-mintToken : String -> Int -> Int -> AuthClaims -> Result Error String
+mintToken : Secret -> Int -> Int -> AuthClaims -> Result Error String
 mintToken secret nowSeconds ttlSeconds payload =
     let
         alg = Jwt.hs256 secret
@@ -52,7 +53,7 @@ mintToken secret nowSeconds ttlSeconds payload =
 
 -- Verify a `Authorization: Bearer <jwt>` header, returning the
 -- decoded AuthClaims on success.  Drives the protected-route gate.
-verifyBearer : String -> Int -> String -> Result Error AuthClaims
+verifyBearer : Secret -> Int -> String -> Result Error AuthClaims
 verifyBearer secret nowSeconds authHeader =
     case stripBearer authHeader of
 

@@ -489,7 +489,11 @@ These apply to any Sky code you write or any compiler change you make:
   display-only lenient helpers.
 - **No raw `.(T)` assertions on any-typed thunks** — route via `rt.Coerce[T]`.
 - **Record field enumeration sorts by `_fieldIndex`** before order-dependent emission.
-- **Secrets are typed** — `Auth.signToken`/`verifyToken` take `String`, never `any`.
+- **Secrets are typed** — `Auth.signToken`/`verifyToken`/`signSlidingToken` and
+  `Jwt.hs256` take the opaque `Sky.Core.Secret.Secret`, never `String`/`any`. A
+  `Secret` redacts itself in every print/log/JSON path; wrap at the boundary
+  (`Secret.fromEnv "VAR"` / `Secret.fromString runtimeStr`) and unwrap only via
+  the greppable `Secret.reveal`. See `docs/security/secret-migration.md`.
 - **`sky check` ≡ `sky build`** — both invoke `go build` on the emitted Go.
 - **Root-cause fixes only.** Never suppress a type error or warning; a defensive
   cover-up that hides a contract violation IS a violation.

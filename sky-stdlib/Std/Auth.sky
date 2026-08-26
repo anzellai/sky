@@ -35,6 +35,7 @@ module Std.Auth exposing
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Jwt as Jwt
+import Sky.Core.Secret exposing (Secret)
 import Sky.Core.Task as Task
 
 
@@ -88,13 +89,13 @@ passwordStrength =
 -- | `signToken secret claims expirySeconds` — produce a signed
 -- JWT.  `claims` is left polymorphic; typically a `Dict` or a
 -- typed-record alias.
-signToken : String -> a -> Int -> Result Error String
+signToken : Secret -> a -> Int -> Result Error String
 signToken =
     Ffi.kernel "Auth_signToken"
 
 
 -- | `verifyToken secret token` — verify + decode a JWT.
-verifyToken : String -> String -> Result Error a
+verifyToken : Secret -> String -> Result Error a
 verifyToken =
     Ffi.kernel "Auth_verifyToken"
 
@@ -114,7 +115,7 @@ verifyToken =
 --
 --     Auth.signSlidingToken secret { sub = uid }
 --         { windowSeconds = 900, maxLifetimeSeconds = 86400 }
-signSlidingToken : String -> a -> { windowSeconds : Int
+signSlidingToken : Secret -> a -> { windowSeconds : Int
 , maxLifetimeSeconds : Int
 } -> Result Error String
 signSlidingToken =
@@ -238,7 +239,7 @@ userAccessState db userId issuedAt =
 --     buildToken : Int -> Result Error String
 --     buildToken now =
 --         Auth.signTokenWithClaims
---             (Jwt.hs256 "secret")
+--             (Jwt.hs256 (Secret.fromEnv "SKY_AUTH_TOKEN_SECRET"))
 --             (Jwt.claims
 --                 |> Jwt.subject "user-42"
 --                 |> Jwt.audience "https://example.app"
@@ -252,11 +253,12 @@ signTokenWithClaims alg claims =
 
 -- | `verifyTokenWithAlgorithm alg now token` — typed-builder
 -- mirror of `verifyToken` that delegates to `Sky.Core.Jwt.decode`.
--- The `now : Int` argument is the current unix-millis used for
--- `exp` / `nbf` window checks.
+-- The `now : Int` argument is the current unix-SECONDS used for
+-- `exp` / `nbf` window checks (the same unit `Jwt.expiresAt` stamps).
 --
 -- @
---     Auth.verifyTokenWithAlgorithm (Jwt.hs256 "secret") now token
+--     Auth.verifyTokenWithAlgorithm
+--         (Jwt.hs256 (Secret.fromEnv "SKY_AUTH_TOKEN_SECRET")) now token
 -- @
 verifyTokenWithAlgorithm : Jwt.Algorithm -> Int -> String -> Result Error String
 verifyTokenWithAlgorithm alg now token =

@@ -16,6 +16,7 @@ import Sky.Core.Math as Math
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Task as Task
 import Sky.Core.Jwt as Jwt
+import Sky.Core.Secret as Secret
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Json.Encode as JsonEnc
 import Sky.Core.Json.Decode as JsonDec
@@ -611,10 +612,10 @@ jwtClaimSet =
 
 jwtHsToken : Result Error String
 jwtHsToken =
-    Jwt.encode (Jwt.hs256 "topsecret") jwtClaimSet
+    Jwt.encode (Jwt.hs256 (Secret.unsafeFromString "topsecret")) jwtClaimSet
 
 
-jwtDecodeOk : String -> Int -> String -> Bool
+jwtDecodeOk : Secret -> Int -> String -> Bool
 jwtDecodeOk secret now tok =
     case Jwt.decode (Jwt.hs256 secret) now tok of
 
@@ -645,7 +646,7 @@ jwtSuite =
                   case jwtHsToken of
 
                       Ok tok ->
-                          Test.isTrue (jwtDecodeOk "topsecret" 1000 tok)
+                          Test.isTrue (jwtDecodeOk (Secret.unsafeFromString "topsecret") 1000 tok)
 
                       Err _ ->
                           Test.isTrue False)
@@ -655,7 +656,7 @@ jwtSuite =
                   case jwtHsToken of
 
                       Ok tok ->
-                          Test.isFalse (jwtDecodeOk "wrong-key" 1000 tok)
+                          Test.isFalse (jwtDecodeOk (Secret.unsafeFromString "wrong-key") 1000 tok)
 
                       Err _ ->
                           Test.isTrue False)
@@ -665,7 +666,7 @@ jwtSuite =
                   case jwtHsToken of
 
                       Ok tok ->
-                          Test.isFalse (jwtDecodeOk "topsecret" 99999999999 tok)
+                          Test.isFalse (jwtDecodeOk (Secret.unsafeFromString "topsecret") 99999999999 tok)
 
                       Err _ ->
                           Test.isTrue False)

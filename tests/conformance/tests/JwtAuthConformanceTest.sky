@@ -20,6 +20,7 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Jwt as Jwt
 import Sky.Core.Json.Decode as JsonDec
+import Sky.Core.Secret as Secret exposing (Secret)
 import Std.Auth as Auth
 import Sky.Test as Test exposing (Test)
 
@@ -27,9 +28,9 @@ import Sky.Test as Test exposing (Test)
 -- ─── Jwt fixtures ──────────────────────────────────────────────────
 -- Sky.Core.Jwt.hs256 imposes no minimum secret length (it just HMACs),
 -- so any string works for the raw-JWT tests.
-jwtSecret : String
+jwtSecret : Secret
 jwtSecret =
-    "the-hs256-signing-secret"
+    Secret.unsafeFromString "the-hs256-signing-secret"
 
 
 jwtAlg : Jwt.Algorithm
@@ -39,7 +40,7 @@ jwtAlg =
 
 -- Build a signed HS256 token from a claim set. Encode failure surfaces
 -- as an obviously-wrong sentinel rather than a silent empty string.
-signWith : String -> Jwt.Claims -> String
+signWith : Secret -> Jwt.Claims -> String
 signWith secret c =
     Result.withDefault "ENCODE_FAILED" (Jwt.encode (Jwt.hs256 secret) c)
 
@@ -95,9 +96,9 @@ subOf payloadJson =
 
 -- ─── Auth fixtures ─────────────────────────────────────────────────
 -- Std.Auth.signToken/verifyToken enforce a 32-byte minimum secret.
-authSecret : String
+authSecret : Secret
 authSecret =
-    "0123456789abcdef0123456789abcdef-extra"
+    Secret.unsafeFromString "0123456789abcdef0123456789abcdef-extra"
 
 
 authClaims : Dict.Dict String String
@@ -107,7 +108,7 @@ authClaims =
 
 -- Verify with an explicit claims-type annotation so HM has a concrete
 -- `a` to solve; only the Ok/Err constructor is inspected downstream.
-verifyAuth : String -> String -> Result Error (Dict.Dict String String)
+verifyAuth : Secret -> String -> Result Error (Dict.Dict String String)
 verifyAuth secret tok =
     Auth.verifyToken secret tok
 
@@ -150,7 +151,7 @@ tests =
         (\_ ->
             let
                 genuine = signWith jwtSecret validClaims
-                forgedSig = sigOf (signWith "a-totally-different-secret" validClaims)
+                forgedSig = sigOf (signWith (Secret.unsafeFromString "a-totally-different-secret") validClaims)
                 forged = headPayloadOf genuine ++ "." ++ forgedSig
             in
                 Test.err (Jwt.decode jwtAlg 1000 forged))
@@ -159,7 +160,7 @@ tests =
     , Test.test "Jwt: wrong secret -> Err [BYPASS]"
         (\_ ->
             Test.err
-                (Jwt.decode (Jwt.hs256 "wrong-secret") 1000
+                (Jwt.decode (Jwt.hs256 (Secret.unsafeFromString "wrong-secret")) 1000
                     (signWith jwtSecret validClaims)))
 
       -- BYPASS CLASS: the classic `alg:none` unsigned-token attack. A
@@ -261,7 +262,7 @@ tests =
                     Result.withDefault "SIGN_FAILED"
                         (Auth.signToken authSecret authClaims 3600)
             in
-                Test.err (verifyAuth "ffffffffffffffffffffffffffffffff-nope" tok))
+                Test.err (verifyAuth (Secret.unsafeFromString "ffffffffffffffffffffffffffffffff-nope") tok))
 
       -- BYPASS CLASS: tampered token body -> Err.
     , Test.test "Auth: verifyToken of tampered token -> Err [BYPASS]"
@@ -277,11 +278,11 @@ tests =
       -- WEAK-KEY REJECTION: a secret shorter than 32 bytes must not be
       -- allowed to sign (RFC 7518 §3.2 HS256 minimum). -> Err.
     , Test.test "Auth: signToken with <32-byte secret -> Err [WEAK KEY]"
-        (\_ -> Test.err (Auth.signToken "short-secret" authClaims 3600))
+        (\_ -> Test.err (Auth.signToken (Secret.unsafeFromString "short-secret") authClaims 3600))
 
       -- Weak-key rejection on the verify side too.
     , Test.test "Auth: verifyToken with <32-byte secret -> Err [WEAK KEY]"
-        (\_ -> Test.err (verifyAuth "short-secret" "a.b.c"))
+        (\_ -> Test.err (verifyAuth (Secret.unsafeFromString "short-secret") "a.b.c"))
 
       -- Malformed token to verifyToken -> Err, never panic.
     , Test.test "Auth: verifyToken of garbage token -> Err (not panic)"

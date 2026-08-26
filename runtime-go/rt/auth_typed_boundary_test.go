@@ -10,9 +10,11 @@ package rt
 // `*rt.SkyMaybe[…]`). That gives an attacker free reconnaissance
 // of how the upstream binding is shaped.
 //
-// Post-P5 the user-visible message is a fixed `expected String`
-// blurb; the actual Go type is logged via `Log.warn` for the
-// server-side audit trail.
+// Post-P5 the user-visible message is a fixed `expected <Type>`
+// blurb — `expected Secret` on the signToken/verifyToken secret legs
+// (post the Secret-type migration), `expected String` on the password
+// + token legs; the actual Go type is logged via `Log.warn` for the
+// server-side audit trail, never returned to the caller.
 //
 // The six cases below cover every public Auth kernel that takes a
 // String argument:
@@ -63,7 +65,16 @@ func authErrorMessage(t *testing.T, res any) string {
 // suffix is the leak this test forbids.
 func assertFixedAuthError(t *testing.T, msg, callerTag string) {
 	t.Helper()
-	want := callerTag + ": expected String"
+	assertFixedAuthErrorOfType(t, msg, callerTag, "String")
+}
+
+// assertFixedAuthErrorOfType is assertFixedAuthError parameterised by the
+// expected-type word. The secret legs of signToken/verifyToken now expect a
+// `Secret` (post the Secret-type migration); the password + token legs still
+// expect a `String`. Either way the message must NOT leak the runtime Go type.
+func assertFixedAuthErrorOfType(t *testing.T, msg, callerTag, typeWord string) {
+	t.Helper()
+	want := callerTag + ": expected " + typeWord
 	if !strings.HasPrefix(msg, want) {
 		t.Fatalf("error message %q must start with %q", msg, want)
 	}
@@ -106,16 +117,17 @@ func TestAuth_PasswordStrength_NonStringMessageHidesType(t *testing.T) {
 	assertFixedAuthError(t, msg, "passwordStrength")
 }
 
-func TestAuth_SignToken_NonStringSecretMessageHidesType(t *testing.T) {
+func TestAuth_SignToken_NonSecretSecretMessageHidesType(t *testing.T) {
 	res := Auth_signToken(123, map[string]any{}, 3600)
 	msg := authErrorMessage(t, res)
-	assertFixedAuthError(t, msg, "signToken")
+	// The secret leg now expects a Secret (opaque type), not a raw String.
+	assertFixedAuthErrorOfType(t, msg, "signToken", "Secret")
 }
 
-func TestAuth_VerifyToken_NonStringSecretMessageHidesType(t *testing.T) {
+func TestAuth_VerifyToken_NonSecretSecretMessageHidesType(t *testing.T) {
 	res := Auth_verifyToken(nil, "some.token.string")
 	msg := authErrorMessage(t, res)
-	assertFixedAuthError(t, msg, "verifyToken")
+	assertFixedAuthErrorOfType(t, msg, "verifyToken", "Secret")
 }
 
 func TestAuth_VerifyToken_NonStringTokenMessageHidesType(t *testing.T) {

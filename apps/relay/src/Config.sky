@@ -28,6 +28,7 @@ module Config exposing
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.System as System
+import Sky.Core.Secret as Secret exposing (Secret)
 import Sky.Core.File as File
 import Sky.Core.Task as Task
 import Sky.Core.Error exposing (Error)
@@ -46,7 +47,7 @@ type alias Features =
 
 type alias Config =
     { port : Int
-    , jwtSecret : String
+    , jwtSecret : Secret
     , tokenTtlSeconds : Int
     , limits : Limits
     , features : Features
@@ -238,9 +239,10 @@ fromDoc : String -> Config
 fromDoc doc =
     { port = listenPort ()
     , jwtSecret =
-        System.getenvOr
-            "SKY_AUTH_TOKEN_SECRET"
-            "relay-dev-secret-please-override-me-32b"
+        Secret.fromString
+            (System.getenvOr
+                "SKY_AUTH_TOKEN_SECRET"
+                "relay-dev-secret-please-override-me-32b")
     , tokenTtlSeconds = envInt "RELAY_TOKEN_TTL" 3600
     , limits =
         { capacity = decodeOr capacityDecoder doc 5

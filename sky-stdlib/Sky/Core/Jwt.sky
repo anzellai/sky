@@ -32,6 +32,7 @@ module Sky.Core.Jwt exposing
     )
 
 import Sky.Core.Crypto as Crypto
+import Sky.Core.Secret as Secret exposing (Secret)
 import Sky.Core.Encoding as Encoding
 import Sky.Core.String as String
 import Sky.Core.List as List
@@ -45,11 +46,11 @@ import Sky.Core.Error as Error exposing (Error)
 -- PEM *private* key to `encode` and the PEM *public* key to `decode`
 -- (HMAC's `HS256` uses the same secret for both).
 type Algorithm
-    = HS256 String
+    = HS256 Secret
     | RS256 String
 
 
-hs256 : String -> Algorithm
+hs256 : Secret -> Algorithm
 hs256 secret =
     HS256 secret
 
@@ -161,10 +162,13 @@ sign alg input =
 
         HS256 secret ->
             -- hmacSha256 hands back hex; JWT wants the raw bytes,
-            -- base64url-encoded.
+            -- base64url-encoded. `Crypto.hmacSha256` is a general HMAC
+            -- primitive (its key is not always a secret), so the secret's
+            -- bytes cross into it via the one sanctioned `Secret.reveal`.
             Result.map
                 b64uEncode
-                (Encoding.hexDecode (Crypto.hmacSha256 secret input))
+                (Encoding.hexDecode
+                    (Crypto.hmacSha256 (Secret.reveal secret) input))
 
         RS256 pemKey ->
             -- rsaSha256Sign hands back standard base64.

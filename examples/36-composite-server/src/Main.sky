@@ -16,6 +16,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Secret as Secret
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Sky.Core.Pure as Pure
@@ -59,7 +60,7 @@ readConfig =
             8000
             (String.toInt (System.getenvOr "SKY_COMPOSITE_PORT" "8000"))
     , dbPath = System.getenvOr "SKY_COMPOSITE_DB" "./composite-server.db"
-    , jwtSecret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" ""
+    , jwtSecret = Secret.fromString (System.getenvOr "SKY_AUTH_TOKEN_SECRET" "")
     , tokenTtlSeconds = 86400
     , rateLimitCapacity = 60
     , rateLimitRefill = 10
@@ -93,7 +94,7 @@ runMigrate cfg =
 
 runServer : Config -> Task Error ()
 runServer cfg =
-    if String.length cfg.jwtSecret < 32 then
+    if String.length (Secret.reveal cfg.jwtSecret) < 32 then
         let
             _ = println "ERROR: SKY_AUTH_TOKEN_SECRET must be >= 32 bytes."
         in

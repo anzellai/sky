@@ -501,7 +501,7 @@ cookie if you run more than one replica.
 
 - **Types over strings for errors** — `Result Error a` / `Task Error a`, never `Result String a`.
 - **No raw HTML/JS** — `Std.Ui` escapes everything; `data-sky-eval` is forbidden.
-- **Secrets are typed** — `Auth.signToken`/`verifyToken` take `String`; never `fmt.Sprintf("%v", secret)`.
+- **Secrets are typed** — `Auth.signToken`/`verifyToken` and `Jwt.hs256` take the opaque `Sky.Core.Secret.Secret` (redacts itself in every log/JSON path); wrap with `Secret.fromEnv "VAR"`, unwrap only via `Secret.reveal`. Never `fmt.Sprintf("%v", secret)`.
 - **Money is `Std.Money`**, never `Float`.
 - **`sky fmt` after editing**, **`sky verify` before shipping.**
 - **Production gate**: set `ENV=production`, and `SKY_CONSOLE_AUTH` (`token` or `app`) with `SKY_CONSOLE_TOKEN`; use a shared session store (redis/postgres) + sticky sessions when you run more than one replica. `SKY_AUTH_TOKEN_SECRET` is **not** a runtime setting — nothing in the runtime reads it (`sky_sid` is unsigned random hex, and `Auth.signToken` takes its secret as a Sky-level *argument*). It is a convention in your own code that only `sky doctor` knows about: if you use `Std.Auth`, whatever variable you feed into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes nothing.
