@@ -27,15 +27,15 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 80 |
 | stdlib modules (denominator) | 92 |
-| stdlib entries (denominator) | 1877 |
+| stdlib entries (denominator) | 1900 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 6 | 6.5% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 825 | 44.0% |
-| symbols unreferenced under the generous rule | 741 | 39.5% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 842 | 44.3% |
+| symbols unreferenced under the generous rule | 760 | 40.0% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -58,8 +58,8 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 19 |
-| stdlib modules owned by exactly one unit of any role | 15 |
+| stdlib modules owned by exactly one `examples/*` | 20 |
+| stdlib modules owned by exactly one unit of any role | 14 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -69,7 +69,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | module | sole owner |
 |---|---|
 | `Sky.Core.Process` | `examples/17-skymon` |
-| `Std.Bundle` | `examples/64-spa-native` |
+| `Std.Bundle` | `examples/64-app-native` |
 | `Std.Cli` | `examples/20-cli-counter` |
 
 ### Config sections lost if `examples/` is retired
@@ -191,7 +191,7 @@ None.
 | `stdlib.Sky.Http.Server.WebSocket` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Runs | equal |
-| `stdlib.Std.App` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.App` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Bundle` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Cache` | stdlib | Asserted | Falsified | stronger |
@@ -214,7 +214,7 @@ None.
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Live` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Live` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Live.Console` | stdlib | None | None | equal |
 | `stdlib.Std.Live.Head` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
@@ -226,7 +226,7 @@ None.
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Tui` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Tui` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Animation` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Background` | stdlib | Asserted | Falsified | stronger |
@@ -242,7 +242,7 @@ None.
 | `stdlib.Std.Ui.Responsive` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Transform` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Transition` | stdlib | Runs | Falsified | stronger |
-| `stdlib.Std.Webview` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Webview` | stdlib | Runs | Falsified | stronger |
 | `ui.cross-backend` | ui | Asserted | Falsified | stronger |
 | `ui.tui` | ui | Runs | Falsified | stronger |
 | `ui.webview` | ui | Builds | Falsified | stronger |

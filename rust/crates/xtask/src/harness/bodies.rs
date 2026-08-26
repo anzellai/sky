@@ -35,7 +35,7 @@ use std::process::Command;
 /// its client/server `Main.sky` + `shared/Shared.sky` + the two symlinked
 /// `Shared.sky` (+5); all reprint byte-exact with zero ERROR nodes.
 /// **187 since 2026-08-24**: the v0.22.0 Sky.Spa release added examples
-/// `61-spa-kanban`, `62-spa-notes`, `63-spa-chat` and `64-spa-native` (+9 `.sky`
+/// `61-app-kanban`, `62-app-notes`, `63-app-chat` and `64-app-native` (+9 `.sky`
 /// files across their `src/`); all still reprint byte-exact with zero ERROR nodes.
 pub const ROUNDTRIP_EXPECTED: u64 = 187;
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
@@ -617,7 +617,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// **127 since 2026-08-22**: `examples/60-spa-todos` (the Sky.Spa example) added
 /// one `examples/` directory → 59 dirs + 68 reject = 127; verdicts identical.
 /// **131 since 2026-08-24**: the v0.22.0 Sky.Spa release added examples
-/// `61-spa-kanban`, `62-spa-notes`, `63-spa-chat`, `64-spa-native` → 63 dirs +
+/// `61-app-kanban`, `62-app-notes`, `63-app-chat`, `64-app-native` → 63 dirs +
 /// 68 reject = 131; verdicts still identical (shared + one full-rebuild fallback).
 pub const SHARED_WORLD_EXPECTED: u64 = 131;
 
@@ -2981,7 +2981,7 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// surface is registered-gate-uncovered by design — `Std.Spa` is config/Task-
 /// shaped (see the DARK_MODULE_CEILING note in `corpus/stdlib.rs`) and is
 /// covered instead by the Sky.Spa examples (`examples/60-spa-todos` …
-/// `64-spa-native`, built to wasm) and the kernel-surface gate.
+/// `64-app-native`, built to wasm) and the kernel-surface gate.
 ///
 /// 155 -> 159: the rest of the v0.22.0 Sky.Spa surface landed — the `Std.Native`
 /// and `Std.Bundle` stdlib modules and the `spa-partition` / `spa-split` CLI

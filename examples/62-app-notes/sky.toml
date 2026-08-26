@@ -1,4 +1,4 @@
-name = "spa-chat"
+name = "app-notes"
 version = "0.1.0"
 entry = "src/Main.sky"
 
@@ -7,7 +7,6 @@ root = "src"
 
 # SQLite by default — a single-file store that embeds, zero ops (the pinned
 # tier-1 default). This is the AUTO-SPLIT INPUT project; `sky spa-split` derives
-# the native backend (which owns this DB + the SSE broker) and the wasm frontend
-# from it.
+# the native backend (which owns this DB) and the wasm frontend from it.
 [database]
 driver = "sqlite"
