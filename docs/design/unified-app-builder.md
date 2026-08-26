@@ -6,7 +6,7 @@
 > replaced; and the 2-param `App` sketch, superseded by `App fallback seed page
 > model msg`). **For the current, live API, read `docs/skyapp/overview.md` and
 > `sky doc Std.App`.** The "Implementation status" + "roadmap" sections below track
-> what shipped vs what remains (`App.withRequest`).
+> what shipped (incl. `App.withRequest`) vs the design rationale.
 >
 > The question it answered: can the app-shape variants become ONE app builder
 > whose target is a *build* choice (`--target family[:variant]`), instead of a
@@ -398,15 +398,20 @@ and their split path are untouched):**
    `Spa.app` entry from the `App.app` value** and feeds the EXISTING, UNCHANGED
    auto-split — closing the client-target gap without touching the proven
    splitter (the risk the user fenced off for live apps).
-4. **`App.withRequest`** — DEFERRED (needs a `Std.Live` change). Intent: make
-   `init`'s seed portable, the Live HTTP request an explicit capability. But
-   `Std.Live` delivers the request ONLY via `init`'s seed, so decoupling it
-   requires `Std.Live`/its runtime to deliver the request outside `init` (e.g. an
-   `onRequest` config field firing a `Cmd`). That touches the **live-traffic web
-   runtime** — the same risk class as the splitter — so it is left for an
-   explicit, separately-authorised change. Today's model already suffices:
-   `init : a -> …` that IGNORES its seed is portable across every target; an
-   `init : Request -> …` that reads the request is web-only (it pins the seed).
+4. **`App.withRequest`** — SHIPPED. Intent (met): make `init`'s seed portable,
+   the Live HTTP request an explicit capability. Rather than touch the
+   live-traffic web runtime's `init` path (the fenced-off risk), it is done
+   **entirely in the App layer**: `runLive` synthesises the Live init so it calls
+   `a.init ()` (portable — the app never reads the request through its seed) and,
+   when `App.withRequest` is set, applies the `(Request -> model -> (model, Cmd
+   msg))` hook to the model BEFORE the first render. The `Request` is built from
+   the seed record the runtime already hands init (`live.go handleInitial`), so
+   raw `Std.Live` is untouched. `withRequest` fixes the app's `seed` to `()`
+   (`init : a -> …` / `init : () -> …`), which is the portability contract. One
+   runtime fix rode along: `coerceReflectArg` now rebuilds a `Dict String String`
+   map element-wise, so the request's headers/params/cookies survive the
+   map→record coercion (they silently arrived empty before — the same latent bug
+   affected raw-Live "read a cookie at init"). See `docs/skyapp/overview.md`.
 
 ## Capability model — mandatory config, type-enforced (phantom flag)
 

@@ -101,6 +101,41 @@ requires a fallback page — add `|> App.withNotFound <page>`"*. A terminal-only
 (`NoFallback`) is never forced to add one; it just can't target `web` until it
 does. Everything else (`routes`, `window`, `input`) stays optional.
 
+## Reading the request — `App.withRequest`
+
+A web app often needs the incoming HTTP request at session start: an auth cookie
+to render the logged-in view on **first paint**, the path/query to seed initial
+state, a header to pick a locale. `App.withRequest` delivers it **portably**:
+
+```elm
+app { init = init, update = update, view = view, subscriptions = subs }
+    |> App.withRequest
+        (\req model ->
+            case Dict.get "sky_sid" req.cookies of
+                Just sid -> ( { model | session = Just sid }, Cmd.none )
+                Nothing  -> ( model, Cmd.none )
+        )
+    |> App.withNotFound NotFound
+```
+
+`withRequest : (Request -> model -> ( model, Cmd msg )) -> App … -> App …` runs
+**after `init` but before the first render**, so an auth-dependent view is
+correct on first paint — no logged-out flash, no `Cmd.perform` round-trip. It
+returns the same `( model, Cmd msg )` shape, so it can also fire a startup
+command.
+
+The point is portability. `init` stays `seed -> …` and **ignores its seed**, so
+the same source still builds for Tui / Cli / Webview (which have no HTTP request
+and skip this hook). The request arrives *only* through this web-only channel —
+which is why using `withRequest` fixes the app's `seed` to `()` (write
+`init : a -> …` or `init : () -> …`; a concrete non-unit seed is rejected). Only
+the Live/web runner consumes it.
+
+At session init the `Sky.Http.Server.Request` carries `method` / `path` /
+`headers` / `params` / `query` / `cookies`. `body` and `remoteAddr` are empty —
+init is a GET-time hook; read a POST body in a route handler or an `update`
+command instead.
+
 ## View adapter
 
 You write one `view : model -> Element msg`. `Std.App` adapts it per backend:

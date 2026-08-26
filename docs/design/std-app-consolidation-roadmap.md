@@ -33,8 +33,9 @@ onto an incomplete replacement.
 - [ ] **Feature parity.** Every capability reachable via `Live.app` / `Spa.app` /
       `Tui.app` / `Cli.program` / `Webview.app` is reachable via `Std.App`
       (`App.app` + a `withX`), OR is explicitly documented as intentionally
-      dropped. Known open item: **`App.withRequest`** (portable request access —
-      needs a `Std.Live` runtime change; tracked in the unified-app-builder doc).
+      dropped. **`App.withRequest`** — SHIPPED (portable request access; the
+      request refines the model before first paint via `runLive`, `init` stays
+      seed-portable). See `docs/skyapp/overview.md`.
 - [ ] **Every target verified end-to-end**, not just build-verified: `web`,
       `web:app`, `desktop` (the Live-in-a-window mode, run on a real display),
       `desktop:*` / `tablet:*` / `mobile:*` native, `terminal:tui|cli`.

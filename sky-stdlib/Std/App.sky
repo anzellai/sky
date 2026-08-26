@@ -57,6 +57,7 @@ module Std.App exposing
     , withGuard
     , withOnKey
     , withOnNavigate
+    , withRequest
     , baseDefaults
     , webDefaults
     , tabletDefaults
@@ -73,11 +74,13 @@ module Std.App exposing
     )
 
 import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Http as Http
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Std.Cli as Cli
+import Std.Cmd as Cmd
 import Std.Html exposing (Html)
 import Std.Live as Live
 import Std.Spa as Spa
@@ -261,6 +264,7 @@ type App fallback seed page model msg key
 , guard : Maybe (msg -> model -> Result Error ())
 , onKey : Maybe (key -> msg)
 , onNavigate : Maybe (page -> msg)
+, onRequest : Maybe (Request -> model -> ( model, Cmd msg ))
 }
 
 
@@ -287,6 +291,7 @@ app cfg =
         , guard = Nothing
         , onKey = Nothing
         , onNavigate = Nothing
+        , onRequest = Nothing
         }
 
 
@@ -316,6 +321,7 @@ web cfg =
         , guard = Nothing
         , onKey = Nothing
         , onNavigate = Nothing
+        , onRequest = Nothing
         }
 
 
@@ -443,6 +449,37 @@ withOnNavigate onNav (App a) =
     App { a | onNavigate = Just onNav }
 
 
+-- | Give a WEB app the incoming HTTP request at session start —
+-- `withRequest (\req model -> …)` refines the freshly-`init`ed model with the
+-- request's cookies / headers / path / query BEFORE the first paint, so an
+-- auth-dependent view renders correctly on first render (no logged-out flash,
+-- no `Cmd.perform` round-trip). It runs after `init` and returns the same
+-- `( model, Cmd msg )` shape, so it can also fire a startup command.
+--
+-- This is the PORTABLE way to read the request: `init` stays `seed -> …` and
+-- ignores its seed (so the same app builds for Tui / Cli / Webview, which have
+-- no HTTP request and skip this hook entirely), while the request arrives only
+-- through this web-only channel. Using it fixes the app's `seed` to `()` — the
+-- request is no longer smuggled through `init`'s argument.
+--
+-- Only the Live/web runner consumes it. At session init the request carries
+-- `method` / `path` / `headers` / `params` / `query` / `cookies`; `body` and
+-- `remoteAddr` are empty (init is a GET-time hook — read a POST body in a route
+-- handler or an `update` command instead).
+--
+--     app { init = init, update = update, view = view, subscriptions = subs }
+--         |> withRequest
+--             (\req model ->
+--                 case Dict.get "sky_sid" req.cookies of
+--                     Just sid -> ( { model | session = Just sid }, Cmd.none )
+--                     Nothing  -> ( model, Cmd.none )
+--             )
+--         |> withNotFound NotFound
+withRequest : (Request -> model -> ( model, Cmd msg )) -> App fallback () page model msg key -> App fallback () page model msg key
+withRequest onReq (App a) =
+    App { a | onRequest = Just onReq }
+
+
 -- | The unified entry: `main = App.run app`. The build resolves `--target` and
 -- REWRITES this call to the matching `run<Backend>` (so dead-code elimination
 -- still prunes the unused backends). You never pick a backend in source — this
@@ -481,12 +518,41 @@ spaRoute r =
             Spa.route path make
 
 
+-- Build a `Sky.Http.Server.Request` from the request-shaped seed record the
+-- Live runtime hands `init` at session start (`runtime-go/rt/live.go`
+-- `handleInitial`). That seed carries method / path / headers / params / query
+-- / cookies; `body` and `remoteAddr` are not delivered at init, so they are
+-- empty. `query` arrives as a raw string and is parsed to the `Dict` shape
+-- `Request` declares. This is the ONE bridge — [`withRequest`] delivers this
+-- `Request` to the app; `init` itself never sees the seed (it is called with
+-- `()`), which is what keeps the app portable.
+requestFromSeed_ :
+    { method : String
+    , path : String
+    , headers : Dict String String
+    , params : Dict String String
+    , query : String
+    , cookies : Dict String String
+    }
+    -> Request
+requestFromSeed_ s =
+    { method = s.method
+    , path = s.path
+    , body = ""
+    , headers = s.headers
+    , params = s.params
+    , query = Http.parseQuery s.query
+    , cookies = s.cookies
+    , remoteAddr = ""
+    }
+
+
 -- ─── Runners — one per backend, target → runner is resolved by the build ───
 -- | Run as server-driven HTML + SSE (`--target web`, = Sky.Live). Requires a
 -- fallback page ([`withNotFound`]) because Live routing is total. Folds the
 -- accumulated [`WebOpts`] + the `withHead`/`withGuard`/`withOnNavigate` builders
 -- into the `Live.config` chain.
-runLive : App HasFallback seed page model msg key -> Task Error ()
+runLive : App HasFallback () page model msg key -> Task Error ()
 runLive (App a) =
     case a.notFound of
 
@@ -495,7 +561,20 @@ runLive (App a) =
                 w = findWeb a.configs
                 base =
                     Live.config
-                        { init = a.init
+                        { init =
+                            \liveSeed ->
+                                let
+                                    ( m0, c0 ) = a.init ()
+                                in
+                                    case a.onRequest of
+                                        Just f ->
+                                            let
+                                                ( m1, c1 ) = f (requestFromSeed_ liveSeed) m0
+                                            in
+                                                ( m1, Cmd.batch [ c0, c1 ] )
+
+                                        Nothing ->
+                                            ( m0, c0 )
                         , update = a.update
                         , view =
                             \model ->
@@ -750,7 +829,7 @@ runWebview (App a) =
 -- app AND open a native webview onto it — the desktop delivery of a server-driven
 -- app. Requires a fallback page (it runs `runLive`). The window opens shortly
 -- after the server starts.
-runLiveWindow : App HasFallback seed page model msg key -> Task Error ()
+runLiveWindow : App HasFallback () page model msg key -> Task Error ()
 runLiveWindow (App a) =
     let
         d = findDesktop a.configs

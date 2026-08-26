@@ -2420,6 +2420,33 @@ func coerceReflectArg(av reflect.Value, want reflect.Type) reflect.Value {
 		}
 		return dst
 	}
+	// Map-to-map with a differing element (or key) type. Sky's Dict is
+	// map[string]any, but a typed `Dict String String` parameter/field wants
+	// map[string]string (and likewise map[string]Int → map[string]int64, etc.).
+	// A plain assign/convert cannot bridge these — Go maps are invariant — so
+	// rebuild element-wise, coercing each value (and key) recursively. Without
+	// this a request record delivered to `init`/`withRequest` arrives with its
+	// headers/params/cookies Dicts EMPTY (only the String fields survive).
+	if av.Kind() == reflect.Map && want.Kind() == reflect.Map &&
+		av.Type().Key().Kind() == reflect.String && want.Key().Kind() == reflect.String {
+		dst := reflect.MakeMapWithSize(want, av.Len())
+		for _, mk := range av.MapKeys() {
+			ck := mk
+			if !mk.Type().AssignableTo(want.Key()) {
+				ck = coerceReflectArg(mk, want.Key())
+			}
+			ev := av.MapIndex(mk)
+			for ev.Kind() == reflect.Interface && !ev.IsNil() {
+				ev = ev.Elem()
+			}
+			cv := coerceReflectArg(ev, want.Elem())
+			if ck.IsValid() && cv.IsValid() &&
+				ck.Type().AssignableTo(want.Key()) && cv.Type().AssignableTo(want.Elem()) {
+				dst.SetMapIndex(ck, cv)
+			}
+		}
+		return dst
+	}
 	// Interface target: wrap as-is
 	if want.Kind() == reflect.Interface {
 		return av
