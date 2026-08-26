@@ -33,9 +33,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 6 | 6.5% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 851 | 44.5% |
-| symbols unreferenced under the generous rule | 766 | 40.1% |
+| stdlib modules imported by nothing | 7 | 7.5% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 853 | 44.6% |
+| symbols unreferenced under the generous rule | 768 | 40.2% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -51,6 +51,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `stdlib.Sky.Core.Io`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
+- `stdlib.Std.Webview`
 
 ## Sole ownership
 
@@ -72,7 +73,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | `Std.Bundle` | `examples/64-app-native` |
 | `Std.Cli` | `examples/20-cli-counter` |
 | `Std.Live` | `examples/19-skyforum` |
-| `Std.Webview` | `examples/31-webview-stopwatch-ui` |
+| `Std.Tui` | `examples/21-tui-stopwatch` |
 
 ### Config sections lost if `examples/` is retired
 
@@ -245,7 +246,7 @@ None.
 | `stdlib.Std.Ui.Responsive` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Transform` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Transition` | stdlib | Runs | Falsified | stronger |
-| `stdlib.Std.Webview` | stdlib | Runs | Runs | equal |
+| `stdlib.Std.Webview` | stdlib | None | None | equal |
 | `ui.cross-backend` | ui | Asserted | Falsified | stronger |
 | `ui.tui` | ui | Runs | Falsified | stronger |
 | `ui.webview` | ui | Builds | Falsified | stronger |

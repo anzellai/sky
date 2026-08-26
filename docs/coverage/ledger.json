@@ -530,7 +530,7 @@
         "Std.Bundle": "examples/64-app-native",
         "Std.Cli": "examples/20-cli-counter",
         "Std.Live": "examples/19-skyforum",
-        "Std.Webview": "examples/31-webview-stopwatch-ui"
+        "Std.Tui": "examples/21-tui-stopwatch"
       }
     },
     "stdlib_modules_examples_only": {
@@ -546,6 +546,7 @@
       "Std.Live": "examples/19-skyforum",
       "Std.Native": "examples/64-app-native",
       "Std.PubSub": "examples/36-composite-server",
+      "Std.Tui": "examples/21-tui-stopwatch",
       "Std.Ui.Animation": "examples/26-ui-showcase",
       "Std.Ui.Events": "examples/62-app-notes",
       "Std.Ui.Grid": "examples/26-ui-showcase",
@@ -553,8 +554,7 @@
       "Std.Ui.Lazy": "examples/37-composite-live-shop",
       "Std.Ui.Responsive": "examples/37-composite-live-shop",
       "Std.Ui.Transform": "examples/26-ui-showcase",
-      "Std.Ui.Transition": "examples/26-ui-showcase",
-      "Std.Webview": "examples/31-webview-stopwatch-ui"
+      "Std.Ui.Transition": "examples/26-ui-showcase"
     },
     "stdlib_modules_repo_wide": {
       "Sky.Core.Bytes": {
@@ -653,10 +653,10 @@
           "apps:relay"
         ]
       },
-      "Std.Webview": {
-        "path": "examples/31-webview-stopwatch-ui",
+      "Std.Tui": {
+        "path": "examples/21-tui-stopwatch",
         "units": [
-          "examples/31-webview-stopwatch-ui"
+          "examples/21-tui-stopwatch"
         ]
       }
     }
@@ -5832,16 +5832,6 @@
             "strength": 2
           },
           {
-            "by": "examples/22-tui-stopwatch-ui (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/23-tui-todo (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
             "by": "examples/24-tui-kitchen-sink (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -5863,11 +5853,6 @@
           },
           {
             "by": "examples/30-sse-server-demo (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/31-webview-stopwatch-ui (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
           },
@@ -6013,16 +5998,6 @@
             "strength": 2
           },
           {
-            "by": "examples/22-tui-stopwatch-ui (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/23-tui-todo (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
             "by": "examples/24-tui-kitchen-sink (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
@@ -6044,11 +6019,6 @@
           },
           {
             "by": "examples/30-sse-server-demo (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/31-webview-stopwatch-ui (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -6937,6 +6907,16 @@
             "strength": 2
           },
           {
+            "by": "examples/22-tui-stopwatch-ui (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/23-tui-todo (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/24-tui-kitchen-sink (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -6963,6 +6943,11 @@
           },
           {
             "by": "examples/29-webview-threejs-spike (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/31-webview-stopwatch-ui (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
           },
@@ -7053,6 +7038,16 @@
             "strength": 2
           },
           {
+            "by": "examples/22-tui-stopwatch-ui (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/23-tui-todo (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/24-tui-kitchen-sink (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
@@ -7079,6 +7074,11 @@
           },
           {
             "by": "examples/29-webview-threejs-spike (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/31-webview-stopwatch-ui (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -10305,16 +10305,6 @@
             "by": "examples/21-tui-stopwatch (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "examples/22-tui-stopwatch-ui (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/23-tui-todo (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
           }
         ],
         "strength": 2
@@ -10324,16 +10314,6 @@
         "evidence": [
           {
             "by": "examples/21-tui-stopwatch (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/22-tui-stopwatch-ui (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
-          {
-            "by": "examples/23-tui-todo (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           }
@@ -11677,26 +11657,14 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Runs",
-        "evidence": [
-          {
-            "by": "examples/31-webview-stopwatch-ui (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          }
-        ],
-        "strength": 2
+        "class": "None",
+        "evidence": [],
+        "strength": 0
       },
       "cover_today": {
-        "class": "Runs",
-        "evidence": [
-          {
-            "by": "examples/31-webview-stopwatch-ui (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          }
-        ],
-        "strength": 2
+        "class": "None",
+        "evidence": [],
+        "strength": 0
       },
       "description": "the Std.Webview public API",
       "id": "stdlib.Std.Webview",
@@ -11810,16 +11778,17 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 6,
+      "count": 7,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
         "Std.Db.Migrate",
         "Std.Db.Table",
-        "Std.Live.Console"
+        "Std.Live.Console",
+        "Std.Webview"
       ],
-      "pct_of_denominator": 6.5
+      "pct_of_denominator": 7.5
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -11830,7 +11799,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 11,
+      "count": 12,
       "surfaces": [
         "cli.config",
         "cli.console",
@@ -11842,7 +11811,8 @@
         "cli.verify",
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Db.Table",
-        "stdlib.Std.Live.Console"
+        "stdlib.Std.Live.Console",
+        "stdlib.Std.Webview"
       ]
     },
     "symbols_unreferenced_generous": {
@@ -12690,9 +12660,10 @@
           ]
         },
         "Std.Tui": {
-          "count": 4,
+          "count": 5,
           "symbols": [
             "AppConfig",
+            "app",
             "withCanvasHeight",
             "withCanvasWidth",
             "withGuard"
@@ -12963,10 +12934,11 @@
           ]
         },
         "Std.Webview": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "AppCfg",
             "WindowCfg",
+            "app",
             "defaultWindow",
             "url",
             "withSize",
@@ -12974,8 +12946,8 @@
           ]
         }
       },
-      "count": 766,
-      "pct_of_denominator": 40.1
+      "count": 768,
+      "pct_of_denominator": 40.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13911,9 +13883,10 @@
           ]
         },
         "Std.Tui": {
-          "count": 4,
+          "count": 5,
           "symbols": [
             "AppConfig",
+            "app",
             "withCanvasHeight",
             "withCanvasWidth",
             "withGuard"
@@ -14185,10 +14158,11 @@
           ]
         },
         "Std.Webview": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "AppCfg",
             "WindowCfg",
+            "app",
             "defaultWindow",
             "url",
             "withSize",
@@ -14196,8 +14170,8 @@
           ]
         }
       },
-      "count": 851,
-      "pct_of_denominator": 44.5
+      "count": 853,
+      "pct_of_denominator": 44.6
     }
   },
   "units": [
@@ -14663,12 +14637,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/22-tui-stopwatch-ui",
-      "modules_imported": 10,
+      "modules_imported": 9,
       "path": "examples/22-tui-stopwatch-ui",
-      "refs_generous": 22,
-      "refs_qualified": 21,
+      "refs_generous": 23,
+      "refs_qualified": 22,
       "role": "Example",
-      "sky_files": 1,
+      "sky_files": 2,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -14677,12 +14651,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/23-tui-todo",
-      "modules_imported": 12,
+      "modules_imported": 11,
       "path": "examples/23-tui-todo",
-      "refs_generous": 37,
-      "refs_qualified": 36,
+      "refs_generous": 38,
+      "refs_qualified": 37,
       "role": "Example",
-      "sky_files": 1,
+      "sky_files": 2,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -14787,12 +14761,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/31-webview-stopwatch-ui",
-      "modules_imported": 8,
+      "modules_imported": 7,
       "path": "examples/31-webview-stopwatch-ui",
-      "refs_generous": 19,
-      "refs_qualified": 19,
+      "refs_generous": 23,
+      "refs_qualified": 22,
       "role": "Example",
-      "sky_files": 1,
+      "sky_files": 2,
       "sky_toml_sections": [
         "[source]"
       ]
