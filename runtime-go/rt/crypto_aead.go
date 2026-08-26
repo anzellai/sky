@@ -40,7 +40,11 @@ const (
 // descriptive error for the wrong length so callers can detect the
 // "forgot to call aesKeyFromPassword" failure mode.
 func readKey(name string, key any) ([]byte, error) {
-	k := []byte(fmt.Sprintf("%v", key))
+	// The key is a Sky `Secret` (opaque). secretReveal is the ONE boundary
+	// where its bytes are unwrapped — for the cipher, exactly where they must
+	// be. A bare string is tolerated transitionally. NEVER fmt.Sprintf a
+	// Secret here: it redacts to "[REDACTED]" and silently derives a wrong key.
+	k := []byte(secretReveal(key))
 	if len(k) != aeadKeyBytes {
 		return nil, fmt.Errorf("%s: key must be %d bytes, got %d (derive via Crypto.aesKeyFromPassword if you have a password)", name, aeadKeyBytes, len(k))
 	}
@@ -162,17 +166,19 @@ func Crypto_chacha20Decrypt(key any, encoded any) any {
 	return Ok[any, any](string(pt))
 }
 
-// Crypto.aesKeyFromPassword : String -> String -> String
+// Crypto.aesKeyFromPassword : Secret -> String -> Secret
 // PBKDF2-HMAC-SHA256, 100 000 iterations, 32-byte output.  Same
 // derivation function for both AES and ChaCha; the alias exists so
-// docs / IDE hovers are unambiguous.
+// docs / IDE hovers are unambiguous. The password is a Secret (revealed
+// at this one boundary); the derived key IS a secret, so it is returned
+// wrapped in a Secret — it feeds straight into aesGcmEncrypt's Secret key.
 func Crypto_aesKeyFromPassword(password any, salt any) any {
-	return string(pbkdf2.Key(readBytes(password), readBytes(salt), pbkdf2Iterations, aeadKeyBytes, sha256.New))
+	return Secret{v: string(pbkdf2.Key([]byte(secretReveal(password)), readBytes(salt), pbkdf2Iterations, aeadKeyBytes, sha256.New))}
 }
 
-// Crypto.chachaKeyFromPassword : String -> String -> String
+// Crypto.chachaKeyFromPassword : Secret -> String -> Secret
 func Crypto_chachaKeyFromPassword(password any, salt any) any {
-	return string(pbkdf2.Key(readBytes(password), readBytes(salt), pbkdf2Iterations, aeadKeyBytes, sha256.New))
+	return Secret{v: string(pbkdf2.Key([]byte(secretReveal(password)), readBytes(salt), pbkdf2Iterations, aeadKeyBytes, sha256.New))}
 }
 
 // ═══════════════════════════════════════════════════════════

@@ -34,6 +34,7 @@ module Sky.Core.Crypto exposing
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Secret exposing (Secret)
 
 
 -- ─── Hashes ────────────────────────────────────────────────────────
@@ -107,7 +108,7 @@ rsaSha256Verify =
 -- safe to store / transmit.  A new random nonce is drawn for
 -- every call (so encrypting the same message twice yields
 -- different ciphertexts).
-aesGcmEncrypt : String -> String -> Result Error String
+aesGcmEncrypt : Secret -> String -> Result Error String
 aesGcmEncrypt =
     Ffi.kernel "Crypto_aesGcmEncrypt"
 
@@ -116,7 +117,7 @@ aesGcmEncrypt =
 -- `aesGcmEncrypt`.  Returns `Err` on any tag-validation failure
 -- (so a tampered ciphertext NEVER decrypts to garbage).  Same
 -- key length rules as `aesGcmEncrypt`.
-aesGcmDecrypt : String -> String -> Result Error String
+aesGcmDecrypt : Secret -> String -> Result Error String
 aesGcmDecrypt =
     Ffi.kernel "Crypto_aesGcmDecrypt"
 
@@ -126,7 +127,7 @@ aesGcmDecrypt =
 -- output format as `aesGcmEncrypt`.  ChaCha20 is preferred on
 -- platforms without AES hardware acceleration — typically smaller
 -- mobile / embedded CPUs.
-chacha20Encrypt : String -> String -> Result Error String
+chacha20Encrypt : Secret -> String -> Result Error String
 chacha20Encrypt =
     Ffi.kernel "Crypto_chacha20Encrypt"
 
@@ -134,7 +135,7 @@ chacha20Encrypt =
 -- | `chacha20Decrypt key encoded` — decrypt the output of
 -- `chacha20Encrypt`.  Same Err-on-tampering guarantee as
 -- `aesGcmDecrypt`.
-chacha20Decrypt : String -> String -> Result Error String
+chacha20Decrypt : Secret -> String -> Result Error String
 chacha20Decrypt =
     Ffi.kernel "Crypto_chacha20Decrypt"
 
@@ -142,12 +143,14 @@ chacha20Decrypt =
 -- | `aesKeyFromPassword password salt` — derive a 32-byte
 -- AES-256 key from a password + salt via PBKDF2-HMAC-SHA256
 -- (100 000 iterations — OWASP recommended floor as of 2026).
--- The returned `String` is the raw 32 bytes; pass it straight
--- to `aesGcmEncrypt`.  `salt` MUST be unique per user / record
+-- `password` is an opaque `Secret`; the derived key is itself a
+-- secret, so it comes back as a `Secret` you pass straight to
+-- `aesGcmEncrypt` (which reveals it internally for the cipher).
+-- `salt` MUST be unique per user / record
 -- (16 random bytes from `randomBytes 16` is the standard
 -- shape).  NOT for password storage — use `Std.Auth.hashPassword`
 -- (bcrypt) for that.
-aesKeyFromPassword : String -> String -> String
+aesKeyFromPassword : Secret -> String -> Secret
 aesKeyFromPassword =
     Ffi.kernel "Crypto_aesKeyFromPassword"
 
@@ -157,7 +160,7 @@ aesKeyFromPassword =
 -- with `chacha20Encrypt`.  Both ciphers use 32-byte keys, so this
 -- is a thin alias for documentation; you can interchange the two
 -- safely.
-chachaKeyFromPassword : String -> String -> String
+chachaKeyFromPassword : Secret -> String -> Secret
 chachaKeyFromPassword =
     Ffi.kernel "Crypto_chachaKeyFromPassword"
 

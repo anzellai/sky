@@ -532,7 +532,7 @@ cryptoSuite =
               "aesKeyFromPassword derivation succeeds round-trip"
               (\_ ->
                   let
-                      key = Crypto.aesKeyFromPassword "p" "salt"
+                      key = Crypto.aesKeyFromPassword (Secret.unsafeFromString "p") "salt"
                   in
                       case Crypto.aesGcmEncrypt key "x" of
 
@@ -545,7 +545,7 @@ cryptoSuite =
               "aesGcm round-trip"
               (\_ ->
                   let
-                      key = Crypto.aesKeyFromPassword "hunter2" "salt"
+                      key = Crypto.aesKeyFromPassword (Secret.unsafeFromString "hunter2") "salt"
                   in
                       case Crypto.aesGcmEncrypt key "hello world" of
 
@@ -564,7 +564,7 @@ cryptoSuite =
               "aesGcm tamper detection"
               (\_ ->
                   let
-                      key = Crypto.aesKeyFromPassword "hunter2" "salt"
+                      key = Crypto.aesKeyFromPassword (Secret.unsafeFromString "hunter2") "salt"
                       tampered = "AAAAAAAAAAAAAAAAAAAAAAAAA"
                   in
                       case Crypto.aesGcmDecrypt key tampered of
@@ -578,7 +578,7 @@ cryptoSuite =
               "chacha20 round-trip"
               (\_ ->
                   let
-                      key = Crypto.chachaKeyFromPassword "pw" "saltsalt"
+                      key = Crypto.chachaKeyFromPassword (Secret.unsafeFromString "pw") "saltsalt"
                   in
                       case Crypto.chacha20Encrypt key "another payload" of
 
@@ -596,7 +596,7 @@ cryptoSuite =
         , Test.test
               "aesGcm short-key rejected"
               (\_ ->
-                  case Crypto.aesGcmEncrypt "short" "x" of
+                  case Crypto.aesGcmEncrypt (Secret.unsafeFromString "short") "x" of
 
                       Err _ ->
                           Test.isTrue True

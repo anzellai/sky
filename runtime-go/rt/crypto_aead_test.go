@@ -14,10 +14,15 @@ func TestCryptoAesGcmRoundTrip(t *testing.T) {
 		t.Fatalf("aesGcmEncrypt accepted a wrong-length key")
 	}
 
-	// Derive a real 32-byte key.
-	key := Crypto_aesKeyFromPassword("hunter2", "regression-salt").(string)
-	if len(key) != 32 {
-		t.Fatalf("aesKeyFromPassword should return 32 bytes, got %d", len(key))
+	// Derive a real 32-byte key. It comes back as an opaque Secret (the
+	// derived key is a secret); the ciphers reveal it internally, so it is
+	// passed straight through. The 32-byte contract is checked on its reveal.
+	key := Crypto_aesKeyFromPassword("hunter2", "regression-salt")
+	if _, ok := key.(Secret); !ok {
+		t.Fatalf("aesKeyFromPassword must return an opaque Secret, got %T", key)
+	}
+	if len(secretReveal(key)) != 32 {
+		t.Fatalf("aesKeyFromPassword should derive 32 bytes, got %d", len(secretReveal(key)))
 	}
 
 	// Round-trip succeeds.
@@ -52,7 +57,7 @@ func TestCryptoAesGcmRoundTrip(t *testing.T) {
 	}
 
 	// Wrong key fails.
-	badKey := Crypto_aesKeyFromPassword("hunter3", "regression-salt").(string)
+	badKey := Crypto_aesKeyFromPassword("hunter3", "regression-salt")
 	bad2 := Crypto_aesGcmDecrypt(badKey, encoded).(SkyResult[any, any])
 	if bad2.Tag != 1 {
 		t.Errorf("aesGcmDecrypt accepted a wrong key")
@@ -61,9 +66,9 @@ func TestCryptoAesGcmRoundTrip(t *testing.T) {
 
 // ChaCha20-Poly1305 round-trip mirrors AES-GCM (same shape, same tests).
 func TestCryptoChaCha20RoundTrip(t *testing.T) {
-	key := Crypto_chachaKeyFromPassword("hunter2", "salt").(string)
-	if len(key) != 32 {
-		t.Fatalf("chachaKeyFromPassword should return 32 bytes, got %d", len(key))
+	key := Crypto_chachaKeyFromPassword("hunter2", "salt")
+	if len(secretReveal(key)) != 32 {
+		t.Fatalf("chachaKeyFromPassword should derive 32 bytes, got %d", len(secretReveal(key)))
 	}
 
 	enc := Crypto_chacha20Encrypt(key, "another secret").(SkyResult[any, any])
@@ -82,13 +87,13 @@ func TestCryptoChaCha20RoundTrip(t *testing.T) {
 
 // PBKDF2 key derivation is deterministic for the same input.
 func TestCryptoKeyDerivationDeterministic(t *testing.T) {
-	k1 := Crypto_aesKeyFromPassword("p", "s").(string)
-	k2 := Crypto_aesKeyFromPassword("p", "s").(string)
+	k1 := secretReveal(Crypto_aesKeyFromPassword("p", "s"))
+	k2 := secretReveal(Crypto_aesKeyFromPassword("p", "s"))
 	if k1 != k2 {
 		t.Errorf("aesKeyFromPassword is non-deterministic — key would never match on decrypt")
 	}
 	// Different salt → different key.
-	k3 := Crypto_aesKeyFromPassword("p", "s2").(string)
+	k3 := secretReveal(Crypto_aesKeyFromPassword("p", "s2"))
 	if k1 == k3 {
 		t.Errorf("aesKeyFromPassword ignores salt")
 	}
