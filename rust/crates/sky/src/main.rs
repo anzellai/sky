@@ -840,19 +840,55 @@ fn is_std_app_dispatched_entry(entry_file: &Path) -> bool {
     }
 }
 
-/// True when the source calls the bare `App.run` dispatcher (`App.run ` / `App.run(`)
-/// — NOT a concrete runner like `App.runTui`. The build rewrites this call to the
-/// target's `run<Backend>`.
-fn uses_app_run(src: &str) -> bool {
-    src.contains("App.run ") || src.contains("App.run(")
+/// A `App.run` occurrence at `pos` is the BARE dispatcher iff it is not followed
+/// by an identifier character — so `App.run app`, `App.run(x)`, and a line-final
+/// `App.run` (the multiline `App.run\n    (App.app … |> …)` form) all count,
+/// while the concrete runners `App.runTui` / `App.runLive` / … (followed by a
+/// letter) never do. Matching only `App.run ` / `App.run(` missed the multiline
+/// form, so `App.run` was left as its `runTui` placeholder body → the app
+/// silently built for the terminal.
+fn is_bare_app_run_at(src: &str, pos: usize) -> bool {
+    match src.as_bytes().get(pos + "App.run".len()) {
+        None => true,
+        Some(&c) => !(c.is_ascii_alphanumeric() || c == b'_'),
+    }
 }
 
-/// Rewrite the bare `App.run` dispatcher call to a concrete `App.run<Backend>`.
-/// Both call spellings (`App.run app`, `App.run(...)`) are covered; concrete
-/// runners (`App.runTui`) never match `App.run ` / `App.run(`.
+/// True when the source calls the bare `App.run` dispatcher — NOT a concrete
+/// runner like `App.runTui`. The build rewrites this call to the target's
+/// `run<Backend>`.
+fn uses_app_run(src: &str) -> bool {
+    let mut start = 0;
+    while let Some(rel) = src[start..].find("App.run") {
+        let pos = start + rel;
+        if is_bare_app_run_at(src, pos) {
+            return true;
+        }
+        start = pos + "App.run".len();
+    }
+    false
+}
+
+/// Rewrite every bare `App.run` dispatcher call to a concrete `App.run<Backend>`.
+/// Every call spelling — `App.run app`, `App.run(...)`, and line-final
+/// `App.run\n    (...)` — is covered; concrete runners (`App.runTui`) are left
+/// untouched (they are followed by an identifier character).
 fn rewrite_app_run(src: &str, runner: &str) -> String {
-    src.replace("App.run ", &format!("App.{runner} "))
-        .replace("App.run(", &format!("App.{runner}("))
+    let repl = format!("App.{runner}");
+    let mut out = String::with_capacity(src.len());
+    let mut start = 0;
+    while let Some(rel) = src[start..].find("App.run") {
+        let pos = start + rel;
+        out.push_str(&src[start..pos]);
+        if is_bare_app_run_at(src, pos) {
+            out.push_str(&repl);
+        } else {
+            out.push_str("App.run");
+        }
+        start = pos + "App.run".len();
+    }
+    out.push_str(&src[start..]);
+    out
 }
 
 /// Map a resolved [`target::Target`] to the `Std.App` runner that backs it and
@@ -7984,6 +8020,37 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_run_rewrite_covers_every_call_spelling_and_spares_concrete_runners() {
+        // Named single-line.
+        assert!(uses_app_run("main = App.run appDef\n"));
+        assert_eq!(
+            rewrite_app_run("main = App.run appDef\n", "runLive"),
+            "main = App.runLive appDef\n"
+        );
+        // Inline single-line (the space before `(`).
+        assert!(uses_app_run("main = App.run (App.app { init = init })\n"));
+        assert_eq!(
+            rewrite_app_run("main = App.run (App.app { i = i })\n", "runLive"),
+            "main = App.runLive (App.app { i = i })\n"
+        );
+        // Multiline: `App.run` is line-final, the argument on the next line. This
+        // is the form that silently fell back to the `runTui` placeholder before.
+        let multiline = "main =\n    App.run\n        (App.app { i = i }\n            |> App.withNotFound NotFound)\n";
+        assert!(uses_app_run(multiline), "multiline App.run must be detected");
+        assert_eq!(
+            rewrite_app_run(multiline, "runLive"),
+            "main =\n    App.runLive\n        (App.app { i = i }\n            |> App.withNotFound NotFound)\n"
+        );
+        // Concrete runners (already picked a backend) are NEVER a bare dispatcher.
+        assert!(!uses_app_run("main = App.runTui appDef\n"));
+        assert!(!uses_app_run("main = App.runLive appDef\n"));
+        assert_eq!(
+            rewrite_app_run("main = App.runTui appDef\n", "runLive"),
+            "main = App.runTui appDef\n"
+        );
+    }
 
     #[test]
     fn detect_listening_port_reads_the_runtime_banner_forms() {
