@@ -21,9 +21,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 157 |
-| covered by the new corpus (>= Asserted) | 140 |
-| verdict `stronger` | 135 |
-| verdict `equal` | 22 |
+| covered by the new corpus (>= Asserted) | 138 |
+| verdict `stronger` | 133 |
+| verdict `equal` | 24 |
 | verdict `weaker` | 0 |
 | corpus units | 80 |
 | stdlib modules (denominator) | 93 |
@@ -59,9 +59,9 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 21 |
-| stdlib modules owned by exactly one unit of any role | 16 |
+| stdlib modules owned by exactly one unit of any role | 17 |
 | sky.toml sections owned by exactly one unit | 2 |
-| **lost if `examples/` retired** — modules | **4** |
+| **lost if `examples/` retired** — modules | **5** |
 | **lost if `examples/` retired** — config sections | **1** |
 
 ### Modules lost if `examples/` is retired
@@ -71,6 +71,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | `Sky.Core.Process` | `examples/17-skymon` |
 | `Std.Bundle` | `examples/64-app-native` |
 | `Std.Cli` | `examples/20-cli-counter` |
+| `Std.Live` | `examples/19-skyforum` |
 | `Std.Webview` | `examples/31-webview-stopwatch-ui` |
 
 ### Config sections lost if `examples/` is retired
@@ -216,7 +217,7 @@ None.
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Live` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Live` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Live.Console` | stdlib | None | None | equal |
 | `stdlib.Std.Live.Head` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
@@ -228,7 +229,7 @@ None.
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Tui` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Tui` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Ui` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Animation` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Background` | stdlib | Asserted | Falsified | stronger |

@@ -2822,17 +2822,37 @@ fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) ->
         return fails;
     };
 
+    let before = baseline_surface_strengths(base);
+
     let covered_now = led.doc["summary"]["surfaces_covered"].as_u64().unwrap_or(0);
     let covered_before = base["summary"]["surfaces_covered"].as_u64().unwrap_or(0);
-    if covered_now < covered_before {
+    // A deprecated front door that falls below `Asserted` (its last direct
+    // consumer migrated to Std.App) is allowed to leave the covered tally — the
+    // deprecation IS the decision to cover it less. Discount that many from the
+    // fall so the summary ratchet matches the per-surface exemption below.
+    let asserted = Strength::Asserted as u64;
+    let deprecated_uncovered = before
+        .iter()
+        .filter(|(id, was)| {
+            **was as u64 >= asserted
+                && is_deprecated_front_door_surface(id)
+                && led
+                    .surfaces
+                    .iter()
+                    .find(|s| &s.id == *id)
+                    .map_or(true, |s| (s.new_max() as u64) < asserted)
+        })
+        .count() as u64;
+    if covered_now + deprecated_uncovered < covered_before {
         fails.push(format!(
-            "COVERED SURFACES FELL — summary.surfaces_covered {covered_before} -> {covered_now}. \
-             Surfaces at strength >= Asserted may only grow; a fall means the new corpus stopped \
-             asserting something it used to assert."
+            "COVERED SURFACES FELL — summary.surfaces_covered {covered_before} -> {covered_now} \
+             (after discounting {deprecated_uncovered} deprecated front door(s)). Surfaces at \
+             strength >= Asserted may only grow; a fall means the new corpus stopped asserting \
+             something it used to assert."
         ));
     }
 
-    let before = baseline_surface_strengths(base);
+    let mut dropped: Vec<String> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
     for s in &led.surfaces {
         let now = s.new_max() as u8;
@@ -4154,6 +4174,52 @@ mod tests {
         assert!(
             !ratchet(&other, Some(&other_base), &none).is_empty(),
             "a non-deprecated surface's cover_new fall must still fail"
+        );
+    }
+
+    #[test]
+    fn a_deprecated_front_door_leaving_the_covered_tally_is_exempt() {
+        let none = BTreeSet::new();
+        // Covered 1 -> 0 because a deprecated front door fell below Asserted; the
+        // summary ratchet discounts it and does NOT fire.
+        let led = Ledger {
+            surfaces: vec![Surface {
+                id: "stdlib.Std.Webview".into(),
+                category: "stdlib".into(),
+                description: "d".into(),
+                today: vec![Ev::new("t", Strength::Runs)],
+                new: vec![Ev::new("n", Strength::Runs)],
+            }],
+            doc: json!({ "summary": { "surfaces_covered": 0 } }),
+        };
+        let base = json!({
+            "summary": { "surfaces_covered": 1 },
+            "surfaces": [ { "id": "stdlib.Std.Webview", "cover_new": { "strength": 4 } } ]
+        });
+        assert!(
+            ratchet(&led, Some(&base), &none).is_empty(),
+            "a deprecated front door leaving the covered tally must be exempt"
+        );
+        // A NON-deprecated surface leaving the tally still fails.
+        let other = Ledger {
+            surfaces: vec![Surface {
+                id: "stdlib.Std.Ui".into(),
+                category: "stdlib".into(),
+                description: "d".into(),
+                today: vec![Ev::new("t", Strength::Runs)],
+                new: vec![Ev::new("n", Strength::Runs)],
+            }],
+            doc: json!({ "summary": { "surfaces_covered": 0 } }),
+        };
+        let other_base = json!({
+            "summary": { "surfaces_covered": 1 },
+            "surfaces": [ { "id": "stdlib.Std.Ui", "cover_new": { "strength": 4 } } ]
+        });
+        assert!(
+            ratchet(&other, Some(&other_base), &none)
+                .iter()
+                .any(|f| f.contains("COVERED SURFACES FELL")),
+            "a non-deprecated surface leaving the tally must fail"
         );
     }
 

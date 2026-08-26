@@ -13,8 +13,7 @@ module Main exposing (main)
 -- tree, computes character-cell layout, paints to the terminal.
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Task as Task
-import Std.Tui as Tui
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import State exposing (..)
@@ -112,12 +111,14 @@ subscriptions _ =
 -- Tab / Shift-Tab cycles focus through the tab buttons, Enter or
 -- space activates the focused one (handled by the runtime focus ring
 -- before reaching user code).
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
 main =
-    Tui.app
-        (Tui.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            })
-        |> Task.run
+    App.runTui appDef

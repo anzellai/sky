@@ -529,6 +529,7 @@
         "Sky.Core.Process": "examples/17-skymon",
         "Std.Bundle": "examples/64-app-native",
         "Std.Cli": "examples/20-cli-counter",
+        "Std.Live": "examples/19-skyforum",
         "Std.Webview": "examples/31-webview-stopwatch-ui"
       }
     },
@@ -628,6 +629,12 @@
           "apps:dispatch"
         ]
       },
+      "Std.Live": {
+        "path": "examples/19-skyforum",
+        "units": [
+          "examples/19-skyforum"
+        ]
+      },
       "Std.Markdown": {
         "path": "apps/dispatch",
         "units": [
@@ -664,10 +671,10 @@
   "summary": {
     "stdlib_entries": 1911,
     "stdlib_modules": 93,
-    "surfaces_covered": 140,
-    "surfaces_covered_pct": 89.2,
-    "surfaces_equal": 22,
-    "surfaces_stronger": 135,
+    "surfaces_covered": 138,
+    "surfaces_covered_pct": 87.9,
+    "surfaces_equal": 24,
+    "surfaces_stronger": 133,
     "surfaces_total": 157,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -9101,20 +9108,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Falsified",
+        "class": "Runs",
         "evidence": [
-          {
-            "by": "apps:bundled (gate `apps-bundled`)",
-            "class": "Falsified",
-            "strength": 4
-          },
           {
             "by": "examples/19-skyforum (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
           }
         ],
-        "strength": 4
+        "strength": 2
       },
       "cover_today": {
         "class": "Runs",
@@ -9129,7 +9131,7 @@
       },
       "description": "the Std.Live public API",
       "id": "stdlib.Std.Live",
-      "verdict": "stronger"
+      "verdict": "equal"
     },
     {
       "category": "stdlib",
@@ -10297,13 +10299,8 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Falsified",
+        "class": "Runs",
         "evidence": [
-          {
-            "by": "apps:bundled (gate `apps-bundled`)",
-            "class": "Falsified",
-            "strength": 4
-          },
           {
             "by": "examples/21-tui-stopwatch (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
@@ -10320,7 +10317,7 @@
             "strength": 2
           }
         ],
-        "strength": 4
+        "strength": 2
       },
       "cover_today": {
         "class": "Runs",
@@ -10345,7 +10342,7 @@
       },
       "description": "the Std.Tui public API",
       "id": "stdlib.Std.Tui",
-      "verdict": "stronger"
+      "verdict": "equal"
     },
     {
       "category": "stdlib",
@@ -14208,10 +14205,10 @@
       "db_drivers": [],
       "gate": "apps-bundled",
       "id": "apps:bundled",
-      "modules_imported": 25,
+      "modules_imported": 23,
       "path": "sky-bundled",
       "refs_generous": 124,
-      "refs_qualified": 116,
+      "refs_qualified": 119,
       "role": "Layer2",
       "sky_files": 15,
       "sky_toml_sections": []

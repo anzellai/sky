@@ -1,5 +1,5 @@
 name = "sky-console"
 entry = "src/Main.sky"
 
-[live]
-port = 8025
+# The Sky.Live port is set on the Std.App value (App.withConfig (WebConfig …))
+# in src/Main.sky, not here — `Std.App` is the single config door.
