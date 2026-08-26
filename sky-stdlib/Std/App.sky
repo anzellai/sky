@@ -10,24 +10,55 @@
 --
 --     main = App.runTui (App.app { init = init, update = update, view = view, subscriptions = subs })
 --
--- Type: `App fallback seed page model msg`. `fallback` is a phantom capability
--- flag — `withNotFound` flips it to `HasFallback`, and `runLive` (web) requires
--- it, so a web app with no fallback page is a COMPILE error (users never write
--- the type; inference handles it). `seed` is `init`'s argument (Live passes a
--- request record; the native backends pass unit — so a portable app's `init`
--- must NOT read its seed, or it pins `seed` and only builds for `web`).
--- `page` is the routing page type (unconstrained when there are no routes).
+-- Config is layered in two pieces (see docs/design/std-app-config-dx.md):
 --
--- See docs/design/unified-app-builder.md.
+--   - [`withBase`] carries the cross-target [`BaseConfig`] (log, database, env).
+--   - [`withConfig`] carries a per-target [`Config`] variant whose name matches
+--     the `--target` flag family — `WebConfig`, `DesktopConfig`, `TabletConfig`,
+--     `MobileConfig`, `TerminalConfig` — each an exposed `*Opts` record you
+--     record-update from an exposed `*Defaults`.
+--   - Function-valued knobs (`withHead`, `withGuard`, `withOnKey`,
+--     `withOnNavigate`) stay builders because they thread `model`/`msg`/`page`.
+--
+-- Type: `App fallback seed page model msg key`. `fallback` is a phantom
+-- capability flag — `withNotFound` flips it to `HasFallback`, and `runLive`
+-- (web) requires it, so a web app with no fallback page is a COMPILE error
+-- (users never write the type; inference handles it). `seed` is `init`'s
+-- argument (Live passes a request record; the native backends pass unit — so a
+-- portable app's `init` must NOT read its seed, or it pins `seed` and only
+-- builds for `web`). `page` is the routing page type (unconstrained when there
+-- are no routes). `key` is the terminal key-event type ([`withOnKey`]);
+-- unconstrained until a handler is attached.
+--
+-- See docs/design/unified-app-builder.md + docs/design/std-app-config-dx.md.
 module Std.App exposing
     ( App
     , NoFallback
     , HasFallback
+    , BaseConfig
+    , Config(..)
+    , WebOpts
+    , TabletOpts
+    , DesktopOpts
+    , TerminalOpts
+    , MobileOpts
     , app
     , withRoutes
     , withNotFound
     , withWindow
     , withInput
+    , withBase
+    , withConfig
+    , withHead
+    , withGuard
+    , withOnKey
+    , withOnNavigate
+    , baseDefaults
+    , webDefaults
+    , tabletDefaults
+    , desktopDefaults
+    , terminalDefaults
+    , mobileDefaults
     , run
     , runLive
     , runLiveWindow
@@ -43,6 +74,7 @@ import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Std.Cli as Cli
+import Std.Html exposing (Html)
 import Std.Live as Live
 import Std.Spa as Spa
 import Std.Tui as Tui
@@ -60,6 +92,112 @@ type NoFallback
 type HasFallback
     = HasFallback
 
+-- | Cross-target config shared by every backend. Plain data — record-update it
+-- from [`baseDefaults`] and attach with [`withBase`]. `logFormat` / `logLevel`
+-- are simple strings for now (they map to `Sky.Config` later); `database` is an
+-- optional DSN; `env` is the environment mode (`"dev"` / `"production"` / …).
+type alias BaseConfig =
+    { logFormat : String
+    , logLevel : String
+    , database : Maybe String
+    , env : String
+    }
+
+
+-- | The built-in [`BaseConfig`] default. Record-update it: `{ baseDefaults |
+-- logLevel = "debug" }`.
+baseDefaults : BaseConfig
+baseDefaults =
+    { logFormat = "text", logLevel = "info", database = Nothing, env = "dev" }
+
+-- | Per-target config. The variant name matches the `--target` flag family, so
+-- `--target desktop:mac` tells you to write `DesktopConfig`. Each variant wraps
+-- an exposed `*Opts` record — record-update it from the matching `*Defaults` and
+-- attach with [`withConfig`]. Data-only: function-valued knobs stay builders.
+type Config
+    = WebConfig WebOpts
+    | DesktopConfig DesktopOpts
+    | TabletConfig TabletOpts
+    | MobileConfig MobileOpts
+    | TerminalConfig TerminalOpts
+
+-- | Web-target (Sky.Live) scalar config. `port` defaults to 8080 and `csrf` to
+-- `True`; the `Maybe` fields are unset by default. Maps to `Live.withPort` /
+-- `withStatic` / `withStaticUrl` / `withTtl` / `withIdleEvict` /
+-- `withMaxBodyBytes` / `withInput` (`inputMode`).
+type alias WebOpts =
+    { port : Int
+    , static : Maybe String
+    , staticUrl : Maybe String
+    , ttl : Maybe String
+    , idleEvict : Maybe String
+    , maxBodyBytes : Maybe Int
+    , inputMode : Maybe String
+    , csrf : Bool
+    }
+
+
+-- | The built-in [`WebOpts`] default.
+webDefaults : WebOpts
+webDefaults =
+    { port = 8080
+    , static = Nothing
+    , staticUrl = Nothing
+    , ttl = Nothing
+    , idleEvict = Nothing
+    , maxBodyBytes = Nothing
+    , inputMode = Nothing
+    , csrf = True
+    }
+
+-- | Tablet-target config — same Live-backed shape as [`WebOpts`].
+type alias TabletOpts =
+    WebOpts
+
+
+-- | The built-in [`TabletOpts`] default (= [`webDefaults`]).
+tabletDefaults : TabletOpts
+tabletDefaults =
+    webDefaults
+
+-- | Desktop-target (Sky.Webview / Live-in-window) config: window `title` +
+-- initial `width`/`height`. Defaults: `"Sky"`, 800×600.
+type alias DesktopOpts =
+    { title : String
+    , width : Int
+    , height : Int
+    }
+
+
+-- | The built-in [`DesktopOpts`] default.
+desktopDefaults : DesktopOpts
+desktopDefaults =
+    { title = "Sky", width = 800, height = 600 }
+
+-- | Terminal-target (Sky.Tui) config: the logical design canvas in pixels.
+-- Defaults: 1280×720. Maps to `Tui.withCanvasWidth` / `withCanvasHeight`.
+type alias TerminalOpts =
+    { canvasWidth : Int
+    , canvasHeight : Int
+    }
+
+
+-- | The built-in [`TerminalOpts`] default.
+terminalDefaults : TerminalOpts
+terminalDefaults =
+    { canvasWidth = 1280, canvasHeight = 720 }
+
+-- | Mobile-target config. Placeholder: no stdlib backend exists yet, so this is
+-- seeded minimal (`bundleId`) as future work — the flag already routes to it.
+type alias MobileOpts =
+    { bundleId : String }
+
+
+-- | The built-in [`MobileOpts`] default.
+mobileDefaults : MobileOpts
+mobileDefaults =
+    { bundleId = "" }
+
 -- | An app described once, runnable on any backend. Built by [`app`] and
 -- refined by the `with…` builders; consumed by a `run<Backend>` runner.
 --
@@ -67,8 +205,9 @@ type HasFallback
 -- tracks whether [`withNotFound`] has supplied the fallback page that Live
 -- requires; it is not stored in the record. Users never write the `App` type
 -- (inference handles the flag); it surfaces only when [`runLive`] rejects an app
--- that lacks a fallback.
-type App fallback seed page model msg
+-- that lacks a fallback. `key` is the terminal key-event type carried by
+-- [`withOnKey`] (unconstrained until attached).
+type App fallback seed page model msg key
     = App { init : seed -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> Element msg
@@ -79,17 +218,27 @@ type App fallback seed page model msg
       , size : ( Int, Int )
       }
 , onInput : Maybe (String -> msg)
+, base : BaseConfig
+, web : WebOpts
+, tablet : TabletOpts
+, desktop : DesktopOpts
+, terminal : TerminalOpts
+, mobile : MobileOpts
+, head : Maybe (model -> List (Html msg))
+, guard : Maybe (msg -> model -> Result Error ())
+, onKey : Maybe (key -> msg)
+, onNavigate : Maybe (page -> msg)
 }
 
 
--- | Describe an app from the shared TEA core. Routing, a window title, and
--- input are added by the `with…` builders below (each is target-relevant and
+-- | Describe an app from the shared TEA core. Routing, config, and function
+-- knobs are added by the `with…` builders below (each is target-relevant and
 -- ignored by targets that have no use for it).
 app : { init : seed -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> Element msg
 , subscriptions : model -> Sub msg
-} -> App NoFallback seed page model msg
+} -> App NoFallback seed page model msg key
 app cfg =
     App
         { init = cfg.init
@@ -100,33 +249,105 @@ app cfg =
         , notFound = Nothing
         , window = { title = "Sky", size = ( 800, 600 ) }
         , onInput = Nothing
+        , base = baseDefaults
+        , web = webDefaults
+        , tablet = tabletDefaults
+        , desktop = desktopDefaults
+        , terminal = terminalDefaults
+        , mobile = mobileDefaults
+        , head = Nothing
+        , guard = Nothing
+        , onKey = Nothing
+        , onNavigate = Nothing
         }
 
 
 -- | Attach URL routes as `(path, page)` pairs (web targets). Pair with
 -- [`withNotFound`] — the `web` target requires a fallback page.
-withRoutes : List ( String, page ) -> App fallback seed page model msg -> App fallback seed page model msg
+withRoutes : List ( String, page ) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withRoutes routes (App a) =
     App { a | routes = routes }
 
 
 -- | Set the fallback page for an unmatched route (web targets).
-withNotFound : page -> App fallback seed page model msg -> App HasFallback seed page model msg
+withNotFound : page -> App fallback seed page model msg key -> App HasFallback seed page model msg key
 withNotFound page_ (App a) =
     App { a | notFound = Just page_ }
 
 
 -- | Set the desktop window title + initial size (desktop targets).
-withWindow : String -> Int -> Int -> App fallback seed page model msg -> App fallback seed page model msg
+withWindow : String -> Int -> Int -> App fallback seed page model msg key -> App fallback seed page model msg key
 withWindow title width height (App a) =
     App { a | window = { title = title, size = ( width, height ) } }
 
 
 -- | Wire a line/text input handler (terminal targets). The payload is the
 -- entered line; a terminal renderer maps its input to it.
-withInput : (String -> msg) -> App fallback seed page model msg -> App fallback seed page model msg
+withInput : (String -> msg) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withInput onLine (App a) =
     App { a | onInput = Just onLine }
+
+
+-- | Attach the cross-target [`BaseConfig`] (log, database, env). Record-update
+-- from [`baseDefaults`].
+withBase : BaseConfig -> App fallback seed page model msg key -> App fallback seed page model msg key
+withBase base (App a) =
+    App { a | base = base }
+
+
+-- | Attach a per-target [`Config`] variant. Call once per customised target;
+-- the variant's `*Opts` record is stored on the matching field and folded into
+-- that backend's runner. `DesktopConfig` also populates the window so
+-- [`runWebview`] / [`runLiveWindow`] see the title + size.
+withConfig : Config -> App fallback seed page model msg key -> App fallback seed page model msg key
+withConfig cfg (App a) =
+    case cfg of
+
+        WebConfig o ->
+            App { a | web = o }
+
+        TabletConfig o ->
+            App { a | tablet = o }
+
+        DesktopConfig o ->
+            App
+                { a | desktop = o
+                , window = { title = o.title, size = ( o.width, o.height ) }
+                }
+
+        TerminalConfig o ->
+            App { a | terminal = o }
+
+        MobileConfig o ->
+            App { a | mobile = o }
+
+
+-- | Set the document `<head>` builder (web/desktop targets → `Live.withHead`).
+withHead : (model -> List (Html msg)) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withHead headFor (App a) =
+    App { a | head = Just headFor }
+
+
+-- | Attach a per-Msg guard — `guard msg model` returns `Err` to reject the
+-- message before `update` runs (web + terminal targets → `Live.withGuard` /
+-- `Tui.withGuard`).
+withGuard : (msg -> model -> Result Error ()) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withGuard guard (App a) =
+    App { a | guard = Just guard }
+
+
+-- | Attach a raw key-event handler (terminal target → `Tui.withOnKey`). The
+-- key-event type is whatever the handler declares.
+withOnKey : (key -> msg) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withOnKey onKey (App a) =
+    App { a | onKey = Just onKey }
+
+
+-- | Wire a navigation handler — `onNavigate page` yields a `msg` when the app
+-- routes to `page` (web target → `Live.withOnNavigate`).
+withOnNavigate : (page -> msg) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withOnNavigate onNav (App a) =
+    App { a | onNavigate = Just onNav }
 
 
 -- | The unified entry: `main = App.run app`. The build resolves `--target` and
@@ -135,31 +356,117 @@ withInput onLine (App a) =
 -- is the whole point of `Std.App`. When built without a target it defaults to
 -- `web` (Sky.Live). The body here is a placeholder the build replaces; it is
 -- never the compiled entry.
-run : App fallback seed page model msg -> Task Error ()
+run : App fallback seed page model msg key -> Task Error ()
 run =
     runTui
 
 
 -- ─── Runners — one per backend, target → runner is resolved by the build ───
 -- | Run as server-driven HTML + SSE (`--target web`, = Sky.Live). Requires a
--- fallback page ([`withNotFound`]) because Live routing is total.
-runLive : App HasFallback seed page model msg -> Task Error ()
+-- fallback page ([`withNotFound`]) because Live routing is total. Folds the
+-- accumulated [`WebOpts`] + the `withHead`/`withGuard`/`withOnNavigate` builders
+-- into the `Live.config` chain.
+runLive : App HasFallback seed page model msg key -> Task Error ()
 runLive (App a) =
     case a.notFound of
 
         Just fallback ->
-            Live.app
-                (Live.config
-                    { init = a.init
-                    , update = a.update
-                    , view = \model -> Ui.layout [] (a.view model)
-                    , subscriptions = a.subscriptions
-                    , routes =
-                        List.map
-                            (\( path, page_ ) -> Live.route path page_)
-                            a.routes
-                    , notFound = fallback
-                    })
+            let
+                w = a.web
+                base =
+                    Live.config
+                        { init = a.init
+                        , update = a.update
+                        , view = \model -> Ui.layout [] (a.view model)
+                        , subscriptions = a.subscriptions
+                        , routes =
+                            List.map
+                                (\( path, page_ ) -> Live.route path page_)
+                                a.routes
+                        , notFound = fallback
+                        }
+                withStatic_ =
+                    case w.static of
+
+                        Just s ->
+                            Live.withStatic s base
+
+                        Nothing ->
+                            base
+                withStaticUrl_ =
+                    case w.staticUrl of
+
+                        Just s ->
+                            Live.withStaticUrl s withStatic_
+
+                        Nothing ->
+                            withStatic_
+                withTtl_ =
+                    case w.ttl of
+
+                        Just t ->
+                            Live.withTtl t withStaticUrl_
+
+                        Nothing ->
+                            withStaticUrl_
+                withIdle_ =
+                    case w.idleEvict of
+
+                        Just t ->
+                            Live.withIdleEvict t withTtl_
+
+                        Nothing ->
+                            withTtl_
+                withMaxBody_ =
+                    case w.maxBodyBytes of
+
+                        Just n ->
+                            Live.withMaxBodyBytes n withIdle_
+
+                        Nothing ->
+                            withIdle_
+                withInputMode_ =
+                    case w.inputMode of
+
+                        Just m ->
+                            Live.withInput m withMaxBody_
+
+                        Nothing ->
+                            withMaxBody_
+                withPort_ = Live.withPort w.port withInputMode_
+                -- TODO(std-app-config): `w.csrf` has no `Std.Live` builder
+                -- (CSRF is a `Sky.Config` concern, and `Live.app` takes no
+                -- `Sky.Config`), so it is stored but not yet threaded.
+                -- TODO(std-app-config): `a.base` (log/database/env) likewise has
+                -- no `Live.app` hook yet; it is stored for the boot-time
+                -- resolution described in the design (§4) once `Sky.Config` is
+                -- wired through.
+                withHead_ =
+                    case a.head of
+
+                        Just h ->
+                            Live.withHead h withPort_
+
+                        Nothing ->
+                            withPort_
+                withGuard_ =
+                    case a.guard of
+
+                        Just g ->
+                            Live.withGuard g withHead_
+
+                        Nothing ->
+                            withHead_
+                withNav_ =
+                    case a.onNavigate of
+
+                        Just f ->
+                            Live.withOnNavigate f withGuard_
+
+                        Nothing ->
+                            withGuard_
+            in
+                Live.app withNav_
 
         Nothing ->
             Task.fail
@@ -168,8 +475,9 @@ runLive (App a) =
 
 
 -- | Run as a client wasm SPA (`--target web:app` / `mobile:*` / `tablet:*`,
--- = Sky.Spa). Effects auto-split to a backend at build time.
-runSpa : App fallback seed page model msg -> Task Error ()
+-- = Sky.Spa). Effects auto-split to a backend at build time. Folds only what
+-- Spa supports (routes + fallback); web-server-only knobs are ignored.
+runSpa : App fallback seed page model msg key -> Task Error ()
 runSpa (App a) =
     let
         base =
@@ -196,22 +504,45 @@ runSpa (App a) =
 
 
 -- | Run as a full-screen terminal UI (`--target terminal:tui`, = Sky.Tui).
--- The `Element` view renders directly to ANSI cells.
-runTui : App fallback seed page model msg -> Task Error ()
+-- The `Element` view renders directly to ANSI cells. Folds the [`TerminalOpts`]
+-- canvas + the `withOnKey`/`withGuard` builders into the `Tui.config` chain.
+runTui : App fallback seed page model msg key -> Task Error ()
 runTui (App a) =
-    Tui.app
-        (Tui.config
-            { init = a.init
-            , update = a.update
-            , view = a.view
-            , subscriptions = a.subscriptions
-            })
+    let
+        t = a.terminal
+        base =
+            Tui.config
+                { init = a.init
+                , update = a.update
+                , view = a.view
+                , subscriptions = a.subscriptions
+                }
+        withW_ = Tui.withCanvasWidth t.canvasWidth base
+        withH_ = Tui.withCanvasHeight t.canvasHeight withW_
+        withKey_ =
+            case a.onKey of
+
+                Just k ->
+                    Tui.withOnKey k withH_
+
+                Nothing ->
+                    withH_
+        withGuard_ =
+            case a.guard of
+
+                Just g ->
+                    Tui.withGuard g withKey_
+
+                Nothing ->
+                    withKey_
+    in
+        Tui.app withGuard_
 
 
 -- | Run as a line-based CLI (`--target terminal:cli`, = Sky.Cli). The
 -- `Element` view is flattened to text (best-effort — see [`elementToText`]);
 -- `Std.Cli.program` stays the escape hatch for a hand-authored `String` view.
-runCli : App fallback seed page model msg -> Task Error ()
+runCli : App fallback seed page model msg key -> Task Error ()
 runCli (App a) =
     let
         base =
@@ -234,8 +565,9 @@ runCli (App a) =
 
 
 -- | Run as a native desktop window (`--target desktop:<os>` is native wasm; this
--- is the standalone Sky.Webview form). `seed` is pinned to unit.
-runWebview : App fallback () page model msg -> Task Error ()
+-- is the standalone Sky.Webview form). `seed` is pinned to unit. The window is
+-- taken from [`withWindow`] / a `DesktopConfig` via [`withConfig`].
+runWebview : App fallback () page model msg key -> Task Error ()
 runWebview (App a) =
     Webview.app
         { init = a.init
@@ -250,7 +582,7 @@ runWebview (App a) =
 -- app AND open a native webview onto it — the desktop delivery of a server-driven
 -- app. Requires a fallback page (it runs `runLive`). The window opens shortly
 -- after the server starts.
-runLiveWindow : App HasFallback seed page model msg -> Task Error ()
+runLiveWindow : App HasFallback seed page model msg key -> Task Error ()
 runLiveWindow (App a) =
     Task.map
         (\_ -> ())

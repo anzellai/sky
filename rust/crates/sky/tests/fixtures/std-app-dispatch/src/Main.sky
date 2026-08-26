@@ -48,7 +48,7 @@ subscriptions _ =
     Sub.none
 
 
-app : App.App HasFallback a Page Model Msg
+app : App.App HasFallback a Page Model Msg key
 app =
     App.app
         { init = init
