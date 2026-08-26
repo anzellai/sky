@@ -1097,7 +1097,7 @@ token =
         )
 
 verified : Result Error String   -- raw JSON claims string
-verified = Auth.verifyTokenWithAlgorithm (Jwt.hs256 "secret") now token
+verified = Auth.verifyTokenWithAlgorithm (Jwt.hs256 (Secret.fromString "secret")) now token
 ```
 
 ### `Std.Time` `*Utc` infallible companions

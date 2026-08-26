@@ -15,6 +15,7 @@ module Main exposing (main)
 import Std.Auth as Auth
 import Std.Db as Db
 import Sky.Core.Task as Task
+import Sky.Core.Secret as Secret
 import Std.Log exposing (println)
 
 
@@ -29,7 +30,7 @@ main =
                                 |> Task.andThenResult
                                     (\uid ->
                                         Auth.signToken
-                                            "your-secret-min-32-bytes-please-rotate"
+                                            (Secret.fromString "your-secret-min-32-bytes-please-rotate")
                                             { sub = uid }
                                             3600
                                     )
@@ -56,7 +57,7 @@ If you already have a users table and just want to hash passwords + issue JWTs:
 | `Auth.hashPasswordCost` | `String -> Int -> Result Error String` | explicit cost (10–14 typical) |
 | `Auth.verifyPassword` | `String -> String -> Result Error Bool` | constant-time compare |
 | `Auth.passwordStrength` | `String -> Result Error String` | `"weak" / "fair" / "strong"` category label |
-| `Auth.signToken` | `String -> a -> Int -> Result Error String` | HMAC-SHA256 JWT, expirySeconds from now; `a` is your claims record / dict |
+| `Auth.signToken` | `Secret -> a -> Int -> Result Error String` | HMAC-SHA256 JWT, expirySeconds from now; `a` is your claims record / dict. The signing key is an opaque `Sky.Core.Secret` — wrap at the boundary (`Secret.fromEnv "VAR"` / `Secret.fromString runtimeStr`). |
 | `Auth.verifyToken` | `String -> String -> Result Error a` | parametric — decode into the claims record / dict the call site annotates |
 
 These return `Result` (synchronous CPU work), so they compose naturally inside any handler:
@@ -106,11 +107,12 @@ import Sky.Http.Server exposing (Request, Response)
 import Std.Auth as Auth
 import Std.Db as Db
 import System
+import Sky.Core.Secret as Secret
 import Sky.Core.Error as Error exposing (Error)
 
 
 secret =
-    System.getenvOr "AUTH_SECRET" ""
+    Secret.fromString (System.getenvOr "AUTH_SECRET" "")
 
 
 main =
@@ -213,7 +215,7 @@ Configure `Std.Auth` from your own code, reading whatever environment variables
 you choose at the call site:
 
 ```elm
-secret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret"
+secret = Secret.fromEnv "SKY_AUTH_TOKEN_SECRET"   -- opaque Secret; redacts itself in logs
 ttl    = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400" |> String.toInt |> Result.withDefault 86400
 
 token  = Auth.signToken secret claims ttl

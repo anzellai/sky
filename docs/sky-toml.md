@@ -213,7 +213,7 @@ Configure `Std.Auth` from your code, reading whatever environment variables you
 choose at the call site:
 
 ```elm
-secret = System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret"
+secret = Secret.fromEnv "SKY_AUTH_TOKEN_SECRET"   -- opaque Secret; redacts in logs
 ttl    = System.getenvOr "SKY_AUTH_TOKEN_TTL" "86400" |> String.toInt |> Result.withDefault 86400
 cookie = System.getenvOr "SKY_AUTH_COOKIE" "sky_auth"
 
