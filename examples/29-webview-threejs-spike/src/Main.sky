@@ -33,7 +33,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
-import Std.Webview as Webview
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Html as Html
@@ -143,12 +143,18 @@ view _ =
 -- ═══════════════════════════════════════════════════════════════════
 -- Main
 -- ═══════════════════════════════════════════════════════════════════
-main =
-    Webview.app
+appDef =
+    App.web
         { init = init
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , window =
-            { title = "Sky.Webview spike - three.js", size = ( 1024, 720 ) }
         }
+        |> App.withWindow "Sky.Webview spike - three.js" 1024 720
+        -- Single-view app (no routing); `desktop` = Live-in-a-window still
+        -- requires the total-routing fallback, never actually hit here.
+        |> App.withNotFound ()
+
+
+main =
+    App.run appDef
