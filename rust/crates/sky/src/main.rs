@@ -923,6 +923,24 @@ fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf,
             return Err(ExitCode::FAILURE);
         }
     }
+    // Link the parent's fetched Sky deps (`.skydeps`) + generated Go-FFI surface
+    // (`sky-ffi`) into the derived project, so an FFI / Sky-dependency app builds
+    // through the Std.App derived entry WITHOUT re-fetching or re-introspecting.
+    // The derived project carries its own `sky.toml [dependencies]` (copied) and
+    // resolves deps relative to itself, so without these it fails with "not
+    // fetched — run 'sky install'". Symlink (cheap) rather than copy the trees
+    // (13-skyshop's is 76k FFI symbols); a link failure is non-fatal — the build
+    // then re-fetches/regenerates.
+    for name in [".skydeps", "sky-ffi"] {
+        let from = project_dir.join(name);
+        if from.is_dir() {
+            let to = out_root.join(name);
+            #[cfg(unix)]
+            let _ = std::os::unix::fs::symlink(&from, &to);
+            #[cfg(windows)]
+            let _ = std::os::windows::fs::symlink_dir(&from, &to);
+        }
+    }
     Ok(src_to)
 }
 
@@ -3655,6 +3673,34 @@ fn verb(check_only: bool) -> &'static str {
 
 // ---- run -----------------------------------------------------------------
 
+/// Fetch declared Sky dependencies when `.skydeps` is absent — the pre-dispatch
+/// auto-install for `sky run`, so it works without a manual `sky install` first
+/// on the Std.App / Sky.Spa / normal paths alike. Gated on a cheap directory
+/// check: a project whose deps are already fetched returns immediately. A fetch
+/// failure is non-fatal here — the subsequent build surfaces the real error.
+fn maybe_fetch_sky_deps(repo_root: &Path, project_dir: &Path) {
+    let deps = project::read_sky_dependencies(&project_dir.join("sky.toml"));
+    if deps.is_empty() {
+        return;
+    }
+    let skydeps = project_dir.join(".skydeps");
+    let present = skydeps.is_dir()
+        && std::fs::read_dir(&skydeps)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+    if present {
+        return;
+    }
+    println!(
+        "sky run: fetching {} Sky dependency(ies) (auto-install)…",
+        deps.len()
+    );
+    let report = project::ffi_install(project_dir, repo_root);
+    for line in &report.lines {
+        println!("{line}");
+    }
+}
+
 /// `sky run <file>` — build, then exec the produced binary with inherited
 /// stdio, propagating its exit code.
 fn cmd_run(args: &[String]) -> ExitCode {
@@ -3722,6 +3768,12 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    // Auto-install BEFORE dispatch, so `sky run` works without a manual `sky
+    // install` first on EVERY path — Std.App (which builds a derived entry and
+    // never reaches the normal-build retry below), Sky.Spa, and the normal
+    // build. Gated on the cheap ".skydeps absent while deps are declared" check,
+    // so a project whose deps are already fetched pays no per-run cost.
+    maybe_fetch_sky_deps(&repo_root, &project_dir);
     // Std.App dispatched entry: build the derived per-target entry and run it.
     // `--target` selects the backend (required); the build is the same derived
     // entry `sky build` produces, then the binary is exec'd with the real TTY.
