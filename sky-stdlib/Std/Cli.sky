@@ -1,5 +1,9 @@
 -- | Std.Cli — one-shot / interactive CLI backend (Layer 3 Sky source).
 --
+-- **DEPRECATED for direct use — write `Std.App` instead.** `Std.App` composes
+-- this module for `--target terminal:cli`. Still functional (Std.App uses it),
+-- but new code should use `App.app` + `App.run`. See docs/skyapp/overview.md.
+--
 -- A TEA loop for command-line tools: `Cli.config { init, update, view,
 -- subscriptions }` produces an opaque `AppConfig`; attach an stdin-line
 -- handler with `Cli.withOnLine`. `view` renders a plain `String`. Every

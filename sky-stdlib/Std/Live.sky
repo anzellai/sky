@@ -1,5 +1,11 @@
 -- | Std.Live — server-driven web UI backend (Layer 3 Sky source).
 --
+-- **DEPRECATED for direct use — write `Std.App` instead.** `Std.App` is the
+-- single public app builder; it composes this module for the `web` target
+-- (`--target web`, the default). This module stays functional (Std.App uses it
+-- internally, and existing apps keep compiling), but new code should use
+-- `App.app { … } |> App.withNotFound … ` + `App.run`. See docs/skyapp/overview.md.
+--
 -- `Live.app` takes a typed builder config: `Live.config { init, update,
 -- view, subscriptions, routes, notFound }` produces an opaque `AppConfig`,
 -- and optional fields (head / guard / static / analytics / …) are attached

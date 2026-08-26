@@ -1,5 +1,10 @@
 -- | Std.Spa — client-side TEA (Sky.Spa), the browser counterpart of Std.Live.
 --
+-- **DEPRECATED for direct use — write `Std.App` instead.** `Std.App` composes
+-- this module for the client targets (`--target web:app` / `mobile:*` /
+-- `desktop:*`), synthesising the split from your `App.app`. Still functional,
+-- but new code should use `App.app` + `App.run`. See docs/skyapp/overview.md.
+--
 -- An app is written EXACTLY like a Sky.Live app — the same `Model`, `Msg`,
 -- pure `update`, and `view` over the renderer-agnostic `Std.Html` /
 -- `Std.Ui` — but the TEA loop runs on the CLIENT, compiled to

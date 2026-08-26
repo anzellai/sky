@@ -45,7 +45,16 @@ pub fn render_module(
     // the dual Sky.Http.Server) now declares its full surface in its .sky source
     // as Ffi.kernel aliases, so `sky doc` renders from that ONE source — no
     // curated-registry append (v0.19 kernel-metadata unification).
-    Ok(render_source(&src))
+    let page = render_source(&src);
+    if is_deprecated_front_door(module_arg) {
+        return Ok(format!(
+            "⚠  DEPRECATED — use `Std.App` instead.\n   \
+             `Std.App` is the single public app builder; it composes this module \
+             for you.\n   This module stays functional, but new code should use \
+             `App.app` + `App.run` + `--target`.\n   See docs/skyapp/overview.md.\n\n{page}"
+        ));
+    }
+    Ok(page)
 }
 
 /// Kernel-only modules: `(full_name, pseudo)` from the kernel registry whose
@@ -418,6 +427,21 @@ pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
         }
     }
     stdlib.extend(kernel_extra);
+    // The per-shape app front doors are DEPRECATED — `Std.App` is the single
+    // public builder that wraps them. They still compile (Std.App uses them
+    // internally, and existing apps keep working), but are listed under their own
+    // header so new code reaches for `Std.App`, not the modules it subsumes.
+    let deprecated: Vec<String> = {
+        let mut d: Vec<String> = stdlib
+            .iter()
+            .filter(|m| is_deprecated_front_door(m))
+            .cloned()
+            .collect();
+        stdlib.retain(|m| !is_deprecated_front_door(m));
+        d.sort();
+        d.dedup();
+        d
+    };
     for v in [&mut project, &mut stdlib] {
         v.sort();
         v.dedup();
@@ -430,7 +454,22 @@ pub fn list_modules(repo_root: &Path, project_dir: &Path) -> String {
     }
     out.push_str("── stdlib ──\n");
     out.push_str(&stdlib.join("\n"));
+    if !deprecated.is_empty() {
+        out.push_str("\n\n── deprecated — use Std.App ──\n");
+        out.push_str(&deprecated.join("\n"));
+    }
     out
+}
+
+/// The per-shape app front doors (`Std.Live` / `Std.Tui` / `Std.Cli` /
+/// `Std.Webview` / `Std.Spa`) that `Std.App` subsumes. They remain functional
+/// (Std.App composes them) but are deprecated for direct use — `sky doc --list`
+/// lists them under a deprecated header and their pages carry a notice.
+pub fn is_deprecated_front_door(name: &str) -> bool {
+    matches!(
+        name,
+        "Std.Live" | "Std.Tui" | "Std.Cli" | "Std.Webview" | "Std.Spa"
+    )
 }
 
 /// A module file that was read successfully AND carries a `module` header.
@@ -1023,6 +1062,18 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deprecated_front_doors_are_the_five_app_shape_modules() {
+        for m in ["Std.Live", "Std.Tui", "Std.Cli", "Std.Webview", "Std.Spa"] {
+            assert!(is_deprecated_front_door(m), "{m} should be deprecated");
+        }
+        // Std.App is the replacement, never deprecated; the front-door SUB-modules
+        // (Std.Live.Console/Head) are not the front door and stay listed.
+        for m in ["Std.App", "Std.Live.Console", "Std.Live.Head", "Std.Db", "Std.Ui"] {
+            assert!(!is_deprecated_front_door(m), "{m} must NOT be deprecated");
+        }
+    }
 
     /// The v0.19-migrated kernel modules render their full typed signatures +
     /// doc + example FROM the .sky source (single source of truth — no

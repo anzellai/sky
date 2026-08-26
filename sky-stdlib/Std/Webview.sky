@@ -1,5 +1,9 @@
 -- | Std.Webview — desktop UI backend (Layer 3 Sky source).
 --
+-- **DEPRECATED for direct use — write `Std.App` instead.** `Std.App` composes
+-- this module for `--target desktop`. Still functional (Std.App uses it), but
+-- new code should use `App.app` + `App.run`. See docs/skyapp/overview.md.
+--
 -- `Webview.app` is the cross-backend mirror of `Live.app` and
 -- `Tui.app`: same TEA shape (init / update / view / subscriptions),
 -- view returns a `Std.Ui.Element` tree, and the runtime owns the

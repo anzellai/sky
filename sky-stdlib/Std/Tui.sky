@@ -1,5 +1,9 @@
 -- | Std.Tui — terminal UI backend (Layer 3 Sky source).
 --
+-- **DEPRECATED for direct use — write `Std.App` instead.** `Std.App` composes
+-- this module for `--target terminal:tui`. Still functional (Std.App uses it),
+-- but new code should use `App.app` + `App.run`. See docs/skyapp/overview.md.
+--
 -- The same TEA shape as `Live.app` / `Webview.app`, rendered to ANSI cells.
 -- `Tui.config { init, update, view, subscriptions }` produces an opaque
 -- `AppConfig`; attach the optional key handler / guard / canvas size with the
