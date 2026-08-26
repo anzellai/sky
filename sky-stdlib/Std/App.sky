@@ -43,6 +43,7 @@ module Std.App exposing
     , TerminalOpts
     , MobileOpts
     , app
+    , web
     , route
     , routeParam
     , spaRoute
@@ -136,6 +137,7 @@ type alias WebOpts =
     , idleEvict : Maybe String
     , maxBodyBytes : Maybe Int
     , inputMode : Maybe String
+    , analytics : Maybe { pageViews : Bool }
     , csrf : Bool
     }
 
@@ -150,6 +152,7 @@ webDefaults =
     , idleEvict = Nothing
     , maxBodyBytes = Nothing
     , inputMode = Nothing
+    , analytics = Nothing
     , csrf = True
     }
 
@@ -224,6 +227,17 @@ routeParam : String -> (String -> page) -> AppRoute page
 routeParam path make =
     RouteParam path make
 
+-- | The app's view, held as one of two shapes so both a `Std.Ui` view and a
+-- `Std.Html` view can flow through the same `App`. [`app`] wraps a
+-- `model -> Element msg` in `ViewUi`; [`web`] wraps a `model -> Html msg` in
+-- `ViewHtml`. The web/desktop/mobile runners render either (adapting `ViewUi`
+-- via `Ui.layout []`); the terminal runners require a `ViewUi` and reject a
+-- `ViewHtml`. Internal — not exposed.
+type ViewImpl model msg
+    = ViewUi (model -> Element msg)
+    | ViewHtml (model -> Html msg)
+
+
 -- | An app described once, runnable on any backend. Built by [`app`] and
 -- refined by the `with…` builders; consumed by a `run<Backend>` runner.
 --
@@ -236,7 +250,7 @@ routeParam path make =
 type App fallback seed page model msg key
     = App { init : seed -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
-, view : model -> Element msg
+, viewImpl : ViewImpl model msg
 , subscriptions : model -> Sub msg
 , routes : List (AppRoute page)
 , notFound : Maybe page
@@ -262,7 +276,36 @@ app cfg =
     App
         { init = cfg.init
         , update = cfg.update
-        , view = cfg.view
+        , viewImpl = ViewUi cfg.view
+        , subscriptions = cfg.subscriptions
+        , routes = []
+        , notFound = Nothing
+        , onInput = Nothing
+        , base = baseDefaults
+        , configs = []
+        , head = Nothing
+        , guard = Nothing
+        , onKey = Nothing
+        , onNavigate = Nothing
+        }
+
+
+-- | Describe an app whose `view` returns `Std.Html.Html` (not a `Std.Ui`
+-- `Element`). Identical to [`app`] in every other way — the same `with…`
+-- builders refine it and the same runners consume it — but the web/desktop/mobile
+-- backends (Live/Spa/Webview) render the `Html` natively, while the terminal
+-- backends (Tui/Cli) reject it (they require a `Std.Ui` view — use [`app`] for a
+-- cross-platform view).
+web : { init : seed -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> Html msg
+, subscriptions : model -> Sub msg
+} -> App NoFallback seed page model msg key
+web cfg =
+    App
+        { init = cfg.init
+        , update = cfg.update
+        , viewImpl = ViewHtml cfg.view
         , subscriptions = cfg.subscriptions
         , routes = []
         , notFound = Nothing
@@ -454,7 +497,15 @@ runLive (App a) =
                     Live.config
                         { init = a.init
                         , update = a.update
-                        , view = \model -> Ui.layout [] (a.view model)
+                        , view =
+                            \model ->
+                                case a.viewImpl of
+
+                                    ViewUi v ->
+                                        Ui.layout [] (v model)
+
+                                    ViewHtml v ->
+                                        v model
                         , subscriptions = a.subscriptions
                         , routes = List.map liveRoute_ a.routes
                         , notFound = fallback
@@ -508,6 +559,14 @@ runLive (App a) =
                         Nothing ->
                             withMaxBody_
                 withPort_ = Live.withPort w.port withInputMode_
+                withAnalytics_ =
+                    case w.analytics of
+
+                        Just an ->
+                            Live.withAnalytics an withPort_
+
+                        Nothing ->
+                            withPort_
                 -- TODO(std-app-config): `w.csrf` has no `Std.Live` builder
                 -- (CSRF is a `Sky.Config` concern, and `Live.app` takes no
                 -- `Sky.Config`), so it is stored but not yet threaded.
@@ -519,10 +578,10 @@ runLive (App a) =
                     case a.head of
 
                         Just h ->
-                            Live.withHead h withPort_
+                            Live.withHead h withAnalytics_
 
                         Nothing ->
-                            withPort_
+                            withAnalytics_
                 withGuard_ =
                     case a.guard of
 
@@ -558,7 +617,15 @@ runSpa (App a) =
             Spa.config
                 { init = a.init
                 , update = a.update
-                , view = \model -> Ui.layout [] (a.view model)
+                , view =
+                    \model ->
+                        case a.viewImpl of
+
+                            ViewUi v ->
+                                Ui.layout [] (v model)
+
+                            ViewHtml v ->
+                                v model
                 , subscriptions = a.subscriptions
                 }
         routed =
@@ -582,35 +649,43 @@ runSpa (App a) =
 -- canvas + the `withOnKey`/`withGuard` builders into the `Tui.config` chain.
 runTui : App fallback seed page model msg key -> Task Error ()
 runTui (App a) =
-    let
-        t = findTerminal a.configs
-        base =
-            Tui.config
-                { init = a.init
-                , update = a.update
-                , view = a.view
-                , subscriptions = a.subscriptions
-                }
-        withW_ = Tui.withCanvasWidth t.canvasWidth base
-        withH_ = Tui.withCanvasHeight t.canvasHeight withW_
-        withKey_ =
-            case a.onKey of
+    case a.viewImpl of
 
-                Just k ->
-                    Tui.withOnKey k withH_
+        ViewUi v ->
+            let
+                t = findTerminal a.configs
+                base =
+                    Tui.config
+                        { init = a.init
+                        , update = a.update
+                        , view = v
+                        , subscriptions = a.subscriptions
+                        }
+                withW_ = Tui.withCanvasWidth t.canvasWidth base
+                withH_ = Tui.withCanvasHeight t.canvasHeight withW_
+                withKey_ =
+                    case a.onKey of
 
-                Nothing ->
-                    withH_
-        withGuard_ =
-            case a.guard of
+                        Just k ->
+                            Tui.withOnKey k withH_
 
-                Just g ->
-                    Tui.withGuard g withKey_
+                        Nothing ->
+                            withH_
+                withGuard_ =
+                    case a.guard of
 
-                Nothing ->
-                    withKey_
-    in
-        Tui.app withGuard_
+                        Just g ->
+                            Tui.withGuard g withKey_
+
+                        Nothing ->
+                            withKey_
+            in
+                Tui.app withGuard_
+
+        ViewHtml _ ->
+            Task.fail
+                (Error.invalidInput
+                    "terminal:tui requires a Std.Ui view — App.web (Std.Html) targets web/desktop/mobile; use App.app for a cross-platform view")
 
 
 -- | Run as a line-based CLI (`--target terminal:cli`, = Sky.Cli). The
@@ -618,24 +693,32 @@ runTui (App a) =
 -- `Std.Cli.program` stays the escape hatch for a hand-authored `String` view.
 runCli : App fallback seed page model msg key -> Task Error ()
 runCli (App a) =
-    let
-        base =
-            Cli.config
-                { init = a.init
-                , update = a.update
-                , view = \model -> elementToText (a.view model)
-                , subscriptions = a.subscriptions
-                }
-        withLine =
-            case a.onInput of
+    case a.viewImpl of
 
-                Just onLine ->
-                    Cli.withOnLine onLine base
+        ViewUi v ->
+            let
+                base =
+                    Cli.config
+                        { init = a.init
+                        , update = a.update
+                        , view = \model -> elementToText (v model)
+                        , subscriptions = a.subscriptions
+                        }
+                withLine =
+                    case a.onInput of
 
-                Nothing ->
-                    base
-    in
-        Cli.program withLine
+                        Just onLine ->
+                            Cli.withOnLine onLine base
+
+                        Nothing ->
+                            base
+            in
+                Cli.program withLine
+
+        ViewHtml _ ->
+            Task.fail
+                (Error.invalidInput
+                    "terminal:cli requires a Std.Ui view — App.web targets web/desktop; use App.app")
 
 
 -- | Run as a native desktop window (`--target desktop:<os>` is native wasm; this
@@ -649,7 +732,15 @@ runWebview (App a) =
         Webview.app
             { init = a.init
             , update = a.update
-            , view = \model -> Ui.layout [] (a.view model)
+            , view =
+                \model ->
+                    case a.viewImpl of
+
+                        ViewUi v ->
+                            Ui.layout [] (v model)
+
+                        ViewHtml v ->
+                            v model
             , subscriptions = a.subscriptions
             , window = { title = d.title, size = ( d.width, d.height ) }
             }
