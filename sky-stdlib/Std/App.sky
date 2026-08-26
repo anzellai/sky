@@ -214,16 +214,9 @@ type App fallback seed page model msg key
 , subscriptions : model -> Sub msg
 , routes : List ( String, page )
 , notFound : Maybe page
-, window : { title : String
-      , size : ( Int, Int )
-      }
 , onInput : Maybe (String -> msg)
 , base : BaseConfig
-, web : WebOpts
-, tablet : TabletOpts
-, desktop : DesktopOpts
-, terminal : TerminalOpts
-, mobile : MobileOpts
+, configs : List Config
 , head : Maybe (model -> List (Html msg))
 , guard : Maybe (msg -> model -> Result Error ())
 , onKey : Maybe (key -> msg)
@@ -247,14 +240,9 @@ app cfg =
         , subscriptions = cfg.subscriptions
         , routes = []
         , notFound = Nothing
-        , window = { title = "Sky", size = ( 800, 600 ) }
         , onInput = Nothing
         , base = baseDefaults
-        , web = webDefaults
-        , tablet = tabletDefaults
-        , desktop = desktopDefaults
-        , terminal = terminalDefaults
-        , mobile = mobileDefaults
+        , configs = []
         , head = Nothing
         , guard = Nothing
         , onKey = Nothing
@@ -275,10 +263,11 @@ withNotFound page_ (App a) =
     App { a | notFound = Just page_ }
 
 
--- | Set the desktop window title + initial size (desktop targets).
+-- | Set the desktop window title + initial size (desktop targets). Shorthand
+-- for a [`DesktopConfig`] via [`withConfig`].
 withWindow : String -> Int -> Int -> App fallback seed page model msg key -> App fallback seed page model msg key
 withWindow title width height (App a) =
-    App { a | window = { title = title, size = ( width, height ) } }
+    App { a | configs = DesktopConfig { title = title, width = width, height = height } :: a.configs }
 
 
 -- | Wire a line/text input handler (terminal targets). The payload is the
@@ -296,30 +285,65 @@ withBase base (App a) =
 
 
 -- | Attach a per-target [`Config`] variant. Call once per customised target;
--- the variant's `*Opts` record is stored on the matching field and folded into
--- that backend's runner. `DesktopConfig` also populates the window so
--- [`runWebview`] / [`runLiveWindow`] see the title + size.
+-- the variant is prepended to the app's config list and the matching runner
+-- reads its own variant (via [`findWeb`] / [`findDesktop`] / [`findTerminal`]),
+-- so an app carries only the configs actually provided — not one record per
+-- target — keeping the generic builder cheap (docs/design/std-app-config-dx.md
+-- §"scalar/function split").
 withConfig : Config -> App fallback seed page model msg key -> App fallback seed page model msg key
 withConfig cfg (App a) =
-    case cfg of
+    App { a | configs = cfg :: a.configs }
 
-        WebConfig o ->
-            App { a | web = o }
 
-        TabletConfig o ->
-            App { a | tablet = o }
+-- | The first [`WebConfig`] (or [`TabletConfig`], Live-backed too) in the app's
+-- config list, else [`webDefaults`]. Used by [`runLive`].
+findWeb : List Config -> WebOpts
+findWeb configs =
+    case configs of
 
-        DesktopConfig o ->
-            App
-                { a | desktop = o
-                , window = { title = o.title, size = ( o.width, o.height ) }
-                }
+        [] ->
+            webDefaults
 
-        TerminalConfig o ->
-            App { a | terminal = o }
+        (WebConfig o) :: _ ->
+            o
 
-        MobileConfig o ->
-            App { a | mobile = o }
+        (TabletConfig o) :: _ ->
+            o
+
+        _ :: rest ->
+            findWeb rest
+
+
+-- | The first [`DesktopConfig`] in the app's config list, else
+-- [`desktopDefaults`]. Used by [`runWebview`] / [`runLiveWindow`].
+findDesktop : List Config -> DesktopOpts
+findDesktop configs =
+    case configs of
+
+        [] ->
+            desktopDefaults
+
+        (DesktopConfig o) :: _ ->
+            o
+
+        _ :: rest ->
+            findDesktop rest
+
+
+-- | The first [`TerminalConfig`] in the app's config list, else
+-- [`terminalDefaults`]. Used by [`runTui`].
+findTerminal : List Config -> TerminalOpts
+findTerminal configs =
+    case configs of
+
+        [] ->
+            terminalDefaults
+
+        (TerminalConfig o) :: _ ->
+            o
+
+        _ :: rest ->
+            findTerminal rest
 
 
 -- | Set the document `<head>` builder (web/desktop targets → `Live.withHead`).
@@ -372,7 +396,7 @@ runLive (App a) =
 
         Just fallback ->
             let
-                w = a.web
+                w = findWeb a.configs
                 base =
                     Live.config
                         { init = a.init
@@ -509,7 +533,7 @@ runSpa (App a) =
 runTui : App fallback seed page model msg key -> Task Error ()
 runTui (App a) =
     let
-        t = a.terminal
+        t = findTerminal a.configs
         base =
             Tui.config
                 { init = a.init
@@ -569,13 +593,16 @@ runCli (App a) =
 -- taken from [`withWindow`] / a `DesktopConfig` via [`withConfig`].
 runWebview : App fallback () page model msg key -> Task Error ()
 runWebview (App a) =
-    Webview.app
-        { init = a.init
-        , update = a.update
-        , view = \model -> Ui.layout [] (a.view model)
-        , subscriptions = a.subscriptions
-        , window = a.window
-        }
+    let
+        d = findDesktop a.configs
+    in
+        Webview.app
+            { init = a.init
+            , update = a.update
+            , view = \model -> Ui.layout [] (a.view model)
+            , subscriptions = a.subscriptions
+            , window = { title = d.title, size = ( d.width, d.height ) }
+            }
 
 
 -- | Run as **Sky.Live in a native window** (`--target desktop`): serve the Live
@@ -584,9 +611,15 @@ runWebview (App a) =
 -- after the server starts.
 runLiveWindow : App HasFallback seed page model msg key -> Task Error ()
 runLiveWindow (App a) =
-    Task.map
-        (\_ -> ())
-        (Task.parallel [ runLive (App a), openLiveWindow_ a.window ])
+    let
+        d = findDesktop a.configs
+    in
+        Task.map
+            (\_ -> ())
+            (Task.parallel
+                [ runLive (App a)
+                , openLiveWindow_ { title = d.title, size = ( d.width, d.height ) }
+                ])
 
 
 openLiveWindow_ : { title : String
