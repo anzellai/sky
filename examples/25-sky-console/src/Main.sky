@@ -16,7 +16,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Live exposing (app, route, config)
+import Std.App as App
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import State exposing (..)
@@ -60,14 +60,17 @@ viewWrapped model =
     Ui.layout [] (view model)
 
 
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = viewWrapped
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" () ]
+        |> App.withNotFound ()
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8025 })
+
+
 main =
-    app
-        (config
-            { init = init
-            , update = update
-            , view = viewWrapped
-            , subscriptions = subscriptions
-            , routes = [ route "/" () ]
-            , notFound = ()
-            }
-            |> Std.Live.withPort 8025)
+    App.run appDef

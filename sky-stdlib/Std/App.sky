@@ -43,6 +43,9 @@ module Std.App exposing
     , TerminalOpts
     , MobileOpts
     , app
+    , route
+    , routeParam
+    , spaRoute
     , withRoutes
     , withNotFound
     , withWindow
@@ -198,6 +201,29 @@ mobileDefaults : MobileOpts
 mobileDefaults =
     { bundleId = "" }
 
+-- | A URL route. A `page` type erased over static vs parametric so a route list
+-- can MIX a nullary page (`route "/" Home`) with a `:param` route whose page is
+-- built from the captured segment (`routeParam "/p/:slug" Product`, where
+-- `Product : String -> page`). Build them with [`route`] / [`routeParam`] and
+-- attach with [`withRoutes`]; the runners lower each to the backend's own route
+-- (`Sky.Live` / `Sky.Spa`), which already erase the page type the same way.
+type AppRoute page
+    = RouteStatic String page
+    | RouteParam String (String -> page)
+
+
+-- | A static route: `route "/about" AboutPage`.
+route : String -> page -> AppRoute page
+route path page_ =
+    RouteStatic path page_
+
+
+-- | A parametric route: `routeParam "/products/:slug" ProductPage`, where
+-- `ProductPage : String -> page` receives the captured `:slug` segment.
+routeParam : String -> (String -> page) -> AppRoute page
+routeParam path make =
+    RouteParam path make
+
 -- | An app described once, runnable on any backend. Built by [`app`] and
 -- refined by the `with…` builders; consumed by a `run<Backend>` runner.
 --
@@ -212,7 +238,7 @@ type App fallback seed page model msg key
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> Element msg
 , subscriptions : model -> Sub msg
-, routes : List ( String, page )
+, routes : List (AppRoute page)
 , notFound : Maybe page
 , onInput : Maybe (String -> msg)
 , base : BaseConfig
@@ -250,9 +276,9 @@ app cfg =
         }
 
 
--- | Attach URL routes as `(path, page)` pairs (web targets). Pair with
--- [`withNotFound`] — the `web` target requires a fallback page.
-withRoutes : List ( String, page ) -> App fallback seed page model msg key -> App fallback seed page model msg key
+-- | Attach URL routes (web targets), built with [`route`] / [`routeParam`].
+-- Pair with [`withNotFound`] — the `web` target requires a fallback page.
+withRoutes : List (AppRoute page) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withRoutes routes (App a) =
     App { a | routes = routes }
 
@@ -385,6 +411,33 @@ run =
     runTui
 
 
+-- | Lower an [`App`] [`Route`] to a `Sky.Live` route. `Live.route` erases its
+-- page arg, so a static page and a `:param` constructor (`String -> page`) both
+-- pass through — Live applies the constructor to the captured segment at match.
+liveRoute_ r =
+    case r of
+
+        RouteStatic path page_ ->
+            Live.route path page_
+
+        RouteParam path make ->
+            Live.route path make
+
+
+-- | Lower an [`App`] [`Route`] to a `Sky.Spa` route (same erasure as Live).
+-- Exposed because the `--target <spa>` build synthesises a `Sky.Spa` entry that
+-- maps the app's routes through it.
+spaRoute : AppRoute page -> Spa.Route
+spaRoute r =
+    case r of
+
+        RouteStatic path page_ ->
+            Spa.route path page_
+
+        RouteParam path make ->
+            Spa.route path make
+
+
 -- ─── Runners — one per backend, target → runner is resolved by the build ───
 -- | Run as server-driven HTML + SSE (`--target web`, = Sky.Live). Requires a
 -- fallback page ([`withNotFound`]) because Live routing is total. Folds the
@@ -403,10 +456,7 @@ runLive (App a) =
                         , update = a.update
                         , view = \model -> Ui.layout [] (a.view model)
                         , subscriptions = a.subscriptions
-                        , routes =
-                            List.map
-                                (\( path, page_ ) -> Live.route path page_)
-                                a.routes
+                        , routes = List.map liveRoute_ a.routes
                         , notFound = fallback
                         }
                 withStatic_ =
@@ -513,7 +563,7 @@ runSpa (App a) =
                 }
         routed =
             Spa.withRoutes
-                (List.map (\( path, page_ ) -> Spa.route path page_) a.routes)
+                (List.map spaRoute a.routes)
                 base
         withFallback =
             case a.notFound of

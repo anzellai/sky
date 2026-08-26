@@ -56,7 +56,7 @@ app =
         , view = view
         , subscriptions = subscriptions
         }
-        |> App.withRoutes [ ( "/", Home ) ]
+        |> App.withRoutes [ App.route "/" Home ]
         |> App.withNotFound Home
         |> App.withInput Line
 

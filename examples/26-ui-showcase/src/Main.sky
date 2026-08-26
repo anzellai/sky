@@ -2,7 +2,7 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
-import Std.Live as Live
+import Std.App as App
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
@@ -614,14 +614,16 @@ view model =
                 (originalSections ++ RegressionGates.cases Edit))
 
 
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8000 })
+
+
 main =
-    Live.app
-        (Live.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes = []
-            , notFound = ()
-            }
-            |> Live.withPort 8000)
+    App.run appDef

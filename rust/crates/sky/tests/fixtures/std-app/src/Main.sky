@@ -59,7 +59,7 @@ myApp =
         , view = view
         , subscriptions = subscriptions
         }
-        |> App.withRoutes [ ( "/", Home ) ]
+        |> App.withRoutes [ App.route "/" Home ]
         |> App.withNotFound Home
         |> App.withWindow "Std.App fixture" 640 480
         |> App.withInput Line
