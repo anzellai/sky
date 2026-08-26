@@ -1,11 +1,12 @@
 -- | Std.Cli — one-shot / interactive CLI backend (Layer 3 Sky source).
 --
 -- **DEPRECATED for direct use — write `Std.App` instead.** `Std.App` composes
--- this module for `--target terminal:cli` (its `App.app` view is a `Std.Ui`
--- `Element`, flattened to text). Still functional (Std.App uses it), and new
--- code should use `App.app` + `App.run` — EXCEPT `program` with a hand-authored
--- `String` view, which `Std.App` does not cover: that is the intentional escape
--- hatch and stays. See docs/skyapp/overview.md.
+-- this module for `--target terminal:cli`: an `App.app` `Std.Ui` view is
+-- flattened to text, and an `App.cli` hand-authored `String` view is printed
+-- verbatim (this module's `program`, now first-class on `Std.App`). Nothing in
+-- user code needs to import `Std.Cli` directly any more — there is no remaining
+-- escape hatch. Still functional because `Std.App` uses it. New code: `App.cli`
+-- (String view) or `App.app` (Std.Ui) + `App.run`. See docs/skyapp/overview.md.
 --
 -- A TEA loop for command-line tools: `Cli.config { init, update, view,
 -- subscriptions }` produces an opaque `AppConfig`; attach an stdin-line

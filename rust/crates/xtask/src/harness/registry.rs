@@ -1177,13 +1177,20 @@ pub static GATES: &[Gate] = &[
         // exactly the event the ledger exists to notice.
         mutations: Mutations::new(&[Mutation {
             id: "coverage-ledger.drop-a-sole-owner-import",
-            description: "delete the ONLY import of `Std.Cli` in the repo; \
-                          `stdlib.Std.Cli`'s cover_new must regress and the \
-                          checked-in ledger must go stale",
+            description: "delete the ONLY import of `Sky.Core.Set` in the repo; \
+                          it drops out of the covered set (imported-by-nothing \
+                          rises) and the checked-in ledger must go stale",
+            // Was `Std.Cli` in 20-cli-counter, but that example migrated to
+            // `App.cli` (Std.App now owns the terminal String view). `Std.Bundle`
+            // in 64-app-native looked like a sole-owner but is a NATIVE app whose
+            // generated sub-project re-imports it, so the mutation stayed VACUOUS.
+            // `Sky.Core.Set` is imported by exactly one plain unit — the
+            // DictSet conformance suite — with no generated duplicate, so removing
+            // it genuinely raises imported-by-nothing (verified 9 -> 10).
             kind: MutationKind::ReplaceOnce {
-                path: "examples/20-cli-counter/src/Main.sky",
-                from: "import Std.Cli",
-                to: "-- import Std.Cli",
+                path: "tests/conformance/tests/DictSetConformanceTest.sky",
+                from: "import Sky.Core.Set",
+                to: "-- import Sky.Core.Set",
             },
         }]),
         body: bodies::coverage_ledger,

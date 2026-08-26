@@ -160,7 +160,7 @@
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1786442352
+      "proven_at_unix": 1787787147
     },
     "erasure-path-uses-an-index": {
       "mutation": "erasure-index.drop-the-anonymous-id-index",

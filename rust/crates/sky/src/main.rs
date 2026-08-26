@@ -708,6 +708,47 @@ fn parse_toml_entry(toml: &str) -> Option<String> {
     None
 }
 
+/// Extract `target = "..."` from the `[app]` section of a `sky.toml`. This is a
+/// project's PERSISTED build target — a `terminal:cli` / `terminal:tui` project
+/// (whose `App.cli` / `App.tui` String view cannot render on `web`) records its
+/// backend once here instead of repeating `--target` on every `sky build`/`run`.
+/// An explicit CLI `--target` always overrides it. Hand-rolled to match
+/// `parse_toml_entry` (we never pulled in a full TOML parser for reads).
+fn parse_toml_app_target(toml: &str) -> Option<String> {
+    let mut in_app = false;
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            in_app = line == "[app]";
+            continue;
+        }
+        if in_app {
+            if let Some(rest) = line.strip_prefix("target") {
+                let val = rest
+                    .trim_start()
+                    .strip_prefix('=')?
+                    .trim()
+                    .trim_matches(|c| c == '"' || c == '\'');
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The persisted `[app] target` for the project at `project_dir`, if its
+/// `sky.toml` names one.
+fn sky_toml_app_target(project_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(project_dir.join("sky.toml"))
+        .ok()
+        .and_then(|s| parse_toml_app_target(&s))
+}
+
 /// Resolve the positional entry file, falling back to `sky.toml`'s `entry` when
 /// omitted. Returns the exit code to use on failure.
 fn resolve_entry_arg(positional: &[String], usage: &str) -> Result<PathBuf, ExitCode> {
@@ -1771,6 +1812,26 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let file = file.as_path();
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
+    };
+    // No CLI `--target` → fall back to the project's persisted `[app] target`
+    // in sky.toml (so a terminal-only App.cli / App.tui project builds for its
+    // backend on a bare `sky build`/`run`/`check`). An explicit flag wins. Only
+    // a DISPATCHED entry consults it: the persisted target selects a backend,
+    // which is meaningless for the concrete-`main` derived entry `build_std_app`
+    // re-invokes (that one must ignore it, or it hits the frontend-shell path).
+    let parsed_target = match parsed_target {
+        Some(t) => Some(t),
+        None if is_std_app_dispatched_entry(file) => match sky_toml_app_target(&project_dir) {
+            Some(t) => match target::Target::parse(&t) {
+                Ok(tgt) => Some(tgt),
+                Err(msg) => {
+                    eprintln!("sky.toml [app] target = \"{t}\": {msg}");
+                    return ExitCode::FAILURE;
+                }
+            },
+            None => None,
+        },
+        None => None,
     };
     // Repo-root guard: refuse to write sky-out/ into the compiler repo root,
     // which would overwrite the oracle binary kept there.
@@ -3836,7 +3897,19 @@ fn cmd_run(args: &[String]) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             },
-            None => target::Target::Web,
+            // No CLI flag → the project's persisted `[app] target` (sky.toml),
+            // else `web`. Lets a terminal-only App.cli/App.tui project `sky run`
+            // bare without re-typing `--target terminal:cli`.
+            None => match sky_toml_app_target(&project_dir) {
+                Some(t) => match target::Target::parse(&t) {
+                    Ok(x) => x,
+                    Err(msg) => {
+                        eprintln!("sky.toml [app] target = \"{t}\": {msg}");
+                        return ExitCode::FAILURE;
+                    }
+                },
+                None => target::Target::Web,
+            },
         };
         let embed = args.iter().any(|a| a == "--embed");
         return build_std_app(
@@ -9151,5 +9224,29 @@ mod tests {
             "error should explain the id rule: {err}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn app_target_is_read_from_the_app_section_only() {
+        // The persisted terminal-only backend for an App.cli / App.tui project.
+        let toml = "name = \"c\"\nentry = \"src/Main.sky\"\n\n[app]\ntarget = \"terminal:cli\"\n";
+        assert_eq!(
+            parse_toml_app_target(toml),
+            Some("terminal:cli".to_string())
+        );
+    }
+
+    #[test]
+    fn app_target_ignores_a_target_key_outside_the_app_section() {
+        // A `target` key under some other section must NOT be picked up — only
+        // `[app] target` persists the build backend.
+        let toml = "name = \"c\"\ntarget = \"web\"\n\n[live]\ntarget = \"nonsense\"\n";
+        assert_eq!(parse_toml_app_target(toml), None);
+    }
+
+    #[test]
+    fn app_target_absent_is_none() {
+        let toml = "name = \"c\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n";
+        assert_eq!(parse_toml_app_target(toml), None);
     }
 }

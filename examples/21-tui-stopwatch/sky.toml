@@ -4,3 +4,8 @@ entry = "src/Main.sky"
 
 [source]
 root = "src"
+
+[app]
+# App.tui renders a String view full-screen — terminal-only. Persist the backend
+# so a bare `sky build` / `sky run` targets the TUI (an explicit --target wins).
+target = "terminal:tui"

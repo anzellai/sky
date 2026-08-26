@@ -53,6 +53,7 @@
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
+      "[app]": 2,
       "[database]": 12,
       "[dependencies]": 1,
       "[live]": 2,
@@ -528,9 +529,7 @@
       "stdlib_modules": {
         "Sky.Core.Process": "examples/17-skymon",
         "Std.Bundle": "examples/64-app-native",
-        "Std.Cli": "examples/20-cli-counter",
-        "Std.Live": "examples/19-skyforum",
-        "Std.Tui": "examples/21-tui-stopwatch"
+        "Std.Live": "examples/19-skyforum"
       }
     },
     "stdlib_modules_examples_only": {
@@ -541,12 +540,10 @@
       "Sky.Http.Server.WebSocket": "examples/33-websocket-echo",
       "Std.Bundle": "examples/64-app-native",
       "Std.Cache": "examples/36-composite-server",
-      "Std.Cli": "examples/20-cli-counter",
       "Std.Csv": "examples/36-composite-server",
       "Std.Live": "examples/19-skyforum",
       "Std.Native": "examples/64-app-native",
       "Std.PubSub": "examples/36-composite-server",
-      "Std.Tui": "examples/21-tui-stopwatch",
       "Std.Ui.Animation": "examples/26-ui-showcase",
       "Std.Ui.Events": "examples/62-app-notes",
       "Std.Ui.Grid": "examples/26-ui-showcase",
@@ -605,12 +602,6 @@
           "examples/64-app-native"
         ]
       },
-      "Std.Cli": {
-        "path": "examples/20-cli-counter",
-        "units": [
-          "examples/20-cli-counter"
-        ]
-      },
       "Std.Compression": {
         "path": "tests/conformance",
         "units": [
@@ -652,12 +643,6 @@
         "units": [
           "apps:relay"
         ]
-      },
-      "Std.Tui": {
-        "path": "examples/21-tui-stopwatch",
-        "units": [
-          "examples/21-tui-stopwatch"
-        ]
       }
     }
   },
@@ -669,7 +654,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1911,
+    "stdlib_entries": 1913,
     "stdlib_modules": 93,
     "surfaces_covered": 138,
     "surfaces_covered_pct": 87.9,
@@ -6907,6 +6892,16 @@
             "strength": 2
           },
           {
+            "by": "examples/20-cli-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/21-tui-stopwatch (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/22-tui-stopwatch-ui (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -7034,6 +7029,16 @@
           },
           {
             "by": "examples/19-skyforum (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/20-cli-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/21-tui-stopwatch (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -7276,26 +7281,14 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Runs",
-        "evidence": [
-          {
-            "by": "examples/20-cli-counter (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          }
-        ],
-        "strength": 2
+        "class": "None",
+        "evidence": [],
+        "strength": 0
       },
       "cover_today": {
-        "class": "Runs",
-        "evidence": [
-          {
-            "by": "examples/20-cli-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          }
-        ],
-        "strength": 2
+        "class": "None",
+        "evidence": [],
+        "strength": 0
       },
       "description": "the Std.Cli public API",
       "id": "stdlib.Std.Cli",
@@ -10299,26 +10292,14 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Runs",
-        "evidence": [
-          {
-            "by": "examples/21-tui-stopwatch (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
-          }
-        ],
-        "strength": 2
+        "class": "None",
+        "evidence": [],
+        "strength": 0
       },
       "cover_today": {
-        "class": "Runs",
-        "evidence": [
-          {
-            "by": "examples/21-tui-stopwatch (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          }
-        ],
-        "strength": 2
+        "class": "None",
+        "evidence": [],
+        "strength": 0
       },
       "description": "the Std.Tui public API",
       "id": "stdlib.Std.Tui",
@@ -11778,17 +11759,19 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 7,
+      "count": 9,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
         "Sky.Core.Path",
+        "Std.Cli",
         "Std.Db.Migrate",
         "Std.Db.Table",
         "Std.Live.Console",
+        "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 7.5
+      "pct_of_denominator": 9.7
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -11799,7 +11782,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 12,
+      "count": 14,
       "surfaces": [
         "cli.config",
         "cli.console",
@@ -11810,8 +11793,10 @@
         "cli.upgrade-claude",
         "cli.verify",
         "stdlib.Sky.Core.Io",
+        "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
         "stdlib.Std.Live.Console",
+        "stdlib.Std.Tui",
         "stdlib.Std.Webview"
       ]
     },
@@ -12189,10 +12174,13 @@
           ]
         },
         "Std.Cli": {
-          "count": 2,
+          "count": 5,
           "symbols": [
             "AppConfig",
-            "readPassword"
+            "config",
+            "program",
+            "readPassword",
+            "withOnLine"
           ]
         },
         "Std.Cmd": {
@@ -12660,13 +12648,16 @@
           ]
         },
         "Std.Tui": {
-          "count": 5,
+          "count": 8,
           "symbols": [
             "AppConfig",
             "app",
+            "config",
+            "program",
             "withCanvasHeight",
             "withCanvasWidth",
-            "withGuard"
+            "withGuard",
+            "withOnKey"
           ]
         },
         "Std.Ui": {
@@ -12946,8 +12937,8 @@
           ]
         }
       },
-      "count": 768,
-      "pct_of_denominator": 40.2
+      "count": 774,
+      "pct_of_denominator": 40.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13342,10 +13333,13 @@
           ]
         },
         "Std.Cli": {
-          "count": 2,
+          "count": 5,
           "symbols": [
             "AppConfig",
-            "readPassword"
+            "config",
+            "program",
+            "readPassword",
+            "withOnLine"
           ]
         },
         "Std.Cmd": {
@@ -13883,13 +13877,16 @@
           ]
         },
         "Std.Tui": {
-          "count": 5,
+          "count": 8,
           "symbols": [
             "AppConfig",
             "app",
+            "config",
+            "program",
             "withCanvasHeight",
             "withCanvasWidth",
-            "withGuard"
+            "withGuard",
+            "withOnKey"
           ]
         },
         "Std.Ui": {
@@ -14170,8 +14167,8 @@
           ]
         }
       },
-      "count": 853,
-      "pct_of_denominator": 44.6
+      "count": 859,
+      "pct_of_denominator": 44.9
     }
   },
   "units": [
@@ -14611,11 +14608,12 @@
       "id": "examples/20-cli-counter",
       "modules_imported": 6,
       "path": "examples/20-cli-counter",
-      "refs_generous": 9,
-      "refs_qualified": 9,
+      "refs_generous": 10,
+      "refs_qualified": 10,
       "role": "Example",
-      "sky_files": 1,
+      "sky_files": 3,
       "sky_toml_sections": [
+        "[app]",
         "[source]"
       ]
     },
@@ -14625,11 +14623,12 @@
       "id": "examples/21-tui-stopwatch",
       "modules_imported": 6,
       "path": "examples/21-tui-stopwatch",
-      "refs_generous": 10,
-      "refs_qualified": 10,
+      "refs_generous": 11,
+      "refs_qualified": 11,
       "role": "Example",
-      "sky_files": 1,
+      "sky_files": 2,
       "sky_toml_sections": [
+        "[app]",
         "[source]"
       ]
     },

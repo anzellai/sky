@@ -1,7 +1,9 @@
 module Main exposing (main)
 
 {-|
-21-tui-stopwatch — full-screen TUI stopwatch using Sky.Tui.
+21-tui-stopwatch — full-screen TUI stopwatch via `Std.App` (`App.tui`,
+a hand-authored `String` view drawn full-screen). Built for the terminal
+by `[app] target = "terminal:tui"` in `sky.toml`.
 
 The same paradigm the original 11-fyne-stopwatch was built around
 (ticking timer + start/stop/reset buttons), expressed in pure Sky
@@ -27,7 +29,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.System as System
 import Sky.Core.Task as Task
-import Std.Tui as Tui
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 
@@ -194,12 +196,12 @@ onKey k =
 
 
 main =
-    Tui.program
-        (Tui.config
+    App.run
+        (App.tui
             { init = init
             , update = update
             , view = view
             , subscriptions = subscriptions
             }
-            |> Tui.withOnKey onKey
+            |> App.withOnKey onKey
         )

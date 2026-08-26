@@ -1,11 +1,12 @@
 -- | Std.Tui — terminal UI backend (Layer 3 Sky source).
 --
 -- **DEPRECATED for direct use — write `Std.App` instead.** `Std.App` composes
--- this module for `--target terminal:tui` (via `Tui.app`, a `Std.Ui` `Element`
--- view). Still functional (Std.App uses it), and new code should use `App.app` +
--- `App.run` — EXCEPT `program` with a hand-authored `String` view, which
--- `Std.App` does not cover: that is the intentional escape hatch and stays. See
--- docs/skyapp/overview.md.
+-- this module for `--target terminal:tui`: an `App.app` `Std.Ui` `Element` view
+-- renders via `Tui.app`, and an `App.tui` hand-authored `String` view renders
+-- full-screen via `Tui.program` (now first-class on `Std.App`). Nothing in user
+-- code needs to import `Std.Tui` directly any more — there is no remaining
+-- escape hatch. Still functional because `Std.App` uses it. New code: `App.tui`
+-- (String view) or `App.app` (Std.Ui) + `App.run`. See docs/skyapp/overview.md.
 --
 -- The same TEA shape as `Live.app` / `Webview.app`, rendered to ANSI cells.
 -- `Tui.config { init, update, view, subscriptions }` produces an opaque

@@ -45,6 +45,8 @@ module Std.App exposing
     , MobileOpts
     , app
     , web
+    , cli
+    , tui
     , route
     , routeParam
     , api
@@ -84,7 +86,7 @@ import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Std.Cli as Cli
 import Std.Cmd as Cmd
-import Std.Html exposing (Html)
+import Std.Html as Html exposing (Html)
 import Std.Live as Live
 import Std.Spa as Spa
 import Std.Tui as Tui
@@ -265,12 +267,15 @@ api path handler =
 -- | The app's view, held as one of two shapes so both a `Std.Ui` view and a
 -- `Std.Html` view can flow through the same `App`. [`app`] wraps a
 -- `model -> Element msg` in `ViewUi`; [`web`] wraps a `model -> Html msg` in
--- `ViewHtml`. The web/desktop/mobile runners render either (adapting `ViewUi`
--- via `Ui.layout []`); the terminal runners require a `ViewUi` and reject a
+-- `ViewHtml`; [`cli`] / [`tui`] wrap a `model -> String` in `ViewString`. The
+-- web/desktop/mobile runners render `ViewUi` (adapting via `Ui.layout []`) or
+-- `ViewHtml`, and reject a `ViewString` at boot (terminal-only); the terminal
+-- runners render `ViewUi` (flattened) or `ViewString` (verbatim), and reject a
 -- `ViewHtml`. Internal — not exposed.
 type ViewImpl model msg
     = ViewUi (model -> Element msg)
     | ViewHtml (model -> Html msg)
+    | ViewString (model -> String)
 
 -- | An app described once, runnable on any backend. Built by [`app`] and
 -- refined by the `with…` builders; consumed by a `run<Backend>` runner.
@@ -342,6 +347,66 @@ web cfg =
         { init = cfg.init
         , update = cfg.update
         , viewImpl = ViewHtml cfg.view
+        , subscriptions = cfg.subscriptions
+        , routes = []
+        , notFound = Nothing
+        , onInput = Nothing
+        , base = baseDefaults
+        , configs = []
+        , head = Nothing
+        , guard = Nothing
+        , onKey = Nothing
+        , onNavigate = Nothing
+        , onRequest = Nothing
+        }
+
+
+-- | Describe an app whose `view` returns a plain `String` — the line-oriented
+-- CLI shape (`--target terminal:cli`, = Sky.Cli). Feed stdin lines to a `Msg`
+-- with [`withOnLine`]. A `String` view is terminal-only: the web / desktop /
+-- mobile runners reject it at boot (use [`app`] for a cross-platform `Std.Ui`
+-- view). This is the first-class home of what used to be `Std.Cli.program`.
+cli : { init : seed -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> String
+, subscriptions : model -> Sub msg
+} -> App NoFallback seed page model msg key
+cli cfg =
+    App
+        { init = cfg.init
+        , update = cfg.update
+        , viewImpl = ViewString cfg.view
+        , subscriptions = cfg.subscriptions
+        , routes = []
+        , notFound = Nothing
+        , onInput = Nothing
+        , base = baseDefaults
+        , configs = []
+        , head = Nothing
+        , guard = Nothing
+        , onKey = Nothing
+        , onNavigate = Nothing
+        , onRequest = Nothing
+        }
+
+
+-- | Describe an app whose `view` returns a plain `String`, rendered full-screen
+-- on the terminal (`--target terminal:tui`, = Sky.Tui's `program` loop). Attach
+-- a key handler with [`withOnKey`]. Identical to [`cli`] in shape — both carry a
+-- `ViewString` — differing only in which terminal runner draws it; a `String`
+-- view is terminal-only (the web / desktop / mobile runners reject it at boot).
+-- Use [`app`] instead when you want a `Std.Ui` view that renders full-screen
+-- ANSI *and* the web. This is the first-class home of `Std.Tui.program`.
+tui : { init : seed -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> String
+, subscriptions : model -> Sub msg
+} -> App NoFallback seed page model msg key
+tui cfg =
+    App
+        { init = cfg.init
+        , update = cfg.update
+        , viewImpl = ViewString cfg.view
         , subscriptions = cfg.subscriptions
         , routes = []
         , notFound = Nothing
@@ -644,6 +709,25 @@ applyBase_ base boot =
     Task.andThen (\_ -> boot) (Config.apply (baseToConfig_ base))
 
 
+-- | A `ViewString` app ([`cli`] / [`tui`]) renders a raw `String` and runs ONLY
+-- on the terminal targets. The web / desktop / mobile runners call this to
+-- refuse it at boot — loudly, before serving anything — mirroring how the
+-- terminal runners refuse a `ViewHtml`. `boot` is a pure Task construction, so
+-- evaluating it before the guard fires has no observable effect; for a
+-- `ViewString` it is simply discarded.
+guardTerminalView_ : ViewImpl model msg -> Task Error () -> Task Error ()
+guardTerminalView_ vi boot =
+    case vi of
+
+        ViewString _ ->
+            Task.fail
+                (Error.invalidInput
+                    "this app has a String view (App.cli / App.tui) — build it with --target terminal:cli or terminal:tui; use App.app for a cross-platform Std.Ui view that also renders on the web")
+
+        _ ->
+            boot
+
+
 -- | Run as server-driven HTML + SSE (`--target web`, = Sky.Live). Requires a
 -- fallback page ([`withNotFound`]) because Live routing is total. Folds the
 -- accumulated [`WebOpts`] + the `withHead`/`withGuard`/`withOnNavigate` builders
@@ -651,7 +735,7 @@ applyBase_ base boot =
 -- [`applyBase_`]).
 runLive : App HasFallback () page model msg key -> Task Error ()
 runLive (App a) =
-    applyBase_ a.base (runLiveBoot_ (App a))
+    applyBase_ a.base (guardTerminalView_ a.viewImpl (runLiveBoot_ (App a)))
 
 
 runLiveBoot_ : App HasFallback () page model msg key -> Task Error ()
@@ -692,6 +776,10 @@ runLiveBoot_ (App a) =
 
                                     ViewHtml v ->
                                         v model
+
+                                    ViewString v ->
+                                        -- unreachable: guardTerminalView_ refuses a String view before Live renders
+                                        Html.text (v model)
                         , subscriptions = a.subscriptions
                         , routes = List.map liveRoute_ a.routes
                         , notFound = fallback
@@ -804,7 +892,7 @@ runLiveBoot_ (App a) =
 -- Spa supports (routes + fallback); web-server-only knobs are ignored.
 runSpa : App fallback seed page model msg key -> Task Error ()
 runSpa (App a) =
-    applyBase_ a.base (runSpaBoot_ (App a))
+    applyBase_ a.base (guardTerminalView_ a.viewImpl (runSpaBoot_ (App a)))
 
 
 runSpaBoot_ : App fallback seed page model msg key -> Task Error ()
@@ -823,6 +911,10 @@ runSpaBoot_ (App a) =
 
                             ViewHtml v ->
                                 v model
+
+                            ViewString v ->
+                                -- unreachable: guardTerminalView_ refuses a String view before Spa renders
+                                Html.text (v model)
                 , subscriptions = a.subscriptions
                 }
         routed = Spa.withRoutes (List.concatMap spaRoute a.routes) base
@@ -881,15 +973,49 @@ runTuiBoot_ (App a) =
             in
                 Tui.app withGuard_
 
+        ViewString v ->
+            -- App.tui: a hand-authored String view, drawn full-screen by
+            -- Tui.program (what Std.Tui.program used to be, now first-class).
+            let
+                t = findTerminal a.configs
+                base =
+                    Tui.config
+                        { init = a.init
+                        , update = a.update
+                        , view = v
+                        , subscriptions = a.subscriptions
+                        }
+                withW_ = Tui.withCanvasWidth t.canvasWidth base
+                withH_ = Tui.withCanvasHeight t.canvasHeight withW_
+                withKey_ =
+                    case a.onKey of
+
+                        Just k ->
+                            Tui.withOnKey k withH_
+
+                        Nothing ->
+                            withH_
+                withGuard_ =
+                    case a.guard of
+
+                        Just g ->
+                            Tui.withGuard g withKey_
+
+                        Nothing ->
+                            withKey_
+            in
+                Tui.program withGuard_
+
         ViewHtml _ ->
             Task.fail
                 (Error.invalidInput
-                    "terminal:tui requires a Std.Ui view — App.web (Std.Html) targets web/desktop/mobile; use App.app for a cross-platform view")
+                    "terminal:tui requires a Std.Ui or String view — App.web (Std.Html) targets web/desktop/mobile; use App.app or App.tui")
 
 
--- | Run as a line-based CLI (`--target terminal:cli`, = Sky.Cli). The
--- `Element` view is flattened to text (best-effort — see [`elementToText`]);
--- `Std.Cli.program` stays the escape hatch for a hand-authored `String` view.
+-- | Run as a line-based CLI (`--target terminal:cli`, = Sky.Cli). An [`app`]
+-- `Element` view is flattened to text (best-effort — see [`elementToText`]); a
+-- [`cli`] `String` view is printed verbatim — the first-class successor to the
+-- old `Std.Cli.program` escape hatch.
 runCli : App fallback seed page model msg key -> Task Error ()
 runCli (App a) =
     applyBase_ a.base (runCliBoot_ (App a))
@@ -919,10 +1045,32 @@ runCliBoot_ (App a) =
             in
                 Cli.program withLine
 
+        ViewString v ->
+            -- App.cli: a hand-authored String view, printed verbatim (what
+            -- Std.Cli.program used to be, now first-class).
+            let
+                base =
+                    Cli.config
+                        { init = a.init
+                        , update = a.update
+                        , view = v
+                        , subscriptions = a.subscriptions
+                        }
+                withLine =
+                    case a.onInput of
+
+                        Just onLine ->
+                            Cli.withOnLine onLine base
+
+                        Nothing ->
+                            base
+            in
+                Cli.program withLine
+
         ViewHtml _ ->
             Task.fail
                 (Error.invalidInput
-                    "terminal:cli requires a Std.Ui view — App.web targets web/desktop; use App.app")
+                    "terminal:cli requires a Std.Ui or String view — App.web targets web/desktop; use App.app or App.cli")
 
 
 -- | Run as a native desktop window (`--target desktop:<os>` is native wasm; this
@@ -930,7 +1078,7 @@ runCliBoot_ (App a) =
 -- taken from [`withWindow`] / a `DesktopConfig` via [`withConfig`].
 runWebview : App fallback () page model msg key -> Task Error ()
 runWebview (App a) =
-    applyBase_ a.base (runWebviewBoot_ (App a))
+    applyBase_ a.base (guardTerminalView_ a.viewImpl (runWebviewBoot_ (App a)))
 
 
 runWebviewBoot_ : App fallback () page model msg key -> Task Error ()
@@ -950,6 +1098,10 @@ runWebviewBoot_ (App a) =
 
                         ViewHtml v ->
                             v model
+
+                        ViewString v ->
+                            -- unreachable: guardTerminalView_ refuses a String view before the webview renders
+                            Html.text (v model)
             , subscriptions = a.subscriptions
             , window = { title = d.title, size = ( d.width, d.height ) }
             }

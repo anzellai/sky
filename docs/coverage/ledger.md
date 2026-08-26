@@ -27,15 +27,15 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 80 |
 | stdlib modules (denominator) | 93 |
-| stdlib entries (denominator) | 1911 |
+| stdlib entries (denominator) | 1913 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 7 | 7.5% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 853 | 44.6% |
-| symbols unreferenced under the generous rule | 768 | 40.2% |
+| stdlib modules imported by nothing | 9 | 9.7% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 859 | 44.9% |
+| symbols unreferenced under the generous rule | 774 | 40.5% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -49,8 +49,10 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.upgrade-claude`
 - `cli.verify`
 - `stdlib.Sky.Core.Io`
+- `stdlib.Std.Cli`
 - `stdlib.Std.Db.Table`
 - `stdlib.Std.Live.Console`
+- `stdlib.Std.Tui`
 - `stdlib.Std.Webview`
 
 ## Sole ownership
@@ -59,10 +61,10 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 21 |
-| stdlib modules owned by exactly one unit of any role | 17 |
+| stdlib modules owned by exactly one `examples/*` | 19 |
+| stdlib modules owned by exactly one unit of any role | 15 |
 | sky.toml sections owned by exactly one unit | 2 |
-| **lost if `examples/` retired** — modules | **5** |
+| **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
 
 ### Modules lost if `examples/` is retired
@@ -71,9 +73,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 |---|---|
 | `Sky.Core.Process` | `examples/17-skymon` |
 | `Std.Bundle` | `examples/64-app-native` |
-| `Std.Cli` | `examples/20-cli-counter` |
 | `Std.Live` | `examples/19-skyforum` |
-| `Std.Tui` | `examples/21-tui-stopwatch` |
 
 ### Config sections lost if `examples/` is retired
 
@@ -199,7 +199,7 @@ None.
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Bundle` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Cache` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Cli` | stdlib | Runs | Runs | equal |
+| `stdlib.Std.Cli` | stdlib | None | None | equal |
 | `stdlib.Std.Cmd` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Codec` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Compression` | stdlib | Asserted | Falsified | stronger |
@@ -230,7 +230,7 @@ None.
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Tui` | stdlib | Runs | Runs | equal |
+| `stdlib.Std.Tui` | stdlib | None | None | equal |
 | `stdlib.Std.Ui` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Animation` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Background` | stdlib | Asserted | Falsified | stronger |

@@ -1237,6 +1237,11 @@ fn is_externally_consumed_section(section: &str) -> bool {
         // (`is_generated_split_project`). It is consumed by the build, never the
         // runtime, so an inert-key warning about it is noise.
         | "spa"
+        // `[app] target` is the project's PERSISTED build target (see
+        // `parse_toml_app_target` in the CLI): a terminal-only App.cli/App.tui
+        // project records `terminal:cli` / `terminal:tui` once so a bare
+        // `sky build`/`run` picks its backend. Build-time, never runtime.
+        | "app"
     )
 }
 
@@ -2805,6 +2810,8 @@ mod sky_toml_tests {
             ("dependencies", "somelib"),
             ("go.dependencies", "github.com/x/y"),
             ("lib", "name"),
+            ("spa", "generated"),  // build recursion guard
+            ("app", "target"),     // persisted build backend (App.cli/App.tui)
             ("", "port"),
         ] {
             let body = if section.is_empty() {

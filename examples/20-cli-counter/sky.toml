@@ -4,3 +4,8 @@ entry = "src/Main.sky"
 
 [source]
 root = "src"
+
+[app]
+# App.cli renders a String view — terminal-only. Persist the backend so a bare
+# `sky build` / `sky run` targets the CLI (an explicit --target still wins).
+target = "terminal:cli"

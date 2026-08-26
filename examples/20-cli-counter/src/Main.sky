@@ -1,10 +1,12 @@
 module Main exposing (main)
 
 {-|
-20-cli-counter — first end-to-end demo of Sky.Cli, the line-oriented
-TEA backend. Same `init / update / view / subscriptions` shape as
-Sky.Live, plus a CLI-specific `onLine : String -> Msg` that maps
-each stdin line to a Msg.
+20-cli-counter — the line-oriented CLI shape via `Std.App` (`App.cli`).
+Same `init / update / view : model -> String / subscriptions` shape as
+every other target, plus a CLI-specific `onLine : String -> Msg` (wired
+with `App.withInput`) that maps each stdin line to a Msg. `App.run` is
+built for the terminal by the `[app] target = "terminal:cli"` in
+`sky.toml`, so a bare `sky run` picks the CLI backend.
 
 Run:
     sky run src/Main.sky
@@ -20,7 +22,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.System as System
 import Sky.Core.Task as Task
-import Std.Cli as Cli
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 
@@ -93,11 +95,11 @@ onLine line =
 
 
 main =
-    Cli.program
-        (Cli.config
+    App.run
+        (App.cli
             { init = init
             , update = update
             , view = view
             , subscriptions = subscriptions
             }
-            |> Cli.withOnLine onLine)
+            |> App.withInput onLine)
