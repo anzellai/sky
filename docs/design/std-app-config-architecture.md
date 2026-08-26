@@ -394,6 +394,213 @@ Still genuinely open (small): whether an embedded sub-app (console, a mounted
 sub-app) inherits the parent's `withX` or configures independently — decide when
 sub-app config is actually wired.
 
+## 7b. `Secret` migration surface (from the stdlib sweep, 2026-08-26)
+
+A read-only sweep of `sky-stdlib/` + `runtime-go/rt/` catalogued exactly what
+migrates. Summary; the sequencing is what matters.
+
+**Migrate (secret currently `String`/`any` → `Secret`)** — ~20 surfaces:
+- **Auth** (`Std/Auth.sky`): `signToken`, `verifyToken`, `signSlidingToken` — the
+  HMAC secret arg. *Widest blast radius + the flagged rule* (§ below).
+- **Jwt** (`Sky/Core/Jwt.sky`): `hs256`, `rs256`, the `Algorithm` constructors.
+- **Crypto** (`Sky/Core/Crypto.sky`): `hmacSha256/512` (key), `rsaSha256Sign`
+  (private key), `aesGcm*`/`chacha20*` encrypt+decrypt (key), `*KeyFromPassword`
+  (password in *and* derived key out → `Secret`).
+- **Email** (`Std/Email.sky`): SES secret, SMTP pass, `Resend`/`SendGrid` API-key
+  constructors.
+- **Http** (`Sky/Http/Middleware.sky`): `withBasicAuth` *password* (username stays).
+- **Db** (`Std/Db.sky`): `open`'s Postgres DSN — but see the judgment call below.
+
+**The rt chokepoint:** `coerceAuthSecret` (`runtime-go/rt/db_auth.go:1848`) backs
+all three Auth token kernels — migrate that one function (accept `rt.Secret`,
+`secretReveal` → bytes, keep the ≥N-byte check post-reveal) and Auth is covered.
+
+**New surfaces to ADD (additive, no breakage):**
+- `Secret` type + `Secret.fromEnv` + `Secret.reveal` — a new
+  `Sky/Core/Secret.sky` (nothing exists today).
+- `Http.withBearer` / `Http.withApiKey` / `Http.withBasicAuth` (client) — **none
+  exist today**; users hand-build `withHeader "Authorization" ("Bearer " ++ tok)`.
+- `App.withConsoleTokenFromEnv` / `withMetricsTokenFromEnv` /
+  `withAuthSecretFromEnv` / `withDatabaseFromEnv` — `Std.App` has **no** secret/
+  config builders yet; the whole `withXFromEnv` family is new work.
+
+**Boundary — STAYS `String` (deliberately):** public/verify keys (RS256 verify,
+`rsaSha256Verify`), usernames, SES access-key *id*, the OTLP endpoint URL,
+`Cache`, and `System.getenvOr` (the non-secret config reader). Three judgment
+calls worth stating:
+- **`hashPassword`/`verifyPassword` stay `String`.** They take *per-request form
+  plaintext* at the edge, not a *configured* secret — `Secret` is for configured
+  values (env/handles), and forcing every login field through the handle
+  machinery is wrong.
+- **`Db.open`'s DSN**: migrating it over-taints the SQLite *path* (public) it also
+  accepts. Prefer sanctioning **`Db.connect ()`** (already env-driven, DSN-secret
+  handled entirely in rt — *not source-breaking*) as the path, and leave `open`
+  for advanced/SQLite use.
+- **`Jwt.Algorithm`** holds one field used for both sign (private=secret) and
+  verify (public). A clean migration splits it: `HS256 Secret`, and RS256 into a
+  private-sign (`Secret`) vs public-verify (`String`) shape.
+- **Literal-secret ban bites tests**: `Jwt.hs256 "topsecret"`,
+  `Crypto.hmacSha256 "secret"` in `examples/00-standard-libs` become illegal. Need
+  a clearly-named test-only `Secret.fromString`/`Secret.unsafeFromString` (loud,
+  greppable) so tests can construct a `Secret` — the ban is on *accidental*
+  literals in app code, not on a deliberate test constructor.
+
+**Rule/doc changes (same-commit):** `AGENTS.md:492` "**Secrets are typed** —
+`Auth.signToken`/`verifyToken` take `String`, never `any`" → **take `Secret`**;
+the Auth pinned-default + production-gate `SKY_AUTH_TOKEN_SECRET` prose;
+`templates/AGENTS.md` + `templates/CLAUDE.md` (template-sync rule);
+`Std/Email.sky` docstrings go advisory → structural. `sky doc` regenerates;
+`scripts/doc-examples.sh` examples must switch to `Secret.fromEnv`.
+
+**Breakage (source-breaking user code):** `apps/relay` (Tokens/Config/Main),
+`examples/13-skyshop` (Auth/OAuth), `examples/36-composite-server`,
+`examples/00-standard-libs` (literal keys), `examples/17/18` (Db.open). **NOT
+breaking:** `Db.connect ()` (the dominant DB entry — DSN read in rt), and every
+new surface (additive).
+
+**Sequencing:** (1) `Secret` type + `fromEnv`/`reveal` + the Go redacting struct
++ `coerceAuthSecret` accepting it; (2) `Http.withBearer`/`withApiKey` +
+`App.withXFromEnv` — *additive, ship first, zero breakage*; (3) **Auth** (widest
+blast radius, the flagged rule) with its examples/apps; (4) Crypto + Jwt + Email;
+(5) `Db.open` as a design decision, not a mechanical rename. Each step ships with
+its callers + the doc/rule sync.
+
+*(Notable: `Std/Persist.sky` does not exist on this branch; `Std/Bundle.sky` has
+no signing-key surface — iOS/Android signing isn't modelled in the stdlib.)*
+
+## 7c. Runtime-derived secrets (fetched, not configured)
+
+The env model (`Secret.fromEnv`) covers *configured* secrets. But a large class
+of secrets are **fetched at runtime**: you POST to an OAuth token endpoint (or an
+API login), the response body carries an `access_token`, and you put that token
+in the `Authorization` header of every downstream call. That token arrives as a
+`String` (JSON-decoded from the response) and must become a `Secret` to flow into
+`Http.withBearer`. Three entry paths, in order of preference:
+
+**(a) Decode straight into `Secret` — the clean path.**
+`Secret.decoder : Decoder Secret` (+ a `Codec` twin). The `access_token` field
+decodes *directly* into a `Secret`, so it is tainted + redacting from the moment
+it leaves the wire — a bare `String` never exists:
+
+```elm
+type alias TokenResp = { accessToken : Secret, expiresIn : Int }
+
+tokenDecoder : Decoder TokenResp
+tokenDecoder =
+    Decode.map2 TokenResp
+        (Decode.field "access_token" Secret.decoder)   -- String on the wire → Secret in Sky
+        (Decode.field "expires_in" Decode.int)
+
+callApi : Secret -> Task Error Json
+callApi token =
+    Http.get "https://api.example.com/me"
+        |> Http.withBearer token                       -- consumes the Secret, sets the header
+        |> Http.expectJson
+```
+
+**(b) Promote an existing runtime `String` — `Secret.fromString : String -> Secret`.**
+For when you already hold the string (built it, got it from a source the decoder
+didn't cover). It is the loud, greppable *twin of `Secret.reveal`* — the two
+named crossings of the taint boundary. A `sky check` **lint bans a string-literal
+argument** (a purely syntactic check on the `StringLit` node): `Secret.fromString
+oauthToken` is fine; `Secret.fromString "sk_live_…"` is a compile error naming
+`Secret.fromEnv`. That is how "no secret literals" is enforced without blocking
+runtime promotion. (Tests that genuinely need a literal use
+`Secret.unsafeFromString`, lint-exempt — the name is the warning.)
+
+**(c) The exchange call's OWN secret uses `reveal` when the sink isn't a typed
+builder.** OAuth token exchange sends `client_secret` in a
+`x-www-form-urlencoded` **body**, not a header — no typed consumer fits. That is
+the legitimate use of the escape hatch: `Secret.reveal clientSecret` at the point
+you build the form body, loud and server-only. `withBearer`/`withApiKey`/
+`withBasicAuth` cover the header cases so `reveal` stays rare.
+
+**What `Secret` does and does not manage.** It manages *leakage* — a fetched
+token in your model, logs, or an accidental `MarshalJSON` is `[REDACTED]`; on a
+split app it is backend-only, so a runtime-fetched token can no more reach the
+client than an env one can. It does **not** manage *lifetime* — `expiresIn`,
+refresh, and rotation are ordinary model state (store the `Secret` + an expiry
+`Time`, refresh when stale). The redacting `MarshalJSON` is a bonus safety net:
+you cannot accidentally echo a fetched token back in a JSON response.
+
+**Storing a fetched token** (DB/cache): reveal at the write boundary, or better,
+encrypt with `Crypto.aesGcmEncrypt` (which itself now takes a `Secret` key). The
+DSN/at-rest story is out of scope here; the taint model just makes the write an
+explicit, greppable act rather than an accidental `++`.
+
+So the full constructor set is: `fromEnv` (configured), `decoder` (fetched via
+wire), `fromString` (runtime promotion, literal-banned), `unsafeFromString`
+(tests) — and the single exit `reveal`. Every crossing of the boundary is named.
+
+## 7d. Migration diagnostics — turning the breakage into a guided fix
+
+The breakage in §7b (existing `.sky` code passing a `String` where `Secret` is
+now required) must not surface as a bare `type mismatch: String vs Secret`. Sky
+already has the machinery to make it a guided fix, and it was built for exactly
+this: `builder_cfg_migration_hint` (`crates/ty/src/check.rs:157`), wired into the
+diagnostic via the `suggestion:` field (`check.rs:455`), turned the cryptic v0.19
+`AppConfig _ _ vs record` error into an actionable `Try: …` note pointing at a
+migration doc. We reuse that pattern. Four layers, cheapest first:
+
+**(1) Targeted type-error hint at the exact call site.** A `secret_migration_hint`
+twin: when a mismatch is exactly `String` (found) vs `Secret` (expected) **at an
+argument of a known-migrated stdlib symbol**, attach a `Try:` note instead of the
+bare message. Keyed on `(symbol, arg-index)` so it fires only at the migrated
+sinks (`Auth.signToken`, `Crypto.hmacSha256`, …) — a user's own String-taking
+function still gets the plain error. Two flavours:
+
+```
+error[E2001]: type mismatch — Auth.signToken expects a Secret, found String
+   ┌─ src/Tokens.sky:62:24
+   │
+62 │     Auth.signToken secret claims 3600
+   │                    ^^^^^^ this is a String
+   │
+   = Secret migration (v0.23): Auth.signToken now takes a typed Secret, not a
+     String, so a secret can never be logged, ++'d, or serialised by accident.
+   Try: replace the source of `secret` with `Secret.fromEnv "SKY_AUTH_TOKEN_SECRET"`
+        (configured), `Secret.decoder` (fetched over the wire), or
+        `Secret.fromString secret` (an existing runtime String).
+   See docs/v0.23/migration-secret.md
+```
+
+When the offending argument is a **string literal**, the note is stronger and
+different — this is the literal-ban from §7c, not a wrap suggestion:
+
+```
+   = Secrets may not be literals. Move it to an env var and read it with
+     Secret.fromEnv "VAR" (a literal in source is committed, logged, and shared).
+```
+
+**(2) A migration registry, not scattered `if message.contains`.** A static table
+`MIGRATED_SECRET_SINKS: &[(symbol, arg_index, since_version, env_hint)]` the hint
+function consults. Keeps every note in one place, versioned, and lets a gate
+(`crates/xtask/tests/…`) assert **every symbol migrated in §7b has a registry
+row** — so a future migration can't ship a sink without its note.
+
+**(3) `sky doctor` scans the whole project up front — no whack-a-mole.** A user
+with 40 call sites shouldn't fix-one-recompile-repeat. A `sky doctor` pass (it
+already exists, `[--fix]` and all) walks the project and lists **every** site at
+once, grouped by file, each with the same `Try:` note. Run it right after
+`sky upgrade` and you get the full worklist in one shot.
+
+**(4) `--fix` for the mechanical cases.** The dominant pattern is
+`System.getenvOr "X" ""` feeding a now-`Secret` sink → `sky doctor --fix` rewrites
+it to `Secret.fromEnv "X"` (and adds the `import` if missing). Non-mechanical
+cases (a runtime String, a fetched token) are left with the note, not auto-touched
+— `--fix` never guesses at a `fromString` where a `decoder` was meant.
+
+**(5) A one-time upgrade banner.** `sky upgrade` prints a single breaking-changes
+line on the version that lands Secret, pointing at `docs/v0.23/migration-secret.md`
+— the same doc the per-site notes link to. One destination, three ways to reach
+it (compile error, `sky doctor`, upgrade banner).
+
+Net effect: a user upgrades, recompiles, and instead of a wall of `String vs
+Secret` they get — at the failing line — *which* env var to read and *which*
+constructor to use, or one `sky doctor` report listing all of them, or a
+`--fix` that does the mechanical 80%. The migration doc is written **with** the
+change (same commit, per the template-sync rule), not after.
+
 ## 8. Recommendation
 
 Adopt **`App.withX` (declared) + `SKY_*` (env override, env wins) + `sky.toml` as
