@@ -3694,10 +3694,13 @@ fn cmd_run(args: &[String]) -> ExitCode {
         .collect();
     let args = args.as_slice();
     let (args, profile) = parse_profile(args);
+    // `--open` launches the platform browser at the app's `listening` URL once
+    // it is up (web/server apps). A bare boolean; `parse_out` ignores it.
+    let open = args.iter().any(|a| a == "--open");
     let (positional, out_override) = parse_out(&args);
     let file = match resolve_entry_arg(
         &positional,
-        "usage: sky run <file.sky> [--target <family[:variant]>] [--profile [--profile-dir <dir>] [--profile-timeout <dur>]]  (or run inside a project directory with a sky.toml)",
+        "usage: sky run <file.sky> [--target <family[:variant]>] [--open] [--profile [--profile-dir <dir>] [--profile-timeout <dur>]]  (or run inside a project directory with a sky.toml)",
     ) {
         Ok(f) => f,
         Err(code) => return code,
@@ -3777,6 +3780,9 @@ fn cmd_run(args: &[String]) -> ExitCode {
             if embed { ", embedded PostgreSQL" } else { "" }
         );
         println!("  open  http://localhost:{port}/     (Ctrl-C to stop)");
+        if open {
+            open_when_ready(port);
+        }
         let mut run = Command::new(&app);
         run.current_dir(&backend);
         if embed {
@@ -3820,7 +3826,20 @@ fn cmd_run(args: &[String]) -> ExitCode {
         embed_bundle: None,
         wasm: false,
     };
-    let report = build_example(&opts);
+    let mut report = build_example(&opts);
+    // Auto-install: if the build failed ONLY because Sky dependencies are not
+    // fetched, fetch them and rebuild once — so `sky run` works without a manual
+    // `sky install` first. Idempotent + precisely triggered (no per-run latency
+    // when deps are already present, since it only fires on the "not fetched"
+    // note), it converts build.rs's hard "run 'sky install'" error into a heal.
+    if !report.emitted && report.note.contains("not fetched") {
+        println!("sky run: fetching missing dependencies (auto-install)...");
+        let inst = project::ffi_install(&project_dir, &opts.repo_root);
+        for l in &inst.lines {
+            println!("{l}");
+        }
+        report = build_example(&opts);
+    }
     for w in &report.warnings {
         eprintln!("warning: {w}");
     }
@@ -3910,13 +3929,130 @@ fn cmd_run(args: &[String]) -> ExitCode {
     }
     println!("Build complete, running...");
     let out_dir = project_dir.join(&out_dir_name);
-    match run_app(&out_dir, &envs) {
+    match run_app_open(&out_dir, &envs, open) {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1) as u8),
         Err(e) => {
             eprintln!("sky run: could not launch binary: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Best-effort open a URL in the platform browser (fire-and-forget).
+fn open_url(url: &str) {
+    let spawned = if cfg!(target_os = "macos") {
+        Command::new("open").arg(url).spawn()
+    } else if cfg!(target_os = "windows") {
+        Command::new("cmd").args(["/C", "start", "", url]).spawn()
+    } else {
+        Command::new("xdg-open").arg(url).spawn()
+    };
+    match spawned {
+        Ok(_) => println!("sky run --open: opening {url}"),
+        Err(e) => eprintln!("sky run --open: could not launch a browser ({e}); open {url} yourself."),
+    }
+}
+
+/// Spawn a background thread that waits until `localhost:port` accepts a TCP
+/// connection (up to ~30s), then opens it in the browser. For paths where the
+/// port is known up front (e.g. the Sky.Spa backend's fixed PORT), unlike the
+/// Live path which must read the actual port from the app's stdout.
+fn open_when_ready(port: u16) {
+    std::thread::spawn(move || {
+        use std::net::{SocketAddr, TcpStream};
+        use std::time::Duration;
+        let addr: SocketAddr = match format!("127.0.0.1:{port}").parse() {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+        for _ in 0..150 {
+            if TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
+                open_url(&format!("http://localhost:{port}/"));
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+}
+
+/// Extract the listen port from a runtime "listening" line, e.g.
+/// `Sky.Live listening on :8080` or `Sky server listening on http://localhost:8080`.
+/// The port is the last run of digits on the line.
+fn detect_listening_port(line: &str) -> Option<u16> {
+    if !line.to_ascii_lowercase().contains("listening") {
+        return None;
+    }
+    let bytes = line.as_bytes();
+    let mut best = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if let Ok(n) = line[start..i].parse::<u16>() {
+                best = Some(n);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    best
+}
+
+/// Like `run_app`, but when `open` is set, tee the app's stdout and open a
+/// browser at the first `listening on :PORT` line (web/server apps). Falls back
+/// to `run_app` (inherited stdio, no browser) when `open` is false — so a
+/// terminal/CLI app, which never prints a listening line, is unaffected.
+fn run_app_open(
+    out_dir: &Path,
+    envs: &[(String, String)],
+    open: bool,
+) -> std::io::Result<std::process::ExitStatus> {
+    if !open {
+        return run_app(out_dir, envs);
+    }
+    let project_dir = out_dir.parent().filter(|p| !p.as_os_str().is_empty());
+    let bin_name = project_dir
+        .map(project::configured_bin_name)
+        .unwrap_or_else(|| "app".to_string());
+    let bin_abs =
+        std::fs::canonicalize(out_dir.join(&bin_name)).unwrap_or_else(|_| out_dir.join(&bin_name));
+    let cwd = project_dir
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| out_dir.to_path_buf());
+    let mut cmd = Command::new(&bin_abs);
+    cmd.current_dir(&cwd);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    // Pipe stdout so we can watch for the listening line; stderr stays inherited.
+    cmd.stdout(std::process::Stdio::piped());
+    let mut child = cmd.spawn()?;
+    if let Some(stdout) = child.stdout.take() {
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            let reader = BufReader::new(stdout);
+            let mut opened = false;
+            for line in reader.lines() {
+                let line = match line {
+                    Ok(l) => l,
+                    Err(_) => break,
+                };
+                // Tee to our stdout so the app's output is still visible.
+                println!("{line}");
+                if !opened {
+                    if let Some(port) = detect_listening_port(&line) {
+                        open_url(&format!("http://localhost:{port}/"));
+                        opened = true;
+                    }
+                }
+            }
+        });
+    }
+    child.wait()
 }
 
 // ---- fmt -----------------------------------------------------------------
@@ -7774,6 +7910,26 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detect_listening_port_reads_the_runtime_banner_forms() {
+        // The two real runtime message shapes (runtime-go/rt/live.go,
+        // rt_server.go): the port is the last run of digits on the line.
+        assert_eq!(
+            detect_listening_port("Sky.Live listening on :8080"),
+            Some(8080)
+        );
+        assert_eq!(
+            detect_listening_port("Sky server listening on http://localhost:8951"),
+            Some(8951)
+        );
+        // Any non-listening line (incl. one that happens to carry a number) is
+        // ignored, so `--open` never fires on a stray log line.
+        assert_eq!(detect_listening_port("booted 3 workers on port config"), None);
+        assert_eq!(detect_listening_port("Sky.Live listening on :3000"), Some(3000));
+        // A listening line with no port yields nothing rather than a panic.
+        assert_eq!(detect_listening_port("now listening for connections"), None);
+    }
 
     #[test]
     fn sanitize_pkg_segment_yields_a_valid_android_segment() {
