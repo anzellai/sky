@@ -416,6 +416,15 @@ fn classify(dir: &Path, name: &str) -> Shape {
 }
 
 fn shape_of_segment(seg: &str) -> Option<Shape> {
+    // Std.App unified entry (`main = App.run appDef`, built by `sky build` to its
+    // DEFAULT target = web = Sky.Live). The gate builds the default target, so a
+    // Std.App app runs as a Live server here regardless of which other targets it
+    // also supports (terminal:tui/cli, desktop, web:app — those are covered by
+    // std_app_flow + spa_split_flow). Checked FIRST because a migrated app may
+    // still mention `App.route`/config that could otherwise mislead the scan.
+    if seg.contains("App.run") {
+        return Some(Shape::Live);
+    }
     if seg.contains("Webview.app") || seg.contains("Webview.program") {
         return Some(Shape::Webview);
     }
@@ -2250,6 +2259,21 @@ fn is_native_link_failure(blocker: &str) -> bool {
 #[cfg(test)]
 mod golden_gate_tests {
     use super::*;
+
+    #[test]
+    fn std_app_entry_classifies_as_live_not_cli() {
+        // A migrated Std.App app's main is `App.run appDef`; the build-run gate
+        // builds the DEFAULT target (web = Sky.Live), so it MUST classify as Live
+        // — not fall through to the Cli default, which would run a web server as a
+        // line-oriented CLI and hang. Regression for the entire Std.App example
+        // migration (all 20 apps use `App.run`).
+        assert_eq!(shape_of_segment("App.run appDef"), Some(Shape::Live));
+        assert_eq!(shape_of_segment("    App.run appDef\n"), Some(Shape::Live));
+        // The explicit backends still classify as before — no regression.
+        assert_eq!(shape_of_segment("Spa.app cfg"), Some(Shape::Spa));
+        assert_eq!(shape_of_segment("Tui.app cfg"), Some(Shape::Tui));
+        assert_eq!(shape_of_segment("Live.app cfg"), Some(Shape::Live));
+    }
 
     fn cli_row(name: &str, stdout: &str) -> Row {
         Row {
