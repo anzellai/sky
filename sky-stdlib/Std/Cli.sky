@@ -21,6 +21,7 @@ module Std.Cli exposing (AppConfig, program, config, withOnLine, readPassword)
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Secret exposing (Secret)
 
 -- | The built Sky.Cli app configuration. Opaque — produced by `config`,
 -- refined by `withOnLine`, consumed by `program`.
@@ -52,7 +53,11 @@ withOnLine =
 
 
 -- | Read one line from stdin with terminal echo disabled (passwords never
--- land in scrollback). `readPassword ()`.
-readPassword : () -> Task Error String
+-- land in scrollback). Returns an opaque `Secret`, so a password read here
+-- cannot leak into a log or a `%v`. Feed it to a `Secret`-consuming API
+-- (`Http.withBearer`, `Auth.signToken`) directly, or unwrap it with the
+-- greppable `Secret.reveal` where a `String` is required (e.g.
+-- `Auth.hashPassword (Secret.reveal pw)`). `readPassword ()`.
+readPassword : () -> Task Error Secret
 readPassword =
     Ffi.kernel "Cli_readPassword"

@@ -195,7 +195,9 @@ func Cli_readPassword(_ any) any {
 			if err != nil && line == "" {
 				return Err[any, any](ErrIo("readPassword: " + err.Error()))
 			}
-			return Ok[any, any](strings.TrimRight(line, "\r\n"))
+			// The line is a password — hand back an opaque Secret, never a
+			// String that could leak into a log or a `%v`.
+			return Ok[any, any](Secret{v: strings.TrimRight(line, "\r\n")})
 		}
 		bytes, err := term.ReadPassword(fd)
 		// term.ReadPassword does NOT echo a newline on Enter — the
@@ -205,7 +207,7 @@ func Cli_readPassword(_ any) any {
 		if err != nil {
 			return Err[any, any](ErrIo("readPassword: " + err.Error()))
 		}
-		return Ok[any, any](string(bytes))
+		return Ok[any, any](Secret{v: string(bytes)})
 	}
 }
 
