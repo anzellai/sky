@@ -175,8 +175,43 @@ command instead.
 You write one `view : model -> Element msg`. `Std.App` adapts it per backend:
 `Ui.layout []` for the HTML family (Live/Spa/Webview), the `Element` directly for
 Tui, and a best-effort `Element`→text flatten for `terminal:cli` (2-D layout has
-no lossless text form — `Std.Cli.program` stays the escape hatch for a
-hand-authored `String` view).
+no lossless text form).
+
+## String views — `App.cli` / `App.tui`
+
+When you want to hand-author the terminal output yourself (`view : model ->
+String`), reach for `App.cli` (line-oriented, printed verbatim) or `App.tui`
+(drawn full-screen) instead of `App.app`. They are siblings of `App.app` /
+`App.web`, refined by the same `with…` builders and run by the same `App.run`:
+
+```elm
+main : Task Error ()
+main =
+    App.run
+        (App.cli { init = init, update = update, view = view, subscriptions = subscriptions }
+            |> App.withInput onLine)   -- stdin lines → Msg
+
+
+view : Model -> String
+view model =
+    "count=" ++ String.fromInt model.count ++ " > "
+```
+
+A `String` view is **terminal-only** — it cannot render on the web, so the
+`web` / `desktop` / `mobile` runners refuse it at boot (use `App.app` for a
+`Std.Ui` view that renders full-screen ANSI *and* the web). These builders are
+the first-class successors to the old `Std.Cli.program` / `Std.Tui.program`;
+nothing in user code imports `Std.Cli` / `Std.Tui` directly any more.
+
+Because a String-view app can't fall back to the `web` default, pin its backend
+in `sky.toml` so a bare `sky build` / `sky run` picks the terminal:
+
+```toml
+[app]
+target = "terminal:cli"   # or "terminal:tui"
+```
+
+An explicit `--target` on the command line always overrides the persisted one.
 
 ## Client targets — same source, no `Std.Spa` entry
 

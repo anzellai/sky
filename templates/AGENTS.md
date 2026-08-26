@@ -60,10 +60,16 @@ import. The mapping (build with the matching `--target`):
 | `Live.withOnNavigate …` / `Live.withGuard …` | `\|> App.withOnNavigate …` / `\|> App.withGuard …` |
 | `Live.withPort n` / `Live.withStore …` | `\|> App.withConfig (App.WebConfig { App.webDefaults \| port = n, … })` |
 | `Live.withHead`-only page not-found | `\|> App.withNotFound <page>` (required for `web`) |
-| `Tui.app (Tui.config { … })` · `Tui.withOnKey f` | `App.app { … } \|> App.withOnKey f` + `--target terminal:tui` |
+| `Tui.app (Tui.config { … })` · `Tui.withOnKey f` (a `Std.Ui` view) | `App.app { … } \|> App.withOnKey f` + `--target terminal:tui` |
+| `Tui.program (Tui.config { … })` (a `String` view) | `App.tui { … } \|> App.withOnKey f` + `[app] target = "terminal:tui"` |
+| `Cli.program (Cli.config { … }) \|> Cli.withOnLine f` (a `String` view) | `App.cli { … } \|> App.withInput f` + `[app] target = "terminal:cli"` |
 | `Webview.app { …, window }` | `App.web { … } \|> App.withWindow title w h \|> App.withNotFound …` + `--target desktop` |
 | `Spa.app (Spa.config { … })` | `App.app { … } \|> App.withNotFound …` + `--target web:app` |
 | `main = Live.app cfg` | `appDef = App.app { … } \|> …` then `main = App.run appDef` |
+
+`App.cli` / `App.tui` take a `view : model -> String` (terminal-only — the web
+targets refuse it at boot). Pin the backend in `sky.toml` (`[app] target = …`)
+so a bare `sky build`/`run` picks it; an explicit `--target` still overrides.
 
 Cross-cutting config (log / database / telemetry) that was a top-level
 `Sky.Config` `config` binding becomes `\|> App.withBase { App.baseDefaults \|

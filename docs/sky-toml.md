@@ -38,6 +38,7 @@ That's enough — every other field has a sensible default.
 | `[log]`              | Std.Log default format and level                     |
 | `[env]`              | Env-var namespace prefix (v0.11.5+)                  |
 | `[security]`         | CSRF opt-out                                         |
+| `[app]`              | Persisted build `target` for a `Std.App` entry (build-time, not runtime) |
 
 > **Cross-platform packaging (app name, bundle id, icon) is NOT in `sky.toml`.**
 > It lives in code, as an optional `bundle` binding built with `Std.Bundle`'s
@@ -78,6 +79,31 @@ bin     = "app"           # output binary name → sky-out/app
 | `entry`   | string | `"src/Main.sky"` | Default file for `sky build` / `run`   |
 | `root`    | string | `"src"`          | Source-root prefix for module imports  |
 | `bin`     | string | `"app"`          | Output binary name in `sky-out/`       |
+
+---
+
+## `[app]`
+
+The persisted build **target** for a `Std.App` entry — the backend a bare
+`sky build` / `sky run` / `sky check` picks when no `--target` is on the command
+line. It exists mainly for the terminal String-view shapes (`App.cli` /
+`App.tui`): their `view : model -> String` cannot render on `web`, so the `web`
+default would fail — pinning `terminal:cli` / `terminal:tui` here lets a bare
+build target the terminal instead.
+
+```toml
+[app]
+target = "terminal:cli"   # or terminal:tui · desktop · web:app · mobile:ios · …
+```
+
+| Key      | Type   | Default | Meaning                                             |
+|----------|--------|---------|-----------------------------------------------------|
+| `target` | string | `web`   | Default `--target family[:variant]` for this entry  |
+
+This is a **build-time** marker (like `[spa]`), not runtime config — it is read
+by the CLI when resolving the target, never by the running app. An explicit
+`--target` on the command line always overrides it, and it only applies to a
+dispatched `Std.App` entry (one that imports `Std.App` and runs `App.run`).
 
 ---
 
