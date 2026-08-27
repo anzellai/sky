@@ -68,14 +68,15 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Live exposing (app, config, route, api, withAuthSliding)
 import Std.Auth as Auth
+import Sky.Core.Secret as Secret
 import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
 import System
 
 
-secret : String
+secret : Secret.Secret
 secret =
-    System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret-at-least-32-bytes-xxxxxx"
+    Secret.fromString (System.getenvOr "SKY_AUTH_TOKEN_SECRET" "dev-secret-at-least-32-bytes-xxxxxx")
 
 
 type alias Model =
