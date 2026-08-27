@@ -20,6 +20,7 @@ mod corpus_bench;
 mod coverage_ledger;
 mod denominators_gate;
 mod divergences_gate;
+mod erasure_fuzz;
 mod fmt_gate;
 mod fuzz_gate;
 mod harness;
@@ -68,6 +69,7 @@ const GATES: &[(&str, GateFn)] = &[
     }),
     ("fmt", |args| fmt_gate::run(args, &repo_root())),
     ("fuzz", |args| fuzz_gate::run(args, &repo_root())),
+    ("erasure-fuzz", |args| erasure_fuzz::run(args, &repo_root())),
     ("welltyped", |args| welltyped_gate::run(args, &repo_root())),
     ("repro", |args| repro_gate::run(args, &repo_root())),
     ("s8", |args| s8_gate::run(args, &repo_root())),
