@@ -1,65 +1,58 @@
-# Autonomous goal — Std.App finish + Secret migration
+# AUTONOMOUS GOAL — erasure-boundary bug closure (2026-08-27)
 
-Captured verbatim 2026-08-26 (branch `feat/unified-app-builder`).
+## The user's verbatim mandate
 
-## User's verbatim mandate
-
-> let's do the parked 1 & 2 now. 3 can wait.
+> ok go with what you suggested. basically you go fully unattended + autonomous
+> + PIV mode to tackle all bugs found during the widening pass.
 >
-> after parked 1 & 2 completed, move on to Secret migration e2e + tested + verified.
->
-> after all these examples need to be migrated to use new Secret mechanism too.
->
-> and then we will test everything together with like --open/install etc.
+> our goals are to close as many bugs you found possible and ensure no breakage
+> or regression, only to improve the quality of sky compiler and it's
+> implementation
 
-Where "parked 1 / 2 / 3" refer to the assistant's preceding status message:
+## What "what you suggested" was (the accepted plan)
 
-1. **Parked 1** — Example migration + SPA-example rename to Std.App
-   ("rename the examples for SPA to app-x … refactor all examples sky.live
-   sky.tui, sky.webview, sky.cli … to Std.App").
-2. **Parked 2** — `--open` auto install/launch flag (+ `sky run` auto-installs
-   deps instead of requiring a manual `sky install` first).
-3. **Parked 3** — `App.withRequest` — **DEFERRED by the user** ("3 can wait").
+1. A short widening pass of the `xtask erasure-fuzz` gate aimed at **breadth of
+   root-cause classes** (non-map positions, more kernel constructions) — enough
+   to know whether there is a THIRD root-cause class beyond the two known:
+   fn-erasure (7a0e5efc, fixed) and the cross-module kernel collision (open).
+2. Then FIX each root cause **one at a time** (NOT batched — they are proven
+   distinct), each verified against the full Std.App corpus before the next.
+3. The cross-module collision is fixed with the **revert-as-proof** protocol:
+   revert `Std.App`'s `AppRoute` → `Route` and confirm all 31 migrated apps run
+   with the colliding name (the acceptance test already lives in the tree).
 
-## Ordered execution
+## The two hard constraints (NO relaxation)
 
-1. Parked 1 (examples → Std.App + SPA rename to `app-*`).
-2. Parked 2 (`--open` + `sky run` auto-install).
-3. Secret migration — **e2e + tested + verified** (design in
-   `docs/design/std-app-config-architecture.md` §§7,7b,7c,7d).
-4. Migrate all examples to the new `Secret` mechanism.
-5. Joint final integration test with `--open`/install (with the user).
+- **NO breakage or regression.** Every fix is verified against: erasure-fuzz
+  (its coordinates flip green), the FULL `example-sweep`, the `apps/*` gates,
+  `coerce-floor` (re-blessed DELIBERATELY — a nominal-resolution fix MOVES sites;
+  confirm each moved site targets the CORRECT nominal and the `adapter` floor
+  stays exactly 0), and `cargo test --workspace`.
+- **Root-cause fixes only, regression-test-first.** The failing fuzzer coordinate
+  IS the regression artefact. Compiler-level fixes consult
+  `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md` (the floor authority) and
+  `docs/rust-rewrite/13` (edge-case matrix) FIRST (CLAUDE.md §0.3/§0.4).
 
-## Standing constraints (INVIOLABLE)
+## Standing constraints carried from the session
 
-- **No push / tag / release without an explicit user ask.** Get the branch
-  ready only. Local commits are checkpoints.
-- **darraghstudio HARD HOLD** — never touch/deploy/upgrade it until the user
-  personally verifies no regression.
-- Root-cause fixes only; every fix gets a regression test; only an independent
-  adversarial Judge declares a phase "done".
-- Secrets are typed — the migration formalises this into the `Secret` type.
-- `--open` LIVE launch verification (real browser/simulator) is step 5, the
-  joint test WITH the user — implement + unit-test the wiring now, don't claim
-  live-launch verified solo.
+- **darraghstudio HARD HOLD** — never touch/deploy/upgrade.
+- **NO merge / tag / release without explicit ask.** Push to the feature branch
+  `feat/unified-app-builder` is authorised.
+- No co-author wording in commits.
 
-## Scope decision — example → Std.App migration (stated up front)
+## Done = an independent adversarial Judge (fresh context) confirms
 
-- **Migrate app-shaped `examples/`** (TEA entries: `Live.app` / `Spa.app` /
-  `Tui.app` / `Cli.program` with init/update/view/subscriptions) to `Std.App`
-  (`App.app` + `App.run`). Examples are the *documentation* layer → they model
-  the recommended unified way.
-- **One-shot jobs / pure-lib examples** (`main = Task.run work`, no TEA loop;
-  stdlib smoke like `00-standard-libs`) **stay** on direct `Task.run` — they are
-  not TEA apps and do not fit `App.app`.
-- **Rename the SPA examples to `app-*`.**
-- **`apps/` (Layer 2 real-world) MIGRATE to `Std.App` too** — SUPERSEDED
-  2026-08-26 by the user's explicit "migrate everything (apps/ too)" decision
-  when the front doors were deprecated. The earlier plan kept `apps/` on the
-  direct front doors for coverage; now they use `App.app`, which composes the
-  same backends (Live/Tui/Webview) — so the Postgres + session/SSE + cross-backend
-  surfaces are still exercised, just through `Std.App`. Direct `Live.app`/`Tui.app`
-  API coverage remains in the `rust/crates/sky/tests/*_flow.rs` fixtures. The
-  front-door modules are deprecated, not deleted.
-- Re-bless `coerce-floor` + stdout goldens where emission legitimately changes;
-  verify byte-equivalence where the Direct/synthesised path should preserve it.
+- Every root-cause class the widening pass found is either FIXED (root cause,
+  with the fuzzer coordinate flipped to a regression guard) or escalated to the
+  user as a genuine implementation blocker with a floor citation.
+- Zero breakage: full workspace + sweep + apps + coerce-floor + erasure-fuzz all
+  green, AND the `AppRoute`→`Route` revert confirms the cross-module fix on real
+  code.
+- No "deferred / pre-existing / out of scope" framing in any close claim.
+
+## Loop state (updated each iteration)
+
+- Phase A — tooling + baseline: parallelize erasure-fuzz; establish baseline green.
+- Phase B — widening pass: classify root-cause classes.
+- Phase C+ — fix each class, PIV, verify, commit.
+- Phase Z — Judge verification.

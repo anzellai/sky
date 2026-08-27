@@ -110,13 +110,52 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
     let mut expected_open: Vec<String> = Vec::new();
     let mut passed = 0usize;
 
+    // Write every case first (sequential, cheap), then evaluate in parallel —
+    // each case is an isolated project dir, so the `sky build` + run of one never
+    // touches another. Bounded to available_parallelism - 1 so the box stays
+    // usable. Order is not meaningful (results keyed by id), so we sort for a
+    // deterministic report.
+    let mut writable: Vec<&Case> = Vec::new();
     for case in &cases {
         let dir = scratch.join(&case.id);
         if let Err(e) = write_case(&dir, case) {
             generator_defects.push((case.id.clone(), format!("write failed: {e}")));
-            continue;
+        } else {
+            writable.push(case);
         }
-        let outcome = evaluate(&sky, &dir);
+    }
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get().saturating_sub(1).max(1))
+        .unwrap_or(4)
+        .min(writable.len().max(1));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut results: Vec<(String, Outcome)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                let next = &next;
+                let writable = &writable;
+                let scratch = &scratch;
+                let sky = &sky;
+                scope.spawn(move || {
+                    let mut local: Vec<(String, Outcome)> = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(case) = writable.get(i) else { break };
+                        let dir = scratch.join(&case.id);
+                        local.push((case.id.clone(), evaluate(sky, &dir)));
+                    }
+                    local
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    });
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let meta: std::collections::HashMap<&str, &Case> =
+        cases.iter().map(|c| (c.id.as_str(), c)).collect();
+    for (id, outcome) in results {
+        let case = meta[id.as_str()];
         let is_bug = matches!(
             outcome,
             Outcome::CodegenBug(_) | Outcome::RuntimeBug(_) | Outcome::Timeout(_)
