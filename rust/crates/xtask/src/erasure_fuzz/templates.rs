@@ -10,13 +10,16 @@
 //!   * a fixed set of hand-written seeds for the fn-in-container and
 //!     record-erasure classes (the fixed bugs — regression guards), and
 //!   * a COMBINATORIAL matrix for the cross-module kernel collision — the class
-//!     with a live OPEN bug — crossing `{kernel type} × {erased position} ×
-//!     {name collides / distinct}`. Every COLLIDE case is `Expect::KnownOpen` (a
-//!     probe of the open class; its pass/fail is data, never a gate failure);
-//!     every CONTROL is `Expect::MustPass`. Widening showed the class manifests
-//!     for `Live.Route` in all six positions (including a bare list literal — so
-//!     it does not even need a `map`). When the class is fixed and every probe
-//!     passes, they are promoted to `MustPass` to guard the fix.
+//!     CLOSED by Fix 1 (declare Std.Live.Route) + Fix 2 (goty: a bare
+//!     kernel-implicit name never captures a same-named local) — crossing
+//!     `{kernel type} × {erased position} × {name collides / distinct}`. Every
+//!     COLLIDE probe of a `fixed = true` kernel is `Expect::MustPass` (a
+//!     regression guard); an unfixed kernel's probes would be `Expect::KnownOpen`
+//!     (tracked, not gate-failing) until it too is fixed. Widening showed the
+//!     collision manifested for `Live.Route` in all six positions — including a
+//!     bare list literal, so it did not even need a `map` — and for a second
+//!     name, `Sky.Http.Server.Response` (via `Dict.map`); Fix 2 closes both, and
+//!     every current kernel is `fixed = true`.
 
 use super::{Case, Expect};
 
