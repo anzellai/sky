@@ -748,7 +748,7 @@ fn verify_one(
     // <dir>/sky-out/app (build_std_app names THIS gate as a consumer) — and
     // verify that.
     if is_std_app_dispatched(dir) {
-        return verify_std_app(root, dir, name, shape, do_verify, verbose);
+        return verify_std_app(root, dir, name, shape, do_verify, golden, bless, verbose);
     }
     let opts = BuildOptions {
         repo_root: root.to_path_buf(),
@@ -899,6 +899,8 @@ fn verify_std_app(
     name: &str,
     shape: Shape,
     do_verify: bool,
+    golden: bool,
+    bless: bool,
     verbose: bool,
 ) -> Row {
     let sky = root.join("sky-out").join("sky");
@@ -945,6 +947,30 @@ fn verify_std_app(
     row.build_ok = true;
     // build_std_app copies the target binary to the standard <dir>/sky-out/app.
     let out_dir = dir.join("sky-out");
+
+    // A CLI example must CAPTURE stdout whenever `--run`, `--golden`, or `--bless`
+    // needs it (mirrors verify_one's `want_inline_run`). The `--golden` gate reads
+    // `rust_stdout` + `run_ok` off the Row; without this a dispatched App.cli like
+    // 20-cli-counter is reported "did-not-run" and the gate fails. Handled BEFORE
+    // the `do_verify` gate, because `--golden` runs with do_verify=false.
+    let want_cli_capture = (do_verify || golden || bless) && shape == Shape::Cli;
+    if want_cli_capture {
+        row.run_kind = "no-panic";
+        let (ok, stdout, note) = run_cli_capture(&out_dir, name);
+        row.run_ok = Some(ok);
+        row.rust_stdout = stdout;
+        // A dispatched Std.App CLI has no legacy-Haskell oracle — the binary at
+        // <dir>/sky-out/app IS the rust build. Populate oracle_stdout from it so
+        // bless's rust==oracle guard holds and the local drift check has a value.
+        if do_verify || bless {
+            row.oracle_stdout = run_oracle_stdout(dir, stdin_for(name));
+        }
+        if !ok && !note.is_empty() {
+            row.blocker = note;
+        }
+        return row;
+    }
+
     if !do_verify {
         return row;
     }
@@ -971,18 +997,9 @@ fn verify_std_app(
                 row.blocker = note;
             }
         }
-        // A line-oriented App.cli: run it plainly (NOT under a pty — the pty
-        // quit-key path hangs a line-oriented reader), feed the example's stdin,
-        // close the pipe, and assert it exits without a Go panic. No oracle to
-        // match, since Std.App has no legacy-Haskell equivalent.
-        Shape::Cli => {
-            row.run_kind = "no-panic";
-            let (ok, note) = verify_cli_nopanic(&out_dir, name);
-            row.run_ok = Some(ok);
-            if !note.is_empty() {
-                row.blocker = note;
-            }
-        }
+        // Cli is handled by the want_cli_capture branch above (do_verify implies
+        // it), so it never reaches here.
+        Shape::Cli => {}
         // wasm client / native GUI window — build-only, run covered by
         // spa_split_flow + std_app_flow (same ceiling as verify_one's arms).
         Shape::Spa | Shape::Webview | Shape::Ffi => {
@@ -1058,13 +1075,14 @@ fn verify_tui_boots(out_dir: &Path, _name: &str) -> (bool, String) {
 }
 
 /// Run a line-oriented `App.cli` binary at `<out_dir>/app` (a dispatched Std.App
-/// build), feed the example's stdin then EOF, and assert it exits without a Go
-/// panic. Not under a pty — a line reader hangs on the pty quit-key path
-/// verify_tui uses. `wait_bounded` caps a wedged reader at 20s.
-fn verify_cli_nopanic(out_dir: &Path, name: &str) -> (bool, String) {
+/// build), feed the example's stdin then EOF, and return `(no_panic, stdout,
+/// blocker)`. NOT under a pty — a line reader hangs on the pty quit-key path
+/// verify_tui uses. `wait_bounded` caps a wedged reader at 20s. The captured
+/// stdout drives the `--golden` compare + `--bless` for dispatched CLI examples.
+fn run_cli_capture(out_dir: &Path, name: &str) -> (bool, Option<String>, String) {
     let app = out_dir.join("app");
     if !app.exists() {
-        return (false, "no binary".into());
+        return (false, None, "no binary".into());
     }
     let mut cmd = Command::new(&app);
     cmd.current_dir(out_dir)
@@ -1073,7 +1091,7 @@ fn verify_cli_nopanic(out_dir: &Path, name: &str) -> (bool, String) {
         .stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => return (false, format!("spawn: {e}")),
+        Err(e) => return (false, None, format!("spawn: {e}")),
     };
     // Write the example's stdin (if any) then drop the handle → EOF, so a
     // stdin-reading loop terminates instead of blocking the bounded wait.
@@ -1085,17 +1103,20 @@ fn verify_cli_nopanic(out_dir: &Path, name: &str) -> (bool, String) {
     match wait_bounded(&mut child, Duration::from_secs(20)) {
         Some(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
             // A Go panic prints `panic:` + a `goroutine` dump; a Sky-level fatal
-            // exits non-zero with an ERROR line. Either is a run failure.
+            // exits non-zero with an ERROR line. Either is a run failure — but we
+            // still return the captured stdout so the golden gate reports a
+            // concrete mismatch rather than a bare "did-not-run".
             if stderr.contains("panic:") || stderr.contains("goroutine ") {
-                (false, truncate(stderr.trim(), 60))
+                (false, Some(stdout), truncate(stderr.trim(), 60))
             } else if out.status.success() {
-                (true, String::new())
+                (true, Some(stdout), String::new())
             } else {
-                (false, truncate(stderr.trim(), 60))
+                (false, Some(stdout), truncate(stderr.trim(), 60))
             }
         }
-        None => (false, "cli hung".into()),
+        None => (false, None, "cli hung".into()),
     }
 }
 
