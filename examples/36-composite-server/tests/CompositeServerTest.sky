@@ -71,7 +71,8 @@ jwtSuite =
               "mintToken + verifyBearer round-trip"
               (\_ ->
                   let
-                      secret = Secret.unsafeFromString (String.repeat 64 "k")
+                      secret =
+                          Secret.unsafeFromString (String.repeat 64 "k")
                       claims =
                           { userId = 42, email = "user@example.com", exp = 0 }
                   in
@@ -95,7 +96,8 @@ jwtSuite =
               "expired token rejected"
               (\_ ->
                   let
-                      secret = Secret.unsafeFromString (String.repeat 64 "k")
+                      secret =
+                          Secret.unsafeFromString (String.repeat 64 "k")
                       claims = { userId = 1, email = "x@y.z", exp = 0 }
                   in
                       case Auth.mintToken secret 1000 1 claims of
@@ -118,7 +120,8 @@ jwtSuite =
               "missing Bearer prefix rejected"
               (\_ ->
                   let
-                      secret = Secret.unsafeFromString (String.repeat 64 "k")
+                      secret =
+                          Secret.unsafeFromString (String.repeat 64 "k")
                   in
                       case Auth.verifyBearer secret 1000 "abc.def.ghi" of
 
