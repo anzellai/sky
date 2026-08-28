@@ -72,6 +72,8 @@ ok    String > trim outer space
   ok    Jwt > HS256 verify round-trips
   ok    Jwt > rejects a forged signature (wrong key)
   ok    Jwt > rejects an expired token
+  ok    Secret+Http > withBearer sets Authorization: Bearer <revealed>
+  ok    Secret+Http > withApiKey sets a custom header from the Secret
   ok    Encoding > base64 round-trip
   ok    Encoding > hex round-trip
   ok    Encoding > urlEncode escapes space as + (QueryEscape semantics)
@@ -129,4 +131,4 @@ ok    String > trim outer space
   ok    Task.retryWith > withJitter composes
   ok    Task.retryWith > retryOn predicate short-circuits
   ok    Task.retryWith > defaultRetryPolicy builder chain
-131 passed, 0 failed (131 total)
+133 passed, 0 failed (133 total)
