@@ -83,5 +83,20 @@
     ONE change. Proven on a SECOND name: Sky.Http.Server.Response collided (via
     Dict.map) pre-fix, runs clean post-fix. coerce-floor: NULL diff (now=golden,
     adapter 0) — zero emission impact. Verified: Response + Route repros run clean.
-    STILL TODO: full fuzzer + example-sweep + workspace at milestone; commit.
-- Phase Z — Judge verification.
+    Verified: fuzzer 88/0, example-sweep 29/0, workspace 112/0, coerce-floor NULL
+    diff. Committed c9797ded, pushed.
+- Phase Z — Judge verification: **VERDICT 100% ACHIEVED + VERIFIED** (independent
+  fresh-context adversarial Judge). Built+ran the repro (prints 2, no panic),
+  confirmed root-cause fix, fuzzer guards for Live.Route + Server.Response,
+  adapter floor exactly 0, AppRoute→Route revert intact, no third class, no
+  deferral framing. **MANDATE CLOSED.**
+
+## OUTCOME (2026-08-28)
+
+Bugs closed: the cross-module kernel-type collision class — Fix 1 (declare
+Std.Live.Route) + Fix 2 (goty: a bare kernel-implicit name never captures a
+same-named local, closing all 10 undeclared kernel-implicit names). fn-erasure
+(7a0e5efc) already fixed; value-shape matrix found no third class. No regression
+(coerce-floor null/+3-justified, sweep/workspace/fuzzer green). Compiler quality
+improved: sound Sky→Go name resolution + a permanent erasure-boundary regression
+gate (xtask erasure-fuzz). No merge/tag without explicit user ask.
