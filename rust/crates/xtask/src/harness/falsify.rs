@@ -127,6 +127,15 @@ pub fn restore_orphans(root: &Path) -> Vec<String> {
 struct Patch {
     path: PathBuf,
     original: String,
+    /// The mutation target's mtime *before* we touched it. The revert restores
+    /// byte-identical content, so the file is genuinely unchanged — and its
+    /// freshness timestamp must be too. Without this, `fs::write` in `revert`
+    /// stamps the file with "now", and a mutation on an embed-root source
+    /// (`runtime-go/`, `sky-stdlib/`) makes `sky-out/sky` look STALE to a
+    /// *sibling* gate that runs later and carries a fresh-compiler guard
+    /// (`sky-suites`). That surfaced as a spurious INCONCLUSIVE — the harness
+    /// perturbing its own downstream verdict.
+    original_mtime: Option<std::time::SystemTime>,
     applied: bool,
     journal: Option<PathBuf>,
 }
@@ -142,6 +151,9 @@ impl Patch {
         let path = root.join(rel);
         let original = std::fs::read_to_string(&path)
             .map_err(|e| format!("cannot read mutation target {rel}: {e}"))?;
+        // Captured before the write so the revert can put the freshness clock
+        // back exactly where it was — see the field docstring.
+        let original_mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
         let hits = original.matches(from).count();
         if hits != 1 {
             return Err(format!(
@@ -176,6 +188,7 @@ impl Patch {
         Ok(Patch {
             path,
             original,
+            original_mtime,
             applied: true,
             journal,
         })
@@ -184,6 +197,17 @@ impl Patch {
     fn revert(&mut self) {
         if self.applied {
             let _ = std::fs::write(&self.path, &self.original);
+            // Content is byte-identical to before the mutation, so the file is
+            // genuinely unchanged — put its mtime back too, or a sibling gate's
+            // fresh-compiler guard reads this self-inflicted "now" stamp as a
+            // stale `sky-out/sky` and refuses a verdict (the sky-suites
+            // INCONCLUSIVE). Best-effort: a failure here only reintroduces the
+            // benign timestamp bump, never corrupts content.
+            if let Some(mt) = self.original_mtime {
+                if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&self.path) {
+                    let _ = f.set_modified(mt);
+                }
+            }
             self.applied = false;
             // Restoring the SOURCE is not enough. The mutated run may have
             // emitted Go and built a binary FROM the mutation, and those
