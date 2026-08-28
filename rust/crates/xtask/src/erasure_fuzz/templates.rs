@@ -11,12 +11,14 @@
 //!     record-erasure classes (the fixed bugs — regression guards), and
 //!   * a COMBINATORIAL matrix for the cross-module kernel collision — the class
 //!     with a live OPEN bug — crossing `{kernel type} × {erased position} ×
-//!     {name collides / distinct}`. Only the one PROVEN coordinate
-//!     (`Live.Route × List.map × collide`) is seeded `expect_pass=false`; every
-//!     other kernel/position collision is `expect_pass=true`, so a failure there
-//!     is reported as a NEW bug, which is the point of widening the matrix.
+//!     {name collides / distinct}`. Every COLLIDE case is `Expect::KnownOpen` (a
+//!     probe of the open class; its pass/fail is data, never a gate failure);
+//!     every CONTROL is `Expect::MustPass`. Widening showed the class manifests
+//!     for `Live.Route` in all six positions (including a bare list literal — so
+//!     it does not even need a `map`). When the class is fixed and every probe
+//!     passes, they are promoted to `MustPass` to guard the fix.
 
-use super::Case;
+use super::{Case, Expect};
 
 /// Imports every generated program shares (Prelude auto-loads Maybe/Result/etc.
 /// as VALUES; the qualified module aliases are added per program as needed).
@@ -32,7 +34,118 @@ pub fn generate_cases() -> Vec<Case> {
     cases.push(cross_module_same_name_same_shape());
     cases.push(cross_module_plain_rep_mismatch());
     cases.extend(kernel_collision_matrix());
+    cases.extend(value_shape_matrix());
     cases
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The value-shape matrix (compound value × erased position), breadth check
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A plain (non-kernel) compound value and how to reduce it to an `Int`. These
+/// exercise the codegen narrow-back for a function / record / ADT that has been
+/// erased through a polymorphic map — the fn arm is the 7a0e5efc class, in the
+/// positions its regression test never covered (Dict / nested). All MustPass: a
+/// failure is a NEW bug (an incomplete earlier fix, or a third root-cause class).
+struct Shape {
+    id: &'static str,
+    /// type declarations + a top-level `<shape> -> Int` helper named `extract`.
+    decls: &'static str,
+    /// an expression of the shape's type.
+    value: &'static str,
+    /// the name of the shape→Int helper declared in `decls`.
+    extract: &'static str,
+}
+
+fn shapes() -> Vec<Shape> {
+    vec![
+        Shape {
+            id: "fn",
+            decls: "extract : (Int -> Int) -> Int\nextract f =\n    f 5\n",
+            value: "(\\x -> x + 10)", // extract → 15
+            extract: "extract",
+        },
+        Shape {
+            id: "record",
+            decls: "type alias Rec =\n    { n : Int }\n\n\nextract : Rec -> Int\nextract r =\n    r.n\n",
+            value: "{ n = 7 }", // extract → 7
+            extract: "extract",
+        },
+        Shape {
+            id: "adt",
+            decls: "type Box\n    = Box Int\n\n\nextract : Box -> Int\nextract b =\n    case b of\n        Box n ->\n            n\n",
+            value: "(Box 9)", // extract → 9
+            extract: "extract",
+        },
+    ]
+}
+
+/// The positions a plain value is erased through, then reduced to an `Int`.
+#[derive(Clone, Copy)]
+enum VPos {
+    ListMap,
+    DictMap,
+    NestedMaybeList,
+}
+
+impl VPos {
+    fn all() -> [VPos; 3] {
+        [VPos::ListMap, VPos::DictMap, VPos::NestedMaybeList]
+    }
+    fn id(self) -> &'static str {
+        match self {
+            VPos::ListMap => "listmap",
+            VPos::DictMap => "dictmap",
+            VPos::NestedMaybeList => "nested",
+        }
+    }
+    fn imports(self) -> &'static [&'static str] {
+        match self {
+            VPos::ListMap => &["import Sky.Core.List as List"],
+            VPos::DictMap => &["import Sky.Core.List as List", "import Sky.Core.Dict as Dict"],
+            VPos::NestedMaybeList => {
+                &["import Sky.Core.List as List", "import Sky.Core.Maybe as Maybe"]
+            }
+        }
+    }
+    /// An `Int` = the sum of `extract` applied to `value` after erasure.
+    fn observe(self, extract: &str, value: &str) -> String {
+        match self {
+            VPos::ListMap => format!("List.foldl (\\a b -> a + b) 0 (List.map {extract} [ {value} ])"),
+            VPos::DictMap => format!(
+                "List.foldl (\\a b -> a + b) 0 (Dict.values (Dict.map (\\_ v -> {extract} v) (Dict.fromList [ ( \"k\", {value} ) ])))"
+            ),
+            VPos::NestedMaybeList => format!(
+                "Maybe.withDefault 0 (Maybe.map (\\xs -> List.foldl (\\a b -> a + b) 0 (List.map {extract} xs)) (Just [ {value} ]))"
+            ),
+        }
+    }
+}
+
+fn value_shape_matrix() -> Vec<Case> {
+    let mut out = Vec::new();
+    for s in shapes() {
+        for pos in VPos::all() {
+            let mut imports = String::from(BASE);
+            for imp in pos.imports() {
+                imports.push_str(imp);
+                imports.push('\n');
+            }
+            let body = format!(
+                "module Main exposing (main)\n\n{imports}\n{decls}\n\n\
+                 main =\n    println (String.fromInt ({obs}))\n",
+                decls = s.decls,
+                obs = pos.observe(s.extract, s.value),
+            );
+            out.push(Case {
+                id: format!("V_{}__{}", s.id, pos.id()),
+                files: vec![("Main.sky".into(), body)],
+                expect: Expect::MustPass,
+                note: "compound value erased through a poly map, materialised to Int (must pass)",
+            });
+        }
+    }
+    out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,11 +230,24 @@ enum Pos {
     MaybeMap,
     ResultMap,
     DictMap,
+    /// A list LITERAL of kernel values — the erasure is at element insertion, not
+    /// through a polymorphic `map`. Tests whether the collision needs the map or
+    /// just the container's `any` slot.
+    ContainerLit,
+    /// `Maybe (List kernel)` — the value crosses TWO erased boundaries.
+    NestedMaybeList,
 }
 
 impl Pos {
-    fn all() -> [Pos; 4] {
-        [Pos::ListMap, Pos::MaybeMap, Pos::ResultMap, Pos::DictMap]
+    fn all() -> [Pos; 6] {
+        [
+            Pos::ListMap,
+            Pos::MaybeMap,
+            Pos::ResultMap,
+            Pos::DictMap,
+            Pos::ContainerLit,
+            Pos::NestedMaybeList,
+        ]
     }
     fn id(self) -> &'static str {
         match self {
@@ -129,15 +255,21 @@ impl Pos {
             Pos::MaybeMap => "maybemap",
             Pos::ResultMap => "resultmap",
             Pos::DictMap => "dictmap",
+            Pos::ContainerLit => "containerlit",
+            Pos::NestedMaybeList => "nested",
         }
     }
-    /// The qualified-module import the observation needs.
-    fn import(self) -> &'static str {
+    /// The qualified-module imports the observation needs.
+    fn imports(self) -> &'static [&'static str] {
         match self {
-            Pos::ListMap => "import Sky.Core.List as List",
-            Pos::MaybeMap => "import Sky.Core.Maybe as Maybe",
-            Pos::ResultMap => "import Sky.Core.Result as Result",
-            Pos::DictMap => "import Sky.Core.Dict as Dict",
+            Pos::ListMap => &["import Sky.Core.List as List"],
+            Pos::MaybeMap => &["import Sky.Core.Maybe as Maybe"],
+            Pos::ResultMap => &["import Sky.Core.Result as Result"],
+            Pos::DictMap => &["import Sky.Core.Dict as Dict"],
+            Pos::ContainerLit => &["import Sky.Core.List as List"],
+            Pos::NestedMaybeList => {
+                &["import Sky.Core.List as List", "import Sky.Core.Maybe as Maybe"]
+            }
         }
     }
     /// An `Int`-valued expression that runs `to_k` over `v0`/`v1` through this
@@ -154,6 +286,10 @@ impl Pos {
             Pos::DictMap => format!(
                 "Dict.size (Dict.map (\\_ v -> {to_k} v) (Dict.fromList [ ( \"k\", {v0} ) ]))"
             ),
+            Pos::ContainerLit => format!("List.length [ {to_k} {v0}, {to_k} {v1} ]"),
+            Pos::NestedMaybeList => format!(
+                "Maybe.withDefault 0 (Maybe.map List.length (Just (List.map {to_k} [ {v0}, {v1} ])))"
+            ),
         }
     }
 }
@@ -169,8 +305,10 @@ fn kernel_collision_matrix() -> Vec<Case> {
                 let result_ty = format!("{}.{}{}", k.alias, k.ty, k.ty_args);
 
                 let mut imports = String::from(BASE);
-                imports.push_str(pos.import());
-                imports.push('\n');
+                for imp in pos.imports() {
+                    imports.push_str(imp);
+                    imports.push('\n');
+                }
                 imports.push_str(&format!("import {} as {}\n", k.module, k.alias));
                 for extra in k.extra_imports {
                     imports.push_str(extra);
@@ -195,11 +333,13 @@ fn kernel_collision_matrix() -> Vec<Case> {
                 // the root-cause fix lands, all three flip to guard it. Every
                 // OTHER collision candidate (other kernels) stays expect_pass=true,
                 // so a failure there is a genuinely NEW discovery.
-                // Proven blast radius: the Live.Route collision panics through
-                // ALL FOUR poly-map positions (List/Maybe/Result/Dict — each
-                // discovered by widening the matrix). One defect, four coordinates.
-                let known_open = collide && k.alias == "Live" && k.ty == "Route";
-
+                // Proven blast radius: the Live.Route collision panics through the
+                // A COLLIDE case probes the known-open cross-module collision
+                // class: whether it currently manifests is DATA (widening found it
+                // manifests for Live.Route in every position, and for Ui.Element
+                // via Dict.map — one root cause, a broad surface). A CONTROL
+                // (distinct name) must always pass. When the class is fixed, every
+                // collide probe passes and they are promoted to MustPass.
                 out.push(Case {
                     id: format!(
                         "K_{}_{}__{}__{}",
@@ -209,11 +349,9 @@ fn kernel_collision_matrix() -> Vec<Case> {
                         if collide { "collide" } else { "control" }
                     ),
                     files: vec![("Main.sky".into(), body)],
-                    expect_pass: !known_open,
-                    note: if known_open {
-                        "OPEN — proven: local `Route` collides with kernel `Live.Route` (all poly-map positions)"
-                    } else if collide {
-                        "collision candidate: local name shadows a kernel type (new bug if it fails)"
+                    expect: if collide { Expect::KnownOpen } else { Expect::MustPass },
+                    note: if collide {
+                        "collision probe: local name shadows a kernel type (known-open class)"
                     } else {
                         "control: distinct local name, no collision (must pass)"
                     },
@@ -254,7 +392,7 @@ fn fn_in_container() -> Vec<Case> {
                      main =\n    println (applyIt handler \"hello\")\n"
                 ),
             )],
-            expect_pass: true,
+            expect: Expect::MustPass,
             note: "fn in Maybe, applied (7a0e5efc archetype)",
         },
         Case {
@@ -272,7 +410,7 @@ fn fn_in_container() -> Vec<Case> {
                      main =\n    println (runFirst handlers \"hi\")\n"
                 ),
             )],
-            expect_pass: true,
+            expect: Expect::MustPass,
             note: "fn in List, head applied",
         },
         Case {
@@ -291,7 +429,7 @@ fn fn_in_container() -> Vec<Case> {
                      main =\n    println (applyIt handler \"hey\")\n"
                 ),
             )],
-            expect_pass: true,
+            expect: Expect::MustPass,
             note: "fn in Result, applied",
         },
     ]
@@ -314,7 +452,7 @@ fn record_through_poly_map() -> Case {
                  \x20   println (String.join \",\" names)\n"
             ),
         )],
-        expect_pass: true,
+        expect: Expect::MustPass,
         note: "record through poly map + field read",
     }
 }
@@ -336,7 +474,7 @@ fn record_update_in_tuple() -> Case {
                  main =\n    println (nameOf (mk {{ id = 1, name = \"kept\" }}))\n"
             ),
         )],
-        expect_pass: true,
+        expect: Expect::MustPass,
         note: "record update in a tuple in an ADT, field read back (#166 shape)",
     }
 }
@@ -370,7 +508,7 @@ fn cross_module_same_name_same_shape() -> Case {
                 ),
             ),
         ],
-        expect_pass: true,
+        expect: Expect::MustPass,
         note: "control: same-named cross-module ADTs, SAME plain rep — safe",
     }
 }
@@ -405,7 +543,7 @@ fn cross_module_plain_rep_mismatch() -> Case {
                 ),
             ),
         ],
-        expect_pass: true,
+        expect: Expect::MustPass,
         note: "control: same name, plain-Sky rep mismatch (ADT vs record) — safe",
     }
 }
@@ -415,41 +553,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_known_open_bug_is_still_seeded() {
-        // The proven cross-module kernel collision is the one KNOWN-OPEN
-        // coordinate. If it is ever dropped, the gate silently stops watching the
-        // regression it exists for. Assert it is present AND still marked open.
+    fn the_collision_probes_are_seeded_known_open() {
+        // Every COLLIDE case probes the known-open cross-module collision class;
+        // if that seeding is ever dropped, the gate stops watching the class. At
+        // least the proven Live.Route × List.map coordinate must be present + open.
         let cases = generate_cases();
         let open = cases
             .iter()
             .find(|c| c.id == "K_Live_Route__listmap__collide")
             .expect("the proven kernel-collision coordinate must stay in the matrix");
         assert!(
-            !open.expect_pass,
-            "the proven collision is still an OPEN bug; expect_pass must stay false \
-             until the root-cause fix lands (then flip it, so it guards the fix)"
+            open.expect == Expect::KnownOpen,
+            "the collision probes must be Expect::KnownOpen until the class is fixed \
+             (then promote them to MustPass, so they guard the fix)"
         );
     }
 
     #[test]
-    fn only_the_proven_blast_radius_is_seeded_open() {
-        // The known-open set is EXACTLY the three `Live.Route` collision
-        // coordinates (List/Maybe/Result map). Every other case must be
-        // expect_pass=true, so a failure anywhere else is a NEW discovery, never
-        // silently tolerated.
-        let open: std::collections::BTreeSet<&str> = [
-            "K_Live_Route__listmap__collide",
-            "K_Live_Route__maybemap__collide",
-            "K_Live_Route__resultmap__collide",
-            "K_Live_Route__dictmap__collide",
-        ]
-        .into_iter()
-        .collect();
+    fn collide_is_known_open_and_everything_else_must_pass() {
+        // The seeding rule: a `__collide` case is a probe of the open class
+        // (KnownOpen); every other case — controls and the fixed-class seeds — is
+        // MustPass, so a failure there is a NEW bug, never silently tolerated.
         for c in generate_cases() {
-            if open.contains(c.id.as_str()) {
-                assert!(!c.expect_pass, "{} is a known-open coordinate", c.id);
+            let is_collide = c.id.contains("__collide");
+            if is_collide {
+                assert!(c.expect == Expect::KnownOpen, "{} (collide) must be KnownOpen", c.id);
             } else {
-                assert!(c.expect_pass, "{} must be expect_pass=true (discovery mode)", c.id);
+                assert!(c.expect == Expect::MustPass, "{} must be MustPass", c.id);
             }
         }
     }

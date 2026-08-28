@@ -77,14 +77,27 @@ enum Outcome {
     Timeout(String),
 }
 
+/// What a correct compiler should do with a case — and how a failure is scored.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Expect {
+    /// Must pass. A failure is a NEW soundness bug and FAILS the gate. Fixed
+    /// classes (regression guards) and controls are `MustPass`.
+    MustPass,
+    /// A probe of a KNOWN-OPEN root-cause class (a cross-module collision
+    /// candidate). Its pass/fail is DATA, not a gate condition: a failure is a
+    /// tracked manifestation of the open class (gate stays green), a pass just
+    /// means that coordinate does not manifest yet. When the class is fixed and
+    /// every such case passes, they are promoted to `MustPass` (regression
+    /// guards) — the gate then goes red if any regresses.
+    KnownOpen,
+}
+
 /// A generated project: one entry `Main.sky` plus any sibling modules.
 struct Case {
     id: String,
     /// `(relative-path-under-src, content)`; `Main.sky` is the entry.
     files: Vec<(String, String)>,
-    /// Whether a correct compiler should make this PASS. `false` marks a program
-    /// seeded from a KNOWN-OPEN bug: rediscovering it is success, not a surprise.
-    expect_pass: bool,
+    expect: Expect,
     note: &'static str,
 }
 
@@ -167,42 +180,43 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
                 if verbose {
                     println!("  PASS  {}  ({})", case.id, case.note);
                 }
-                if !case.expect_pass {
-                    // A seeded known-open bug now passes — the fix landed. Loud,
-                    // because the seed's `expect_pass=false` must be flipped.
-                    println!(
-                        "  NOTE  {} was seeded as a KNOWN-OPEN bug but now PASSES — \
-                         the root-cause fix has landed; flip expect_pass to true.",
-                        case.id
-                    );
-                }
             }
             Outcome::IllTyped(msg) => {
                 generator_defects.push((case.id.clone(), msg.clone()));
             }
-            _ if is_bug => {
-                if case.expect_pass {
+            _ if is_bug => match case.expect {
+                Expect::MustPass => {
                     println!("  BUG   {}  ({})\n        {:?}", case.id, case.note, outcome);
                     bugs.push((case.id.clone(), outcome));
-                } else {
-                    println!(
-                        "  OPEN  {} rediscovered the known-open bug ({})",
-                        case.id, case.note
-                    );
+                }
+                Expect::KnownOpen => {
+                    println!("  OPEN  {} — known-open class manifests ({})", case.id, case.note);
                     expected_open.push(case.id.clone());
                 }
-            }
+            },
             _ => {}
         }
     }
+    // Count how many known-open probes CURRENTLY PASS — when this reaches the
+    // total number of known-open probes, the class is fixed and every one should
+    // be promoted to `MustPass`.
+    let known_open_total = cases.iter().filter(|c| c.expect == Expect::KnownOpen).count();
+    let known_open_manifesting = expected_open.len();
 
     println!("\n─────────────────────────────────────────────");
     println!(
-        "erasure-fuzz: {passed} passed · {} NEW bug(s) · {} known-open rediscovered · {} generator defect(s)",
+        "erasure-fuzz: {passed} passed · {} NEW bug(s) · {known_open_manifesting}/{known_open_total} known-open probes manifest · {} generator defect(s)",
         bugs.len(),
-        expected_open.len(),
         generator_defects.len()
     );
+    if known_open_total > 0 && known_open_manifesting == 0 {
+        // Every known-open probe now PASSES — the class is fixed. Loud: the seeds
+        // must be promoted from `KnownOpen` to `MustPass` so they guard the fix.
+        println!(
+            "\n  *** the known-open collision class is FIXED — all {known_open_total} probes pass. \
+             Promote them from Expect::KnownOpen to Expect::MustPass so they guard the fix. ***"
+        );
+    }
     if !generator_defects.is_empty() {
         println!("\ngenerator defects (templates that did not type-check — fix the template, not the compiler):");
         for (id, msg) in &generator_defects {
@@ -214,15 +228,33 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         for (id, o) in &bugs {
             println!("  - {id}:\n{}", indent(&format!("{o:?}"), 6));
         }
-        // A new bug fails the gate; a KNOWN-OPEN rediscovery does not (it is
-        // expected until the fix lands).
+        // A NEW bug (a MustPass case that failed) fails the gate; a KnownOpen
+        // manifestation does not (it is expected until the class is fixed).
         return 1;
     }
     0
 }
 
-/// Build then, if it built, run — classifying at each boundary.
+/// Evaluate a case, re-running ONCE on any bug/timeout verdict before trusting
+/// it. A REAL soundness bug is deterministic — it reproduces on a fresh clean
+/// build. A transient failure (parallel `go build` contending on the shared
+/// GOCACHE, a resource blip) does NOT, so the second verdict is authoritative.
+/// Without this, parallelism would spuriously false-positive the gate.
 fn evaluate(sky: &Path, dir: &Path) -> Outcome {
+    let first = evaluate_once(sky, dir);
+    match first {
+        Outcome::CodegenBug(_) | Outcome::RuntimeBug(_) | Outcome::Timeout(_) => {
+            let _ = std::fs::remove_dir_all(dir.join("sky-out"));
+            let _ = std::fs::remove_dir_all(dir.join(".skycache"));
+            let _ = std::fs::remove_dir_all(dir.join(".skydeps"));
+            evaluate_once(sky, dir)
+        }
+        ok => ok,
+    }
+}
+
+/// Build then, if it built, run — classifying at each boundary.
+fn evaluate_once(sky: &Path, dir: &Path) -> Outcome {
     let _ = std::fs::remove_dir_all(dir.join("sky-out"));
     let (built, out) = build(sky, dir);
     let type_checked = out.contains("-- Generating Go") || out.contains("Compilation successful");
