@@ -382,6 +382,99 @@ fn corpus(root: &Path) -> Vec<String> {
     ds
 }
 
+// ---- Std.App dispatched entries -----------------------------------------
+
+/// True when `dir`'s entry is a DISPATCHED Std.App entry: it `import`s Std.App
+/// and calls the BARE `App.run` dispatcher (not a concrete `App.runLive` /
+/// `App.runTui`). Such an entry is NOT buildable by the in-process
+/// [`build_example`] — that emits the `App.run` runTui PLACEHOLDER, a binary
+/// that `go build`s cleanly but fails at RUNTIME ("terminal:tui requires a
+/// Std.Ui or String view" for an App.web app; "stdin is not a terminal" for an
+/// App.app one). The CLI's `sky build` resolves the real target instead; see
+/// [`verify_std_app`]. Mirrors `sky`'s own `is_std_app_dispatched_entry`.
+fn is_std_app_dispatched(dir: &Path) -> bool {
+    let Some(src) = entry_source(&dir.join("src")) else {
+        return false;
+    };
+    let imports_app = src
+        .lines()
+        .any(|l| l.trim_start().starts_with("import Std.App"));
+    imports_app && uses_bare_app_run(&src)
+}
+
+/// The source calls the bare `App.run` dispatcher — an `App.run` occurrence NOT
+/// followed by an identifier character (so `App.runTui` / `App.runLive` do not
+/// count). Mirrors `sky`'s `is_bare_app_run_at`.
+fn uses_bare_app_run(src: &str) -> bool {
+    let needle = "App.run";
+    let mut from = 0;
+    while let Some(i) = src[from..].find(needle) {
+        let pos = from + i;
+        match src.as_bytes().get(pos + needle.len()) {
+            None => return true,
+            Some(&c) if !(c.is_ascii_alphanumeric() || c == b'_') => return true,
+            _ => {}
+        }
+        from = pos + needle.len();
+    }
+    false
+}
+
+/// The persisted `[app] target` from `dir/sky.toml`, if any. Hand-rolled to
+/// match `sky`'s `parse_toml_app_target` (we never pulled in a TOML parser for
+/// reads). `None` = no pin, so `sky build` defaults to `web` (Sky.Live).
+fn app_target(dir: &Path) -> Option<String> {
+    let toml = std::fs::read_to_string(dir.join("sky.toml")).ok()?;
+    let mut in_app = false;
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            in_app = line == "[app]";
+            continue;
+        }
+        if in_app {
+            if let Some(rest) = line.strip_prefix("target") {
+                let v = rest
+                    .trim_start()
+                    .strip_prefix('=')?
+                    .trim()
+                    .trim_matches(|c| c == '"' || c == '\'');
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The shape of the binary `sky build` will produce for a dispatched Std.App
+/// entry, resolved from `[app] target` (default `web` = Sky.Live). `None` when
+/// `dir` is not a dispatched Std.App entry — the caller then falls back to the
+/// `main`-body scan. This is why a migrated `20-cli-counter` (`[app] target =
+/// "terminal:cli"`) classifies as Cli and a `09-live-counter` (no pin) as Live,
+/// even though both read `main = App.run appDef`.
+fn std_app_dispatch_shape(dir: &Path) -> Option<Shape> {
+    if !is_std_app_dispatched(dir) {
+        return None;
+    }
+    Some(match app_target(dir).as_deref() {
+        // web / tablet families + no pin → Sky.Live server (runLive).
+        None | Some("web") | Some("tablet") => Shape::Live,
+        Some("terminal:tui") => Shape::Tui,
+        Some("terminal:cli") => Shape::Cli,
+        // A bare `desktop` is a native Live window (runLiveWindow, cgo) — a GUI,
+        // build-only like Webview. Every other family variant (`web:app`,
+        // `mobile:*`, `desktop:mac|windows|linux`, `tablet:*`) is a wasm Spa
+        // client — also build-only here.
+        Some("desktop") => Shape::Webview,
+        Some(_) => Shape::Spa,
+    })
+}
+
 // ---- shape classification ------------------------------------------------
 
 /// Detect an example's app shape from its entry module's `main` binding, using
@@ -390,6 +483,12 @@ fn corpus(root: &Path) -> Vec<String> {
 fn classify(dir: &Path, name: &str) -> Shape {
     if FFI_BUILD_ONLY.contains(&name) {
         return Shape::Ffi;
+    }
+    // A dispatched Std.App entry's shape is the target `sky build` resolves for
+    // it, NOT the `App.run` the main-body scan would (mis)read as Live. Checked
+    // before the scan so `[app] target` wins.
+    if let Some(s) = std_app_dispatch_shape(dir) {
+        return s;
     }
     let src = dir.join("src");
     let entry = entry_source(&src);
@@ -642,6 +741,15 @@ fn verify_one(
     // no-ops when the surface is already present (`need` is false), so the cost
     // is paid once and reused, just moved earlier so `--all` is comprehensive.
     ensure_ffi_surface(root, dir);
+    // A dispatched Std.App entry cannot go through the in-process build_example
+    // below: that emits the `App.run` runTui placeholder (a binary that builds
+    // but fails at runtime). Build it the way a user + example-sweep do — the
+    // CLI's `sky build`, which resolves the real target and copies the binary to
+    // <dir>/sky-out/app (build_std_app names THIS gate as a consumer) — and
+    // verify that.
+    if is_std_app_dispatched(dir) {
+        return verify_std_app(root, dir, name, shape, do_verify, verbose);
+    }
     let opts = BuildOptions {
         repo_root: root.to_path_buf(),
         example_dir: dir.to_path_buf(),
@@ -774,6 +882,220 @@ fn verify_one(
         blocker,
         rust_stdout,
         oracle_stdout,
+    }
+}
+
+/// Build + verify a DISPATCHED Std.App entry via the CLI `sky build`, which the
+/// in-process `build_example` cannot do (it emits the `App.run` runTui
+/// placeholder). `sky build` resolves the `[app] target` (default web =
+/// Sky.Live), builds the derived entry, and copies the binary to
+/// `<dir>/sky-out/app`; we then drive it by the shape `std_app_dispatch_shape`
+/// picked. The oracle (legacy Haskell) has no Std.App, so there is no stdout
+/// match here — Live/Http probe the server, Tui/Cli assert no-panic, and the
+/// client/GUI shapes (Spa/Webview) are build-only, exactly as in `verify_one`.
+fn verify_std_app(
+    root: &Path,
+    dir: &Path,
+    name: &str,
+    shape: Shape,
+    do_verify: bool,
+    verbose: bool,
+) -> Row {
+    let sky = root.join("sky-out").join("sky");
+    let build = Command::new(&sky)
+        .arg("build")
+        .arg("src/Main.sky")
+        .current_dir(dir)
+        .output();
+    let mut row = Row {
+        name: name.into(),
+        shape,
+        emitted: false,
+        build_ok: false,
+        run_ok: None,
+        matched: None,
+        run_kind: "n/a",
+        blocker: String::new(),
+        rust_stdout: None,
+        oracle_stdout: None,
+    };
+    let out = match build {
+        Ok(o) => o,
+        Err(e) => {
+            row.blocker = format!("sky build spawn: {e}");
+            return row;
+        }
+    };
+    row.emitted = true;
+    if !out.status.success() {
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        row.blocker = first_go_error(&combined);
+        if row.blocker.is_empty() {
+            row.blocker = "sky build (Std.App dispatch) failed".into();
+        }
+        return row;
+    }
+    if verbose {
+        eprintln!("  [{name}] sky build (Std.App dispatch) → sky-out/app");
+    }
+    row.build_ok = true;
+    // build_std_app copies the target binary to the standard <dir>/sky-out/app.
+    let out_dir = dir.join("sky-out");
+    if !do_verify {
+        return row;
+    }
+    match shape {
+        Shape::Live | Shape::Http => {
+            row.run_kind = "match";
+            let (ok, m, note) = verify_server(dir, &out_dir, name, shape, verbose);
+            row.run_ok = Some(ok);
+            row.matched = m;
+            if !note.is_empty() {
+                row.blocker = note;
+            }
+        }
+        // A full-screen App.tui: assert it BOOTS + renders without a Go panic.
+        // NOT "quits on a piped key" — a raw-mode TUI reader cannot be reliably
+        // driven to quit through a pty from a harness (timing + input-mode
+        // dependent), so requiring it makes every real TUI "hang". Surviving a
+        // short grace window alive is the run-verifiable property.
+        Shape::Tui => {
+            row.run_kind = "no-panic";
+            let (ok, note) = verify_tui_boots(&out_dir, name);
+            row.run_ok = Some(ok);
+            if !note.is_empty() {
+                row.blocker = note;
+            }
+        }
+        // A line-oriented App.cli: run it plainly (NOT under a pty — the pty
+        // quit-key path hangs a line-oriented reader), feed the example's stdin,
+        // close the pipe, and assert it exits without a Go panic. No oracle to
+        // match, since Std.App has no legacy-Haskell equivalent.
+        Shape::Cli => {
+            row.run_kind = "no-panic";
+            let (ok, note) = verify_cli_nopanic(&out_dir, name);
+            row.run_ok = Some(ok);
+            if !note.is_empty() {
+                row.blocker = note;
+            }
+        }
+        // wasm client / native GUI window — build-only, run covered by
+        // spa_split_flow + std_app_flow (same ceiling as verify_one's arms).
+        Shape::Spa | Shape::Webview | Shape::Ffi => {
+            row.run_kind = "n/a";
+        }
+    }
+    row
+}
+
+/// Assert a full-screen `App.tui` binary at `<out_dir>/app` BOOTS + renders its
+/// first frame(s) without a Go panic. A TUI in raw mode cannot be reliably
+/// driven to quit through a pty from a harness, so "quits on q" is the wrong
+/// property (it makes every real TUI hang) — surviving a short grace window
+/// alive is the right one. A best-effort quit key is still sent: if the app
+/// honours it we get a clean early exit (also a pass); otherwise the grace
+/// window elapses and we kill it. A panic — or a non-zero exit BEFORE the grace
+/// (an ERROR before render) — is a failure.
+fn verify_tui_boots(out_dir: &Path, _name: &str) -> (bool, String) {
+    let app = out_dir.join("app");
+    if !app.exists() {
+        return (false, "no binary".into());
+    }
+    // Under a pty (`script -q /dev/null ./app`) so the runtime's isatty check
+    // passes and it enters full-screen mode, same as verify_tui.
+    let mut cmd = Command::new("script");
+    cmd.arg("-q")
+        .arg("/dev/null")
+        .arg("./app")
+        .current_dir(out_dir)
+        .env("TERM", "xterm")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return (false, format!("spawn: {e}")),
+    };
+    if let Some(mut si) = child.stdin.take() {
+        let _ = si.write_all(b"q\n\x03");
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stderr = Vec::new();
+                if let Some(mut e) = child.stderr.take() {
+                    let _ = std::io::Read::read_to_end(&mut e, &mut stderr);
+                }
+                let se = String::from_utf8_lossy(&stderr);
+                if se.contains("panic:") || se.contains("goroutine ") {
+                    return (false, truncate(se.trim(), 60));
+                }
+                // Clean exit (`System.exit 0` on quit) passes; a non-zero exit
+                // before render is a real failure.
+                return if status.success() {
+                    (true, String::new())
+                } else {
+                    (false, truncate(se.trim(), 60))
+                };
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // Alive through the grace window → booted + rendering.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return (true, String::new());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return (false, format!("wait: {e}")),
+        }
+    }
+}
+
+/// Run a line-oriented `App.cli` binary at `<out_dir>/app` (a dispatched Std.App
+/// build), feed the example's stdin then EOF, and assert it exits without a Go
+/// panic. Not under a pty — a line reader hangs on the pty quit-key path
+/// verify_tui uses. `wait_bounded` caps a wedged reader at 20s.
+fn verify_cli_nopanic(out_dir: &Path, name: &str) -> (bool, String) {
+    let app = out_dir.join("app");
+    if !app.exists() {
+        return (false, "no binary".into());
+    }
+    let mut cmd = Command::new(&app);
+    cmd.current_dir(out_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return (false, format!("spawn: {e}")),
+    };
+    // Write the example's stdin (if any) then drop the handle → EOF, so a
+    // stdin-reading loop terminates instead of blocking the bounded wait.
+    if let Some(mut si) = child.stdin.take() {
+        if let Some(data) = stdin_for(name) {
+            let _ = si.write_all(data.as_bytes());
+        }
+    }
+    match wait_bounded(&mut child, Duration::from_secs(20)) {
+        Some(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            // A Go panic prints `panic:` + a `goroutine` dump; a Sky-level fatal
+            // exits non-zero with an ERROR line. Either is a run failure.
+            if stderr.contains("panic:") || stderr.contains("goroutine ") {
+                (false, truncate(stderr.trim(), 60))
+            } else if out.status.success() {
+                (true, String::new())
+            } else {
+                (false, truncate(stderr.trim(), 60))
+            }
+        }
+        None => (false, "cli hung".into()),
     }
 }
 
@@ -2273,6 +2595,89 @@ mod golden_gate_tests {
         assert_eq!(shape_of_segment("Spa.app cfg"), Some(Shape::Spa));
         assert_eq!(shape_of_segment("Tui.app cfg"), Some(Shape::Tui));
         assert_eq!(shape_of_segment("Live.app cfg"), Some(Shape::Live));
+    }
+
+    #[test]
+    fn uses_bare_app_run_distinguishes_dispatcher_from_concrete_runners() {
+        assert!(uses_bare_app_run("main =\n    App.run appDef\n"));
+        assert!(uses_bare_app_run("main = App.run (App.app { init = init })\n"));
+        assert!(uses_bare_app_run("    App.run\n        (App.app cfg |> App.web)\n"));
+        // Concrete runners are NOT the bare dispatcher.
+        assert!(!uses_bare_app_run("main = App.runTui appDef\n"));
+        assert!(!uses_bare_app_run("main = App.runLive appDef\n"));
+        assert!(!uses_bare_app_run("main = App.runCli appDef\n"));
+        assert!(!uses_bare_app_run("import Std.Live exposing (app)\n"));
+    }
+
+    /// Stage a minimal dispatched Std.App example dir (entry + optional
+    /// `[app] target`) in a unique temp dir, so the fs-reading helpers can be
+    /// exercised end-to-end. No `Date`/`rand` (banned in some contexts) — the
+    /// caller passes a unique tag.
+    fn stage_std_app(tag: &str, target: Option<&str>) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("sky-build-run-stdapp-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("src").join("Main.sky"),
+            "module Main exposing (main)\n\nimport Std.App as App\n\nmain =\n    App.run appDef\n",
+        )
+        .unwrap();
+        let toml = match target {
+            Some(t) => format!("name = \"x\"\nentry = \"src/Main.sky\"\n\n[app]\ntarget = \"{t}\"\n"),
+            None => "name = \"x\"\nentry = \"src/Main.sky\"\n".to_string(),
+        };
+        std::fs::write(dir.join("sky.toml"), toml).unwrap();
+        dir
+    }
+
+    #[test]
+    fn dispatched_std_app_shape_follows_the_app_target() {
+        // No pin → web = Sky.Live (a bare `sky build` builds the Live server).
+        let d = stage_std_app("none", None);
+        assert!(is_std_app_dispatched(&d));
+        assert_eq!(std_app_dispatch_shape(&d), Some(Shape::Live));
+
+        // A terminal pin builds a terminal binary, NOT a Live server — the very
+        // bug that made `20-cli-counter` / `21-24` fail "server exited on start".
+        assert_eq!(
+            std_app_dispatch_shape(&stage_std_app("tcli", Some("terminal:cli"))),
+            Some(Shape::Cli)
+        );
+        assert_eq!(
+            std_app_dispatch_shape(&stage_std_app("ttui", Some("terminal:tui"))),
+            Some(Shape::Tui)
+        );
+        // Web / tablet families stay Live; client + GUI targets are build-only.
+        assert_eq!(
+            std_app_dispatch_shape(&stage_std_app("web", Some("web"))),
+            Some(Shape::Live)
+        );
+        assert_eq!(
+            std_app_dispatch_shape(&stage_std_app("spa", Some("web:app"))),
+            Some(Shape::Spa)
+        );
+        assert_eq!(
+            std_app_dispatch_shape(&stage_std_app("mob", Some("mobile:ios"))),
+            Some(Shape::Spa)
+        );
+        assert_eq!(
+            std_app_dispatch_shape(&stage_std_app("desk", Some("desktop"))),
+            Some(Shape::Webview)
+        );
+
+        // A non-dispatched dir (no Std.App / no bare App.run) opts out entirely,
+        // so classify() falls back to the main-body scan.
+        let plain = std::env::temp_dir().join("sky-build-run-stdapp-plain");
+        let _ = std::fs::remove_dir_all(&plain);
+        std::fs::create_dir_all(plain.join("src")).unwrap();
+        std::fs::write(
+            plain.join("src").join("Main.sky"),
+            "module Main exposing (main)\n\nmain =\n    println \"hi\"\n",
+        )
+        .unwrap();
+        std::fs::write(plain.join("sky.toml"), "name = \"x\"\n").unwrap();
+        assert!(!is_std_app_dispatched(&plain));
+        assert_eq!(std_app_dispatch_shape(&plain), None);
     }
 
     fn cli_row(name: &str, stdout: &str) -> Row {
