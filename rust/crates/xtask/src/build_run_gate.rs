@@ -903,7 +903,16 @@ fn verify_std_app(
     bless: bool,
     verbose: bool,
 ) -> Row {
-    let sky = root.join("sky-out").join("sky");
+    // The `sky` binary SIBLING to the running xtask — `cargo build --workspace`
+    // produces both under target/release/, so this exists on CI (which never
+    // runs build.sh, so `<root>/sky-out/sky` is ABSENT there) and locally, and
+    // is the SAME compiler version as xtask's in-process build_example. Fall back
+    // to the installed sky-out/sky only if the sibling is somehow missing.
+    let sky = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("sky")))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| root.join("sky-out").join("sky"));
     let build = Command::new(&sky)
         .arg("build")
         .arg("src/Main.sky")
