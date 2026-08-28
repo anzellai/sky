@@ -13,6 +13,66 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.23.0 — one app builder, typed secrets (2026-08-28)
+
+The whole app surface now goes through a single builder, and every secret in the
+stdlib is a typed, self-redacting value instead of a bare `String`. Two large
+workstreams — one of them breaking.
+
+### `Std.App` — one builder, one `--target`
+
+Describe an app once — `App.app { init, update, view, subscriptions }` — and a
+build-time `--target family[:variant]` picks the backend; `App.run` is the single
+entry. `App.app` takes a `Std.Ui` view that renders across web, terminal, and
+desktop; `App.web` takes a `Std.Html` view; and new **`App.cli`** / **`App.tui`**
+take a hand-authored `String` view for the terminal (the first-class successors
+to `Std.Cli.program` / `Std.Tui.program`). Config layers in two typed pieces —
+`withBase` (cross-target log / database / telemetry) and `withConfig` (a
+per-target variant whose name matches the `--target` family). A String-view app
+pins its backend with `[app] target = "terminal:cli"` in `sky.toml`.
+
+The five per-shape front doors — `Std.Live`, `Std.Spa`, `Std.Tui`, `Std.Cli`,
+`Std.Webview` — are now **deprecated for direct use** (they still compile; `sky
+doc` groups them under "deprecated — use Std.App"). Nothing in user code needs to
+import them directly any more.
+
+### ⚠ Breaking — secrets are a typed `Sky.Core.Secret`, not `String`
+
+Every secret-bearing argument in the stdlib is now the opaque `Sky.Core.Secret`,
+which redacts itself (`[REDACTED]`) in every log / print / JSON / `%v` path. This
+is a signature change — existing code that passes a `String` will not type-check
+until it is wrapped:
+
+| API | before | after |
+|---|---|---|
+| `Auth.signToken` / `verifyToken` / `signSlidingToken` | `String` key | `Secret` key |
+| `Jwt.hs256` | `String` | `Secret` |
+| `Jwt.rs256` | one `String` key | private `Secret`; verify moved to **`rs256Verify : String`** |
+| `Crypto.aesGcmEncrypt`/`Decrypt`, `chacha20*`, `aesKeyFromPassword` | `String` key | `Secret` |
+| `Http.withBearer` / `withApiKey` | `String` | `Secret` |
+| `Cli.readPassword` | returned `String` | returns `Secret` |
+
+**Migration:** wrap at the boundary — `Secret.fromEnv "MY_VAR"` (recommended) or
+`Secret.fromString runtimeString` — and unwrap only through the greppable
+`Secret.reveal`. A committed string *literal* to any of these is now a deliberate
+compile error (secrets must not be committed to source). DB connection passwords
+are also redacted in connect-error logs. Full guide:
+`docs/security/secret-migration.md`.
+
+### Soundness
+
+- **Fixed a cross-module type-collision miscompile.** A local type whose
+  unqualified name shadowed a kernel type — e.g. a user `type Route` next to
+  `Std.Live.Route` — could bind the foreign kernel handle to the local nominal
+  and panic at runtime (`rt.Coerce`) while `sky check` passed. `Std.Live.Route`
+  is now a declared opaque type (matching `Std.Spa` / `Sky.Http.Server`), and
+  codegen no longer resolves a bare kernel-implicit name to a same-named local —
+  closing the class for every kernel-implicit name (`Session`, `Request`,
+  `Response`, …), not just `Route`.
+- **New `xtask erasure-fuzz` gate.** It generates well-typed erasure-crossing
+  programs and builds *and runs* them, asserting `type-check ⟹ go build ⟹ no
+  panic` — a permanent guard for the "compiles clean, panics at runtime" class.
+
 ## v0.22.1 — Sky.Spa: one command to run a split app (2026-08-25)
 
 ### `sky build` / `sky run` auto-split a Sky.Spa app

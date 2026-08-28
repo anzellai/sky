@@ -2,14 +2,15 @@
 
 [sky-lang.org](https://sky-lang.org) · [Docs & tour](https://anzellai.github.io/sky/) · [Examples](examples/)
 
-> **Status: v0.22.x** — public APIs are stable for the
+> **Status: v0.23.x** — public APIs are stable for the
 > v1.0 line; minor versions ship features additively. Internals can
 > still change between minor versions. The compiler is written in
 > Rust (cargo workspace at `rust/`) — the typed-Go output and the
 > "if it compiles, it works" guarantee carry over unchanged. The
 > retired Haskell compiler stays under `legacy-haskell-compiler/` as
-> the differential oracle. **New in v0.22: [Sky.Spa](docs/skyspa/overview.md)** —
-> the *same* app compiled to wasm and shipped to web, desktop, iOS, and Android.
+> the differential oracle. **New in v0.23: [Std.App](docs/skyapp/overview.md)** —
+> one builder + one `--target` for every app shape, and secrets are now the
+> typed, self-redacting [`Sky.Core.Secret`](docs/security/secret-migration.md).
 
 Sky is a **fullstack functional language that compiles to typed Go**.
 You write Elm-style syntax — explicit types, exhaustive pattern matching,
