@@ -1031,13 +1031,19 @@ fn verify_tui_boots(out_dir: &Path, _name: &str) -> (bool, String) {
     if !app.exists() {
         return (false, "no binary".into());
     }
-    // Under a pty (`script -q /dev/null ./app`) so the runtime's isatty check
-    // passes and it enters full-screen mode, same as verify_tui.
+    // Under a pty so the runtime's isatty check passes and it enters full-screen
+    // mode. `script`'s CLI is NOT portable: macOS/BSD takes the command as
+    // trailing args (`script -q <file> cmd…`), while Linux util-linux needs
+    // `-c "cmd"` + a typescript FILE, plus `-e` to propagate the command's exit
+    // status. Using the BSD form on a Linux CI runner is exactly the "script:
+    // unexpected number of arguments" that failed the tui gate.
     let mut cmd = Command::new("script");
-    cmd.arg("-q")
-        .arg("/dev/null")
-        .arg("./app")
-        .current_dir(out_dir)
+    if cfg!(target_os = "linux") {
+        cmd.arg("-q").arg("-e").arg("-c").arg("./app").arg("/dev/null");
+    } else {
+        cmd.arg("-q").arg("/dev/null").arg("./app");
+    }
+    cmd.current_dir(out_dir)
         .env("TERM", "xterm")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1503,15 +1509,18 @@ fn verify_tui(out_dir: &Path, _name: &str) -> (bool, String) {
     if !app.exists() {
         return (false, "no binary".into());
     }
-    // macOS: `script -q /dev/null <cmd>` runs cmd in a pty; stdin is forwarded.
-    // `wait_bounded` (below) bounds a wedged TUI — no external `timeout` wrapper
-    // (absent on macOS, GNU coreutils only), which would also make this spawn a
-    // redundant double-bound.
+    // `script` runs cmd in a pty; stdin is forwarded. `wait_bounded` (below)
+    // bounds a wedged TUI — no external `timeout` wrapper (absent on macOS, GNU
+    // coreutils only), which would also make this spawn a redundant double-bound.
+    // `script`'s CLI is NOT portable — see verify_tui_boots: macOS/BSD takes the
+    // command as trailing args, Linux util-linux needs `-c "cmd"` + `-e`.
     let mut cmd = Command::new("script");
-    cmd.arg("-q")
-        .arg("/dev/null")
-        .arg("./app")
-        .current_dir(out_dir)
+    if cfg!(target_os = "linux") {
+        cmd.arg("-q").arg("-e").arg("-c").arg("./app").arg("/dev/null");
+    } else {
+        cmd.arg("-q").arg("/dev/null").arg("./app");
+    }
+    cmd.current_dir(out_dir)
         .env("TERM", "xterm")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

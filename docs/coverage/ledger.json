@@ -15103,10 +15103,10 @@
       "id": "examples/61-app-kanban",
       "modules_imported": 11,
       "path": "examples/61-app-kanban",
-      "refs_generous": 62,
-      "refs_qualified": 60,
+      "refs_generous": 63,
+      "refs_qualified": 61,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -15151,10 +15151,10 @@
       "id": "examples/64-app-native",
       "modules_imported": 13,
       "path": "examples/64-app-native",
-      "refs_generous": 67,
-      "refs_qualified": 63,
+      "refs_generous": 68,
+      "refs_qualified": 64,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[source]"
       ]
