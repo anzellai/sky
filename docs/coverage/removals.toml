@@ -200,8 +200,27 @@ commit = "2771303a"
 #
 # ## Current state
 #
-# No authorised rises. Every count in config-surface.json is at or below the
-# value it was first measured at. (The `[bundle]` packaging identity moved OUT of
+# One authorised rise (below). The `[bundle]` packaging identity moved OUT of
 # sky.toml into a `Std.Bundle` `withX` binding read from source, so it is no
 # longer a pre-binary config read at all — see rust/crates/sky/src/main.rs
-# resolve_bundle_identity / scan_bundle_call.)
+# resolve_bundle_identity / scan_bundle_call.
+
+[[config-surface-rise]]
+metric = "documented_without_reader"
+from   = 8
+to     = 13
+reason = """measurement, not surface: the unified-app-builder branch documented \
+the CONFIG MODEL, not new runtime settings, so the +5 documented `SKY_*` names \
+have no runtime reader BY CONSTRUCTION — none is a real setting a user can set \
+and watch do nothing. Breakdown: `SKY_LSP_DEBUG`/`SKY_LSP_TRACE` appear only in \
+`docs/tooling/config-architecture.md` (which LISTS the flagged names as its own \
+worked example) and in `docs/tooling/lsp.md` (which documents that they were \
+REMOVED — `grep … returns nothing`); `SKY_ANALYTICS_DEBUG` and \
+`SKY_LIVE_MAX_SUBS_PER_SESSION` are in RFC/design docs (`docs/rfcs/std-analytics.md`, \
+`docs/skylive/pubsub-design.md`) as PROPOSED knobs; `SKY_AUTH_COOKIE` \
+(`docs/sky-toml.md`) is a user-CONVENTION env var read in the user's own code, \
+exactly like the already-accepted `SKY_AUTH_TOKEN_SECRET`. The mechanical scan \
+cannot tell a design-doc/RFC/meta reference or a user-convention from a real \
+runtime setting."""
+owner  = "anzel"
+commit = "pending-merge"

@@ -649,7 +649,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1913,
+    "stdlib_entries": 1914,
     "stdlib_modules": 93,
     "surfaces_covered": 138,
     "surfaces_covered_pct": 87.9,
@@ -12537,9 +12537,10 @@
           ]
         },
         "Std.Live": {
-          "count": 22,
+          "count": 23,
           "symbols": [
             "AppConfig",
+            "Route",
             "api",
             "bindSessionUser",
             "lifecycle",
@@ -12942,7 +12943,7 @@
           ]
         }
       },
-      "count": 773,
+      "count": 774,
       "pct_of_denominator": 40.4
     },
     "symbols_unreferenced_strict": {
@@ -13761,9 +13762,10 @@
           ]
         },
         "Std.Live": {
-          "count": 25,
+          "count": 26,
           "symbols": [
             "AppConfig",
+            "Route",
             "api",
             "app",
             "bindSessionUser",
@@ -14171,7 +14173,7 @@
           ]
         }
       },
-      "count": 858,
+      "count": 859,
       "pct_of_denominator": 44.9
     }
   },
@@ -14737,10 +14739,10 @@
       "id": "examples/29-webview-threejs-spike",
       "modules_imported": 6,
       "path": "examples/29-webview-threejs-spike",
-      "refs_generous": 14,
-      "refs_qualified": 14,
+      "refs_generous": 15,
+      "refs_qualified": 15,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[live]",
         "[source]"
@@ -14766,10 +14768,10 @@
       "id": "examples/31-webview-stopwatch-ui",
       "modules_imported": 7,
       "path": "examples/31-webview-stopwatch-ui",
-      "refs_generous": 23,
-      "refs_qualified": 22,
+      "refs_generous": 24,
+      "refs_qualified": 23,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[source]"
       ]

@@ -9,11 +9,11 @@
   "removals_accounted": 3,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 1913,
+    "entries": 1914,
     "explicit_exposing": {
-      "entries": 1311,
+      "entries": 1312,
       "modules": 87,
-      "unfiltered_entries": 1584
+      "unfiltered_entries": 1585
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -29,12 +29,12 @@
       "modules": 6
     },
     "modules": 93,
-    "types": 150,
+    "types": 151,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 2186,
+      "entries": 2187,
       "hidden_by_exposing": 273,
-      "types": 159,
+      "types": 160,
       "values": 2027
     },
     "values": 1763
