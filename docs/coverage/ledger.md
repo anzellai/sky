@@ -34,8 +34,8 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 9.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 859 | 44.9% |
-| symbols unreferenced under the generous rule | 774 | 40.4% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 861 | 45.0% |
+| symbols unreferenced under the generous rule | 776 | 40.5% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -61,8 +61,8 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 20 |
-| stdlib modules owned by exactly one unit of any role | 14 |
+| stdlib modules owned by exactly one `examples/*` | 19 |
+| stdlib modules owned by exactly one unit of any role | 15 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -226,7 +226,7 @@ None.
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Native` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Spa` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |
