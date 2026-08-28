@@ -53,7 +53,7 @@
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
-      "[app]": 2,
+      "[app]": 4,
       "[database]": 12,
       "[dependencies]": 1,
       "[live]": 2,
@@ -263,7 +263,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 935,
+      "expected_assertions": 937,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -14649,6 +14649,7 @@
       "role": "Example",
       "sky_files": 2,
       "sky_toml_sections": [
+        "[app]",
         "[source]"
       ]
     },
@@ -14658,11 +14659,12 @@
       "id": "examples/23-tui-todo",
       "modules_imported": 11,
       "path": "examples/23-tui-todo",
-      "refs_generous": 38,
-      "refs_qualified": 37,
+      "refs_generous": 39,
+      "refs_qualified": 38,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 3,
       "sky_toml_sections": [
+        "[app]",
         "[source]"
       ]
     },
@@ -14672,10 +14674,10 @@
       "id": "examples/24-tui-kitchen-sink",
       "modules_imported": 11,
       "path": "examples/24-tui-kitchen-sink",
-      "refs_generous": 48,
-      "refs_qualified": 47,
+      "refs_generous": 49,
+      "refs_qualified": 48,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -14836,8 +14838,8 @@
       "id": "examples/36-composite-server",
       "modules_imported": 27,
       "path": "examples/36-composite-server",
-      "refs_generous": 114,
-      "refs_qualified": 105,
+      "refs_generous": 115,
+      "refs_qualified": 106,
       "role": "Example",
       "sky_files": 10,
       "sky_toml_sections": [

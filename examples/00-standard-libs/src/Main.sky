@@ -532,7 +532,10 @@ cryptoSuite =
               "aesKeyFromPassword derivation succeeds round-trip"
               (\_ ->
                   let
-                      key = Crypto.aesKeyFromPassword (Secret.unsafeFromString "p") "salt"
+                      key =
+                          Crypto.aesKeyFromPassword
+                              (Secret.unsafeFromString "p")
+                              "salt"
                   in
                       case Crypto.aesGcmEncrypt key "x" of
 
@@ -545,7 +548,10 @@ cryptoSuite =
               "aesGcm round-trip"
               (\_ ->
                   let
-                      key = Crypto.aesKeyFromPassword (Secret.unsafeFromString "hunter2") "salt"
+                      key =
+                          Crypto.aesKeyFromPassword
+                              (Secret.unsafeFromString "hunter2")
+                              "salt"
                   in
                       case Crypto.aesGcmEncrypt key "hello world" of
 
@@ -564,7 +570,10 @@ cryptoSuite =
               "aesGcm tamper detection"
               (\_ ->
                   let
-                      key = Crypto.aesKeyFromPassword (Secret.unsafeFromString "hunter2") "salt"
+                      key =
+                          Crypto.aesKeyFromPassword
+                              (Secret.unsafeFromString "hunter2")
+                              "salt"
                       tampered = "AAAAAAAAAAAAAAAAAAAAAAAAA"
                   in
                       case Crypto.aesGcmDecrypt key tampered of
@@ -578,7 +587,10 @@ cryptoSuite =
               "chacha20 round-trip"
               (\_ ->
                   let
-                      key = Crypto.chachaKeyFromPassword (Secret.unsafeFromString "pw") "saltsalt"
+                      key =
+                          Crypto.chachaKeyFromPassword
+                              (Secret.unsafeFromString "pw")
+                              "saltsalt"
                   in
                       case Crypto.chacha20Encrypt key "another payload" of
 
@@ -596,7 +608,9 @@ cryptoSuite =
         , Test.test
               "aesGcm short-key rejected"
               (\_ ->
-                  case Crypto.aesGcmEncrypt (Secret.unsafeFromString "short") "x" of
+                  case Crypto.aesGcmEncrypt
+                           (Secret.unsafeFromString "short")
+                           "x" of
 
                       Err _ ->
                           Test.isTrue True
@@ -646,17 +660,21 @@ secretHttpSuite =
                         acc)
                 "MISSING"
                 req.headers
-
         reqWith =
             Http.defaultRequest "https://api.example/x"
                 |> Http.withBearer (Secret.unsafeFromString "tok123")
-                |> Http.withApiKey "X-Api-Key" (Secret.unsafeFromString "key456")
+                |> Http.withApiKey
+                       "X-Api-Key"
+                       (Secret.unsafeFromString "key456")
     in
         Test.suite
             "Secret+Http"
             [ Test.test
                   "withBearer sets Authorization: Bearer <revealed>"
-                  (\_ -> Test.equal "Bearer tok123" (headerVal "Authorization" reqWith))
+                  (\_ ->
+                      Test.equal
+                          "Bearer tok123"
+                          (headerVal "Authorization" reqWith))
             , Test.test
                   "withApiKey sets a custom header from the Secret"
                   (\_ -> Test.equal "key456" (headerVal "X-Api-Key" reqWith))
@@ -683,7 +701,11 @@ jwtSuite =
                   case jwtHsToken of
 
                       Ok tok ->
-                          Test.isTrue (jwtDecodeOk (Secret.unsafeFromString "topsecret") 1000 tok)
+                          Test.isTrue
+                              (jwtDecodeOk
+                                  (Secret.unsafeFromString "topsecret")
+                                  1000
+                                  tok)
 
                       Err _ ->
                           Test.isTrue False)
@@ -693,7 +715,11 @@ jwtSuite =
                   case jwtHsToken of
 
                       Ok tok ->
-                          Test.isFalse (jwtDecodeOk (Secret.unsafeFromString "wrong-key") 1000 tok)
+                          Test.isFalse
+                              (jwtDecodeOk
+                                  (Secret.unsafeFromString "wrong-key")
+                                  1000
+                                  tok)
 
                       Err _ ->
                           Test.isTrue False)
@@ -703,7 +729,11 @@ jwtSuite =
                   case jwtHsToken of
 
                       Ok tok ->
-                          Test.isFalse (jwtDecodeOk (Secret.unsafeFromString "topsecret") 99999999999 tok)
+                          Test.isFalse
+                              (jwtDecodeOk
+                                  (Secret.unsafeFromString "topsecret")
+                                  99999999999
+                                  tok)
 
                       Err _ ->
                           Test.isTrue False)

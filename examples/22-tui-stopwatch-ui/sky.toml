@@ -4,3 +4,9 @@ entry = "src/Main.sky"
 
 [source]
 root = "src"
+
+[app]
+# App.app with a full-screen Std.Ui view — this is a TUI example. Persist the
+# backend so a bare `sky build`/`run` (and verify-cli's tui-start) targets the
+# terminal; an explicit --target still overrides (e.g. --target web).
+target = "terminal:tui"
