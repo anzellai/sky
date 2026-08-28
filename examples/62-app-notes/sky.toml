@@ -10,3 +10,7 @@ root = "src"
 # the native backend (which owns this DB) and the wasm frontend from it.
 [database]
 driver = "sqlite"
+# A default single-file path so the app runs self-contained via `sky run` (the
+# web/Live build). The auto-split backend (see README) overrides this with an
+# explicit SKY_DB_PATH, which always wins — so both execution modes work.
+path = "notes.db"

@@ -1371,7 +1371,17 @@ fn serve_and_fetch(app: &Path, cwd: &Path, spare: u16, _shape: Shape, name: &str
 
     // Wait for the listening line, or fall back to the spare port on timeout.
     // On Disconnected (stdout closed) the process already exited — bail fast.
-    let port = match rx.recv_timeout(Duration::from_secs(8)) {
+    //
+    // The window is generous (30s, not 8s) because a COLD Go binary on a shared
+    // CI runner — first execution, from disk, initialising the Sky.Live runtime
+    // — can take well over 8s to reach its listening line, and the timeout
+    // fallback (`spare`) is a port the app never binds (Live reads a
+    // <PREFIX>_LIVE_PORT the harness can't set generically), so a premature
+    // timeout curls a dead port and reports a spurious "no response" (62-app-notes
+    // on macOS CI). recv_timeout returns the instant the line arrives, so a fast
+    // server is not slowed — this only extends how long we tolerate a slow-but-
+    // alive one; a genuine crash still hits Disconnected immediately.
+    let port = match rx.recv_timeout(Duration::from_secs(30)) {
         Ok(p) => Some(p),
         Err(mpsc::RecvTimeoutError::Timeout) => Some(spare),
         Err(mpsc::RecvTimeoutError::Disconnected) => None,
