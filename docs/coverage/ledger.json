@@ -544,7 +544,6 @@
       "Std.Live": "examples/19-skyforum",
       "Std.Native": "examples/64-app-native",
       "Std.PubSub": "examples/36-composite-server",
-      "Std.Spa": "examples/61-app-kanban",
       "Std.Ui.Animation": "examples/26-ui-showcase",
       "Std.Ui.Events": "examples/62-app-notes",
       "Std.Ui.Grid": "examples/26-ui-showcase",
@@ -631,6 +630,12 @@
         "path": "apps/dispatch",
         "units": [
           "apps:dispatch"
+        ]
+      },
+      "Std.Spa": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
         ]
       },
       "Std.Trace": {
@@ -9833,25 +9838,14 @@
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "examples/61-app-kanban (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "Runs",
-        "evidence": [
-          {
-            "by": "examples/61-app-kanban (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          }
-        ],
-        "strength": 2
+        "class": "None",
+        "evidence": [],
+        "strength": 0
       },
       "description": "the Std.Spa public API",
       "id": "stdlib.Std.Spa",
@@ -12121,7 +12115,7 @@
           ]
         },
         "Std.App": {
-          "count": 17,
+          "count": 18,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -12134,6 +12128,7 @@
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
+            "runLiveWindow",
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
@@ -12617,7 +12612,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "Route",
@@ -12625,6 +12620,7 @@
             "postJson",
             "route",
             "routeInt",
+            "withNotFound",
             "withOnNavigate",
             "withRoutes"
           ]
@@ -12943,8 +12939,8 @@
           ]
         }
       },
-      "count": 774,
-      "pct_of_denominator": 40.4
+      "count": 776,
+      "pct_of_denominator": 40.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13278,7 +13274,7 @@
           ]
         },
         "Std.App": {
-          "count": 18,
+          "count": 19,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -13292,6 +13288,7 @@
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
+            "runLiveWindow",
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
@@ -13846,7 +13843,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "Route",
@@ -13854,6 +13851,7 @@
             "postJson",
             "route",
             "routeInt",
+            "withNotFound",
             "withOnNavigate",
             "withRoutes"
           ]
@@ -14173,8 +14171,8 @@
           ]
         }
       },
-      "count": 859,
-      "pct_of_denominator": 44.9
+      "count": 861,
+      "pct_of_denominator": 45.0
     }
   },
   "units": [
@@ -14187,7 +14185,7 @@
       "refs_generous": 124,
       "refs_qualified": 119,
       "role": "Layer2",
-      "sky_files": 15,
+      "sky_files": 13,
       "sky_toml_sections": []
     },
     {
@@ -14199,7 +14197,7 @@
       "refs_generous": 58,
       "refs_qualified": 54,
       "role": "Layer2",
-      "sky_files": 16,
+      "sky_files": 14,
       "sky_toml_sections": []
     },
     {
@@ -14210,10 +14208,10 @@
       "id": "apps:dispatch",
       "modules_imported": 23,
       "path": "apps/dispatch",
-      "refs_generous": 99,
-      "refs_qualified": 91,
+      "refs_generous": 98,
+      "refs_qualified": 90,
       "role": "Layer2",
-      "sky_files": 8,
+      "sky_files": 4,
       "sky_toml_sections": [
         "[database]",
         "[source]"
@@ -14225,10 +14223,10 @@
       "id": "apps:fieldbook",
       "modules_imported": 27,
       "path": "apps/fieldbook",
-      "refs_generous": 179,
-      "refs_qualified": 179,
+      "refs_generous": 178,
+      "refs_qualified": 178,
       "role": "Layer2",
-      "sky_files": 13,
+      "sky_files": 7,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -14241,10 +14239,10 @@
       "id": "apps:fleet",
       "modules_imported": 31,
       "path": "apps/ledger",
-      "refs_generous": 146,
-      "refs_qualified": 134,
+      "refs_generous": 145,
+      "refs_qualified": 133,
       "role": "Layer2",
-      "sky_files": 21,
+      "sky_files": 11,
       "sky_toml_sections": [
         "[database]",
         "[source]"
@@ -14258,10 +14256,10 @@
       "id": "apps:ledger",
       "modules_imported": 31,
       "path": "apps/ledger",
-      "refs_generous": 146,
-      "refs_qualified": 134,
+      "refs_generous": 145,
+      "refs_qualified": 133,
       "role": "Layer2",
-      "sky_files": 21,
+      "sky_files": 11,
       "sky_toml_sections": [
         "[database]",
         "[source]"
@@ -14287,10 +14285,10 @@
       "id": "apps:storefront",
       "modules_imported": 17,
       "path": "examples/13-skyshop",
-      "refs_generous": 105,
-      "refs_qualified": 57,
+      "refs_generous": 104,
+      "refs_qualified": 56,
       "role": "Layer2",
-      "sky_files": 38,
+      "sky_files": 19,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
         "[dependencies]",
@@ -14449,10 +14447,10 @@
       "id": "examples/09-live-counter",
       "modules_imported": 9,
       "path": "examples/09-live-counter",
-      "refs_generous": 51,
-      "refs_qualified": 11,
+      "refs_generous": 50,
+      "refs_qualified": 10,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 1,
       "sky_toml_sections": []
     },
     {
@@ -14461,10 +14459,10 @@
       "id": "examples/10-live-component",
       "modules_imported": 8,
       "path": "examples/10-live-component",
-      "refs_generous": 51,
-      "refs_qualified": 11,
+      "refs_generous": 50,
+      "refs_qualified": 10,
       "role": "Example",
-      "sky_files": 4,
+      "sky_files": 2,
       "sky_toml_sections": []
     },
     {
@@ -14490,10 +14488,10 @@
       "id": "examples/12-skyvote",
       "modules_imported": 23,
       "path": "examples/12-skyvote",
-      "refs_generous": 142,
-      "refs_qualified": 53,
+      "refs_generous": 141,
+      "refs_qualified": 52,
       "role": "Example",
-      "sky_files": 34,
+      "sky_files": 17,
       "sky_toml_sections": [
         "[database]",
         "[source]"
@@ -14505,10 +14503,10 @@
       "id": "examples/13-skyshop",
       "modules_imported": 17,
       "path": "examples/13-skyshop",
-      "refs_generous": 105,
-      "refs_qualified": 57,
+      "refs_generous": 104,
+      "refs_qualified": 56,
       "role": "Example",
-      "sky_files": 38,
+      "sky_files": 19,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
         "[dependencies]",
@@ -14551,10 +14549,10 @@
       "id": "examples/16-skychess",
       "modules_imported": 23,
       "path": "examples/16-skychess",
-      "refs_generous": 149,
-      "refs_qualified": 63,
+      "refs_generous": 148,
+      "refs_qualified": 62,
       "role": "Example",
-      "sky_files": 27,
+      "sky_files": 14,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
         "[database]",
@@ -14569,10 +14567,10 @@
       "id": "examples/17-skymon",
       "modules_imported": 23,
       "path": "examples/17-skymon",
-      "refs_generous": 118,
-      "refs_qualified": 75,
+      "refs_generous": 117,
+      "refs_qualified": 74,
       "role": "Example",
-      "sky_files": 38,
+      "sky_files": 19,
       "sky_toml_sections": [
         "[\"go.dependencies\"]",
         "[database]",
@@ -14585,10 +14583,10 @@
       "id": "examples/18-job-queue",
       "modules_imported": 17,
       "path": "examples/18-job-queue",
-      "refs_generous": 51,
-      "refs_qualified": 39,
+      "refs_generous": 50,
+      "refs_qualified": 38,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -14599,10 +14597,10 @@
       "id": "examples/19-skyforum",
       "modules_imported": 13,
       "path": "examples/19-skyforum",
-      "refs_generous": 60,
-      "refs_qualified": 56,
+      "refs_generous": 59,
+      "refs_qualified": 55,
       "role": "Example",
-      "sky_files": 17,
+      "sky_files": 9,
       "sky_toml_sections": [
         "[live]",
         "[source]"
@@ -14614,10 +14612,10 @@
       "id": "examples/20-cli-counter",
       "modules_imported": 6,
       "path": "examples/20-cli-counter",
-      "refs_generous": 10,
-      "refs_qualified": 10,
+      "refs_generous": 9,
+      "refs_qualified": 9,
       "role": "Example",
-      "sky_files": 3,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[app]",
         "[source]"
@@ -14629,10 +14627,10 @@
       "id": "examples/21-tui-stopwatch",
       "modules_imported": 6,
       "path": "examples/21-tui-stopwatch",
-      "refs_generous": 11,
-      "refs_qualified": 11,
+      "refs_generous": 10,
+      "refs_qualified": 10,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[app]",
         "[source]"
@@ -14644,10 +14642,10 @@
       "id": "examples/22-tui-stopwatch-ui",
       "modules_imported": 9,
       "path": "examples/22-tui-stopwatch-ui",
-      "refs_generous": 23,
-      "refs_qualified": 22,
+      "refs_generous": 22,
+      "refs_qualified": 21,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[app]",
         "[source]"
@@ -14659,10 +14657,10 @@
       "id": "examples/23-tui-todo",
       "modules_imported": 11,
       "path": "examples/23-tui-todo",
-      "refs_generous": 39,
-      "refs_qualified": 38,
+      "refs_generous": 37,
+      "refs_qualified": 36,
       "role": "Example",
-      "sky_files": 3,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[app]",
         "[source]"
@@ -14674,10 +14672,10 @@
       "id": "examples/24-tui-kitchen-sink",
       "modules_imported": 11,
       "path": "examples/24-tui-kitchen-sink",
-      "refs_generous": 49,
-      "refs_qualified": 48,
+      "refs_generous": 47,
+      "refs_qualified": 46,
       "role": "Example",
-      "sky_files": 3,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -14688,10 +14686,10 @@
       "id": "examples/25-sky-console",
       "modules_imported": 9,
       "path": "examples/25-sky-console",
-      "refs_generous": 46,
-      "refs_qualified": 45,
+      "refs_generous": 45,
+      "refs_qualified": 44,
       "role": "Example",
-      "sky_files": 6,
+      "sky_files": 3,
       "sky_toml_sections": []
     },
     {
@@ -14700,10 +14698,10 @@
       "id": "examples/26-ui-showcase",
       "modules_imported": 14,
       "path": "examples/26-ui-showcase",
-      "refs_generous": 97,
-      "refs_qualified": 96,
+      "refs_generous": 96,
+      "refs_qualified": 95,
       "role": "Example",
-      "sky_files": 4,
+      "sky_files": 2,
       "sky_toml_sections": []
     },
     {
@@ -14714,10 +14712,10 @@
       "id": "examples/27-multi-session-chat",
       "modules_imported": 18,
       "path": "examples/27-multi-session-chat",
-      "refs_generous": 75,
-      "refs_qualified": 44,
+      "refs_generous": 74,
+      "refs_qualified": 43,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[database]",
         "[source]"
@@ -14729,10 +14727,10 @@
       "id": "examples/28-streaming-chat",
       "modules_imported": 13,
       "path": "examples/28-streaming-chat",
-      "refs_generous": 47,
-      "refs_qualified": 20,
+      "refs_generous": 46,
+      "refs_qualified": 19,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 1,
       "sky_toml_sections": []
     },
     {
@@ -14741,10 +14739,10 @@
       "id": "examples/29-webview-threejs-spike",
       "modules_imported": 6,
       "path": "examples/29-webview-threejs-spike",
-      "refs_generous": 15,
-      "refs_qualified": 15,
+      "refs_generous": 13,
+      "refs_qualified": 13,
       "role": "Example",
-      "sky_files": 3,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[live]",
         "[source]"
@@ -14770,10 +14768,10 @@
       "id": "examples/31-webview-stopwatch-ui",
       "modules_imported": 7,
       "path": "examples/31-webview-stopwatch-ui",
-      "refs_generous": 24,
-      "refs_qualified": 23,
+      "refs_generous": 22,
+      "refs_qualified": 21,
       "role": "Example",
-      "sky_files": 3,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -14812,10 +14810,10 @@
       "id": "examples/34-multi-tier-console",
       "modules_imported": 9,
       "path": "examples/34-multi-tier-console",
-      "refs_generous": 26,
-      "refs_qualified": 13,
+      "refs_generous": 25,
+      "refs_qualified": 12,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 1,
       "sky_toml_sections": []
     },
     {
@@ -14852,10 +14850,10 @@
       "id": "examples/37-composite-live-shop",
       "modules_imported": 19,
       "path": "examples/37-composite-live-shop",
-      "refs_generous": 113,
-      "refs_qualified": 109,
+      "refs_generous": 112,
+      "refs_qualified": 108,
       "role": "Example",
-      "sky_files": 23,
+      "sky_files": 12,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -14866,10 +14864,10 @@
       "id": "examples/38-composite-ui-multibackend",
       "modules_imported": 20,
       "path": "examples/38-composite-ui-multibackend",
-      "refs_generous": 90,
-      "refs_qualified": 86,
+      "refs_generous": 89,
+      "refs_qualified": 85,
       "role": "Example",
-      "sky_files": 11,
+      "sky_files": 6,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -15044,10 +15042,10 @@
       "id": "examples/52-blog-analytics",
       "modules_imported": 20,
       "path": "examples/52-blog-analytics",
-      "refs_generous": 84,
-      "refs_qualified": 77,
+      "refs_generous": 83,
+      "refs_qualified": 76,
       "role": "Example",
-      "sky_files": 2,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[analytics]",
         "[database]",
@@ -15101,12 +15099,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/61-app-kanban",
-      "modules_imported": 11,
+      "modules_imported": 10,
       "path": "examples/61-app-kanban",
-      "refs_generous": 63,
-      "refs_qualified": 61,
+      "refs_generous": 59,
+      "refs_qualified": 57,
       "role": "Example",
-      "sky_files": 3,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[source]"
       ]
@@ -15119,10 +15117,10 @@
       "id": "examples/62-app-notes",
       "modules_imported": 18,
       "path": "examples/62-app-notes",
-      "refs_generous": 84,
-      "refs_qualified": 79,
+      "refs_generous": 83,
+      "refs_qualified": 78,
       "role": "Example",
-      "sky_files": 6,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[database]",
         "[source]"
@@ -15136,10 +15134,10 @@
       "id": "examples/63-app-chat",
       "modules_imported": 18,
       "path": "examples/63-app-chat",
-      "refs_generous": 86,
-      "refs_qualified": 81,
+      "refs_generous": 85,
+      "refs_qualified": 80,
       "role": "Example",
-      "sky_files": 6,
+      "sky_files": 3,
       "sky_toml_sections": [
         "[database]",
         "[source]"
@@ -15151,10 +15149,10 @@
       "id": "examples/64-app-native",
       "modules_imported": 13,
       "path": "examples/64-app-native",
-      "refs_generous": 68,
-      "refs_qualified": 64,
+      "refs_generous": 66,
+      "refs_qualified": 62,
       "role": "Example",
-      "sky_files": 3,
+      "sky_files": 1,
       "sky_toml_sections": [
         "[source]"
       ]

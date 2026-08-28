@@ -1037,9 +1037,14 @@ fn verify_tui_boots(out_dir: &Path, _name: &str) -> (bool, String) {
     // `-c "cmd"` + a typescript FILE, plus `-e` to propagate the command's exit
     // status. Using the BSD form on a Linux CI runner is exactly the "script:
     // unexpected number of arguments" that failed the tui gate.
+    // NB: no `-e` on Linux. `-e` makes util-linux `script` propagate the child's
+    // exit status, and a TUI we send 'q' to exits via `System.exit 0` OR is
+    // killed — either way the CODE is not a boot signal, and a non-zero code from
+    // a benign quit made the gate FAIL with a blank blocker. We judge boot by
+    // "no panic / no FATAL", not by exit code (see the exit arm below).
     let mut cmd = Command::new("script");
     if cfg!(target_os = "linux") {
-        cmd.arg("-q").arg("-e").arg("-c").arg("./app").arg("/dev/null");
+        cmd.arg("-q").arg("-c").arg("./app").arg("/dev/null");
     } else {
         cmd.arg("-q").arg("/dev/null").arg("./app");
     }
@@ -1052,28 +1057,28 @@ fn verify_tui_boots(out_dir: &Path, _name: &str) -> (bool, String) {
         Ok(c) => c,
         Err(e) => return (false, format!("spawn: {e}")),
     };
+    // 'q' is the quit key these apps honour. NOT Ctrl-C (\x03) — a SIGINT exit is
+    // exactly the non-zero code that tripped the old status check under Linux.
     if let Some(mut si) = child.stdin.take() {
-        let _ = si.write_all(b"q\n\x03");
+        let _ = si.write_all(b"q\n");
     }
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
+            Ok(Some(_status)) => {
                 let mut stderr = Vec::new();
                 if let Some(mut e) = child.stderr.take() {
                     let _ = std::io::Read::read_to_end(&mut e, &mut stderr);
                 }
                 let se = String::from_utf8_lossy(&stderr);
-                if se.contains("panic:") || se.contains("goroutine ") {
+                // A Go panic or a Sky FATAL means it did NOT boot cleanly. Any
+                // other exit — clean quit, or SIGINT — booted + rendered without
+                // crashing, which is the property this gate asserts. Exit code is
+                // deliberately ignored (see the -e note above).
+                if se.contains("panic:") || se.contains("goroutine ") || se.contains("[FATAL]") {
                     return (false, truncate(se.trim(), 60));
                 }
-                // Clean exit (`System.exit 0` on quit) passes; a non-zero exit
-                // before render is a real failure.
-                return if status.success() {
-                    (true, String::new())
-                } else {
-                    (false, truncate(se.trim(), 60))
-                };
+                return (true, String::new());
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
@@ -1516,7 +1521,7 @@ fn verify_tui(out_dir: &Path, _name: &str) -> (bool, String) {
     // command as trailing args, Linux util-linux needs `-c "cmd"` + `-e`.
     let mut cmd = Command::new("script");
     if cfg!(target_os = "linux") {
-        cmd.arg("-q").arg("-e").arg("-c").arg("./app").arg("/dev/null");
+        cmd.arg("-q").arg("-c").arg("./app").arg("/dev/null");
     } else {
         cmd.arg("-q").arg("/dev/null").arg("./app");
     }

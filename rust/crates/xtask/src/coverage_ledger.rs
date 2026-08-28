@@ -1244,6 +1244,13 @@ fn is_generated(path: &Path) -> bool {
                 | Some(".skycache")
                 | Some(".skydeps")
                 | Some(".split")
+                // `.skyapp/<target>/` is the Std.App derived-entry tree `sky build`
+                // stages for a dispatched entry (and `xtask build-run` now stages
+                // it too, via the CLI dispatch). Its generated `.sky` files must be
+                // skipped, or a tree that has run a Std.App example scans them while
+                // CI's fresh config-gates checkout does not — the exact "detail
+                // field differs" drift this list exists to prevent.
+                | Some(".skyapp")
                 | Some("sky-ffi")
                 | Some("node_modules")
         )
