@@ -1314,7 +1314,7 @@ fn jwt_battery(edge: &str) -> Vec<Check> {
             rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 \"abc\"", None),
             rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 \"\"", None),
             // RS256 with a key that is not a PEM cannot sign.
-            rs(&["Jwt.encode", "Jwt.rs256"], "Jwt.encode (Jwt.rs256 \"not-a-pem\") Jwt.claims", None),
+            rs(&["Jwt.encode", "Jwt.rs256"], "Jwt.encode (Jwt.rs256 (Secret.unsafeFromString \"not-a-pem\")) Jwt.claims", None),
         ],
         _ => vec![],
     }
