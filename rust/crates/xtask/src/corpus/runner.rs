@@ -25,7 +25,19 @@ use std::time::{Duration, Instant};
 /// example sweep spawns thousands of `xcrun` processes and exhausts the per-uid
 /// process table, which kills mem-guard's ability to fork and makes unrelated
 /// things fail. v2 §7.6 makes `EAGAIN` on spawn a FAIL, never a retry.
-const WORKERS: usize = 4;
+const WORKERS_DEFAULT: usize = 4;
+
+/// Concurrent build+run workers. Default 4; lower it with `CORPUS_JOBS` on a
+/// memory-constrained host (each worker runs a `go build` whose `compile` child
+/// can peak >1 GB — an over-subscribed fleet spikes swap and gets its children
+/// killed by mem-guard mid-build).
+fn workers() -> usize {
+    std::env::var("CORPUS_JOBS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(WORKERS_DEFAULT)
+}
 
 /// Per-case wall-clock ceiling. A case that hangs is a bug to bisect, not to wait
 /// out.
@@ -449,9 +461,10 @@ pub fn run_cases(root: &Path, cases: &[GenCase], scratch: &Path) -> Vec<CaseResu
     let results: Mutex<Vec<CaseResult>> = Mutex::new(Vec::new());
     let done = AtomicUsize::new(0);
     let total = cases.len();
+    let n_workers = workers();
 
     std::thread::scope(|s| {
-        for w in 0..WORKERS {
+        for w in 0..n_workers {
             let next = &next;
             let results = &results;
             let done = &done;
@@ -512,7 +525,7 @@ pub fn spike(root: &Path, n: usize) -> i32 {
     println!("  generated corpus (N_min) : {total}");
     println!("  spike sample             : {} (stride {stride})", sample.len());
     println!("  mode                     : build + RUN (value assertions)");
-    println!("  workers                  : {WORKERS}");
+    println!("  workers                  : {}", workers());
     println!();
 
     let scratch = scratch_root("spike");
@@ -727,9 +740,10 @@ fn report(results: &[CaseResult], wall: Duration, total: usize) {
     let per_case = wall.as_secs_f64() / total.max(1) as f64;
     println!();
     println!(
-        "  wall-clock {:.1}s for {total} cases  ({:.2} s/case at {WORKERS} workers)",
+        "  wall-clock {:.1}s for {total} cases  ({:.2} s/case at {} workers)",
         wall.as_secs_f64(),
-        per_case
+        per_case,
+        workers()
     );
 }
 

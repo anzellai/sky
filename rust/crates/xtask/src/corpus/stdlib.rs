@@ -1231,13 +1231,13 @@ fn jwt_battery(edge: &str) -> Vec<Check> {
         "nominal" => vec![
             rs(
                 &["Jwt.encode", "Jwt.hs256", "Jwt.claims", "Jwt.subject"],
-                "Jwt.encode (Jwt.hs256 \"k\") (Jwt.subject \"u1\" Jwt.claims)",
+                "Jwt.encode (Jwt.hs256 (Secret.unsafeFromString \"k\")) (Jwt.subject \"u1\" Jwt.claims)",
                 Some(JWT_HS256_TOKEN),
             ),
             // `decode` hands back the VERIFIED payload JSON.
             rs(
                 &["Jwt.decode"],
-                "Jwt.decode (Jwt.hs256 \"k\") 0 tok",
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 tok",
                 Some("{\"sub\":\"u1\"}"),
             ),
             // The registered-claim builders, in the order `withClaim` appends.
@@ -1249,7 +1249,7 @@ fn jwt_battery(edge: &str) -> Vec<Check> {
                     "Jwt.jwtId",
                     "Jwt.withClaim",
                 ],
-                "Jwt.decode (Jwt.hs256 \"k\") 0 (signed (Jwt.claims |> Jwt.issuer \"iss1\" \
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 (signed (Jwt.claims |> Jwt.issuer \"iss1\" \
                  |> Jwt.audience \"aud1\" |> Jwt.issuedAt 5 |> Jwt.jwtId \"id1\" \
                  |> Jwt.withClaim \"role\" (Encode.string \"admin\")))",
                 Some("{\"iss\":\"iss1\",\"aud\":\"aud1\",\"iat\":5,\"jti\":\"id1\",\"role\":\"admin\"}"),
@@ -1260,13 +1260,13 @@ fn jwt_battery(edge: &str) -> Vec<Check> {
             // payload — not an error, and not `null`.
             rs(
                 &["Jwt.encode", "Jwt.claims"],
-                "Jwt.decode (Jwt.hs256 \"k\") 0 (signed Jwt.claims)",
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 (signed Jwt.claims)",
                 Some("{}"),
             ),
             // An empty secret is a legal HMAC key.
             rs(
                 &["Jwt.hs256"],
-                "Jwt.decode (Jwt.hs256 \"\") 0 (rok (Jwt.encode (Jwt.hs256 \"\") Jwt.claims))",
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"\")) 0 (rok (Jwt.encode (Jwt.hs256 (Secret.unsafeFromString \"\")) Jwt.claims))",
                 Some("{}"),
             ),
         ],
@@ -1276,23 +1276,23 @@ fn jwt_battery(edge: &str) -> Vec<Check> {
             // the first.
             rs(
                 &["Jwt.expiresAt", "Jwt.decode"],
-                "Jwt.decode (Jwt.hs256 \"k\") 99 (signed (Jwt.expiresAt 100 Jwt.claims))",
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 99 (signed (Jwt.expiresAt 100 Jwt.claims))",
                 Some("{\"exp\":100}"),
             ),
             rs(
                 &["Jwt.expiresAt", "Jwt.decode"],
-                "Jwt.decode (Jwt.hs256 \"k\") 100 (signed (Jwt.expiresAt 100 Jwt.claims))",
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 100 (signed (Jwt.expiresAt 100 Jwt.claims))",
                 None,
             ),
             // `nbf`: `now < nbf` is NOT-YET-VALID, so equality PASSES.
             rs(
                 &["Jwt.notBefore", "Jwt.decode"],
-                "Jwt.decode (Jwt.hs256 \"k\") 100 (signed (Jwt.notBefore 100 Jwt.claims))",
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 100 (signed (Jwt.notBefore 100 Jwt.claims))",
                 Some("{\"nbf\":100}"),
             ),
             rs(
                 &["Jwt.notBefore", "Jwt.decode"],
-                "Jwt.decode (Jwt.hs256 \"k\") 99 (signed (Jwt.notBefore 100 Jwt.claims))",
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 99 (signed (Jwt.notBefore 100 Jwt.claims))",
                 None,
             ),
         ],
@@ -1301,7 +1301,7 @@ fn jwt_battery(edge: &str) -> Vec<Check> {
             // survive the round trip exactly.
             rs(
                 &["Jwt.subject", "Jwt.decode"],
-                "Jwt.decode (Jwt.hs256 \"k\") 0 (signed (Jwt.subject \"世界\" Jwt.claims))",
+                "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 (signed (Jwt.subject \"世界\" Jwt.claims))",
                 Some("{\"sub\":\"世界\"}"),
             ),
         ],
@@ -1309,10 +1309,10 @@ fn jwt_battery(edge: &str) -> Vec<Check> {
             // The security-relevant branches. Each must be `Err`, and a token
             // verifier that returned `Ok` on any of them is a vulnerability
             // rather than a bug.
-            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 \"wrong\") 0 tok", None),
-            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 \"k\") 0 (tok ++ \"x\")", None),
-            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 \"k\") 0 \"abc\"", None),
-            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 \"k\") 0 \"\"", None),
+            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"wrong\")) 0 tok", None),
+            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 (tok ++ \"x\")", None),
+            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 \"abc\"", None),
+            rs(&["Jwt.decode"], "Jwt.decode (Jwt.hs256 (Secret.unsafeFromString \"k\")) 0 \"\"", None),
             // RS256 with a key that is not a PEM cannot sign.
             rs(&["Jwt.encode", "Jwt.rs256"], "Jwt.encode (Jwt.rs256 \"not-a-pem\") Jwt.claims", None),
         ],
@@ -3346,8 +3346,11 @@ fn fixtures(slug: &str) -> &'static str {
              emptyResults : List (Result Error Int)\nemptyResults =\n    []\n"
         }
         "crypto" => {
-            "aesKey : String\naesKey =\n    Crypto.aesKeyFromPassword \"pw\" \"salt-1234567890\"\n\n\n\
-             chachaKey : String\nchachaKey =\n    Crypto.chachaKeyFromPassword \"pw\" \"salt-1234567890\"\n"
+            // The AEAD keys are `Sky.Core.Secret` since the Secret migration; the
+            // password arg is a Secret too (a literal to `fromString` is a compile
+            // error, so the corpus uses the lint-exempt `unsafeFromString`).
+            "aesKey : Secret\naesKey =\n    Crypto.aesKeyFromPassword (Secret.unsafeFromString \"pw\") \"salt-1234567890\"\n\n\n\
+             chachaKey : Secret\nchachaKey =\n    Crypto.chachaKeyFromPassword (Secret.unsafeFromString \"pw\") \"salt-1234567890\"\n"
         }
         "decimal" => "emptyDecimals : List Decimal\nemptyDecimals =\n    []\n",
         "money" => "emptyMoneys : List Money\nemptyMoneys =\n    []\n",
@@ -3361,7 +3364,7 @@ fn fixtures(slug: &str) -> &'static str {
         // laundered into a decode `Err` that would pass a `None` expectation.
         "jwt" => {
             "tok : String\ntok =\n    signed (Jwt.subject \"u1\" Jwt.claims)\n\n\n\
-             signed : Jwt.Claims -> String\nsigned c =\n    rok (Jwt.encode (Jwt.hs256 \"k\") c)\n\n\n\
+             signed : Jwt.Claims -> String\nsigned c =\n    rok (Jwt.encode (Jwt.hs256 (Secret.unsafeFromString \"k\")) c)\n\n\n\
              rok : Result Error String -> String\nrok r =\n    case r of\n\
              \x20       Ok v ->\n            v\n\n        Err _ ->\n            \"ENCODE-FAILED\"\n"
         }
@@ -3429,8 +3432,12 @@ fn extra_imports(slug: &str) -> &'static [&'static str] {
         // `Result.mapError` is asserted against `Error.toString`, and `errInt`
         // is built with `Error.io`.
         "result" => &["Sky.Core.Error as Error"],
-        // The AEAD round-trips go through `Result.andThen`.
-        "crypto" => &[],
+        // The AEAD keys are `Sky.Core.Secret` since the Secret migration; the
+        // battery builds them with `Secret.unsafeFromString`.
+        "crypto" => &["Sky.Core.Secret as Secret"],
+        // `Jwt.hs256` takes a `Secret` signing key (Secret migration); the
+        // battery wraps the literal key with `Secret.unsafeFromString`.
+        "jwt" => &["Sky.Core.Secret as Secret"],
         // `Result.map` lifts a projection over a decode result, so a failure
         // stays a failure instead of being papered over by a default.
         "codec" => &["Sky.Core.Result as Result", "Sky.Core.Json.Encode as Encode"],
