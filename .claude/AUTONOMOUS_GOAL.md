@@ -73,7 +73,15 @@
     19-skyforum builds + runs HTTP 200 with the colliding `Route page`;
     coerce-floor re-blessed (+3 narrow/Live project, adapter floor unchanged 0),
     green. STILL TODO: workspace + full sweep + apps at milestone; commit.
-  * FIX 2 (class): widen the fuzzer with the OTHER undeclared kernel-implicit
-    names (Handler/Middleware/Session/Store/VNode/Request/Response/Db) → declare
-    the ones that collide, same zero-risk pattern. IN PROGRESS.
+  * FIX 2 (class fix) APPLIED: rather than declare each undeclared kernel-implicit
+    name, harden `goty.rs` `app_to_go` so a BARE kernel-implicit name
+    (hir::KERNEL_IMPLICIT_TYPES) never takes the cur_mod-preferred lookup (which
+    captured a same-named LOCAL type). Flat-only for those names → resolves a
+    DECLARED same-named type correctly (Error) and erases a truly-undeclared one
+    to `any` (correct for a kernel handle). Closes the class for all 10 undeclared
+    names (Value/Handler/Middleware/Session/VNode/Request/Response/Cmd/Sub/Db) in
+    ONE change. Proven on a SECOND name: Sky.Http.Server.Response collided (via
+    Dict.map) pre-fix, runs clean post-fix. coerce-floor: NULL diff (now=golden,
+    adapter 0) — zero emission impact. Verified: Response + Route repros run clean.
+    STILL TODO: full fuzzer + example-sweep + workspace at milestone; commit.
 - Phase Z — Judge verification.

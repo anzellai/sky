@@ -4,6 +4,7 @@
 
 use crate::ir::{GoTy, Prim};
 use base::Name;
+use hir::KERNEL_IMPLICIT_TYPES;
 use std::collections::HashMap;
 use ty::Ty;
 
@@ -559,12 +560,29 @@ fn app_to_go(
             // Prefer the current module's own declaration of `name` when it has
             // one (disambiguates a `Msg`/`Model` declared in several modules);
             // fall back to the flat map otherwise.
-            let nominal = cur_mod
-                .and_then(|m| {
-                    env.nominal_by_module
-                        .get(&(m.to_string(), bare.to_string()))
-                })
-                .or_else(|| env.nominal.get(bare));
+            //
+            // EXCEPT a bare KERNEL-IMPLICIT type name (`Route`, `Session`,
+            // `Response`, `Handler`, … — hir::KERNEL_IMPLICIT_TYPES). Such a name,
+            // arriving here bare, is a FOREIGN kernel handle, never the CURRENT
+            // module's same-named LOCAL type (a local reference is rewritten to
+            // its qualified key upstream and takes the qualified fast-path). The
+            // cur_mod preference would wrongly capture that local, binding a
+            // kernel handle (e.g. `rt.liveRoute`) to the local nominal and
+            // mis-narrowing it at runtime — the cross-module collision class. For
+            // a kernel-implicit name use ONLY the flat map: it resolves a DECLARED
+            // same-named type correctly (`Sky.Core.Error.Error`) and finds nothing
+            // for a truly-undeclared one, which erases to `any` below — exactly
+            // right for an opaque kernel handle.
+            let nominal = if KERNEL_IMPLICIT_TYPES.contains(&bare) {
+                env.nominal.get(bare)
+            } else {
+                cur_mod
+                    .and_then(|m| {
+                        env.nominal_by_module
+                            .get(&(m.to_string(), bare.to_string()))
+                    })
+                    .or_else(|| env.nominal.get(bare))
+            };
             if let Some(n) = nominal {
                 // Phantom opaque-handle types (`Route`/`Server`/`Cookie`):
                 // the runtime value is a kernel struct handle, not the `int`

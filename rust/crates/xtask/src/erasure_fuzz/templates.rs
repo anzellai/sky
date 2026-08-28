@@ -227,6 +227,21 @@ fn kernels() -> Vec<Kernel> {
             construct: |i| format!("Ui.class \"c{i}\""),
             fixed: true,
         },
+        // Sky.Http.Server.Response — a SECOND undeclared kernel-implicit name
+        // (like Live.Route was), user-plausible (`type Response`). It collided
+        // (via Dict.map) before the goty class fix; that fix (bare kernel-implicit
+        // names never capture a same-named local) closes it WITHOUT declaring the
+        // type — so `fixed = true` and its collision probes now guard the class fix
+        // for every undeclared kernel-implicit name, not just Route.
+        Kernel {
+            module: "Sky.Http.Server",
+            alias: "Server",
+            ty: "Response",
+            ty_args: "",
+            extra_imports: &[],
+            construct: |i| format!("Server.text \"r{i}\""),
+            fixed: true,
+        },
     ]
 }
 
@@ -583,18 +598,13 @@ mod tests {
     }
 
     #[test]
-    fn a_fixed_kernels_collision_probes_are_must_pass() {
-        // The seeding rule: a collide probe of a `fixed = true` kernel is a
-        // MustPass guard; a collide probe of an unfixed kernel stays KnownOpen
-        // (tracked); every control + fixed-class seed is MustPass. All current
-        // kernels are fixed, so every collide probe here is MustPass.
+    fn all_current_kernels_are_fixed_so_every_case_must_pass() {
+        // After the goty class fix, every kernel in the matrix is `fixed = true`,
+        // so every case — collide probes (regression guards for the fix), controls,
+        // and fixed-class seeds — is MustPass. A future `fixed = false` kernel would
+        // make its collide probes KnownOpen instead.
         for c in generate_cases() {
-            if c.id.contains("__collide") {
-                // every kernel in the matrix is currently `fixed = true`
-                assert!(c.expect == Expect::MustPass, "{} (fixed collide) must be MustPass", c.id);
-            } else {
-                assert!(c.expect == Expect::MustPass, "{} must be MustPass", c.id);
-            }
+            assert!(c.expect == Expect::MustPass, "{} must be MustPass", c.id);
         }
     }
 

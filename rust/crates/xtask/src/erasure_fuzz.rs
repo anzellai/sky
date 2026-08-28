@@ -137,9 +137,20 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
             writable.push(case);
         }
     }
-    let workers = std::thread::available_parallelism()
+    // Each worker runs a `sky build` → a `go build` whose `compile` child can peak
+    // over 1 GB, so the fleet is capped conservatively (default 4) to stay under
+    // the mem-guard system-memory floor — an over-subscribed fleet spikes swap and
+    // gets its `sky` children killed mid-build, which then orphans their `go`
+    // processes. Tune with SKY_FUZZ_JOBS.
+    let default_jobs = std::thread::available_parallelism()
         .map(|n| n.get().saturating_sub(1).max(1))
         .unwrap_or(4)
+        .min(4);
+    let workers = std::env::var("SKY_FUZZ_JOBS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(default_jobs)
         .min(writable.len().max(1));
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut results: Vec<(String, Outcome)> = std::thread::scope(|scope| {
