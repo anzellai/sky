@@ -167,6 +167,10 @@ struct Kernel {
     extra_imports: &'static [&'static str],
     /// an expression constructing a value of the kernel type; `i` disambiguates.
     construct: fn(u8) -> String,
+    /// `true` once this kernel's cross-module collision is FIXED (its type is a
+    /// DECLARED opaque nominal, not a bare kernel-implicit name) — its collision
+    /// probes are then MustPass regression guards. `false` keeps them KnownOpen.
+    fixed: bool,
 }
 
 fn kernels() -> Vec<Kernel> {
@@ -179,6 +183,7 @@ fn kernels() -> Vec<Kernel> {
             ty_args: "",
             extra_imports: &["import Std.Ui as Ui"],
             construct: |i| format!("Live.route \"/p{i}\" (\\_ -> Ui.text \"x\")"),
+            fixed: true,
         },
         // Std.Ui.Element — VNode-backed, a different kernel rep. Unknown whether
         // it collides; expect_pass=true, so a break here is a NEW discovery.
@@ -189,6 +194,7 @@ fn kernels() -> Vec<Kernel> {
             ty_args: " msg",
             extra_imports: &[],
             construct: |i| format!("Ui.text \"e{i}\""),
+            fixed: true,
         },
         // Sky.Core.Secret — `rt.Secret`, a redacting struct. A user `type Secret`
         // colliding with the security type is a plausible real-world shadow.
@@ -199,6 +205,7 @@ fn kernels() -> Vec<Kernel> {
             ty_args: "",
             extra_imports: &[],
             construct: |i| format!("Secret.unsafeFromString \"s{i}\""),
+            fixed: true,
         },
         // Std.Decimal.Decimal — a numeric struct type.
         Kernel {
@@ -208,6 +215,7 @@ fn kernels() -> Vec<Kernel> {
             ty_args: "",
             extra_imports: &[],
             construct: |i| format!("Dec.fromInt {i}"),
+            fixed: true,
         },
         // Std.Ui.Attribute — another VNode-family kernel type, parameterised.
         Kernel {
@@ -217,6 +225,7 @@ fn kernels() -> Vec<Kernel> {
             ty_args: " msg",
             extra_imports: &[],
             construct: |i| format!("Ui.class \"c{i}\""),
+            fixed: true,
         },
     ]
 }
@@ -334,12 +343,12 @@ fn kernel_collision_matrix() -> Vec<Case> {
                 // OTHER collision candidate (other kernels) stays expect_pass=true,
                 // so a failure there is a genuinely NEW discovery.
                 // Proven blast radius: the Live.Route collision panics through the
-                // A COLLIDE case probes the known-open cross-module collision
-                // class: whether it currently manifests is DATA (widening found it
-                // manifests for Live.Route in every position, and for Ui.Element
-                // via Dict.map — one root cause, a broad surface). A CONTROL
-                // (distinct name) must always pass. When the class is fixed, every
-                // collide probe passes and they are promoted to MustPass.
+                // PROMOTED (Fix 1, Std.Live now DECLARES Route): every collision
+                // probe passes, so they are MustPass regression guards. A kernel
+                // whose collision is NOT yet fixed carries `fixed = false`, keeping
+                // its collide probes KnownOpen (tracked, not gate-failing) until it
+                // is declared too. A regression of a fixed collision, or a newly
+                // added undeclared kernel that collides, turns the gate red.
                 out.push(Case {
                     id: format!(
                         "K_{}_{}__{}__{}",
@@ -349,9 +358,13 @@ fn kernel_collision_matrix() -> Vec<Case> {
                         if collide { "collide" } else { "control" }
                     ),
                     files: vec![("Main.sky".into(), body)],
-                    expect: if collide { Expect::KnownOpen } else { Expect::MustPass },
+                    expect: if collide && !k.fixed {
+                        Expect::KnownOpen
+                    } else {
+                        Expect::MustPass
+                    },
                     note: if collide {
-                        "collision probe: local name shadows a kernel type (known-open class)"
+                        "collision probe: local name shadows a kernel type (must not collide)"
                     } else {
                         "control: distinct local name, no collision (must pass)"
                     },
@@ -553,31 +566,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_collision_probes_are_seeded_known_open() {
-        // Every COLLIDE case probes the known-open cross-module collision class;
-        // if that seeding is ever dropped, the gate stops watching the class. At
-        // least the proven Live.Route × List.map coordinate must be present + open.
+    fn the_proven_collision_coordinate_is_a_regression_guard() {
+        // After Fix 1 (Std.Live declares Route) the proven Live.Route × List.map
+        // collision must be a MustPass guard — a regression re-opens it and turns
+        // the gate red. If this ever reverts to KnownOpen, the fix stopped being
+        // guarded.
         let cases = generate_cases();
-        let open = cases
+        let g = cases
             .iter()
             .find(|c| c.id == "K_Live_Route__listmap__collide")
             .expect("the proven kernel-collision coordinate must stay in the matrix");
         assert!(
-            open.expect == Expect::KnownOpen,
-            "the collision probes must be Expect::KnownOpen until the class is fixed \
-             (then promote them to MustPass, so they guard the fix)"
+            g.expect == Expect::MustPass,
+            "the fixed Live.Route collision must be MustPass so it guards the fix"
         );
     }
 
     #[test]
-    fn collide_is_known_open_and_everything_else_must_pass() {
-        // The seeding rule: a `__collide` case is a probe of the open class
-        // (KnownOpen); every other case — controls and the fixed-class seeds — is
-        // MustPass, so a failure there is a NEW bug, never silently tolerated.
+    fn a_fixed_kernels_collision_probes_are_must_pass() {
+        // The seeding rule: a collide probe of a `fixed = true` kernel is a
+        // MustPass guard; a collide probe of an unfixed kernel stays KnownOpen
+        // (tracked); every control + fixed-class seed is MustPass. All current
+        // kernels are fixed, so every collide probe here is MustPass.
         for c in generate_cases() {
-            let is_collide = c.id.contains("__collide");
-            if is_collide {
-                assert!(c.expect == Expect::KnownOpen, "{} (collide) must be KnownOpen", c.id);
+            if c.id.contains("__collide") {
+                // every kernel in the matrix is currently `fixed = true`
+                assert!(c.expect == Expect::MustPass, "{} (fixed collide) must be MustPass", c.id);
             } else {
                 assert!(c.expect == Expect::MustPass, "{} must be MustPass", c.id);
             }

@@ -235,21 +235,21 @@ mobileDefaults =
 -- `Product : String -> page`). Build them with [`route`] / [`routeParam`] and
 -- attach with [`withRoutes`]; the runners lower each to the backend's own route
 -- (`Sky.Live` / `Sky.Spa`), which already erase the page type the same way.
-type AppRoute page
+type Route page
     = RouteStatic String page
     | RouteParam String (String -> page)
     | RouteApi String (Request -> Task Error Response)
 
 
 -- | A static route: `route "/about" AboutPage`.
-route : String -> page -> AppRoute page
+route : String -> page -> Route page
 route path page_ =
     RouteStatic path page_
 
 
 -- | A parametric route: `routeParam "/products/:slug" ProductPage`, where
 -- `ProductPage : String -> page` receives the captured `:slug` segment.
-routeParam : String -> (String -> page) -> AppRoute page
+routeParam : String -> (String -> page) -> Route page
 routeParam path make =
     RouteParam path make
 
@@ -260,7 +260,7 @@ routeParam path make =
 -- SERVER-side, for the `web`/`desktop` (Live) targets. The terminal backends
 -- drop it; the client (Spa) targets cannot carry it at all — the handler is
 -- server-side, so keep raw endpoints in a `web`-target app.
-api : String -> (Request -> Task Error Response) -> AppRoute page
+api : String -> (Request -> Task Error Response) -> Route page
 api path handler =
     RouteApi path handler
 
@@ -291,7 +291,7 @@ type App fallback seed page model msg key
 , update : msg -> model -> ( model, Cmd msg )
 , viewImpl : ViewImpl model msg
 , subscriptions : model -> Sub msg
-, routes : List (AppRoute page)
+, routes : List (Route page)
 , notFound : Maybe page
 , onInput : Maybe (String -> msg)
 , base : BaseConfig
@@ -423,7 +423,7 @@ tui cfg =
 
 -- | Attach URL routes (web targets), built with [`route`] / [`routeParam`].
 -- Pair with [`withNotFound`] — the `web` target requires a fallback page.
-withRoutes : List (AppRoute page) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withRoutes : List (Route page) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withRoutes routes (App a) =
     App { a | routes = routes }
 
@@ -655,7 +655,7 @@ liveRoute_ r =
 -- maps the app's routes through it. A raw [`api`] endpoint yields the empty list
 -- — the client (Spa) backend has no server endpoints, so those are dropped
 -- (`List.concatMap`) rather than routed.
-spaRoute : AppRoute page -> List Spa.Route
+spaRoute : Route page -> List Spa.Route
 spaRoute r =
     case r of
 

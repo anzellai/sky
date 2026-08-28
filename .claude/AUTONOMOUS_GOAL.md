@@ -52,7 +52,28 @@
 
 ## Loop state (updated each iteration)
 
-- Phase A — tooling + baseline: parallelize erasure-fuzz; establish baseline green.
-- Phase B — widening pass: classify root-cause classes.
-- Phase C+ — fix each class, PIV, verify, commit.
+- Phase A — tooling + baseline: DONE. erasure-fuzz parallelized (6db7a440) +
+  clean-retry for flake robustness (1c5267de).
+- Phase B — widening pass: DONE (1c5267de). Result: exactly ONE open root-cause
+  class — the cross-module kernel collision. Confirmed REP-SPECIFIC to Live.Route
+  (among 5 kernels), POSITION-GENERAL (all 6 positions incl. no-map container
+  literal). NO third class (fn/record/adt value-shape matrix all green; the
+  7a0e5efc fn-erasure fix holds across positions). Gate: 70 pass · 0 new · 6/30
+  known-open probes manifest (Live.Route × 6).
+- Phase C — FIX the cross-module collision.
+  * Architecture-consult (fresh agent, doc 14): PROCEED. Root cause = `Std.Live`
+    never DECLARES `type Route`; it is a bare kernel-implicit name, so goty's
+    cur_mod-preferred lookup binds the foreign `Live.Route` value to a same-named
+    LOCAL type → rt.Coerce[wrong nominal] → panic. Std.Spa/Http.Server declare it
+    (safe). Rep-specific to Live.Route (rt.liveRoute, non-ADT).
+  * FIX 1 DONE + VERIFIED: declare `type Route = Route_OPAQUE` in Std.Live +
+    expose it (mirrors Std.Spa/Http.Server). Reverted Std.App AppRoute→Route (the
+    workaround) as the real-code acceptance proof. Verified: erasure-fuzz 76 pass
+    / 0 bugs (all Live.Route collision coords promoted to MustPass guards);
+    19-skyforum builds + runs HTTP 200 with the colliding `Route page`;
+    coerce-floor re-blessed (+3 narrow/Live project, adapter floor unchanged 0),
+    green. STILL TODO: workspace + full sweep + apps at milestone; commit.
+  * FIX 2 (class): widen the fuzzer with the OTHER undeclared kernel-implicit
+    names (Handler/Middleware/Session/Store/VNode/Request/Response/Db) → declare
+    the ones that collide, same zero-risk pattern. IN PROGRESS.
 - Phase Z — Judge verification.

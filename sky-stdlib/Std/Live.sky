@@ -26,6 +26,7 @@
 -- ```
 module Std.Live exposing
     ( AppConfig
+    , Route
     , app
     , config
     , route
@@ -61,6 +62,17 @@ import Std.Html exposing (Html)
 -- `msg` thread the TEA types through the builder chain.
 type AppConfig model msg
     = AppConfig_OPAQUE
+
+
+-- | A server route, produced by `route` / `api` and registered in a config's
+-- `routes`. Opaque — its runtime shape (`rt.liveRoute`) is an implementation
+-- detail. DECLARED (not left kernel-implicit) so a same-named local `type Route`
+-- in user code cannot collide with it in the Sky→Go type map — matching the
+-- `Std.Spa` / `Sky.Http.Server` `Route` declarations. Without this an annotated
+-- converter `Local.Route -> Live.Route` mis-narrowed the kernel handle to the
+-- local nominal and panicked at runtime while `sky check` passed.
+type Route
+    = Route_OPAQUE
 
 
 -- | Build the app config from the six required fields. Attach optional
