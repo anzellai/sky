@@ -760,6 +760,11 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     // `config-matrix` (a registered gate, so GATE_SURFACES already carries it);
     // claiming it here too would double-count.
     ("xtask:config-surface", &[]),
+    // `config-migration --check` (added to release.yml's full-tier gate) is the
+    // same kind of accounting: it verifies the migration surface census is
+    // current. It is ALSO a registered harness gate (T1), so its coverage is
+    // scored through GATE_SURFACES; claiming it here too would double-count.
+    ("xtask:config-migration", &[]),
     // The harness runs the registered gates; their coverage is already scored
     // through GATE_SURFACES, and counting it twice here would double-claim.
     ("xtask:harness", &[]),
