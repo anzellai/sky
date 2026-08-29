@@ -1705,7 +1705,20 @@ transparent =
 -- wrapper (page-wide `Background.color` for dark mode,
 -- `Font.family` for a document-wide font stack, etc.), use
 -- `Ui.layoutWith { wrapperAttrs = [...], rootAttrs = [...] }`.
-layout : List (Attribute msg) -> Element msg -> any
+--
+-- Returns a `Std.Html.Html` DOCUMENT (the page-tall wrapper +
+-- baseline stylesheet), NOT an `Element` — a `layout` is the
+-- render of a UI tree, not a node within one. That concrete type
+-- is load-bearing: it is what makes an `App.app` (Std.Ui family,
+-- whose `view` must return `Element msg`) view rooted at
+-- `Ui.layout` a COMPILE error rather than a silently-empty page.
+-- `App.app` supplies the document shell itself — its view returns
+-- a bare `Element` (e.g. `Ui.column [...] [...]`); `Ui.layout` is
+-- for `App.web` / direct Sky.Live / Sky.Spa views, whose `view`
+-- returns `Html`. (Previously typed `-> any`, which erased the
+-- `Html`/`Element` distinction and let the mismatch reach a
+-- runtime `rt.Coerce[Element](Html)` that yielded an empty page.)
+layout : List (Attribute msg) -> Element msg -> Html.Html msg
 layout rootAttrs root =
     layoutWith { wrapperAttrs = [], rootAttrs = rootAttrs } root
 
@@ -1737,7 +1750,7 @@ layout rootAttrs root =
 -- existing apps.
 layoutWith : { wrapperAttrs : List (Attribute msg)
 , rootAttrs : List (Attribute msg)
-} -> Element msg -> any
+} -> Element msg -> Html.Html msg
 layoutWith cfg root =
     let
         defaultWrapperStyle =

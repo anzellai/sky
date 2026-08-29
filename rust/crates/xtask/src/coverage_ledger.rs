@@ -722,6 +722,12 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     ("xtask:coerce-floor", &["compiler.coerce-floor"]),
     ("xtask:fuzz", &["compiler.fuzz"]),
     ("xtask:welltyped", &["compiler.fuzz"]),
+    // The erasure-boundary soundness fuzzer (type-check ⟹ go build ⟹ no panic
+    // ⟹ CORRECT VALUE). A fuzzer like `fuzz`/`welltyped`, sharing the same
+    // `compiler.fuzz` surface — its distinct value is the value-check, but the
+    // surface it exercises is the same fuzzing surface, so it shares the claim
+    // rather than inventing a new id.
+    ("xtask:erasure-fuzz", &["compiler.fuzz"]),
     ("xtask:divergences", &["compiler.oracle-differential"]),
     ("xtask:shared-world", &["compiler.shared-world"]),
     // `lsp` is a REGISTERED gate as of 2026-08-12 and claims the `lsp` surface

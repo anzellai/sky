@@ -566,7 +566,7 @@ counterDemo model =
         ]
 
 
-view : Model -> any
+view : Model -> Element Msg
 view model =
     let
         originalSections =
@@ -598,20 +598,25 @@ view model =
             , section "Chart — heatmap (24 h x 7 d errors)" heatmapDemo
             ]
     in
-        Ui.layout
+        -- App.app (Std.Ui family) view returns a bare `Element`; the Std.App
+        -- runner supplies the `Ui.layout` document shell. The page-level attrs
+        -- that used to sit on `Ui.layout`'s root (width/height fill, background,
+        -- font) move onto this root `Ui.column`.
+        Ui.column
             [ Ui.width Ui.fill
             , Ui.height Ui.fill
             , Background.color (Ui.rgb 244 245 248)
             , Font.family "system-ui, -apple-system, Segoe UI, sans-serif"
+            , Ui.htmlAttribute "data-test-id" "showcase-root"
             ]
-            (Ui.column
+            [ Ui.column
                 [ Ui.width (Ui.maximum 760 Ui.fill)
                 , Ui.centerX
                 , Ui.padding 28
                 , Ui.spacing 18
-                , Ui.htmlAttribute "data-test-id" "showcase-root"
                 ]
-                (originalSections ++ RegressionGates.cases Edit))
+                (originalSections ++ RegressionGates.cases Edit)
+            ]
 
 
 appDef =

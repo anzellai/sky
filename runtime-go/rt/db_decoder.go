@@ -243,26 +243,11 @@ func DbDec_money(colName any) any {
 	}}
 }
 
-// sqlCodeToCurrency builds the Sky-side Currency ADT for a
-// 3-letter ISO code. Named variants (USD/EUR/.../USDC) get a
-// dedicated ADT with that SkyName; unknown codes fall through to
-// `CurrencyRaw String`. Matches Std.Money.parseCurrency's semantics
-// but lives at the runtime layer so the decoder doesn't have to
-// reflect-call into Sky kernel code.
-func sqlCodeToCurrency(code string) SkyADT {
-	switch code {
-	case "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "SEK", "NOK",
-		"DKK", "CNY", "HKD", "SGD", "KRW", "TWD", "INR", "THB", "MYR", "IDR",
-		"PHP", "VND", "BRL", "MXN", "ARS", "CLP", "ZAR", "TRY", "RUB", "UAH",
-		"PLN", "CZK", "HUF", "RON", "BGN", "AED", "SAR", "QAR", "KWD", "BHD",
-		"OMR", "JOD", "ILS", "EGP", "NGN", "KES", "GHS", "MAD", "TND", "DZD",
-		"PKR", "BDT", "LKR", "NPR",
-		"BTC", "ETH", "USDT", "USDC":
-		return SkyADT{Tag: 0, SkyName: code, Fields: []any{}}
-	default:
-		return SkyADT{Tag: 0, SkyName: "CurrencyRaw", Fields: []any{code}}
-	}
-}
+// sqlCodeToCurrency moved to codec_auto.go so it compiles for wasm too:
+// this file is `//go:build !js` (no SQL on the client), but Codec.auto's
+// Money JSON decode — which runs on the Sky.Spa wasm client — also needs the
+// currency-code→ADT reconstruction. A pure code→ADT switch has no DB
+// dependency, so it belongs in the always-compiled codec file.
 
 // DbDec_nullable : Decoder a -> Decoder (Maybe a) — returns Just
 // for non-null cells, Nothing when ANY column read by `inner` is

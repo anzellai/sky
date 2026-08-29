@@ -50,6 +50,55 @@ fn terminal_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-terminal")
 }
 
+fn ui_layout_reject_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/std-app-ui-layout-reject/src/Main.sky")
+}
+
+/// REGRESSION GATE for the silent "compiles but renders an empty page" break:
+/// an `App.app` (Std.Ui family, whose `view` must return `Element msg`) whose
+/// view ROOTS at `Ui.layout` / `Ui.layoutWith`. Those produce a `Std.Html.Html`
+/// DOCUMENT, and while they were typed `-> any` the mismatch was erased: the
+/// `Html` was coerced into the `Element` view slot at runtime, yielding an empty
+/// element — `sky check` passed, `go build` passed, the browser showed only the
+/// root `<div>` + `<style>` with ZERO event attributes.
+///
+/// The fix gives `Ui.layout`/`layoutWith` their real return type (`Html msg`),
+/// so this shape is now a COMPILE error. This gate runs on EVERY commit (the
+/// browser check that originally caught it — `scripts/verify-live-app.mjs` — is
+/// nightly-only). It is type-check only (rejection precedes `go build`), so it
+/// needs no Go toolchain. PROVEN both directions: with `Ui.layout : … -> any`
+/// (pre-fix) this fixture type-checks + `go build`s clean (gate would be RED);
+/// with `-> Html msg` (post-fix) it is rejected with `Element _ vs Html _`
+/// (gate GREEN).
+#[test]
+fn app_ui_view_rooted_at_layout_is_rejected_not_silently_emptied() {
+    // No Go gate: a type mismatch is reported before the Go backend runs.
+    let out = Command::new(SKY)
+        .arg("check")
+        .arg(ui_layout_reject_entry())
+        .output()
+        .expect("failed to run sky check on the ui-layout reject fixture");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "an App.app (Std.Ui) view rooted at Ui.layout returns an Html document, \
+         not an Element — it MUST be rejected, never silently coerced to an empty \
+         page. It type-checked:\n{combined}"
+    );
+    // Pin the SHAPE of the rejection: the App.app boundary sees an Html result
+    // where an Element view is required. Guards against the error degrading into
+    // an unrelated failure that would pass the `!success` check vacuously.
+    assert!(
+        combined.contains("Element") && combined.contains("Html"),
+        "expected an Element-vs-Html view type mismatch at the App.app boundary:\n{combined}"
+    );
+}
+
 /// Copy a fixture to a fresh temp dir so per-target derived build trees
 /// (`.skyapp/`) never land in the repo. Returns the temp project dir.
 fn copy_fixture_to_temp(fixture: PathBuf, tag: &str) -> PathBuf {

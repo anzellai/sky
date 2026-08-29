@@ -1,0 +1,54 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { n : Int }
+
+
+type Msg
+    = Bump
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+-- WRONG for App.app (Std.Ui family): the view ROOTS at `Ui.layout`, which
+-- returns an `Html` DOCUMENT, not an `Element`. `App.app`'s `view` must return
+-- `Element msg` (the runner supplies the document shell). Before the fix this
+-- type-checked (Ui.layout returned `any`) and rendered a SILENTLY EMPTY page;
+-- after the fix it is a COMPILE error. No `: any` annotation — inference must
+-- see the `Html` result.
+view model =
+    Ui.layout []
+        (Ui.column []
+            [ Ui.el [ Ui.onClick Bump ] (Ui.text "Bump") ]
+        )
+
+
+appDef =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound ()
+
+
+main =
+    App.run appDef

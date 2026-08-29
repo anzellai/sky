@@ -166,19 +166,21 @@ init _req =
 
 
 -- ─── View dispatcher ─────────────────────────────────────────────
-view : Model -> any
+view : Model -> Element Msg
 view model =
-    Ui.layout
-        []
-        (Ui.column
-            [ Ui.padding 24
-            , Ui.spacing 24
-            , Background.color (Ui.rgb 246 246 240)
-            , Font.family "Verdana, Geneva, sans-serif"
-            , Font.size 14
-            , Font.color (Ui.rgb 33 33 33)
-            ]
-            [ topNav model, pageBody model, pageFooter ])
+    -- App.app (Std.Ui family) views return a bare `Element` — the Std.App/Sky.Live
+    -- runner supplies the `Ui.layout` document shell itself. Rooting this at
+    -- `Ui.layout` would return an `Html` document into an `Element` slot (a compile
+    -- error since Ui.layout is typed `Html`; formerly a silently-empty page).
+    Ui.column
+        [ Ui.padding 24
+        , Ui.spacing 24
+        , Background.color (Ui.rgb 246 246 240)
+        , Font.family "Verdana, Geneva, sans-serif"
+        , Font.size 14
+        , Font.color (Ui.rgb 33 33 33)
+        ]
+        [ topNav model, pageBody model, pageFooter ]
 
 
 pageBody : Model -> Element Msg

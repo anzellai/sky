@@ -55,16 +55,16 @@ subscriptions _ =
     Sub.none
 
 
-viewWrapped : Model -> any
-viewWrapped model =
-    Ui.layout [] (view model)
-
-
 appDef =
     App.app
         { init = init
         , update = update
-        , view = viewWrapped
+
+        -- App.app (Std.Ui family) takes a bare `Element` view directly; the
+        -- Std.App runner supplies the `Ui.layout` document shell. Wrapping in
+        -- `Ui.layout` here returns an `Html` document into an `Element` slot
+        -- (a compile error; formerly a silently-empty page).
+        , view = view
         , subscriptions = subscriptions
         }
         |> App.withRoutes [ App.route "/" () ]

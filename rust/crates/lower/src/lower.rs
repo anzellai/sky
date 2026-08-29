@@ -4585,8 +4585,19 @@ impl<'a> Ctx<'a> {
         // calls are byte-identical.
         let callee_result_erased =
             matches!(&c.ty, GoTy::Func(_, cret) if matches!(**cret, GoTy::Any));
-        let apply_erased = matches!(c.ty, GoTy::Any)
-            || (callee_result_erased && !matches!(ret_goty, GoTy::Any));
+        // ONLY on an EXACT application. A def called with fewer/more args than
+        // its arity is desugared by make_partial / over_apply below, which
+        // coerce correctly on their own. Critically, a point-free arity-0 alias
+        // applied to an arg (`idish = identity; idish "x"` — go_arity 0, one
+        // arg) is an OVER-application whose `ret_goty` is the alias's whole
+        // declared type `a -> a` (`func(any) any`), NOT the `func(arg) result`
+        // this coercion would build: pre-coercing it wrapped the applied value
+        // in `CoerceFuncSlot[func(any) any]` and panicked at runtime. A
+        // bound-var callee (the `Endo f` case, arity unknown) keeps firing.
+        let exact_application = go_arity.map_or(true, |n| n == largs.len());
+        let apply_erased = exact_application
+            && (matches!(c.ty, GoTy::Any)
+                || (callee_result_erased && !matches!(ret_goty, GoTy::Any)));
         let c = if apply_erased && !largs.is_empty() {
             let fn_ty = GoTy::Func(
                 largs.iter().map(|a| a.ty.clone()).collect(),

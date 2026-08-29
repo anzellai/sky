@@ -49,25 +49,26 @@ init _req =
     )
 
 
-view : Model -> any
+view : Model -> Element Msg
 view model =
-    Ui.layoutWith
-        { wrapperAttrs =
-            [ Background.color (Ui.rgb 250 248 244)
-            , Font.family "system-ui, -apple-system, sans-serif"
-            , Font.size 14
-            , Font.color (Ui.rgb 30 30 36)
-            ]
-        , rootAttrs = []
-        }
-        (Ui.column
-            [ Ui.width Ui.fill, Ui.spacing 24 ]
-            [ Common.topNav model
-            , Ui.column
-                  [ Ui.paddingXY 24 16, Ui.spacing 16, Ui.width Ui.fill ]
-                  [ pageBody model ]
-            , Common.footer
-            ])
+    -- App.app (Std.Ui family) view returns a bare `Element`; the Std.App runner
+    -- supplies the `Ui.layout` document shell. The page-level `wrapperAttrs`
+    -- (background/font) that used to sit on `Ui.layoutWith` move onto this root
+    -- `Ui.column` so the page styling is preserved.
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.spacing 24
+        , Background.color (Ui.rgb 250 248 244)
+        , Font.family "system-ui, -apple-system, sans-serif"
+        , Font.size 14
+        , Font.color (Ui.rgb 30 30 36)
+        ]
+        [ Common.topNav model
+        , Ui.column
+              [ Ui.paddingXY 24 16, Ui.spacing 16, Ui.width Ui.fill ]
+              [ pageBody model ]
+        , Common.footer
+        ]
 
 
 pageBody : Model -> Element Msg

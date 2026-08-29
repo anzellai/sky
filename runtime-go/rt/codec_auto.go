@@ -394,6 +394,29 @@ func currencyCodeOf(cur any) string {
 	return name
 }
 
+// sqlCodeToCurrency builds the Sky-side Currency ADT for a 3-letter ISO code.
+// Named variants (USD/EUR/.../USDC) get a dedicated ADT with that SkyName;
+// unknown codes fall through to `CurrencyRaw String`. Matches
+// Std.Money.parseCurrency's semantics but lives at the runtime layer so the
+// decoder doesn't reflect-call into Sky kernel code. It lives HERE (not in the
+// `//go:build !js` db_decoder.go) because Codec.auto's Money JSON decode runs
+// on the Sky.Spa wasm client too, and the function is a pure code→ADT switch
+// with no DB dependency. The DB decoder (also !js) calls it from here.
+func sqlCodeToCurrency(code string) SkyADT {
+	switch code {
+	case "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "SEK", "NOK",
+		"DKK", "CNY", "HKD", "SGD", "KRW", "TWD", "INR", "THB", "MYR", "IDR",
+		"PHP", "VND", "BRL", "MXN", "ARS", "CLP", "ZAR", "TRY", "RUB", "UAH",
+		"PLN", "CZK", "HUF", "RON", "BGN", "AED", "SAR", "QAR", "KWD", "BHD",
+		"OMR", "JOD", "ILS", "EGP", "NGN", "KES", "GHS", "MAD", "TND", "DZD",
+		"PKR", "BDT", "LKR", "NPR",
+		"BTC", "ETH", "USDT", "USDC":
+		return SkyADT{Tag: 0, SkyName: code, Fields: []any{}}
+	default:
+		return SkyADT{Tag: 0, SkyName: "CurrencyRaw", Fields: []any{code}}
+	}
+}
+
 // Codec_autoEnc : a -> Value. Reflects the record into a JSON object Value.
 func Codec_autoEnc(snakeArg, record any) any {
 	raw, err := codecAutoEncodeVal(reflect.ValueOf(record), AsBool(snakeArg))
@@ -635,48 +658,57 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 		}
 		// A user payload ADT — the tagged `{"tag":<name>,"v0":…}` the encoder
 		// emits — reconstructed via the same wire factory the runtime trusts.
-		if obj, ok := raw.(map[string]any); ok {
-			if tag, hasTag := obj["tag"].(string); hasTag {
-				var rawArgs []json.RawMessage
-				for i := 0; ; i++ {
-					v, present := obj[fmt.Sprintf("v%d", i)]
-					if !present {
-						break
+		// GUARD: only when the TARGET type is genuinely an ADT (a SkyADT-backed
+		// struct or a sealed-variant interface). A plain RECORD may legitimately
+		// carry a field NAMED `tag` (e.g. `Inner = { tag : String, n : Int }`),
+		// and it must decode field-by-field, never be mistaken for an ADT wire
+		// and fed to BuildAdtFromWire — the CodecConformanceTest `Inner = {tag,n}`
+		// nested-record round-trip exists to pin exactly this (it was the silent
+		// string→ADT confusion the test's docstring warns about).
+		if isSkyAdtType(gt) || gt.Kind() == reflect.Interface {
+			if obj, ok := raw.(map[string]any); ok {
+				if tag, hasTag := obj["tag"].(string); hasTag {
+					var rawArgs []json.RawMessage
+					for i := 0; ; i++ {
+						v, present := obj[fmt.Sprintf("v%d", i)]
+						if !present {
+							break
+						}
+						b, mErr := json.Marshal(v)
+						if mErr != nil {
+							return reflect.Value{}, fmt.Errorf("Codec.auto: ADT arg marshal: %v", mErr)
+						}
+						rawArgs = append(rawArgs, b)
 					}
-					b, mErr := json.Marshal(v)
-					if mErr != nil {
-						return reflect.Value{}, fmt.Errorf("Codec.auto: ADT arg marshal: %v", mErr)
+					// The variant registry is keyed by the PACKAGE-QUALIFIED name
+					// (`main.Main_Role`), which `reflect.Type.String()` yields — the
+					// bare `declaredType` (`Main_Role`) is deliberately NOT a key
+					// (adt_variant_factory.go:103). Fall back to the bare name for a
+					// legacy SkyADT-tag registration.
+					adtName := gt.String()
+					val, built := BuildAdtFromWire(adtName, tag, rawArgs, -1)
+					if !built {
+						val, built = BuildAdtFromWire(declaredType, tag, rawArgs, -1)
 					}
-					rawArgs = append(rawArgs, b)
-				}
-				// The variant registry is keyed by the PACKAGE-QUALIFIED name
-				// (`main.Main_Role`), which `reflect.Type.String()` yields — the
-				// bare `declaredType` (`Main_Role`) is deliberately NOT a key
-				// (adt_variant_factory.go:103). Fall back to the bare name for a
-				// legacy SkyADT-tag registration.
-				adtName := gt.String()
-				val, built := BuildAdtFromWire(adtName, tag, rawArgs, -1)
-				if !built {
-					val, built = BuildAdtFromWire(declaredType, tag, rawArgs, -1)
-				}
-				if built {
-					// The field's Go type may be a SEALED INTERFACE (sealed-variant
-					// ADT — `Convert` can't target an interface) or a concrete
-					// `SkyADT`-backed type. Assign directly when the built variant
-					// implements the field type; else convert.
-					rvVal := reflect.ValueOf(val)
-					out := reflect.New(gt).Elem()
-					switch {
-					case rvVal.Type().AssignableTo(gt):
-						out.Set(rvVal)
-					case rvVal.Type().ConvertibleTo(gt):
-						out.Set(rvVal.Convert(gt))
-					default:
-						return reflect.Value{}, fmt.Errorf("Codec.auto: rebuilt %s value is not assignable to the field type %s", declaredType, gt)
+					if built {
+						// The field's Go type may be a SEALED INTERFACE (sealed-variant
+						// ADT — `Convert` can't target an interface) or a concrete
+						// `SkyADT`-backed type. Assign directly when the built variant
+						// implements the field type; else convert.
+						rvVal := reflect.ValueOf(val)
+						out := reflect.New(gt).Elem()
+						switch {
+						case rvVal.Type().AssignableTo(gt):
+							out.Set(rvVal)
+						case rvVal.Type().ConvertibleTo(gt):
+							out.Set(rvVal.Convert(gt))
+						default:
+							return reflect.Value{}, fmt.Errorf("Codec.auto: rebuilt %s value is not assignable to the field type %s", declaredType, gt)
+						}
+						return out, nil
 					}
-					return out, nil
+					return reflect.Value{}, fmt.Errorf("Codec.auto: cannot rebuild ADT %s variant %q", declaredType, tag)
 				}
-				return reflect.Value{}, fmt.Errorf("Codec.auto: cannot rebuild ADT %s variant %q", declaredType, tag)
 			}
 		}
 	}

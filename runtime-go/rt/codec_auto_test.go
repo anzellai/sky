@@ -248,3 +248,37 @@ func mustDecimal(s string) decimal.Decimal {
 	}
 	return d
 }
+
+type acTagFieldRecord struct {
+	Tag string `sky:"tag,string"`
+	N   int    `sky:"n,int"`
+}
+
+type acOuterWithTagField struct {
+	Box acTagFieldRecord `sky:"box,acTagFieldRecord"`
+}
+
+// A plain record with a field literally NAMED `tag` must round-trip as a JSON
+// object, NOT be mistaken for an ADT wire `{"tag":<variant>,...}` and fed to
+// BuildAdtFromWire. Regression for the #5 decode arm over-triggering on any
+// map carrying a string `tag` key — the CodecConformanceTest `Inner = {tag,n}`
+// nested-record case is the Sky-level twin of this.
+func TestCodecAutoTagNamedFieldIsNotAnAdt(t *testing.T) {
+	v := acOuterWithTagField{Box: acTagFieldRecord{Tag: "hello", N: 3}}
+	enc := Codec_autoEnc(true, v).(JsonValue)
+	b, _ := json.Marshal(enc.raw)
+	if got := string(b); got != `{"box":{"tag":"hello","n":3}}` {
+		t.Fatalf("record with `tag` field encoded wrong: %s", got)
+	}
+	dec := Codec_autoDecoder(true, acOuterWithTagField{}).(JsonDecoder)
+	var raw any
+	_ = json.Unmarshal(b, &raw)
+	res := dec.run(raw).(SkyResult[any, any])
+	if res.Tag != 0 {
+		t.Fatalf("record with `tag` field failed to decode (mistaken for ADT?): %+v", res)
+	}
+	back := res.OkValue.(acOuterWithTagField)
+	if back.Box.Tag != "hello" || back.Box.N != 3 {
+		t.Errorf("record with `tag` field round-trip lost data: %+v", back.Box)
+	}
+}
