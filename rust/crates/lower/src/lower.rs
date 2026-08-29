@@ -4566,19 +4566,28 @@ impl<'a> Ctx<'a> {
                 }
             })
             .collect();
-        // An `any`-typed callee that we are APPLYING arguments to MUST be a
-        // function at run time — but Go rejects `<any>(args)` ("cannot call …
-        // any is not a function"), a `sky check`-passes / `go build`-fails
-        // soundness break. This is the INLINE application of a polymorphic-return
-        // call: `(id2 fn) x` where `id2 : a -> a` lowered to `func(any) any` and
-        // its `any` result is applied directly. The LET-bound form defuses it for
-        // free — `let f = id2 fn in f x` coerces `f` to the concrete func type at
-        // its bind site (`coerce_if_needed`) — so do the same here, targeting
-        // `func(<arg tys>) ret`. Only fires for an `any` callee (a Def callee with
-        // a known arity already took the partial/over-apply branches below, and a
-        // concrete-func value is left untouched), so non-broken calls are
-        // byte-identical.
-        let c = if matches!(c.ty, GoTy::Any) && !largs.is_empty() {
+        // Applying an ERASED callee where a concrete result is expected is a
+        // `sky check`-passes / `go build`-fails soundness break, in two shapes:
+        //   (a) BARE `any` callee — `(id2 fn) x`, `id2 : a -> a` → `func(any) any`,
+        //       whose `any` RESULT is applied directly: Go rejects `<any>(args)`
+        //       ("any is not a function").
+        //   (b) `func(…) any` callee whose RESULT is used at a concrete type —
+        //       `type Endo a = Endo (a -> a); applyZero (Endo f) = f 0` : the ADT
+        //       field lowers to `func(any) any`, and `f 0` returns `any` where the
+        //       fn returns `Int` ("cannot use v(0) (any) as int … need type
+        //       assertion").
+        // The LET-bound form defuses (a) for free (its bind site coerces `f`), and
+        // a plain record field defuses (b) — but the applied-erased-callee site did
+        // neither. Coerce the callee to `func(<arg tys>) ret` so BOTH the call and
+        // its result land at the concrete Go type. Fires ONLY when the callee is
+        // erased (`any`, or a func with an `any` return) AND the expected result is
+        // concrete — a fully-concrete-typed callee is left untouched, so non-broken
+        // calls are byte-identical.
+        let callee_result_erased =
+            matches!(&c.ty, GoTy::Func(_, cret) if matches!(**cret, GoTy::Any));
+        let apply_erased = matches!(c.ty, GoTy::Any)
+            || (callee_result_erased && !matches!(ret_goty, GoTy::Any));
+        let c = if apply_erased && !largs.is_empty() {
             let fn_ty = GoTy::Func(
                 largs.iter().map(|a| a.ty.clone()).collect(),
                 Box::new(ret_goty.clone()),

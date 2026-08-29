@@ -73,6 +73,12 @@ enum Outcome {
     CodegenBug(String),
     /// Built but the run panicked — a runtime soundness bug.
     RuntimeBug(String),
+    /// Built + ran clean but printed the WRONG value — a SILENT-correctness bug
+    /// (compiles, runs, no panic, wrong answer). This is the class that a
+    /// build-and-no-panic prover is blind to; a `Case` with `expect_stdout` turns
+    /// erasure-fuzz into a full "if it compiles it works" check. It caught the
+    /// open-row-alias field-drop break (age/city zeroed with no error).
+    WrongValue(String),
     /// Build or run exceeded its wall clock.
     Timeout(String),
 }
@@ -98,6 +104,11 @@ struct Case {
     /// `(relative-path-under-src, content)`; `Main.sky` is the entry.
     files: Vec<(String, String)>,
     expect: Expect,
+    /// The EXACT value the program must print (its last non-empty stdout line),
+    /// or `None` to check only build-succeeds + no-panic. `Some(_)` upgrades the
+    /// case to a silent-correctness check — a clean run that prints the wrong
+    /// value is a `WrongValue` bug, not a pass.
+    expect_stdout: Option<String>,
     note: &'static str,
 }
 
@@ -166,7 +177,10 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some(case) = writable.get(i) else { break };
                         let dir = scratch.join(&case.id);
-                        local.push((case.id.clone(), evaluate(sky, &dir)));
+                        local.push((
+                            case.id.clone(),
+                            evaluate(sky, &dir, case.expect_stdout.as_deref()),
+                        ));
                     }
                     local
                 })
@@ -182,7 +196,10 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         let case = meta[id.as_str()];
         let is_bug = matches!(
             outcome,
-            Outcome::CodegenBug(_) | Outcome::RuntimeBug(_) | Outcome::Timeout(_)
+            Outcome::CodegenBug(_)
+                | Outcome::RuntimeBug(_)
+                | Outcome::WrongValue(_)
+                | Outcome::Timeout(_)
         );
 
         match &outcome {
@@ -251,21 +268,24 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
 /// build. A transient failure (parallel `go build` contending on the shared
 /// GOCACHE, a resource blip) does NOT, so the second verdict is authoritative.
 /// Without this, parallelism would spuriously false-positive the gate.
-fn evaluate(sky: &Path, dir: &Path) -> Outcome {
-    let first = evaluate_once(sky, dir);
+fn evaluate(sky: &Path, dir: &Path, expect_stdout: Option<&str>) -> Outcome {
+    let first = evaluate_once(sky, dir, expect_stdout);
     match first {
+        // A build/run/timeout failure retries once (filters a mem-guard-killed
+        // flake). A WrongValue is DETERMINISTIC — the emitted Go computes it — so
+        // it never retries; retrying would only hide it.
         Outcome::CodegenBug(_) | Outcome::RuntimeBug(_) | Outcome::Timeout(_) => {
             let _ = std::fs::remove_dir_all(dir.join("sky-out"));
             let _ = std::fs::remove_dir_all(dir.join(".skycache"));
             let _ = std::fs::remove_dir_all(dir.join(".skydeps"));
-            evaluate_once(sky, dir)
+            evaluate_once(sky, dir, expect_stdout)
         }
         ok => ok,
     }
 }
 
 /// Build then, if it built, run — classifying at each boundary.
-fn evaluate_once(sky: &Path, dir: &Path) -> Outcome {
+fn evaluate_once(sky: &Path, dir: &Path, expect_stdout: Option<&str>) -> Outcome {
     let _ = std::fs::remove_dir_all(dir.join("sky-out"));
     let (built, out) = build(sky, dir);
     let type_checked = out.contains("-- Generating Go") || out.contains("Compilation successful");
@@ -282,7 +302,7 @@ fn evaluate_once(sky: &Path, dir: &Path) -> Outcome {
         BuildResult::Ok => {}
     }
     // Built — now run it.
-    run_binary(&dir.join("sky-out/app"))
+    run_binary(&dir.join("sky-out/app"), expect_stdout)
 }
 
 enum BuildResult {
@@ -330,7 +350,7 @@ fn build(sky: &Path, dir: &Path) -> (BuildResult, String) {
     }
 }
 
-fn run_binary(bin: &Path) -> Outcome {
+fn run_binary(bin: &Path, expect_stdout: Option<&str>) -> Outcome {
     if !bin.exists() {
         return Outcome::CodegenBug(format!("build reported success but {} is absent", bin.display()));
     }
@@ -357,6 +377,23 @@ fn run_binary(bin: &Path) -> Outcome {
                     || out.contains("interface conversion");
                 if !status.success() && panicked {
                     return Outcome::RuntimeBug(tail(&out));
+                }
+                // Silent-correctness check: a value-pinned case must print EXACTLY
+                // its expected value (the last non-empty stdout line — the sole
+                // `println`). A clean run with the wrong value is the compiles-but-
+                // lies class (open-row alias field-drop), invisible to a build/no-
+                // panic prover. Only checked on a clean exit — a panic/build fail
+                // is already the more severe classification above.
+                if let Some(exp) = expect_stdout {
+                    let printed = out
+                        .lines()
+                        .map(str::trim)
+                        .rev()
+                        .find(|l| !l.is_empty())
+                        .unwrap_or("");
+                    if printed != exp {
+                        return Outcome::WrongValue(format!("expected {exp:?}, printed {printed:?}"));
+                    }
                 }
                 // A clean non-zero exit without a panic is not our class (the
                 // template may legitimately exit non-zero); treat as passed but

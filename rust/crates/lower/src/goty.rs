@@ -340,7 +340,47 @@ fn has_unresolved(t: &Ty, params: &HashMap<Name, GoTy>) -> bool {
     }
 }
 
+thread_local! {
+    /// Field-NAME sets currently being resolved on the stack. A nested record
+    /// alias whose field template shares this record's field-name set makes the
+    /// `fit` closure's `go_ty(tmpl)` re-enter `select_record_candidate` for the
+    /// SAME set — an unbounded codegen recursion (stack overflow) that a
+    /// well-typed program reached (`type alias Inner = {value:Int}; type alias
+    /// Outer = {value:Inner}`). Guarding it terminates the cycle.
+    static RESOLVING_FIELDSETS: std::cell::RefCell<Vec<Vec<String>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn select_record_candidate<'a>(
+    candidates: &'a [String],
+    fields: &[(Name, Ty)],
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> Option<&'a String> {
+    // Cycle guard (see RESOLVING_FIELDSETS): a re-entry for a field-name set
+    // already being resolved higher on the stack refuses to resolve — `go_ty`
+    // then falls back to the anonymous struct (structurally correct, no crash),
+    // and the refusal also correctly REFUTES the self-nesting candidate at the
+    // outer level (its template resolves to a non-matching type). Without this a
+    // program that passed `sky check` aborts the compiler with a stack overflow.
+    let key: Vec<String> = {
+        let mut k: Vec<String> = fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+        k.sort();
+        k
+    };
+    if RESOLVING_FIELDSETS.with(|s| s.borrow().contains(&key)) {
+        return None;
+    }
+    RESOLVING_FIELDSETS.with(|s| s.borrow_mut().push(key.clone()));
+    let result = select_record_candidate_inner(candidates, fields, env, cur_mod, params);
+    RESOLVING_FIELDSETS.with(|s| {
+        s.borrow_mut().pop();
+    });
+    result
+}
+
+fn select_record_candidate_inner<'a>(
     candidates: &'a [String],
     fields: &[(Name, Ty)],
     env: &TypeEnv,

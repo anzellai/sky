@@ -10,8 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/shopspring/decimal"
 )
 
 // skyTagName returns the Sky field name from a struct field's `sky:"name,type"`
@@ -119,6 +122,30 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 			out[i] = e
 		}
 		return out, nil
+	case reflect.Map:
+		// Dict k v → JSON object. `Dict String v` keys are already `string`
+		// (encodeDictKey verbatim); other key types are stringified. Sorted for
+		// determinism (Dict's own sorted-key contract). Before this arm a Dict
+		// field hit `default:` → the whole record silently encoded as `null`.
+		type kvpair struct {
+			k string
+			v reflect.Value
+		}
+		pairs := make([]kvpair, 0, rv.Len())
+		for _, mk := range rv.MapKeys() {
+			pairs = append(pairs, kvpair{fmt.Sprintf("%v", mk.Interface()), rv.MapIndex(mk)})
+		}
+		sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })
+		obj := jsonOrderedObject{}
+		for _, p := range pairs {
+			ev, err := codecAutoEncodeVal(p.v, snake)
+			if err != nil {
+				return nil, err
+			}
+			obj.keys = append(obj.keys, p.k)
+			obj.vals = append(obj.vals, ev)
+		}
+		return obj, nil
 	case reflect.Struct:
 		t := rv.Type()
 		if isSkyMaybeType(t) {
@@ -127,8 +154,54 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 			}
 			return codecAutoEncodeVal(rv.FieldByName("JustValue"), snake)
 		}
-		if isSkyAdtType(t) {
-			return nil, fmt.Errorf("Codec.auto: cannot derive data-carrying ADT %q — use an explicit taggedUnion codec", t.Name())
+		// Set a → JSON array (sorted, deterministic via Set_toList). Before this
+		// its sole unexported `items` field was skipped by codecAutoEncodeStruct
+		// → `{}` (elements silently vanished).
+		if t == reflect.TypeOf(SkySet{}) {
+			elems := AsList(Set_toList(rv.Interface()))
+			out := make([]any, len(elems))
+			for i, e := range elems {
+				ev, err := codecAutoEncodeVal(reflect.ValueOf(e), snake)
+				if err != nil {
+					return nil, err
+				}
+				out[i] = ev
+			}
+			return out, nil
+		}
+		// A data-carrying ADT (legacy `SkyADT` OR sealed-iface variant —
+		// `unwrapADTShape` normalises both; a plain record returns ok=false).
+		// Before this these fell to an error (→ null record) or, for a sealed
+		// variant, were mis-read as a record (`{"v0":7}`, untagged, undecodable).
+		if name, _, fields, ok := unwrapADTShape(rv.Interface()); ok {
+			switch name {
+			// Std.Decimal — shopspring-backed; its canonical string round-trips.
+			case "Decimal__Internal":
+				return decimalUnbox(rv.Interface()).String(), nil
+			// Std.Money — the pinned currency default: {amount, currency}.
+			case "Money":
+				if len(fields) >= 2 {
+					return jsonOrderedObject{
+						keys: []string{"amount", "currency"},
+						vals: []any{decimalUnbox(fields[0]).String(), currencyCodeOf(fields[1])},
+					}, nil
+				}
+			}
+			// General payload ADT → TAGGED `{"tag":<name>,"v0":…,…}`: nullary arms
+			// are distinguished by tag and the whole thing decodes via
+			// BuildAdtFromWire. (Nullary REGISTERED enums never reach here — they
+			// lower to `int` and take the enum path — so this changes only the
+			// data-carrying encoding, which previously did not round-trip at all.)
+			obj := jsonOrderedObject{keys: []string{"tag"}, vals: []any{name}}
+			for i, f := range fields {
+				ev, err := codecAutoEncodeVal(reflect.ValueOf(f), snake)
+				if err != nil {
+					return nil, err
+				}
+				obj.keys = append(obj.keys, fmt.Sprintf("v%d", i))
+				obj.vals = append(obj.vals, ev)
+			}
+			return obj, nil
 		}
 		return codecAutoEncodeStruct(rv, snake)
 	case reflect.Interface:
@@ -190,7 +263,8 @@ func Codec_autoEncOverrides(snakeArg, encsArg, record any) any {
 		} else {
 			r, err := codecAutoEncodeTyped(rv.Field(i), skyTagType(f), snake)
 			if err != nil {
-				return JsonValue{raw: nil}
+				// Fail loud, never silently null the whole record (see Codec_autoEnc).
+				panic("Codec.auto: cannot encode field " + col + " — " + err.Error())
 			}
 			raw = r
 		}
@@ -308,14 +382,31 @@ func codecAutoEncodeTyped(rv reflect.Value, declaredType string, snake bool) (an
 	return codecAutoEncodeVal(rv, snake)
 }
 
+// currencyCodeOf renders a `Std.Money.Currency` value as its code string: a
+// nullary arm (`USD`) → its name; a `CurrencyRaw "XYZ"` → the raw string.
+func currencyCodeOf(cur any) string {
+	name, _, fields, _ := unwrapADTShape(cur)
+	if len(fields) > 0 {
+		if s, ok := fields[0].(string); ok {
+			return s
+		}
+	}
+	return name
+}
+
 // Codec_autoEnc : a -> Value. Reflects the record into a JSON object Value.
 func Codec_autoEnc(snakeArg, record any) any {
 	raw, err := codecAutoEncodeVal(reflect.ValueOf(record), AsBool(snakeArg))
 	if err != nil {
-		// Encoding can't return a Result; surface as a JSON string error marker
-		// is worse than a clear panic-free empty — but auto validates via cols,
-		// so a genuine underivable type is caught at derivation. Return null.
-		return JsonValue{raw: nil}
+		// FAIL LOUD, never silently null. Encoding can't return a `Result` (the
+		// Sky signature is `a -> Value`), and returning `null` here silently threw
+		// away the ENTIRE record — the pinned persistence default writing null to
+		// the DB with zero signal (a Money/Decimal/Dict field did exactly this).
+		// A genuinely underivable field is a data-loss bug in well-typed code, so
+		// a classified panic (surfaced by the runtime's panic net) is strictly
+		// better than silent corruption. After the Dict/Set/Decimal/Money/ADT arms
+		// this fires only for a truly un-encodable type.
+		panic("Codec.auto: cannot encode this value — " + err.Error())
 	}
 	return JsonValue{raw: raw}
 }
@@ -385,6 +476,27 @@ func codecAutoDecodeVal(rt reflect.Type, raw any, snake bool) (reflect.Value, er
 				return reflect.Value{}, err
 			}
 			out.Index(i).Set(ev)
+		}
+		return out, nil
+	case reflect.Map:
+		// Dict k v ← JSON object. The witness carries the concrete element type
+		// (`map[string]int`), so values decode without a declaredType. Keys are
+		// JSON strings decoded to the key type.
+		m, ok := raw.(map[string]any)
+		if !ok {
+			return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for Dict, got %s", jsonValueKind(raw))
+		}
+		out := reflect.MakeMapWithSize(rt, len(m))
+		for k, v := range m {
+			vv, err := codecAutoDecodeVal(rt.Elem(), v, snake)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			kv, err := codecAutoDecodeVal(rt.Key(), k, snake)
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			out.SetMapIndex(kv, vv)
 		}
 		return out, nil
 	case reflect.Struct:
@@ -491,6 +603,81 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 				out.Index(i).Set(ev)
 			}
 			return out, nil
+		}
+		// Std.Decimal — a JSON string; rebuild via decimalBox (round-trips the
+		// canonical `Decimal.String()` the encoder emitted).
+		if declaredType == "Std_Decimal_Decimal" {
+			s, ok := raw.(string)
+			if !ok {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: expected Decimal string, got %s", jsonValueKind(raw))
+			}
+			d, err := decimal.NewFromString(s)
+			if err != nil {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: Decimal parse %q: %v", s, err)
+			}
+			return reflect.ValueOf(decimalBox(d)).Convert(gt), nil
+		}
+		// Std.Money — `{"amount":"12.99","currency":"USD"}`; reuse the DB decoder's
+		// currency reconstruction (nullary code → its variant; unknown → CurrencyRaw).
+		if declaredType == "Std_Money_Money" {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: expected Money object, got %s", jsonValueKind(raw))
+			}
+			amtS, _ := m["amount"].(string)
+			curS, _ := m["currency"].(string)
+			amt, err := decimal.NewFromString(amtS)
+			if err != nil {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: Money amount parse %q: %v", amtS, err)
+			}
+			money := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{decimalBox(amt), sqlCodeToCurrency(curS)}}
+			return reflect.ValueOf(money).Convert(gt), nil
+		}
+		// A user payload ADT — the tagged `{"tag":<name>,"v0":…}` the encoder
+		// emits — reconstructed via the same wire factory the runtime trusts.
+		if obj, ok := raw.(map[string]any); ok {
+			if tag, hasTag := obj["tag"].(string); hasTag {
+				var rawArgs []json.RawMessage
+				for i := 0; ; i++ {
+					v, present := obj[fmt.Sprintf("v%d", i)]
+					if !present {
+						break
+					}
+					b, mErr := json.Marshal(v)
+					if mErr != nil {
+						return reflect.Value{}, fmt.Errorf("Codec.auto: ADT arg marshal: %v", mErr)
+					}
+					rawArgs = append(rawArgs, b)
+				}
+				// The variant registry is keyed by the PACKAGE-QUALIFIED name
+				// (`main.Main_Role`), which `reflect.Type.String()` yields — the
+				// bare `declaredType` (`Main_Role`) is deliberately NOT a key
+				// (adt_variant_factory.go:103). Fall back to the bare name for a
+				// legacy SkyADT-tag registration.
+				adtName := gt.String()
+				val, built := BuildAdtFromWire(adtName, tag, rawArgs, -1)
+				if !built {
+					val, built = BuildAdtFromWire(declaredType, tag, rawArgs, -1)
+				}
+				if built {
+					// The field's Go type may be a SEALED INTERFACE (sealed-variant
+					// ADT — `Convert` can't target an interface) or a concrete
+					// `SkyADT`-backed type. Assign directly when the built variant
+					// implements the field type; else convert.
+					rvVal := reflect.ValueOf(val)
+					out := reflect.New(gt).Elem()
+					switch {
+					case rvVal.Type().AssignableTo(gt):
+						out.Set(rvVal)
+					case rvVal.Type().ConvertibleTo(gt):
+						out.Set(rvVal.Convert(gt))
+					default:
+						return reflect.Value{}, fmt.Errorf("Codec.auto: rebuilt %s value is not assignable to the field type %s", declaredType, gt)
+					}
+					return out, nil
+				}
+				return reflect.Value{}, fmt.Errorf("Codec.auto: cannot rebuild ADT %s variant %q", declaredType, tag)
+			}
 		}
 	}
 	return codecAutoDecodeVal(gt, raw, snake)

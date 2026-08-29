@@ -1,61 +1,44 @@
-# AUTONOMOUS GOAL — get main release-ready (2026-08-28)
+# AUTONOMOUS MANDATE — secure `main` to truly hold "if it compiles it works"
 
-## The user's verbatim mandate
+## Verbatim goal (user, 2026-08-29)
 
-> ok fully e2e unattended+autonomous + PIV
-> until you get to main ready to release
+> yes please all the remaining gaps, holes, bugs, ci improvements etc. to make
+> our main branch, which our next big release will be based on, as secured and
+> as completed as possible. meaning truly holds our if it compiles it works
+> status
+>
+> you can proceed with fully unattended+autonomous+piv mode.
+>
+> if you need my inputs say it now otherwise you can proceed until fully e2e
+> delivered, ready for me to review + tag release
 
-(Follows the merge-readiness discussion: this branch — feat/unified-app-builder,
-161 files, +10.3k/−2k, carrying unified Std.App + front-door deprecation + the
-BREAKING Secret migration + Sky.Spa + embedded-Postgres + the erasure-collision
-soundness fixes — is a clean fast-forward onto main. §0.2.1 says a merge to main
-is gated by the FULL suite, not the per-commit subset.)
+## Definition of done (Judge verifies the LITERAL claim)
 
-## Definition of done — "main ready to release"
+`main` truly holds **"if it compiles it works"**: no known program that passes
+`sky check` but fails `go build` OR panics at runtime OR returns wrong values
+under well-typed semantics — AND the gates that prove this are WIRED so the
+class cannot silently recur. The user reviews + tags; I do NOT tag/release.
 
-1. The FULL §0.2.1 merge gate is GREEN (run to completion, nothing skipped that
-   the environment can run):
-   - `cargo test --workspace` WITH live tests (a real PostgreSQL cluster up — NOT
-     SKY_LIVE_TESTS=skip).
-   - `xtask harness --tier t2` (behaviour-corpus — the v0.21.0-class catcher).
-   - `xtask harness --tier t3` (apps-postgres + multi-replica fleet).
-   - `xtask harness --verify-falsifiers --tier t1` (falsifier proofs).
-   - `scripts/example-sweep.sh` full build+run on a clean slate.
-   - `scripts/conformance.sh`.
-   - coerce-floor / denominators / coverage-ledger / config-* all `--check` green.
-   If a tier genuinely cannot run in THIS environment (e.g. PG shmget limit), say
-   so LOUDLY with the reason and confirm CI covers it — never silently skip.
-2. Every red is fixed at root cause (PIV: architecture-consult for compiler
-   changes, regression-test-first), re-verified. NO "deferred / pre-existing /
-   out of scope" framing.
-3. Release prepared: version bump (recommend v0.23.0 — breaking minor) with
-   CHANGELOG.md entry + README banner + AGENTS.md "Current line" in sync (the
-   docs_state_the_current_version gate must be green).
-4. Fast-forward merge to main.
+## Scope (from this session's 5 audits + 2 confirmed+fixed breaks)
 
-## Reserved for the user (durable rule — do NOT do autonomously)
+1. **Find + fix remaining soundness holes** — adversarial sweep across the hard
+   classes (type-system/aliases/row-poly, FFI/rt.Coerce boundary, effects/Task,
+   stdlib semantics). Every hole → fix (root cause) + regression.
+2. **Enforcement wiring** (so the class can't recur):
+   - erasure-fuzz into CI (runs NOWHERE today) + templates for the found breaks.
+   - release.yml full-tier meta-gate (§0.2.1 unenforced prose).
+   - release-gate holes: config-migration + verify-cli in no workflow; release
+     runs a weaker run-set than per-commit; coerce-floor masks 5 FFI rows at
+     release.
+3. **Robustness**: HM solver budget (pathological module OOMs host); reconcile
+   `//` by zero (panics) vs `modBy 0` (total) — make total, matching Elm + the
+   no-panic promise.
+4. **Polish** (non-blocking, do if time): missing List combinators, sky doc
+   drift (kernel-lowered ops not surfaced), stale `--help`.
 
-- `git tag` + `gh release` publish (the actual RELEASE). Stop at merged+versioned
-  main; hand the release button to the user.
-- The final VERSION NUMBER is the user's call (I set a recommended one for gate
-  consistency; they adjust before the tag).
-
-## Standing constraints
-
-- darraghstudio HARD HOLD — never touch/deploy/upgrade.
-- No co-author wording in commits.
-- Memory: the box is swap-constrained this session — run gates SERIALLY at LOW
-  parallelism, clean orphan go/sky processes between phases, distinguish
-  mem-guard-kill flakes (CodegenBug on a control/known-pass case, SIGKILL
-  signature) from real failures (re-run to confirm before treating as a bug).
-
-## Loop state
-
-- Phase 0 — setup: goal captured; relieve memory; provision a real PG cluster.
-- Phase 1 — workspace + live tests (PG up).
-- Phase 2 — T2 behaviour-corpus.
-- Phase 3 — T3 apps-postgres + fleet.
-- Phase 4 — example-sweep (full) + conformance.
-- Phase 5 — falsifiers + census --check.
-- Phase 6 — version bump + CHANGELOG + doc sync; FF merge to main.
-- Phase Z — Judge verifies "release-ready"; hand release to user.
+## Protocol
+- Root-cause fixes only; regression-test-first; full verify (coerce-floor +
+  example-sweep + erasure-fuzz + cargo test workspace + corpus) before each
+  landing; batch pushes at milestones; watch CI green after each push.
+- Fresh-context adversarial Judge at close on the LITERAL claim.
+- NO tag/release (user's). darraghstudio HARD HOLD.

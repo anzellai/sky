@@ -153,6 +153,13 @@ isolated-target
 isolated-target/
 *-target/
 
+# The cargo workspace lives at rust/target (ignored by rust/.gitignore), but the
+# `xtask erasure-fuzz` fuzzer writes its per-case scratch (a Go build + binary
+# per generated program, several GB) to repo-root `target/erasure-fuzz`. That
+# path is NOT under rust/, so ignore the repo-root target dir explicitly —
+# otherwise a `git add -A` would stage multiple GB of ephemeral build output.
+/target/
+
 # Sky.Spa spike build artifacts
 docs/skyspa/spike/main.wasm
 docs/skyspa/spike/wasm_exec.js

@@ -3,6 +3,8 @@ package rt
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
 
 // mirrors what a Sky record lowers to, with the S3 `sky:` field tags.
@@ -158,4 +160,91 @@ func TestCodecAutoWithOverride(t *testing.T) {
 	if out, _ := res.OkValue.(awItem); !out.Active {
 		t.Errorf("active override should decode int 1 -> true, got %+v", res.OkValue)
 	}
+}
+
+// ── v1 audit 2026-08-29: Codec.auto silent-data-loss regressions ─────────────
+
+type acDictHolder struct {
+	Counts map[string]int `sky:"counts,map[string]int"`
+}
+
+// Dict was silently encoded as `null` (the whole record) before the reflect.Map
+// arm — the pinned persistence default writing null to the DB.
+func TestCodecAutoDictRoundTrip(t *testing.T) {
+	v := acDictHolder{Counts: map[string]int{"a": 1, "b": 2}}
+	enc := Codec_autoEnc(true, v).(JsonValue)
+	b, err := json.Marshal(enc.raw)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got := string(b); got != `{"counts":{"a":1,"b":2}}` {
+		t.Fatalf("Dict encoded wrong (was `null` before the fix): %s", got)
+	}
+	dec := Codec_autoDecoder(true, acDictHolder{}).(JsonDecoder)
+	var raw any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	res := dec.run(raw).(SkyResult[any, any])
+	if res.Tag != 0 {
+		t.Fatalf("Dict decode failed: %+v", res)
+	}
+	back := res.OkValue.(acDictHolder)
+	if back.Counts["a"] != 1 || back.Counts["b"] != 2 {
+		t.Errorf("Dict round-trip lost data: %+v", back.Counts)
+	}
+}
+
+type acDecimalHolder struct {
+	Qty Std_Decimal_Decimal_forTest `sky:"qty,Std_Decimal_Decimal"`
+}
+
+// A Decimal field is an rt.SkyADT under the hood; the codec must encode it as
+// its canonical string (was `null` before the fix). We mirror the generated
+// `type Std_Decimal_Decimal = rt.SkyADT` with a local alias for the test.
+type Std_Decimal_Decimal_forTest = SkyADT
+
+func TestCodecAutoDecimalRoundTrip(t *testing.T) {
+	v := acDecimalHolder{Qty: decimalBox(mustDecimal("3.14"))}
+	enc := Codec_autoEnc(true, v).(JsonValue)
+	b, _ := json.Marshal(enc.raw)
+	if got := string(b); got != `{"qty":"3.14"}` {
+		t.Fatalf("Decimal encoded wrong (was `null`): %s", got)
+	}
+	dec := Codec_autoDecoder(true, acDecimalHolder{}).(JsonDecoder)
+	var raw any
+	_ = json.Unmarshal(b, &raw)
+	res := dec.run(raw).(SkyResult[any, any])
+	if res.Tag != 0 {
+		t.Fatalf("Decimal decode failed: %+v", res)
+	}
+	back := res.OkValue.(acDecimalHolder)
+	if decimalUnbox(back.Qty).String() != "3.14" {
+		t.Errorf("Decimal round-trip wrong: %s", decimalUnbox(back.Qty).String())
+	}
+}
+
+type acUnencodable struct {
+	Bad chan int `sky:"bad,chan"`
+}
+
+// FAIL LOUD: an un-encodable field must PANIC, never silently null the whole
+// record (which discarded all the OTHER fields' data too). Regression for the
+// `return JsonValue{raw:nil}` swallow.
+func TestCodecAutoFailsLoudNotSilent(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("Codec.auto silently encoded an un-encodable field instead of panicking")
+		}
+	}()
+	Codec_autoEnc(true, acUnencodable{Bad: make(chan int)})
+	t.Fatal("unreachable — Codec_autoEnc should have panicked")
+}
+
+func mustDecimal(s string) decimal.Decimal {
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		panic(err)
+	}
+	return d
 }

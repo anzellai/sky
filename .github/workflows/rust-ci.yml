@@ -615,6 +615,63 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
+  # ── erasure-fuzz: type-check ⟹ go build ⟹ no panic ⟹ CORRECT VALUE ──────────
+  #
+  # Generates well-typed programs that cross the erasure boundary (a compound
+  # value — function / record / ADT / Dict — passed through a polymorphic slot,
+  # a codec, an open-row alias) and asserts every one that passes `sky check`
+  # also `go build`s, runs without panic, AND prints the value the generator
+  # constructed. The value check is the load-bearing half: the 2026-08-29 v1
+  # audit found FIVE soundness breaks, and three of them (open-row field-drop,
+  # nested-alias overflow, Codec.auto null) compiled and ran WITHOUT a panic —
+  # they just returned the wrong data. A build-only gate is blind to that class;
+  # this gate is `if it compiles it works`, enforced.
+  #
+  # Setup-independent (own `cargo build`, restores the shared cargo cache by
+  # restore-keys) so it does not sit on setup's critical path — listed in
+  # SETUP_INDEPENDENT_JOBS for the tier-budget assertion. `find_sky_bin` knows
+  # only `sky-out/sky` and `target/release/sky`; this job builds DEBUG (a
+  # release build would double the job), so SKY_BIN points it at the debug
+  # binary explicitly.
+  erasure-fuzz:
+    runs-on: ubuntu-latest
+    # ~90s workspace build + ~60s cache restore + the case sweep (each case is a
+    # sky build + go build + run; parallel across the runner's cores). Measured
+    # ~4-6 min for the sweep warm. 20 leaves the ~1.5x margin the corpus jobs
+    # carry, with room for a cold Go cache.
+    timeout-minutes: 20
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      SKY_BIN: ${{ github.workspace }}/rust/target/debug/sky
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-linux-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - run: cargo build --workspace --locked
+      - name: Gate — erasure-fuzz (type-check ⟹ go build ⟹ no panic ⟹ correct value)
+        run: cargo run -q -p xtask -- erasure-fuzz
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
   # ── Behavioural stdlib + live docs (split out of codegen-build) ─────────────
   #
   # Both gates need a --release `sky` and neither needs anything else
@@ -1168,6 +1225,7 @@ jobs:
       - codegen-build
       - build-corpus
       - build-corpus-2
+      - erasure-fuzz
       - behaviour-docs
       - config-gates
       - lsp-fuzz
@@ -1227,7 +1285,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-behaviour build-corpus build-corpus-2 licence-gate-linux licence-gate-macos'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-behaviour build-corpus build-corpus-2 erasure-fuzz licence-gate-linux licence-gate-macos'
         run: |
           set -euo pipefail
           gh api \

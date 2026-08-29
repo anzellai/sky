@@ -38,7 +38,132 @@ pub fn generate_cases() -> Vec<Case> {
     cases.push(cross_module_plain_rep_mismatch());
     cases.extend(kernel_collision_matrix());
     cases.extend(value_shape_matrix());
+    cases.extend(v1_audit_soundness_repros());
     cases
+}
+
+/// Regression guards for the soundness breaks the 2026-08-29 v1 adversarial audit
+/// found. Each is value-pinned (`expect_stdout`) so a re-break is caught whether
+/// it fails `go build`, panics, OR silently returns the wrong value. All
+/// `MustPass`: a failure here is a regression of a fixed break.
+fn v1_audit_soundness_repros() -> Vec<Case> {
+    vec![
+        // BREAK #1 (fixed 3d22af11): INLINE application of a polymorphic-return
+        // call `(id2 fn) x` — `id2 : a -> a` lowers to `func(any) any`, and the
+        // `any` result was applied directly → `<any>(41)` fails `go build`.
+        Case {
+            id: "REPRO_inline_apply_poly_return".into(),
+            files: vec![(
+                "Main.sky".into(),
+                "module Main exposing (main)\n\n\
+                 import Sky.Core.Prelude exposing (..)\n\
+                 import Sky.Core.String as String\n\
+                 import Std.Log exposing (println)\n\n\n\
+                 id2 : a -> a\nid2 x =\n    x\n\n\n\
+                 main =\n    println (String.fromInt ((id2 (\\n -> n + 1)) 41))\n"
+                    .into(),
+            )],
+            expect: Expect::MustPass,
+            expect_stdout: Some("42".into()),
+            note: "BREAK #1: inline-apply of a polymorphic return (go-build-fail class)",
+        },
+        // BREAK #2 (fixed 3d22af11): an OPEN-ROW ALIAS in arg+result position was
+        // emitted as a CLOSED struct, silently zeroing the caller's extra fields.
+        // Value-pinned: this is a SILENT-corruption class — it compiled + ran +
+        // did not panic, it just returned the wrong values (age=0 city="").
+        Case {
+            id: "REPRO_open_row_alias_field_drop".into(),
+            files: vec![(
+                "Main.sky".into(),
+                "module Main exposing (main)\n\n\
+                 import Sky.Core.Prelude exposing (..)\n\
+                 import Sky.Core.String as String\n\
+                 import Std.Log exposing (println)\n\n\n\
+                 type alias Named a =\n    { a | name : String }\n\n\n\
+                 tag : Named a -> Named a\ntag r =\n    r\n\n\n\
+                 rename : Named a -> Named a\nrename r =\n    { r | name = \"new\" }\n\n\n\
+                 main =\n    let\n        base =\n            { name = \"old\", age = 5, city = \"Rome\" }\n\n        \
+                 t =\n            tag base\n\n        u =\n            rename base\n    in\n    \
+                 println (String.fromInt t.age ++ \"/\" ++ t.city ++ \"/\" ++ u.name ++ \"/\" ++ String.fromInt u.age)\n"
+                    .into(),
+            )],
+            expect: Expect::MustPass,
+            expect_stdout: Some("5/Rome/new/5".into()),
+            note: "BREAK #2: open-row alias field-drop (SILENT-corruption class — value-pinned)",
+        },
+        // BREAK #3 (found 2026-08-29): a generic ADT payload typed `a -> a`
+        // (self-adapter), unwrapped in a MONOMORPHIC function and applied, misses
+        // the concrete-return narrowing → `func(any)any` result used where `Int`
+        // is expected fails `go build`. Same class as #1 at the ADT-field site.
+        Case {
+            id: "REPRO_generic_adt_self_adapter_apply".into(),
+            files: vec![(
+                "Main.sky".into(),
+                "module Main exposing (main)\n\n\
+                 import Sky.Core.Prelude exposing (..)\n\
+                 import Sky.Core.String as String\n\
+                 import Std.Log exposing (println)\n\n\n\
+                 type Endo a\n    = Endo (a -> a)\n\n\n\
+                 applyZero : Endo Int -> Int\napplyZero e =\n    case e of\n        Endo f ->\n            f 0\n\n\n\
+                 main =\n    println (String.fromInt (applyZero (Endo (\\x -> x + 42))))\n"
+                    .into(),
+            )],
+            expect: Expect::MustPass,
+            expect_stdout: Some("42".into()),
+            note: "BREAK #3: generic ADT `a -> a` field applied misses result narrowing (go-build-fail class)",
+        },
+        // BREAK #4 (fixed 2026-08-29): nested NAMED record aliases sharing the
+        // same field-NAME set — `Inner = {value:Int}`, `Outer = {value:Inner}` —
+        // made `select_record_candidate` re-enter for the same set forever, a
+        // codegen STACK OVERFLOW (`sky check` said "Types OK" then SIGABRT). Fixed
+        // by a thread-local cycle guard in goty.rs.
+        Case {
+            id: "REPRO_nested_same_fieldset_alias".into(),
+            files: vec![(
+                "Main.sky".into(),
+                "module Main exposing (main)\n\n\
+                 import Sky.Core.Prelude exposing (..)\n\
+                 import Sky.Core.String as String\n\
+                 import Std.Log exposing (println)\n\n\n\
+                 type alias Inner =\n    { value : Int }\n\n\n\
+                 type alias Outer =\n    { value : Inner }\n\n\n\
+                 mk : Outer\nmk =\n    { value = { value = 99 } }\n\n\n\
+                 main =\n    println (String.fromInt mk.value.value)\n"
+                    .into(),
+            )],
+            expect: Expect::MustPass,
+            expect_stdout: Some("99".into()),
+            note: "BREAK #4: nested same-fieldset named aliases (compiler stack-overflow class)",
+        },
+        // BREAK #5 (fixed 2026-08-29): Codec.auto — the PINNED persistence
+        // default — silently encoded a Dict / Decimal / Money / ADT field as
+        // JSON `null` (its reflect walk fell through to a null return, and the
+        // encoder swallowed the failure as `{raw:nil}`). A record round-tripped
+        // through `toJson`/`fromJson` came back with the compound field ZEROED
+        // — the app compiled, ran, did not panic, and wrote null to the DB. A
+        // SILENT-corruption class, so this is value-pinned on the re-encoded
+        // JSON: a nulled Dict would print `"counts":null`.
+        Case {
+            id: "REPRO_codec_auto_dict_roundtrip".into(),
+            files: vec![(
+                "Main.sky".into(),
+                "module Main exposing (main)\n\n\
+                 import Sky.Core.Prelude exposing (..)\n\
+                 import Sky.Core.Dict as Dict\n\
+                 import Std.Codec as Codec\n\
+                 import Std.Log exposing (println)\n\n\n\
+                 type alias Inventory =\n    { name : String, counts : Dict String Int }\n\n\n\
+                 codec : Codec.Codec Inventory\ncodec =\n    Codec.auto { name = \"\", counts = Dict.empty }\n\n\n\
+                 main =\n    let\n        v =\n            { name = \"shelf\", counts = Dict.fromList [ ( \"a\", 1 ), ( \"b\", 2 ) ] }\n\n        \
+                 json =\n            Codec.toJson codec v\n    in\n    case Codec.fromJson codec json of\n        \
+                 Ok back ->\n            println (Codec.toJson codec back)\n\n        Err _ ->\n            println \"DECODE_FAILED\"\n"
+                    .into(),
+            )],
+            expect: Expect::MustPass,
+            expect_stdout: Some("{\"name\":\"shelf\",\"counts\":{\"a\":1,\"b\":2}}".into()),
+            note: "BREAK #5: Codec.auto silently nulls a Dict/Decimal/Money/ADT field (SILENT-corruption class — value-pinned round-trip)",
+        },
+    ]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +183,10 @@ struct Shape {
     value: &'static str,
     /// the name of the shape→Int helper declared in `decls`.
     extract: &'static str,
+    /// the Int `extract value` yields — the observe reduces a single-element
+    /// container, so the sum equals this. Pinning it makes the case a
+    /// silent-CORRECTNESS check, not just build + no-panic.
+    expected: i64,
 }
 
 fn shapes() -> Vec<Shape> {
@@ -67,18 +196,21 @@ fn shapes() -> Vec<Shape> {
             decls: "extract : (Int -> Int) -> Int\nextract f =\n    f 5\n",
             value: "(\\x -> x + 10)", // extract → 15
             extract: "extract",
+            expected: 15,
         },
         Shape {
             id: "record",
             decls: "type alias Rec =\n    { n : Int }\n\n\nextract : Rec -> Int\nextract r =\n    r.n\n",
             value: "{ n = 7 }", // extract → 7
             extract: "extract",
+            expected: 7,
         },
         Shape {
             id: "adt",
             decls: "type Box\n    = Box Int\n\n\nextract : Box -> Int\nextract b =\n    case b of\n        Box n ->\n            n\n",
             value: "(Box 9)", // extract → 9
             extract: "extract",
+            expected: 9,
         },
     ]
 }
@@ -144,6 +276,7 @@ fn value_shape_matrix() -> Vec<Case> {
                 id: format!("V_{}__{}", s.id, pos.id()),
                 files: vec![("Main.sky".into(), body)],
                 expect: Expect::MustPass,
+                expect_stdout: Some(s.expected.to_string()),
                 note: "compound value erased through a poly map, materialised to Int (must pass)",
             });
         }
@@ -381,6 +514,7 @@ fn kernel_collision_matrix() -> Vec<Case> {
                     } else {
                         Expect::MustPass
                     },
+                    expect_stdout: None,
                     note: if collide {
                         "collision probe: local name shadows a kernel type (must not collide)"
                     } else {
@@ -424,6 +558,7 @@ fn fn_in_container() -> Vec<Case> {
                 ),
             )],
             expect: Expect::MustPass,
+            expect_stdout: None,
             note: "fn in Maybe, applied (7a0e5efc archetype)",
         },
         Case {
@@ -442,6 +577,7 @@ fn fn_in_container() -> Vec<Case> {
                 ),
             )],
             expect: Expect::MustPass,
+            expect_stdout: None,
             note: "fn in List, head applied",
         },
         Case {
@@ -461,6 +597,7 @@ fn fn_in_container() -> Vec<Case> {
                 ),
             )],
             expect: Expect::MustPass,
+            expect_stdout: None,
             note: "fn in Result, applied",
         },
     ]
@@ -484,6 +621,7 @@ fn record_through_poly_map() -> Case {
             ),
         )],
         expect: Expect::MustPass,
+        expect_stdout: None,
         note: "record through poly map + field read",
     }
 }
@@ -506,6 +644,7 @@ fn record_update_in_tuple() -> Case {
             ),
         )],
         expect: Expect::MustPass,
+        expect_stdout: None,
         note: "record update in a tuple in an ADT, field read back (#166 shape)",
     }
 }
@@ -540,6 +679,7 @@ fn cross_module_same_name_same_shape() -> Case {
             ),
         ],
         expect: Expect::MustPass,
+        expect_stdout: None,
         note: "control: same-named cross-module ADTs, SAME plain rep — safe",
     }
 }
@@ -575,6 +715,7 @@ fn cross_module_plain_rep_mismatch() -> Case {
             ),
         ],
         expect: Expect::MustPass,
+        expect_stdout: None,
         note: "control: same name, plain-Sky rep mismatch (ADT vs record) — safe",
     }
 }
