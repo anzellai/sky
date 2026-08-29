@@ -288,7 +288,17 @@ jobs:
   # already cover sky). Setup-dependent (needs: setup) — NOT in
   # SETUP_INDEPENDENT_JOBS.
   test-sky:
-    needs: setup
+    # Deliberately NO `needs: setup` — the same reasoning as `build-corpus`.
+    # test-sky is the LONGEST job in the graph (~720s of postgres-live + spa-split
+    # + db-flow integration), and it consumes none of setup's OUTPUT: it restores
+    # the shared cargo cache by `restore-keys` (Swatinem `shared-key: sky-linux`,
+    # `save-if: false`) exactly as every setup-dependent job does. While it waited
+    # on setup, the T1 tier was `setup(~270s) + test-sky(~720s) ≈ 990s` — pinned
+    # against the ceiling and flapping over it on setup variance. Run alongside
+    # setup instead and the tier is `setup + max(OTHER dependent) = setup +
+    # config-gates(~520s) ≈ 790s`, while test-sky itself (independent) stays well
+    # under the ceiling. Listed in SETUP_INDEPENDENT_JOBS so the budget assertion
+    # charges it correctly.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -1293,7 +1303,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-behaviour build-corpus build-corpus-2 erasure-fuzz licence-gate-linux licence-gate-macos'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-behaviour build-corpus build-corpus-2 erasure-fuzz test-sky licence-gate-linux licence-gate-macos'
         run: |
           set -euo pipefail
           gh api \
