@@ -58,7 +58,7 @@ import Std.Webview as Webview
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui
-import Std.Ui exposing (Element)
+import Std.Html exposing (Html)
 
 
 type alias Model = { count : Int }
@@ -80,9 +80,9 @@ subscriptions : Model -> Sub Msg
 subscriptions _ = Sub.none
 
 
-view : Model -> Html
+view : Model -> Html Msg
 view model =
-    -- wrap the Element in `Ui.layout` → `Html`; a raw `Ui.row` gives a blank window
+    -- wrap the Element in `Ui.layout` → `Html Msg`; a raw `Ui.row` gives a blank window
     Ui.layout []
         (Ui.row [ Ui.spacing 12 ]
             [ Ui.button [] { onPress = Just Dec, label = Ui.text "-" }

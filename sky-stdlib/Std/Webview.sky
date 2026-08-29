@@ -27,6 +27,7 @@
 module Std.Webview exposing (app, url, WindowCfg, AppCfg, defaultWindow, withTitle, withSize)
 
 import Sky.Ffi as Ffi
+import Std.Html exposing (Html)
 
 -- | Window configuration. Closed record for v0.1 (better HM error
 -- messages) — open record to absorb optional fields (alwaysOnTop,
@@ -70,7 +71,7 @@ withSize w h cfg =
 type alias AppCfg model msg =
     { init : () -> ( model, Cmd msg )
     , update : msg -> model -> ( model, Cmd msg )
-    , view : model -> Html
+    , view : model -> Html msg
     , subscriptions : model -> Sub msg
     , window : WindowCfg
     }

@@ -286,7 +286,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 335,
+      "expected_assertions": 337,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -345,7 +345,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 481,
+      "expected_assertions": 483,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -1390,6 +1390,11 @@
         "evidence": [
           {
             "by": ".github/workflows/release.yml: xtask fuzz (`xtask:fuzz` is not harness-registered — no proven falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": ".github/workflows/rust-ci.yml: xtask erasure-fuzz (`xtask:erasure-fuzz` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
           }
@@ -12663,7 +12668,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 130,
+          "count": 131,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -12757,6 +12762,7 @@
             "kernelAttr",
             "layoutContextFor",
             "layoutContextFromFlags",
+            "layoutWith",
             "locationCss",
             "markerFlagStep",
             "markerFlags",
@@ -12939,8 +12945,8 @@
           ]
         }
       },
-      "count": 776,
-      "pct_of_denominator": 40.5
+      "count": 777,
+      "pct_of_denominator": 40.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13894,7 +13900,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 130,
+          "count": 131,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -13988,6 +13994,7 @@
             "kernelAttr",
             "layoutContextFor",
             "layoutContextFromFlags",
+            "layoutWith",
             "locationCss",
             "markerFlagStep",
             "markerFlags",
@@ -14171,7 +14178,7 @@
           ]
         }
       },
-      "count": 861,
+      "count": 862,
       "pct_of_denominator": 45.0
     }
   },
@@ -14194,10 +14201,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 16,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 58,
-      "refs_qualified": 54,
+      "refs_generous": 59,
+      "refs_qualified": 55,
       "role": "Layer2",
-      "sky_files": 14,
+      "sky_files": 15,
       "sky_toml_sections": []
     },
     {
@@ -14686,8 +14693,8 @@
       "id": "examples/25-sky-console",
       "modules_imported": 9,
       "path": "examples/25-sky-console",
-      "refs_generous": 45,
-      "refs_qualified": 44,
+      "refs_generous": 44,
+      "refs_qualified": 43,
       "role": "Example",
       "sky_files": 3,
       "sky_toml_sections": []
@@ -14698,8 +14705,8 @@
       "id": "examples/26-ui-showcase",
       "modules_imported": 14,
       "path": "examples/26-ui-showcase",
-      "refs_generous": 96,
-      "refs_qualified": 95,
+      "refs_generous": 95,
+      "refs_qualified": 94,
       "role": "Example",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -14850,8 +14857,8 @@
       "id": "examples/37-composite-live-shop",
       "modules_imported": 19,
       "path": "examples/37-composite-live-shop",
-      "refs_generous": 112,
-      "refs_qualified": 108,
+      "refs_generous": 111,
+      "refs_qualified": 107,
       "role": "Example",
       "sky_files": 12,
       "sky_toml_sections": [
