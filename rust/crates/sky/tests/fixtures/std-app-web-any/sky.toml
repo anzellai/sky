@@ -1,0 +1,5 @@
+[project]
+name = "std-app-web-any"
+
+[app]
+entry = "src/Main.sky"

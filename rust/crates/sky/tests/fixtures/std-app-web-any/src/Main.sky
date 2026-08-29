@@ -1,0 +1,52 @@
+module Main exposing (main)
+
+-- The SYMMETRIC twin of std-app-ui-layout-any: `App.web` (the Std.Html family,
+-- whose view slot is `Html msg`) with a view annotated `Model -> any` that
+-- returns a Std.Ui `Element`. `Element` and `Html` share `rt.SkyADT`, so the
+-- `any` slot accepts the Element and `sky check` + `go build` pass — but the web
+-- runner would render the Element AS Html, its constructors dispatch to nothing,
+-- and the page is SILENTLY BLANK. The fix routes the ViewHtml root through
+-- `renderHtmlRoot_`, which wraps a crossed-in Element in `Ui.layout []`. This
+-- fixture must BUILD and RENDER its `webcount=` content, not a blank page.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.App as App
+import Std.Ui as Ui
+
+
+type alias Model =
+    { n : Int }
+
+
+type Msg
+    = Bump
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    ( { model | n = model.n + 1 }, Cmd.none )
+
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+view : Model -> any
+view model =
+    Ui.column [] [ Ui.text ("webcount=" ++ String.fromInt model.n) ]
+
+
+appDef =
+    App.web { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound ()
+
+
+main =
+    App.run appDef

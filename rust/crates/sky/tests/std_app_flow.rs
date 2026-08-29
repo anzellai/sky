@@ -59,6 +59,10 @@ fn ui_layout_any_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-ui-layout-any")
 }
 
+fn web_any_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-web-any")
+}
+
 /// REGRESSION GATE for the silent "compiles but renders an empty page" break:
 /// an `App.app` (Std.Ui family, whose `view` must return `Element msg`) whose
 /// view ROOTS at `Ui.layout` / `Ui.layoutWith`. Those produce a `Std.Html.Html`
@@ -189,6 +193,77 @@ fn app_ui_view_annotated_any_rooted_at_layout_renders_not_silently_empty() {
         body.contains("count="),
         "the `-> any` + Ui.layout view must render its content, not a blank page \
          — expected `count=` in the served HTML but the body was:\n{body}"
+    );
+}
+
+/// The SYMMETRIC twin of the test above: `App.web` (Std.Html family, view slot
+/// `Html msg`) with `view : Model -> any` returning a Std.Ui `Element`.
+/// `Element`/`Html` share `rt.SkyADT`, so the `any` slot accepts the Element and
+/// `sky check` + `go build` pass — but the ViewHtml runner would render the
+/// Element as Html, its constructors dispatching to nothing, and the page is
+/// silently blank. The fix routes the ViewHtml root through `renderHtmlRoot_`,
+/// wrapping a crossed-in Element in `Ui.layout []`. Reverting that route makes
+/// this gate RED (served body is the empty `sky-root`, no `webcount=`).
+#[test]
+fn app_web_view_annotated_any_returning_element_renders_not_silently_empty() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
+    let dir = copy_fixture_to_temp(web_any_fixture_dir(), "webany");
+
+    let build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky build on the web-any fixture");
+    assert!(
+        build.status.success(),
+        "the `App.web` + `view : Model -> any` returning an Element must still \
+         build (accepted by design; the fix makes it RENDER, not reject):\n\
+         --- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr),
+    );
+
+    let port = 8481u16;
+    let app_bin = dir.join(".skyapp").join("web").join("sky-out").join("app");
+    assert!(
+        app_bin.exists(),
+        "expected the web app binary at {}",
+        app_bin.display()
+    );
+    let log_path = dir.join("server.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&dir)
+        .env("SKY_LIVE_PORT", port.to_string())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .expect("spawn compiled web-any app");
+
+    let ready = wait_for_listening(&log_path, port, 60);
+    if !ready {
+        let _ = child.kill();
+        let mut buf = String::new();
+        use std::io::Read as _;
+        let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut buf));
+        panic!("app never reported listening on :{port}\nlog:\n{buf}");
+    }
+
+    let body = curl_body(port, "/");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let body = body.expect("GET / should return a body");
+    assert!(
+        body.contains("webcount="),
+        "the `App.web` + `-> any` Element view must render its content, not a \
+         blank page — expected `webcount=` in the served HTML but the body \
+         was:\n{body}"
     );
 }
 

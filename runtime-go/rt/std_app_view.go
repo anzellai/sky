@@ -43,3 +43,17 @@ func Std_App_htmlDocOrDefault(el any, deflt any) any {
 	// `Ui.layout [] el` wrapping — the behaviour that has always been correct.
 	return deflt
 }
+
+// Std_App_asElement reinterprets a value at the App view boundary as an
+// `Element`. `Std_Ui_Element` and `Std_Html_Html` are BOTH the alias `rt.SkyADT`
+// (identical Go rep), so this is a runtime IDENTITY. It exists only so the
+// `App.web` render path (whose view slot is `Html msg`) can reuse
+// `renderUiRoot_` / `htmlDocOrDefault` — both typed `Element msg -> …` — on the
+// SYMMETRIC escape: a user annotating an `App.web` view `model -> any` and
+// returning a Std.Ui `Element`. Without this the runner renders that Element as
+// Html, the Element constructors dispatch to nothing, and the page is silently
+// blank (the App.app hole's twin). After the cast, `htmlDocOrDefault`'s SkyName
+// check routes it: a genuine Html doc (`HElement`/`HText`/`HRaw`) passes
+// through unchanged; a crossed-in Element (`Empty`/`Text`/`Node`/…) is wrapped
+// in `Ui.layout []`.
+func Std_App_asElement(v any) any { return v }

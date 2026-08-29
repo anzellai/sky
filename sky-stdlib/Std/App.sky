@@ -302,9 +302,27 @@ renderUiRoot_ el =
     htmlDocOrDefault_ el (Ui.layout [] el)
 
 
+-- | Normalise an `App.web` (`ViewHtml`) root the SYMMETRIC way. The slot is
+-- `Html msg`, so the common case is a genuine Std.Html document — but a view
+-- annotated `model -> any` can return a Std.Ui `Element` there (Element/Html
+-- share `rt.SkyADT`, so the `any` slot accepts it), and rendering that Element
+-- AS Html is silently blank (the twin of the `ViewUi` hole). `asElement_` is a
+-- runtime identity (same Go rep) that lets us reuse the SkyName discriminator:
+-- a real Html doc (`HElement`/`HText`/`HRaw`) passes straight through, a
+-- crossed-in Element is wrapped in `Ui.layout []`.
+renderHtmlRoot_ : Html.Html msg -> Html.Html msg
+renderHtmlRoot_ h =
+    renderUiRoot_ (asElement_ h)
+
+
 htmlDocOrDefault_ : Element msg -> Html.Html msg -> Html.Html msg
 htmlDocOrDefault_ =
     Ffi.kernel "Std_App_htmlDocOrDefault"
+
+
+asElement_ : Html.Html msg -> Element msg
+asElement_ =
+    Ffi.kernel "Std_App_asElement"
 
 -- | An app described once, runnable on any backend. Built by [`app`] and
 -- refined by the `with…` builders; consumed by a `run<Backend>` runner.
@@ -804,7 +822,7 @@ runLiveBoot_ (App a) =
                                         renderUiRoot_ (v model)
 
                                     ViewHtml v ->
-                                        v model
+                                        renderHtmlRoot_ (v model)
 
                                     ViewString v ->
                                         -- unreachable: guardTerminalView_ refuses a String view before Live renders
@@ -939,7 +957,7 @@ runSpaBoot_ (App a) =
                                 renderUiRoot_ (v model)
 
                             ViewHtml v ->
-                                v model
+                                renderHtmlRoot_ (v model)
 
                             ViewString v ->
                                 -- unreachable: guardTerminalView_ refuses a String view before Spa renders
@@ -1126,7 +1144,7 @@ runWebviewBoot_ (App a) =
                             renderUiRoot_ (v model)
 
                         ViewHtml v ->
-                            v model
+                            renderHtmlRoot_ (v model)
 
                         ViewString v ->
                             -- unreachable: guardTerminalView_ refuses a String view before the webview renders
