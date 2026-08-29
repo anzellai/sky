@@ -55,6 +55,10 @@ fn ui_layout_reject_entry() -> PathBuf {
         .join("tests/fixtures/std-app-ui-layout-reject/src/Main.sky")
 }
 
+fn ui_layout_any_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-ui-layout-any")
+}
+
 /// REGRESSION GATE for the silent "compiles but renders an empty page" break:
 /// an `App.app` (Std.Ui family, whose `view` must return `Element msg`) whose
 /// view ROOTS at `Ui.layout` / `Ui.layoutWith`. Those produce a `Std.Html.Html`
@@ -97,6 +101,117 @@ fn app_ui_view_rooted_at_layout_is_rejected_not_silently_emptied() {
         combined.contains("Element") && combined.contains("Html"),
         "expected an Element-vs-Html view type mismatch at the App.app boundary:\n{combined}"
     );
+}
+
+/// REGRESSION GATE for the confirmed "compiles but renders a SILENTLY EMPTY
+/// page" soundness break that the reject fixture above does NOT catch.
+///
+/// The reject fixture pins the CONCRETE-msg shape (an event handler pins `msg`,
+/// so `Ui.layout`'s `Html msg` collides with the `Element msg` view slot and is
+/// rejected at type-check). THIS fixture pins the shape that escapes that gate:
+/// the view is annotated `Model -> any` AND `msg` is left polymorphic (no
+/// handler). `any` + polymorphic `msg` lets `Html a` unify with `Element msg`,
+/// so `sky check` (and `go build`) accept it — and because `Std.Ui.Element` and
+/// `Std.Html.Html` are BOTH the `rt.SkyADT` alias, the runtime `rt.Coerce` at
+/// the config boundary is a no-op: the raw `Html` document reached the runner
+/// unchanged, `Ui.layout` re-wrapped it, and Html's Tag-0 `HElement` was read as
+/// Element's Tag-0 `Empty` → a blank page (`curl` body carried the root `<div>`
+/// only, zero `count=`).
+///
+/// The fix (`Std_App_htmlDocOrDefault`, runtime-go/rt/std_app_view.go) routes on
+/// the runtime constructor NAME, making the escape HARMLESS — the document
+/// renders. So this gate BUILDS + RUNS the app and asserts the served HTML
+/// carries the view's `count=` content. PROVEN both directions: reverting the
+/// fix (renderer back to `Ui.layout [] (v model)`) rebuilds a binary whose `GET
+/// /` body has zero `count=` (gate RED); with the fix the body contains `count=`
+/// (gate GREEN). Needs a Go toolchain to build + run, so it gates via
+/// `live_gate` (loud skip, never silent).
+#[test]
+fn app_ui_view_annotated_any_rooted_at_layout_renders_not_silently_empty() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
+    let dir = copy_fixture_to_temp(ui_layout_any_fixture_dir(), "uilayoutany");
+
+    // ── Compile leg: this shape type-checks + go-builds (that is the whole
+    // point — it slips past the type-level reject gate above). ──
+    let build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky build on the ui-layout-any fixture");
+    assert!(
+        build.status.success(),
+        "the `view : Model -> any` + Ui.layout + polymorphic-msg app must still \
+         build (it is accepted by design; the fix makes it RENDER, not reject):\n\
+         --- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr),
+    );
+
+    // ── Runtime leg: run the web binary and assert the served body is NOT the
+    // empty root — it must carry the view's `count=` text. ──
+    let port = 8479u16;
+    let app_bin = dir.join(".skyapp").join("web").join("sky-out").join("app");
+    assert!(
+        app_bin.exists(),
+        "expected the web app binary at {}",
+        app_bin.display()
+    );
+    let log_path = dir.join("server.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&dir)
+        .env("SKY_LIVE_PORT", port.to_string())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .expect("spawn compiled ui-layout-any app");
+
+    let ready = wait_for_listening(&log_path, port, 60);
+    if !ready {
+        let _ = child.kill();
+        let mut buf = String::new();
+        use std::io::Read as _;
+        let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut buf));
+        panic!("app never reported listening on :{port}\nlog:\n{buf}");
+    }
+
+    let body = curl_body(port, "/");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let body = body.expect("GET / should return a body");
+    assert!(
+        body.contains("count="),
+        "the `-> any` + Ui.layout view must render its content, not a blank page \
+         — expected `count=` in the served HTML but the body was:\n{body}"
+    );
+}
+
+fn wait_for_listening(log_path: &std::path::Path, port: u16, tries: u32) -> bool {
+    use std::io::Read as _;
+    let needle = format!("Sky.Live listening on :{port}");
+    for _ in 0..tries {
+        if let Ok(mut f) = std::fs::File::open(log_path) {
+            let mut buf = String::new();
+            if f.read_to_string(&mut buf).is_ok() && buf.contains(&needle) {
+                return true;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    false
+}
+
+// Full response BODY of `GET http://127.0.0.1:<port><path>`.
+fn curl_body(port: u16, path: &str) -> Option<String> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let out = Command::new("curl").args(["-s", &url]).output().ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 /// Copy a fixture to a fresh temp dir so per-target derived build trees

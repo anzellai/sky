@@ -84,6 +84,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
+import Sky.Ffi as Ffi
 import Std.Cli as Cli
 import Std.Cmd as Cmd
 import Std.Html as Html exposing (Html)
@@ -276,6 +277,34 @@ type ViewImpl model msg
     = ViewUi (model -> Element msg)
     | ViewHtml (model -> Html msg)
     | ViewString (model -> String)
+
+
+-- | Render a `ViewUi` value to a page-tall Html document for the web-family
+-- backends (Live/Spa/Webview).
+--
+-- The intended shape is `Ui.layout [] el` — wrap the `Element` in a document.
+-- But a user can annotate their view `model -> any` and root it at `Ui.layout`
+-- themselves, returning a full `Html` DOCUMENT where an `Element` is expected.
+-- `any` + a polymorphic `msg` lets `Html a` unify with `Element msg`, so
+-- `sky check` (and `go build`) accept it. Because `Element` and `Html` share
+-- ONE Go representation (`rt.SkyADT`), the erasure-boundary `rt.Coerce` is a
+-- no-op and the raw `Html` document reaches this point unchanged — then
+-- `Ui.layout` re-wraps it, and since Html's `HElement` and Element's `Empty`
+-- both lower to Tag 0, the whole document renders as an empty Element (a
+-- SILENTLY BLANK page). See `runtime-go/rt/std_app_view.go` for the mechanism.
+--
+-- [`htmlDocOrDefault_`] discriminates on the runtime constructor NAME (unique
+-- across the two ADTs even though their Tags collide): an already-Html document
+-- is returned as-is; a genuine `Element` falls through to `Ui.layout [] el` —
+-- the behaviour that has always been correct for well-typed views.
+renderUiRoot_ : Element msg -> Html.Html msg
+renderUiRoot_ el =
+    htmlDocOrDefault_ el (Ui.layout [] el)
+
+
+htmlDocOrDefault_ : Element msg -> Html.Html msg -> Html.Html msg
+htmlDocOrDefault_ =
+    Ffi.kernel "Std_App_htmlDocOrDefault"
 
 -- | An app described once, runnable on any backend. Built by [`app`] and
 -- refined by the `with…` builders; consumed by a `run<Backend>` runner.
@@ -772,7 +801,7 @@ runLiveBoot_ (App a) =
                                 case a.viewImpl of
 
                                     ViewUi v ->
-                                        Ui.layout [] (v model)
+                                        renderUiRoot_ (v model)
 
                                     ViewHtml v ->
                                         v model
@@ -907,7 +936,7 @@ runSpaBoot_ (App a) =
                         case a.viewImpl of
 
                             ViewUi v ->
-                                Ui.layout [] (v model)
+                                renderUiRoot_ (v model)
 
                             ViewHtml v ->
                                 v model
@@ -1094,7 +1123,7 @@ runWebviewBoot_ (App a) =
                     case a.viewImpl of
 
                         ViewUi v ->
-                            Ui.layout [] (v model)
+                            renderUiRoot_ (v model)
 
                         ViewHtml v ->
                             v model

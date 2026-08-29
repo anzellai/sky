@@ -1,0 +1,64 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+
+
+type alias Model =
+    { n : Int }
+
+
+type Msg
+    = Bump
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+-- The soundness hole this fixture pins: the view is annotated `Model -> any`
+-- AND roots at `Ui.layout` (returning an `Html` DOCUMENT), AND `msg` is left
+-- polymorphic (no event handler pins it). The `any` + polymorphic `msg` lets
+-- `Html a` unify with `App.app`'s `Element msg` view slot, so `sky check`
+-- (which includes `go build`) accepts it. `Element` and `Html` share ONE Go
+-- representation (`rt.SkyADT`), so the runtime `rt.Coerce` is a no-op and the
+-- raw `Html` document reached the runner unchanged — where `Ui.layout` re-wrap
+-- read Html's Tag-0 `HElement` as Element's Tag-0 `Empty` and rendered a
+-- SILENTLY BLANK page.
+--
+-- The fix (`Std_App_htmlDocOrDefault`, runtime-go/rt/std_app_view.go) routes on
+-- the runtime constructor NAME so the escape is HARMLESS: the document renders
+-- correctly. This fixture builds + runs; the flow test asserts the body carries
+-- the `count=` content instead of an empty root.
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column []
+            [ Ui.text ("count=" ++ String.fromInt model.n) ]
+        )
+
+
+appDef =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound ()
+
+
+main =
+    App.run appDef
