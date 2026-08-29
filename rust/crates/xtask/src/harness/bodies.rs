@@ -573,18 +573,22 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// * **+25** — five surfaces the ledger listed as dark-but-assertable
 ///   (`Sky.Core.Bytes`, `Sky.Core.Jwt`, `Std.Codec`, `Std.Markdown`,
 ///   `Std.Compression`) × their five edge classes.
-pub const CORPUS_EXPECTED: u64 = 481;
+pub const CORPUS_EXPECTED: u64 = 483;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
 ///
-/// **335 since the Family-S shape close** (was 296): all 40 new cases carry a
-/// generator-constructed value, so all 40 are built and run. Measured cost of
-/// the addition on this host: 40 × 1.39 s/case at 4 workers ≈ 56 s of the
-/// `corpus` gate's wall clock (see `xtask corpus-bench`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 335;
+/// **337 since the Sky.Core.Secret Family-S surface** (was 335 since the
+/// Family-S shape close, itself up from 296): the two `stdlib_edge/*-secret`
+/// cases each carry a generator-constructed value, so both are built and run.
+/// The count is enforced ONLY by the T2 `corpus` gate, which runs in the
+/// nightly and (as of this cycle) the release gate — never in the per-commit
+/// T1 tier — so a behavioural-case addition that forgets this const surfaces a
+/// tier late. Both `CORPUS_EXPECTED` (all cases) and this (the built-and-run
+/// subset) move by the same +2 when a behavioural case lands.
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 337;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -3336,4 +3340,48 @@ pub fn jobs_complete_failure_is_reported(ctx: &GateCtx) -> GateOutcome {
         "TestJobsCompleteFailureIsReported",
         JOBS_COMPLETE_FAILURE_EXPECTED,
     )
+}
+
+#[cfg(test)]
+mod corpus_count_sync {
+    //! Keep the declared corpus assertion counts in lockstep with what the
+    //! generator actually produces, ENFORCED PER-COMMIT.
+    //!
+    //! Why this exists: the counts are otherwise checked only by the T2 `corpus`
+    //! gate and the T1 `corpus-manifest` gate running THROUGH THE HARNESS — and
+    //! the harness runs `--tier t2` only in the nightly, `--tier t1` only in the
+    //! release gate. Neither runs on a normal push. So on 2026-08-29 the two
+    //! `stdlib_edge/*-secret` cases (added 0f53a7dc) moved the corpus 481 → 483 /
+    //! behavioural 335 → 337 without the consts moving, per-commit CI stayed
+    //! green, and the drift did not surface until that night's `corpus FAIL
+    //! 337/335`. These are plain `cargo test` unit tests: `test-rest` runs
+    //! `cargo test --workspace` on every push, so the SAME drift now fails the
+    //! push that introduces it, a tier earlier and free of any corpus build.
+
+    #[test]
+    fn corpus_expected_matches_the_generator() {
+        let n = crate::corpus::all_cases().len() as u64;
+        assert_eq!(
+            super::CORPUS_EXPECTED, n,
+            "CORPUS_EXPECTED = {} but the generator produces {n} case(s). A corpus \
+             case was added or removed without updating the const. Set \
+             CORPUS_EXPECTED = {n} in harness/bodies.rs (this is what the release \
+             gate's `harness --tier t1` would otherwise reject a tier later).",
+            super::CORPUS_EXPECTED
+        );
+    }
+
+    #[test]
+    fn corpus_behavioural_expected_matches_the_generator() {
+        let n = crate::corpus::behavioural_cases().len() as u64;
+        assert_eq!(
+            super::CORPUS_BEHAVIOURAL_EXPECTED, n,
+            "CORPUS_BEHAVIOURAL_EXPECTED = {} but the generator produces {n} \
+             built-and-run case(s). A behavioural corpus case was added or removed \
+             without updating the const — the exact drift the nightly T2 `corpus` \
+             gate caught late. Set CORPUS_BEHAVIOURAL_EXPECTED = {n} in \
+             harness/bodies.rs.",
+            super::CORPUS_BEHAVIOURAL_EXPECTED
+        );
+    }
 }
