@@ -1495,9 +1495,30 @@ fn collect_types(
                     });
                 }
                 ast::Decl::Alias(a) => {
-                    if let (Some(tname), Some(ast::Type::Record(_))) =
+                    if let (Some(tname), Some(ast::Type::Record(rec))) =
                         (a.name().map(|t| t.text().to_string()), a.ty())
                     {
+                        // An OPEN-ROW alias (`type alias Named a = { a | name :
+                        // String }`) has NO sound closed Go representation: its row
+                        // variable stands for "and any other fields". Registering it
+                        // as a one-field `_R` struct makes every use coerce the
+                        // caller's WIDER record DOWN to that struct, silently
+                        // dropping the row-carried fields (`{name,age,city}` → only
+                        // `name` survives; `age`/`city` re-widen to zero values — a
+                        // compiles-but-lies soundness break). Skip registration: a
+                        // named open-row alias then falls to `app_to_go`'s
+                        // unknown-nominal → `GoTy::Any` branch and reflects over its
+                        // fields, exactly like the INLINE `{ ρ | … }` open row that
+                        // is already handled correctly. A CLOSED record alias
+                        // (`type alias Person = { name, age }`, no RowVar) keeps its
+                        // concrete struct — its uses are byte-identical to before.
+                        let is_open_row = rec
+                            .syntax()
+                            .children()
+                            .any(|c| c.kind() == syntax::SyntaxKind::RowVar);
+                        if is_open_row {
+                            continue;
+                        }
                         let fields: Vec<(String, Ty)> = ty::record_alias_fields(a.syntax())
                             .into_iter()
                             .map(|(n, t)| (n, world.expand_ty(&t)))
@@ -4545,6 +4566,27 @@ impl<'a> Ctx<'a> {
                 }
             })
             .collect();
+        // An `any`-typed callee that we are APPLYING arguments to MUST be a
+        // function at run time — but Go rejects `<any>(args)` ("cannot call …
+        // any is not a function"), a `sky check`-passes / `go build`-fails
+        // soundness break. This is the INLINE application of a polymorphic-return
+        // call: `(id2 fn) x` where `id2 : a -> a` lowered to `func(any) any` and
+        // its `any` result is applied directly. The LET-bound form defuses it for
+        // free — `let f = id2 fn in f x` coerces `f` to the concrete func type at
+        // its bind site (`coerce_if_needed`) — so do the same here, targeting
+        // `func(<arg tys>) ret`. Only fires for an `any` callee (a Def callee with
+        // a known arity already took the partial/over-apply branches below, and a
+        // concrete-func value is left untouched), so non-broken calls are
+        // byte-identical.
+        let c = if matches!(c.ty, GoTy::Any) && !largs.is_empty() {
+            let fn_ty = GoTy::Func(
+                largs.iter().map(|a| a.ty.clone()).collect(),
+                Box::new(ret_goty.clone()),
+            );
+            self.coerce_if_needed(c, &fn_ty)
+        } else {
+            c
+        };
         // Partial application: a def of arity N called with M < N args must
         // yield a closure over the remaining params (Sky curries; Go does not).
         // `Result.andThen (validateTime now)` → `func(_p0 any) R { return

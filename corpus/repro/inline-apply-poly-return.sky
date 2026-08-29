@@ -1,0 +1,26 @@
+-- PINNED REPRO — v1 soundness audit 2026-08-29 (compiles but go-build fails)
+--
+-- The INLINE application of a polymorphic-return call — `(id2 fn) x` where
+-- `id2 : a -> a` lowered to `func(any) any` — omitted the func-slot coercion on
+-- the `any` result, so Go saw `<any>(41)` and rejected it ("cannot call ... any
+-- is not a function"). `sky check` accepted it. The LET-bound form
+-- (`let f = id2 fn in f x`) always worked (coerced at the bind site) — only the
+-- inline-application path missed the coercion.
+--
+-- coordinate: erasure=poly_return position=inline_apply
+-- expect: accept, stdout "42"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+id2 : a -> a
+id2 x =
+    x
+
+
+main =
+    println (String.fromInt ((id2 (\n -> n + 1)) 41))

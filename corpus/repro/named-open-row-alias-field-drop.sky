@@ -1,0 +1,55 @@
+-- PINNED REPRO — v1 soundness audit 2026-08-29 (silent data corruption)
+--
+-- A function whose signature uses an OPEN-ROW ALIAS in argument+result
+-- position silently dropped the caller's row-carried fields. `sky check`
+-- passed, `go build` was clean, it RAN — and returned WRONG values (the worst
+-- class: compiles, runs, lies). Root cause: `type alias Named a = { a | name }`
+-- was registered + emitted as a CLOSED one-field Go struct, so the wider
+-- caller record was coerced DOWN to it (age/city dropped, re-widened to zero).
+-- The INLINE open row `{ a | name }` was always fine — only the NAMED alias
+-- broke. Covers BOTH positions: passthrough `tag` and update `rename`.
+--
+-- coordinate: position=bare annotation=annotated row=open_alias carrier=direct
+-- expect: accept, stdout "5/Rome/new/5"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Named a =
+    { a | name : String }
+
+
+tag : Named a -> Named a
+tag r =
+    r
+
+
+rename : Named a -> Named a
+rename r =
+    { r | name = "new" }
+
+
+main =
+    let
+        base =
+            { name = "old", age = 5, city = "Rome" }
+
+        t =
+            tag base
+
+        u =
+            rename base
+    in
+    println
+        (String.fromInt t.age
+            ++ "/"
+            ++ t.city
+            ++ "/"
+            ++ u.name
+            ++ "/"
+            ++ String.fromInt u.age
+        )

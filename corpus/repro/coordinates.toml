@@ -95,3 +95,21 @@ coordinate    = { declaration = "union", modules = "two", reference = "fully_qua
 expect        = "reject"
 expect_stdout = ""
 summary       = "FIXED 2026-08-12: two same-named unions in two modules were ONE type to the checker. `ty::sig::rewrite_alias_refs` module-qualified `DefKind::TypeAlias` only (the #164 fix), so every union collapsed to its bare final segment and `unify.rs` compared `Ty::App` names as plain strings — while `lower` emitted two DISTINCT Go interfaces and bridged them with `rt.Coerce`, which SUCCEEDS because both interfaces carry the same method set. `sky check` clean, `go build` clean, `sky.Unreachable(case)` at runtime. Now rejected [E2001] `type mismatch: Conflate.Beta.Shape vs Conflate.Alpha.Shape`, because union identity is module-qualified through `ty::nominal`. A directory rather than one file, because two modules ARE the reproduction — and every reference here is fully qualified, so no use-site ambiguity rule ([E1012] in any namespace) could reach it."
+
+[[repro]]
+file          = "named-open-row-alias-field-drop.sky"
+issue         = "v1-soundness-audit-2026-08-29"
+stratum       = "record_update"
+coordinate    = { position = "bare", annotation = "annotated", row = "open_alias", carrier = "direct" }
+expect        = "accept"
+expect_stdout = "5/Rome/new/5"
+summary       = "open-row alias (Named a = {a|name}) in arg+result position was emitted as a closed struct, silently dropping the row-carried fields (passthrough AND update)"
+
+[[repro]]
+file          = "inline-apply-poly-return.sky"
+issue         = "v1-soundness-audit-2026-08-29"
+stratum       = "erasure"
+coordinate    = { erasure = "poly_return", position = "inline_apply" }
+expect        = "accept"
+expect_stdout = "42"
+summary       = "inline application of a polymorphic-return call ((id2 fn) x) omitted the func-slot coercion on the any result; sky check passed, go build failed"
