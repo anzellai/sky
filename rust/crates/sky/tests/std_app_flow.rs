@@ -130,6 +130,7 @@ fn app_ui_view_rooted_at_layout_is_rejected_not_silently_emptied() {
 /// /` body has zero `count=` (gate RED); with the fix the body contains `count=`
 /// (gate GREEN). Needs a Go toolchain to build + run, so it gates via
 /// `live_gate` (loud skip, never silent).
+#[ignore = "heavy build+run of a web app; runs in the erasure-fuzz CI job (both are erasure-boundary soundness checks) so test-sky stays off the T1 critical path"]
 #[test]
 fn app_ui_view_annotated_any_rooted_at_layout_renders_not_silently_empty() {
     if !required(Need::Go, have_go()) {
@@ -204,6 +205,7 @@ fn app_ui_view_annotated_any_rooted_at_layout_renders_not_silently_empty() {
 /// silently blank. The fix routes the ViewHtml root through `renderHtmlRoot_`,
 /// wrapping a crossed-in Element in `Ui.layout []`. Reverting that route makes
 /// this gate RED (served body is the empty `sky-root`, no `webcount=`).
+#[ignore = "heavy build+run of a web app; runs in the erasure-fuzz CI job (both are erasure-boundary soundness checks) so test-sky stays off the T1 critical path"]
 #[test]
 fn app_web_view_annotated_any_returning_element_renders_not_silently_empty() {
     if !required(Need::Go, have_go()) {

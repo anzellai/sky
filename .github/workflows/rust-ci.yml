@@ -667,6 +667,14 @@ jobs:
       - run: cargo build --workspace --locked
       - name: Gate — erasure-fuzz (type-check ⟹ go build ⟹ no panic ⟹ correct value)
         run: cargo run -q -p xtask -- erasure-fuzz
+      # The Std.App `-> any` view render gates (`std_app_flow.rs`) are the SAME
+      # erasure-boundary class — a Std.Ui Element / Std.Html document crossing an
+      # `any`-erased view slot renders a silently blank page. They build AND run a
+      # web app (~40s), so they carry `#[ignore]` to stay OFF test-sky's T1
+      # critical path and run HERE, a setup-independent job with headroom. `test-sky`
+      # skips them (ignored); this is the one place they execute — keep it.
+      - name: Gate — Std.App `-> any` view render (erasure-boundary, ignored on test-sky)
+        run: cargo test -p sky --test std_app_flow --locked -- --ignored --exact app_ui_view_annotated_any_rooted_at_layout_renders_not_silently_empty app_web_view_annotated_any_returning_element_renders_not_silently_empty
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
