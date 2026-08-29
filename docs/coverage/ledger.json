@@ -14201,10 +14201,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 16,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 59,
-      "refs_qualified": 55,
+      "refs_generous": 60,
+      "refs_qualified": 56,
       "role": "Layer2",
-      "sky_files": 16,
+      "sky_files": 17,
       "sky_toml_sections": []
     },
     {
