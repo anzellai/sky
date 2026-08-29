@@ -714,3 +714,133 @@ fn the_census_and_ratchet_gates_run_on_a_pull_request() {
         missing.join("\n  ")
     );
 }
+
+/// The release gate must run the FULL tier suite — every tier, nothing deferred
+/// to the nightly. This makes CLAUDE.md §0.2.1 (INVIOLABLE) structural.
+///
+/// # Why this exists
+///
+/// The per-commit `ci-green` fan-in runs a deliberately LIGHT tier so commits
+/// stay fast, and the heaviest gates — the T2 `behaviour-corpus` (which `go
+/// build`s AND RUNS every combinatorial fixture), the T3 Postgres app tier, the
+/// falsifier proofs, and the full `example-sweep` (build AND run every example,
+/// not just `sky check`) — ran ONLY in the nightly. That split is correct for a
+/// commit and WRONG for a release: a release is the point where *everything we
+/// know how to test must be green* is the gate.
+///
+/// The lesson (2026-08-20): a `record_update` typed-emit codegen regression
+/// shipped in v0.21.0. It type-checked, all examples built, both downstream apps
+/// deployed — and the nightly T2 behaviour-corpus caught it the MORNING AFTER
+/// the release, one tier too late, after users could already `sky upgrade`. A
+/// gate we own found a defect a gate we own should have blocked at the tag.
+///
+/// # What this asserts
+///
+/// The `gate` job in `release.yml` — the job `release: needs: [build, gate]`
+/// blocks publication on — has `run:` bodies that invoke, at minimum: the T2
+/// tier, the T3 tier, the falsifier verification, and a full `example-sweep.sh`
+/// that is NOT `--build-only` (it must RUN each example, not just compile it).
+/// T1 and T4 already had explicit tests / were present; T2/T3/falsifiers/sweep
+/// are the tiers that were nightly-only and are the point of §0.2.1.
+///
+/// Parsed, never grepped as raw text — a comment mentioning `--tier t2` must not
+/// vouch for an invocation that is not there, which is exactly how the sibling
+/// tier-invocation test was defeated once already.
+#[test]
+fn the_release_gate_runs_the_full_tier_suite() {
+    let path = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/workflows/release.yml"
+    ));
+    let text = std::fs::read_to_string(&path).expect("read release.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("release.yml parses");
+    let jobs = doc
+        .get("jobs")
+        .and_then(|j| j.as_mapping())
+        .expect("`jobs` mapping");
+
+    let gate = jobs
+        .get(serde_yaml::Value::from("gate"))
+        .expect("release.yml has a `gate` job");
+    let steps = gate
+        .get("steps")
+        .and_then(|s| s.as_sequence())
+        .expect("`gate` job has steps");
+
+    // EXECUTABLE content only — `run:` bodies, never step names or comments.
+    let mut haystack = String::new();
+    for step in steps {
+        if let Some(run) = step.get("run").and_then(|r| r.as_str()) {
+            haystack.push_str(run);
+            haystack.push('\n');
+        }
+    }
+    assert!(
+        haystack.contains("xtask"),
+        "no `xtask` invocation found in any `gate` step `run:` body — the parse \
+         is broken, not the repo"
+    );
+
+    // Each required invocation, with why it is load-bearing at a release.
+    let required: &[(&str, &str)] = &[
+        (
+            "--tier t2",
+            "the T2 behaviour-corpus — `go build`s AND RUNS every combinatorial \
+             fixture. It caught the v0.21.0 `record_update` regression a tier too \
+             late because it was nightly-only",
+        ),
+        (
+            "--tier t3",
+            "the T3 Layer-2 app tier (the ONLY Postgres app coverage). Needs the \
+             `services: postgres` container declared on the gate job",
+        ),
+        (
+            "--verify-falsifiers",
+            "proves each T1 gate's declared mutation STILL reddens it — the proofs \
+             `--require-proofs` leans on. Ran only in the nightly",
+        ),
+    ];
+    let missing: Vec<String> = required
+        .iter()
+        .filter(|(inv, _)| !haystack.contains(inv))
+        .map(|(inv, why)| format!("`{inv}` — {why}"))
+        .collect();
+
+    // The example-sweep must build AND run. A `--build-only` invocation compiles
+    // every example but never executes one, so it would NOT have caught the
+    // v0.21.0 regression (which type-checked and built); it must be absent.
+    let sweep_present = haystack.contains("example-sweep.sh");
+    let sweep_is_build_only = haystack.contains("example-sweep.sh --build-only")
+        || haystack.contains("example-sweep.sh")
+            && haystack
+                .lines()
+                .filter(|l| l.contains("example-sweep.sh"))
+                .any(|l| l.contains("--build-only"));
+
+    let mut problems = missing;
+    if !sweep_present {
+        problems.push(
+            "`example-sweep.sh` — the full clean-slate sweep that builds AND RUNS \
+             every example incl. FFI/Std.Db. Ran only in the nightly"
+                .to_string(),
+        );
+    } else if sweep_is_build_only {
+        problems.push(
+            "`example-sweep.sh` is invoked with `--build-only`, which only \
+             compiles — it must RUN each example (drop the flag), or a regression \
+             that builds but panics at runtime ships"
+                .to_string(),
+        );
+    }
+
+    assert!(
+        problems.is_empty(),
+        "release.yml's `gate` job does NOT run the full tier suite. CLAUDE.md \
+         §0.2.1 (INVIOLABLE) requires every tier at a release — nothing deferred \
+         to the nightly, which is exactly the gap that let the v0.21.0 \
+         `record_update` codegen regression ship. Missing:\n  {}\n\n\
+         Add each to a `run:` step of the `gate` job (T3 also needs the \
+         `services: postgres` container). Mirror nightly-sweep.yml's invocations.",
+        problems.join("\n  ")
+    );
+}

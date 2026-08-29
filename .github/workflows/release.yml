@@ -198,7 +198,36 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 90 → 180. The light subset fit in 90; the FULL tier suite does not.
+    # §0.2.1 (INVIOLABLE) requires every tier at a release, and the heavy ones
+    # dominate: the T2 behaviour-corpus alone is ~25 min on a CI runner
+    # (nightly-sweep.yml:228 measured it >25 min on its first run), T3 adds the
+    # Postgres app builds, and the full clean-slate example-sweep — build AND
+    # run every example incl. the FFI/Std.Db ones — is ~60 min in the nightly
+    # (nightly-sweep.yml:44-48). Sized to hold all of them, not to a single tier.
+    timeout-minutes: 180
+    # T3 (harness --tier t3) drives the Layer-2 app gates, two of which
+    # (`apps-ledger-postgres`, `apps-dispatch-postgres`) need a REAL PostgreSQL.
+    # This service mirrors nightly-sweep.yml's `harness-t3` job VERBATIM (same
+    # image, credentials, health-check) so the DSN the gates read is the one that
+    # job already proves works. It is ADDITIONAL to the apt-installed
+    # postgresql-16 below: that one backs the shared-cluster live tests via
+    # SKY_POSTGRES_BIN (each spins up its own cluster in a temp dir); this
+    # container backs the T3 DSN on localhost:5432.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -299,6 +328,29 @@ jobs:
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs
 
+      # T2 — the behavioural corpus. This is the tier that caught the v0.21.0
+      # `record_update` codegen regression the MORNING AFTER the release, because
+      # it ran ONLY in the nightly (nightly-sweep.yml's `behaviour-corpus` job).
+      # §0.2.1 exists precisely because a gate we own found a defect one tier too
+      # late. It `go build`s AND RUNS every combinatorial fixture. Nightly runs it
+      # as bare `--tier t2`; `--require-proofs` is added here to match the rigor
+      # of the T1 line above (a release must not ship behind a lapsed proof).
+      - name: Gate harness (T2 — behaviour-corpus, build+run every fixture) with proof requirement
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --require-proofs
+
+      # T3 — the Layer-2 app tier. `apps-ledger-postgres` / `apps-dispatch-postgres`
+      # read the DSN below (the service container declared at job level); the
+      # values mirror nightly-sweep.yml's `harness-t3` job VERBATIM. Set on the
+      # STEP, not the job, so the earlier workspace/live tests — which stand up
+      # their OWN cluster via SKY_POSTGRES_BIN — are not handed this DSN.
+      - name: Gate harness (T3 — Layer-2 app tier on Postgres) with proof requirement
+        working-directory: rust
+        env:
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+          DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
+        run: cargo run --release --locked -q -p xtask -- harness --tier t3 --require-proofs
+
       # T4 is the PRE-RELEASE tier — the one whose whole purpose is to run
       # exactly here — and it was invoked by nothing at all. Gate selection is
       # exact tier equality (`harness/mod.rs`, `g.tier == o.tier`), so the
@@ -314,16 +366,43 @@ jobs:
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t4
 
-      # Denominator + ledger ratchets. These do not test the compiler; they
-      # assert that the coverage claims shipped alongside it are still true and
-      # still current. A release is exactly when a stale ledger does the most
-      # damage.
+      # Falsifier verification — the deepest check in the repo. `--require-proofs`
+      # on the tier lines above DEMOTES a PASS whose proof lapsed, but only this
+      # run ESTABLISHES that a gate's declared mutation still reddens it. It ran
+      # ONLY in the nightly (nightly-sweep.yml's `falsifier-verification` job).
+      # Scoped to `--tier t1` exactly as nightly does: the merge-blocking tier
+      # whose proofs the per-push safety net leans on. It rewrites
+      # falsifier-proofs.json in the workspace; this job does not commit it.
+      - name: Falsifier verification (T1 mutations still bite)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --tier t1
+
+      # The FULL clean-slate example sweep — build AND run every example from a
+      # wiped slate, INCLUDING the FFI / Std.Db / real-SDK examples (skyshop's
+      # 76k-symbol cold `sky install`, Fyne, embedded Postgres). This is the
+      # other gate §0.2.1 names by hand: it ran ONLY in the nightly
+      # (nightly-sweep.yml's `example-sweep` job). No `--build-only` — the sweep
+      # must RUN each binary, not just compile it. The compiler at `sky-out/sky`
+      # was installed by the `bash scripts/build.sh` step above (the sweep
+      # resolves that path and refuses a stale one via require_fresh_compiler),
+      # and it does the per-example FFI `sky install` itself.
+      - name: Full example sweep (clean-slate build AND run of every example, incl. FFI/Std.Db)
+        working-directory: .
+        run: scripts/example-sweep.sh
+
+      # Denominator + ledger + config-migration ratchets. These do not test the
+      # compiler; they assert that the coverage + config-migration claims shipped
+      # alongside it are still true and still current. A release is exactly when a
+      # stale ledger does the most damage. `config-migration --check` is the
+      # legacy→withX migration census (§0.2.1 step 2); it runs in no per-commit
+      # job, so a release is the only place it is gated.
       - name: Coverage ratchets
         working-directory: rust
         run: |
           set -euo pipefail
           cargo run --release --locked -q -p xtask -- denominators --check
           cargo run --release --locked -q -p xtask -- coverage-ledger --check
+          cargo run --release --locked -q -p xtask -- config-migration --check
 
   # ────────────────────────────────────────────────────────────────
   # Assemble release assets, generate checksums, publish GitHub Release.
