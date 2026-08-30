@@ -179,27 +179,43 @@ func TestLogPanicAndExit_NoOpWhenNoPanic(t *testing.T) {
 	LogPanicAndExit()
 }
 
-// TestIntDivPanic_StillPanics confirms rt.IntDiv still panics on
-// div-by-zero (we did NOT silently swallow it — the top-level
-// recover is what catches it, not rt.IntDiv itself).
-func TestIntDivPanic_StillPanics(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("rt.IntDiv(1, 0) should panic, did not")
-		}
-		s, ok := r.(string)
-		if !ok {
-			t.Fatalf("rt.IntDiv panic value: got %T, want string", r)
-		}
-		if !strings.Contains(s, "integer division by zero") {
-			t.Errorf("rt.IntDiv panic msg: %q", s)
-		}
-		// The panic message classifies cleanly.
-		kind, _ := classifyPanic(s)
-		if kind != "DivisionByZero" {
-			t.Errorf("classifyPanic round-trip: got %q, want DivisionByZero", kind)
-		}
+// TestIntDivByZero_IsTotal confirms integer division / remainder by zero is
+// TOTAL — it returns 0 rather than panicking, matching Elm's `//` (`5 // 0 == 0`)
+// and Sky's own `modBy 0` (also 0). A well-typed `n // 0` must not crash: integer
+// division has a defined, representable total answer, so "if it compiles it
+// works" requires 0, not a DivisionByZero panic. (Float `/` — rt.Div — stays a
+// loud error because its total answer is ±Infinity, which Sky has no shape for.)
+func TestIntDivByZero_IsTotal(t *testing.T) {
+	if got := IntDiv(1, 0); AsInt(got) != 0 {
+		t.Errorf("IntDiv(1, 0) = %v, want 0 (total, like modBy)", got)
+	}
+	if got := IntDiv(-7, 0); AsInt(got) != 0 {
+		t.Errorf("IntDiv(-7, 0) = %v, want 0", got)
+	}
+	if got := Rem(9, 0); AsInt(got) != 0 {
+		t.Errorf("Rem(9, 0) = %v, want 0 (total, like modBy)", got)
+	}
+	// Non-zero divisors still compute normally.
+	if got := IntDiv(7, 2); AsInt(got) != 3 {
+		t.Errorf("IntDiv(7, 2) = %v, want 3", got)
+	}
+	if got := Rem(7, 3); AsInt(got) != 1 {
+		t.Errorf("Rem(7, 3) = %v, want 1", got)
+	}
+	// Float `/` by zero remains a loud, cleanly-classified error (documented
+	// floor: Sky has no ±Infinity shape).
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("rt.Div(1, 0) should still panic (no float Infinity shape)")
+			}
+			if s, ok := r.(string); ok {
+				if kind, _ := classifyPanic(s); kind != "DivisionByZero" {
+					t.Errorf("rt.Div panic classify: got %q, want DivisionByZero", kind)
+				}
+			}
+		}()
+		_ = Div(1, 0)
 	}()
-	_ = IntDiv(1, 0)
 }

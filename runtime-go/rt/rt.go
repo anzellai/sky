@@ -2768,24 +2768,28 @@ func Div(a, b any) any {
 }
 
 func IntDiv(a, b any) any {
-	// REACHABLE-FROM-SKY: `n // 0` from valid Sky source triggers
-	// this panic. The top-level recover in func main() (Cycle 6 PC,
-	// v0.15.43) catches it as `DivisionByZero` and emits a structured
-	// Error log + exit 1 — instead of dumping a Go stack. See
-	// runtime-go/rt/panic_recover.go + docs/v0.15.x-hardening/
-	// CYCLE-06-PC-panic-site-audit.md.
+	// TOTAL: `n // 0` from valid Sky source returns 0, matching Elm's `//`
+	// (`5 // 0 == 0`) and Sky's own `modBy 0` (which already returns 0). Integer
+	// division has a defined, representable total answer, so a well-typed program
+	// must not panic on it ("if it compiles it works"). This replaced a panic
+	// that the top-level recover classified as DivisionByZero — see
+	// runtime-go/rt/panic_recover_test.go::TestIntDivByZero_IsTotal. Float `/`
+	// (rt.Div) stays a loud error: its total answer is ±Infinity, which Sky has
+	// no shape for, so 0.0 would be a SILENT wrong value.
 	db := AsInt(b)
 	if db == 0 {
-		panic("rt.IntDiv: integer division by zero")
+		return 0
 	}
 	return AsInt(a) / db
 }
 
 func Rem(a, b any) any {
-	// REACHABLE-FROM-SKY: `n % 0` — same recover contract as IntDiv.
+	// TOTAL: `n % 0` returns 0, consistent with `IntDiv` above and `modBy 0`.
+	// The integer-remainder-by-zero case has a defined total answer, so it must
+	// not panic on well-typed code.
 	db := AsInt(b)
 	if db == 0 {
-		panic("rt.Rem: modulo by zero")
+		return 0
 	}
 	return AsInt(a) % db
 }
@@ -2854,6 +2858,24 @@ func skyADTActiveFields(v reflect.Value, tag int) []string {
 	return nil
 }
 
+// structHasUnexportedField reports whether a struct type has any unexported
+// field — the signal that it is a Go-native value (a kernel/FFI type such as a
+// shopspring decimal, time.Time, or big.Int) rather than a Sky ADT/record
+// (whose fields are all exported). deepEq uses it to route such values to
+// reflect.DeepEqual, since walking their fields via reflect.Value.Interface()
+// panics on the unexported ones.
+func structHasUnexportedField(t reflect.Type) bool {
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).PkgPath != "" { // a non-empty PkgPath marks an unexported field
+			return true
+		}
+	}
+	return false
+}
+
 func deepEq(a, b any) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -2909,6 +2931,19 @@ func deepEq(a, b any) bool {
 		}
 		return true
 	case reflect.Struct:
+		// A struct with UNEXPORTED fields is a Go-native value that reached Sky
+		// through a kernel — a shopspring `decimal.Decimal` (inside Money /
+		// Decimal), a `time.Time`, a `big.Int`. deepEq walks struct fields via
+		// `.Interface()`, which PANICS on an unexported field ("cannot return
+		// value obtained from unexported field"), so a well-typed `money1 ==
+		// money2` used to CRASH — the Money holds a Decimal whose internals are
+		// unexported. Defer such structs to `reflect.DeepEqual`, which compares
+		// unexported fields safely. Sky's own ADTs/records carry only EXPORTED
+		// fields (`Tag`/`SkyName`/`Fields`/`V0…`), so they never take this path
+		// and keep the Sky-aware structural logic below.
+		if structHasUnexportedField(ra.Type()) || structHasUnexportedField(rb.Type()) {
+			return reflect.DeepEqual(a, b)
+		}
 		// Audit P0-7: Sky's canonical ADT structs (SkyMaybe[T],
 		// SkyResult[E, A], SkyTuple2/3) carry the active discriminator
 		// in `Tag` plus payloads in named fields. Comparing

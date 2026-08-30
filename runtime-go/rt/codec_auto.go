@@ -627,6 +627,40 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 			}
 			return out, nil
 		}
+		// Dict k v ← JSON object. The declared type is `map[<key>]<value>`; the
+		// FIRST `]` closes the key, the rest is the value type. Threading BOTH
+		// declared types down is what lets a Dict VALUE that is itself a
+		// data-carrying ADT — `Dict String Money`, `Dict String Decimal`, a Dict
+		// of a user ADT — decode: without this arm the Dict fell to the reflect
+		// path (codecAutoDecodeVal), which sees every such value as the erased
+		// `rt.SkyADT` alias and cannot tell Money from Decimal from a user ADT,
+		// so it errored "cannot derive data-carrying ADT". List/Maybe already
+		// threaded their element type; Dict was the gap.
+		if inner, ok := strings.CutPrefix(declaredType, "map["); ok && gt.Kind() == reflect.Map {
+			close := strings.IndexByte(inner, ']')
+			if close < 0 {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: malformed Dict type %q", declaredType)
+			}
+			keyType := inner[:close]
+			valType := inner[close+1:]
+			m, isObj := raw.(map[string]any)
+			if !isObj {
+				return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for Dict, got %s", jsonValueKind(raw))
+			}
+			out := reflect.MakeMapWithSize(gt, len(m))
+			for k, v := range m {
+				kv, err := codecAutoDecodeTyped(gt.Key(), keyType, k, snake)
+				if err != nil {
+					return reflect.Value{}, err
+				}
+				vv, err := codecAutoDecodeTyped(gt.Elem(), valType, v, snake)
+				if err != nil {
+					return reflect.Value{}, err
+				}
+				out.SetMapIndex(kv, vv)
+			}
+			return out, nil
+		}
 		// Std.Decimal — a JSON string; rebuild via decimalBox (round-trips the
 		// canonical `Decimal.String()` the encoder emitted).
 		if declaredType == "Std_Decimal_Decimal" {

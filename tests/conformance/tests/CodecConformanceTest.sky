@@ -29,8 +29,10 @@ asserted ACTIVE below.
     in the "auto strict → Err" section below. -}
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.String as String
 import Std.Codec as Codec exposing (Codec)
+import Std.Money as Money exposing (Money, Currency(..))
 import Sky.Test as Test exposing (Test)
 
 
@@ -120,6 +122,20 @@ productOverride : Codec Product
 productOverride =
     Codec.autoWith [ ( "active", intBool ) ]
         { name = "", priceMinor = 0, active = False }
+
+
+-- A Dict whose VALUE is a data-carrying ADT (`Money` = rt.SkyADT). The decoder
+-- must thread the Dict's declared value type down so the Money value routes to
+-- the Money arm — before the `map[` decode arm this fell to the reflect path,
+-- which cannot tell Money/Decimal/user-ADT apart (all erased to `rt.SkyADT`) and
+-- errored "cannot derive data-carrying ADT". List/Maybe already worked.
+type alias Ledger =
+    { balances : Dict String Money }
+
+
+ledgerCodec : Codec Ledger
+ledgerCodec =
+    Codec.auto { balances = Dict.empty }
 
 
 -- Explicit object builder with hand-picked (non-derived) key names.
@@ -212,6 +228,32 @@ tests =
         (\_ -> roundTrip optCodec { label = "a", note = Nothing })
     , Test.test "round-trip: Maybe (Just \"\") is NOT collapsed to Nothing"
         (\_ -> roundTrip optCodec { label = "a", note = Just "" })
+    , Test.test "round-trip: Dict of a data-carrying ADT value (Dict String Money)"
+        (\_ ->
+            -- Compared via re-encoded JSON, not structural `==`: a Money holds a
+            -- shopspring Decimal whose fields are unexported, which `deepEq`
+            -- cannot walk. The point here is that the DECODE succeeds and is
+            -- lossless — before the Dict `map[` decode arm it errored "cannot
+            -- derive data-carrying ADT".
+            let
+                v =
+                    { balances =
+                        Dict.fromList
+                            [ ( "usd", Money.fromMinor USD 1299 )
+                            , ( "gbp", Money.fromMinor GBP 999 )
+                            ]
+                    }
+
+                j1 =
+                    Codec.toJson ledgerCodec v
+            in
+            case Codec.fromJson ledgerCodec j1 of
+                Ok back ->
+                    Test.equal j1 (Codec.toJson ledgerCodec back)
+
+                Err _ ->
+                    Test.isTrue False
+        )
 
     -- ── Adversarial scalar values ─────────────────────────────────────────
     , Test.test "adversarial string: JSON metacharacters + escapes survive"

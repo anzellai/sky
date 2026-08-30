@@ -277,6 +277,23 @@ tests =
         (\_ -> Test.isFalse (beyondInf 1000000.0))
     , Test.test "T5.0 bare nan: Math.nan == Math.nan is False (direct, no wrapper)"
         (\_ -> Test.isFalse (Math.nan == Math.nan))
+
+      -- ── Integer division / remainder by ZERO is TOTAL (returns 0), matching
+      --    Elm's `//` (`5 // 0 == 0`) and Sky's `modBy 0`. A well-typed `n // 0`
+      --    must NOT panic — "if it compiles it works". (Float `/` by 0.0 stays a
+      --    loud error, since its ±Infinity result has no representable shape.)
+    , Test.test "5 // 0 == 0 (integer division by zero is total)"
+        (\_ -> Test.equal 0 (5 // 0))
+    , Test.test "-7 // 0 == 0 (negative dividend, still total)"
+        (\_ -> Test.equal 0 (-7 // 0))
+    , Test.test "9 % 0 == 0 (integer remainder by zero is total)"
+        (\_ -> Test.equal 0 (9 % 0))
+    , Test.test "modBy 0 5 == 0 (already total; // and % now match it)"
+        (\_ -> Test.equal 0 (modBy 0 5))
+    , Test.test "7 // 2 == 3 (nonzero divisor still truncates toward zero)"
+        (\_ -> Test.equal 3 (7 // 2))
+    , Test.test "7 % 3 == 1 (nonzero divisor remainder unchanged)"
+        (\_ -> Test.equal 1 (7 % 3))
     ]
 
 

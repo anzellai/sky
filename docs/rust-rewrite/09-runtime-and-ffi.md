@@ -80,7 +80,7 @@ live / hub outputs):
 | ADT machinery | `type X = rt.SkyADT` (`{Tag int; SkyName string; Fields []any}`), `rt.SkyVariant` (sealed-iface successor), `rt.SkyMaybe/Result/Value/Attribute`, `rt.RegisterAdtTag/AdtVariant/MsgVariant/MsgUpdate/MsgDecoder/GobType`, `rt.EnumTagIs`, `rt.Unreachable`, `rt.Ok/Err/Just/Nothing` | Registration calls are emitted into `init()`. `RegisterAdtTag`/`AdtVariant` take the **package-qualified owning ADT first** (`rt.RegisterAdtTag("main.Main_Msg", "Inc", 0)`) — a bare ctor name is not a key, and neither is a bare Go type name, because the wire path resolves a client-supplied string against these registries. See [Wire dispatch](#wire-dispatch-is-scoped-to-the-apps-msg-adt) below. |
 | Task / call | `rt.AnyTaskRun`, `rt.SkyTask`, `rt.SkyCall` | `main` auto-forces a Task-typed entry via `rt.AnyTaskRun` (matches the current runtime auto-force rule). |
 | JSON / wire | `rt.JsonRawMessage`, `rt.JsonUnmarshal` | |
-| Operators | `rt.Add/Sub/Mul/Eq/Or/And/Gt/Concat`, `rt.IntDiv/Rem/Div` | Div-family are the reachable-from-Sky panic sites (classified by `rt.LogPanicAndExit`). |
+| Operators | `rt.Add/Sub/Mul/Eq/Or/And/Gt/Concat`, `rt.IntDiv/Rem/Div` | `rt.IntDiv` (`//`) and `rt.Rem` (`%`) are TOTAL — by-zero returns 0 (like `modBy`, like Elm's `//`), so no panic. Only float `rt.Div` (`/`) still panics by zero (its total answer is ±Infinity, which Sky has no shape for), classified by `rt.LogPanicAndExit`. |
 | Bootstrap | `rt.SetPortDefault`, `rt.SetSkyDefault`, `rt.LogPanicAndExit`, `rt.System_getenv` | Emitted in top-level `init()` / `main()` prologue. |
 
 **Design rule (ASPIRATIONAL — read the next paragraph for what is built):**

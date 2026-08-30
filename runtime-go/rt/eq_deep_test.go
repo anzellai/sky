@@ -8,7 +8,44 @@ package rt
 // payload field which held different zero-value types (`nil` any
 // vs `""` string) per instantiation.
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/shopspring/decimal"
+)
+
+// A Sky value wrapping a Go-native struct with UNEXPORTED fields (a shopspring
+// decimal, inside Money/Decimal) must be comparable via `==` (rt.Eq → deepEq)
+// WITHOUT panicking. Regression: `money1 == money2` crashed "cannot return value
+// obtained from unexported field" because deepEq walked the decimal's internals
+// via reflect.Value.Interface(). deepEq now routes unexported-field structs to
+// reflect.DeepEqual.
+func TestDeepEqUnexportedFieldsDoNotPanic(t *testing.T) {
+	box := func(s string) any {
+		d, err := decimal.NewFromString(s)
+		if err != nil {
+			t.Fatalf("decimal %q: %v", s, err)
+		}
+		return decimalBox(d)
+	}
+	usd := SkyADT{Tag: 0, SkyName: "USD"}
+	m1 := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{box("12.99"), usd}}
+	m2 := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{box("12.99"), usd}}
+	m3 := SkyADT{Tag: 0, SkyName: "Money", Fields: []any{box("0.01"), usd}}
+
+	if !AsBool(Eq(m1, m2)) {
+		t.Error("equal Money values compared unequal")
+	}
+	if AsBool(Eq(m1, m3)) {
+		t.Error("distinct-amount Money values compared equal")
+	}
+	if !AsBool(Eq(box("5.5"), box("5.5"))) {
+		t.Error("equal bare decimals compared unequal")
+	}
+	if AsBool(Eq(box("5.5"), box("5.6"))) {
+		t.Error("distinct bare decimals compared equal")
+	}
+}
 
 func TestEq_MaybeNothingAcrossInstantiations(t *testing.T) {
 	// Both Nothing, but different generic instantiations.

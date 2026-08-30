@@ -282,3 +282,35 @@ func TestCodecAutoTagNamedFieldIsNotAnAdt(t *testing.T) {
 		t.Errorf("record with `tag` field round-trip lost data: %+v", back.Box)
 	}
 }
+
+type acDictDecimalHolder struct {
+	Prices map[string]Std_Decimal_Decimal_forTest `sky:"prices,map[string]Std_Decimal_Decimal"`
+}
+
+// A Dict whose VALUE is a data-carrying ADT (here Decimal, an rt.SkyADT) must
+// round-trip. Before the typed-path `map[` arm, the Dict fell to the reflect
+// decode path, which sees the erased `rt.SkyADT` alias and errored "cannot
+// derive data-carrying ADT" — a decode failure on well-formed data. The List
+// and Maybe arms already threaded their element type; Dict was the gap.
+func TestCodecAutoDictOfDecimalRoundTrip(t *testing.T) {
+	v := acDictDecimalHolder{Prices: map[string]Std_Decimal_Decimal_forTest{
+		"a": decimalBox(mustDecimal("12.99")),
+		"b": decimalBox(mustDecimal("0.01")),
+	}}
+	enc := Codec_autoEnc(true, v).(JsonValue)
+	b, _ := json.Marshal(enc.raw)
+	if got := string(b); got != `{"prices":{"a":"12.99","b":"0.01"}}` {
+		t.Fatalf("Dict-of-Decimal encoded wrong: %s", got)
+	}
+	dec := Codec_autoDecoder(true, acDictDecimalHolder{}).(JsonDecoder)
+	var raw any
+	_ = json.Unmarshal(b, &raw)
+	res := dec.run(raw).(SkyResult[any, any])
+	if res.Tag != 0 {
+		t.Fatalf("Dict-of-Decimal decode FAILED (the data-carrying-ADT gap): %+v", res)
+	}
+	back := res.OkValue.(acDictDecimalHolder)
+	if decimalUnbox(back.Prices["a"]).String() != "12.99" || decimalUnbox(back.Prices["b"]).String() != "0.01" {
+		t.Errorf("Dict-of-Decimal round-trip lost data: %+v", back.Prices)
+	}
+}

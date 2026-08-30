@@ -268,8 +268,10 @@ escaped the synchronous Sky path, runs `classifyPanic` to bucket it
 structured `Error` log line with a 4-byte errId (honouring
 `SKY_LOG_FORMAT=json`), and exits 1 — instead of dumping a Go stack trace. The
 reachable-from-Sky panic sites are exactly the §5 primitive-coerce floor from
-[`07`](07-lowering-and-ir.md) (`rt.IntDiv`, `rt.AsInt/AsFloat/AsBool`, `rt.cmp`,
-`rt.Coerce`, index-out-of-range, nil-deref).
+[`07`](07-lowering-and-ir.md) (`rt.Div` — float `/` by zero, whose ±Infinity
+result Sky cannot represent; `rt.AsInt/AsFloat/AsBool`, `rt.cmp`, `rt.Coerce`,
+index-out-of-range, nil-deref). Integer `rt.IntDiv` (`//`) and `rt.Rem` (`%`) are
+NOT panic sites — they are total, returning 0 by zero like `modBy`.
 
 Codegen emits the matching floors per app shape (mirroring the Haskell backend):
 
