@@ -274,9 +274,27 @@ fn run_inspector_on(
                 .env("CGO_ENABLED", "1");
         }
     }
-    let out = cmd
-        .output()
-        .map_err(|e| format!("spawn sky-ffi-inspect: {e}"))?;
+    // ETXTBSY (errno 26 on Linux and macOS alike): the `sky-ffi-inspect` binary
+    // can still be open for writing by a concurrent linker at the instant we
+    // execve it — seen under `cargo test --workspace` load, and equally possible
+    // for a `sky install` that just rebuilt the inspector. That is a transient
+    // race, not a real failure, so retry with a short backoff before surfacing
+    // it. Any other spawn error fails immediately.
+    let out = {
+        let mut attempt: u32 = 0;
+        loop {
+            match cmd.output() {
+                Ok(o) => break o,
+                Err(e) if e.raw_os_error() == Some(26) && attempt < 10 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        u64::from(20 * attempt),
+                    ));
+                }
+                Err(e) => return Err(format!("spawn sky-ffi-inspect: {e}")),
+            }
+        }
+    };
     let stdout = String::from_utf8_lossy(&out.stdout);
     if stdout.trim().is_empty() {
         let err = String::from_utf8_lossy(&out.stderr);
