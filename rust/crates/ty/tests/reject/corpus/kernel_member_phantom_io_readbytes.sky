@@ -1,0 +1,15 @@
+-- gate: reject
+-- defect: `Io.readBytes` — a PHANTOM kernel member. It was listed in
+--         `KERNEL_FUNCTIONS[Io]` with no backing `rt.Io_readBytes` symbol, so a
+--         reference passed `sky check` and failed `go build`
+--         (`undefined: rt.Io_readBytes`). The `xtask kernel-members` gate
+--         removed the phantom; the reject now refuses it at name resolution.
+-- rust: reject [E1001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+main =
+    println (Io.readBytes 10)

@@ -36,6 +36,7 @@ module Sky.Core.List exposing
     , zip
     , map
     , filter
+    , filterMap
     , any
     , all
     , find
@@ -43,6 +44,9 @@ module Sky.Core.List exposing
     , foldr
     , concatMap
     , indexedMap
+    , sort
+    , sortBy
+    , sortWith
     )
 
 import Sky.Ffi as Ffi
@@ -59,6 +63,35 @@ map =
 filter : (a -> Bool) -> List a -> List a
 filter =
     Ffi.kernel "List_filter"
+
+
+-- | `filterMap fn list` — map each element and keep only the `Just` results
+-- (`fn` returning `Nothing` drops the element).
+filterMap : (a -> Maybe b) -> List a -> List b
+filterMap =
+    Ffi.kernel "List_filterMap"
+
+
+-- | `sort list` — ascending sort by the runtime's structural ordering
+-- (`Int`/`Float`/`String`/`Char`/tuples/lists of those). Stable.
+sort : List a -> List a
+sort =
+    Ffi.kernel "List_sort"
+
+
+-- | `sortBy keyFn list` — stable sort by the `keyFn elem` projection's
+-- structural ordering.
+sortBy : (a -> b) -> List a -> List a
+sortBy =
+    Ffi.kernel "List_sortBy"
+
+
+-- | `sortWith cmp list` — stable sort by a custom comparator. `cmp a b`
+-- returns a negative `Int` when `a` precedes `b`, positive when it follows,
+-- `0` when equal (same contract as `Basics.compare` rendered to an `Int`).
+sortWith : (a -> a -> Int) -> List a -> List a
+sortWith =
+    Ffi.kernel "List_sortWith"
 
 
 -- | `foldr fn acc list` — right fold: `fn a0 (fn a1 (… (fn aN acc)))`.
@@ -221,6 +254,8 @@ tail list =
             Just rest
 
 
+-- | `cons x list` — prepend `x` (the `::` operator as a named function).
+cons : a -> List a -> List a
 cons x list =
     x :: list
 

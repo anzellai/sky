@@ -76,6 +76,28 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         // `Dict_map2T` is the typed variant of a `map2` the surface never
         // exposes (no bare `rt.Dict_map2`); it is internal dispatch.
         "Dict" => &["map2"],
+        // Std.Db Store/Codec/migration machinery — invoked by generated code and
+        // the `Std.Db.Store` layer, NOT a `Db.<name>` user surface. (`getFloat`
+        // is deliberately NOT here: it parallels `getString`/`getInt`/`getBool`
+        // and is a real member — promoted to KERNEL_FUNCTIONS[Db] + Db.sky.)
+        "Db" => &[
+            "autoMigrate",
+            "createCols",
+            "dropTables",
+            "dumpProject",
+            "execObject",
+            "execObjectMany",
+            "execObjectWith",
+            "queryDecodeRows",
+            "queryObjects",
+            "renderMigrations",
+            "resetTables",
+            "snakeName",
+            "sqlOfValue",
+            "updateByPk",
+            "updateWhere",
+            "upsertObject",
+        ],
         // `rt.Process_loadEnv` is the backing for `System.loadEnv`; `Process`'s
         // only member is `run`. A bare `Process.loadEnv` is not intended.
         "Process" => &["loadEnv"],

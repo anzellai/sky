@@ -29,6 +29,7 @@ module Std.Db exposing
     , getField
     , getString
     , getInt
+    , getFloat
     , getBool
     , Migration
     , defaultMigration
@@ -329,6 +330,12 @@ getString =
 getInt : String -> row -> Int
 getInt =
     Ffi.kernel "Db_getInt"
+
+
+-- | Read a REAL/NUMERIC column from a row by name, defaulting to 0.0 when absent/unparseable (display-only lenient reader).
+getFloat : String -> row -> Float
+getFloat =
+    Ffi.kernel "Db_getFloat"
 
 
 -- | Read a BOOLEAN/0-1 column from a row by name, defaulting to False when absent.

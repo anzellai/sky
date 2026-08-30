@@ -1,0 +1,19 @@
+-- gate: reject
+-- defect: `List.sum` — no such kernel member. The `List` pseudo-module
+--         (Sky.Core.List) has no `sum`, and no `rt.List_sum` symbol exists in
+--         the Go runtime. This used to resolve to an UNVALIDATED `Res::Kernel`
+--         (a `fresh_flex` type, lowering to `rt.List_sum`) that passed
+--         `sky check` and then failed `go build` with `undefined: rt.List_sum`
+--         — a `sky check ≡ sky build` violation caught only by the codegen ABI
+--         guard at `[E4005]`. Now rejected at NAME RESOLUTION
+--         (hir::resolve::resolve_qual_var, the `kernel_pseudo` fallback), with a
+--         clear naming error and a did-you-mean over the module's real members.
+-- rust: reject [E1001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+main =
+    println (String.fromInt (List.sum [ 1, 2, 3 ]))

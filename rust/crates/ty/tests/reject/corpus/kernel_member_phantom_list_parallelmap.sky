@@ -1,0 +1,16 @@
+-- gate: reject
+-- defect: `List.parallelMap` — a PHANTOM kernel member. It sat in the resolver's
+--         member table (`KERNEL_FUNCTIONS[List]` + `PRELUDE_QUALIFIERS[List]`)
+--         with NO backing `rt.List_parallelMap` symbol, so it passed `sky check`
+--         and failed `go build` (`undefined: rt.List_parallelMap`). The
+--         `xtask kernel-members` gate removed the phantom from both tables, and
+--         the reject now refuses it at name resolution.
+-- rust: reject [E1001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+main =
+    println (String.fromInt (List.length (List.parallelMap (\x -> x) [ 1, 2, 3 ])))

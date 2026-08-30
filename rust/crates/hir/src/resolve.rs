@@ -2744,16 +2744,26 @@ impl<'a> Resolver<'a> {
             };
         }
         if let Some(pseudo) = self.db.kernel_pseudo(qual) {
+            let pseudo = pseudo.to_string();
+            if let Some(err) = self.reject_unknown_kernel_member(&pseudo, qual, name, span) {
+                return err;
+            }
             return Res::Kernel {
-                module: Name::new(pseudo),
+                module: Name::new(&pseudo),
                 func: Name::new(name),
             };
         }
         match self.import_aliases.get(qual).cloned() {
-            Some(ImportSource::Kernel(pseudo)) => Res::Kernel {
-                module: Name::new(&pseudo),
-                func: Name::new(name),
-            },
+            Some(ImportSource::Kernel(pseudo)) => {
+                if let Some(err) = self.reject_unknown_kernel_member(&pseudo, qual, name, span) {
+                    err
+                } else {
+                    Res::Kernel {
+                        module: Name::new(&pseudo),
+                        func: Name::new(name),
+                    }
+                }
+            }
             Some(ImportSource::Foreign(pkg)) => {
                 self.track_class_b(pkg.clone(), Some(qual.to_string()), name, RefKind::Value);
                 Res::Foreign {
@@ -2903,6 +2913,72 @@ impl<'a> Resolver<'a> {
             };
             if better {
                 best = Some((d, cand));
+            }
+        }
+        best.map(|(_, c)| c)
+    }
+
+    /// Validate a qualified reference `qual.name` that resolves to kernel
+    /// pseudo-module `pseudo` against the pseudo's known member set. Returns
+    /// `Some(Res::Error)` — after emitting a naming diagnostic — when `name` is
+    /// NOT a member, closing the hole where ANY `Mod.fn` minted an UNVALIDATED
+    /// `Res::Kernel` (`fresh_flex` type, `rt.<Mod>_<fn>` lowering) that only
+    /// `project::abi_guard` caught at codegen `[E4005]`. Returns `None` when the
+    /// member is known (the caller proceeds to `Res::Kernel`) OR when the pseudo
+    /// has no static enumeration (`kernel_functions` is `None` — the
+    /// `.sky`-migrated bare aliases whose members resolve via `qual_vars`, e.g.
+    /// `Live`/`Jobs`; the `kernel-members` gate's assertion 4 covers those).
+    ///
+    /// Zero-false-positive contract: `KERNEL_FUNCTIONS[pseudo]` is a proven
+    /// SUPERSET of every runtime-backed member (the `xtask kernel-members` gate),
+    /// so this reject fires ONLY for a member with no runtime symbol at all —
+    /// exactly the codegen `[E4005]` cases, now reported at type-check time.
+    fn reject_unknown_kernel_member(
+        &mut self,
+        pseudo: &str,
+        qual: &str,
+        name: &str,
+        span: Option<Span>,
+    ) -> Option<Res> {
+        let funcs = crate::kernel::kernel_functions(pseudo)?;
+        if funcs.contains(&name) {
+            return None;
+        }
+        if self.quiet == 0 {
+            let hint = Self::closest_member(name, funcs)
+                .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
+                .unwrap_or_default();
+            let mut diag =
+                Diagnostic::error("E1001", format!("`{qual}` has no member `{name}`{hint}"));
+            if let Some(sp) = span {
+                diag = diag.with_label(sp, "no such kernel member");
+            }
+            self.result.diagnostics.push(diag);
+            self.result.class_a.push(ClassA {
+                qualifier: Some(qual.to_string()),
+                name: name.to_string(),
+                kind: RefKind::Value,
+                reason: "unknown kernel member".to_string(),
+            });
+        }
+        Some(Res::Error)
+    }
+
+    /// The closest known member name to `name` within edit-distance 2, ties
+    /// broken lexicographically (determinism, mirroring `did_you_mean`).
+    fn closest_member(name: &str, funcs: &[&str]) -> Option<String> {
+        let mut best: Option<(usize, String)> = None;
+        for cand in funcs {
+            let d = levenshtein(name, cand);
+            if d > 2 {
+                continue;
+            }
+            let better = match &best {
+                None => true,
+                Some((bd, bc)) => d < *bd || (d == *bd && *cand < bc.as_str()),
+            };
+            if better {
+                best = Some((d, cand.to_string()));
             }
         }
         best.map(|(_, c)| c)

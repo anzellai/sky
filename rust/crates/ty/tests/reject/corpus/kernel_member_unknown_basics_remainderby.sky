@@ -1,0 +1,15 @@
+-- gate: reject
+-- defect: `Basics.remainderBy` — no such kernel member. `Basics` has `modBy`
+--         but no `remainderBy`, and no `rt.Basics_remainderBy` symbol exists.
+--         Previously an unvalidated `Res::Kernel` that failed `go build`
+--         (`undefined: rt.Basics_remainderBy`); now rejected at name
+--         resolution with a naming error.
+-- rust: reject [E1001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+main =
+    println (String.fromInt (Basics.remainderBy 2 7))

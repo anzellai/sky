@@ -49,7 +49,16 @@ fn repo_root() -> PathBuf {
 /// Advertised kernel-qualifier members with NO Sky-level signature. Each row is
 /// a program the checker cannot arity-check. **Ratchets DOWNWARD only.**
 ///
-/// 94 rows when this gate was added; **67** now — 27 net departures, not 28.
+/// 94 rows when this gate was added; **70** now. It fell to 67, then the
+/// `kernel-members` SSOT sync (the `xtask kernel-members` gate) COMPLETED
+/// `KERNEL_FUNCTIONS` against the runtime — advertising ~78 previously-missing
+/// real members. Most already carried a `.sky` signature; nine did not, and
+/// four of THOSE (`List.filterMap`/`sort`/`sortBy`/`cons`) were typed in the
+/// same change, so the net addition here is the five kernel-only / alias members
+/// (`Basics.errorToString`/`js`, `Random.choiceMaybe`, `Server.csrfIssue`/
+/// `csrfVerify`) plus `Sub.subscribeStream`/`subscribeWebSocket` and
+/// `Middleware.rateLimit`, against the removal of the `Io.readBytes` and
+/// `List.parallelMap` phantoms. It otherwise ratchets DOWNWARD.
 /// `Db.findWhere` was declared, then UN-declared again (`988de75b`) because
 /// typing it required exposing a raw `WHERE`-concatenating function from
 /// `Std/Db.sky` under a name that does not warn; it came back to this list and
@@ -134,8 +143,8 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
     (
         "Basics",
         &[
-            "abs", "always", "clamp", "compare", "fst", "identity", "max", "min", "modBy",
-            "negate", "not", "snd", "sqrt", "toString",
+            "abs", "always", "clamp", "compare", "errorToString", "fst", "identity", "js", "max",
+            "min", "modBy", "negate", "not", "snd", "sqrt", "toString",
         ],
     ),
     ("Context", &["background", "todo", "withCancel", "withValue"]),
@@ -152,24 +161,17 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
         &["call", "callPure", "callTask", "has", "isPure", "kernel", "toAny"],
     ),
     ("Fmt", &["errorf", "sprint", "sprintf", "sprintln"]),
-    ("Io", &["readBytes", "writeString"]),
+    ("Io", &["writeString"]),
     (
         "List",
-        // `any` and `foldl` came off this list when they were annotated in
-        // `sky-stdlib/Sky/Core/List.sky`. The list ratchets DOWNWARD only.
-        &[
-            "all",
-            "filterMap",
-            "find",
-            "head",
-            "member",
-            "parallelMap",
-            "sort",
-            "sortBy",
-            "tail",
-        ],
+        // `any`/`foldl` came off when annotated in `Sky/Core/List.sky`; then
+        // `filterMap`/`sort`/`sortBy`/`cons` when they gained `.sky` signatures
+        // (the kernel-members SSOT sync), and `parallelMap` when it was deleted
+        // as a phantom. The list ratchets DOWNWARD only.
+        &["all", "find", "head", "member", "tail"],
     ),
     ("Log", &["with"]),
+    ("Middleware", &["rateLimit"]),
     (
         "Maybe",
         &[
@@ -184,6 +186,15 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
             "traverse",
             "withDefault",
         ],
+    ),
+    (
+        "Random",
+        // `choiceMaybe` is the runtime symbol that BACKS `Random.choice`
+        // (`Random.sky`: `choice = Ffi.kernel "Random_choiceMaybe"`). It is a
+        // `KERNEL_TABLE` alias target, so it is ambiently reachable as
+        // `Random.choiceMaybe` and therefore a member the reject must allow — but
+        // it has no `.sky` Def of its own to carry a signature.
+        &["choiceMaybe"],
     ),
     (
         "Result",
@@ -202,7 +213,10 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
             "withDefault",
         ],
     ),
-    ("Server", &["group", "use"]),
+    // Kernel-only members (their type lives in the runtime, not a `.sky` Def):
+    // `csrfIssue`/`csrfVerify` alongside the pre-existing `group`/`use`.
+    ("Server", &["csrfIssue", "csrfVerify", "group", "use"]),
+    ("Sub", &["subscribeStream", "subscribeWebSocket"]),
 ];
 
 /// Top-level `name : Type` annotations in a `.sky` source — exactly the decls
@@ -404,7 +418,7 @@ fn the_remaining_untyped_kernel_surface_is_still_within_its_review_date() {
     assert!(
         !expired,
         "the untyped kernel surface passed its review date of {UNTYPED_KERNEL_REVIEW_BY}.\n\n\
-         67 advertised kernel members across 11 pseudo-modules still have no Sky \
+         70 advertised kernel members across 14 pseudo-modules still have no Sky \
          signature, so the checker cannot arity-check a call to any of them. They \
          do NOT reach `go build` as raw Go errors — `lower::reject_over_application` \
          catches over-application one stage later — but the diagnostic has no span \
@@ -423,15 +437,15 @@ fn the_remaining_untyped_kernel_surface_is_still_within_its_review_date() {
 fn the_declared_remaining_count_matches_the_allowlist() {
     let declared: usize = UNTYPED_KERNEL_MEMBERS.iter().map(|(_, ms)| ms.len()).sum();
     assert_eq!(
-        declared, 67,
+        declared, 70,
         "the untyped-kernel allowlist holds {declared} member(s), but the \
-         re-declaration above and the module docstring both say 67. Update BOTH \
+         re-declaration above and the module docstring both say 70. Update BOTH \
          when the list moves — a hand-maintained count that nothing checks is a \
          number that goes stale silently, which is what happened at 988de75b."
     );
     let modules = UNTYPED_KERNEL_MEMBERS.len();
     assert_eq!(
-        modules, 11,
-        "the allowlist spans {modules} pseudo-module(s), not the 11 declared above"
+        modules, 14,
+        "the allowlist spans {modules} pseudo-module(s), not the 14 declared above"
     );
 }
