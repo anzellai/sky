@@ -13,6 +13,14 @@ pub fn kernel_go_name_opt(module: &str, func: &str) -> Option<&'static str> {
     table().get(&(module, func)).copied()
 }
 
+/// Every `(pseudo-module, func, runtime-symbol)` entry in the kernel dispatch
+/// table, in source order. Exposed for the `kernel-members` drift gate, which
+/// enumerates the `(M, f)` keys a module maps: a member `f` is REAL iff its
+/// `kernel_go_name` lands on a symbol the runtime exports.
+pub fn kernel_table_entries() -> &'static [(&'static str, &'static str, &'static str)] {
+    KERNEL_TABLE
+}
+
 /// The Go runtime symbol for a kernel reference, defaulting to `rt.<Mod>_<fn>`.
 pub fn kernel_go_name(module: &str, func: &str) -> String {
     kernel_go_name_opt(module, func)

@@ -22,8 +22,8 @@ pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, M
 pub use hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
 pub use kernel::{
-    is_reserved_sky_namespace, kernel_functions, KERNEL_IMPLICIT_TYPES, KERNEL_MODULES,
-    PRELUDE_PROTECTED,
+    is_reserved_sky_namespace, kernel_functions, KERNEL_FUNCTIONS, KERNEL_IMPLICIT_TYPES,
+    KERNEL_MODULES, PRELUDE_PROTECTED, PRELUDE_QUALIFIERS,
 };
 pub use resolve::{
     resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, RefKind, RefOcc, ResolveResult,

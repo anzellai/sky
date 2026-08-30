@@ -25,6 +25,7 @@ mod fmt_gate;
 mod fuzz_gate;
 mod harness;
 mod infer_gate;
+mod kernel_members;
 mod lsp_gate;
 mod reject_gate;
 mod repro_gate;
@@ -59,6 +60,9 @@ const GATES: &[(&str, GateFn)] = &[
     ("roundtrip", roundtrip),
     ("resolve", |args| resolve_gate::run(args, &repo_root())),
     ("infer", |args| infer_gate::run(args, &repo_root())),
+    ("kernel-members", |args| {
+        kernel_members::run(args, &repo_root())
+    }),
     ("reject", |args| reject_gate::run(args, &repo_root())),
     ("build-run", |args| build_run_gate::run(args, &repo_root())),
     ("coerce-floor", |args| {
