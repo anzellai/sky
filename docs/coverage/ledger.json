@@ -263,7 +263,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 937,
+      "expected_assertions": 944,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",

@@ -84,7 +84,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 937;
+pub const CONFORMANCE_EXPECTED: u64 = 944;
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
