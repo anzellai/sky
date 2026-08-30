@@ -409,8 +409,8 @@
     },
     "kernel-members": {
       "expected_assertions": 116,
-      "falsifier_mutation": "",
-      "falsifier_proven": false,
+      "falsifier_mutation": "kernel-members.drop-a-real-member",
+      "falsifier_proven": true,
       "summary": "the kernel-member tables + .sky exposing are a faithful superset of the runtime",
       "surfaces": [
         "meta.kernel-members"
@@ -2286,15 +2286,15 @@
     {
       "category": "meta",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "gate `kernel-members`",
-            "class": "Asserted",
-            "strength": 3
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",

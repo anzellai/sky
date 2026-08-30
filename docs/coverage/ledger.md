@@ -147,7 +147,7 @@ None.
 | `meta.config-migration` | meta | None | Falsified | stronger |
 | `meta.config-surface` | meta | None | Falsified | stronger |
 | `meta.coverage-accounting` | meta | None | Falsified | stronger |
-| `meta.kernel-members` | meta | None | Asserted | stronger |
+| `meta.kernel-members` | meta | None | Falsified | stronger |
 | `observability.analytics-store` | observability | None | Falsified | stronger |
 | `observability.console` | observability | Asserted | Falsified | stronger |
 | `runtime.go-rt` | runtime | Asserted | Asserted | equal |
@@ -284,7 +284,7 @@ None.
 | `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
 | `erasure-path-uses-an-index` | T1 | PROVEN | `observability.analytics-store` |
 | `jobs-complete-failure-is-reported` | T1 | PROVEN | `runtime.periodic-goroutines` |
-| `kernel-members` | T1 | not proven | `meta.kernel-members` |
+| `kernel-members` | T1 | PROVEN | `meta.kernel-members` |
 | `live-time-every-mutex-survives-a-panic` | T1 | PROVEN | `runtime.periodic-goroutines` · `skylive.session-sse-csrf` |
 | `lsp` | T1 | PROVEN | `lsp` |
 | `periodic-loops-recover-per-cycle` | T1 | PROVEN | `runtime.periodic-goroutines` |
