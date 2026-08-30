@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 157 |
-| covered by the new corpus (>= Asserted) | 138 |
-| verdict `stronger` | 133 |
+| surfaces | 158 |
+| covered by the new corpus (>= Asserted) | 139 |
+| verdict `stronger` | 134 |
 | verdict `equal` | 24 |
 | verdict `weaker` | 0 |
 | corpus units | 80 |
 | stdlib modules (denominator) | 93 |
-| stdlib entries (denominator) | 1914 |
+| stdlib entries (denominator) | 1919 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 9.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 862 | 45.0% |
-| symbols unreferenced under the generous rule | 777 | 40.6% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 865 | 45.1% |
+| symbols unreferenced under the generous rule | 780 | 40.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -147,6 +147,7 @@ None.
 | `meta.config-migration` | meta | None | Falsified | stronger |
 | `meta.config-surface` | meta | None | Falsified | stronger |
 | `meta.coverage-accounting` | meta | None | Falsified | stronger |
+| `meta.kernel-members` | meta | None | Asserted | stronger |
 | `observability.analytics-store` | observability | None | Falsified | stronger |
 | `observability.console` | observability | Asserted | Falsified | stronger |
 | `runtime.go-rt` | runtime | Asserted | Asserted | equal |
@@ -283,6 +284,7 @@ None.
 | `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
 | `erasure-path-uses-an-index` | T1 | PROVEN | `observability.analytics-store` |
 | `jobs-complete-failure-is-reported` | T1 | PROVEN | `runtime.periodic-goroutines` |
+| `kernel-members` | T1 | not proven | `meta.kernel-members` |
 | `live-time-every-mutex-survives-a-panic` | T1 | PROVEN | `runtime.periodic-goroutines` · `skylive.session-sse-csrf` |
 | `lsp` | T1 | PROVEN | `lsp` |
 | `periodic-loops-recover-per-cycle` | T1 | PROVEN | `runtime.periodic-goroutines` |

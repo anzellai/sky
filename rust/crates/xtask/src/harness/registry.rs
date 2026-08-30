@@ -1227,6 +1227,35 @@ pub static GATES: &[Gate] = &[
         body: bodies::config_surface,
     },
     Gate {
+        name: "kernel-members",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        budget_s: 120,
+        expected: bodies::KERNEL_MEMBERS_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the kernel-member tables + .sky exposing are a faithful superset of the runtime",
+        // The mutation is the exact defect the gate exists to catch: a real
+        // runtime-backed member dropped from `KERNEL_FUNCTIONS`. `RealMembers`
+        // still carries `sortWith` (from `List.sky` + the lower KERNEL_TABLE +
+        // `rt.List_sortWith`), so `KERNEL_FUNCTIONS[List] == RealMembers` breaks —
+        // and had this shipped, the qualified-member reject would have wrongly
+        // refused `List.sortWith`. `KERNEL_FUNCTIONS` is compiled into xtask, so
+        // the harness's `rebuild_xtask` (falsify.rs) is what makes the mutation
+        // observable — it is designed to rebuild before re-running the gate.
+        mutations: Mutations::new(&[Mutation {
+            id: "kernel-members.drop-a-real-member",
+            description: "delete `sortWith` from KERNEL_FUNCTIONS[List]; the tables \
+                          then under-cover the runtime and the superset assertion \
+                          must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/hir/src/kernel.rs",
+                from: "            \"sortWith\",\n",
+                to: "",
+            },
+        }]),
+        body: bodies::kernel_members,
+    },
+    Gate {
         name: "config-matrix",
         tier: Tier::T1,
         // Builds and runs five real Sky.Live apps and binds real ports;

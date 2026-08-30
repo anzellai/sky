@@ -844,6 +844,9 @@ jobs:
       - name: 'Gate — config-surface (the census is current; no defect count rose)'
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- config-surface --check
+      - name: 'Gate — kernel-members (tables are a faithful superset of the runtime)'
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- kernel-members
       - name: Gate — coverage ratchets (denominators + ledger)
         working-directory: rust
         run: |

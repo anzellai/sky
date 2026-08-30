@@ -3038,6 +3038,22 @@ pub fn config_surface(ctx: &GateCtx) -> GateOutcome {
     GateOutcome::new(passed, assertions, detail)
 }
 
+/// `xtask kernel-members` — the kernel-metadata drift gate. It proves the
+/// compiler's kernel-member tables (`KERNEL_FUNCTIONS` / `PRELUDE_QUALIFIERS`)
+/// and the stdlib `.sky` `exposing` lists are a faithful SUPERSET of the
+/// runtime's real `rt.<Mod>_<fn>` exports — the invariant the qualified-member
+/// reject (`resolve.rs::reject_unknown_kernel_member`) depends on for ZERO false
+/// positives. A member added to a table with no runtime symbol (`parallelMap`),
+/// or a real runtime member missing from `KERNEL_FUNCTIONS` (which the reject
+/// would then wrongly refuse), turns it red. Moves when the kernel surface moves
+/// — a real event that must be read, not absorbed.
+pub const KERNEL_MEMBERS_EXPECTED: u64 = 116;
+
+pub fn kernel_members(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::kernel_members::check_body(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
 /// One assertion per observed cell, one per census entry the manifest must
 /// bucket, three per covered setting (the declared default, the
 /// arm-distinguishability check, and — where a builder exists — the

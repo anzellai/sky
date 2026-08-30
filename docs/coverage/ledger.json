@@ -407,6 +407,16 @@
       ],
       "tier": "T1"
     },
+    "kernel-members": {
+      "expected_assertions": 116,
+      "falsifier_mutation": "",
+      "falsifier_proven": false,
+      "summary": "the kernel-member tables + .sky exposing are a faithful superset of the runtime",
+      "surfaces": [
+        "meta.kernel-members"
+      ],
+      "tier": "T1"
+    },
     "live-time-every-mutex-survives-a-panic": {
       "expected_assertions": 2,
       "falsifier_mutation": "time-every.unlock-only-on-the-happy-path",
@@ -439,7 +449,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 68,
+      "expected_assertions": 72,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -654,13 +664,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1914,
+    "stdlib_entries": 1919,
     "stdlib_modules": 93,
-    "surfaces_covered": 138,
-    "surfaces_covered_pct": 87.9,
+    "surfaces_covered": 139,
+    "surfaces_covered_pct": 88.0,
     "surfaces_equal": 24,
-    "surfaces_stronger": 133,
-    "surfaces_total": 157,
+    "surfaces_stronger": 134,
+    "surfaces_total": 158,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -2271,6 +2281,34 @@
       },
       "description": "the checked-in denominators and coverage ledger are current, and neither shrank without an accounted entry",
       "id": "meta.coverage-accounting",
+      "verdict": "stronger"
+    },
+    {
+      "category": "meta",
+      "cover_new": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "gate `kernel-members`",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [
+          {
+            "by": "nothing — four drifted sources with no gate; List.sortWith worked qualified but not via exposing, parallelMap was a phantom",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 0
+      },
+      "description": "the kernel-member tables (KERNEL_FUNCTIONS / PRELUDE_QUALIFIERS) and the stdlib .sky exposing lists are a faithful superset of the runtime rt.* exports — the invariant the qualified-member reject relies on for zero false positives",
+      "id": "meta.kernel-members",
       "verdict": "stronger"
     },
     {
@@ -11926,6 +11964,13 @@
             "requiredAt"
           ]
         },
+        "Sky.Core.List": {
+          "count": 2,
+          "symbols": [
+            "sort",
+            "sortWith"
+          ]
+        },
         "Sky.Core.Maybe": {
           "count": 8,
           "symbols": [
@@ -12306,7 +12351,7 @@
           ]
         },
         "Std.Db": {
-          "count": 25,
+          "count": 26,
           "symbols": [
             "SqlField",
             "defaultMigration",
@@ -12325,6 +12370,7 @@
             "getById",
             "getByIdDecode",
             "getField",
+            "getFloat",
             "getInt",
             "insertFields",
             "insertFieldsReturning",
@@ -12945,7 +12991,7 @@
           ]
         }
       },
-      "count": 777,
+      "count": 780,
       "pct_of_denominator": 40.6
     },
     "symbols_unreferenced_strict": {
@@ -13078,6 +13124,13 @@
           "count": 1,
           "symbols": [
             "requiredAt"
+          ]
+        },
+        "Sky.Core.List": {
+          "count": 2,
+          "symbols": [
+            "sort",
+            "sortWith"
           ]
         },
         "Sky.Core.Maybe": {
@@ -13478,7 +13531,7 @@
           ]
         },
         "Std.Db": {
-          "count": 26,
+          "count": 27,
           "symbols": [
             "SqlField",
             "SqlValue",
@@ -13498,6 +13551,7 @@
             "getById",
             "getByIdDecode",
             "getField",
+            "getFloat",
             "getInt",
             "insertFields",
             "insertFieldsReturning",
@@ -14178,8 +14232,8 @@
           ]
         }
       },
-      "count": 862,
-      "pct_of_denominator": 45.0
+      "count": 865,
+      "pct_of_denominator": 45.1
     }
   },
   "units": [
@@ -14292,8 +14346,8 @@
       "id": "apps:storefront",
       "modules_imported": 17,
       "path": "examples/13-skyshop",
-      "refs_generous": 104,
-      "refs_qualified": 56,
+      "refs_generous": 105,
+      "refs_qualified": 57,
       "role": "Layer2",
       "sky_files": 19,
       "sky_toml_sections": [
@@ -14510,8 +14564,8 @@
       "id": "examples/13-skyshop",
       "modules_imported": 17,
       "path": "examples/13-skyshop",
-      "refs_generous": 104,
-      "refs_qualified": 56,
+      "refs_generous": 105,
+      "refs_qualified": 57,
       "role": "Example",
       "sky_files": 19,
       "sky_toml_sections": [
@@ -14556,8 +14610,8 @@
       "id": "examples/16-skychess",
       "modules_imported": 23,
       "path": "examples/16-skychess",
-      "refs_generous": 148,
-      "refs_qualified": 62,
+      "refs_generous": 149,
+      "refs_qualified": 63,
       "role": "Example",
       "sky_files": 14,
       "sky_toml_sections": [

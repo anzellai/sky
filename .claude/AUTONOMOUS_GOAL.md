@@ -1,44 +1,62 @@
-# AUTONOMOUS MANDATE — secure `main` to truly hold "if it compiles it works"
+# AUTONOMOUS MANDATE — kernel-metadata unification to fully close reviewer item 2
 
-## Verbatim goal (user, 2026-08-29)
+## Verbatim goal (user, 2026-08-30)
 
-> yes please all the remaining gaps, holes, bugs, ci improvements etc. to make
-> our main branch, which our next big release will be based on, as secured and
-> as completed as possible. meaning truly holds our if it compiles it works
-> status
->
-> you can proceed with fully unattended+autonomous+piv mode.
->
-> if you need my inputs say it now otherwise you can proceed until fully e2e
-> delivered, ready for me to review + tag release
+> ok please do, as in fully unattended+autonomous+PIV mode
+> no more inputs from me as I'm away now
+
+(In reply to my offer: "I can take on the kernel-metadata unification next to
+fully close item 2.")
 
 ## Definition of done (Judge verifies the LITERAL claim)
 
-`main` truly holds **"if it compiles it works"**: no known program that passes
-`sky check` but fails `go build` OR panics at runtime OR returns wrong values
-under well-typed semantics — AND the gates that prove this are WIRED so the
-class cannot silently recur. The user reviews + tags; I do NOT tag/release.
+Reviewer **item 2** — "unknown qualified members (e.g. `List.sum`) resolve to
+`any` and are rejected only at codegen `[E4005]`; the checker resolving unknown
+qualified members to `any` is a smell" — is FULLY CLOSED:
 
-## Scope (from this session's 5 audits + 2 confirmed+fixed breaks)
+1. An unknown qualified kernel member (`List.sum`, `Basics.remainderBy`, any
+   `Mod.fn` where `Mod` is a kernel module and `fn` is not a real member) is
+   **rejected at type-check** with a clear naming/type error — NOT deferred to a
+   codegen `[E4005]`, and NOT silently resolved to `any`.
+2. **ZERO false positives**: every REAL kernel function still resolves and
+   compiles, both QUALIFIED (`List.sortWith`) and via `exposing` (`import
+   Sky.Core.List exposing (sortWith)`), and every example / corpus / conformance
+   / real app still builds+runs.
+3. A **single source of truth** for kernel-function membership, synced across the
+   compiler tables (`KERNEL_MODULES` / `PRELUDE_QUALIFIERS` / `KERNEL_FUNCTIONS`
+   in `rust/crates/hir/src/kernel.rs`), the stdlib `.sky` `exposing` lists, and
+   the runtime `rt.*` exports — with a **drift gate** that FAILS CI if they
+   diverge (so this class cannot silently recur).
+4. The confirmed drift is fixed: `sortWith` (real, in runtime, missing from
+   source/exposing) becomes importable; `parallelMap` (in the prelude list, NO
+   runtime impl) is reconciled (implemented or removed).
 
-1. **Find + fix remaining soundness holes** — adversarial sweep across the hard
-   classes (type-system/aliases/row-poly, FFI/rt.Coerce boundary, effects/Task,
-   stdlib semantics). Every hole → fix (root cause) + regression.
-2. **Enforcement wiring** (so the class can't recur):
-   - erasure-fuzz into CI (runs NOWHERE today) + templates for the found breaks.
-   - release.yml full-tier meta-gate (§0.2.1 unenforced prose).
-   - release-gate holes: config-migration + verify-cli in no workflow; release
-     runs a weaker run-set than per-commit; coerce-floor masks 5 FFI rows at
-     release.
-3. **Robustness**: HM solver budget (pathological module OOMs host); reconcile
-   `//` by zero (panics) vs `modBy 0` (total) — make total, matching Elm + the
-   no-panic promise.
-4. **Polish** (non-blocking, do if time): missing List combinators, sky doc
-   drift (kernel-lowered ops not surfaced), stale `--help`.
+## Verification (Judge, fresh context, adversarial)
+- `List.sum` / `Basics.remainderBy` → rejected at `sky check` (type/naming error,
+  not codegen E4005).
+- `List.sortWith` works qualified AND via `exposing`.
+- `cargo test --workspace` + full example sweep + conformance + corpus + the new
+  drift gate all green. coerce-floor unchanged (this is resolution, not emission).
+- No forbidden framings ("but/except/mostly/…") in the PASS verdict.
 
-## Protocol
-- Root-cause fixes only; regression-test-first; full verify (coerce-floor +
-  example-sweep + erasure-fuzz + cargo test workspace + corpus) before each
-  landing; batch pushes at milestones; watch CI green after each push.
-- Fresh-context adversarial Judge at close on the LITERAL claim.
-- NO tag/release (user's). darraghstudio HARD HOLD.
+## Constraints
+- PIV: architecture-consult (`docs/rust-rewrite/`) BEFORE tactics; grill; Judge at
+  close. Root-cause fixes only. No co-author line. Batch pushes at milestones.
+- Related: memory `flagged_items_and_kernel_metadata`,
+  `v0_19_kernel_metadata_unification`. The wildcard-`any` mechanism is
+  load-bearing (`sky_wildcard_any_soundness`) — do not destabilise it; this adds
+  a NAME-EXISTENCE check, distinct from type inference.
+
+## PROGRESS
+- P0 architecture-consult: DONE (PROCEED). Hole = resolve.rs:2746/2753 kernel-pseudo
+  fallback returns Res::Kernel unvalidated. SSOT = .sky (v0.19 direction). Reject
+  validates against kernel_functions(pseudo); zero-false-positive invariant =
+  KERNEL_FUNCTIONS ⊇ every real callable member (member REAL iff kernel_go_name in
+  runtime_exports).
+- P1 drift gate: DONE (worktree agent, commit 3b71229b). `xtask kernel-members`.
+  Drift is repo-wide: 18 modules, ~78 ambient members missing from KERNEL_FUNCTIONS
+  (all KERNEL_TABLE-backed + real → add), 2 phantoms (List.parallelMap, Io.readBytes
+  → remove), 4 List.sky bindings missing (sort/sortBy/sortWith/filterMap → add),
+  17 Db runtime-only symbols (add getFloat; mark other 16 internal — sweep arbitrates).
+- P2-P4: IN PROGRESS (agent resumed with the include-all policy; example-sweep is the
+  false-positive arbiter — promote any now-rejected symbol an app actually uses).

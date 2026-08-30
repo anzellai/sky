@@ -400,6 +400,19 @@ static CROSS_CUTTING: &[CrossSurface] = &[
             0,
         )],
     },
+    CrossSurface {
+        id: "meta.kernel-members",
+        category: "meta",
+        description: "the kernel-member tables (KERNEL_FUNCTIONS / PRELUDE_QUALIFIERS) \
+                      and the stdlib .sky exposing lists are a faithful superset of the \
+                      runtime rt.* exports — the invariant the qualified-member reject \
+                      relies on for zero false positives",
+        today: &[(
+            "nothing — four drifted sources with no gate; List.sortWith worked \
+             qualified but not via exposing, parallelMap was a phantom",
+            0,
+        )],
+    },
     // Distinct from `meta.config-surface`, and the distinction is the whole
     // point of the stage. That one counts WHO READS WHAT, from source. This one
     // records WHAT VALUE ARRIVES, from a running binary — which is the only
@@ -543,6 +556,7 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("shared-world", &["compiler.shared-world", "compiler.resolve"]),
     ("coverage-ledger", &["meta.coverage-accounting"]),
     ("config-surface", &["meta.config-surface"]),
+    ("kernel-members", &["meta.kernel-members"]),
     ("config-matrix", &["meta.config-effective-values"]),
     ("config-migration", &["meta.config-migration"]),
     ("config-migrate", &["meta.config-migrate"]),
@@ -760,6 +774,12 @@ static CI_SURFACES: &[(&str, &[&str])] = &[
     // `config-matrix` (a registered gate, so GATE_SURFACES already carries it);
     // claiming it here too would double-count.
     ("xtask:config-surface", &[]),
+    // `kernel-members` proves the kernel-member tables are a faithful superset of
+    // the runtime (the invariant the qualified-member reject relies on). It is a
+    // registered T1 harness gate, so its coverage is already scored through
+    // GATE_SURFACES; the config-gates job runs it directly too, so this row keeps
+    // the anti-drift test total — it claims nothing, to avoid double-counting.
+    ("xtask:kernel-members", &[]),
     // `config-migration --check` (added to release.yml's full-tier gate) is the
     // same kind of accounting: it verifies the migration surface census is
     // current. It is ALSO a registered harness gate (T1), so its coverage is
