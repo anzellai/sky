@@ -1,0 +1,15 @@
+-- gate: reject
+-- defect: `Tui.nope` — no such member. `Std.Tui` migrated to Layer-3 Sky
+--         source; its real members resolve via `qual_vars`. An unknown member
+--         used to defer to codegen `[E4005]`; it is now rejected at name
+--         resolution against the module's complete Sky-source surface.
+-- rust: reject [E1001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Tui as Tui
+import Std.Log exposing (println)
+
+
+main =
+    println (Tui.nope 1)

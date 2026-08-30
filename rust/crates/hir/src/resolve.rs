@@ -2940,7 +2940,54 @@ impl<'a> Resolver<'a> {
         name: &str,
         span: Option<Span>,
     ) -> Option<Res> {
-        let funcs = crate::kernel::kernel_functions(pseudo)?;
+        let Some(funcs) = crate::kernel::kernel_functions(pseudo) else {
+            // No ENUMERATED kernel members for this pseudo. Two sub-cases:
+            //   * A `.sky`-migrated kernel module (`Std.Live`/`Std.Jobs`/
+            //     `Std.Tui`): its members are real `Res::Def`s, so its COMPLETE
+            //     exposed surface is already in `qual_vars` (+ `qual_ctors` for
+            //     its types), eagerly populated by `bind_qual_from_exports`. An
+            //     unknown member of such a module is a genuine error — reject it
+            //     HERE, at name resolution, rather than let it fall through to a
+            //     codegen `[E4005]`. This closes the migrated-module half of the
+            //     "reject unknown kernel members at type-check" contract.
+            //   * A true wildcard kernel pseudo with no static enumeration and no
+            //     Sky surface: stay LENIENT (return None) — this is the
+            //     `sky_wildcard_any_soundness` mechanism and must not be
+            //     destabilised.
+            let known = self
+                .qual_vars
+                .get(qual)
+                .map(|m| m.keys().cloned().collect::<Vec<_>>())
+                .filter(|ks| !ks.is_empty());
+            let has_surface =
+                known.is_some() || self.qual_ctors.get(qual).is_some_and(|m| !m.is_empty());
+            if !has_surface {
+                return None; // lenient wildcard pseudo — leave resolution alone
+            }
+            if self.qual_ctors.get(qual).is_some_and(|m| m.contains_key(name)) {
+                return None; // a type/ctor of the module, resolved elsewhere
+            }
+            if self.quiet == 0 {
+                let members = known.unwrap_or_default();
+                let refs: Vec<&str> = members.iter().map(|s| s.as_str()).collect();
+                let hint = Self::closest_member(name, &refs)
+                    .map(|m| format!(" (did you mean `{qual}.{m}`?)"))
+                    .unwrap_or_default();
+                let mut diag =
+                    Diagnostic::error("E1001", format!("`{qual}` has no member `{name}`{hint}"));
+                if let Some(sp) = span {
+                    diag = diag.with_label(sp, "no such member");
+                }
+                self.result.diagnostics.push(diag);
+                self.result.class_a.push(ClassA {
+                    qualifier: Some(qual.to_string()),
+                    name: name.to_string(),
+                    kind: RefKind::Value,
+                    reason: "unknown module member".to_string(),
+                });
+            }
+            return Some(Res::Error);
+        };
         if funcs.contains(&name) {
             return None;
         }

@@ -1,0 +1,16 @@
+-- gate: reject
+-- defect: `Jobs.nope` — no such member. `Std.Jobs` migrated to Layer-3 Sky
+--         source; its real members (define/enqueue/cancel/…) resolve via
+--         `qual_vars`. An unknown member used to defer to codegen `[E4005]`;
+--         it is now rejected at name resolution against the module's complete
+--         Sky-source surface.
+-- rust: reject [E1001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Jobs as Jobs
+import Std.Log exposing (println)
+
+
+main =
+    println (Jobs.nope 1)

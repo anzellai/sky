@@ -1,0 +1,21 @@
+-- gate: reject
+-- defect: `Live.nope` — no such member. `Std.Live` migrated to Layer-3 Sky
+--         source (sky-stdlib/Std/Live.sky), so its real members (app/config/
+--         route/…) resolve as `Res::Def` via `qual_vars`, but it is STILL a
+--         registered kernel pseudo (hir::KERNEL_MODULES) with no
+--         KERNEL_FUNCTIONS entry. An unknown member therefore missed the
+--         qual_vars lookup, hit the None-lenient kernel-pseudo fallback, and
+--         resolved to an UNVALIDATED `Res::Kernel` that passed `sky check` and
+--         failed `go build` at codegen `[E4005]`. Now that the pseudo has a
+--         complete Sky-source surface in `qual_vars`, an unknown member is
+--         rejected at NAME RESOLUTION with a did-you-mean over the real members.
+-- rust: reject [E1001]
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Live as Live
+import Std.Log exposing (println)
+
+
+main =
+    println (Live.nope 1)
