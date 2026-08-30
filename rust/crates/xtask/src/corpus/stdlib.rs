@@ -474,7 +474,17 @@ pub fn kernel_inventory() -> std::collections::BTreeMap<String, std::collections
 /// declared "93 kernel members have no Sky signature" work with its own ratchet
 /// (`project/tests/kernel_signature_coverage.rs`) — not a coverage-accounting
 /// change, and not something to smuggle in here.
-const ROUTED_ONLY_KERNEL_MEMBERS: &[(&str, &str)] = &[("List", "sortWith")];
+///
+/// **Currently empty — the one member it held (`List.sortWith`) was closed the
+/// way this docstring prescribed.** The kernel-metadata unification advertised
+/// `sortWith` in `hir::KERNEL_FUNCTIONS[List]` (`crates/hir/src/kernel.rs`) and
+/// gave it a `.sky` signature (`sky-stdlib/Sky/Core/List.sky`), so it now lives
+/// in the ordinary `kernel_inventory()` and is rejected at type-check, not
+/// codegen, when misspelled. `every_routed_only_member_is_really_routed_and_
+/// really_unadvertised` flagged the leftover row as a lie; it is removed here.
+/// The mechanism stays: a genuinely routed-but-unadvertised member found later
+/// is DECLARED here (and checked from both ends) until `hir` catches up.
+const ROUTED_ONLY_KERNEL_MEMBERS: &[(&str, &str)] = &[];
 
 /// The stdlib inventory: module → its public `exposing` surface, read from the
 /// SAME `api/symbols.json` the coverage ledger uses (the `sky doc --export`
