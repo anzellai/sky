@@ -73,6 +73,34 @@ are also redacted in connect-error logs. Full guide:
   programs and builds *and runs* them, asserting `type-check ⟹ go build ⟹ no
   panic` — a permanent guard for the "compiles clean, panics at runtime" class.
 
+### Type checking & diagnostics
+
+- **Unknown qualified kernel members are rejected at `sky check`, not codegen.**
+  Calling a member a kernel module does not have — `List.sum`,
+  `Basics.remainderBy`, or an unknown member of a `.sky`-migrated module such as
+  `Live.nope` / `Jobs.nope` / `Tui.nope` — now fails at type-check with a clear
+  `[E1001]` "no member" error and a did-you-mean, instead of type-checking to
+  `any` and failing later with a codegen `[E4005]`. A new `xtask kernel-members`
+  drift gate keeps the compiler's kernel tables, the stdlib `.sky` `exposing`
+  lists, and the runtime exports in sync — with a proven falsifier — so the class
+  cannot silently return. (`sortWith`/`sortBy`/`filterMap` are now importable
+  both qualified and via `exposing`; the phantom `List.parallelMap` /
+  `Io.readBytes` are gone.)
+- **Compiler hints link to public docs.** Diagnostics that reference a guide —
+  the typed-`Secret` migration hint above, the `[observability]` / `sky.toml`
+  build notes, the config-migration notice, and the `sky doc` deprecation notes
+  on the retired front-door modules — now point at a full
+  `https://github.com/anzellai/sky/blob/main/docs/…` URL instead of a
+  repo-relative `docs/…` path that a `sky upgrade` user has no way to open.
+
+### Reliability
+
+- **`sky install` no longer fails on a transient inspector-spawn race.** The Go
+  FFI inspector (`sky-ffi-inspect`) is retried on `ETXTBSY` ("text file busy") —
+  the case where a just-built inspector binary is still held open by the linker
+  at the instant it is executed — so a first inspection after a rebuild no longer
+  fails spuriously.
+
 ## v0.22.1 — Sky.Spa: one command to run a split app (2026-08-25)
 
 ### `sky build` / `sky run` auto-split a Sky.Spa app
