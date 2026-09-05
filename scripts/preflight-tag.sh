@@ -54,7 +54,7 @@ fail() {
     exit 1
 }
 
-step "1/6 — Rebuild compiler from clean state"
+step "1/7 — Rebuild compiler from clean state"
 # `cp rust/target/release/sky` was wrong here for the same reason it was wrong
 # in build.sh: cargo honours CARGO_TARGET_DIR and friends, so that path can name
 # an older build. In a RELEASE gate that is the worst possible place for it —
@@ -67,12 +67,12 @@ install_binary "$(cargo_bin_path "$REPO_ROOT/rust" sky --release)" "$REPO_ROOT/s
     || fail "could not install the compiler cargo just built"
 [ -x ./sky-out/sky ] || fail "compiler binary missing after cargo build"
 
-step "2/6 — Smoke-test binary"
+step "2/7 — Smoke-test binary"
 ver=$(./sky-out/sky --version 2>&1)
 echo "  version output: $ver"
 echo "$ver" | grep -qE "^sky " || fail "sky --version did not print 'sky' line"
 
-step "3/6 — rust gate suite"
+step "3/7 — rust gate suite"
 # CLAUDE.md §2.3 — long-running commands must be timeout-bounded.
 # 60 min ceiling; if real runs need more, that's a flaky test.
 #
@@ -85,7 +85,19 @@ step "3/6 — rust gate suite"
 # harness is the honest fix; raising the ceiling would only have hidden it.
 ( cd rust && with_timeout 3600 bash -c 'cargo test --workspace --locked && for g in roundtrip resolve infer reject fuzz coerce-floor repro; do cargo run --release -q -p xtask -- "$g" || exit 1; done && cargo run --release -q -p xtask -- build-run --all && cargo run --release -q -p xtask -- build-run --shape cli --run --golden' ) || fail "rust gate suite had failures"
 
-step "4/6 — Example sweep (build-only, all 19+ examples)"
+step "4/7 — Config census + conformance + live-docs gates"
+# These three run only in the merge/nightly tier in CI, so a code-clean tag can
+# still ship a drifted config census, a stale conformance count, or a docs
+# example that stopped compiling — each of which bit a real release. Run them
+# here so the tag HOST catches them, not the nightly the morning after.
+( cd rust && with_timeout 900 bash -c 'for g in config-surface kernel-members denominators coverage-ledger config-migration; do cargo run --release -q -p xtask -- "$g" --check || exit 1; done' ) \
+    || fail "config census drift — regenerate (cargo run -p xtask -- <gate>) and re-commit docs/coverage/*.json"
+scripts/conformance.sh >/dev/null 2>&1 \
+    || fail "conformance suite had failures (or CONFORMANCE_EXPECTED in harness/bodies.rs is stale)"
+scripts/doc-examples.sh >/dev/null 2>&1 \
+    || fail "a live-docs example no longer compiles — see scripts/doc-examples.sh"
+
+step "5/7 — Example sweep (build-only, all 19+ examples)"
 # Run the sweep ONCE. It used to run twice — once piped to `tail -5` for
 # display and again captured for the check — which doubled the slowest step in
 # the whole preflight for nothing.
@@ -100,7 +112,7 @@ echo "$sweep_out" | grep -qE "^sweep: [0-9]+ passed, 0 failed$" || \
     fail "example-sweep failed: $(echo "$sweep_out" | grep -E '^sweep: ' | tail -1)"
 
 if [ $SKIP_WEB -eq 0 ]; then
-    step "5/6 — Runtime verification (Playwright; web apps)"
+    step "6/7 — Runtime verification (Playwright; web apps)"
     # Take the gate's EXIT STATUS as the verdict, and keep the anchored grep as
     # a second, independent witness.
     #
@@ -129,7 +141,7 @@ else
 fi
 
 if [ $SKIP_CLI -eq 0 ]; then
-    step "6/6 — Runtime verification (CLI / Sky.Tui / Sky.Cli)"
+    step "7/7 — Runtime verification (CLI / Sky.Tui / Sky.Cli)"
     if [ -x scripts/verify-cli.sh ]; then
         # The CLI arm was left on the UNANCHORED pattern when the web arm above
         # was fixed. `grep -qE "0 fail"` matches the substring inside "10 fail",
