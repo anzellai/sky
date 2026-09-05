@@ -91,7 +91,7 @@ step "4/7 — Config census + conformance + live-docs gates"
 # example that stopped compiling — each of which bit a real release. Run them
 # here so the tag HOST catches them, not the nightly the morning after.
 ( cd rust && with_timeout 900 bash -c 'for g in config-surface kernel-members denominators coverage-ledger config-migration; do cargo run --release -q -p xtask -- "$g" --check || exit 1; done' ) \
-    || fail "config census drift — regenerate (cargo run -p xtask -- <gate>) and re-commit docs/coverage/*.json"
+    || fail "config census drift — regenerate the failing census gate and re-commit docs/coverage/*.json"
 scripts/conformance.sh >/dev/null 2>&1 \
     || fail "conformance suite had failures (or CONFORMANCE_EXPECTED in harness/bodies.rs is stale)"
 scripts/doc-examples.sh >/dev/null 2>&1 \
