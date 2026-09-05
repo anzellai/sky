@@ -370,7 +370,8 @@ pub fn migration_hint(present: &[(String, String, String)]) -> Option<String> {
         }
         out.push_str(
             "  Your app still runs — these are applied as defaults. Move them into `config`\n\
-             \x20 (Sky.Config.withX / Live.withX); see docs/tooling/config-architecture.md.\n",
+             \x20 (Sky.Config.withX / Live.withX); see \
+             https://github.com/anzellai/sky/blob/main/docs/tooling/config-architecture.md.\n",
         );
     }
 

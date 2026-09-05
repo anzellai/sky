@@ -1302,7 +1302,8 @@ fn inert_key_hint(section: &str, key: &str) -> Option<&'static str> {
         ),
         ("observability", "enabled") => Some(
             "There is no `[observability]` section. The console and metrics \
-             endpoints gate on `ENV` (see docs/observability.md).",
+             endpoints gate on `ENV` (see \
+             https://github.com/anzellai/sky/blob/main/docs/observability.md).",
         ),
         _ => None,
     }
@@ -1365,7 +1366,10 @@ pub fn unknown_config_keys(keys: &[(String, String)]) -> Vec<String> {
                 msg.push_str(hint);
                 msg.push(' ');
             }
-            msg.push_str("(See docs/sky-toml.md; keys are camelCase.)");
+            msg.push_str(
+                "(See https://github.com/anzellai/sky/blob/main/docs/sky-toml.md; \
+                 keys are camelCase.)",
+            );
             msg
         })
         .collect()

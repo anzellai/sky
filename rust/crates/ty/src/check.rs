@@ -183,7 +183,8 @@ fn secret_migration_hint(message: &str) -> Option<String> {
              (read from the environment), or `Secret.fromString someRuntimeString` \
              when you already hold the value. `import Sky.Core.Secret as Secret \
              exposing (Secret)`; the raw bytes come back only through \
-             `Secret.reveal`. See docs/security/secret-migration.md"
+             `Secret.reveal`. See \
+             https://github.com/anzellai/sky/blob/main/docs/security/secret-migration.md"
                 .to_string(),
         )
     } else {

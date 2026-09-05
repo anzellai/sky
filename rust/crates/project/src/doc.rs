@@ -51,7 +51,8 @@ pub fn render_module(
             "⚠  DEPRECATED — use `Std.App` instead.\n   \
              `Std.App` is the single public app builder; it composes this module \
              for you.\n   This module stays functional, but new code should use \
-             `App.app` + `App.run` + `--target`.\n   See docs/skyapp/overview.md.\n\n{page}"
+             `App.app` + `App.run` + `--target`.\n   See \
+             https://github.com/anzellai/sky/blob/main/docs/skyapp/overview.md.\n\n{page}"
         ));
     }
     Ok(page)
