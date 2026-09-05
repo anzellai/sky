@@ -161,24 +161,28 @@ the client, keep the backend stateless.
 ## 3. Programming model — same as Sky.Live
 
 An author writes the *same* `Model / Msg / update / view` they'd write for
-Sky.Live, over the *same* renderer-agnostic `Std.Ui.Element`. Only the entry
-point and the Model's shape convention change.
+Sky.Live, over the *same* renderer-agnostic `Std.Ui.Element`, via the unified
+[`Std.App`](../skyapp/overview.md) front door. Only the build `--target` (a
+client wasm backend) and the Model's shape convention change.
 
 ```elm
+appDef =
+    App.app
+        { init          = Model.init
+        , update        = Update.update      -- PURE branches run on the CLIENT
+        , view          = View.view          -- Element Msg, rendered client-side to the DOM
+        , subscriptions = Subs.subscriptions
+        }
+        |> App.withRoutes Routes.routes      -- client-side routing (History API)
+        |> App.withNotFound NotFoundPage
+
+
 main =
-    Spa.app
-        (Spa.config
-            { init          = Model.init
-            , update        = Update.update   -- PURE branches run on the CLIENT
-            , view          = View.view        -- Element Msg, rendered client-side to the DOM
-            , subscriptions = Subs.subscriptions
-            , routes        = Routes.routes     -- client-side routing (History API)
-            , notFound      = NotFoundPage
-            }
-            |> Spa.withApi   "https://api.example.com"  -- backend base for server effects
-            |> Spa.withMount "#app"
-        )
+    App.run appDef       -- built --target web:app  (runner-direct: App.runSpa appDef)
 ```
+
+`Spa.app` / `Spa.config` are the low-level runtime `Std.App` composes for the
+client targets; user code never imports `Std.Spa` directly.
 
 ### 3.1 Model = `{ ui, data }` — source of truth, not "where it lives"
 

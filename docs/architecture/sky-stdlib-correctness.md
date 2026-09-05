@@ -540,8 +540,8 @@ exact runtime shape).
     `withRetryOn`.
 
 **Effect-boundary law**: every Task at the top of `main` MUST be
-forced — either by explicit `Task.run` (CLI/Cli) or by the runtime
-entry point (`Live.app`, `Server.listen`). A `let _ = TaskExpr`
+forced — either by explicit `Task.run` (a one-shot CLI) or by the
+runtime entry point (`App.run`, `Server.listen`). A `let _ = TaskExpr`
 inside Sky source is auto-forced by the compiler via
 `rt.AnyTaskRun`. This is structural — the compiler emits the wrap;
 the user does not opt in.
@@ -864,25 +864,44 @@ generators. Every other helper (`div`, `span`, `p`, ...) is `node
 "<tag>"` partial-applied. So `div [] [text "x"]` is structurally
 identical to `node "div" [] [text "x"]`.
 
-### 4.2 TEA shape (`Live.app` cfg)
+### 4.2 TEA shape (`Std.App` — `App.app` + builders)
+
+The unified front door is `Std.App`: write the TEA record once and
+compose the optional pieces with `App.with…` builders. A build-time
+`--target family[:variant]` (default `web`) selects the backend — the
+web target runs on the Sky.Live runtime documented in the rest of this
+section.
 
 ```elm
-main =
-    Live.app
-        { init = init                  -- Request -> (Model, Cmd Msg)
-        , update = update              -- Msg -> Model -> (Model, Cmd Msg)
-        , view = view                  -- Model -> Element Msg (or Html Msg)
+appDef =
+    App.app
+        { init = init                   -- () -> (Model, Cmd Msg)
+        , update = update               -- Msg -> Model -> (Model, Cmd Msg)
+        , view = view                   -- Model -> Element Msg
         , subscriptions = subscriptions -- Model -> Sub Msg
-        , routes = [...]               -- URL routing
-        , notFound = HomePage          -- fallback
-        , head = headFor               -- OPTIONAL Model -> List (Html Msg)
-        , consoleAuth = ...            -- OPTIONAL row-poly
-        , status = ...                 -- OPTIONAL i18n
         }
+        |> App.withRoutes [ App.route "/" HomePage ] -- URL routing
+        |> App.withNotFound HomePage                  -- fallback (MANDATORY for web)
+        |> App.withHead headFor                       -- OPTIONAL Model -> List (Html Msg)
+        |> App.withRequest onRequest                  -- OPTIONAL Request -> Model -> (Model, Cmd Msg)
+
+main : Task Error ()
+main =
+    App.run appDef                       -- --target web (default) → runLive
 ```
 
-The cfg is **row-poly** (extensible records). Apps that omit
-optional fields build byte-identical to the pre-extension shape.
+(Use `App.web` in place of `App.app` when `view : Model -> Html Msg`
+is raw `Std.Html` rather than a `Std.Ui` `Element`.) The `init` seed
+is `()`; the incoming `Request` (path / query / method / headers /
+cookies) is delivered through `App.withRequest`, which runs after
+`init` and before the first paint.
+
+**Low-level mechanism.** `App.run` lowers to `Std.Live`'s `Live.app`
+over a **row-poly** cfg (extensible records) — `routes` / `notFound` /
+`head` and the optional `consoleAuth` (row-poly) and `status` (i18n)
+fields. Apps that omit optional fields build byte-identical to the
+pre-extension shape. User code never imports `Std.Live` directly;
+`Std.App` composes it.
 
 ### 4.3 `init` lifecycle
 

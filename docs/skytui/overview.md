@@ -7,70 +7,124 @@
 > [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
 
 
-**Terminal-rendering TEA backend.** `Sky.Tui` runs an `init` / `update`
+**Terminal-rendering TEA backend.** Sky.Tui runs an `init` / `update`
 / `view` / `subscriptions` app the same way Sky.Live runs a web app —
 but the view function paints to ANSI terminal cells instead of HTML.
 The same `Std.Ui` element tree renders in both backends, so a
 counter, a stopwatch, or a small dashboard ports between the browser
 and the terminal with no view rewrites.
 
+**You write it through `Std.App`.** Don't import `Std.Tui` in app
+code — write one `App.app` (or `App.tui`) value and pick the terminal
+at build time with `--target`:
+
+| `--target` | Backend | View | Builder |
+|---|---|---|---|
+| `terminal:tui` | Sky.Tui — full-screen, raw mode, alt-screen | `model -> Element msg` (Std.Ui) **or** `model -> String` | `App.app` / `App.tui` |
+| `terminal:cli` | Sky.Cli — line-oriented, non-raw terminal | `model -> String` | `App.cli` |
+
+A `Std.Ui` `Element` view under `App.app` renders full-screen ANSI on
+`terminal:tui` — the exact same view function that renders HTML on
+`--target web` and a native window on `--target desktop`. `Std.Tui` /
+`Std.Cli` themselves are the low-level runtimes `Std.App` composes;
+you never call them directly.
+
 ```elm
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Task as Task
+import Sky.Core.String as String
 import Sky.Core.System as System
-import Std.Tui as Tui
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Ui as Ui
-import Std.Ui exposing (Element)
-import Std.Ui.Background as Background
+import Std.Ui as Ui exposing (Element)
 import Std.Ui.Font as Font
 
 
-type alias Model = { count : Int }
+type alias Model =
+    { count : Int }
 
-type Msg = Increment | Decrement | Quit | NoOp
+
+type alias KeyEvent =
+    { kind : String, value : String }
+
+
+type Msg
+    = Increment
+    | Decrement
+    | Quit
+    | NoOp
+
 
 init : () -> ( Model, Cmd Msg )
-init _ = ( { count = 0 }, Cmd.none )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
 
 update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model = case msg of
-    Increment -> ( { model | count = model.count + 1 }, Cmd.none )
-    Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
-    Quit      -> ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
-    NoOp      -> ( model, Cmd.none )
+update msg model =
+    case msg of
+        Increment -> ( { model | count = model.count + 1 }, Cmd.none )
+        Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
+        Quit      -> ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
+        NoOp      -> ( model, Cmd.none )
+
 
 view : Model -> Element Msg
 view model =
-    Ui.column
-        [ Ui.padding 16, Ui.spacing 8 ]
-        [ Ui.text ("Count: " ++ String.fromInt model.count)
+    Ui.column [ Ui.padding 16, Ui.spacing 8 ]
+        [ Ui.el [ Font.bold ] (Ui.text ("Count: " ++ String.fromInt model.count))
         , Ui.row [ Ui.spacing 8 ]
-            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "-" }
             , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
             ]
         ]
 
+
 subscriptions : Model -> Sub Msg
-subscriptions _ = Sub.none
+subscriptions _ =
+    Sub.none
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.kind == "char" && k.value == "q" then
+        Quit
+
+    else
+        NoOp
+
+
+appDef =
+    App.app
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withOnKey onKey
+
 
 main =
-    Tui.app
-        (Tui.config
-            { init = init, update = update, view = view
-            , subscriptions = subscriptions
-            }
-        )
-        |> Task.run
+    App.run appDef
+```
+
+Pin the terminal backend so a bare `sky build` / `sky run` picks it
+(an explicit `--target` still wins):
+
+```toml
+# sky.toml
+[app]
+target = "terminal:tui"
 ```
 
 `sky run src/Main.sky` builds and launches the binary. The terminal
 switches to alt-screen, raw mode, and mouse tracking; teardown on
 exit (Ctrl-C, `Quit`, panic, SIGTERM) restores the user's primary
-screen.
+screen. `App.withOnKey onKey` attaches the raw key-event handler
+(`KeyEvent -> Msg`) the terminal backend delivers — the runner maps
+it to the low-level `Tui.withOnKey`.
+
+> **Runner-direct form.** `main = App.runTui appDef` builds the TUI
+> backend without a `--target` flag or `sky.toml` pin. `App.run` +
+> `--target terminal:tui` is the portable default.
 
 ## Status: stable
 
@@ -106,55 +160,71 @@ sessions don't end up with a corrupted readline.
 
 ## Logical-pixel canvas
 
-Attach a logical-pixel canvas via the `Tui.withCanvasWidth` /
-`Tui.withCanvasHeight` builders. The runtime computes `pxPerCell`
-from the live terminal size and scales every `Ui.padding 8`,
-`Ui.spacing 4`, `Ui.px N` to character cells. Default 1280×720
-matches a typical web canvas — Std.Ui apps written for the browser
-look right in the terminal without re-tuning. Tweak via
-`Tui.withCanvasWidth 800` for denser layout.
+Attach a logical-pixel canvas via a `TerminalConfig` passed to
+`App.withConfig`. The runtime computes `pxPerCell` from the live
+terminal size and scales every `Ui.padding 8`, `Ui.spacing 4`,
+`Ui.px N` to character cells. Default 1280×720 matches a typical web
+canvas — Std.Ui apps written for the browser look right in the
+terminal without re-tuning. Tweak `canvasWidth` for denser layout.
+(`App.withConfig (App.TerminalConfig …)` maps to the low-level
+`Tui.withCanvasWidth` / `Tui.withCanvasHeight`.)
 
 ```elm
+appDef =
+    App.app
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withOnKey onKey
+        |> App.withConfig
+            (App.TerminalConfig { App.terminalDefaults | canvasWidth = 1024, canvasHeight = 768 })
+
+
 main =
-    Tui.app
-        (Tui.config
-            { init = init, update = update, view = view
-            , subscriptions = subscriptions
-            }
-            |> Tui.withCanvasWidth 1024
-            |> Tui.withCanvasHeight 768
-        )
-        |> Task.run
+    App.run appDef
 ```
 
 ## Auth guard middleware
 
-The `Tui.withGuard` builder attaches a guard with the same shape as
-`Live.app`'s — `Msg -> Model -> Result Error ()`. Returning
-`Err reason` skips the update and (if your model has
-`notification` / `notificationType` fields) writes the rejection
-into them for the view to render. The same guard function works
-under both backends, so authentication logic stays portable.
+The `App.withGuard` builder attaches a guard —
+`Msg -> Model -> Result Error ()`. Returning `Err reason` skips the
+update and (if your model has `notification` / `notificationType`
+fields) writes the rejection into them for the view to render. The
+same guard function works under every backend (the runner maps it to
+`Tui.withGuard` on the terminal and `Live.withGuard` on the web), so
+authentication logic stays portable.
 
-## Sky.Cli — line-oriented TEA
+## Sky.Cli — line-oriented TEA (`--target terminal:cli`)
 
-For apps that DON'T want raw-mode and full-screen rendering,
-`Sky.Cli` provides a line-oriented variant: the view returns a
-`String`, `update` consumes lines from stdin, and the runtime runs
-on a regular non-raw terminal. Useful for piped scripts and CI
-diagnostics.
+For apps that DON'T want raw-mode and full-screen rendering, build
+with `App.cli` and `--target terminal:cli`: the view returns a
+`String`, `App.withInput` maps each stdin line to a `Msg`, and the
+runtime runs on a regular non-raw terminal. Useful for piped scripts
+and CI diagnostics.
 
-`Cli.readPassword : () -> Task Error String` reads a line from
-stdin with terminal echo disabled — wraps `golang.org/x/term`'s
-ReadPassword. Falls back gracefully on non-TTY stdin.
+```elm
+appDef =
+    App.cli
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withInput onLine
+```
+
+```toml
+# sky.toml
+[app]
+target = "terminal:cli"
+```
+
+`Cli.readPassword : () -> Task Error String` (a helper of the
+line-oriented runtime) reads a line from stdin with terminal echo
+disabled — wraps `golang.org/x/term`'s ReadPassword. Falls back
+gracefully on non-TTY stdin.
 
 ## Examples
 
 | # | Name | Description |
 |---|------|-------------|
-| 20 | cli-counter | Sky.Cli — TEA on stdin lines |
-| 21 | tui-stopwatch | Sky.Tui — bubbletea-style stopwatch |
-| 22 | tui-stopwatch-ui | Sky.Tui — Std.Ui-driven stopwatch (same view function works under Sky.Live too) |
+| 20 | cli-counter | `App.cli` — TEA on stdin lines (`--target terminal:cli`) |
+| 21 | tui-stopwatch | `App.tui` — bubbletea-style stopwatch, String view (`terminal:tui`) |
+| 22 | tui-stopwatch-ui | `App.app` — Std.Ui `Element` view rendered full-screen (same view works under `--target web` too) |
 | 23 | tui-todo | Sky.Tui — todo CRUD demo |
 | 24 | tui-kitchen-sink | Sky.Tui — every supported Std.Ui primitive in one screen |
 
@@ -191,6 +261,7 @@ inspired the `safeGo` + alt-screen lifecycle. See `NOTICE.md`.
 
 ## See also
 
+- `docs/skyapp/overview.md` — `Std.App` + `--target`, the front door for every app shape (web / terminal / desktop).
 - `docs/skylive/overview.md` — the web-side TEA backend that shares the same `Std.Ui` element tree.
 - `docs/skyui/overview.md` — the layout DSL itself.
 - `examples/24-tui-kitchen-sink/src/Main.sky` — every supported primitive in one screen.

@@ -83,8 +83,9 @@ from:
   `Sky.Http.Server` `api` handlers, post-init bootstrap, scheduled
   jobs, callbacks from external systems (webhooks). The `Int` is the
   broker's delivery count. Errors with `Unavailable` when no
-  `Live.app` is running in this process (CLI tools, isolated unit
-  tests, pure HTTP servers).
+  Sky.Live runtime is running in this process — i.e. no `App.run` on a
+  `web`/`desktop` target (CLI tools, isolated unit tests, pure HTTP
+  servers).
 
 ### `Cmd.publish topic payload`
 
@@ -179,8 +180,8 @@ channel:
 
 The Task resolves with the count of subscribers that received the
 broadcast (the same `int` `Cmd.publish` gets in its internal path).
-Errors with `Unavailable` when no `Live.app` is registered in this
-process.
+Errors with `Unavailable` when no Sky.Live runtime is running in this
+process (no `App.run` on a `web`/`desktop` target).
 
 ```elm
 import Sky.Http.Server as Server

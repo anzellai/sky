@@ -367,7 +367,9 @@ It has three parts:
    **login handler** uses to write the cookie with the SAME attributes the
    re-issue will use.
 
-The one-line opt-in — a Sky.Live app with a login `api` route:
+The one-line opt-in. `Live.withAuthSliding` is a **Sky.Live low-level builder** —
+`Std.App` composes Sky.Live but does not surface this sliding-session hook, so mount
+it on a `Std.Live` app directly (a Sky.Live app with a login `api` route):
 
 ```elm
 secret =
@@ -482,6 +484,10 @@ Three steps:
 3. **Revoke / disable** from an admin action. **Sky provides the mechanism; your
    app owns the "is the caller an admin?" authorization** — call `revokeUser` /
    `disableUser` only after your own admin check.
+
+Like sliding tokens, `Live.withRevocation` / `Live.bindSessionUser` are **Sky.Live
+low-level builders** not surfaced through `Std.App`, so wire them on a `Std.Live` app
+directly:
 
 ```elm
 import Std.Live as Live exposing (app, config, withRevocation, bindSessionUser)

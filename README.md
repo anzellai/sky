@@ -97,10 +97,14 @@ A counter web app — type-checked, server-driven, no JavaScript.
 ```elm
 module Main exposing (main)
 
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task exposing (Task)
+import Std.App as App
 import Std.Cmd as Cmd
-import Std.Live exposing (app, config, route)
 import Std.Sub as Sub
-import Std.Ui as Ui
+import Std.Ui as Ui exposing (Element)
 import Std.Ui.Font as Font
 
 
@@ -112,7 +116,7 @@ type Msg
 type alias Model = { count : Int }
 
 
-init : a -> ( Model, Cmd Msg )
+init : () -> ( Model, Cmd Msg )
 init _ = ( { count = 0 }, Cmd.none )
 
 
@@ -123,35 +127,38 @@ update msg model =
         Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
 
 
-view : Model -> Ui.Element Msg
+view : Model -> Element Msg
 view model =
-    Ui.layout []
-        (Ui.row [ Ui.spacing 16, Ui.padding 24 ]
-            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
-            , Ui.el [ Font.size 24 ] (Ui.text (String.fromInt model.count))
-            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
-            ])
+    Ui.row [ Ui.spacing 16, Ui.padding 24 ]
+        [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+        , Ui.el [ Font.size 24 ] (Ui.text (String.fromInt model.count))
+        , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+        ]
 
 
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+appDef =
+    App.app
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound ()
+
+
+main : Task Error ()
 main =
-    app
-        (config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = \_ -> Sub.none
-            , routes = [ route "/" () ]
-            , notFound = ()
-            }
-        )
+    App.run appDef
 ```
 
 ```bash
 sky run src/Main.sky    # http://localhost:8000
 ```
 
-Add `Std.Tui.app cfg` to ship the same `view` to a terminal
-canvas, or `Std.Webview.app cfg` for a native desktop window.
+One `App.app` source, one `--target` per shape: bare (or `--target web`) serves
+it over Sky.Live; `--target terminal:tui` paints the same `view` to a terminal
+canvas; `--target desktop` wraps it in a native desktop window.
 
 ## Install
 
@@ -175,14 +182,24 @@ codegen.
 Every shape is the same TEA-style `init / update / view / subscriptions`;
 pick by where the loop should run and how you ship it.
 
-| You're building | Surface | Reach for it when | Entry point |
+You write ONE `App.app { init, update, view, subscriptions }` source and pick a
+backend with a build-time `--target family[:variant]` (default `web`). You never
+import `Std.Live`/`Std.Spa`/`Std.Tui`/`Std.Cli`/`Std.Webview` — `Std.App`
+composes them all.
+
+| You're building | `--target` | Reach for it when | Delivers |
 |---|---|---|---|
-| **Interactive web app, server-driven** | **Sky.Live** | you want zero client build + instant first paint, server-owned state, and real-time updates over one SSE per session; the target is the browser today | `Live.app (Live.config {…})` |
-| **Cross-platform app** (web · desktop · iOS · Android) | **Sky.Spa** | pure UI transitions should be **instant + local** (client wasm, no round-trip), the backend is a stateless API, and you ship to a webview (desktop/mobile) | `Spa.app (Spa.config {…})` |
-| HTTP / JSON API (no UI) | **Sky.Http.Server** | you're serving JSON/REST with typed routes + middleware, no rendered UI | `Server.listen 8000 [...]` |
-| Terminal UI (TUI) | **Sky.Tui** | a rich terminal app — the *same* `Std.Ui` view, painted to ANSI cells | `Tui.app (Tui.config {…})` |
-| CLI tool / background job | **Sky.Cli** | a one-shot command or cron job, no UI loop | `main = Task.run ...` |
-| Native desktop window | **Sky.Webview** | a desktop `.app`/`.exe` wrapping your UI in a native window | `Webview.app { … }` |
+| **Interactive web app, server-driven** | `web` (default) | you want zero client build + instant first paint, server-owned state, and real-time updates over one SSE per session; the target is the browser today | **Sky.Live** |
+| **Cross-platform app** (web · desktop · iOS · Android) | `web:app` · `desktop:mac` · `tablet:ipad` · `mobile:ios` | pure UI transitions should be **instant + local** (client wasm, no round-trip), the backend is a stateless API, and you ship to a webview (desktop/mobile) | **Sky.Spa** (client wasm) |
+| HTTP / JSON API (no UI) | — | you're serving JSON/REST with typed routes + middleware, no rendered UI | **Sky.Http.Server** (`Server.listen 8000 [...]`) |
+| Terminal UI (TUI) | `terminal:tui` | a rich terminal app — the *same* `Std.Ui` view, painted to ANSI cells | **Sky.Tui** |
+| CLI tool / background job | `terminal:cli` | a one-shot command or line-oriented loop | **Sky.Cli** (or bare `main = Task.run ...`) |
+| Native desktop window | `desktop` | a desktop `.app`/`.exe` wrapping your UI in a native window | **Sky.Webview** |
+
+Add `App.withNotFound …` (mandatory for `web`/`desktop`) and `App.withRoutes […]`
+to the same `appDef`; for a raw `Std.Html` view use `App.web` instead of
+`App.app`, and for a hand-authored terminal `view : model -> String` use
+`App.cli` / `App.tui`. `main = App.run appDef` is the entry for every target.
 
 **Sky.Live vs Sky.Spa — the two TEA runtimes.** Sky.Live keeps the loop on the
 **server** (per-user model, live SSE, a full re-render each interaction) — great

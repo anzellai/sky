@@ -951,19 +951,24 @@ Unchanged in shape; the cross-cutting concerns leave the app-shape builders:
 ```elm
 config = … |> Config.withSessions Config.SharedWithDatabase
 
+appDef =
+    App.app { init = init, update = update, view = view, subscriptions = subs }
+        |> App.withRoutes routes
+        |> App.withNotFound NotFound
+        |> App.withConfig
+            (App.WebConfig { App.webDefaults | port = 8000, staticDir = Just "public" })
+
 main =
-    Live.app
-        (Live.config { init = init, update = update, view = view
-                     , subscriptions = subs, routes = routes, notFound = NotFound }
-            |> Live.withPort 8000
-            |> Live.withStatic "public"
-        )
+    App.run appDef
 ```
 
-`Live.withStore` / `withStorePath` are superseded by
-`Config.withSessions` — one typed strategy replacing two stringly-typed knobs,
-which is also how `LIVE_TTL`'s three meanings (§1.7) separate into three named
-settings.
+The front door is `Std.App` (`App.app` + `App.run`, `--target web` by default);
+the app-shape knobs — port, static dir, routes, not-found — stay on the app
+builders (`App.withConfig` / `App.withRoutes` / `App.withNotFound`, composing
+over the low-level `Live.withX`). The **low-level** `Live.withStore` /
+`withStorePath` are superseded by `Config.withSessions` — one typed strategy
+replacing two stringly-typed knobs, which is also how `LIVE_TTL`'s three meanings
+(§1.7) separate into three named settings.
 
 **Std.Webview needs aligning first.** It is the only shape still on plain
 records with pure-Sky update builders (`Std/Webview.sky:30,45,51,66`). It should

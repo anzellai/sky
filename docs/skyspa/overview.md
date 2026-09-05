@@ -1,11 +1,14 @@
 # Sky.Spa — client-side TEA (overview)
 
-> **Status: supported feature.** Sky.Spa is part of the Sky stdlib (`Std.Spa`);
-> the runtime partition, the auto-split, and the `Std.Bundle` packaging story are
-> built, tested, and stable. It targets **desktop / mobile-embed webview first**;
-> the constraints below (e.g. web-as-a-first-class-target) are real current scope
-> boundaries, not instability. This page documents what Sky.Spa *is* and what is
-> **not yet** in scope.
+> **Status: supported feature.** Sky.Spa is the **client-wasm backend of
+> [`Std.App`](../skyapp/overview.md)** — you write an `App.app` and select it
+> with a client `--target` (`web:app` / `mobile:*` / `tablet:*`); `Std.Spa` is
+> the low-level runtime the build drives, not a module you import. The runtime
+> partition, the auto-split, and the `Std.Bundle` packaging story are built,
+> tested, and stable. It targets **desktop / mobile-embed webview first**; the
+> constraints below (e.g. web-as-a-first-class-target) are real current scope
+> boundaries, not instability. This page documents what the Sky.Spa target *is*
+> and what is **not yet** in scope.
 
 Sky.Spa runs the Sky TEA loop **on the client**. You write the *same*
 `Model / Msg / update / view` you would write for [Sky.Live](../skylive/overview.md),
@@ -29,21 +32,24 @@ session, no SSE.
 
 ## Build & run — one command
 
-A `Spa.app` entry (it imports `Std.Spa`) is auto-split by the normal verbs — you
-do not run the generator by hand:
+An `App.app` entry built to a **client `--target`** (`web:app` / `mobile:*` /
+`tablet:*`) selects the Sky.Spa backend, which auto-splits into a wasm frontend
++ a native backend by the normal verbs — you do not run the generator by hand:
 
 ```bash
-sky run src/Main.sky              # split → build wasm frontend + native backend → run it
-sky build src/Main.sky            # split + build both (artefacts under .split/)
-sky build --embed --target ios …  # flags COMPOSE: --embed → backend PostgreSQL, --target → frontend shell
+sky run   --target web:app  src/Main.sky  # split → build wasm frontend + native backend → run it
+sky build --target web:app  src/Main.sky  # split + build both (artefacts under .split/)
+sky build --embed --target mobile:ios …   # flags COMPOSE: --embed → backend PostgreSQL, --target → frontend shell
 ```
 
-`sky run` starts the backend, which serves the frontend + `/_rpc` + the dev
-console + metrics same-origin (one binary) — open the printed
-`http://localhost:<port>/`. `sky check` type-checks the shared source without
-splitting. The explicit generator (`sky spa-split <entry> --out <dir>`) is for
-when you want the `frontend/`/`backend/`/`shared/` trees kept at a chosen path;
-see [`docs/tooling/cli.md`](../tooling/cli.md) and [auto-split.md](auto-split.md).
+Pin the target once in `sky.toml` (`[app]` → `target = "web:app"`) and a bare
+`sky build` / `sky run` picks it. `sky run` starts the backend, which serves the
+frontend + `/_rpc` + the dev console + metrics same-origin (one binary) — open
+the printed `http://localhost:<port>/`. `sky check` type-checks the shared
+source without splitting. The explicit generator (`sky spa-split <entry> --out
+<dir>`) is the low-level form for when you want the
+`frontend/`/`backend/`/`shared/` trees kept at a chosen path; see
+[`docs/tooling/cli.md`](../tooling/cli.md) and [auto-split.md](auto-split.md).
 
 ## When to use Sky.Spa vs Sky.Live
 
@@ -69,27 +75,29 @@ not a multi-megabyte wasm blob.
 
 ## The programming model — same as Sky.Live
 
-An app is written like a Sky.Live app; only the entry point and a Model-shape
-convention change. The four TEA fields go in `Spa.config`; routing and the
-server boundary are attached with `withX` builders (exactly like Sky.Live's
-optionals):
+An app is written exactly like a Sky.Live / web `App.app`; only the build
+`--target` (a client wasm backend) and a Model-shape convention change. The four
+TEA fields go in `App.app`; routing and the server boundary are attached with
+`App.withX` builders (exactly like the web target's optionals):
 
 ```elm
+appDef =
+    App.app
+        { init = Model.init
+        , update = Update.update      -- pure branches run on the CLIENT
+        , view = View.view            -- Std.Ui Element, painted client-side to the DOM
+        , subscriptions = Subs.subs   -- Sub.every timers, reconciled after each update
+        }
+        |> App.withRoutes
+            [ App.route "/" All
+            , App.route "/active" Active
+            , App.route "/completed" Completed
+            ]
+        |> App.withNotFound NotFound
+
+
 main =
-    Spa.app
-        (Spa.config
-            { init = Model.init
-            , update = Update.update      -- pure branches run on the CLIENT
-            , view = View.view            -- Std.Ui Element, painted client-side to the DOM
-            , subscriptions = Subs.subs   -- Sub.every timers, reconciled after each update
-            }
-            |> Spa.withRoutes
-                [ Spa.route "/" All
-                , Spa.route "/active" Active
-                , Spa.route "/completed" Completed
-                ]
-            |> Spa.withNotFound NotFound
-        )
+    App.run appDef       -- built --target web:app  (runner-direct: App.runSpa appDef)
 ```
 
 `view` is `Std.Ui` (the default — see the pinned defaults in
@@ -121,12 +129,15 @@ wrapper.
 > auto-split ([auto-split.md](auto-split.md)). v1 apps follow the discipline by
 > hand, which keeps them forward-compatible with the v2 mechanism.
 
-## The explicit, typed server boundary
+## The server boundary — generated, with an explicit low-level form
 
-v1's boundary is **explicit** (author-declared), not compiler-derived. Talk to a
-stateless Sky backend with `Std.Spa.getJson` / `postJson`, decoding with a
-`Std.Codec` that is the **same** codec compiled into the backend — one type, one
-codec, one wire contract, no OpenAPI/TS drift:
+Under a client `--target` the auto-split derives the boundary for you: an
+ordinary effectful `update` branch becomes a generated `POST /_rpc/<Msg>` (pure
+→ client, any effect → server; see [auto-split.md](auto-split.md)) over a
+`Std.Codec` shared with the backend — one type, one codec, one wire contract, no
+OpenAPI/TS drift. The **low-level, explicit** form — talk to a stateless Sky
+backend by hand with `Std.Spa.getJson` / `postJson`, decoding with that **same**
+codec — is what the generated code uses under the hood:
 
 ```elm
 Refresh ->
@@ -147,32 +158,29 @@ compiling — that is the whole point.
 decoded body, or an `Err` — a non-2xx status, a decode failure, and a network
 failure are all `Err`), so the app writes one `case`, not two.
 
-## Routing — `withRoutes` (History API)
+## Routing — `App.withRoutes` (History API)
 
-Routing is opt-in via the `withX` builders (a single-view app needs none). The
-names read exactly like Sky.Live:
+Routing is opt-in via the `App.withX` builders (a single-view app needs none).
+The names read exactly like the web target:
 
-- `Spa.route path page` — register a route; `path` may contain `:param` segments
-  (`/thing/:id`), captured as a **String** and passed to a page constructor
-  (`ThingPage : String -> Page`). Put literal routes before `:param` patterns.
-- `Spa.routeInt path toPage` — a `:param` route whose captured segment is an
-  **Int** (`TodoDetail : Int -> Page`); the segment is parsed before it reaches
-  the constructor, so the page carries a typed `Int`, not a `String` you
-  re-parse in `view`. A non-integer segment makes the route **not match**, so
-  `/todo/abc` falls through to the next route or `withNotFound` — exactly as an
-  invalid id should. (The runtime can't see the constructor's parameter type
-  under the erased ABI, so the Int-ness is declared at the route.)
-- `Spa.withRoutes routes` — resolves `location.pathname` on mount, on an
+- `App.route path page` — register a static route (`App.route "/about" About`).
+  Put literal routes before `:param` patterns.
+- `App.routeParam path toPage` — a route whose `path` carries a `:param` segment
+  (`App.routeParam "/thing/:id" ThingPage`, `ThingPage : String -> Page`),
+  captured as a **String** and passed to the page constructor. Parse it (e.g.
+  `String.toInt`) inside the constructor or `view` when you need a typed id;
+  route an id your app rejects to `App.withNotFound`.
+- `App.withRoutes routes` — resolves `location.pathname` on mount, on an
   intercepted internal-link click, and on Back/Forward, setting `model.page`.
-- `Spa.withNotFound page` — the page shown when nothing matches.
-- `Spa.withOnNavigate (page -> msg)` — fired after the route is applied, so the
+- `App.withNotFound page` — the page shown when nothing matches.
+- `App.withOnNavigate (page -> msg)` — fired after the route is applied, so the
   app can run an effect per navigation.
 
 Internal `<a href>` clicks are intercepted (History `pushState`, no reload);
 Back/Forward (`popstate`) is honoured; an external host, `target="_blank"`, a
 `download`, a `sky-external` mark, or a modified click is left to the browser.
 
-The full surface (typed signatures + summaries) is `sky doc Std.Spa`.
+The full surface (typed signatures + summaries) is `sky doc Std.App`.
 
 ## Security — the untrusted client is a first-class rule
 
@@ -231,4 +239,5 @@ These are real, current scope boundaries — not roadmap optimism:
   tracing + the effects-via-`Cmd` dialect).
 - [`examples/60-spa-todos`](../../examples/60-spa-todos) — the worked full-stack
   example.
-- `sky doc Std.Spa` — the live API surface.
+- `sky doc Std.App` — the live front-door API (the low-level transport is
+  `sky doc Std.Spa`).

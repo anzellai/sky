@@ -269,13 +269,13 @@ tier calls for it*.
 
 | User wants | Use | Entry point |
 |---|---|---|
-| Web app (forms, real-time, UI state) | **Sky.Live** | `Live.app cfg` |
-| Client-rendered SPA / cross-platform client loop | **Sky.Spa** | `Spa.app cfg` |
+| Web app (forms, real-time, UI state) | **Sky.Live** | `App.app {…}` + `--target web` (default) |
+| Client-rendered SPA / cross-platform client loop | **Sky.Spa** | `App.app {…}` + `--target web:app` (or `desktop`/`mobile`) |
 | HTTP/JSON API (no browser UI) | **Sky.Http.Server** | `Server.listen 8000 [...]` |
 | Background job / cron | **Sky.Cli** | `main = Task.run work` |
-| Terminal UI | **Sky.Tui** | `Tui.app cfg` |
+| Terminal UI | **Sky.Tui** | `App.app {…}` + `--target terminal:tui` |
 | One-shot CLI | **Sky.Cli** | `main = Task.run cliCmd` |
-| Desktop app | **Sky.Webview** | `Webview.app cfg` (macOS in v0.1) |
+| Desktop app | **Sky.Webview** | `App.app {…}` + `--target desktop` (macOS in v0.1) |
 | WebSocket feed | **Sky.Http.Server.WebSocket** | `Server.upgrade req` |
 | SSE / token stream | **Sky.Http.Server.Stream** | `Server.Stream.emit` |
 | One source, many targets (web/terminal/desktop) | **Std.App** | `App.app { init, update, view, subscriptions }` + `--target` |

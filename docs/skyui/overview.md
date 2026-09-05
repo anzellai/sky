@@ -15,9 +15,12 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task exposing (Task)
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Live exposing (app, config, route)
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
@@ -29,7 +32,7 @@ type alias Model = { count : Int }
 type Msg = Increment | Decrement
 
 
-init : a -> ( Model, Cmd Msg )
+init : () -> ( Model, Cmd Msg )
 init _ = ( { count = 0 }, Cmd.none )
 
 
@@ -40,28 +43,37 @@ update msg model =
         Decrement -> ( { model | count = model.count - 1 }, Cmd.none )
 
 
-view : Model -> any
+view : Model -> Element Msg
 view model =
-    Ui.layout []
-        (Ui.row
-            [ Ui.spacing 12
-            , Ui.padding 16
-            , Background.color (Ui.rgb 255 102 0)
-            , Font.color (Ui.rgb 255 255 255)
-            , Border.rounded 4
-            ]
-            [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
-            , Ui.el [ Font.size 24, Font.bold ] (Ui.text (String.fromInt model.count))
-            , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
-            ])
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.padding 16
+        , Background.color (Ui.rgb 255 102 0)
+        , Font.color (Ui.rgb 255 255 255)
+        , Border.rounded 4
+        ]
+        [ Ui.button [] { onPress = Just Decrement, label = Ui.text "−" }
+        , Ui.el [ Font.size 24, Font.bold ] (Ui.text (String.fromInt model.count))
+        , Ui.button [] { onPress = Just Increment, label = Ui.text "+" }
+        ]
 
 
+subscriptions : Model -> Sub Msg
 subscriptions _ = Sub.none
 
-main = app (config { init = init, update = update, view = view, subscriptions = subscriptions, routes = [], notFound = () })
+
+appDef =
+    App.app
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound ()
+
+
+main : Task Error ()
+main =
+    App.run appDef
 ```
 
-That's the whole picture: every visual element is an `Element msg`, every styling/layout decision is an `Attribute msg`, and the layout function `Ui.layout` produces the value Sky.Live's `view` field expects.
+That's the whole picture: every visual element is an `Element msg`, every styling/layout decision is an `Attribute msg`, and `App.app`'s `view : model -> Element msg` returns the root element directly — the runtime supplies the page wrapper. `App.run` picks the web backend by default (`sky build`, or `--target web`), so the same Std.Ui view also renders on `--target desktop` / `terminal:tui` without touching the view code. Std.Ui is the view layer; [`Std.App`](../skyapp/overview.md) is the entry point.
 
 ## Why it exists
 
@@ -80,7 +92,7 @@ Std.Ui takes a different cut: model layout in terms the user actually wants (`ro
 
 Every `Element msg` has a `msg` parameter — the same `msg` you've defined for your TEA app. Attributes that carry events (`onClick`, `onSubmit`, `onInput`) tie into the same `msg` so the type checker catches mismatches at compile time.
 
-The `Ui.layout` function takes the root element and produces an `any` that Sky.Live's `view` field accepts. Wrap your top-level view in it.
+`App.app` takes `view : model -> Element msg` and wraps your root element in a viewport-tall page shell for you — no explicit wrapper call in the common case. Reach for `Ui.layoutWith` (§`Ui.layoutWith`) only when you need to style that wrapper itself (page-wide background, cascading font).
 
 ## Layout primitives
 

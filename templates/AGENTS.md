@@ -357,36 +357,32 @@ error (`[E1011] NOT EXPOSED`).
 
 ## Sky.Live essentials
 
-`Live.app` takes a typed **builder** config (v0.19): `Live.config { init, update,
-view, subscriptions, routes, notFound }` builds an opaque `AppConfig`; attach
-optional fields with `withX` builders in a pipe:
+A `web`-target app runs on the **Sky.Live** runtime — the server-driven backend
+`App.run appDef` composes when `--target` is `web` (the default). You author it
+through `Std.App`: `App.app { init, update, view, subscriptions }` refined by
+`with…` builders in a pipe, run by `main = App.run appDef`:
 
 ```elm
-import Std.Live exposing (app, config, route, withHead)
+import Std.App as App
+
+appDef =
+    App.app
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withRoutes [ App.route "/" Home ]
+        |> App.withHead headFor      -- optional; also withGuard/withOnNavigate/withConfig/…
+        |> App.withNotFound Home      -- required for web (compile-enforced)
 
 main =
-    app
-        (config
-            { init = init, update = update, view = view
-            , subscriptions = subscriptions
-            , routes = [ route "/" Home ], notFound = Home
-            }
-            |> withHead headFor      -- optional; also withGuard/withAnalytics/withStatic/…
-        )
+    App.run appDef
 ```
 
-**Migrating an older project:** if you see the pre-v0.19 record literal
-`Live.app { init = …, update = …, …, head = … }` (or `Tui.app` / `Tui.program` /
-`Cli.program`), migrate it — that form is REMOVED and won't compile. Keep the six
-required fields (`init`/`update`/`view`/`subscriptions`/`routes`/`notFound`) inside
-`config { … }`, and move every OPTIONAL field to a `|> withX` in the pipe
-(`head` → `withHead`, `guard` → `withGuard`, `analytics` → `withAnalytics`,
-`onKey` → `withOnKey`, `onLine` → `withOnLine`, …); add `config` + the `withX`
-names you use to the `exposing (…)` list. The compiler error for the old form
-prints this same recipe. `Webview.app` keeps its closed record. Full guide:
-`docs/v0.19/migration-builder-cfg.md`. Same pattern for `Tui.app` /
-`Tui.program` (`Tui.config` + `withOnKey`) and `Cli.program` (`Cli.config` +
-`withOnLine`). `init` runs
+`App.withRoutes` takes `App.route "/path" page` / `App.routeParam "/p/:id" mk` /
+`App.api "/x" handler`; `App.withConfig (App.WebConfig { App.webDefaults | port =
+8000, inputMode = Just "debounce" })` sets the port and input mode; cross-cutting
+log/database/telemetry go through `App.withBase { App.baseDefaults | … }`. See
+the migration table earlier in this file and `sky doc Std.App` for the full
+builder set. The remaining Sky.Live facts below describe what the `web` backend
+does at run time. `init` runs
 per-session (a reload restores Model from the store; it does NOT re-run `init`).
 `init` receives a `req` with `path` / `query` / `params` / `method` / `headers` /
 `cookies`. `update msg model` returns `(Model, Cmd Msg)`; `Cmd.perform task ToMsg`
@@ -416,14 +412,15 @@ sky watch src/Main.sky       # rebuild + restart on save
 sky add <go/pkg> | remove | install | update   # Go FFI deps
 ```
 
-**Sky.Spa entries auto-split.** If `main` is a `Spa.app` (the entry imports
-`Std.Spa`), `sky build src/Main.sky` derives + builds a wasm frontend + native
-backend under `.split/` (no manual `sky spa-split`), and `sky run src/Main.sky`
-runs the backend — it serves the frontend + `/_rpc` same-origin. `--target
-desktop|ios|android` (frontend shell) and `--embed` (bundle PostgreSQL into the
-backend) COMPOSE with the split. `sky check` type-checks the shared source
-without splitting; `sky spa-split <entry> --out <dir>` is the explicit form when
-you want the split trees kept at a path.
+**Sky.Spa entries auto-split.** Building the same `App.app` source to a client
+target (`--target web:app` · `desktop:mac` · `tablet:ipad` · `mobile:ios`)
+synthesises a Spa app and runs the Sky.Spa auto-split: `sky build src/Main.sky`
+derives + builds a wasm frontend + native backend under `.split/` (no manual
+`sky spa-split`), and `sky run src/Main.sky` runs the backend — it serves the
+frontend + `/_rpc` same-origin. `--target desktop|ios|android` (frontend shell)
+and `--embed` (bundle PostgreSQL into the backend) COMPOSE with the split. `sky
+check` type-checks the shared source without splitting; `sky spa-split <entry>
+--out <dir>` is the explicit form when you want the split trees kept at a path.
 
 Run `sky verify` before you consider a change done — it runs fmt-clean +
 type-check + production build + every `tests/*.sky` suite, and exits non-zero on

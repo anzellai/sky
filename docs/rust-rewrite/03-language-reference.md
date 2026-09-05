@@ -614,8 +614,10 @@ explicit `Task.run` (runs at binding-init time), e.g.
   **`rt.AnyTaskRun` unconditionally** (`Compile.hs` ~`19155-19170,21077`). So a
   Task-typed `main` runs with **no trailing `|> Task.run`** — the trailing
   `Task.run` at program entry is a no-op.
-- All app-shape entries rely on this: `main = Cli.program cfg`,
-  `main = Tui.app cfg`, `main = Webview.app cfg`, `main = Live.app cfg`.
+- All app-shape entries rely on this: the unified front door is
+  `main = App.run appDef` (`Std.App`), which a build-time `--target
+  family[:variant]` rewrites to the backend runner
+  (`runLive` / `runTui` / `runCli` / `runWebview` / `runSpa`).
 - The Sky binding `main` in `module Main` emits as Go `func main()` (special-
   cased, not module-prefixed) (see §12).
 - Module-level `Task.run` at a non-main binding is still load-bearing (§8).

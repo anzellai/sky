@@ -150,8 +150,9 @@ consume them too.
 
 Sky.Live (server-driven UI) runtime config. Every key seeds an
 env-var default at startup, namespaced by `[env] prefix`
-(default `SKY_`). These seeds sit BELOW an explicit `Live.withX`
-builder call in code, which in turn sits below the operator's
+(default `SKY_`). These seeds sit BELOW an explicit builder call in code
+(`App.withConfig` on a `Std.App` entry, or the low-level `Live.withX`),
+which in turn sits below the operator's
 environment (shell or `.env`) — see [Precedence](#precedence).
 See the [Sky.Live overview](skylive/overview.md) for the full
 picture.
@@ -717,6 +718,7 @@ builder:
 -- doc-example: skip  (illustrative — init/update/view/subscriptions elided)
 module Main exposing (main, bundle)
 
+import Std.App as App
 import Std.Bundle as Bundle exposing (Bundle)
 
 bundle : Bundle
@@ -726,8 +728,12 @@ bundle =
         |> Bundle.withIcon "assets/icon.png"
         |> Bundle.withVersion "2.3.0"
 
+appDef =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound ()
+
 main =
-    Spa.app (Spa.config { init = init, update = update, view = view, subscriptions = subscriptions })
+    App.run appDef
 ```
 
 `sky build --target …` reads those `withX` values *from the source* (no runtime
@@ -754,10 +760,11 @@ Rules:
   (`com.acme.notes` → `Notes`), because the display name may contain spaces or
   emoji the filesystem and Swift/Java toolchains reject.
 - `--target` **composes with the auto-split**: `sky build --target ios
-  src/Main.sky` on a `Spa.app` entry splits and builds the frontend for that
-  shell (the backend native alongside). For a **client-only** app it runs on the
-  project directly. (The explicit `sky spa-split … --target` form still works if
-  you keep the split trees at a chosen path.)
+  src/Main.sky` on a `Std.App` entry (or a low-level `Spa.app`) splits and builds
+  the frontend for that shell (the backend native alongside). For a
+  **client-only** app it runs on the project directly. (The explicit
+  `sky spa-split … --target` form still works if you keep the split trees at a
+  chosen path.)
 
 Full API: `sky doc Std.Bundle`.
 
@@ -778,9 +785,11 @@ first):
    `ENV`, k8s, CI vars).
 2. **`.env` file** in the working directory (auto-loaded at
    startup; never overrides existing env vars).
-3. **Explicit builder calls in code** (`Live.withPort`,
-   `Live.withStore`, `Live.withStorePath`, `Live.withTtl`,
-   `Live.withIdleEvict`).
+3. **Explicit builder calls in code** — on a `Std.App` entry,
+   `App.withConfig (App.WebConfig { App.webDefaults | port = 8000, … })`
+   and `App.withBase …`; on the low-level runtimes, the underlying
+   `Live.withPort` / `Live.withStore` / `Live.withStorePath` /
+   `Live.withIdleEvict`.
 4. **`sky.toml`** defaults (compiled into the binary's
    `init()`; only set when the corresponding env var is unset).
 5. **Hardcoded runtime fallbacks** (e.g. port `8080`, TTL `30m`).

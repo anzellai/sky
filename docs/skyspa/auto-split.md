@@ -7,6 +7,13 @@
 > specifies the mechanism that survives it (trace `Task` in the branch **body**),
 > the one obstacle it hits (inline effect *interleaving*), and the dialect that
 > removes the obstacle. Grounded in real Sky surfaces (file:line).
+>
+> **Front door vs. mechanism.** The user-facing entry is
+> [`Std.App`](../skyapp/overview.md): write an `App.app` and build it with a
+> client `--target` (`web:app` / `mobile:*` / `tablet:*`). The `Spa.app` /
+> `Spa.config` / `Spa.postJson` / `import Std.Spa` names below are the low-level
+> `Std.Spa` runtime **and the generator internals** that `Std.App` drives — how
+> the split is computed and emitted, not surfaces user code writes.
 
 ## 1. Goal
 

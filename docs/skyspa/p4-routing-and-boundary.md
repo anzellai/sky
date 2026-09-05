@@ -1,10 +1,12 @@
 # Sky.Spa v1 — client routing + the explicit typed server boundary (P4)
 
-> **Status:** P4 design of record. This is the DX-defining surface: `Std.Spa`
-> client-side routing (History API) and the *explicit, author-declared* server
-> boundary (client `Http` → a stateless Sky backend, sharing a `Std.Codec`).
-> Every claim below is grounded in real Sky surfaces (file:line), verified
-> against the code.
+> **Status:** P4 design of record. This is the DX-defining surface: client-side
+> routing (History API) and the *explicit, author-declared* server boundary
+> (client `Http` → a stateless Sky backend, sharing a `Std.Codec`). User code
+> writes this as **`Std.App`** (`App.app` + `sky build --target web:app`); `Std.Spa`
+> is the low-level client runtime `Std.App` builds on, documented here as the
+> mechanism. Every claim below is grounded in real Sky surfaces (file:line),
+> verified against the code.
 
 ## Phase-0 architecture consult (findings, file:line)
 
@@ -64,6 +66,12 @@
 
 ### Routing — opt-in builders (config stays the 4 TEA fields)
 
+Author-facing these are `App.withRoutes` / `App.route` / `App.withNotFound` /
+`App.withOnNavigate` on an `App.app` value; the client build for `--target
+web:app` synthesises the `Std.Spa` app from your `App.app` and runs the existing
+auto-split. Underneath, `Std.Spa` exposes the same shape on its `AppConfig` (the
+mechanism this doc verifies):
+
 ```elm
 type Route  -- opaque, produced by `route`
 
@@ -75,19 +83,21 @@ withOnNavigate : (page -> msg) -> AppConfig model msg -> AppConfig model msg
 ```
 
 ```elm
+appDef =
+    App.app
+        { init = init, update = update, view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+            [ App.route "/"      Home
+            , App.route "/about" About
+            ]
+        |> App.withNotFound NotFound
+        |> App.withOnNavigate (\_ -> NavHappened)
+
+
 main =
-    Spa.app
-        (Spa.config
-            { init = init, update = update, view = view
-            , subscriptions = subscriptions
-            }
-            |> Spa.withRoutes
-                [ Spa.route "/"      Home
-                , Spa.route "/about" About
-                ]
-            |> Spa.withNotFound NotFound
-            |> Spa.withOnNavigate (\_ -> NavHappened)
-        )
+    App.run appDef        -- sky build --target web:app  (client wasm + backend)
 ```
 
 **Why builders, not `routes` in `config` (deviation from the literal brief —
@@ -97,10 +107,10 @@ every URL; a Sky.Spa client can legitimately be a single-view app (the shipped
 routes and MUST keep compiling). A required `routes`/`notFound` field would (a)
 break every one of those and (b) force a meaningless `notFound` page on a
 counter. Sky.Live *itself* attaches every optional through `withX` builders
-(`withHead`/`withOnNavigate`/…), so a routed Spa app "reads the same" — same
-`route` / `withOnNavigate` names, same mental model — while routing stays the
-opt-in capability it actually is. `config` remains the four TEA fields; a routed
-app adds `|> withRoutes […] |> withNotFound Page`.
+(`withHead`/`withOnNavigate`/…), so a routed `Std.App` app "reads the same" —
+same `App.route` / `App.withOnNavigate` names, same mental model — while routing
+stays the opt-in capability it actually is. The app value remains the four TEA
+fields; a routed app adds `|> App.withRoutes […] |> App.withNotFound Page`.
 
 **Convention (mirrors Sky.Live exactly):** a routed app's `Model` has a `page`
 field. On navigation the runtime resolves the URL → page value and sets
@@ -162,8 +172,8 @@ boundary's shape must not encourage trusting it, and the docs say so plainly:
 
 ## Five-pillar check
 
-- **DX** — written like Sky.Live: same `Model/Msg/update/view`, `route` /
-  `withOnNavigate` names, one `getJson` call for a typed round-trip.
+- **DX** — written like Sky.Live: same `Model/Msg/update/view`, `App.route` /
+  `App.withOnNavigate` names, one `getJson` call for a typed round-trip.
 - **Scalability** — the backend is stateless (no per-user Model, no session, no
   SSE); it scales horizontally, the DB is the only shared axis.
 - **Maintenance** — one language, one type system, one `Element`, one `Codec`

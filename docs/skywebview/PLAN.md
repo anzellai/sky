@@ -2,6 +2,16 @@
 
 > **Historical / legacy reference.** Describes the Haskell compiler, now preserved under legacy-haskell-compiler/. The primary compiler is Rust — see docs/rust-rewrite/.
 
+> **Front door has moved to `Std.App`.** User code never writes
+> `Webview.app` / `Tui.app` / `Live.app` directly any more — you write one
+> `App.app` value and pick the desktop with `sky build --target desktop`
+> (see [`../skyapp/overview.md`](../skyapp/overview.md) and
+> [`overview.md`](overview.md)). The kernel-level API sketches below
+> (`Webview.app`, `rt.Webview_app`, the `("Webview", "app")` type-checker
+> arm) are the **low-level Sky.Webview mechanism** that `Std.App` composes;
+> they are preserved here as the implementation design, not as the surface a
+> user writes.
+
 > Status: planning draft (2026-05-28). No code shipped yet. Reviewed against `docs/archive/tea-backends.md` + `docs/archive/std-ui-cross-platform.md` + `runtime-go/rt/tui.go` + `runtime-go/rt/live.go`.
 
 ## Part 1 — Recommendation

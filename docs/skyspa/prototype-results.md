@@ -9,10 +9,12 @@
 ## What was proven
 
 A real Sky-emitted TEA app — `Model = Int`, `Msg = Increment | Decrement | Reset`,
-pure `update`, `Std.Html` `view`, entry `Spa.app (Spa.config { init, update, view })`
+pure `update`, `Std.Html` `view`, entry `App.web { init, update, view,
+subscriptions }` + `main = App.run appDef` built `sky build --target web:app`
 — goes Sky source → emitted Go → wasm → **renders in the browser DOM**, with the
-client TEA loop running entirely client-side. **DX note:** the app reads exactly
-like a Sky.Live app; only the entry point differs.
+client TEA loop running entirely client-side. **DX note:** the app is written as
+`Std.App`, identical to a web (`Sky.Live`) app; the client build is purely a
+`--target` choice — the same source targets both.
 
 ## Gates (all independently re-run, not agent-claimed)
 

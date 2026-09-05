@@ -7,16 +7,19 @@
 > [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
 
 
-**Server-driven UI with the TEA architecture** (`init` / `update` / `view` / `subscriptions`). Sky.Live lets you build interactive web apps where all state, logic, and rendering live on the server. The browser runs no client-side framework — just minimal JavaScript for DOM patching and SSE reconnection.
+**Server-driven UI with the TEA architecture** (`init` / `update` / `view` / `subscriptions`). You write the app once with **`Std.App`** and build it for the `web` target (the default) — **Sky.Live is the runtime that target delivers**: all state, logic, and rendering live on the server, and the browser runs no client-side framework, just minimal JavaScript for DOM patching and SSE reconnection. You never import `Std.Live` yourself; `Std.App` composes it.
 
 ```elm
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
-import Std.Live exposing (app, config, route)
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task exposing (Task)
+import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
-import Std.Html as Html
+import Std.Html as Html exposing (Html)
 import Std.Html.Events as Event
 
 
@@ -48,7 +51,7 @@ update msg model =
             ( { model | count = model.count - 1 }, Cmd.none )
 
 
-view : Model -> any
+view : Model -> Html Msg
 view model =
     Html.div []
         [ Html.button [ Event.onClick Increment ] [ Html.text "+" ]
@@ -62,18 +65,24 @@ subscriptions _ =
     Sub.none
 
 
+appDef =
+    App.web
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withRoutes [ App.route "/" HomePage ]
+        |> App.withNotFound HomePage
+
+
+main : Task Error ()
 main =
-    app
-        (config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes = [ route "/" HomePage ]
-            , notFound = HomePage
-            }
-        )
+    App.run appDef
 ```
+
+Build it with `sky run` / `sky build` (bare = the `web` target). `App.web` takes a
+raw `Std.Html` view; for the cross-platform `Std.Ui` `Element` view — the pinned
+default, which also renders on `terminal` and `desktop` targets — use `App.app`
+instead (same builders). `App.withNotFound` is compile-mandatory for `web`. To
+pin a non-web target for a bare `sky build`, set `[app] target = "…"` in
+`sky.toml`, or pass `--target family[:variant]` on the command line.
 
 ## How it works
 
@@ -248,9 +257,13 @@ The drop is a correctness loss in transit (the client misses that specific frame
 
 ### Localising the banner
 
-Override the banner strings via the `Live.withStatus` builder on the app config.
+Banner-string localisation is a **low-level mechanism of the underlying
+`Std.Live` runtime** that `Std.App` composes for the `web`/`desktop` targets —
+there is no `Std.App`-level builder for it yet, so you drop to the `Std.Live`
+front door via its `withStatus` builder when you need it:
 
 ```elm
+-- Low-level Std.Live mechanism (Std.App composes this runtime).
 main =
     Live.app
         (Live.config

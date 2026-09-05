@@ -1217,30 +1217,37 @@ Responses: `text`, `json`, `html`, `withStatus`, `redirect`,
 
 ### `Live` — Sky.Live (server-driven UI)
 
-```elm
-import Sky.Live as Live
+Sky.Live is the **server-driven UI backend** — a TEA loop over an SSE wire, with
+sessions, routing, and a shared store. You do not import it directly: write the
+app with [`Std.App`](skyapp/overview.md) and `App.run` picks Sky.Live on the
+default `--target web` (and `--target desktop` for a native window).
 
+```elm
+import Std.App as App
+
+appDef =
+    App.app
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withRoutes [ App.route "/" HomePage ]
+        |> App.withNotFound HomePage
+
+main : Task Error ()
 main =
-    Live.app
-        (Live.config
-            { init = init
-            , update = update
-            , view = view
-            , subscriptions = subscriptions
-            , routes = [ Live.route "/" HomePage ]
-            , notFound = HomePage
-            }
-        )
-    -- v0.19: the app config is a typed builder — optional fields attach with
-    -- `|> Live.withHead …` / `withGuard` / `withAnalytics` / `withStatic` / … .
+    App.run appDef
+    -- Optional config attaches to the same builder:
+    -- `|> App.withHead …` / `App.withGuard …` / `App.withConfig …` / `App.withBase …`.
 ```
 
-See [Sky.Live overview](skylive/overview.md) for the full TEA flow.
+`App.withNotFound` is mandatory for web (a compile-enforced fallback flag), and
+routes are built with `App.route` / `App.routeParam` / `App.api`. See
+[Sky.Live overview](skylive/overview.md) for the full TEA flow that this target
+delivers — the low-level `Sky.Live` runtime is documented there as the mechanism
+`--target web` compiles to.
 
 #### `Std.Live.Head` — per-page `<head>` injection (v0.15.58+)
 
-Optional per-page `<head>` injection — attach via `Live.withHead`
-(a `Model -> List (Html msg)`). Runtime renders the list and splices it into `<head>`
+Optional per-page `<head>` injection — attach via `App.withHead`
+(a `model -> List (Html msg)`; it lowers to the runtime's `Live.withHead`). Runtime renders the list and splices it into `<head>`
 on every full GET, after the runtime's required baseline meta
 tags and before the inline `<style>` reset. Absent field → empty
 insert (byte-identical to pre-v0.15.58 output).
@@ -1278,28 +1285,30 @@ fetch + history push).
 
 ### `Std.Webview` — desktop UI backend (v0.16+)
 
-The cross-backend mirror of `Live.app` and `Tui.app` — same TEA shape
-(init / update / view / subscriptions), `view : model -> Html` returns
-a post-`Ui.layout` Element tree, and the runtime opens a native window
-(WKWebView on macOS in v0.1; Linux + Windows in v0.2). No HTTP server,
-no SSE, no session store — the bridge is in-process `Bind` + `Eval`
-via `webview_go`.
+The desktop backend behind `App.run` on `--target desktop:<os>` — same TEA shape
+(init / update / view / subscriptions) as every other target, and the runtime
+opens a native window (WKWebView on macOS in v0.1; Linux + Windows in v0.2). No
+HTTP server, no SSE, no session store — the bridge is in-process `Bind` + `Eval`
+via `webview_go`. You do not import `Std.Webview` directly; write the app with
+[`Std.App`](skyapp/overview.md) and pick the desktop target at build time.
 
 ```elm
-import Std.Webview as Webview
+import Std.App as App
 
+appDef =
+    App.app
+        { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withWindow "Sky Stopwatch" 800 600
+        |> App.withNotFound ()
+
+main : Task Error ()
 main =
-    Webview.app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , window =
-            Webview.defaultWindow
-                |> Webview.withTitle "Sky Stopwatch"
-                |> Webview.withSize 800 600
-        }
-        |> Task.run
+    App.run appDef
+```
+
+```bash
+sky build --target desktop       # Sky.Live in a native window
+sky build --target desktop:mac   # native webview shell (Std.Webview backend)
 ```
 
 `WindowCfg` v0.1 is `{ title : String, size : (Int, Int) }`; v0.2
@@ -1523,8 +1532,9 @@ downgrades with `setConsent Anonymous` (random anon id, no identity) or
 `setConsent Denied` (drops all capture). Consent + identity are session-scoped,
 so one Sky.Live user's identity never bleeds into another's.
 
-**Auto page-views (opt-in).** Attach `|> Live.withAnalytics { pageViews = True }`
-to the `Live.app` config — every full page load is captured (consent-gated), with
+**Auto page-views (opt-in).** This attaches on the low-level `Sky.Live` backend
+config (the mechanism `--target web` compiles to): `|> Live.withAnalytics {
+pageViews = True }` — every full page load is captured (consent-gated), with
 anonymised device + IP context. Add an **`identify` resolver** to attribute an
 already-authenticated session (including the first render, before any Msg runs)
 without a manual `identify` call — add the `withAnalyticsIdentify` builder:

@@ -605,7 +605,7 @@ Rebuild a downstream app's compiler binary (`cargo build --release -p sky` in sk
 - **Runtime bump:** all Sky.Live apps must recompile to get the new runtime. No opt-out flag; the runtime is embedded via Template Haskell and shipped with the compiler binary.
 - **Wire format:** additive. New fields are optional; omitting them produces the pre-upgrade behaviour.
 - **Sky-id format:** changes visible in DOM (`sky-id="r.0#div.1#form..."` instead of `sky-id="r.0.1..."`). Tests that assert on sky-id strings must update. Dev tools scripts that query by `[sky-id^="r."]` continue to work.
-- **No CLAUDE.md changes needed.** The public API (`Live.app`, `Html.*`, `Server.*`) is unchanged. `Html.keyed` is a new opt-in helper, documented but not required.
+- **No CLAUDE.md changes needed.** The public API (`App.run` / `App.web` / `App.app`, `Html.*`, `Server.*`) is unchanged. `Html.keyed` is a new opt-in helper, documented but not required.
 
 ## Open questions — resolved
 

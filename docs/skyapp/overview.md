@@ -42,7 +42,7 @@ import Std.Ui as Ui
 
 app =
     App.app { init = init, update = update, view = view, subscriptions = subscriptions }
-        |> App.withRoutes [ ( "/", Home ) ]
+        |> App.withRoutes [ App.route "/" Home ]
         |> App.withNotFound NotFound
 
 
@@ -89,7 +89,9 @@ Each `with…` builder adds a capability a target may require; targets that don'
 use it ignore it. The builders are uniform (`… -> App … -> App …`), so you
 mix-and-match — pre-inject whatever your targets need:
 
-- `App.withRoutes [ ( path, page ) ]` + `App.withNotFound page` — routing.
+- `App.withRoutes [ App.route path page ]` + `App.withNotFound page` — routing
+  (`App.route` / `App.routeParam` / `App.api` build the `Route` values; you never
+  pass a raw `( path, page )` tuple).
 - `App.withWindow title width height` — desktop window.
 - `App.withInput onLine` — a terminal line/text input handler.
 
@@ -113,7 +115,7 @@ Two layers, both plain data you record-update from an exposed default:
   ```elm
   import Sky.Config as Config
 
-  app { init, update, view, subscriptions }
+  App.app { init = init, update = update, view = view, subscriptions = subscriptions }
       |> App.withBase
           { App.baseDefaults
               | database = Just (Config.Sqlite "app.db")
@@ -142,7 +144,7 @@ to render the logged-in view on **first paint**, the path/query to seed initial
 state, a header to pick a locale. `App.withRequest` delivers it **portably**:
 
 ```elm
-app { init = init, update = update, view = view, subscriptions = subs }
+App.app { init = init, update = update, view = view, subscriptions = subs }
     |> App.withRequest
         (\req model ->
             case Dict.get "sky_sid" req.cookies of

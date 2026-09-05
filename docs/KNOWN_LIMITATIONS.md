@@ -167,8 +167,9 @@ context: `docs/skyspa/overview.md` + `docs/skyspa/design.md`.
   generation pass would drop Stripe install from ~8 min to ~10 s.
 
 * **Sub-app Sky-side API.** `MountSubApp` is currently Go-side
-  (`rt.MountSubApp` in generated `main.go`). A Sky-side `Live.app {
-  subApps = [...] }` API is on the v0.17.x list.
+  (`rt.MountSubApp` in generated `main.go`). A Sky-side sub-apps
+  builder on `Std.App` (e.g. `App.withSubApps [...]` composed onto
+  `App.app`) is on the v0.17.x list.
 
 * **Lambda-typed OUTPUT for ALL call sites.** Typed routing for
   `List.map` / `Maybe.map` etc. uses `rt.List_mapT[A, any]` — input
