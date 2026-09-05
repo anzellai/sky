@@ -298,6 +298,25 @@ jobs:
           echo "── xtask coerce-floor (SKY_LIVE_TESTS=skip: FFI-gitignored rows) ──"
           SKY_LIVE_TESTS=skip cargo run --release --locked -q -p xtask -- coerce-floor
 
+      # `scripts/build.sh` installs the compiler at `sky-out/sky` — the binary
+      # that BOTH the codegen build+run sweep and the app-driving harness gates
+      # need, and it MUST run before either.
+      #
+      #   * `build-run --all` spawns `sky build` for every `live`-shape example.
+      #     On the v0.23.0 tag this step ran BEFORE build.sh, so every live
+      #     example failed with `sky build spawn: No such file or directory
+      #     (os error 2)` — four platform binaries already built, publication
+      #     blocked on an ORDERING bug, not a defect (the per-commit and nightly
+      #     gates, which build the compiler first, passed the same commit).
+      #   * The harness gates that drive real projects (`apps-*`, `sky-suites`)
+      #     invoke `sky-out/sky` directly. Without it they report VACUOUS — "a
+      #     gate that cannot run has not passed" — which is what blocked the
+      #     first v0.20.0 tag (eight gates VACUOUS). The gates were right; the
+      #     job order was wrong.
+      - name: Install the compiler the gates drive
+        working-directory: .
+        run: bash scripts/build.sh
+
       - name: Codegen build + run
         working-directory: rust
         run: |
@@ -305,24 +324,13 @@ jobs:
           cargo run --release --locked -q -p xtask -- build-run --all
           cargo run --release --locked -q -p xtask -- build-run --shape cli --run --golden
 
-      # The harness is the only runner here that CANNOT report a false green: a
-      # gate that did not execute renders NOT RUN, the suite renders UNKNOWN,
-      # and UNKNOWN exits 3. `--require-proofs` additionally demotes a PASS
-      # whose falsifying mutation has not been verified inside its declared
-      # window to UNPROVEN, which is also non-zero. A release should not ship
-      # behind a gate nobody has proven can fail.
-      # The harness gates that drive real projects (`apps-*`, `sky-suites`)
-      # invoke the INSTALLED compiler at `sky-out/sky`. Without it they report
-      # VACUOUS — "the gate reported zero assertions … A gate that cannot run
-      # has not passed" — and the harness fails, which is exactly what it should
-      # do and exactly what it did on the first v0.20.0 tag: eight gates
-      # VACUOUS, publication blocked, four platform binaries built for nothing.
-      #
-      # The gates were right; this job was incomplete. `scripts/build.sh` is
-      # what puts a compiler where they look.
-      - name: Install the compiler the app gates drive
+      # `build-run --all` builds+runs every example, so bound the Go build cache
+      # afterward (as the per-commit and nightly jobs do) — belt-and-suspenders
+      # against the disk pressure that could otherwise evict artifacts mid-job.
+      - name: Bound the Go caches
+        if: always()
         working-directory: .
-        run: bash scripts/build.sh
+        run: bash scripts/ci/bound-go-cache.sh
 
       - name: Gate harness (T1) with proof requirement
         working-directory: rust
