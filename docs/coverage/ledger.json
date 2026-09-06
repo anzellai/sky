@@ -664,7 +664,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1922,
+    "stdlib_entries": 1923,
     "stdlib_modules": 93,
     "surfaces_covered": 139,
     "surfaces_covered_pct": 88.0,
@@ -6510,6 +6510,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -12260,7 +12265,7 @@
           ]
         },
         "Std.App": {
-          "count": 18,
+          "count": 19,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -12270,6 +12275,7 @@
             "TabletOpts",
             "TerminalOpts",
             "WebOpts",
+            "apiServerRoute",
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
@@ -13041,7 +13047,7 @@
           ]
         }
       },
-      "count": 730,
+      "count": 731,
       "pct_of_denominator": 38.0
     },
     "symbols_unreferenced_strict": {
@@ -13369,7 +13375,7 @@
           ]
         },
         "Std.App": {
-          "count": 19,
+          "count": 20,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -13380,6 +13386,7 @@
             "TabletOpts",
             "TerminalOpts",
             "WebOpts",
+            "apiServerRoute",
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
@@ -14222,7 +14229,7 @@
           ]
         }
       },
-      "count": 815,
+      "count": 816,
       "pct_of_denominator": 42.4
     }
   },
@@ -14243,12 +14250,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 20,
+      "modules_imported": 21,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 79,
-      "refs_qualified": 75,
+      "refs_generous": 84,
+      "refs_qualified": 77,
       "role": "Layer2",
-      "sky_files": 27,
+      "sky_files": 37,
       "sky_toml_sections": []
     },
     {
