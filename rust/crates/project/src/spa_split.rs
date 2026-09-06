@@ -1314,6 +1314,29 @@ fn gen_backend(
     add(imports, &mut import_lines, "Std.Codec", "import Std.Codec as Codec");
     add(imports, &mut import_lines, "Sky.Core.System", "import Sky.Core.System as System");
     add(imports, &mut import_lines, "Sky.Core.Error", "import Sky.Core.Error as Error exposing (Error)");
+    // SSR (design §4.1): a backend that carries `view`/`init` (≥1 server branch,
+    // or push) gets an SSR `GET /{$}` route that renders the first paint. It
+    // needs `Sky.Ffi` (the `Spa_ssr*` render-kernel aliases) and `Sky.Core.Task`
+    // (the handler answers `Task Error Response`). Two gates narrow it:
+    //   - a static-only backend (§2.5 — no app decls copied) has no `view` to
+    //     render and is skipped (P2); and
+    //   - the SSR route references the `spaView_` + `spaHead_` bindings that the
+    //     App→Spa synthesis emits (main.rs::synthesize_spa_source), so SSR is
+    //     scoped to the AUTO-SYNTHESISED `Std.App` path — a HAND-authored
+    //     `Spa.app` backend has `view`/`init` under their own names + an inline
+    //     `Spa.withHead`, no `spaView_`/`spaHead_`, so it keeps today's static
+    //     shell (design §10 q2: require Std.App for automatic SSR).
+    let has_synth_view = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaView_"));
+    let has_synth_head = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaHead_"));
+    let emit_ssr = !(server.is_empty() && !push_mode) && has_synth_view && has_synth_head;
+    if emit_ssr {
+        add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
+        add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
+    }
     if push_mode {
         // Server→client PUSH machinery (docs/skyspa/auto-split.md §16).
         add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
@@ -1488,6 +1511,62 @@ fn gen_backend(
     if push_mode {
         // The SSE push endpoint (topic from the query string).
         routes.push("        , Server.api \"GET /_sky/sub\" subHandler".to_string());
+    }
+
+    // SSR first paint (design §4.1/§4.4). Emitted only for a backend that carries
+    // `view`/`init` (≥1 server branch, or push) — a static-only backend has no
+    // app decls and is skipped (P2). The route renders the ROOT `/` server-side
+    // so a crawler sees real content + a per-route `<head>` instead of the empty
+    // `#app` static shell; asset GETs fall through to `Server.static`.
+    if emit_ssr {
+        handlers.push_str(
+            "-- SSR render kernels (design §4.1) — thin `Ffi.kernel` aliases over the\n\
+             -- backend render half (runtime-go/rt/spa_ssr_notjs.go). Referencing them\n\
+             -- here keeps renderAppHead / HtmlRenderWithHandlers LIVE in the backend\n\
+             -- binary (link-time DCE drops them until an SSR route calls them).\n\
+             spaSsrRenderHead : any -> model -> String\n\
+             spaSsrRenderHead =\n\
+             \x20   Ffi.kernel \"Spa_ssrRenderHead\"\n\n\n\
+             spaSsrRenderBody : any -> String\n\
+             spaSsrRenderBody =\n\
+             \x20   Ffi.kernel \"Spa_ssrRenderBody\"\n\n\n\
+             spaSsrPage : String -> String -> String -> String -> String\n\
+             spaSsrPage =\n\
+             \x20   Ffi.kernel \"Spa_ssrPage\"\n\n\n\
+             spaSsrWasmName : String -> String\n\
+             spaSsrWasmName =\n\
+             \x20   Ffi.kernel \"Spa_ssrWasmName\"\n\n\n\
+             -- The content-hashed wasm filename, resolved ONCE (a memoised CAF) from\n\
+             -- the same frontend dist `Server.static` serves.\n\
+             spaWasmName : String\n\
+             spaWasmName =\n\
+             \x20   spaSsrWasmName \"../frontend/dist\"\n\n\n\
+             -- Server-render the ROOT route's first paint: resolve to the initial\n\
+             -- model (P1: init's pure result — the client re-runs the deterministic\n\
+             -- spaInit, so the model is not embedded; embedding is a P3 concern),\n\
+             -- render head + body to HTML, serve the assembled document with the\n\
+             -- server-rendered body inside a `data-sky-ssr`-marked #app.\n\
+             ssrHandler : Handler\n\
+             ssrHandler _ =\n\
+             \x20   let\n\
+             \x20       ( ssrModel, _ ) =\n\
+             \x20           init ()\n\
+             \x20   in\n\
+             \x20   Task.succeed\n\
+             \x20       (Server.html\n\
+             \x20           (spaSsrPage\n\
+             \x20               (spaSsrRenderHead spaHead_ ssrModel)\n\
+             \x20               (spaSsrRenderBody (spaView_ ssrModel))\n\
+             \x20               spaWasmName\n\
+             \x20               \"\"\n\
+             \x20           )\n\
+             \x20       )\n\n\n",
+        );
+        // Registered AHEAD of the static route and matched at the ROOT ONLY
+        // (`GET /{$}`, Go 1.22 exact-root syntax) so asset GETs still reach the
+        // file server. Pushed before the static route below so the leading-comma
+        // → `[` rewrite still lands on the first list element.
+        routes.push("        , Server.api \"GET /{$}\" ssrHandler".to_string());
     }
 
     // The static-asset route is always the LAST element of the listen list.

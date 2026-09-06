@@ -1246,6 +1246,106 @@ main =
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+fn ssr_app_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-app")
+}
+
+/// SSR-P1. A `Std.App` app with ≥1 SERVER branch (a `File` effect) auto-splits
+/// into a backend that carries `view`/`init`, and `gen_backend` must emit an SSR
+/// `GET /{$}` route that server-renders the root's first paint (design §4.1) —
+/// the SEO enabler that replaces the empty `#app` static shell with real,
+/// crawlable HTML + a per-route `<head>`.
+///
+/// Two layers of proof:
+///  - synthesis: `App.withHead` is carried into a NAMED `spaHead_` binding (so it
+///    reaches the backend, where the SSR route calls it — an inline lambda would
+///    live only in the dropped `main`);
+///  - emission: the backend source carries the `ssrHandler` + the `GET /{$}`
+///    route (registered AHEAD of `Server.static`) that renders
+///    `spaSsrRenderBody (spaView_ …)` with the `spaHead_` head, and the whole
+///    split type-checks (`generate` type-checks the emitted backend — a malformed
+///    SSR route would fail HERE, before any Go).
+/// The Go-gated leg proves the whole thing builds end-to-end. The SERVED HTML
+/// (body inside a `data-sky-ssr` `#app` + the `<head>`) is asserted by the Go
+/// runtime tests (spa_ssr_notjs_test.go / spa_ssr_test.go); the browser hydration
+/// leg is manual (a wasm/browser attach cannot run here).
+#[test]
+fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_app_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Synthesis carried `withHead` into a NAMED binding referenced by the config.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    assert!(
+        synth.contains("spaHead_ model_") && synth.contains("|> Spa.withHead spaHead_"),
+        "SSR-P1: withHead must be a NAMED `spaHead_` binding (reaches the backend), \
+         referenced by the config:\n{synth}"
+    );
+
+    // The split ran → the emitted backend (incl. the SSR route) TYPE-CHECKED.
+    assert!(
+        log.contains("client/server split") || log.contains("Built Std.App entry"),
+        "SSR-P1: the split must run (the emitted backend SSR route type-checked):\n{log}"
+    );
+
+    // The backend carries the SSR route, ahead of the static route.
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    for needle in [
+        "ssrHandler",
+        "Server.api \"GET /{$}\" ssrHandler",
+        "spaSsrPage",
+        "spaSsrRenderBody (spaView_ ssrModel)",
+        "spaSsrRenderHead spaHead_ ssrModel",
+        "spaSsrWasmName \"../frontend/dist\"",
+    ] {
+        assert!(
+            backend.contains(needle),
+            "SSR-P1: the generated backend must carry the SSR route piece `{needle}`:\n{backend}"
+        );
+    }
+    // The SSR route must be registered BEFORE the static fallthrough so asset
+    // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server.
+    let ssr_at = backend.find("Server.api \"GET /{$}\" ssrHandler");
+    let static_at = backend.find("Server.static \"/\"");
+    assert!(
+        ssr_at.is_some() && static_at.is_some() && ssr_at < static_at,
+        "SSR-P1: the SSR route must precede the static route:\n{backend}"
+    );
+
+    // Full end-to-end proof (Go-gated): the whole thing builds — a broken kernel
+    // reference (`Spa_ssr*`) would fail the backend `go build` here.
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "SSR-P1: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/app").is_file(),
+        "backend binary must be built:\n{log}"
+    );
+    assert!(
+        dist_has_wasm(&proj.join(".skyapp/web-app/.split/frontend/dist")),
+        "frontend wasm must be staged:\n{log}"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// BUG-3. When the SYNTHESISED client entry fails to type-check, the failure
 /// must surface the actual diagnostic (file:line + caret), plus a pointer to the
 /// staged entry — not a bare `1 type error(s)` count that discards where the

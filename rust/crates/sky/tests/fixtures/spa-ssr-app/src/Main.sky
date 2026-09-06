@@ -1,0 +1,98 @@
+module Main exposing (main)
+
+-- Sky.Spa SSR P1 fixture: a `Std.App` `App.app` app with ONE server branch
+-- (a `File` effect in `update`) so the auto-split is NOT static-only — the
+-- generated backend copies `view`/`init` verbatim and the SSR `GET /{$}` route
+-- has a real `view` to server-render. `App.withHead` exercises the P0 per-route
+-- `<head>` carry-through. Built with `sky build --target web:app`; the served
+-- root must carry the rendered body inside a `data-sky-ssr` `#app` + the head.
+--
+-- The `File` branch (like tests/fixtures/spa-split) makes the branch SERVER by
+-- the partition rule (any effect ⇒ server); it never runs on the SSR `GET /`
+-- (init is `Cmd.none`, so the root render is pure), so the served page needs no
+-- filesystem access to prove crawlable content.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Live.Head as Head
+
+
+type alias Model =
+    { n : Int
+    , log : String
+    }
+
+
+type Msg
+    = Bump
+    | Persist
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, log = "ready" }, Cmd.none )
+
+
+-- Server effect (File): writes n, reads it back, returns a confirmation. Reached
+-- transitively from the `Persist` branch → that branch is SERVER.
+saveN : Int -> Task Error String
+saveN n =
+    File.writeFile "count.txt" (String.fromInt n)
+        |> Task.andThen (\_ -> File.readFile "count.txt")
+        |> Task.map (\s -> "saved: " ++ s)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            -- PURE → client-local, zero round-trip.
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        Persist ->
+            -- EFFECTFUL (File) → server branch; read-set {n}, write-set {log}.
+            ( { model | log = Result.withDefault "err" (Task.run (saveN model.n)) }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column [ Ui.spacing 8 ]
+        [ Ui.text ("Sky SSR fixture — n = " ++ String.fromInt model.n)
+        , Ui.text model.log
+        , Ui.button [] { onPress = Just Bump, label = Ui.text "Bump" }
+        , Ui.button [] { onPress = Just Persist, label = Ui.text "Persist" }
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withHead
+            (\m ->
+                [ Head.title ("SSR Fixture n=" ++ String.fromInt m.n)
+                , Head.meta "description" "sky spa ssr p1 fixture"
+                ]
+            )
+
+
+main : Task Error ()
+main =
+    App.run app
