@@ -333,7 +333,17 @@ func renderCurrent() {
 	// consumed) — responsive + hover styling silently do nothing.
 	applyStyleInjections(&vn)
 	if spaPrev == nil {
-		spaMount(spaRoot, vn)
+		// SSR first paint (design §4.4): when the mount was server-rendered
+		// (data-sky-ssr) AND the freshly-computed tree is provably hydratable,
+		// ATTACH handlers to the existing server DOM in place instead of wiping +
+		// rebuilding — preserving node identity so there is no flash. Otherwise
+		// (no SSR, or a structural divergence spaHydratableVNode caught) fall back
+		// to today's full spaMount, which is always correct.
+		if spaShouldHydrate(spaRoot, vn) {
+			spaHydrate(spaRoot, vn)
+		} else {
+			spaMount(spaRoot, vn)
+		}
 	} else {
 		// clientState tells diffTrees what the focused input actually shows
 		// right now, so it skips emitting a value patch that would only

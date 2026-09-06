@@ -43,6 +43,73 @@ func spaMount(mount js.Value, root VNode) {
 	mount.Call("appendChild", buildDOM(root))
 }
 
+// spaShouldHydrate decides whether the DOM already under `mount` was
+// server-rendered (SSR, design §4.4) and can be HYDRATED in place, or whether
+// the client must fall back to today's spaMount wipe-and-rebuild. Three gates,
+// all required:
+//
+//   - the mount carries the `data-sky-ssr` marker the SSR backend stamps (so a
+//     non-SSR / static-shell deploy still boots via spaMount, unchanged);
+//   - the mount actually has a server-painted element child (an empty `#app`
+//     from a stale/failed render is rebuilt, not hydrated onto nothing);
+//   - the freshly-computed VNode tree passes the POSITIVE structural parity
+//     check (spa_ssr.go). A `sky-id`-presence check alone is NOT fail-safe: raw
+//     nodes, adjacent text, and valued <textarea> line up by sky-id yet diverge
+//     structurally from the server DOM and corrupt on the first diff. When the
+//     tree is not provably hydratable we rebuild (correct today's behaviour)
+//     rather than adopt a mismatched tree.
+func spaShouldHydrate(mount js.Value, root VNode) bool {
+	if !mount.Truthy() {
+		return false
+	}
+	if !mount.Call("getAttribute", spaSSRMarker).Truthy() {
+		return false
+	}
+	if !mount.Get("firstElementChild").Truthy() {
+		return false
+	}
+	ok, reason := spaHydratableVNode(root)
+	if !ok {
+		if c := js.Global().Get("console"); c.Truthy() {
+			c.Call("warn", "[sky.spa] SSR hydrate skipped, full rebuild:", reason)
+		}
+		return false
+	}
+	return true
+}
+
+// spaHydrate attaches the client's real event closures (and input-prop
+// reflections) to the EXISTING server-rendered DOM nodes — matched by the
+// `sky-id` both sides compute identically — WITHOUT any createElement /
+// innerHTML="" / appendChild. It is the non-destructive replacement for spaMount
+// on an SSR first paint (design §4.4). The server's inert sky-<event> /
+// data-sky-hid attributes are left in place: the client neither reads nor
+// manages them (it dispatches from the in-memory VNode.Events map bound here),
+// so they are harmless bytes a later pass may strip. renderCurrent sets spaPrev
+// to this tree afterwards, so every subsequent render takes the diff path.
+func spaHydrate(mount js.Value, root VNode) {
+	hydrateVNode(mount, root)
+}
+
+// hydrateVNode walks the VNode tree, binding events + reflecting input props onto
+// the matching existing DOM node. Text/raw nodes carry no sky-id (assignSkyIDs
+// skips non-elements) so they bind nothing; spaShouldHydrate has already proven
+// the child structure matches the server DOM, so positional text is aligned.
+func hydrateVNode(scope js.Value, el VNode) {
+	if el.SkyID != "" {
+		node := scope.Call("querySelector", `[sky-id="`+escAttr(el.SkyID)+`"]`)
+		if node.Truthy() {
+			bindNodeEvents(node, el)
+			for k, v := range el.Attrs {
+				reflectInputProp(node, k, v)
+			}
+		}
+	}
+	for i := range el.Children {
+		hydrateVNode(scope, el.Children[i])
+	}
+}
+
 // spaInjectBaseCSS appends a <style id="sky-base-reset"> carrying liveBaseCSS
 // (the shared server/client reset) into the document <head>, once. Idempotent —
 // a page that already ships the reset (or a hot reload) is a no-op.
