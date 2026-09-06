@@ -1762,6 +1762,123 @@ fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+fn mixed_routes_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-mixed-routes")
+}
+
+/// GAP-1 (mixed page + `App.api` routes) + GAP-2 together — the full sky-lang.org
+/// shape. `withRoutes (Routes.routes ++ apiRoutes)` mixes page routes (sibling
+/// `Routes`) with server `App.api` endpoints (`apiRoutes`, its handlers reaching
+/// server effects), and `init` is a sibling db-read. Before the fix the
+/// synthesised client `spaRoutes_` referenced the server-tainted `apiRoutes` the
+/// split drops → the client entry failed to compile (`Undefined name:
+/// spaRoutes_`). The fix partitions `withRoutes`: page routes drive the client
+/// `spaRoutes_`, the api endpoints become a BACKEND-only `spaApiRoutes_` the
+/// server mounts via `App.apiServerRoute`.
+#[test]
+fn splits_mixed_page_and_api_routes() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&mixed_routes_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the mixed-routes fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // ── GAP-1 client leg: the synthesised client `spaRoutes_` carries ONLY the
+    // page routes; it does NOT reference the server `apiRoutes` binding (which the
+    // split drops) nor any api handler. Holds without a Go toolchain. ──
+    let fe_main = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"),
+    )
+    .unwrap_or_else(|_| panic!("generated frontend Main.sky must exist:\n{log}"));
+    let fe_code = strip_line_comments(&fe_main);
+    assert!(
+        fe_code.contains("|> Spa.withRoutes spaRoutes_") && fe_code.contains("spaRoutes_ ="),
+        "GAP-1: the frontend must define + wire the page-only `spaRoutes_`:\n{fe_main}"
+    );
+    for needle in ["apiRoutes", "spaApiRoutes_", "handleItemsApi", "handleHealthz"] {
+        assert!(
+            !references_word_test(&fe_code, needle),
+            "GAP-1: the client `spaRoutes_`/entry must NOT reference the api binding `{needle}`:\n{fe_main}"
+        );
+    }
+
+    // ── GAP-1 backend leg: the api endpoints are mounted BACKEND-ONLY, via
+    // `App.apiServerRoute spaApiRoutes_`, and `spaApiRoutes_` carries the api
+    // route source. ──
+    let backend = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/backend/src/Main.sky"),
+    )
+    .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
+    assert!(
+        backend.contains("spaApiRoutes_ =")
+            && backend.contains("++ List.concatMap App.apiServerRoute spaApiRoutes_"),
+        "GAP-1: the backend must mount the api routes via `App.apiServerRoute spaApiRoutes_`:\n{backend}"
+    );
+    // The api handlers survive into the backend (they run there).
+    assert!(
+        backend.contains("handleItemsApi") && backend.contains("handleHealthz"),
+        "GAP-1: the api handlers must remain in the BACKEND tree:\n{backend}"
+    );
+
+    // ── GAP-1 page routes still SSR, ahead of the static fallthrough. ──
+    let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
+    let static_at = backend.find("Server.static \"/\"");
+    assert!(
+        items_at.is_some() && static_at.is_some() && items_at < static_at,
+        "GAP-1: page routes must SSR ahead of the static fallthrough:\n{backend}"
+    );
+
+    // ── GAP-2 within the mixed app: the sibling `Boot.init` is stripped. ──
+    let boot = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/src/Boot.sky"),
+    )
+    .unwrap_or_else(|_| panic!("generated frontend Boot.sky must exist:\n{log}"));
+    let boot_code = strip_line_comments(&boot);
+    assert!(
+        boot_code.contains("Cmd.none")
+            && !references_word_test(&boot_code, "db")
+            && !boot_code.contains("Db.query"),
+        "GAP-2: the sibling `Boot.init` must be stripped to `Cmd.none` in the frontend:\n{boot}"
+    );
+
+    // ── Go-gated e2e: the whole `--target web:app` build succeeds and the wasm
+    // frontend links with no `Db_*` kernel. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "GAP-1: --target web:app must build end-to-end:\n{log}"
+    );
+    let dist = proj.join(".skyapp/web-app/.split/frontend/dist");
+    assert!(
+        dist_has_wasm(&dist),
+        "GAP-1: the wasm frontend must build to a content-hashed main.<hash>.wasm:\n{log}"
+    );
+    let fe_go = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
+    )
+    .unwrap_or_default();
+    if !fe_go.is_empty() {
+        assert!(
+            !fe_go.contains("Db_query"),
+            "GAP-2: the emitted wasm frontend Go must contain no Db_query kernel"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 fn have_sqlite3() -> bool {
     Command::new("sqlite3")
         .arg("--version")

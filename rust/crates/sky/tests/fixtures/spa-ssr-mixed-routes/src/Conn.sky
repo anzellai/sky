@@ -1,0 +1,21 @@
+module Conn exposing (db)
+
+-- One memoised connection (CAF) — reaches `Db.open`, so the split routes THIS
+-- whole module to the BACKEND ONLY; it is absent from the wasm frontend. The
+-- sibling `init` in `Boot` reads through it (GAP-2).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.System as System
+import Std.Db as Db
+
+
+db : Db.Db
+db =
+    case Task.run (Db.open "sqlite" (System.getenvOr "MIXED_DB_PATH" "app.db")) of
+
+        Ok c ->
+            c
+
+        Err _ ->
+            System.exit 1

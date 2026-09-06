@@ -51,6 +51,7 @@ module Std.App exposing
     , routeParam
     , api
     , spaRoute
+    , apiServerRoute
     , withRoutes
     , withNotFound
     , withWindow
@@ -85,6 +86,7 @@ import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Sky.Ffi as Ffi
+import Sky.Http.Server as Server
 import Std.Cli as Cli
 import Std.Cmd as Cmd
 import Std.Html as Html exposing (Html)
@@ -714,6 +716,29 @@ spaRoute r =
 
         RouteApi _ _ ->
             []
+
+
+-- | Lower an [`App`] [`Route`] to the BACKEND server routes it mounts: a raw
+-- [`api`] endpoint yields `[ Server.api path handler ]`, a page route yields `[]`.
+-- The symmetric partner of [`spaRoute`] (which keeps page routes for the client
+-- and drops api endpoints). Exposed for the `--target <spa>` BACKEND: `withRoutes`
+-- can MIX page routes with `App.api` server endpoints (OAuth callbacks, /healthz,
+-- webhooks), and the split synthesis routes the api endpoints here so they are
+-- mounted as real `Server` handlers on the backend — the client (Spa) cannot
+-- carry them (the handler is server-side). `List.concatMap apiServerRoute` over
+-- the app's route list yields exactly the api mounts.
+apiServerRoute : Route page -> List Server.Route
+apiServerRoute r =
+    case r of
+
+        RouteStatic _ _ ->
+            []
+
+        RouteParam _ _ ->
+            []
+
+        RouteApi path handler ->
+            [ Server.api path handler ]
 
 
 -- Build a `Sky.Http.Server.Request` from the request-shaped seed record the

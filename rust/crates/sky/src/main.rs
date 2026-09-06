@@ -1251,8 +1251,16 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
             view = Some(v);
         } else if let Some(v) = match_record_field(t, "subscriptions") {
             subscriptions = Some(v);
-        } else if let Some(v) = t.strip_prefix("|> App.withRoutes ") {
-            routes = Some(v.trim().to_string());
+        } else if let Some(rest) = strip_app_builder(t, "withRoutes") {
+            // The `withRoutes` argument may span multiple lines (a `sky fmt`-wrapped
+            // list literal, or `(Routes.routes ++ apiRoutes)` broken across lines),
+            // so gather continuation lines by bracket-balancing rather than taking
+            // only the first physical line. GAP-1 then partitions the flattened
+            // argument into client page routes + backend api routes.
+            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
+            routes = Some(arg);
+            i += consumed;
+            continue;
         } else if let Some(v) = t.strip_prefix("|> App.withNotFound ") {
             not_found = Some(v.trim().to_string());
         } else if let Some(rest) = strip_app_builder(t, "withHead") {
@@ -1377,6 +1385,252 @@ fn gather_builder_arg(lines: &[&str], i: usize, first_rest: &str) -> (String, us
     (parts.join(" "), consumed)
 }
 
+/// Split `s` into top-level parts on the two-character separator `sep` (`"++"`),
+/// ignoring occurrences inside `()`/`[]`/`{}` brackets or `"…"` string literals.
+/// Parts are trimmed; empty parts are dropped. A `s` with no top-level separator
+/// returns a single-element vec.
+fn split_top_level(s: &str, sep: &str) -> Vec<String> {
+    let bytes = s.as_bytes();
+    let sep_bytes = sep.as_bytes();
+    let mut parts: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escaped = false;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0
+            && !in_str
+            && i + sep_bytes.len() <= bytes.len()
+            && &bytes[i..i + sep_bytes.len()] == sep_bytes
+        {
+            let piece = s[start..i].trim();
+            if !piece.is_empty() {
+                parts.push(piece.to_string());
+            }
+            i += sep_bytes.len();
+            start = i;
+            continue;
+        }
+        i += 1;
+    }
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        parts.push(last.to_string());
+    }
+    parts
+}
+
+/// Strip one layer of balanced surrounding parentheses (`(expr)` → `expr`),
+/// repeatedly, so `((a ++ b))` → `a ++ b`. Only strips when the OUTER `(` matches
+/// the final `)` (not `(a) ++ (b)`).
+fn strip_outer_parens(s: &str) -> String {
+    let mut cur = s.trim();
+    loop {
+        if !cur.starts_with('(') || !cur.ends_with(')') {
+            break;
+        }
+        // Verify the leading `(` closes at the trailing `)` (balanced), so
+        // `(a) ++ (b)` is left intact.
+        let bytes = cur.as_bytes();
+        let mut depth = 0i32;
+        let mut in_str = false;
+        let mut escaped = false;
+        let mut matches_at_end = true;
+        for (idx, &c) in bytes.iter().enumerate() {
+            if in_str {
+                if escaped {
+                    escaped = false;
+                } else if c == b'\\' {
+                    escaped = true;
+                } else if c == b'"' {
+                    in_str = false;
+                }
+                continue;
+            }
+            match c {
+                b'"' => in_str = true,
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth -= 1;
+                    if depth == 0 && idx != bytes.len() - 1 {
+                        matches_at_end = false;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !matches_at_end {
+            break;
+        }
+        cur = cur[1..cur.len() - 1].trim();
+    }
+    cur.to_string()
+}
+
+/// Split a list literal `[ e1, e2, … ]` into its top-level element expressions.
+/// Returns `None` when `s` is not a `[ … ]` list literal. Elements are trimmed.
+fn split_list_elements(s: &str) -> Option<Vec<String>> {
+    let t = s.trim();
+    if !t.starts_with('[') || !t.ends_with(']') {
+        return None;
+    }
+    let inner = &t[1..t.len() - 1];
+    Some(
+        split_top_level(inner, ",")
+            .into_iter()
+            .filter(|e| !e.is_empty())
+            .collect(),
+    )
+}
+
+/// The head token of a route element (`App.api "GET /x" h` → `App.api`,
+/// `App.route "/" Home` → `App.route`).
+fn route_element_head(elem: &str) -> &str {
+    elem.trim().split_whitespace().next().unwrap_or("").trim_end_matches('(')
+}
+
+/// Names of ENTRY top-level bindings whose value is a list literal of ONLY
+/// `App.api …` elements — the "api route table" bindings (`apiRoutes = [ App.api
+/// … ]`, the sky-lang.org shape). Used by [`partition_routes`] to route such a
+/// binding, referenced from `withRoutes`, to the backend-only api mount rather
+/// than the client route table. A binding that mixes `App.api` with page routes
+/// is NOT classified here (it is left on the client side, where the page routes
+/// belong; splitting a mixed binding would need to rewrite its declaration).
+fn api_route_binding_names(src: &str) -> std::collections::HashSet<String> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut out = std::collections::HashSet::new();
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
+        // A column-0 `name =` value binding (skip type annotations `name :`).
+        let is_binding_start = !line.is_empty()
+            && !line.starts_with(char::is_whitespace)
+            && line.trim_end().ends_with('=')
+            && !line.contains(':');
+        if is_binding_start {
+            let name = line.trim_end().trim_end_matches('=').trim().to_string();
+            // Gather the binding body (continuation lines until the next col-0
+            // line), stripping each line's `--` comment BEFORE joining — an
+            // `apiRoutes` list routinely has comments between elements (the
+            // sky-lang.org shape), and cutting the JOINED body at the first `--`
+            // would truncate the whole list.
+            let mut body = String::new();
+            let mut j = i + 1;
+            while j < lines.len() {
+                let raw = lines[j];
+                if !raw.is_empty() && !raw.starts_with(char::is_whitespace) {
+                    break;
+                }
+                let clean = strip_line_comment_run(raw.trim());
+                let clean = clean.trim();
+                if !clean.is_empty() {
+                    body.push_str(clean);
+                    body.push(' ');
+                }
+                j += 1;
+            }
+            if let Some(elems) = split_list_elements(body.trim()) {
+                if !elems.is_empty() && elems.iter().all(|e| route_element_head(e) == "App.api") {
+                    out.insert(name);
+                }
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Drop `--` line comments from a flattened one-line body (comments are already
+/// on their own physical lines when a binding is gathered, but a trailing `-- …`
+/// on an element line survives the flatten; cut at the first `--`).
+fn strip_line_comment_run(s: &str) -> String {
+    match s.find("--") {
+        Some(i) => s[..i].to_string(),
+        None => s.to_string(),
+    }
+}
+
+/// GAP-1: partition a `withRoutes` argument into the CLIENT route source (page
+/// routes — `App.route`/`routeParam`) and the BACKEND api route source
+/// (`App.api` endpoints). The synthesised client `spaRoutes_` must reference ONLY
+/// the client source, so it never pulls in a server-tainted api binding the split
+/// drops (which left `spaRoutes_` undefined → `E1001`); the api source, when
+/// present, becomes a `spaApiRoutes_` binding the backend mounts via
+/// `App.apiServerRoute`.
+///
+/// The argument is split on top-level `++`. A `++` operand that is a list literal
+/// is partitioned element-by-element (`App.api` → api, else client); an operand
+/// that names an ENTRY api-route binding (`apiRoutes`) goes to the api side; every
+/// other operand (a sibling page-route table like `Routes.routes`, an opaque ref)
+/// stays on the client side. Returns `(client_expr, Some(api_expr))`, or
+/// `(routes_arg, None)` when no api routes are found (no behaviour change for the
+/// common page-only app).
+fn partition_routes(routes_arg: &str, src: &str) -> (String, Option<String>) {
+    let api_bindings = api_route_binding_names(src);
+    let stripped = strip_outer_parens(routes_arg);
+    let operands = split_top_level(&stripped, "++");
+    let mut client_parts: Vec<String> = Vec::new();
+    let mut api_parts: Vec<String> = Vec::new();
+    for op in &operands {
+        let o = strip_outer_parens(op);
+        if let Some(elems) = split_list_elements(&o) {
+            // A list literal: partition its elements by route kind.
+            let mut page_elems: Vec<String> = Vec::new();
+            let mut api_elems: Vec<String> = Vec::new();
+            for e in elems {
+                if route_element_head(&e) == "App.api" {
+                    api_elems.push(e);
+                } else {
+                    page_elems.push(e);
+                }
+            }
+            if !page_elems.is_empty() {
+                client_parts.push(format!("[ {} ]", page_elems.join(", ")));
+            }
+            if !api_elems.is_empty() {
+                api_parts.push(format!("[ {} ]", api_elems.join(", ")));
+            }
+        } else if api_bindings.contains(o.trim()) {
+            api_parts.push(o);
+        } else {
+            client_parts.push(o);
+        }
+    }
+    let client_expr = if client_parts.is_empty() {
+        "[]".to_string()
+    } else {
+        client_parts.join(" ++ ")
+    };
+    let api_expr = if api_parts.is_empty() {
+        None
+    } else {
+        Some(api_parts.join(" ++ "))
+    };
+    (client_expr, api_expr)
+}
+
 /// Remove a top-level binding (its signature + definition) named `name` from a
 /// fmt'd source. A binding runs from a column-0 `name …` line until the next
 /// column-0 non-blank line.
@@ -1471,10 +1725,27 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
     // resolve nothing server-side. The client references the same bindings, so
     // client + server share one route table.
     let (routes_binding, routes_line) = match &fields.routes {
-        Some(r) => (
-            format!("spaRoutes_ =\n    List.concatMap App.spaRoute ({r})\n\n\n"),
-            "\n            |> Spa.withRoutes spaRoutes_".to_string(),
-        ),
+        Some(r) => {
+            // GAP-1: `withRoutes` may MIX page routes with `App.api` server
+            // endpoints. Partition the argument — page routes drive the CLIENT
+            // `spaRoutes_` (+ the per-route SSR GET mounts, which key off it), and
+            // the api endpoints (if any) become a BACKEND-only `spaApiRoutes_`
+            // binding the generated server mounts via `App.apiServerRoute`. Before
+            // this, the client `spaRoutes_` referenced the whole arg — including a
+            // server-tainted api binding the split drops — so the client entry
+            // failed to compile (`E1001`).
+            let (client_expr, api_expr) = partition_routes(r, src);
+            let mut binding = format!(
+                "spaRoutes_ =\n    List.concatMap App.spaRoute ({client_expr})\n\n\n"
+            );
+            if let Some(api) = api_expr {
+                // `spaApiRoutes_` references the server-tainted api handlers, so
+                // the split's taint analysis drops it from the wasm frontend
+                // automatically; the backend keeps + mounts it.
+                binding.push_str(&format!("spaApiRoutes_ =\n    ({api})\n\n\n"));
+            }
+            (binding, "\n            |> Spa.withRoutes spaRoutes_".to_string())
+        }
         None => (String::new(), String::new()),
     };
     let (not_found_binding, not_found_line) = match &fields.not_found {

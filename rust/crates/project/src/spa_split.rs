@@ -1941,6 +1941,14 @@ fn gen_backend(
     let has_synth_routes = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaRoutes_"));
+    // GAP-1: the App→Spa synthesis emits a `spaApiRoutes_` binding (main.rs
+    // synthesize_spa_source) when `withRoutes` MIXES page routes with `App.api`
+    // server endpoints. The backend mounts those as real `Server` handlers
+    // (`List.concatMap App.apiServerRoute spaApiRoutes_`), appended to the
+    // `Server.listen` route list — the client (Spa) cannot carry a server handler.
+    let has_synth_api_routes = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaApiRoutes_"));
     // Data-resolved SSR (design §4.2): the GET-safe allowlist, applied
     // FAIL-CLOSED at synthesis over the app's `init` source. The settle
     // (Spa_ssrSettle) runs `init`'s `cmd0` to a data-bearing model server-side —
@@ -2004,7 +2012,10 @@ fn gen_backend(
     // `spaView_`/`spaHead_` — so it must copy those decls. `emit_ssr`'s
     // `has_synth_view && has_synth_head` guard already restricts this to the
     // synthesis output, whose decls carry no client-only `Std.Spa` reference.
-    let static_only_backend = server.is_empty() && !push_mode && !emit_ssr;
+    // An app with `App.api` server endpoints (`spaApiRoutes_`) is NOT static-only:
+    // the backend must carry the api route binding + its handlers to mount them,
+    // so its (synthesised, TEA-safe) decls are copied like any server-bearing app.
+    let static_only_backend = server.is_empty() && !push_mode && !emit_ssr && !has_synth_api_routes;
     let mut body = String::new();
     if !static_only_backend {
         for d in file.decls() {
@@ -2301,8 +2312,23 @@ fn gen_backend(
     handlers.push_str(
         "serverPort : Int\nserverPort =\n    case String.toInt (System.getenvOr \"PORT\" \"8951\") of\n        Just p ->\n            p\n\n        Nothing ->\n            8951\n\n\n",
     );
+    // GAP-1: mount the app's `App.api` server endpoints. `spaApiRoutes_` (the
+    // synthesis' api route source) is lowered to `List Server.Route` by
+    // `App.apiServerRoute` and appended to the static list literal via `++`, so
+    // the api endpoints (OAuth callbacks, /healthz, webhooks) are served — the Go
+    // 1.22 mux matches the more-specific `GET /path` ahead of the `/` static
+    // catch-all regardless of registration order. Page routes are handled by the
+    // per-route SSR GETs above; only api endpoints flow through here (a page route
+    // yields `[]` from `apiServerRoute`).
+    let listen_arg = if has_synth_api_routes {
+        // Inside the grouping parens, layout is free, so the list literal keeps its
+        // own indentation and the `++` appends the api mounts.
+        format!("        (\n{route_block}\n        ]\n            ++ List.concatMap App.apiServerRoute spaApiRoutes_\n        )")
+    } else {
+        format!("{route_block}\n        ]")
+    };
     handlers.push_str(&format!(
-        "main : Task Error ()\nmain =\n    Server.listen\n        serverPort\n{route_block}\n        ]\n"
+        "main : Task Error ()\nmain =\n    Server.listen\n        serverPort\n{listen_arg}\n"
     ));
 
     Ok(format!(

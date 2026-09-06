@@ -1,0 +1,21 @@
+module Boot exposing (init)
+
+-- `init` factored into a SIBLING module (the sky-lang.org shape) whose command
+-- is a curated GET-safe read through the backend-only `db` CAF. Kept verbatim in
+-- the wasm frontend it would reference the dropped `db` binding + the
+-- server-only `Db.query` kernel (`undefined: rt.Db_query`). The frontend strip
+-- must resolve `init` through the import graph and rewrite its command to
+-- `Cmd.none` — the same treatment an ENTRY `init` already gets (GAP-2).
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Db as Db
+import Conn exposing (db)
+import State exposing (..)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = HomePage, items = [] }
+    , Cmd.perform (Db.query db "SELECT name FROM items ORDER BY name" []) GotItems
+    )

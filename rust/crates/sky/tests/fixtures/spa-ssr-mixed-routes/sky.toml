@@ -1,0 +1,5 @@
+[project]
+name = "ssr-mixed-routes"
+
+[app]
+target = "web:app"
