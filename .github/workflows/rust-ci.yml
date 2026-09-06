@@ -860,9 +860,18 @@ jobs:
       # invocation so a NOT RUN / UNPROVEN in any of them renders the suite
       # UNKNOWN (exit 3) rather than a quiet skip. Server-spinning apps-* /
       # sky-suites / lsp stay out deliberately — see the job header.
-      - name: 'Gate — cli-verbs + analytics (fast T1 counting gates)'
+      #
+      # roundtrip + shared-world join here (v1 B9): both are pure in-process
+      # scans (parse / type-check, no sky-out/sky needed) and both are EXACT-count
+      # ratchets that previously asserted their count ONLY at tag/nightly — so
+      # roundtrip (187) and shared-world (138) drift shipped silently and first
+      # surfaced when a human cut a tag (the v0.23.0 attempts). Running the count
+      # form per-PR is what makes the tag gate boring. (conformance's count also
+      # drifts tier-only, but it needs an installed sky-out/sky to run the suites,
+      # so it stays in the nightly/release tier until config-gates installs one.)
+      - name: 'Gate — cli-verbs + analytics + roundtrip/shared-world (fast T1 counting gates)'
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --only cli-verbs,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index
+        run: cargo run --release --locked -q -p xtask -- harness --only cli-verbs,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,roundtrip,shared-world
       - name: Bound the Go caches before save
         if: always()
         working-directory: .

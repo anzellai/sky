@@ -844,3 +844,51 @@ fn the_release_gate_runs_the_full_tier_suite() {
         problems.join("\n  ")
     );
 }
+
+/// In `release.yml`'s `gate` job, the step that installs the compiler
+/// (`scripts/build.sh` → `sky-out/sky`) MUST run BEFORE the codegen build+run
+/// step (`xtask build-run`, whose `live`-shape examples spawn `sky build`).
+///
+/// The v0.23.0 release publish failed at exactly this point: `build-run --all`
+/// ran first, so every live example died with `sky build spawn: No such file or
+/// directory (os error 2)` while four platform binaries had already built —
+/// publication blocked on step order, not a defect. The fix was a hand-edit to
+/// the order; this test locks it, because the other checks in this file are
+/// presence-only and both steps WERE present — just in the wrong order.
+#[test]
+fn release_gate_installs_the_compiler_before_build_run() {
+    let path = workflows()
+        .into_iter()
+        .find(|p| p.file_name().and_then(|n| n.to_str()) == Some("release.yml"))
+        .expect("release.yml must exist");
+    let text = std::fs::read_to_string(&path).expect("read release.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("release.yml is parseable YAML");
+    let gate = doc
+        .get("jobs")
+        .and_then(|j| j.get("gate"))
+        .and_then(|g| g.get("steps"))
+        .and_then(|s| s.as_sequence())
+        .expect("release.yml has a `gate` job with steps");
+
+    let mut build_sh_idx: Option<usize> = None;
+    let mut build_run_idx: Option<usize> = None;
+    for (i, step) in gate.iter().enumerate() {
+        let run = step.get("run").and_then(|r| r.as_str()).unwrap_or("");
+        if run.contains("build.sh") {
+            build_sh_idx.get_or_insert(i);
+        }
+        if run.contains("build-run") {
+            build_run_idx.get_or_insert(i);
+        }
+    }
+    let bsh = build_sh_idx
+        .expect("release.yml `gate` must install the compiler via scripts/build.sh before its gates run");
+    let brun = build_run_idx.expect("release.yml `gate` must run `xtask build-run`");
+    assert!(
+        bsh < brun,
+        "release.yml `gate` runs `build-run` (step {brun}) BEFORE it installs the compiler via \
+         scripts/build.sh (step {bsh}). build-run's live-shape examples spawn `sky build`, which \
+         needs sky-out/sky to exist — the v0.23.0 publish failed with `sky build spawn: No such \
+         file or directory` for exactly this reason. Move the build.sh install step ahead of it."
+    );
+}
