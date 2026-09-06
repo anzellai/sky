@@ -1335,22 +1335,51 @@ const SSR_GET_UNSAFE_KERNELS: &[&str] = &[
 
 /// Decide, FAIL-CLOSED, whether the app's `init` command is a curated GET-safe
 /// read that the SSR handler may settle server-side (design §4.2). Sound because
-/// it errs toward chrome-only: it returns true ONLY when `init`'s source
-/// mentions at least one GET-safe read kernel (`SSR_GET_SAFE_KERNELS`) AND
-/// mentions NO unsafe kernel (`SSR_GET_UNSAFE_KERNELS`). An `init` whose command
-/// is `Cmd.none`, or whose effect is reached through a helper this direct-body
-/// scan cannot see, does not match and stays chrome-only — never a false
-/// "safe". The per-effect, transitive positive allowlist (following the kernel
-/// identity through the compiler rather than the `init` text) is the documented
-/// follow-on; this text scan is deliberately conservative.
+/// it errs toward chrome-only, checked POSITIVELY per `Cmd.perform`:
+///
+///   * every `Cmd.perform` in `init` must apply a task whose HEAD is an
+///     allowlisted read kernel (`SSR_GET_SAFE_KERNELS`) — a `Cmd.perform` of a
+///     write, a non-deterministic effect, or an opaque task/helper value
+///     (`Cmd.perform someTask …`, whose head we cannot prove safe) disqualifies
+///     the whole `init`;
+///   * there must be at least one such perform (a `Cmd.none` init has nothing to
+///     settle → chrome-only, which is correct — there is no data to resolve);
+///   * belt-and-suspenders, any unsafe kernel token anywhere in `init` also
+///     disqualifies it.
+///
+/// Requiring the safe kernel at the PERFORM HEAD (not merely somewhere in the
+/// text) closes the gap where `init` reads via one perform but writes via a
+/// helper whose name is not a denylist token. The transitive, per-effect
+/// positive allowlist that follows kernel identity through the compiler (rather
+/// than this `init`-source scan) is the documented follow-on; this scan is
+/// deliberately conservative and only ever under-approximates "safe".
 fn init_cmd_is_get_safe(init_src: &str) -> bool {
-    if SSR_GET_UNSAFE_KERNELS
-        .iter()
-        .any(|k| init_src.contains(k))
-    {
+    if SSR_GET_UNSAFE_KERNELS.iter().any(|k| init_src.contains(k)) {
         return false;
     }
-    SSR_GET_SAFE_KERNELS.iter().any(|k| init_src.contains(k))
+    let mut saw_perform = false;
+    let mut rest = init_src;
+    while let Some(i) = rest.find("Cmd.perform") {
+        saw_perform = true;
+        // The task argument follows `Cmd.perform`, optionally wrapped in `(`.
+        let after = rest[i + "Cmd.perform".len()..].trim_start();
+        let head = after.trim_start_matches('(').trim_start();
+        // The head must be an allowlisted kernel at a WORD BOUNDARY, so a prefix
+        // like `File.readFile` cannot accept a longer, unlisted `File.readFileX`.
+        let head_ok = SSR_GET_SAFE_KERNELS.iter().any(|k| {
+            head.starts_with(k)
+                && !head[k.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        });
+        if !head_ok {
+            // This perform's head is not a proven GET-safe read → fail-closed.
+            return false;
+        }
+        rest = &rest[i + "Cmd.perform".len()..];
+    }
+    saw_perform
 }
 
 /// Extract the literal route PATTERN strings from a synthesised `spaRoutes_`
