@@ -1,0 +1,5 @@
+[project]
+name = "ssr-multimodule"
+
+[app]
+target = "web:app"

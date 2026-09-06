@@ -688,6 +688,29 @@ pub fn generate(
         notes.push("no SERVER branches — the frontend is fully client-local and the backend only serves static assets.".into());
     }
 
+    // ---- GAP-A: resolve the module that DECLARES the `Msg` union ----
+    // The generated frontend `update` references the `Applied<Msg>` RPC-response
+    // variants, so they must be injected into the `Msg` union WHEREVER it is
+    // declared. When `Msg` lives in a pure sibling (the sky-lang.org shape —
+    // `Msg` in `State.sky`) the variants are spliced into that module's FRONTEND
+    // copy (the entry-source injection in `gen_frontend` only fires for a `Msg`
+    // in the entry). Identify the module by the union whose variants include the
+    // SERVER branch constructors — robust to the type's name and to a same-named
+    // `Msg` in an unrelated module (an embedded example). Only relevant when
+    // there are server branches (else no `Applied<Msg>` variants are generated).
+    let msg_module: Option<ModuleId> = if server.is_empty() {
+        None
+    } else {
+        let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
+        pure_sibling_mods.iter().copied().find(|m| {
+            db.module_parse(*m).tree().decls().any(|d| {
+                matches!(decl_kind(&d), DeclKind::Union)
+                    && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
+            })
+        })
+    };
+    let msg_module_name: Option<String> = msg_module.map(|m| db.module_name(m).to_string());
+
     let parse = db.module_parse(entry);
     let src = parse.syntax().text().to_string();
     let file = parse.tree();
@@ -767,7 +790,12 @@ pub fn generate(
             needed_siblings.insert(mname);
         }
     }
-    let shared_imports = shared_import_lines(&imports, &needed_siblings, &backend_only_names);
+    let pure_sibling_names: HashSet<String> = pure_sibling_mods
+        .iter()
+        .map(|m| db.module_name(*m).to_string())
+        .collect();
+    let shared_imports =
+        shared_import_lines(&imports, &needed_siblings, &backend_only_names, &pure_sibling_names);
 
     // update param names + the update annotation + the model type name.
     let update_decl = file
@@ -787,6 +815,46 @@ pub fn generate(
         .unwrap_or_else(|| "update : Msg -> Model -> ( Model, Cmd Msg )".to_string());
     let model_ty = model_type_name(&file, &src).unwrap_or_else(|| "Model".to_string());
 
+    // ---- literal SSR route patterns, across EVERY project module (§4.1) ----
+    // The per-route SSR registration needs each route's literal URL pattern so
+    // the backend can mount `GET <pat>` (a more-specific mux entry than
+    // `Server.static "/"`, so asset GETs still fall through to the file server).
+    // The route table is often FACTORED INTO A SIBLING module and referenced as
+    // `App.withRoutes Routes.routes` — the synthesised `spaRoutes_` binding is
+    // then `List.concatMap App.spaRoute (Routes.routes)`, which carries no
+    // literal of its own. Scanning only that binding text (the old behaviour)
+    // therefore found nothing and left every non-root route falling to
+    // `Server.static` → 404 (the sky-lang.org `/blog` gap). Scan the SOURCE of
+    // every project module (entry + siblings) so a `Routes.sky` full of
+    // `App.route "/blog" …` literals is seen. Deduped, source order; the bare
+    // root `/` is dropped (the caller mounts it as the exact-root `GET /{$}`).
+    let mut ssr_route_patterns: Vec<String> = Vec::new();
+    for m in &check_ids {
+        let msrc = db.module_parse(*m).syntax().text().to_string();
+        for pat in spa_ssr_route_patterns(&msrc) {
+            if !ssr_route_patterns.contains(&pat) {
+                ssr_route_patterns.push(pat);
+            }
+        }
+    }
+
+    // ---- resolve `init`'s DECLARING module for the GET-safe SSR scan (§4.2) ----
+    // `init` may be factored into a SIBLING module (the sky-lang.org shape — its
+    // `init` lives in `Model.sky`, not the entry). Resolve the config's `init`
+    // field to its declaring module via the import graph and read THAT module's
+    // `init` source for the curated GET-safe read decision. Scanning only the
+    // entry (the old `app_init_src(file, src)`) missed a sibling `init`, so the
+    // SSR settle was skipped and the first paint shipped an empty `#sky-model`.
+    let init_src = match spa_partition::find_config_field_def(&db, &check_ids, entry, "init") {
+        Some(init_def) => {
+            let imod = db.def_loc(init_def).map(|l| l.module).unwrap_or(entry);
+            let iparse = db.module_parse(imod);
+            let isrc = iparse.syntax().text().to_string();
+            app_init_src(&iparse.tree(), &isrc)
+        }
+        None => app_init_src(&file, &src),
+    };
+
     // ---- write the three trees ----
     let shared_src = gen_shared(&wires, &shared_imports, &copied_decls, &copied_exposing);
     let push_mode = report.subscribes_topics || report.publishes;
@@ -805,7 +873,7 @@ pub fn generate(
             "note: --broker <url> was given but the app has no Cmd.publish / Sub.subscribeTopic, so no push broker is generated; the flag is ignored.".into(),
         );
     }
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode, broker_url)?;
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode, broker_url, &ssr_route_patterns, &init_src)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -855,14 +923,39 @@ pub fn generate(
         &mut files,
     )?;
 
+    // Cycle guard (E1010) for GAP-A. The `Applied<Msg>` variants injected into the
+    // Msg module reference `<Msg>Resp` declared in `Shared`, so the Msg module's
+    // frontend copy imports `Shared`. `Shared` is prevented from importing the Msg
+    // module (shared_import_lines drops it), which breaks the usual cycle. But if a
+    // WIRE FIELD TYPE is declared in the Msg module (`needed_siblings`), `Shared`
+    // genuinely needs it and re-imports it with `exposing (..)` — an unavoidable
+    // cycle. Refuse with a precise message rather than emit a tree that won't
+    // compile.
+    if let (Some(mm_name), true) = (msg_module_name.as_deref(), msg_module.is_some()) {
+        if needed_siblings.contains(mm_name) {
+            return Err(format!(
+                "cannot auto-split: the `Msg` union is declared in module `{mm_name}`, which ALSO declares a type/codec the generated wire (`Shared`) imports — injecting the `Applied<Msg>` RPC variants there needs `import Shared`, forming an import cycle (E1010). Move `Msg` into its own module that declares no wire-referenced type (split `{mm_name}` into `Msg` + the wire types), or keep `Msg` in the entry module. (Refusing rather than emitting a cyclic frontend.)"
+            ));
+        }
+    }
+
     // ---- copy the sibling project modules (§17) ----
     // Pure modules go into BOTH trees verbatim; server-tainted (backend-only)
-    // modules go into the backend ONLY (never the wasm frontend).
+    // modules go into the backend ONLY (never the wasm frontend). The module that
+    // declares `Msg` gets the `Applied<Msg>` variants spliced into its FRONTEND
+    // copy (GAP-A); the backend copy stays verbatim (the backend reuses `update`
+    // as-is and never references the client-only `Applied<Msg>` arms).
     for m in &pure_sibling_mods {
         let rel = module_relpath(&db.module_name(*m).to_string());
-        let text = db.module_parse(*m).syntax().text().to_string();
+        let mparse = db.module_parse(*m);
+        let text = mparse.syntax().text().to_string();
         write(&format!("backend/src/{rel}"), &text, &mut files)?;
-        write(&format!("frontend/src/{rel}"), &text, &mut files)?;
+        let frontend_text = if Some(*m) == msg_module {
+            inject_applied_variants_into_module(&mparse.tree(), &text, &server)
+        } else {
+            text.clone()
+        };
+        write(&format!("frontend/src/{rel}"), &frontend_text, &mut files)?;
     }
     for m in &backend_only_mods {
         let rel = module_relpath(&db.module_name(*m).to_string());
@@ -1255,6 +1348,7 @@ fn shared_import_lines(
     imports: &[ImportInfo],
     needed_siblings: &BTreeSet<String>,
     backend_only: &HashSet<String>,
+    project_siblings: &HashSet<String>,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for i in imports {
@@ -1268,6 +1362,21 @@ fn shared_import_lines(
             continue;
         }
         if needed_siblings.contains(&i.module_path) {
+            continue;
+        }
+        // Drop EVERY project sibling module import that the wire does not need
+        // (a needed one is re-added below with a canonical `exposing (..)`).
+        // `Shared` is pure wire records + codecs and only references stdlib +
+        // the `needed_siblings`; carrying the entry's other sibling imports
+        // (`import Data`, `import Routes`, `import State`) is both unnecessary
+        // and unsound — those modules transitively import the `Msg` module,
+        // whose frontend copy now imports `Shared` for the injected
+        // `Applied<Msg>` variants (GAP-A), so a carried sibling import forms a
+        // `Shared` → sibling → `Msg` → `Shared` cycle (E1010). By the design's
+        // own invariant (needed_siblings = the siblings the wire references) a
+        // copied codec/type body never references a non-needed sibling, so
+        // dropping them is sound.
+        if project_siblings.contains(&i.module_path) {
             continue;
         }
         out.push(i.text.clone());
@@ -1529,6 +1638,13 @@ fn init_return_tuple(init_val: &syntax::ast::Decl) -> Option<(syntax::ast::Expr,
 /// source order, de-duplicated, with the bare root `/` dropped (the caller emits
 /// it as the exact-root `GET /{$}`).
 fn spa_ssr_route_patterns(routes_src: &str) -> Vec<String> {
+    // Strip comments FIRST. This scan now runs over whole module sources
+    // (spa_split::generate scans every project module so a sibling `Routes.sky`
+    // is seen), and a `--`/`{- -}` comment that mentions `App.route "…"` — a
+    // docstring, a code sample — would otherwise be scraped as a real pattern
+    // and emitted as a malformed `Server.api "GET …"` the Go mux rejects.
+    let routes_src = strip_sky_comments(routes_src);
+    let routes_src = routes_src.as_str();
     let mut out: Vec<String> = Vec::new();
     // Walk each `App.route`/`App.routeInt`/`App.routeParam`/`Spa.route` head and
     // take its first string-literal argument as the pattern.
@@ -1541,7 +1657,10 @@ fn spa_ssr_route_patterns(routes_src: &str) -> Vec<String> {
                 let tail = &after[q + 1..];
                 if let Some(end) = tail.find('"') {
                     let pat = &tail[..end];
-                    if !pat.is_empty() && pat != "/" && !out.contains(&pat.to_string()) {
+                    // A valid route pattern is an absolute path (`/…`); requiring
+                    // the leading slash rejects a stray non-path literal the scan
+                    // might otherwise pick up and hand to the Go mux.
+                    if pat.starts_with('/') && pat != "/" && !out.contains(&pat.to_string()) {
                         out.push(pat.to_string());
                     }
                     rest = &tail[end + 1..];
@@ -1550,6 +1669,77 @@ fn spa_ssr_route_patterns(routes_src: &str) -> Vec<String> {
             }
             rest = &after[..];
         }
+    }
+    out
+}
+
+/// Blank out Sky comments (`--` line, `{- -}` block, nestable) so a
+/// text-level scan does not read code samples or docstrings as source. String
+/// literals are respected (a `--` inside `"…"` is not a comment). A best-effort
+/// scanner — triple-quoted strings are not special-cased — sufficient for the
+/// route-literal extraction it guards.
+fn strip_sky_comments(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let n = chars.len();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0usize;
+    let mut in_str = false;
+    let mut block_depth = 0usize;
+    while i < n {
+        let c = chars[i];
+        let c2 = if i + 1 < n { Some(chars[i + 1]) } else { None };
+        if block_depth > 0 {
+            if c == '{' && c2 == Some('-') {
+                block_depth += 1;
+                i += 2;
+                continue;
+            }
+            if c == '-' && c2 == Some('}') {
+                block_depth -= 1;
+                i += 2;
+                continue;
+            }
+            // Preserve newlines so line structure is roughly kept.
+            if c == '\n' {
+                out.push('\n');
+            }
+            i += 1;
+            continue;
+        }
+        if in_str {
+            out.push(c);
+            if c == '\\' {
+                if let Some(nc) = c2 {
+                    out.push(nc);
+                    i += 2;
+                    continue;
+                }
+            }
+            if c == '"' {
+                in_str = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_str = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '-' && c2 == Some('-') {
+            while i < n && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == '{' && c2 == Some('-') {
+            block_depth = 1;
+            i += 2;
+            continue;
+        }
+        out.push(c);
+        i += 1;
     }
     out
 }
@@ -1563,6 +1753,8 @@ fn gen_backend(
     copied_names: &HashSet<String>,
     push_mode: bool,
     broker_url: Option<&str>,
+    ssr_route_patterns: &[String],
+    init_src: &str,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -1607,9 +1799,6 @@ fn gen_backend(
     let has_synth_routes = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaRoutes_"));
-    let has_synth_not_found = file
-        .decls()
-        .any(|d| decl_name(&d).as_deref() == Some("spaNotFound_"));
     // Data-resolved SSR (design §4.2): the GET-safe allowlist, applied
     // FAIL-CLOSED at synthesis over the app's `init` source. The settle
     // (Spa_ssrSettle) runs `init`'s `cmd0` to a data-bearing model server-side —
@@ -1620,11 +1809,12 @@ fn gen_backend(
     // enforced. An `init` whose command is a write, is non-deterministic, or is
     // any shape this scan cannot recognise gets NO settle and renders the pure
     // `init` model (chrome-only, exactly P1) — the fail-closed default.
-    // Join EVERY decl named `init` (the type annotation and the value binding are
-    // separate decls) so the scan sees the body — matching only the annotation
-    // `init : () -> ( Model, Cmd Msg )` would miss the `File.readFile` in the body.
-    let init_src = app_init_src(file, src);
-    let init_get_safe = init_cmd_is_get_safe(&init_src);
+    // The `init` source (its declaring module resolved by the caller — `init`
+    // may live in a sibling module, the sky-lang.org shape) joins EVERY decl
+    // named `init` (annotation + value binding are separate decls) so the scan
+    // sees the body — matching only the annotation `init : () -> ( Model, Cmd
+    // Msg )` would miss the `File.readFile` in the body.
+    let init_get_safe = init_cmd_is_get_safe(init_src);
     // Emit the SSR route for a synthesised (`Std.App`) app when the backend has
     // real per-request work to do: EITHER a server branch / push, OR a GET-safe
     // `init` read to settle (the sky-lang.org content-site shape — a DB read at
@@ -1930,12 +2120,16 @@ fn gen_backend(
         // asset GETs (main.wasm, wasm_exec.js) fall through to the file server.
         routes.push("        , Server.api \"GET /{$}\" ssrHandler".to_string());
         if has_synth_routes {
-            let routes_src = file
-                .decls()
-                .find(|d| decl_name(d).as_deref() == Some("spaRoutes_"))
-                .map(|d| slice(src, d.syntax()).to_string())
-                .unwrap_or_default();
-            for pat in spa_ssr_route_patterns(&routes_src) {
+            // Per-route SSR registration. The patterns are collected by the
+            // caller across EVERY project module (spa_split::generate), so a
+            // route table factored into a sibling (`App.withRoutes
+            // Routes.routes`, its literals in `Routes.sky`) is covered — not
+            // only literals inline in the synthesised `spaRoutes_` binding.
+            // Each `GET <pat>` is a more-specific mux entry than
+            // `Server.static "/"`, so asset GETs still fall through; a `:param`
+            // segment is translated to Go's `{param}` by the runtime's
+            // `colonToMuxPattern`, so a `routeParam "/blog/:slug"` resolves.
+            for pat in ssr_route_patterns {
                 routes.push(format!("        , Server.api \"GET {pat}\" ssrHandler"));
             }
         }
@@ -2265,6 +2459,97 @@ fn decl_name(d: &syntax::ast::Decl) -> Option<String> {
         Decl::Alias(a) => a.name().map(|n| n.text().to_string()),
         Decl::Foreign(_) => None,
     }
+}
+
+/// The constructor names of a `type X = A | B | …` union decl (empty for a
+/// non-union decl). Used to identify the RIGHT `Msg` union (the one whose
+/// variants are the app's branches) when several modules declare a same-named
+/// type.
+fn union_variant_names(d: &syntax::ast::Decl) -> Vec<String> {
+    if let syntax::ast::Decl::Union(u) = d {
+        u.variants()
+            .into_iter()
+            .filter_map(|v| v.name().map(|t| t.text().to_string()))
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Splice the generated `Applied<Msg>` RPC-response variants into the `Msg` union
+/// of a sibling module's source (GAP-A), returning the module source with the
+/// variants appended to the union and the `Shared` (wire types) + `Error` imports
+/// ensured. Returns the source unchanged when there are no server branches or the
+/// named union is absent (fail-safe — never a corrupting edit).
+fn inject_applied_variants_into_module(
+    mfile: &SourceFile,
+    msrc: &str,
+    server: &[(String, BranchIo)],
+) -> String {
+    if server.is_empty() {
+        return msrc.to_string();
+    }
+    // The `Msg` union is the one whose variants include the server branch ctors
+    // (matched the same way the module was selected) — robust to the type's name.
+    let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
+    let union = mfile.decls().find(|d| {
+        matches!(decl_kind(d), DeclKind::Union)
+            && union_variant_names(d).iter().any(|v| want.contains(v.as_str()))
+    });
+    let union = match union {
+        Some(u) => u,
+        None => return msrc.to_string(),
+    };
+    let end = usize::from(union.syntax().text_range().end());
+    if end > msrc.len() {
+        return msrc.to_string();
+    }
+    let mut variants = String::new();
+    for (m, _) in server {
+        variants.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
+    }
+    let mut out = String::with_capacity(msrc.len() + variants.len());
+    out.push_str(&msrc[..end]);
+    out.push_str(&variants);
+    out.push_str(&msrc[end..]);
+    let out = ensure_import_present(&out, "Shared", "import Shared exposing (..)");
+    ensure_import_present(&out, "Sky.Core.Error", "import Sky.Core.Error exposing (Error)")
+}
+
+/// Ensure `import_line` is present in `src` (idempotent — no-op if `module_path`
+/// is already imported under any alias/exposing form), inserting it after the
+/// last existing `import …` line (else after the module declaration).
+fn ensure_import_present(src: &str, module_path: &str, import_line: &str) -> String {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut last_import: Option<usize> = None;
+    for (i, l) in lines.iter().enumerate() {
+        let t = l.trim_start();
+        if let Some(rest) = t.strip_prefix("import ") {
+            last_import = Some(i);
+            if rest.trim_start().split_whitespace().next() == Some(module_path) {
+                return src.to_string();
+            }
+        }
+    }
+    let mut out = String::with_capacity(src.len() + import_line.len() + 1);
+    match last_import {
+        Some(li) => {
+            for (i, l) in lines.iter().enumerate() {
+                out.push_str(l);
+                out.push('\n');
+                if i == li {
+                    out.push_str(import_line);
+                    out.push('\n');
+                }
+            }
+        }
+        None => {
+            out.push_str(import_line);
+            out.push('\n');
+            out.push_str(src);
+        }
+    }
+    out
 }
 
 fn value_params(d: &syntax::ast::Decl) -> Vec<String> {

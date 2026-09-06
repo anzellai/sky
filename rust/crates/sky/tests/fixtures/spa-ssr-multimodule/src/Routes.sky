@@ -1,0 +1,23 @@
+module Routes exposing (routes, notFound)
+
+-- The route table factored into a SHARED module with LITERAL patterns — the
+-- sky-lang.org shape (its routes live in `Routes.sky`, referenced from the
+-- entry as `App.withRoutes Routes.routes`). The synthesised `spaRoutes_`
+-- binding is `List.concatMap App.spaRoute (Routes.routes)` — no literal in
+-- its own text — so the SSR per-route registration must scan the route
+-- table's DECLARING module for `App.route "…"` patterns (GAP-C), else a
+-- non-root route like `/items` never reaches the SSR handler (404).
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import State exposing (Page(..))
+
+
+routes : List any
+routes =
+    [ App.route "/" HomePage, App.route "/items" ItemsPage ]
+
+
+notFound : Page
+notFound =
+    HomePage

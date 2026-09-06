@@ -58,6 +58,10 @@ fn multimodule_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-split-multimodule/src/Main.sky")
 }
 
+fn ssr_multimodule_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-multimodule")
+}
+
 fn clientonly_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/spa-split-clientonly/src/Main.sky")
@@ -1941,4 +1945,186 @@ main =
     );
 
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// Multi-module TEA auto-split (the sky-lang.org SPA-SSR shape). The TEA core is
+/// factored into SHARED modules — `Msg`/`Model`/`Page` in `State`, `init` in
+/// `Data`, the route table in `Routes` — not the entry. `sky build --target
+/// web:app` must resolve each through the module/import graph, not the entry
+/// source text:
+///
+///   * GAP-A: inject the `Applied<Msg>` RPC-response variants into `State`'s
+///     (imported) `Msg` union so the wasm FRONTEND compiles — the generated
+///     frontend `update` references `AppliedSaveItem`, undefined before the fix
+///     (`E1001`). And `Shared` must not re-import the TEA siblings (they reach
+///     `Msg`), or the frontend cycles (`E1010`).
+///   * GAP-B: resolve `init`'s DECLARING module (`Data`) for the GET-safe scan so
+///     the SSR settle runs and `#sky-model` carries REAL resolved data.
+///   * GAP-C: SSR the `/items` route whose literal lives in the sibling `Routes`
+///     module, not inline in `spaRoutes_` — a non-root route must 200 with
+///     server-rendered content, not fall through to `Server.static` (404).
+///
+/// The security spine still holds: the effectful `Store` module is backend-only
+/// and never reaches the wasm frontend.
+#[test]
+fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_multimodule_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the multi-module SSR fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The split ran + the emitted trees type-checked.
+    assert!(
+        log.contains("client/server split") || log.contains("Built Std.App entry"),
+        "the split must run (emitted frontend + backend type-checked):\n{log}"
+    );
+
+    // GAP-A: the FRONTEND copy of the imported `Msg` module (`State`) carries the
+    // generated `Applied<Msg>` variants + the `Shared` import they need.
+    let fe_state = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/State.sky"))
+        .expect("generated frontend State.sky must exist");
+    assert!(
+        fe_state.contains("| AppliedSaveItem (Result Error SaveItemResp)"),
+        "GAP-A: the `Applied<Msg>` variant must be injected into the imported `Msg` union:\n{fe_state}"
+    );
+    assert!(
+        fe_state.contains("import Shared"),
+        "GAP-A: the injected Msg module must import `Shared` for the `<Msg>Resp` payload types:\n{fe_state}"
+    );
+
+    // GAP-A security spine: the effectful `Store` module never reaches the
+    // frontend, and no server effect (`writeFile`/`saveItems`) leaks into it.
+    assert!(
+        !proj.join(".skyapp/web-app/.split/frontend/src/Store.sky").exists(),
+        "the backend-only `Store` module must NOT be emitted into the wasm frontend"
+    );
+    let fe_main = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend Main.sky must exist");
+    // The `SaveItem` server branch is rewritten to an RPC (proving the effect
+    // stays server-side); the frontend never calls `Store.saveItems` directly.
+    assert!(
+        fe_main.contains("Spa.postJson") && fe_main.contains("/_rpc/SaveItem"),
+        "GAP-A: the server branch must be rewritten to an RPC in the frontend (effect stays server-side):\n{fe_main}"
+    );
+
+    // GAP-A cycle guard: `Shared` must not re-import the TEA sibling modules
+    // (they reach `Msg`, which imports `Shared`) — that would be an `E1010`.
+    let fe_shared = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Shared.sky"))
+        .expect("generated frontend Shared.sky must exist");
+    for sib in ["import State", "import Data", "import Routes"] {
+        assert!(
+            !fe_shared.contains(sib),
+            "GAP-A: `Shared` must not import the TEA sibling `{sib}` (cycle):\n{fe_shared}"
+        );
+    }
+
+    // GAP-B + GAP-C at the backend-source level.
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend Main.sky must exist");
+    assert!(
+        backend.contains("spaSsrSettle routed cmd0 update"),
+        "GAP-B: `init` (in the sibling `Data`) must be resolved GET-safe → a data-resolve settle:\n{backend}"
+    );
+    assert!(
+        backend.contains("Server.api \"GET /items\" ssrHandler"),
+        "GAP-C: the `/items` route (literal in the sibling `Routes`) must be SSR-registered:\n{backend}"
+    );
+    let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
+    let static_at = backend.find("Server.static \"/\"");
+    assert!(
+        items_at.is_some() && static_at.is_some() && items_at < static_at,
+        "GAP-C: per-route SSR routes must precede the static fallthrough:\n{backend}"
+    );
+
+    // ── Go-gated: the wasm FRONTEND built + the backend serves REAL per-route
+    // data. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "--target web:app must build end-to-end:\n{log}");
+
+    // GAP-A: the wasm frontend built to a hashed bundle (no `E1001`).
+    let dist = proj.join(".skyapp/web-app/.split/frontend/dist");
+    assert!(
+        dist_has_wasm(&dist),
+        "GAP-A: the wasm frontend must build to a content-hashed main.<hash>.wasm:\n{log}"
+    );
+
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    // Stage the data the settle reads (init: File.readFile "data/items.json").
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    std::fs::copy(proj.join("data/items.json"), backend_dir.join("data/items.json")).unwrap();
+
+    let port = 8976u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled multi-module SSR backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let mut buf = String::new();
+        use std::io::Read as _;
+        let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut buf));
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("multi-module SSR backend never reported listening on :{port}\nlog:\n{buf}");
+    }
+    let items_body = curl_body_p(port, "/items");
+    let home_body = curl_body_p(port, "/");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let items_body = items_body.expect("GET /items should return a body");
+    let home_body = home_body.expect("GET / should return a body");
+
+    // GAP-C + GAP-B: `/items` server-renders the RESOLVED item list (not a 404 /
+    // loading state).
+    assert!(
+        items_body.contains("data-sky-ssr")
+            && items_body.contains("Item list:")
+            && items_body.contains("Alpha Widget")
+            && items_body.contains("Beta Gadget")
+            && items_body.contains("Gamma Gizmo"),
+        "GAP-B/C: GET /items must carry the SERVER-RESOLVED item list. Body was:\n{items_body}"
+    );
+    // GAP-B: the embedded #sky-model blob carries the resolved model.
+    let blob_start = items_body
+        .find(r#"<script id="sky-model" type="application/json">"#)
+        .expect("GAP-B: the #sky-model blob must be present");
+    let blob = &items_body[blob_start..];
+    let blob = &blob[..blob.find("</script>").expect("blob must close")];
+    assert!(
+        blob.contains(r#""page":"ItemsPage""#) && blob.contains("Alpha Widget"),
+        "GAP-B: the #sky-model blob must decode to the RESOLVED model. Blob was:\n{blob}"
+    );
+    // Per-route body: `/` renders Home, not the Items view.
+    let home_app = {
+        let s = home_body.find(r#"<div id="app""#).expect("home #app must exist");
+        let e = home_body.find(r#"<script id="sky-model""#).unwrap_or(home_body.len());
+        &home_body[s..e]
+    };
+    assert!(
+        home_app.contains("Welcome home") && !home_app.contains("Item list:"),
+        "GAP-C: GET / must render Home's own view, not the Items view:\n{home_app}"
+    );
 }

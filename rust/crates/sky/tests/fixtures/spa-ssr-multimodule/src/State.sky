@@ -1,0 +1,33 @@
+module State exposing (..)
+
+-- The TEA state (Model / Msg / Page) factored into a SHARED module — the
+-- sky-lang.org shape. `Msg` is declared HERE, not in the entry, so the
+-- Sky.Spa auto-split must inject the generated `Applied<Msg>` RPC-response
+-- variants into THIS module's `type Msg` (resolved via the import graph),
+-- not the entry source (GAP-A).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+
+type Page
+    = HomePage
+    | ItemsPage
+
+type alias Model =
+    { page : Page
+    , items : List String
+    , draft : String
+    }
+
+type Msg
+    = Navigate Page
+    | GotItems (Result Error String)
+    | DraftChanged String
+    | SaveItem
+
+
+-- A pure client-safe helper (proves a pure sibling helper is reachable).
+normalize : String -> String
+normalize s =
+    String.trim s

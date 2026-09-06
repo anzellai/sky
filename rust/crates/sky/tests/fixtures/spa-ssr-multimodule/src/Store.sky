@@ -1,0 +1,16 @@
+module Store exposing (saveItems)
+
+-- A server-tainted effect helper (File.writeFile). Reaching it from the
+-- `SaveItem` branch makes that branch SERVER, so the split generates an
+-- `AppliedSaveItem` RPC-response variant — which must be injected into
+-- `State`'s (imported) `Msg` union for the wasm frontend to compile (GAP-A).
+-- This whole module is routed BACKEND-ONLY and never reaches the client.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Sky.Core.String as String
+
+
+saveItems : List String -> Task Error ()
+saveItems items =
+    File.writeFile "data/items.json" (String.join "\n" items)

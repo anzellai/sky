@@ -1026,6 +1026,37 @@ fn def_by_name(db: &dyn SkyDb, m: ModuleId, name: &str) -> Option<DefId> {
         .map(|td| td.def)
 }
 
+/// Resolve the `DefId` a `Spa.config { <field> = … }` field points at, when the
+/// field is a plain top-level name reference (the common shape — `init`,
+/// `view`, `subscriptions`). Searches every project module for the config call.
+/// Returns `None` for a lambda / partial-application / kernel field, or when no
+/// `Spa.config { … }` call is found. Used by the auto-split generator to resolve
+/// the DECLARING module of `init`/`view` (which may be factored into a sibling
+/// module — the sky-lang.org shape) via the import graph, rather than scanning
+/// the entry source text (which would miss them).
+pub fn find_config_field_def(
+    db: &skydb::SkyDatabase,
+    check_ids: &[ModuleId],
+    entry: ModuleId,
+    field: &str,
+) -> Option<DefId> {
+    let spa_mod = db.module_by_name("Std.Spa")?;
+    let config_def = def_by_name(db, spa_mod, "config")?;
+    let mut order = vec![entry];
+    order.extend(check_ids.iter().copied().filter(|m| *m != entry));
+    for mid in order {
+        let resolved = db.resolve(mid);
+        for (_def, body) in &resolved.bodies {
+            if let Some(f) = find_config_field(body, config_def, field) {
+                if let Expr::Var(Res::Def(d)) = &body.exprs[f] {
+                    return Some(*d);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Search the app modules for the `Spa.config { … }` call and read its `update`
 /// field. Returns the update DefId (the common case), a lambda body, or an
 /// "unavailable" reason for a non-name shape (partial app).
@@ -1041,7 +1072,7 @@ fn find_config_update_field(
     for mid in order {
         let resolved = db.resolve(mid);
         for (_def, body) in &resolved.bodies {
-            if let Some(field) = find_config_call(body, config_def) {
+            if let Some(field) = find_config_field(body, config_def, "update") {
                 return match &body.exprs[field] {
                     Expr::Var(Res::Def(d)) => UpdateField::Def(*d),
                     Expr::Lambda { body: b, .. } => UpdateField::Lambda(mid, body.clone(), *b),
@@ -1062,8 +1093,8 @@ fn find_config_update_field(
 }
 
 /// Within one body, find a `Call(Var(Res::Def(config_def)), [Record …])` and
-/// return the `update` field's ExprId.
-fn find_config_call(body: &Body, config_def: DefId) -> Option<ExprId> {
+/// return the named field's ExprId.
+fn find_config_field(body: &Body, config_def: DefId, field: &str) -> Option<ExprId> {
     for (id, expr) in body.exprs.iter() {
         if let Expr::Call(callee, args) = expr {
             if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
@@ -1071,7 +1102,7 @@ fn find_config_call(body: &Body, config_def: DefId) -> Option<ExprId> {
                     if let Some(first) = args.first() {
                         if let Expr::Record(fields) = &body.exprs[*first] {
                             for (n, v) in fields {
-                                if n.as_str() == "update" {
+                                if n.as_str() == field {
                                     return Some(*v);
                                 }
                             }

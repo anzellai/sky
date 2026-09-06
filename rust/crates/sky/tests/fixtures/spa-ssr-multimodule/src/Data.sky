@@ -1,0 +1,19 @@
+module Data exposing (init)
+
+-- `init` factored into a SHARED module (the sky-lang.org shape — its `init`
+-- lives in `Model.sky`, not the entry). Its command is a curated GET-safe
+-- read (`File.readFile`), so the auto-split must resolve `init`'s DECLARING
+-- module and scan THAT for the GET-safe read to settle the SSR model
+-- server-side (GAP-B) — scanning only the entry would miss it.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Std.Cmd as Cmd
+import State exposing (..)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = HomePage, items = [], draft = "" }
+    , Cmd.perform (File.readFile "data/items.json") GotItems
+    )
