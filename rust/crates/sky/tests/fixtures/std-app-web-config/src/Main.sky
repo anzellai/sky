@@ -1,0 +1,72 @@
+module Main exposing (main)
+
+-- A minimal PURE Std.App `App.app` app whose `view` returns a Std.Ui
+-- `Element`, configured through `App.withConfig` with the `webDefaults` opts
+-- record. The opts token in the config line is what the old view-family guard
+-- misclassified as a Std.Html-view app, so the synthesised Spa entry skipped
+-- the `Ui.layout []` wrap and failed to type-check (Html vs Element).
+--
+-- Every branch is pure (no Db/File/Http/Task), so it passes the auto-split
+-- taint gate and the whole app is a client build.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { count : Int }
+
+type Msg
+    = Increment
+    | Decrement
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("count: " ++ String.fromInt model.count)
+        , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
+        , Ui.el [ Ui.onClick Decrement ] (Ui.text "-")
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 9090 })
+
+
+main : Task Error ()
+main =
+    App.run app

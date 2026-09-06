@@ -24,10 +24,43 @@
 //! (`ty::Typer::body_types`, whose `BodyTypes.exprs` is the same table the
 //! lowerer consumes) — it never re-implements resolution or inference.
 
-use base::{DefId, ModuleId};
+use base::{DefId, FileId, ModuleId};
 use hir::{Body, Expr, ExprId, LocalDef, LocalId, PatId, Pattern, Res, SkyDb};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
+
+/// A `diagnostics::SourceProvider` over an already-loaded source db, keyed the
+/// same way the build driver keys its own (`FileId(module_id.index())`), so a
+/// re-rendered type-check diagnostic shows the offending source line + caret and
+/// a `<Module>:line:col` header instead of a bare error count (BUG-3). Path is
+/// the module's dotted name (the analysis has no on-disk path map; the name is
+/// enough to identify the file that failed).
+struct SpaSources {
+    text: HashMap<FileId, String>,
+    paths: HashMap<FileId, String>,
+}
+
+impl SpaSources {
+    fn from_db(db: &skydb::SkyDatabase, check_ids: &[ModuleId]) -> Self {
+        let mut text = HashMap::new();
+        let mut paths = HashMap::new();
+        for m in check_ids {
+            let fid = FileId(m.index());
+            text.insert(fid, db.module_parse(*m).syntax().text().to_string());
+            paths.insert(fid, db.module_name(*m).to_string());
+        }
+        SpaSources { text, paths }
+    }
+}
+
+impl diagnostics::SourceProvider for SpaSources {
+    fn text(&self, file: FileId) -> Option<&str> {
+        self.text.get(&file).map(String::as_str)
+    }
+    fn path(&self, file: FileId) -> Option<&str> {
+        self.paths.get(&file).map(String::as_str)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Kernel classification (design §3) — key off the `Res::Kernel` pseudo-module.
@@ -819,13 +852,35 @@ pub fn analyze_loaded(
     let entry_module_name = db.module_name(entry).to_string();
 
     // Type-check first — the report is only meaningful for a program that
-    // `sky check`s clean (mirrors the build's accept/reject gate). We do not
-    // re-render the diagnostics here; a broken project is reported as such.
+    // `sky check`s clean (mirrors the build's accept/reject gate). When it does
+    // NOT check, re-render the ACTUAL diagnostics with file:line + caret (BUG-3)
+    // — a bare `1 type error(s)` count discarded exactly the information a user
+    // needs, and on the `--target web:app` path the failing entry is a
+    // SYNTHESISED file they never wrote, so the count alone is undiagnosable.
     let checked = ty::check_modules(db, &check_ids);
     if checked.type_errors > 0 || checked.name_errors > 0 {
+        let sources = SpaSources::from_db(db, &check_ids);
+        // Surface the error/exhaustiveness diagnostics (the `E1…`/`E2…`/`E3001`
+        // classes the build's accept/reject gate keys on), rendered Elm-style.
+        let ds: Vec<String> = checked
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.severity == diagnostics::Severity::Error
+                    && (d.code.0.starts_with("E1")
+                        || d.code.0.starts_with("E2")
+                        || d.code.0 == "E3001")
+            })
+            .map(|d| d.render_cli(&sources))
+            .collect();
+        let rendered = if ds.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{}", ds.join("\n"))
+        };
         return Err(format!(
-            "project does not type-check ({} type error(s), {} name error(s)) — run `sky check` first",
-            checked.type_errors, checked.name_errors
+            "project does not type-check ({} type error(s), {} name error(s)):{}",
+            checked.type_errors, checked.name_errors, rendered
         ));
     }
 

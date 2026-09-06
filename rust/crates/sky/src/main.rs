@@ -1160,6 +1160,59 @@ struct AppFields {
     subscriptions: String,
     routes: Option<String>,
     not_found: Option<String>,
+    /// `App.with…` builder steps present in the source that the synthesis does
+    /// NOT carry into the derived `Spa.app` entry (everything except the
+    /// carried `withRoutes` / `withNotFound`). Reported as a warning so the drop
+    /// is never silent — a user's `withHead` (SEO) / `withRequest` hooks must
+    /// not vanish invisibly from the client build.
+    dropped_builders: Vec<String>,
+}
+
+/// True iff the source uses the `App.web` BUILDER (a `Std.Html`-view app), as
+/// opposed to `App.app` (a `Std.Ui` `Element`-view app). The distinction drives
+/// whether the synthesised `Spa.config.view` wraps the user's view in
+/// `Ui.layout []` (Element → Html) or passes it through (already Html).
+///
+/// A plain `src.contains("App.web")` ALSO matched `App.webDefaults` /
+/// `App.webConfig` — the `WebOpts` helpers a NORMAL `App.app` web app uses via
+/// `App.withConfig (App.WebConfig { App.webDefaults | … })` — so such an
+/// `App.app` app was misclassified as Html, its `Element` view passed through
+/// without the wrap, and the synthesised entry failed to type-check
+/// (`Html Msg vs Element Msg`). This detects `App.web` only at a CALL position:
+/// not followed by an identifier-continuation char (so `App.web`, `App.web `,
+/// `App.web(`, `App.web{`, `App.web\n` → the builder; `App.webDefaults`,
+/// `App.webConfig`, `App.webWhatever` → NOT), and not preceded by an
+/// identifier/`.` char (so a hypothetical `XApp.web` never matches). `--` line
+/// comments are stripped first, so a doc comment mentioning `App.web` (prose or
+/// a code sample) never flips the classification.
+fn uses_app_web_builder(src: &str) -> bool {
+    const NEEDLE: &str = "App.web";
+    for raw in src.lines() {
+        // Drop any `--` line comment — the builder we detect is code, never
+        // prose. (A `--` inside a string with `App.web` after it on the SAME
+        // line is not a shape real Sky produces.)
+        let line = raw.split_once("--").map(|(code, _)| code).unwrap_or(raw);
+        let bytes = line.as_bytes();
+        let mut from = 0;
+        while let Some(rel) = line[from..].find(NEEDLE) {
+            let at = from + rel;
+            let after = at + NEEDLE.len();
+            let next_is_ident = bytes
+                .get(after)
+                .map(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                .unwrap_or(false);
+            let prev_is_ident = at
+                .checked_sub(1)
+                .and_then(|i| bytes.get(i))
+                .map(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'.')
+                .unwrap_or(false);
+            if !next_is_ident && !prev_is_ident {
+                return true;
+            }
+            from = after;
+        }
+    }
+    false
 }
 
 /// Match a record field `{ field = VAL` or `, field = VAL` (the fmt'd form) and
@@ -1179,6 +1232,7 @@ fn match_record_field(trimmed: &str, field: &str) -> Option<String> {
 fn extract_app_fields(src: &str) -> Option<AppFields> {
     let (mut init, mut update, mut view, mut subscriptions) = (None, None, None, None);
     let (mut routes, mut not_found) = (None, None);
+    let mut dropped_builders: Vec<String> = Vec::new();
     for line in src.lines() {
         let t = line.trim();
         if let Some(v) = match_record_field(t, "init") {
@@ -1193,6 +1247,18 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
             routes = Some(v.trim().to_string());
         } else if let Some(v) = t.strip_prefix("|> App.withNotFound ") {
             not_found = Some(v.trim().to_string());
+        } else if let Some(rest) = t.strip_prefix("|> App.with") {
+            // Any OTHER `|> App.withX …` builder step: the synthesis does not
+            // carry it into the derived Spa entry. Record the step name so the
+            // drop is reported, never silent (BUG-2). The name is the leading
+            // identifier of `rest` (`Head arg…` → `withHead`).
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                dropped_builders.push(format!("with{name}"));
+            }
         }
     }
     Some(AppFields {
@@ -1202,6 +1268,7 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
         subscriptions: subscriptions?,
         routes,
         not_found,
+        dropped_builders,
     })
 }
 
@@ -1264,6 +1331,21 @@ fn app_binding_name(src: &str) -> Option<String> {
 fn synthesize_spa_source(src: &str) -> Option<String> {
     let fields = extract_app_fields(src)?;
     let app_name = app_binding_name(src)?;
+    // BUG-2: never drop a `App.with…` builder step silently. The synthesis
+    // carries only `withRoutes` + `withNotFound` into the client entry; warn,
+    // by name, about every other step so a user's `withHead` (SEO) /
+    // `withRequest` hooks are known not to have crossed to the wasm client.
+    if !fields.dropped_builders.is_empty() {
+        eprintln!(
+            "sky build --target <spa>: warning: {n} `App.with…` builder step(s) were NOT carried \
+             into the synthesised client entry: {list}.\n  \
+             Only `withRoutes` + `withNotFound` cross the App→Spa synthesis. Server-only steps \
+             (`withConfig`, `withRequest`) do not apply to the wasm client; client-relevant steps \
+             (e.g. `withHead` for SEO) must be re-expressed in a `Std.Spa` entry.",
+            n = fields.dropped_builders.len(),
+            list = fields.dropped_builders.join(", "),
+        );
+    }
     let mut out = remove_top_level_binding(src, &app_name);
     out = remove_top_level_binding(&out, "main");
     // Ensure the imports the synthesised main needs.
@@ -1288,7 +1370,7 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
     // needs `model -> Html`, so lay out the Element view but PASS THROUGH the
     // Html view — wrapping an already-Html view in `Ui.layout []` double-lays-out
     // and, for a `Ui.Html`-annotated view, fails to type-check.
-    let spa_view_body = if src.contains("App.web") {
+    let spa_view_body = if uses_app_web_builder(src) {
         format!("{view} model_", view = fields.view)
     } else {
         format!("Ui.layout [] ({view} model_)", view = fields.view)
@@ -1436,7 +1518,20 @@ fn build_std_app(
                     }
                 }
             }
-            Err(code) => code,
+            // BUG-3: the entry that failed is the SYNTHESISED client build, not
+            // a file the user wrote — name it so any file:line the split
+            // reported resolves, and offer the direct `sky check` on it.
+            Err(code) => {
+                eprintln!(
+                    "sky build --target {}: the failure above is in the SYNTHESISED client entry\n  \
+                     staged at `{}`.\n  \
+                     Inspect it directly with:  sky check {}",
+                    tgt.canonical(),
+                    synth_entry.display(),
+                    synth_entry.display(),
+                );
+                code
+            }
         };
     }
 

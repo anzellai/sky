@@ -98,6 +98,53 @@ fn scratch() -> PathBuf {
     std::env::temp_dir().join(uniq)
 }
 
+/// Recursively copy `src` → `dst`, skipping generated build dirs (so a committed
+/// fixture's stray local `.skyapp`/`sky-out`/`dist` never rides along). Used by
+/// the `--target web:app` tests, which build INTO the project dir and so must
+/// run on a scratch copy, never the checked-in tree.
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        let n = name.to_string_lossy();
+        if matches!(
+            n.as_ref(),
+            ".skyapp" | ".split" | "sky-out" | "sky-out-rust" | ".skycache" | ".skydeps" | "dist"
+        ) {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        if from.is_dir() {
+            copy_tree(&from, &to);
+        } else {
+            std::fs::copy(&from, &to).unwrap();
+        }
+    }
+}
+
+fn web_config_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-web-config")
+}
+
+/// Write a minimal `sky.toml` + a Std.App `App.app` `src/Main.sky` from `main_sky`
+/// into a fresh scratch project dir. Used by the BUG-2/BUG-3 `--target web:app`
+/// synthesis tests, which need a specific `App.app` shape rather than a committed
+/// fixture.
+fn scratch_std_app(name: &str, main_sky: &str) -> PathBuf {
+    let dir = scratch();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        format!("name = \"{name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/Main.sky"), main_sky).unwrap();
+    dir
+}
+
 #[test]
 fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -893,4 +940,273 @@ fn explicit_spa_rpc_branch_stays_client_not_a_synthesized_model_rpc() {
     );
 
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// BUG-1 (headline). `sky build --target web:app` on a Std.App `App.app`
+/// (Std.Ui `Element`-view) app that configures itself through `App.withConfig
+/// (App.WebConfig { App.webDefaults | port = … })` MUST succeed end-to-end.
+///
+/// The App→Spa synthesis chooses whether to wrap the user's `view` in
+/// `Ui.layout []` (Element → Html) by detecting the view family. The old guard
+/// was `src.contains("App.web")`, which ALSO matched the `App.webDefaults`
+/// opts helper that a NORMAL `App.app` web app uses — so the app was
+/// misclassified as an `App.web` (Std.Html) app, the wrap was skipped, and the
+/// synthesised `Spa.config` failed to type-check with `Html Msg vs Element Msg`.
+/// The fix detects the `App.web` BUILDER at a call boundary (not the
+/// `App.webDefaults`/`App.webConfig` idents, and not inside `--` comments).
+#[test]
+fn web_app_target_wraps_ui_element_view_despite_webdefaults() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&web_config_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The exact pre-fix symptom must be gone — regardless of the Go toolchain,
+    // because it is a type error the synthesis produced BEFORE any `go build`.
+    assert!(
+        !log.contains("Html Msg` vs `Element Msg") && !log.contains("Html Msg vs Element Msg"),
+        "BUG-1: the Html/Element mismatch must be gone (App.webDefaults must not be read as App.web):\n{log}"
+    );
+    // The synthesised entry must wrap the Element view in `Ui.layout []` (not
+    // pass it through as an already-Html view). This is the direct proof and
+    // needs no Go toolchain.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    assert!(
+        synth.contains("Ui.layout [] (view model_)"),
+        "BUG-1: the Element view must be wrapped in `Ui.layout []`:\n{synth}"
+    );
+    // Synthesis + the split's type-check passed (this line prints only after
+    // `generate` type-checks clean).
+    assert!(
+        log.contains("client/server split"),
+        "the split must run (synthesis + type-check passed):\n{log}"
+    );
+
+    // Full end-to-end proof (Go-gated): the whole `--target web:app` build
+    // produces the native backend + the wasm frontend.
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "BUG-1: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/app").is_file(),
+        "backend binary must be built:\n{log}"
+    );
+    assert!(
+        dist_has_wasm(&proj.join(".skyapp/web-app/.split/frontend/dist")),
+        "frontend wasm must be staged:\n{log}"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// BUG-2. A `|> App.withX` builder step the synthesis does NOT carry into the
+/// derived Spa entry (here `withHead`, an SEO hook) must be reported by name,
+/// never dropped silently. Runs during synthesis, so no Go toolchain is needed.
+#[test]
+fn web_app_synthesis_warns_about_dropped_builder_steps() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let main_sky = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Std.Html as Html exposing (Html)
+
+
+type alias Model =
+    { count : Int }
+
+
+type Msg
+    = Noop
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Noop ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view _ =
+    Ui.text "hi"
+
+
+pageHead : Model -> List (Html Msg)
+pageHead _ =
+    [ Html.node "title" [] [ Html.text "My App" ] ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withHead pageHead
+
+
+main : Task Error ()
+main =
+    App.run app
+"#;
+    let proj = scratch_std_app("withheaddrop", main_sky);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        log.contains("NOT carried") || log.contains("not carried"),
+        "BUG-2: a dropped builder step must be reported, not dropped silently:\n{log}"
+    );
+    // The dropped LIST (the segment after `client entry: `) must name withHead
+    // — and only withHead. `withNotFound` IS carried, so although it appears in
+    // the warning's explanatory prose, it must NOT be in the dropped list.
+    let dropped_list = log
+        .split("client entry: ")
+        .nth(1)
+        .and_then(|s| s.split('.').next())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        dropped_list.contains("withHead"),
+        "BUG-2: `App.withHead` must be named in the dropped list, got `{dropped_list}`:\n{log}"
+    );
+    assert!(
+        !dropped_list.contains("withNotFound"),
+        "withNotFound is carried into the Spa entry and must not be in the dropped list `{dropped_list}`"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// BUG-3. When the SYNTHESISED client entry fails to type-check, the failure
+/// must surface the actual diagnostic (file:line + caret), plus a pointer to the
+/// staged entry — not a bare `1 type error(s)` count that discards where the
+/// error is. Type-checking happens before any `go build`, so no Go is needed.
+#[test]
+fn web_app_type_error_reports_file_line_not_just_a_count() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // `view` returns an `Int`, so the synthesised `Ui.layout [] (view model_)`
+    // cannot type-check — a deterministic single type error in the derived entry.
+    let main_sky = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui
+
+
+type alias Model =
+    { count : Int }
+
+
+type Msg
+    = Noop
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Noop ->
+            ( model, Cmd.none )
+
+
+view : Model -> Int
+view model =
+    model.count
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main : Task Error ()
+main =
+    App.run app
+"#;
+    let proj = scratch_std_app("brokenentry", main_sky);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(!output.status.success(), "a broken synthesised entry must fail the build");
+    // The rendered diagnostic — an Elm-style TYPE ERROR block with a file:line
+    // header — must be present (BUG-3: the count alone used to be all we got).
+    assert!(
+        log.contains("TYPE ERROR") && log.contains("[E2"),
+        "BUG-3: the actual type diagnostic (file:line + code) must be shown, not just a count:\n{log}"
+    );
+    // …and the user must be told WHERE the synthesised entry is, so the
+    // file:line resolves to a real path they can open.
+    assert!(
+        log.contains(".skyapp/web-app") && log.contains("sky check"),
+        "BUG-3: the staged synthesised-entry path + a `sky check` hint must be printed:\n{log}"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
 }
