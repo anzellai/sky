@@ -1111,6 +1111,29 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
             );
             continue;
         };
+        // `Std.Spa`'s client-boundary helpers (`getJson` / `postJson`) are
+        // ordinary Sky over `Cmd.perform` + `Http` + `Codec`
+        // (sky-stdlib/Std/Spa.sky), so the taint walk would otherwise follow them
+        // into `Http_*` and mark every branch that issues an explicit RPC SERVER
+        // (issue #195). But `Std.Spa` IS the wasm-client framework — an explicit
+        // `Spa.postJson`/`getJson` is the client SIDE of an author-drawn boundary
+        // (the same fetch the generated frontend performs), not a server effect to
+        // lift into a synthesized whole-model RPC. Treat every `Std.Spa` def as a
+        // pure client leaf: a branch whose only server reach is `Spa.*` stays
+        // CLIENT and its body is copied verbatim. This is SOUND — nothing in
+        // `Std.Spa` touches a secret / DB / env; it only sends user data to a
+        // URL. Raw `Http.*` (or `Db.*`, …) used DIRECTLY in `update` is unaffected
+        // — that taints via the arm's own refs, never through this module.
+        if db.module_name(loc.module) == "Std.Spa" {
+            nodes.insert(
+                def,
+                DefNode {
+                    direct: None,
+                    callees: HashSet::new(),
+                },
+            );
+            continue;
+        }
         let resolved = db.resolve(loc.module);
         let Some(body) = resolved.bodies.get(&def) else {
             // A referenced def with no body in its module — opaque, conservative.

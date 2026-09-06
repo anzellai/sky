@@ -68,6 +68,11 @@ fn clientnative_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-split-clientnative/src/Main.sky")
 }
 
+fn explicit_rpc_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-split-explicit-rpc/src/Main.sky")
+}
+
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
 /// rather than a fixed `main.wasm`.
 fn dist_has_wasm(dist: &std::path::Path) -> bool {
@@ -780,6 +785,112 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "push frontend must build to wasm");
     assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Regression for issue #195. A branch whose ONLY server contact is an EXPLICIT
+/// `Spa.postJson` / `Spa.getJson` (over a user-provided codec) is a CLIENT branch
+/// — the explicit RPC IS the boundary, not a server effect to lift into a
+/// synthesized whole-model RPC. Before the fix, `spa_partition` followed
+/// `Std.Spa.postJson` into its internal `Http.*` and marked `AddItem` SERVER;
+/// because `AddItem` returns the whole model opaquely (`setUi (…) model`), the
+/// synthesized RPC request carried EVERY Model field, including the record-alias
+/// field `data : Data` — which no codec could wire, so `sky spa-split` failed with
+/// `branch \`AddItem\`, field \`data\`: no codec for a field of type \`any\``.
+///
+/// The fix classifies `Std.Spa`'s client-boundary helpers as CLIENT (pure leaves
+/// in the taint graph), so every branch stays client, no `<Msg>Req`/`<Msg>Resp`
+/// is synthesized, and the `Spa.postJson` call is copied verbatim into the wasm
+/// frontend. The generated static-only backend still builds (it copies none of
+/// the app's TEA decls, which reference the client-only `Std.Spa` framework).
+#[test]
+fn explicit_spa_rpc_branch_stays_client_not_a_synthesized_model_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let output = Command::new(SKY)
+        .args([
+            "spa-split",
+            explicit_rpc_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        output.status.success(),
+        "sky spa-split must SUCCEED on an explicit-RPC client (issue #195), got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The exact #195 symptom must be gone.
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("no codec for a field of type"),
+        "the spurious whole-model codec error must not appear:\n{combined}"
+    );
+    // The split report classifies AddItem CLIENT (local), with NO server branches.
+    assert!(
+        combined.contains("server branches (→ RPC): (none)"),
+        "an explicit-RPC client must have NO server branches:\n{combined}"
+    );
+
+    // The frontend keeps the explicit `Spa.postJson` with the user's own codec —
+    // it is NOT rewritten into a synthesized `Spa.postJson … "/_rpc/AddItem" …`.
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    assert!(
+        front.contains("Spa.postJson newItemCodec itemListCodec \"/api/items\""),
+        "frontend must keep the author's explicit Spa.postJson verbatim"
+    );
+    assert!(
+        !front.contains("/_rpc/AddItem"),
+        "AddItem must NOT be rewritten into a synthesized RPC"
+    );
+
+    // Nothing anywhere synthesized an `AddItemReq` / `AddItemResp` wire record.
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    for (name, text) in [("shared", &shared), ("backend", &back), ("frontend", &front)] {
+        assert!(
+            !text.contains("AddItemReq") && !text.contains("AddItemResp"),
+            "no synthesized AddItemReq/AddItemResp wire record should exist in {name}"
+        );
+        assert!(
+            !text.contains("/_rpc/"),
+            "no /_rpc endpoint should be generated for a client-only app ({name})"
+        );
+    }
+
+    // The real proof: both trees BUILD (backend native, frontend wasm). Gated on
+    // the Go toolchain, exactly like the other build-leg tests here.
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.success(),
+        "explicit-RPC static-only backend must build"
+    );
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(frontend_build.success(), "explicit-RPC frontend must build to wasm");
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }

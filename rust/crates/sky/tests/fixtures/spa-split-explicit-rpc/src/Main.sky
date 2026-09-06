@@ -1,0 +1,148 @@
+module Main exposing (main)
+
+-- Regression fixture for the explicit-RPC-client bug. A hand-authored Sky.Spa
+-- CLIENT whose only server contact is the EXPLICIT typed boundary (the Std.Spa
+-- get/post helpers over a user-provided codec). Every update branch is therefore
+-- CLIENT — the explicit boundary IS the boundary, not a server effect to lift
+-- into a synthesized whole-model round-trip.
+--
+-- Before the fix, the partition followed the Std.Spa post helper into its
+-- internal Http kernel and marked the add branch SERVER; because that branch
+-- returns the whole model opaquely (setUi over model), the synthesized request
+-- carried EVERY Model field — including the record-alias field, which no codec
+-- could wire, so the split failed with a spurious no-codec-for-any error.
+--
+-- The fix classifies the Std.Spa client-boundary helpers as CLIENT, so the add
+-- branch stays client and its explicit post call (with its own request codec) is
+-- copied verbatim — no synthesized wire record.
+--
+-- (This text is copied verbatim into the generated modules' headers, so it is
+-- deliberately worded WITHOUT the constructor name + `Req`/`Resp` suffixes and
+-- WITHOUT the endpoint path literal the acceptance test greps for.)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Error as Error exposing (Error)
+import Std.Spa as Spa
+import Std.Codec as Codec exposing (Codec)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui.Events as Ev
+import Std.Html exposing (Html)
+
+
+type alias Item =
+    { id : Int
+    , title : String
+    }
+
+
+-- The Model carries a RECORD-ALIAS field (`data : Data`) — the shape whose type
+-- the whole-model RPC path degraded to `any` in issue #195.
+type alias Data =
+    { items : List Item }
+
+
+type alias Ui =
+    { draft : String }
+
+
+type alias Model =
+    { ui : Ui
+    , data : Data
+    }
+
+
+type Msg
+    = DraftChanged String
+    | GotItems (Result Error (List Item))
+    | AddItem
+
+
+type alias NewItem =
+    { title : String }
+
+
+itemCodec : Codec Item
+itemCodec =
+    Codec.object Item
+        |> Codec.field "id" .id Codec.int
+        |> Codec.field "title" .title Codec.string
+        |> Codec.buildObject
+
+
+itemListCodec : Codec (List Item)
+itemListCodec =
+    Codec.list itemCodec
+
+
+newItemCodec : Codec NewItem
+newItemCodec =
+    Codec.object NewItem
+        |> Codec.field "title" .title Codec.string
+        |> Codec.buildObject
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { ui = { draft = "" }, data = { items = [] } }
+    , Spa.getJson itemListCodec "/api/items" GotItems
+    )
+
+
+setUi : (Ui -> Ui) -> Model -> Model
+setUi f model =
+    { model | ui = f model.ui }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        DraftChanged t ->
+            ( setUi (\u -> { u | draft = t }) model, Cmd.none )
+
+        GotItems (Ok items) ->
+            ( { model | data = { items = items } }, Cmd.none )
+
+        GotItems (Err _) ->
+            ( model, Cmd.none )
+
+        -- Returns the whole model opaquely (via `setUi`) AND issues an explicit
+        -- `Spa.postJson` with its own request codec + a `{ title }` payload.
+        AddItem ->
+            ( setUi (\u -> { u | draft = "" }) model
+            , Spa.postJson newItemCodec itemListCodec "/api/items" { title = String.trim model.ui.draft } GotItems
+            )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8 ]
+            [ Ui.text ("items: " ++ String.fromInt (List.length model.data.items))
+            , Ui.input
+                [ Ui.htmlAttribute "value" model.ui.draft
+                , Ev.onInput DraftChanged
+                ]
+            , Ui.el [ Ev.onClick AddItem ] (Ui.text "add")
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

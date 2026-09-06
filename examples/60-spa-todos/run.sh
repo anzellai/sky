@@ -30,7 +30,13 @@ GOROOT_WASM="$(go env GOROOT)/lib/wasm/wasm_exec.js"
 
 echo "==> building backend + wasm client"
 ( cd server && "$SKY" build src/Main.sky >/dev/null )
-( cd client && "$SKY" build src/Main.sky >/dev/null \
+# This is a MANUAL split (a hand-written client/ + server/ + symlinked shared/),
+# so the client is a RAW Sky.Spa wasm client — build it with `--wasm` to skip the
+# auto-split that a bare `sky build` on a `Spa.app` entry would run (the auto-split
+# is for a single unified source; this client already IS the client half). `--wasm`
+# emits the client's Go under client/sky-out/, which the standard Go toolchain then
+# compiles to wasm below.
+( cd client && "$SKY" build --wasm src/Main.sky >/dev/null \
     && cd sky-out && GOOS=js GOARCH=wasm go build -o ../main.wasm . )
 cp -f client/main.wasm public/main.wasm
 # The client is built with the STANDARD Go toolchain above (GOOS=js GOARCH=wasm),

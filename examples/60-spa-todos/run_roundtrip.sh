@@ -33,7 +33,9 @@ echo "==> building stateless backend (server/)"
 ( cd server && "$SKY" build src/Main.sky >/dev/null )
 
 echo "==> building Sky.Spa client -> wasm (client/)"
-( cd client && "$SKY" build src/Main.sky >/dev/null \
+# Manual split: build the client as a RAW wasm client (`--wasm`), NOT via the
+# auto-split that a bare `sky build` on a `Spa.app` entry now runs. See run.sh.
+( cd client && "$SKY" build --wasm src/Main.sky >/dev/null \
     && cd sky-out && GOOS=js GOARCH=wasm go build -o ../main.wasm . \
     && rm -f ../wasm_exec.js && cp "$GOROOT_WASM" ../wasm_exec.js \
     && chmod u+w ../wasm_exec.js )

@@ -1326,18 +1326,33 @@ fn gen_backend(
     // All decls except `main` (both its annotation and value), verbatim —
     // MINUS the types/codecs copied into Shared (they arrive via `import Shared
     // exposing (..)`; re-declaring them here would be a duplicate definition).
+    //
+    // EXCEPTION: a STATIC-ONLY backend (no server branches, no push) runs no app
+    // logic at all — it only serves the wasm client's assets. Its `init`/`update`/
+    // `view`/`subscriptions` are dead here, and for a hand-authored Sky.Spa client
+    // (issue #195) they reference the client-only `Std.Spa` framework
+    // (`Spa.getJson`/`postJson`, and the `Spa_app`/`Spa_config` kernels are
+    // `//go:build js` wasm-only), whose import this backend drops (above). Copying
+    // them would leave `Spa.*` undefined server-side. So a static-only backend
+    // copies NONE of the app's `*.sky` decls — just Shared + serverPort + main.
+    // (When there ARE server branches, `update` is reused by the RPC handlers and
+    // — in a well-formed auto-split input — contains no `Std.Spa` references, so
+    // it is copied verbatim as before.)
+    let static_only_backend = server.is_empty() && !push_mode;
     let mut body = String::new();
-    for d in file.decls() {
-        if decl_name(&d).as_deref() == Some("main") {
-            continue;
-        }
-        if let Some(n) = decl_name(&d) {
-            if copied_names.contains(&n) {
+    if !static_only_backend {
+        for d in file.decls() {
+            if decl_name(&d).as_deref() == Some("main") {
                 continue;
             }
+            if let Some(n) = decl_name(&d) {
+                if copied_names.contains(&n) {
+                    continue;
+                }
+            }
+            body.push_str(slice(src, d.syntax()).trim_end());
+            body.push_str("\n\n\n");
         }
-        body.push_str(slice(src, d.syntax()).trim_end());
-        body.push_str("\n\n\n");
     }
 
     // The generated handlers + serverPort + main.
