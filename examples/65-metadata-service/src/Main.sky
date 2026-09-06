@@ -1,0 +1,234 @@
+module Main exposing (main)
+
+-- metadata-service — a headless, STATELESS JSON API backed by Std.Db reads.
+--
+-- This is the exact shape of the internal "core-metadata" trial workload:
+--   * Sky.Http.Server (no Sky.Live, no SSE, no sessions, no CSRF)
+--   * every request is HTTP → one SQL read → JSON response
+--   * the connection pool is one memoised CAF shared across all handlers
+--
+-- Endpoints:
+--   GET /healthz          → {"status":"ok"}                    (no DB touch)
+--   GET /metadata/:key    → one row by primary key, or 404     (indexed read)
+--   GET /metadata?limit=N → the first N rows, ordered by key   (range read)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Encode as Json
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response, Handler)
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Log exposing (println)
+
+
+servicePort : Int
+servicePort =
+    -- Port 8000 is held locally by an unrelated process; bind elsewhere.
+    8137
+
+
+seedCount : Int
+seedCount =
+    500
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+               (\db ->
+                   setupSchema db |> Task.andThen (\_ -> seed db)
+                       |> Task.andThen (\_ -> startServer db))
+
+
+-- ─── Startup: schema + seed (idempotent) ─────────────────────────
+setupSchema : Db -> Task Error ()
+setupSchema db =
+    Db.execRaw
+        db
+        """CREATE TABLE IF NOT EXISTS metadata (
+  key TEXT PRIMARY KEY,
+  namespace TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)"""
+        |> Task.map (\_ -> ())
+
+
+seed : Db -> Task Error ()
+seed db =
+    let
+        rows = List.map rowLiteral (List.range 1 seedCount)
+        sql =
+            "INSERT INTO metadata (key, namespace, value, updated_at) VALUES "
+                ++ String.join ",\n" rows
+                ++ " ON CONFLICT (key) DO NOTHING"
+    in
+        Db.execRaw db sql
+            |> Task.map
+                   (\_ ->
+                       let
+                           _ =
+                               println
+                                   ("metadata-service: seeded up to "
+                                       ++ String.fromInt seedCount
+                                       ++ " rows")
+                       in
+                           ())
+
+
+-- Values are compiler-controlled (no user input), so string-literal VALUES
+-- rows are safe here — this is a seed, not a request path.
+rowLiteral : Int -> String
+rowLiteral i =
+    let
+        key = "svc-" ++ String.padLeft 4 '0' (String.fromInt i)
+        ns = namespaceFor i
+        value =
+            "region=" ++ regionFor i ++ ";tier=" ++ tierFor i ++ ";weight="
+                ++ String.fromInt (modBy 100 i)
+    in
+        "('" ++ key ++ "', '" ++ ns ++ "', '" ++ value
+            ++ "', '2026-09-06T00:00:00Z')"
+
+
+namespaceFor : Int -> String
+namespaceFor i =
+    case modBy 3 i of
+
+        0 ->
+            "billing"
+
+        1 ->
+            "catalog"
+
+        _ ->
+            "identity"
+
+
+regionFor : Int -> String
+regionFor i =
+    case modBy 4 i of
+
+        0 ->
+            "us-east"
+
+        1 ->
+            "us-west"
+
+        2 ->
+            "eu-west"
+
+        _ ->
+            "ap-south"
+
+
+tierFor : Int -> String
+tierFor i =
+    case modBy 2 i of
+
+        0 ->
+            "standard"
+
+        _ ->
+            "premium"
+
+
+-- ─── Server ──────────────────────────────────────────────────────
+startServer : Db -> Task Error ()
+startServer db =
+    let
+        _ =
+            println
+                ("metadata-service: listening on :" ++ String.fromInt servicePort
+                    ++ " (stateless JSON, Std.Db reads)")
+    in
+        Server.listen
+            servicePort
+            [ Server.get "/healthz" handleHealth
+            , Server.get "/metadata" (handleList db)
+            , Server.get "/metadata/:key" (handleGet db)
+            ]
+
+
+-- ─── Handlers ────────────────────────────────────────────────────
+handleHealth : Handler
+handleHealth _ =
+    Task.succeed (Server.json "{\"status\":\"ok\"}")
+
+
+handleGet : Db -> Handler
+handleGet db req =
+    case Server.param "key" req of
+
+        Nothing ->
+            Task.succeed
+                (Server.json "{\"error\":\"missing key\"}"
+                    |> Server.withStatus 400)
+
+        Just key ->
+            Db.findOneByField db "metadata" "key" key
+                |> Task.map
+                       (\maybeRow ->
+                           case maybeRow of
+
+                               Just row ->
+                                   Server.json (encodeRow row)
+
+                               Nothing ->
+                                   Server.json "{\"error\":\"not found\"}"
+                                       |> Server.withStatus 404)
+
+
+handleList : Db -> Handler
+handleList db req =
+    let
+        limit =
+            case Server.queryParam "limit" req of
+
+                Just s ->
+                    case String.toInt s of
+
+                        Just n ->
+                            n
+
+                        Nothing ->
+                            50
+
+                Nothing ->
+                    50
+    in
+        Db.query
+            db
+            "SELECT key, namespace, value, updated_at FROM metadata ORDER BY key ASC LIMIT ?"
+            [ SqlInt limit ]
+            |> Task.map (\rows -> Server.json (encodeRows rows))
+
+
+-- ─── JSON encoding ───────────────────────────────────────────────
+rowValue : Dict String String -> Json.Value
+rowValue row =
+    Json.object
+        [ ( "key", Json.string (Db.getString "key" row) )
+        , ( "namespace", Json.string (Db.getString "namespace" row) )
+        , ( "value", Json.string (Db.getString "value" row) )
+        , ( "updatedAt", Json.string (Db.getString "updated_at" row) )
+        ]
+
+
+encodeRow : Dict String String -> String
+encodeRow row =
+    Json.encode 0 (rowValue row)
+
+
+encodeRows : List (Dict String String) -> String
+encodeRows rows =
+    Json.encode
+        0
+        (Json.object
+            [ ( "count", Json.int (List.length rows) )
+            , ( "items", Json.list rowValue rows )
+            ])

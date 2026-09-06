@@ -49,15 +49,15 @@
     "database_drivers": {
       "sqlite": 12
     },
-    "paths_with_sky_toml": 55,
+    "paths_with_sky_toml": 56,
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
       "[app]": 4,
-      "[database]": 12,
+      "[database]": 13,
       "[dependencies]": 1,
       "[live]": 2,
-      "[source]": 51
+      "[source]": 52
     }
   },
   "gates": {
@@ -460,7 +460,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 187,
+      "expected_assertions": 188,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
@@ -471,7 +471,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 138,
+      "expected_assertions": 139,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -674,12 +674,12 @@
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
-      "Example": 61,
+      "Example": 62,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 80
+    "units_total": 81
   },
   "surfaces": [
     {
@@ -3283,6 +3283,11 @@
             "strength": 2
           },
           {
+            "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -3425,6 +3430,11 @@
           },
           {
             "by": "examples/64-app-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -3826,6 +3836,11 @@
             "strength": 3
           },
           {
+            "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -3860,6 +3875,11 @@
             "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
           },
           {
             "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
@@ -4097,6 +4117,11 @@
             "strength": 2
           },
           {
+            "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Core (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -4254,6 +4279,11 @@
           },
           {
             "by": "examples/63-app-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -5244,6 +5274,11 @@
             "strength": 2
           },
           {
+            "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -5506,6 +5541,11 @@
           },
           {
             "by": "examples/64-app-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -5945,6 +5985,11 @@
             "strength": 2
           },
           {
+            "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -6107,6 +6152,11 @@
           },
           {
             "by": "examples/63-app-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -6498,6 +6548,11 @@
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
@@ -6534,6 +6589,11 @@
             "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 3
@@ -8125,6 +8185,11 @@
             "strength": 2
           },
           {
+            "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -8197,6 +8262,11 @@
           },
           {
             "by": "examples/63-app-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -9484,6 +9554,11 @@
             "strength": 2
           },
           {
+            "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -9696,6 +9771,11 @@
           },
           {
             "by": "examples/63-app-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -15105,6 +15185,21 @@
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
+        "[source]"
+      ]
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "examples/65-metadata-service",
+      "modules_imported": 8,
+      "path": "examples/65-metadata-service",
+      "refs_generous": 32,
+      "refs_qualified": 26,
+      "role": "Example",
+      "sky_files": 1,
+      "sky_toml_sections": [
+        "[database]",
         "[source]"
       ]
     },

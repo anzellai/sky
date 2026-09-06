@@ -1,0 +1,15 @@
+name = "metadata-service"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+# A stateless JSON metadata service, read-backed by Std.Db. This is the shape
+# of the internal "core-metadata" trial workload: no Sky.Live, no SSE, no
+# sessions — just HTTP → SQL read → JSON. Postgres is the production tier, so
+# it runs on the repo's embedded PostgreSQL: `sky run` supervises a per-project
+# cluster and injects the DSN (docs/skydb/embedded-postgres.md). The app never
+# learns which tier it is in — it just calls `Db.connect ()`.
+[database]
+embedded = true
