@@ -664,7 +664,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1921,
+    "stdlib_entries": 1922,
     "stdlib_modules": 93,
     "surfaces_covered": 139,
     "surfaces_covered_pct": 88.0,
@@ -2892,6 +2892,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
             "strength": 4
@@ -4389,6 +4394,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -8104,6 +8114,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
@@ -12722,13 +12737,14 @@
           ]
         },
         "Std.Spa": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "Route",
             "route",
             "routeInt",
             "withHead",
+            "withModelDecoder",
             "withNotFound",
             "withOnNavigate",
             "withRoutes"
@@ -13025,8 +13041,8 @@
           ]
         }
       },
-      "count": 729,
-      "pct_of_denominator": 37.9
+      "count": 730,
+      "pct_of_denominator": 38.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13901,13 +13917,14 @@
           ]
         },
         "Std.Spa": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "Route",
             "route",
             "routeInt",
             "withHead",
+            "withModelDecoder",
             "withNotFound",
             "withOnNavigate",
             "withRoutes"
@@ -14205,7 +14222,7 @@
           ]
         }
       },
-      "count": 814,
+      "count": 815,
       "pct_of_denominator": 42.4
     }
   },
@@ -14226,12 +14243,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 17,
+      "modules_imported": 20,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 73,
-      "refs_qualified": 69,
+      "refs_generous": 78,
+      "refs_qualified": 74,
       "role": "Layer2",
-      "sky_files": 21,
+      "sky_files": 22,
       "sky_toml_sections": []
     },
     {
