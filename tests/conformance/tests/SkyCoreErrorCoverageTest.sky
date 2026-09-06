@@ -1,0 +1,242 @@
+module SkyCoreErrorCoverageTest exposing (main, tests)
+
+-- Behavioral conformance for Sky.Core.Error — the single unified error type.
+-- Closes part of v1 blocker B1: every public symbol of Sky.Core.Error is PURE
+-- (constructors, modifiers, and render/classify helpers — no IO, no DB, no
+-- randomness), so every one gets a real executing assertion here. Assertions
+-- drive the SKY-SOURCE API through the compiled binary. The observable
+-- contracts pinned below come straight from Sky/Core/Error.sky:
+--   * each constructor sets the documented ErrorKind + message, details=Nothing
+--   * the nullary constructors (timeout/notFound/permissionDenied) carry their
+--     documented default message
+--   * withMessage replaces the message but PRESERVES kind + details
+--   * withDetails attaches details but PRESERVES kind + message
+--   * kindLabel / toString render the documented `<Kind>: <message>` form
+--   * isRetryable is True for exactly {Timeout, Network, Unavailable}
+-- Error / ErrorKind / ErrorDetails are all exposed, so assertions pattern-match
+-- the value directly rather than trusting a single rendering path.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as E exposing (Error(..), ErrorKind(..), ErrorDetails(..))
+import Sky.Test as Test exposing (Test)
+
+
+-- ── Extractors: pull the observable fields out of an Error so assertions
+--    can pin kind / message / details independently of toString. ──
+kindOf : Error -> ErrorKind
+kindOf err =
+    case err of
+        Error kind _ ->
+            kind
+
+
+messageOf : Error -> String
+messageOf err =
+    case err of
+        Error _ info ->
+            info.message
+
+
+-- Poison sentinel so a Nothing surfaces as a distinct string, never as a
+-- silent pass, when we expect details to be present.
+detailsLabel : Error -> String
+detailsLabel err =
+    case err of
+        Error _ info ->
+            case info.details of
+                Nothing ->
+                    "<<NO-DETAILS>>"
+
+                Just d ->
+                    case d of
+                        HttpStatus n ->
+                            "http:" ++ String.fromInt n
+
+                        JsonDecode path ->
+                            "json:" ++ path
+
+                        Custom s ->
+                            "custom:" ++ s
+
+                        TypeMismatch ti ->
+                            "type:" ++ ti.expected ++ "/" ++ ti.actual
+
+                        FfiPanic pi ->
+                            "panic:" ++ pi.message
+
+
+hasDetails : Error -> Bool
+hasDetails err =
+    case err of
+        Error _ info ->
+            case info.details of
+                Nothing ->
+                    False
+
+                Just _ ->
+                    True
+
+
+tests : List Test
+tests =
+    [ -- ── mkInfo : the shared ErrorInfo builder — message set, details Nothing ──
+      Test.test "mkInfo sets message"
+        (\_ -> Test.equal "boom" (E.mkInfo "boom").message)
+    , Test.test "mkInfo defaults details to Nothing"
+        (\_ -> Test.equal Nothing (E.mkInfo "boom").details)
+
+    -- ── String-taking constructors: correct kind + message, details Nothing ──
+    , Test.test "io sets kind Io"
+        (\_ -> Test.equal Io (kindOf (E.io "disk gone")))
+    , Test.test "io carries the message"
+        (\_ -> Test.equal "disk gone" (messageOf (E.io "disk gone")))
+    , Test.test "io leaves details Nothing"
+        (\_ -> Test.isFalse (hasDetails (E.io "disk gone")))
+    , Test.test "network sets kind Network"
+        (\_ -> Test.equal Network (kindOf (E.network "dns fail")))
+    , Test.test "network carries the message"
+        (\_ -> Test.equal "dns fail" (messageOf (E.network "dns fail")))
+    , Test.test "ffi sets kind Ffi"
+        (\_ -> Test.equal Ffi (kindOf (E.ffi "cgo trap")))
+    , Test.test "ffi carries the message"
+        (\_ -> Test.equal "cgo trap" (messageOf (E.ffi "cgo trap")))
+    , Test.test "decode sets kind Decode"
+        (\_ -> Test.equal Decode (kindOf (E.decode "bad json")))
+    , Test.test "decode carries the message"
+        (\_ -> Test.equal "bad json" (messageOf (E.decode "bad json")))
+    , Test.test "invalidInput sets kind InvalidInput"
+        (\_ -> Test.equal InvalidInput (kindOf (E.invalidInput "empty name")))
+    , Test.test "invalidInput carries the message"
+        (\_ -> Test.equal "empty name" (messageOf (E.invalidInput "empty name")))
+    , Test.test "conflict sets kind Conflict"
+        (\_ -> Test.equal Conflict (kindOf (E.conflict "dup key")))
+    , Test.test "conflict carries the message"
+        (\_ -> Test.equal "dup key" (messageOf (E.conflict "dup key")))
+    , Test.test "unavailable sets kind Unavailable"
+        (\_ -> Test.equal Unavailable (kindOf (E.unavailable "maintenance")))
+    , Test.test "unavailable carries the message"
+        (\_ -> Test.equal "maintenance" (messageOf (E.unavailable "maintenance")))
+    , Test.test "unexpected sets kind Unexpected"
+        (\_ -> Test.equal Unexpected (kindOf (E.unexpected "??")))
+    , Test.test "unexpected carries the message"
+        (\_ -> Test.equal "??" (messageOf (E.unexpected "??")))
+
+    -- ── Nullary constructors: fixed kind + documented default message ──
+    , Test.test "timeout has kind Timeout"
+        (\_ -> Test.equal Timeout (kindOf E.timeout))
+    , Test.test "timeout default message"
+        (\_ -> Test.equal "operation timed out" (messageOf E.timeout))
+    , Test.test "notFound has kind NotFound"
+        (\_ -> Test.equal NotFound (kindOf E.notFound))
+    , Test.test "notFound default message"
+        (\_ -> Test.equal "not found" (messageOf E.notFound))
+    , Test.test "permissionDenied has kind PermissionDenied"
+        (\_ -> Test.equal PermissionDenied (kindOf E.permissionDenied))
+    , Test.test "permissionDenied default message"
+        (\_ -> Test.equal "permission denied" (messageOf E.permissionDenied))
+
+    -- ── withMessage : replaces message, PRESERVES kind + details ──
+    , Test.test "withMessage replaces the message"
+        (\_ -> Test.equal "new msg" (messageOf (E.withMessage "new msg" (E.io "old msg"))))
+    , Test.test "withMessage preserves the kind"
+        (\_ -> Test.equal Io (kindOf (E.withMessage "new msg" (E.io "old msg"))))
+    , Test.test "withMessage preserves existing details"
+        (\_ ->
+            Test.equal "http:404"
+                (detailsLabel
+                    (E.withMessage "retitled"
+                        (E.withDetails (HttpStatus 404) (E.network "down"))
+                    )
+                )
+        )
+
+    -- ── withDetails : attaches details, PRESERVES kind + message ──
+    , Test.test "withDetails attaches HttpStatus"
+        (\_ -> Test.equal "http:503" (detailsLabel (E.withDetails (HttpStatus 503) (E.network "down"))))
+    , Test.test "withDetails preserves the message"
+        (\_ -> Test.equal "down" (messageOf (E.withDetails (HttpStatus 503) (E.network "down"))))
+    , Test.test "withDetails preserves the kind"
+        (\_ -> Test.equal Network (kindOf (E.withDetails (HttpStatus 503) (E.network "down"))))
+    , Test.test "withDetails attaches JsonDecode"
+        (\_ -> Test.equal "json:$.user.age" (detailsLabel (E.withDetails (JsonDecode "$.user.age") (E.decode "x"))))
+    , Test.test "withDetails attaches Custom"
+        (\_ -> Test.equal "custom:extra" (detailsLabel (E.withDetails (Custom "extra") (E.io "x"))))
+    , Test.test "withDetails attaches TypeMismatch"
+        (\_ -> Test.equal "type:Int/String" (detailsLabel (E.withDetails (TypeMismatch { expected = "Int", actual = "String" }) (E.decode "x"))))
+    , Test.test "withDetails attaches FfiPanic"
+        (\_ -> Test.equal "panic:nil deref" (detailsLabel (E.withDetails (FfiPanic { message = "nil deref", stack = [ "a", "b" ] }) (E.ffi "x"))))
+    , Test.test "withDetails last write wins"
+        (\_ ->
+            Test.equal "http:500"
+                (detailsLabel
+                    (E.withDetails (HttpStatus 500)
+                        (E.withDetails (HttpStatus 400) (E.network "x"))
+                    )
+                )
+        )
+
+    -- ── kindLabel : the documented label for every ErrorKind ──
+    , Test.test "kindLabel Io"
+        (\_ -> Test.equal "IO" (E.kindLabel Io))
+    , Test.test "kindLabel Network"
+        (\_ -> Test.equal "Network" (E.kindLabel Network))
+    , Test.test "kindLabel Ffi == FFI"
+        (\_ -> Test.equal "FFI" (E.kindLabel Ffi))
+    , Test.test "kindLabel Decode"
+        (\_ -> Test.equal "Decode" (E.kindLabel Decode))
+    , Test.test "kindLabel Timeout"
+        (\_ -> Test.equal "Timeout" (E.kindLabel Timeout))
+    , Test.test "kindLabel NotFound"
+        (\_ -> Test.equal "NotFound" (E.kindLabel NotFound))
+    , Test.test "kindLabel PermissionDenied"
+        (\_ -> Test.equal "PermissionDenied" (E.kindLabel PermissionDenied))
+    , Test.test "kindLabel InvalidInput"
+        (\_ -> Test.equal "InvalidInput" (E.kindLabel InvalidInput))
+    , Test.test "kindLabel Conflict"
+        (\_ -> Test.equal "Conflict" (E.kindLabel Conflict))
+    , Test.test "kindLabel Unavailable"
+        (\_ -> Test.equal "Unavailable" (E.kindLabel Unavailable))
+    , Test.test "kindLabel Unexpected"
+        (\_ -> Test.equal "Unexpected" (E.kindLabel Unexpected))
+
+    -- ── toString : `<Kind>: <message>` render form ──
+    , Test.test "toString io renders Kind: message"
+        (\_ -> Test.equal "IO: disk gone" (E.toString (E.io "disk gone")))
+    , Test.test "toString network"
+        (\_ -> Test.equal "Network: dns fail" (E.toString (E.network "dns fail")))
+    , Test.test "toString timeout uses default message"
+        (\_ -> Test.equal "Timeout: operation timed out" (E.toString E.timeout))
+    , Test.test "toString ffi uses FFI label"
+        (\_ -> Test.equal "FFI: cgo trap" (E.toString (E.ffi "cgo trap")))
+    , Test.test "toString reflects withMessage"
+        (\_ -> Test.equal "IO: patched" (E.toString (E.withMessage "patched" (E.io "orig"))))
+
+    -- ── isRetryable : True for exactly {Timeout, Network, Unavailable} ──
+    , Test.test "isRetryable timeout == True"
+        (\_ -> Test.isTrue (E.isRetryable E.timeout))
+    , Test.test "isRetryable network == True"
+        (\_ -> Test.isTrue (E.isRetryable (E.network "x")))
+    , Test.test "isRetryable unavailable == True"
+        (\_ -> Test.isTrue (E.isRetryable (E.unavailable "x")))
+    , Test.test "isRetryable io == False"
+        (\_ -> Test.isFalse (E.isRetryable (E.io "x")))
+    , Test.test "isRetryable ffi == False"
+        (\_ -> Test.isFalse (E.isRetryable (E.ffi "x")))
+    , Test.test "isRetryable decode == False"
+        (\_ -> Test.isFalse (E.isRetryable (E.decode "x")))
+    , Test.test "isRetryable notFound == False"
+        (\_ -> Test.isFalse (E.isRetryable E.notFound))
+    , Test.test "isRetryable permissionDenied == False"
+        (\_ -> Test.isFalse (E.isRetryable E.permissionDenied))
+    , Test.test "isRetryable invalidInput == False"
+        (\_ -> Test.isFalse (E.isRetryable (E.invalidInput "x")))
+    , Test.test "isRetryable conflict == False"
+        (\_ -> Test.isFalse (E.isRetryable (E.conflict "x")))
+    , Test.test "isRetryable unexpected == False"
+        (\_ -> Test.isFalse (E.isRetryable (E.unexpected "x")))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

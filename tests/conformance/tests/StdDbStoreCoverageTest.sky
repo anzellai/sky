@@ -1,0 +1,201 @@
+module StdDbStoreCoverageTest exposing (main, tests)
+
+{-| B1-coverage conformance for the PURE, previously-untested public symbols of
+`Std.Db.Store`:
+
+    Cond, gte, lte, neq, not_, sqlOf, defaultBool, defaultWith, generated
+
+Every case asserts DOCUMENTED BEHAVIOUR, not mere existence:
+
+  * `sqlOf` — the codec-driven typed encoder — is checked against the exact
+    `SqlValue` variant it must produce for String / Int / Bool.
+  * The condition builders (`gte`/`lte`/`neq`/`not_`) are checked structurally
+    on the opaque `Cond` value: each pins its own operator by being UNEQUAL to
+    the neighbour it is most likely to be confused with (a `gte` mistakenly
+    emitting `>` would EQUAL `gt` and fail here), and `not_` is checked to WRAP
+    (double-negation is not eliminated) rather than collapse.
+  * The DDL-shaping builder `defaultBool` is checked through the public
+    `toTable` window: the target column's kind carries the `dbool=true/false`
+    flag and no OTHER column is touched.
+  * `defaultWith` (app-side computed default) and `generated` (DB-filled marker)
+    are checked to be SCHEMA-COLUMN-NEUTRAL through `toTable` — they change the
+    insert/omit behaviour, not the column list, name, or primary key. Their
+    insert-time effect (column omission / computed value) is a live-DB effect
+    and is deferred to Layer-2.
+
+Pure by construction — no DB, no IO, deterministic. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Db.Store as Store exposing (Store)
+import Std.Codec as Codec exposing (Codec)
+import Sky.Test as Test exposing (Test)
+
+
+-- A record whose codec yields three scalar columns to shape through the builders.
+type alias Widget =
+    { id : String
+    , active : Bool
+    , qty : Int
+    }
+
+
+widgetCodec : Codec Widget
+widgetCodec =
+    Codec.auto { id = "", active = False, qty = 0 }
+
+
+baseStore : Store Widget
+baseStore =
+    Store.fromCodec "widgets" widgetCodec |> Store.primaryKey "id"
+
+
+baseCols : List ( String, String )
+baseCols =
+    (Store.toTable baseStore).cols
+
+
+-- The colspec kind for a column name (or a sentinel if the column is absent).
+kindOf : String -> List ( String, String ) -> String
+kindOf col cols =
+    case List.filter (\( c, _ ) -> c == col) cols of
+        ( _, k ) :: _ ->
+            k
+
+        [] ->
+            "<<missing>>"
+
+
+-- A concrete SqlValue used as the RHS of the condition builders.
+v : SqlValue
+v =
+    SqlInt 5
+
+
+tests : List Test
+tests =
+    [ -- ── sqlOf: typed codec-driven encoding to the exact SqlValue variant ──
+      Test.test
+        "sqlOf String -> SqlString"
+        (\_ -> Test.equal (SqlString "hello") (Store.sqlOf Codec.string "hello"))
+    , Test.test
+        "sqlOf Int -> SqlInt"
+        (\_ -> Test.equal (SqlInt 42) (Store.sqlOf Codec.int 42))
+    , Test.test
+        "sqlOf Bool -> SqlBool"
+        (\_ -> Test.equal (SqlBool True) (Store.sqlOf Codec.bool True))
+
+    -- ── Cond + gte/lte/neq/not_: operator identity on the opaque Cond ──
+    , Test.test
+        "gte is reflexive (same col+value builds an equal Cond)"
+        (\_ -> Test.equal (Store.gte "qty" v) (Store.gte "qty" v))
+    , Test.test
+        "gte (>=) is NOT gt (>) — pins the operator, catches gte==gt"
+        (\_ -> Test.notEqual (Store.gte "qty" v) (Store.gt "qty" v))
+    , Test.test
+        "gte (>=) is NOT lte (<=)"
+        (\_ -> Test.notEqual (Store.gte "qty" v) (Store.lte "qty" v))
+    , Test.test
+        "lte is reflexive"
+        (\_ -> Test.equal (Store.lte "qty" v) (Store.lte "qty" v))
+    , Test.test
+        "lte (<=) is NOT lt (<) — pins the operator, catches lte==lt"
+        (\_ -> Test.notEqual (Store.lte "qty" v) (Store.lt "qty" v))
+    , Test.test
+        "neq is reflexive"
+        (\_ -> Test.equal (Store.neq "qty" v) (Store.neq "qty" v))
+    , Test.test
+        "neq (<>) is NOT eq (=) — pins the operator, catches neq==eq"
+        (\_ -> Test.notEqual (Store.neq "qty" v) (Store.eq "qty" v))
+    , Test.test
+        "not_ WRAPS its argument (negation changes the Cond)"
+        (\_ -> Test.notEqual (Store.not_ (Store.eq "qty" v)) (Store.eq "qty" v))
+    , Test.test
+        "not_ is reflexive over the same inner Cond"
+        (\_ ->
+            Test.equal
+                (Store.not_ (Store.eq "qty" v))
+                (Store.not_ (Store.eq "qty" v))
+        )
+    , Test.test
+        "not_ does NOT eliminate double negation"
+        (\_ ->
+            Test.notEqual
+                (Store.not_ (Store.not_ (Store.eq "qty" v)))
+                (Store.eq "qty" v)
+        )
+    , Test.test
+        "not_ (eq) is a distinct Cond from neq (structural NOT, not <>)"
+        (\_ -> Test.notEqual (Store.not_ (Store.eq "qty" v)) (Store.neq "qty" v))
+
+    -- ── defaultBool: DDL flag through the public toTable window ──
+    , Test.test
+        "defaultBool True stamps dbool=true on the target column"
+        (\_ ->
+            Test.equal
+                True
+                (String.contains
+                    "dbool=true"
+                    (kindOf "active" (Store.toTable (Store.defaultBool "active" True baseStore)).cols)
+                )
+        )
+    , Test.test
+        "defaultBool False stamps dbool=false on the target column"
+        (\_ ->
+            Test.equal
+                True
+                (String.contains
+                    "dbool=false"
+                    (kindOf "active" (Store.toTable (Store.defaultBool "active" False baseStore)).cols)
+                )
+        )
+    , Test.test
+        "defaultBool touches ONLY the named column (id kind unchanged)"
+        (\_ ->
+            Test.equal
+                (kindOf "id" baseCols)
+                (kindOf "id" (Store.toTable (Store.defaultBool "active" True baseStore)).cols)
+        )
+
+    -- ── defaultWith: app-side computed default is schema-column-neutral ──
+    , Test.test
+        "defaultWith leaves the column list unchanged (no DDL column added)"
+        (\_ ->
+            Test.equal
+                baseCols
+                (Store.toTable (Store.defaultWith "id" (\_ -> SqlString "x") baseStore)).cols
+        )
+    , Test.test
+        "defaultWith leaves table name and primary key unchanged"
+        (\_ ->
+            let
+                t =
+                    Store.toTable (Store.defaultWith "id" (\_ -> SqlString "x") baseStore)
+            in
+            Test.equal ( "widgets", "id" ) ( t.name, t.pk )
+        )
+
+    -- ── generated: DB-filled marker is schema-column-neutral ──
+    , Test.test
+        "generated leaves the column list unchanged (marks omit, not schema)"
+        (\_ ->
+            Test.equal
+                baseCols
+                (Store.toTable (Store.generated [ "id" ] baseStore)).cols
+        )
+    , Test.test
+        "generated leaves table name and primary key unchanged"
+        (\_ ->
+            let
+                t =
+                    Store.toTable (Store.generated [ "id", "qty" ] baseStore)
+            in
+            Test.equal ( "widgets", "id" ) ( t.name, t.pk )
+        )
+    ]
+
+
+main =
+    Test.runMain tests

@@ -1,0 +1,247 @@
+module StdDbCoverageTest exposing (main, tests)
+
+{-| Behavioral conformance for the PURE, previously-zero-reference surface of
+Std.Db — the part of v1 blocker B1 ("45% of public symbols have zero executing
+assertion") that does not need a live database.
+
+Two families are pinned here, both by VALUE, never by mere existence:
+
+  1. The `Maybe T -> SqlValue` lifters (`fromMaybeInt`, …, `fromMaybeMoney`)
+     plus the `SqlValue` / `SqlField` constructors they produce. Each lifter
+     is documented as `Just v -> SqlT v` and `Nothing -> SqlNull (SqlT
+     witness)` (sky-stdlib/Std/Db.sky:389-490). Every `Just` case asserts the
+     full round-trip of the payload; every `Nothing` case asserts the SqlNull
+     wrapper AND that the witness variant is the type-tag the driver reads
+     (Db.sky:353-356). Decimal/Money payloads are projected to their string
+     forms rather than deep-compared, so the assertion never rests on
+     structural equality of an opaque numeric rep.
+
+  2. The row accessors `getField` / `getInt` / `getFloat` / `getBool`. The
+     runtime represents a typed `Dict String String` row as Go
+     `map[string]string` (runtime-go/rt/db_auth.go:2241-2261), which these
+     kernels read. Each is exercised on a hand-built row for: the present
+     value, the ABSENT-key default (""/0/0.0/False), and — for the numeric
+     readers — an UNPARSEABLE value falling to the lenient zero
+     (db_auth.go:2295-2385). `getBool`'s cross-backend truthiness set
+     (1/true/t/T vs 0/false/absent) is pinned explicitly (dbTruthy,
+     db_auth.go:2357-2363).
+
+NOT covered here (Layer-2, live DB / IO): connect, open, close, query,
+queryDecode, exec, execRaw, migrate, insertRow, insertFields,
+insertFieldsReturning, updateById, updateFields, deleteById, getById,
+getByIdDecode, findByConditions, findOneByField, findManyByField,
+unsafeFindWhere, withTransaction. Faking a DB in a conformance test would
+assert the fake, not Std.Db. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Std.Db as Db
+import Std.Decimal as Dec
+import Std.Money as Money
+import Sky.Test as Test exposing (Test)
+
+
+-- | Variant tag of a SqlValue, with the SqlNull witness spelled out as
+-- "Null:<inner>" — so a Nothing-lift can be pinned to the exact type-tag the
+-- driver reads without deep-comparing the (ignored) witness payload.
+sqlTag : Db.SqlValue -> String
+sqlTag v =
+    case v of
+
+        Db.SqlString _ ->
+            "String"
+
+        Db.SqlInt _ ->
+            "Int"
+
+        Db.SqlFloat _ ->
+            "Float"
+
+        Db.SqlBool _ ->
+            "Bool"
+
+        Db.SqlBytes _ ->
+            "Bytes"
+
+        Db.SqlDecimal _ ->
+            "Decimal"
+
+        Db.SqlTime _ ->
+            "Time"
+
+        Db.SqlMoney _ ->
+            "Money"
+
+        Db.SqlNull inner ->
+            "Null:" ++ sqlTag inner
+
+
+-- | Project a SqlDecimal payload to its canonical string, or a sentinel.
+decOf : Db.SqlValue -> String
+decOf v =
+    case v of
+
+        Db.SqlDecimal d ->
+            Dec.toString d
+
+        _ ->
+            "NOT_DECIMAL"
+
+
+-- | Project a SqlMoney payload to its ISO-coded string, or a sentinel.
+moneyOf : Db.SqlValue -> String
+moneyOf v =
+    case v of
+
+        Db.SqlMoney m ->
+            Money.formatWithCode m
+
+        _ ->
+            "NOT_MONEY"
+
+
+-- | Variant tag of a SqlField.
+fieldTag : Db.SqlField -> String
+fieldTag f =
+    case f of
+
+        Db.SetField _ ->
+            "Set"
+
+        Db.OmitField ->
+            "Omit"
+
+
+-- | A canonical row: a typed `Dict String String`, the shape the row
+-- accessors read. Values chosen so every accessor has a present hit, and the
+-- numeric readers have an unparseable ("name") entry to fall on.
+row : Dict.Dict String String
+row =
+    Dict.fromList
+        [ ( "name", "Ada" )
+        , ( "age", "40" )
+        , ( "neg", "-7" )
+        , ( "score", "3.5" )
+        , ( "one", "1" )
+        , ( "trueWord", "true" )
+        , ( "tLetter", "t" )
+        , ( "capT", "T" )
+        , ( "falseWord", "false" )
+        , ( "zero", "0" )
+        ]
+
+
+tests : List Test
+tests =
+    [ -- ── fromMaybe* — Just carries the payload into the right variant ──
+      Test.test "fromMaybeString (Just s) -> SqlString s"
+        (\_ -> Test.equal (Db.SqlString "hi") (Db.fromMaybeString (Just "hi")))
+    , Test.test "fromMaybeInt (Just n) -> SqlInt n"
+        (\_ -> Test.equal (Db.SqlInt 5) (Db.fromMaybeInt (Just 5)))
+    , Test.test "fromMaybeFloat (Just x) -> SqlFloat x"
+        (\_ -> Test.equal (Db.SqlFloat 2.5) (Db.fromMaybeFloat (Just 2.5)))
+    , Test.test "fromMaybeBool (Just True) -> SqlBool True"
+        (\_ -> Test.equal (Db.SqlBool True) (Db.fromMaybeBool (Just True)))
+    , Test.test "fromMaybeBool (Just False) -> SqlBool False"
+        (\_ -> Test.equal (Db.SqlBool False) (Db.fromMaybeBool (Just False)))
+    , Test.test "fromMaybeBytes (Just b) -> SqlBytes b"
+        (\_ -> Test.equal (Db.SqlBytes "raw") (Db.fromMaybeBytes (Just "raw")))
+    , Test.test "fromMaybeTime (Just t) -> SqlTime t"
+        (\_ -> Test.equal (Db.SqlTime 1700000000) (Db.fromMaybeTime (Just 1700000000)))
+    , Test.test "fromMaybeDecimal (Just d) round-trips the decimal payload"
+        (\_ ->
+            Test.equal (Dec.toString (Dec.fromInt 42))
+                (decOf (Db.fromMaybeDecimal (Just (Dec.fromInt 42))))
+        )
+    , Test.test "fromMaybeMoney (Just m) round-trips the money payload"
+        (\_ ->
+            Test.equal (Money.formatWithCode (Money.fromMajor Money.USD 42))
+                (moneyOf (Db.fromMaybeMoney (Just (Money.fromMajor Money.USD 42))))
+        )
+
+      -- ── fromMaybe* — Nothing -> SqlNull wrapping the correct witness ──
+    , Test.test "fromMaybeString Nothing -> SqlNull (SqlString witness)"
+        (\_ -> Test.equal "Null:String" (sqlTag (Db.fromMaybeString Nothing)))
+    , Test.test "fromMaybeInt Nothing -> SqlNull (SqlInt witness)"
+        (\_ -> Test.equal "Null:Int" (sqlTag (Db.fromMaybeInt Nothing)))
+    , Test.test "fromMaybeFloat Nothing -> SqlNull (SqlFloat witness)"
+        (\_ -> Test.equal "Null:Float" (sqlTag (Db.fromMaybeFloat Nothing)))
+    , Test.test "fromMaybeBool Nothing -> SqlNull (SqlBool witness)"
+        (\_ -> Test.equal "Null:Bool" (sqlTag (Db.fromMaybeBool Nothing)))
+    , Test.test "fromMaybeBytes Nothing -> SqlNull (SqlBytes witness)"
+        (\_ -> Test.equal "Null:Bytes" (sqlTag (Db.fromMaybeBytes Nothing)))
+    , Test.test "fromMaybeTime Nothing -> SqlNull (SqlTime witness)"
+        (\_ -> Test.equal "Null:Time" (sqlTag (Db.fromMaybeTime Nothing)))
+    , Test.test "fromMaybeDecimal Nothing -> SqlNull (SqlDecimal witness)"
+        (\_ -> Test.equal "Null:Decimal" (sqlTag (Db.fromMaybeDecimal Nothing)))
+    , Test.test "fromMaybeMoney Nothing -> SqlNull (SqlMoney witness)"
+        (\_ -> Test.equal "Null:Money" (sqlTag (Db.fromMaybeMoney Nothing)))
+
+      -- ── fromMaybeInt exactness on boundary payloads ──
+    , Test.test "fromMaybeInt (Just 0) carries 0, not the null witness"
+        (\_ -> Test.equal (Db.SqlInt 0) (Db.fromMaybeInt (Just 0)))
+    , Test.test "fromMaybeInt (Just -3) carries the negative value"
+        (\_ -> Test.equal (Db.SqlInt (-3)) (Db.fromMaybeInt (Just (-3))))
+
+      -- ── SqlValue / SqlField constructors as pure values ──
+    , Test.test "SqlNull nests: a null-of-int is distinct from a plain int"
+        (\_ -> Test.equal "Null:Int" (sqlTag (Db.SqlNull (Db.SqlInt 0))))
+    , Test.test "SetField wraps a SqlValue and reports the Set tag"
+        (\_ -> Test.equal "Set" (fieldTag (Db.SetField (Db.SqlInt 9))))
+    , Test.test "OmitField reports the Omit tag"
+        (\_ -> Test.equal "Omit" (fieldTag Db.OmitField))
+    , Test.test "SetField and OmitField are distinct constructors"
+        (\_ -> Test.notEqual (fieldTag (Db.SetField (Db.SqlString "x"))) (fieldTag Db.OmitField))
+    , Test.test "SetField payload is the exact SqlValue given"
+        (\_ ->
+            Test.equal (Db.SetField (Db.SqlString "keep"))
+                (Db.SetField (Db.fromMaybeString (Just "keep")))
+        )
+
+      -- ── getField — present hit + absent default "" ──
+    , Test.test "getField reads a present column verbatim"
+        (\_ -> Test.equal "Ada" (Db.getField "name" row))
+    , Test.test "getField defaults to \"\" for an absent column"
+        (\_ -> Test.equal "" (Db.getField "missing" row))
+
+      -- ── getInt — parse, absent default, unparseable lenient zero ──
+    , Test.test "getInt parses a present numeric column"
+        (\_ -> Test.equal 40 (Db.getInt "age" row))
+    , Test.test "getInt parses a negative value"
+        (\_ -> Test.equal (-7) (Db.getInt "neg" row))
+    , Test.test "getInt defaults to 0 for an absent column"
+        (\_ -> Test.equal 0 (Db.getInt "missing" row))
+    , Test.test "getInt falls to 0 on an unparseable value (lenient reader)"
+        (\_ -> Test.equal 0 (Db.getInt "name" row))
+
+      -- ── getFloat — parse, absent default, unparseable lenient zero ──
+    , Test.test "getFloat parses a present real column"
+        (\_ -> Test.equal 3.5 (Db.getFloat "score" row))
+    , Test.test "getFloat reads an integer-looking column as a float"
+        (\_ -> Test.equal 40.0 (Db.getFloat "age" row))
+    , Test.test "getFloat defaults to 0.0 for an absent column"
+        (\_ -> Test.equal 0.0 (Db.getFloat "missing" row))
+    , Test.test "getFloat falls to 0.0 on an unparseable value (lenient reader)"
+        (\_ -> Test.equal 0.0 (Db.getFloat "name" row))
+
+      -- ── getBool — cross-backend truthiness set ──
+    , Test.test "getBool reads \"1\" as True"
+        (\_ -> Test.isTrue (Db.getBool "one" row))
+    , Test.test "getBool reads \"true\" as True"
+        (\_ -> Test.isTrue (Db.getBool "trueWord" row))
+    , Test.test "getBool reads \"t\" as True (Postgres BOOLEAN)"
+        (\_ -> Test.isTrue (Db.getBool "tLetter" row))
+    , Test.test "getBool reads \"T\" as True"
+        (\_ -> Test.isTrue (Db.getBool "capT" row))
+    , Test.test "getBool reads \"false\" as False"
+        (\_ -> Test.isFalse (Db.getBool "falseWord" row))
+    , Test.test "getBool reads \"0\" as False"
+        (\_ -> Test.isFalse (Db.getBool "zero" row))
+    , Test.test "getBool defaults to False for an absent column"
+        (\_ -> Test.isFalse (Db.getBool "missing" row))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

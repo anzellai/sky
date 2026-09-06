@@ -1,0 +1,175 @@
+module SkyCoreCryptoCoverageTest exposing (main, tests)
+
+-- Behavioural conformance for the strict-zero-reference PURE / deterministically
+-- testable surface of Sky.Core.Crypto (v1 blocker B1). These assertions drive
+-- the SKY-SOURCE crypto API through the compiled binary, asserting BEHAVIOUR
+-- (known hash vectors, an RSA sign→verify round-trip with adversarial negatives,
+-- randomBytes length + uniqueness + size-guard), never mere existence.
+--
+-- Covered here:
+--   * sha512          : String -> String            (hex SHA-512; RFC vectors)
+--   * rsaSha256Sign   : String -> String -> Result Error String
+--   * rsaSha256Verify : String -> String -> String -> Bool
+--   * randomBytes     : Int -> Task Error String     (forced via Task.run CAFs)
+--
+-- randomBytes is Task-typed (entropy) but deterministically testable: its output
+-- LENGTH is fixed by the byte count (hex), two independent draws MUST differ, and
+-- an out-of-range size MUST return Err. Each randomBytes draw is its own top-level
+-- CAF so each is forced independently (distinct entropy), the Uuid-suite pattern.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Task as Task
+import Sky.Test as Test exposing (Test)
+
+
+-- ─── SHA-512 known vectors (hex, lower-case) ───────────────────────
+-- FIPS 180-4 / standard test vectors.
+sha512Empty : String
+sha512Empty =
+    "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+
+
+sha512Abc : String
+sha512Abc =
+    "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+
+
+-- ─── RSA-2048 throwaway key pair (fixture only, never a real secret) ─
+-- Lines joined explicitly so PEM newlines are unambiguous regardless of
+-- source indentation.
+privPem : String
+privPem =
+    String.join "\n"
+        [ "-----BEGIN PRIVATE KEY-----"
+        , "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCzn1DHzsNRdIfI"
+        , "uO6AFFKc+r1DxZXDitoMWZ5OQUdYwhdR8oqrnfRLYx02X80EQK2igX6ZCIVMNrMz"
+        , "qAw1+qF+LaKyIMwyegPmkeTZE+CP7VdudJW3BYNndQtXHsUTKPy5TLrnw3Zzj+FX"
+        , "9kQFORcivRWB2koRZKUCBTBVYDBR2NioKqzUoX5AWq8RnpB/5abZSHlhC4Ffw7ac"
+        , "hMKDDZ28Gc/2KL+auIByIzkAeb/NKUhixF+QVXkRbBje00D4V4mLrjELBNW/enYo"
+        , "icQ+451ivYb0iVESI1K7sESGSHJBXXN6TeuemhrAQHTkBDCwU9FLPQ1vxqb9D+K+"
+        , "sfh8q0PtAgMBAAECggEAAw/BEH22RHmWoOS0tMTj6EB1bVCFy/3vYBlhNZs/1NUX"
+        , "IjK8nGfkLip/iwA20VMJ06sWGlhgqtrq4+FXahKm1SQ8L1+pRO9hiMXFOQVPRz9m"
+        , "ze5kLSSnvzcLzCLpF3mLiTFnLb3mpHOJH8O5OjX2dvRY9qoA/R5OAH4dA9Gl29uC"
+        , "9QurhI2FqTqaTT3UNg7R+mjWCqHY2yGO5CEranYUjr7MKEpT2U/CLDtTVTtayNxP"
+        , "UBtXWiTtmpOAUDwb+3HEqPU8HucKH5thoajl3CZyBrgfsY71awZCDRurFsgC5WA0"
+        , "5jmN6Y9YoobdA2sBS9ko3QJRTwozATM+At0mgkgi7wKBgQDrXKLCa8N+92d5wtAp"
+        , "c661K069ko38s5/6X5GkV7SK2hqaSvlAYSeES5pZHcBUqtV9OEG142k2UHc/I38C"
+        , "14QFUXHWUNL28CMdMK8F8zlTm+NMYyZ33hZ7x7IEGIOOqWSIqZ18lXPnD4VO55Jz"
+        , "pJxmOSc8HE8xPMMtYubxk8oUawKBgQDDX3Kr7Dcq2QUZnOkwZjiZ5b0wMNFwP/6i"
+        , "RHACfDICgYXnpNNR7iRbottTZr/NGMWYLXwl9GSVbsWam5UoTFIFo3nHdND5snqY"
+        , "ER5UyTsYoEcjm7mye9Gt0sXpopowzov4tC6v8YXU5pK4QIlg9wQ4jyrl5KJUPN7M"
+        , "qiSI+fNfBwKBgQDJTVjz+uGhVY+OJ96MpaHW2GynXZLNgQCiT10s98q2O+cm8lsP"
+        , "AkmfMF6aPAUFJXwldplVLWUOjHIBcaWvU49aUReRW12k0SznSX1ZFHeCmEEnU2JS"
+        , "gYQvaFRMhn725NDUxmWpadZQ2QiGvS+Yc0FFeTqiggAFt9ejmQS3uFTNcwKBgQCd"
+        , "NKpSyGnDoojGCUph1X7p5sCKjF2aUwQTkboHZePfvFUBBdG8dUDwM2UEAQOIhsxI"
+        , "HSFucO6Wh2GdfF9S48aEHvyYj9ivcvvObMfZNWrF8AIOFvofMh6QHa9+xYYIi8p5"
+        , "PpLqpA8qNrYMaHGigmD1Gc5M2eH8olYsnSN0zJsV9QKBgCRJyThWwZO9bIkaCft4"
+        , "SpJqkktPFrwgKECt1DK+ozon6i2CtN0hhZPsts2pFNbZxIvB2b+V084hzFj1Dy/x"
+        , "/3pC3vA3aIEFmHhS/Z661sCFlaRNrz9eTSNDt6FIcGKX3OXjp4H36VwUWf+20VVf"
+        , "SMlR0t2WTPk6YfnSA2pimuVX"
+        , "-----END PRIVATE KEY-----"
+        ]
+
+
+pubPem : String
+pubPem =
+    String.join "\n"
+        [ "-----BEGIN PUBLIC KEY-----"
+        , "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs59Qx87DUXSHyLjugBRS"
+        , "nPq9Q8WVw4raDFmeTkFHWMIXUfKKq530S2MdNl/NBECtooF+mQiFTDazM6gMNfqh"
+        , "fi2isiDMMnoD5pHk2RPgj+1XbnSVtwWDZ3ULVx7FEyj8uUy658N2c4/hV/ZEBTkX"
+        , "Ir0VgdpKEWSlAgUwVWAwUdjYqCqs1KF+QFqvEZ6Qf+Wm2Uh5YQuBX8O2nITCgw2d"
+        , "vBnP9ii/mriAciM5AHm/zSlIYsRfkFV5EWwY3tNA+FeJi64xCwTVv3p2KInEPuOd"
+        , "Yr2G9IlREiNSu7BEhkhyQV1zek3rnpoawEB05AQwsFPRSz0Nb8am/Q/ivrH4fKtD"
+        , "7QIDAQAB"
+        , "-----END PUBLIC KEY-----"
+        ]
+
+
+rsaMsg : String
+rsaMsg =
+    "a message that must sign and verify"
+
+
+-- Sign under the private key. On failure a sentinel that can never be a
+-- valid signature, so a downstream verify would be False anyway.
+rsaSig : String
+rsaSig =
+    Result.withDefault "SIGN_FAILED" (Crypto.rsaSha256Sign privPem rsaMsg)
+
+
+-- ─── randomBytes: independent draws are independent CAFs ───────────
+rb16a : Result Error String
+rb16a =
+    Task.run (Crypto.randomBytes 16)
+
+
+rb16b : Result Error String
+rb16b =
+    Task.run (Crypto.randomBytes 16)
+
+
+-- Out-of-range size (0) MUST be an Err, never a panic.
+rbZero : Result Error String
+rbZero =
+    Task.run (Crypto.randomBytes 0)
+
+
+-- Out-of-range size (too large, >1024) MUST be an Err.
+rbHuge : Result Error String
+rbHuge =
+    Task.run (Crypto.randomBytes 2048)
+
+
+rbLen : Result Error String -> Int
+rbLen r =
+    String.length (Result.withDefault "" r)
+
+
+tests : List Test
+tests =
+    [ -- ── sha512: known vectors ──
+      Test.test "sha512: empty string matches the FIPS vector"
+        (\_ -> Test.equal sha512Empty (Crypto.sha512 ""))
+    , Test.test "sha512: \"abc\" matches the FIPS vector"
+        (\_ -> Test.equal sha512Abc (Crypto.sha512 "abc"))
+    , Test.test "sha512: output is 128 hex chars (64 bytes)"
+        (\_ -> Test.equal 128 (String.length (Crypto.sha512 "anything")))
+    , Test.test "sha512: deterministic (same input, same digest)"
+        (\_ -> Test.equal (Crypto.sha512 "repeatable") (Crypto.sha512 "repeatable"))
+    , Test.test "sha512: distinct inputs give distinct digests"
+        (\_ -> Test.notEqual (Crypto.sha512 "a") (Crypto.sha512 "b"))
+    , Test.test "sha512: one-char avalanche (different from \"abc\")"
+        (\_ -> Test.notEqual (Crypto.sha512 "abc") (Crypto.sha512 "abd"))
+
+      -- ── rsaSha256Sign / rsaSha256Verify: round-trip + negatives ──
+    , Test.test "rsaSha256Sign: valid PEM key returns Ok"
+        (\_ -> Test.ok (Crypto.rsaSha256Sign privPem rsaMsg))
+    , Test.test "rsaSha256Sign: unparseable key returns Err (no panic)"
+        (\_ -> Test.err (Crypto.rsaSha256Sign "definitely not a PEM key" rsaMsg))
+    , Test.test "rsaSha256Verify: signature verifies against its public key"
+        (\_ -> Test.isTrue (Crypto.rsaSha256Verify pubPem rsaMsg rsaSig))
+    , Test.test "rsaSha256Verify: tampered message is REJECTED"
+        (\_ -> Test.isFalse (Crypto.rsaSha256Verify pubPem "tampered message" rsaSig))
+    , Test.test "rsaSha256Verify: malformed (non-base64) signature is REJECTED"
+        (\_ -> Test.isFalse (Crypto.rsaSha256Verify pubPem rsaMsg "@@not-base64@@"))
+    , Test.test "rsaSha256Verify: unparseable public key is REJECTED (no panic)"
+        (\_ -> Test.isFalse (Crypto.rsaSha256Verify "not a pem" rsaMsg rsaSig))
+
+      -- ── randomBytes: length, uniqueness, size guard ──
+    , Test.test "randomBytes 16: Ok with 32 hex chars (16 bytes)"
+        (\_ -> Test.equal 32 (rbLen rb16a))
+    , Test.test "randomBytes: two independent draws differ (entropy)"
+        (\_ -> Test.notEqual rb16a rb16b)
+    , Test.test "randomBytes 0: out-of-range size returns Err (no panic)"
+        (\_ -> Test.err rbZero)
+    , Test.test "randomBytes 2048: over-max size returns Err (no panic)"
+        (\_ -> Test.err rbHuge)
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

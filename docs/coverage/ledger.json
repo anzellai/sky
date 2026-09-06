@@ -263,7 +263,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 944,
+      "expected_assertions": 1123,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -2814,6 +2814,11 @@
             "strength": 3
           },
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -2861,6 +2866,11 @@
           },
           {
             "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
             "class": "Asserted",
             "strength": 3
           }
@@ -11894,28 +11904,12 @@
             "toUpper"
           ]
         },
-        "Sky.Core.Crypto": {
-          "count": 4,
-          "symbols": [
-            "randomBytes",
-            "rsaSha256Sign",
-            "rsaSha256Verify",
-            "sha512"
-          ]
-        },
         "Sky.Core.Error": {
-          "count": 10,
+          "count": 3,
           "symbols": [
-            "ErrorDetails",
             "ErrorInfo",
             "PanicInfo",
-            "TypeInfo",
-            "ffi",
-            "kindLabel",
-            "mkInfo",
-            "timeout",
-            "unavailable",
-            "withDetails"
+            "TypeInfo"
           ]
         },
         "Sky.Core.File": {
@@ -12352,27 +12346,14 @@
           ]
         },
         "Std.Db": {
-          "count": 26,
+          "count": 13,
           "symbols": [
-            "SqlField",
             "defaultMigration",
             "deleteById",
             "findByConditions",
             "findManyByField",
-            "fromMaybeBool",
-            "fromMaybeBytes",
-            "fromMaybeDecimal",
-            "fromMaybeFloat",
-            "fromMaybeInt",
-            "fromMaybeMoney",
-            "fromMaybeString",
-            "fromMaybeTime",
-            "getBool",
             "getById",
             "getByIdDecode",
-            "getField",
-            "getFloat",
-            "getInt",
             "insertFields",
             "insertFieldsReturning",
             "unsafeFindWhere",
@@ -12412,26 +12393,18 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 19,
+          "count": 11,
           "symbols": [
             "Cond",
             "Table",
-            "defaultBool",
-            "defaultWith",
             "dropProject",
             "dropTable",
             "dumpSchema",
-            "generated",
-            "gte",
             "insertMany",
-            "lte",
             "migrate",
-            "neq",
-            "not_",
             "pushProject",
             "resetProject",
             "resetTable",
-            "sqlOf",
             "updateFields"
           ]
         },
@@ -12675,30 +12648,6 @@
             "withNotFound",
             "withOnNavigate",
             "withRoutes"
-          ]
-        },
-        "Std.Time": {
-          "count": 19,
-          "symbols": [
-            "addDays",
-            "addHours",
-            "addMinutes",
-            "addSeconds",
-            "day",
-            "dayOfWeek",
-            "dayOfYear",
-            "endOfDay",
-            "endOfMonth",
-            "endOfYear",
-            "formatInZone",
-            "inZone",
-            "isWeekend",
-            "month",
-            "startOfMonth",
-            "startOfWeek",
-            "startOfYear",
-            "utc",
-            "weekOfYear"
           ]
         },
         "Std.Tui": {
@@ -12992,8 +12941,8 @@
           ]
         }
       },
-      "count": 781,
-      "pct_of_denominator": 40.7
+      "count": 730,
+      "pct_of_denominator": 38.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13048,30 +12997,15 @@
             "toUpper"
           ]
         },
-        "Sky.Core.Crypto": {
-          "count": 4,
-          "symbols": [
-            "randomBytes",
-            "rsaSha256Sign",
-            "rsaSha256Verify",
-            "sha512"
-          ]
-        },
         "Sky.Core.Error": {
-          "count": 12,
+          "count": 6,
           "symbols": [
             "Error",
             "ErrorDetails",
             "ErrorInfo",
             "ErrorKind",
             "PanicInfo",
-            "TypeInfo",
-            "ffi",
-            "kindLabel",
-            "mkInfo",
-            "timeout",
-            "unavailable",
-            "withDetails"
+            "TypeInfo"
           ]
         },
         "Sky.Core.File": {
@@ -13533,28 +13467,14 @@
           ]
         },
         "Std.Db": {
-          "count": 27,
+          "count": 13,
           "symbols": [
-            "SqlField",
-            "SqlValue",
             "defaultMigration",
             "deleteById",
             "findByConditions",
             "findManyByField",
-            "fromMaybeBool",
-            "fromMaybeBytes",
-            "fromMaybeDecimal",
-            "fromMaybeFloat",
-            "fromMaybeInt",
-            "fromMaybeMoney",
-            "fromMaybeString",
-            "fromMaybeTime",
-            "getBool",
             "getById",
             "getByIdDecode",
-            "getField",
-            "getFloat",
-            "getInt",
             "insertFields",
             "insertFieldsReturning",
             "unsafeFindWhere",
@@ -13594,27 +13514,19 @@
           ]
         },
         "Std.Db.Store": {
-          "count": 20,
+          "count": 12,
           "symbols": [
             "Cond",
             "Store",
             "Table",
-            "defaultBool",
-            "defaultWith",
             "dropProject",
             "dropTable",
             "dumpSchema",
-            "generated",
-            "gte",
             "insertMany",
-            "lte",
             "migrate",
-            "neq",
-            "not_",
             "pushProject",
             "resetProject",
             "resetTable",
-            "sqlOf",
             "updateFields"
           ]
         },
@@ -13918,30 +13830,6 @@
             "withRoutes"
           ]
         },
-        "Std.Time": {
-          "count": 19,
-          "symbols": [
-            "addDays",
-            "addHours",
-            "addMinutes",
-            "addSeconds",
-            "day",
-            "dayOfWeek",
-            "dayOfYear",
-            "endOfDay",
-            "endOfMonth",
-            "endOfYear",
-            "formatInZone",
-            "inZone",
-            "isWeekend",
-            "month",
-            "startOfMonth",
-            "startOfWeek",
-            "startOfYear",
-            "utc",
-            "weekOfYear"
-          ]
-        },
         "Std.Tui": {
           "count": 8,
           "symbols": [
@@ -14234,8 +14122,8 @@
           ]
         }
       },
-      "count": 866,
-      "pct_of_denominator": 45.1
+      "count": 815,
+      "pct_of_denominator": 42.4
     }
   },
   "units": [
@@ -15361,12 +15249,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 35,
+      "modules_imported": 36,
       "path": "tests/conformance",
-      "refs_generous": 405,
-      "refs_qualified": 398,
+      "refs_generous": 470,
+      "refs_qualified": 461,
       "role": "Conformance",
-      "sky_files": 23,
+      "sky_files": 28,
       "sky_toml_sections": []
     }
   ]

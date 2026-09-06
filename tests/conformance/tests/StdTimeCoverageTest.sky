@@ -1,0 +1,135 @@
+module StdTimeCoverageTest exposing (main, tests)
+
+-- Coverage-closing conformance for the STRICT-ZERO-REFERENCE pure symbols of
+-- Std.Time — the public functions that had no executing assertion anywhere in
+-- the corpus (v1 blocker B1). TimeConformanceTest.sky drives the `*Utc`
+-- infallible companions + arithmetic; this suite covers the FALLIBLE zoned
+-- forms and the fine-grained arithmetic that companion never touched:
+--
+--   utc, inZone, formatInZone,
+--   addDays, addHours, addMinutes, addSeconds,
+--   month, day, dayOfWeek, dayOfYear, weekOfYear, isWeekend,
+--   startOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, endOfDay
+--
+-- Every symbol here is PURE (`Ffi.callPure` into runtime-go/rt/time_zones.go).
+-- Std.Time has NO effectful surface (`now`/`monotonic` live in Sky.Core.Time,
+-- a different module), so nothing is deferred. Inputs are FIXED UTC epoch-ms
+-- built via `T.fromParts "UTC" ...` so the expectations are hand-verifiable.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Time as T
+import Sky.Test as Test exposing (Test)
+
+
+-- Build a UTC epoch-ms from calendar parts (-1 sentinel on construction fail).
+mk : Int -> Int -> Int -> Int -> Int -> Int -> Int
+mk y m d h mi s =
+    Result.withDefault (-1) (T.fromParts "UTC" y m d h mi s)
+
+
+-- Midnight-UTC epoch-ms for a Y-M-D.
+mkd : Int -> Int -> Int -> Int
+mkd y m d =
+    mk y m d 0 0 0
+
+
+tests : List Test
+tests =
+    [ -- ── utc: the shorthand constant is exactly the IANA "UTC" string ──
+      Test.test "utc constant == \"UTC\""
+        (\_ -> Test.equal "UTC" T.utc)
+    , Test.test "utc constant is a valid zone (year utc 0 -> Ok 1970)"
+        (\_ -> Test.equal (Ok 1970) (T.year T.utc 0))
+
+      -- ── inZone: RFC 3339 with zone offset ──
+    , Test.test "inZone UTC of 2021-01-01T00:00:00Z -> RFC3339 Z form"
+        (\_ -> Test.equal (Ok "2021-01-01T00:00:00Z") (T.inZone "UTC" (mkd 2021 1 1)))
+    , Test.test "inZone New_York (winter EST, UTC-5) shifts the wall clock back 5h"
+        (\_ -> Test.equal (Ok "2020-12-31T19:00:00-05:00") (T.inZone "America/New_York" (mkd 2021 1 1)))
+    , Test.test "inZone rejects a bogus zone -> Err"
+        (\_ -> Test.err (T.inZone "Not/AZone" 0))
+
+      -- ── formatInZone: custom Go layout, in the named zone ──
+    , Test.test "formatInZone UTC date-only layout"
+        (\_ -> Test.equal (Ok "2021-01-01") (T.formatInZone "UTC" "2006-01-02" (mkd 2021 1 1)))
+    , Test.test "formatInZone New_York renders the zoned wall clock, not UTC"
+        (\_ -> Test.equal (Ok "2020-12-31 19:00:00") (T.formatInZone "America/New_York" "2006-01-02 15:04:05" (mkd 2021 1 1)))
+    , Test.test "formatInZone rejects a bogus zone -> Err"
+        (\_ -> Test.err (T.formatInZone "Bad/Zone" "2006-01-02" 0))
+
+      -- ── addDays / addHours / addMinutes / addSeconds: exact epoch deltas ──
+    , Test.test "addDays 5 to 2023-01-10 -> 2023-01-15 (same wall time)"
+        (\_ -> Test.equal (mkd 2023 1 15) (T.addDays 5 (mkd 2023 1 10)))
+    , Test.test "addDays crosses a month boundary: Jan 28 + 5d -> Feb 2"
+        (\_ -> Test.equal (mkd 2023 2 2) (T.addDays 5 (mkd 2023 1 28)))
+    , Test.test "addDays negative back-dates: Feb 2 - 5d -> Jan 28"
+        (\_ -> Test.equal (mkd 2023 1 28) (T.addDays (-5) (mkd 2023 2 2)))
+    , Test.test "addHours 3 to 10:00 -> 13:00"
+        (\_ -> Test.equal (mk 2023 1 10 13 0 0) (T.addHours 3 (mk 2023 1 10 10 0 0)))
+    , Test.test "addHours 6 wraps midnight: Jan 10 22:00 + 6h -> Jan 11 04:00"
+        (\_ -> Test.equal (mk 2023 1 11 4 0 0) (T.addHours 6 (mk 2023 1 10 22 0 0)))
+    , Test.test "addMinutes 30 to 10:00 -> 10:30"
+        (\_ -> Test.equal (mk 2023 1 10 10 30 0) (T.addMinutes 30 (mk 2023 1 10 10 0 0)))
+    , Test.test "addSeconds 45 to 10:00:00 -> 10:00:45"
+        (\_ -> Test.equal (mk 2023 1 10 10 0 45) (T.addSeconds 45 (mk 2023 1 10 10 0 0)))
+    , Test.test "add* compose to exactly 1 day of ms: 24h == 1440min == 86400s"
+        (\_ -> Test.equal True
+            (T.addHours 24 0 == T.addMinutes 1440 0
+                && T.addMinutes 1440 0 == T.addSeconds 86400 0
+                && T.addSeconds 86400 0 == T.addDays 1 0))
+
+      -- ── month / day (fallible zoned queries) ──
+    , Test.test "month UTC of 2023-06-15 -> Ok 6"
+        (\_ -> Test.equal (Ok 6) (T.month "UTC" (mkd 2023 6 15)))
+    , Test.test "day UTC of 2023-06-15 -> Ok 15"
+        (\_ -> Test.equal (Ok 15) (T.day "UTC" (mkd 2023 6 15)))
+    , Test.test "day New_York of UTC-midnight 2023-06-15 -> Ok 14 (prev local day)"
+        (\_ -> Test.equal (Ok 14) (T.day "America/New_York" (mkd 2023 6 15)))
+    , Test.test "month rejects a bogus zone -> Err"
+        (\_ -> Test.err (T.month "Bogus/Zone" 0))
+
+      -- ── dayOfWeek (ISO Mon=1..Sun=7), dayOfYear, weekOfYear, isWeekend ──
+    , Test.test "dayOfWeek UTC 2021-01-04 (Monday) -> Ok 1 (ISO)"
+        (\_ -> Test.equal (Ok 1) (T.dayOfWeek "UTC" (mkd 2021 1 4)))
+    , Test.test "dayOfWeek UTC 2021-01-03 (Sunday) -> Ok 7 (ISO, not 0)"
+        (\_ -> Test.equal (Ok 7) (T.dayOfWeek "UTC" (mkd 2021 1 3)))
+    , Test.test "dayOfYear UTC 2021-12-31 -> Ok 365 (non-leap)"
+        (\_ -> Test.equal (Ok 365) (T.dayOfYear "UTC" (mkd 2021 12 31)))
+    , Test.test "dayOfYear UTC 2024-12-31 -> Ok 366 (leap)"
+        (\_ -> Test.equal (Ok 366) (T.dayOfYear "UTC" (mkd 2024 12 31)))
+    , Test.test "weekOfYear ISO UTC 2021-01-01 -> Ok 53 (belongs to 2020)"
+        (\_ -> Test.equal (Ok 53) (T.weekOfYear "UTC" (mkd 2021 1 1)))
+    , Test.test "weekOfYear ISO UTC 2021-01-04 (first Monday) -> Ok 1"
+        (\_ -> Test.equal (Ok 1) (T.weekOfYear "UTC" (mkd 2021 1 4)))
+    , Test.test "isWeekend UTC 2021-01-02 (Saturday) -> Ok True"
+        (\_ -> Test.equal (Ok True) (T.isWeekend "UTC" (mkd 2021 1 2)))
+    , Test.test "isWeekend UTC 2021-01-01 (Friday) -> Ok False"
+        (\_ -> Test.equal (Ok False) (T.isWeekend "UTC" (mkd 2021 1 1)))
+    , Test.test "isWeekend rejects a bogus zone -> Err"
+        (\_ -> Test.err (T.isWeekend "Bad/Zone" 0))
+
+      -- ── Fallible zoned period boundaries (the non-Utc canonical forms) ──
+    , Test.test "startOfWeek UTC 2021-01-01 (Fri) -> Ok 2020-12-28 (Mon)"
+        (\_ -> Test.equal (Ok (mkd 2020 12 28)) (T.startOfWeek "UTC" (mkd 2021 1 1)))
+    , Test.test "startOfMonth UTC mid-June -> Ok 2023-06-01 00:00"
+        (\_ -> Test.equal (Ok (mkd 2023 6 1)) (T.startOfMonth "UTC" (mk 2023 6 15 13 45 30)))
+    , Test.test "endOfMonth UTC June 2023 (30-day) -> Ok 2023-07-01 minus 1ms"
+        (\_ -> Test.equal (Ok (mkd 2023 7 1 - 1)) (T.endOfMonth "UTC" (mk 2023 6 15 13 45 30)))
+    , Test.test "endOfMonth UTC Feb 2024 (leap) -> Ok 2024-03-01 minus 1ms"
+        (\_ -> Test.equal (Ok (mkd 2024 3 1 - 1)) (T.endOfMonth "UTC" (mk 2024 2 10 8 0 0)))
+    , Test.test "startOfYear UTC mid-June -> Ok 2023-01-01 00:00"
+        (\_ -> Test.equal (Ok (mkd 2023 1 1)) (T.startOfYear "UTC" (mk 2023 6 15 13 45 30)))
+    , Test.test "endOfYear UTC 2023 -> Ok 2024-01-01 minus 1ms"
+        (\_ -> Test.equal (Ok (mkd 2024 1 1 - 1)) (T.endOfYear "UTC" (mk 2023 6 15 13 45 30)))
+    , Test.test "endOfDay UTC 2023-06-15 -> Ok 2023-06-16 00:00 minus 1ms"
+        (\_ -> Test.equal (Ok (mkd 2023 6 16 - 1)) (T.endOfDay "UTC" (mk 2023 6 15 13 45 30)))
+    , Test.test "startOfMonth rejects a bogus zone -> Err"
+        (\_ -> Test.err (T.startOfMonth "Bogus/Zone" 0))
+    , Test.test "endOfDay rejects a bogus zone -> Err"
+        (\_ -> Test.err (T.endOfDay "Bogus/Zone" 0))
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests
