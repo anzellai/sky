@@ -1014,8 +1014,13 @@ fn web_app_target_wraps_ui_element_view_despite_webdefaults() {
 }
 
 /// BUG-2. A `|> App.withX` builder step the synthesis does NOT carry into the
-/// derived Spa entry (here `withHead`, an SEO hook) must be reported by name,
-/// never dropped silently. Runs during synthesis, so no Go toolchain is needed.
+/// derived Spa entry must be reported by name, never dropped silently. Runs
+/// during synthesis, so no Go toolchain is needed.
+///
+/// SSR-P0 update: `withHead` is now CARRIED (it becomes `|> Spa.withHead` in the
+/// synthesised entry — the SSR per-route `<head>` channel), so it must NOT be in
+/// the dropped list any more. A genuinely server-only builder (`withGuard`) is
+/// added here to keep the never-drop-silently invariant under test.
 #[test]
 fn web_app_synthesis_warns_about_dropped_builder_steps() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -1074,6 +1079,7 @@ app =
         }
         |> App.withNotFound ()
         |> App.withHead pageHead
+        |> App.withGuard (\_ _ -> Ok ())
 
 
 main : Task Error ()
@@ -1097,9 +1103,10 @@ main =
         log.contains("NOT carried") || log.contains("not carried"),
         "BUG-2: a dropped builder step must be reported, not dropped silently:\n{log}"
     );
-    // The dropped LIST (the segment after `client entry: `) must name withHead
-    // — and only withHead. `withNotFound` IS carried, so although it appears in
-    // the warning's explanatory prose, it must NOT be in the dropped list.
+    // The dropped LIST (the segment after `client entry: `) must name the
+    // server-only `withGuard`. `withRoutes`/`withNotFound`/`withHead` are all
+    // CARRIED, so although they may appear in the warning's explanatory prose,
+    // they must NOT be in the dropped list.
     let dropped_list = log
         .split("client entry: ")
         .nth(1)
@@ -1107,12 +1114,133 @@ main =
         .unwrap_or("")
         .to_string();
     assert!(
-        dropped_list.contains("withHead"),
-        "BUG-2: `App.withHead` must be named in the dropped list, got `{dropped_list}`:\n{log}"
+        dropped_list.contains("withGuard"),
+        "BUG-2: `App.withGuard` (server-only) must be named in the dropped list, got `{dropped_list}`:\n{log}"
+    );
+    assert!(
+        !dropped_list.contains("withHead"),
+        "SSR-P0: `App.withHead` is now carried into the Spa entry and must NOT be in the dropped list `{dropped_list}`:\n{log}"
     );
     assert!(
         !dropped_list.contains("withNotFound"),
         "withNotFound is carried into the Spa entry and must not be in the dropped list `{dropped_list}`"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// SSR-P0. `App.withHead` is CARRIED through the App→Spa synthesis into a
+/// `|> Spa.withHead` step (the SSR per-route `<head>` channel, design §4.3 /
+/// §7-P0). The argument may be a `sky fmt`-wrapped MULTI-LINE lambda; the
+/// line-based `extract_app_fields` must gather the whole lambda by bracket
+/// balancing, not truncate it to its first physical line (§7-P0(c)). This proves
+/// the multi-line capture + the carry, and that the drop-warning no longer names
+/// `withHead`. Synthesis-only assertions need no Go toolchain.
+#[test]
+fn web_app_carries_multiline_withhead_into_spa_entry() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let main_sky = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Std.Live.Head as Head
+
+
+type alias Model =
+    { title : String }
+
+
+type Msg
+    = Noop
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { title = "Home" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Noop ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view _ =
+    Ui.text "hi"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withHead
+            (\m ->
+                [ Head.title ("SSR-HEAD-MARKER: " ++ m.title)
+                , Head.meta "description" "a spa ssr page"
+                ]
+            )
+
+
+main : Task Error ()
+main =
+    App.run app
+"#;
+    let proj = scratch_std_app("multilinehead", main_sky);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The synthesised entry must carry the head as a `Spa.withHead` builder step
+    // AND contain the FULL multi-line lambda body — not a first-line truncation.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    assert!(
+        synth.contains("Spa.withHead"),
+        "SSR-P0: the synthesised entry must carry `withHead` as `Spa.withHead`:\n{synth}"
+    );
+    assert!(
+        synth.contains("SSR-HEAD-MARKER") && synth.contains("Head.meta") && synth.contains("description"),
+        "SSR-P0: the FULL multi-line withHead lambda must be captured (all lines), not truncated:\n{synth}"
+    );
+
+    // The drop-warning, if any fired, must NOT name withHead (it is carried).
+    if let Some(after) = log.split("client entry: ").nth(1) {
+        let dropped_list = after.split('.').next().unwrap_or("");
+        assert!(
+            !dropped_list.contains("withHead"),
+            "SSR-P0: withHead is carried and must not appear in the dropped list `{dropped_list}`:\n{log}"
+        );
+    }
+
+    // Synthesis + the split's type-check passed (only prints after `generate`
+    // type-checks the derived entry clean — so `Spa.withHead pageHead` is well
+    // typed against the new `Std.Spa.withHead` signature).
+    assert!(
+        log.contains("client/server split"),
+        "SSR-P0: the split must run (synthesis + type-check of the head-carrying entry passed):\n{log}"
     );
 
     let _ = std::fs::remove_dir_all(&proj);

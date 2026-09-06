@@ -1160,6 +1160,12 @@ struct AppFields {
     subscriptions: String,
     routes: Option<String>,
     not_found: Option<String>,
+    /// `|> App.withHead <fn>` — the per-route `<head>` builder, carried into the
+    /// synthesised `Spa.config` via `|> Spa.withHead`. The SSR backend renders it
+    /// per route for SEO (design docs/skyspa/ssr-design.md §4.3 / §7-P0). The
+    /// argument may span lines (a `sky fmt`-wrapped `\m -> [ … ]`), so it is
+    /// gathered by bracket-balancing, not by taking the first physical line.
+    head: Option<String>,
     /// `App.with…` builder steps present in the source that the synthesis does
     /// NOT carry into the derived `Spa.app` entry (everything except the
     /// carried `withRoutes` / `withNotFound`). Reported as a warning so the drop
@@ -1231,10 +1237,12 @@ fn match_record_field(trimmed: &str, field: &str) -> Option<String> {
 /// the caller then tells the user to run `sky fmt` or use a `Std.Spa` entry.
 fn extract_app_fields(src: &str) -> Option<AppFields> {
     let (mut init, mut update, mut view, mut subscriptions) = (None, None, None, None);
-    let (mut routes, mut not_found) = (None, None);
+    let (mut routes, mut not_found, mut head) = (None, None, None);
     let mut dropped_builders: Vec<String> = Vec::new();
-    for line in src.lines() {
-        let t = line.trim();
+    let lines: Vec<&str> = src.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim();
         if let Some(v) = match_record_field(t, "init") {
             init = Some(v);
         } else if let Some(v) = match_record_field(t, "update") {
@@ -1247,11 +1255,24 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
             routes = Some(v.trim().to_string());
         } else if let Some(v) = t.strip_prefix("|> App.withNotFound ") {
             not_found = Some(v.trim().to_string());
+        } else if let Some(rest) = strip_app_builder(t, "withHead") {
+            // CARRY `withHead` into the derived Spa entry (SSR per-route `<head>`,
+            // design §4.3 / §7-P0). Unlike the other builders this argument may
+            // span multiple lines — a `sky fmt`-wrapped `\m -> [ … ]` head list —
+            // and `extract_app_fields` is otherwise line-based, so gather
+            // continuation lines by bracket-balancing rather than truncating to
+            // the first physical line (§7-P0(c)). Because it is captured here it
+            // is NOT added to `dropped_builders` — the drop-warning must not name
+            // a builder that is now honoured (§7-P0(b)).
+            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
+            head = Some(arg);
+            i += consumed;
+            continue;
         } else if let Some(rest) = t.strip_prefix("|> App.with") {
             // Any OTHER `|> App.withX …` builder step: the synthesis does not
             // carry it into the derived Spa entry. Record the step name so the
             // drop is reported, never silent (BUG-2). The name is the leading
-            // identifier of `rest` (`Head arg…` → `withHead`).
+            // identifier of `rest` (`Config arg…` → `withConfig`).
             let name: String = rest
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
@@ -1260,6 +1281,7 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
                 dropped_builders.push(format!("with{name}"));
             }
         }
+        i += 1;
     }
     Some(AppFields {
         init: init?,
@@ -1268,8 +1290,91 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
         subscriptions: subscriptions?,
         routes,
         not_found,
+        head,
         dropped_builders,
     })
+}
+
+/// Strip `|> App.<builder>` from a trimmed line, returning the argument text on
+/// that line (may be empty when `sky fmt` wrapped the argument to the next
+/// line). Matches only at a word boundary — `withHead` does NOT match a
+/// hypothetical `withHeadless` — so the builder name is not a loose prefix.
+fn strip_app_builder<'a>(trimmed: &'a str, builder: &str) -> Option<&'a str> {
+    let pfx = format!("|> App.{builder}");
+    let rest = trimmed.strip_prefix(&pfx)?;
+    match rest.chars().next() {
+        None => Some(rest),                                  // `|> App.withHead`
+        Some(c) if c.is_whitespace() || c == '(' => Some(rest), // ` fn` / `(…`
+        _ => None,                                            // withHeadless, …
+    }
+}
+
+/// Net bracket depth contributed by `s` — `([{` as +1, `)]}` as −1 — ignoring
+/// bracket characters inside `"…"` string literals and after a `--` line
+/// comment. Used to gather a possibly-multi-line builder argument without a
+/// full parser.
+fn bracket_delta(s: &str) -> i32 {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escaped = false;
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+        } else if c == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            break; // `--` line comment: ignore the remainder
+        } else {
+            match c {
+                b'"' => in_str = true,
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    depth
+}
+
+/// Gather a possibly-multi-line builder argument that starts at line `i`.
+/// `first_rest` is the argument text already on line `i` after the builder name
+/// (may be empty). Continuation lines are consumed while the running bracket
+/// depth is unbalanced (or no argument text has been seen yet), stopping at the
+/// next top-level (column-0) declaration. Returns the flattened single-line
+/// argument and the number of source lines it spanned (≥ 1, including line `i`).
+fn gather_builder_arg(lines: &[&str], i: usize, first_rest: &str) -> (String, usize) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let f = first_rest.trim();
+    if !f.is_empty() {
+        parts.push(f.to_string());
+        depth += bracket_delta(f);
+    }
+    let mut consumed = 1usize;
+    let mut j = i + 1;
+    while (parts.is_empty() || depth > 0) && j < lines.len() {
+        let raw = lines[j];
+        // A column-0 non-blank line is the next top-level decl — a hard stop.
+        if !raw.is_empty() && !raw.starts_with(char::is_whitespace) {
+            break;
+        }
+        let tl = raw.trim();
+        if !tl.is_empty() {
+            parts.push(tl.to_string());
+            depth += bracket_delta(tl);
+        }
+        consumed += 1;
+        j += 1;
+    }
+    (parts.join(" "), consumed)
 }
 
 /// Remove a top-level binding (its signature + definition) named `name` from a
@@ -1339,9 +1444,9 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
         eprintln!(
             "sky build --target <spa>: warning: {n} `App.with…` builder step(s) were NOT carried \
              into the synthesised client entry: {list}.\n  \
-             Only `withRoutes` + `withNotFound` cross the App→Spa synthesis. Server-only steps \
-             (`withConfig`, `withRequest`) do not apply to the wasm client; client-relevant steps \
-             (e.g. `withHead` for SEO) must be re-expressed in a `Std.Spa` entry.",
+             Only `withRoutes` + `withNotFound` + `withHead` cross the App→Spa synthesis. \
+             Server-only steps (`withConfig`, `withRequest`) do not apply to the wasm client; any \
+             other client-relevant step must be re-expressed in a `Std.Spa` entry.",
             n = fields.dropped_builders.len(),
             list = fields.dropped_builders.join(", "),
         );
@@ -1363,6 +1468,14 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
     };
     let not_found_line = match &fields.not_found {
         Some(n) => format!("\n            |> Spa.withNotFound ({n})"),
+        None => String::new(),
+    };
+    // Carry `App.withHead` → `Spa.withHead` so the SSR backend can render the
+    // per-route `<head>` (design §4.3). The argument is flattened to one line by
+    // `gather_builder_arg`; wrap it in parens so a bare `\m -> …` lambda binds
+    // as the single builder argument.
+    let head_line = match &fields.head {
+        Some(h) => format!("\n            |> Spa.withHead ({h})"),
         None => String::new(),
     };
     // `App.web`'s `view` already returns laid-out `Html` (Std.Html), while
@@ -1388,13 +1501,14 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
          , update = {update}\n            \
          , view = spaView_\n            \
          , subscriptions = {subscriptions}\n            \
-         }}{routes_line}{not_found_line}\n        \
+         }}{routes_line}{not_found_line}{head_line}\n        \
          )\n",
         init = fields.init,
         update = fields.update,
         subscriptions = fields.subscriptions,
         routes_line = routes_line,
         not_found_line = not_found_line,
+        head_line = head_line,
     ));
     Some(out)
 }

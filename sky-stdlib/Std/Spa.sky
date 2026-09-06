@@ -81,6 +81,7 @@ module Std.Spa exposing
     , withRoutes
     , withNotFound
     , withOnNavigate
+    , withHead
     , getJson
     , postJson
     )
@@ -193,6 +194,19 @@ withNotFound =
 withOnNavigate : (page -> msg) -> AppConfig model msg -> AppConfig model msg
 withOnNavigate =
     Ffi.kernel "Spa_withOnNavigate"
+
+
+-- | Set the document `<head>` builder — `head model` returns the `<head>`
+-- children (title, meta, link) for the current (route-resolved) model. The SSR
+-- backend runs it per route through the SAME `Std.Html` → HTML renderer Sky.Live
+-- uses (`renderAppHead`), so a Sky.Spa content site gets a correct per-route
+-- `<head>` for SEO. Mirrors `App.withHead` / `Live.withHead`; the wasm client
+-- never re-renders head into `<body>` (head stays server-owned).
+--
+--     |> Spa.withHead (\m -> [ Head.title m.post.title, Head.meta "description" m.post.summary ])
+withHead : (model -> List (Html msg)) -> AppConfig model msg -> AppConfig model msg
+withHead =
+    Ffi.kernel "Spa_withHead"
 
 
 -- | `getJson codec url toMsg` — GET `url` from the stateless backend and decode

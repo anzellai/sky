@@ -146,6 +146,13 @@ func Spa_withNotFound(page, cfg any) any { return spaCfgSet(cfg, "NotFound", pag
 // Spa_withOnNavigate stores the `page -> msg` callback under "OnNavigate".
 func Spa_withOnNavigate(fn, cfg any) any { return spaCfgSet(cfg, "OnNavigate", fn) }
 
+// Spa_withHead stores the `model -> List (Html msg)` head builder under "Head".
+// The SSR backend route reads it and renders the per-route <head> for SEO
+// (renderAppHead-shape, live.go). The wasm client IGNORES it — head stays
+// server-owned, exactly as Sky.Live does (head is honoured only on the initial
+// GET). Stored on the config map so it survives the withX builder chain.
+func Spa_withHead(fn, cfg any) any { return spaCfgSet(cfg, "Head", fn) }
+
 // ── Route matching (portable pure helpers) ──────────────────────────
 //
 // Reimplements Sky.Live's matchRoute / splitPath algorithm (live.go:1600-1624)
