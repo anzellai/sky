@@ -1175,8 +1175,34 @@ func dbInsertRowBody(capDb, capTable, capRow any) any {
 	}
 }
 
-// Db.getById : Db -> String -> Int -> Task Error (Dict String any)
-// Task-shaped; thunk wraps the SELECT + the inner Db_query forcing.
+// dbBindId normalises a by-id key for parameter binding.
+//
+// The Std.Db by-id signatures (`getById` / `updateById` / `deleteById`) take
+// the id as a `String` on purpose — a large integer id or an OAuth subject
+// both key exactly that way, and an Int id passed as a String avoids the JWT
+// float64 precision floor at 2^53 (same rationale as `Auth.revokeUser`). But
+// an INTEGER primary key must be bound as an integer on PostgreSQL, whose
+// `integer = text` comparison has no implicit cast and would error. So a
+// string that is a base-10 integer binds as `int64`; anything else — an
+// already-numeric id (Go-side callers like `Auth.setRole` pass an `int`), or a
+// genuinely non-numeric text key — binds unchanged. `AsInt` is wrong here: it
+// panics on the String the signature mandates (rt.AsInt: expected numeric
+// value, got string), which is the defect this replaced.
+func dbBindId(id any) any {
+	if s, ok := id.(string); ok {
+		if n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
+			return n
+		}
+		return s
+	}
+	return id
+}
+
+// Db.getById : Db -> String -> String -> Task Error (Maybe (Dict String String))
+// Task-shaped; thunk wraps the SELECT + the inner Db_query forcing. Returns
+// `Nothing` when the row is absent (NOT an Err) and `Just row` when present,
+// matching the declared Sky signature — a bare Dict / ErrNotFound was the
+// pre-fix shape and does not match the type the caller pattern-matches on.
 func Db_getById(db any, table any, id any) any {
 	capDb, capTable, capId := db, table, id
 	return func() any {
@@ -1189,21 +1215,23 @@ func Db_getById(db any, table any, id any) any {
 			return Err[any, any](ErrInvalidInput("db.getById: invalid table name"))
 		}
 		q := fmt.Sprintf("SELECT * FROM %s WHERE id = %s LIMIT 1", qTable, d.placeholder(1))
-		result := AnyTaskRun(Db_query(capDb, q, []any{AsInt(capId)}))
+		result := AnyTaskRun(Db_query(capDb, q, []any{dbBindId(capId)}))
 		r, ok := result.(SkyResult[any, any])
 		if !ok || r.Tag != 0 {
 			return result
 		}
 		rows := AsList(r.OkValue)
 		if len(rows) == 0 {
-			return Err[any, any](ErrNotFound())
+			return Ok[any, any](Nothing[any]())
 		}
-		return Ok[any, any](rows[0])
+		return Ok[any, any](Just[any](rows[0]))
 	}
 }
 
-// Db.updateById : Db -> String -> Int -> Dict String any -> Task Error Int
-// Task-shaped; thunk defers the UPDATE to the Cmd.perform boundary.
+// Db.updateById : Db -> String -> String -> Dict String String -> Task Error Int
+// Task-shaped; thunk defers the UPDATE to the Cmd.perform boundary. The id is
+// bound via dbBindId (a String — see that helper), not AsInt, which panicked on
+// the String the signature mandates.
 func Db_updateById(db any, table any, id any, row any) any {
 	capDb, capTable, capId, capRow := db, table, id, row
 	return func() any {
@@ -1231,7 +1259,7 @@ func Db_updateById(db any, table any, id any, row any) any {
 			vals = append(vals, v)
 			i++
 		}
-		vals = append(vals, AsInt(capId))
+		vals = append(vals, dbBindId(capId))
 		q := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s", qTable, strings.Join(sets, ","), d.placeholder(i))
 		res, err := d.executor().Exec(q, vals...)
 		if err != nil {
@@ -1242,8 +1270,10 @@ func Db_updateById(db any, table any, id any, row any) any {
 	}
 }
 
-// Db.deleteById : Db -> String -> Int -> Task Error Int
-// Task-shaped; thunk defers the DELETE to the Cmd.perform boundary.
+// Db.deleteById : Db -> String -> String -> Task Error Int
+// Task-shaped; thunk defers the DELETE to the Cmd.perform boundary. The id is
+// bound via dbBindId (a String — see that helper), not AsInt, which panicked on
+// the String the signature mandates.
 func Db_deleteById(db any, table any, id any) any {
 	capDb, capTable, capId := db, table, id
 	return func() any {
@@ -1256,7 +1286,7 @@ func Db_deleteById(db any, table any, id any) any {
 			return Err[any, any](ErrInvalidInput("db.deleteById: invalid table name"))
 		}
 		q := fmt.Sprintf("DELETE FROM %s WHERE id = %s", qTable, d.placeholder(1))
-		res, err := d.executor().Exec(q, AsInt(capId))
+		res, err := d.executor().Exec(q, dbBindId(capId))
 		if err != nil {
 			return Err[any, any](ErrIo("db.deleteById: " + err.Error()))
 		}
@@ -2178,11 +2208,21 @@ func Auth_login(db any, email any, password any) any {
 	}
 }
 
-// Auth.setRole : Db -> Int -> String -> Task Error Int
-// Just delegates to the now-thunked Db_updateById, so this returns a
-// Task thunk by transitivity.
+// Auth.setRole : Db -> Int -> String -> Task Error ()
+// Delegates to the now-thunked Db_updateById, then maps its affected-row
+// count to unit — the declared Sky return type is `()`, and returning the
+// raw Int (as this did before) made a well-typed caller CoerceFailure
+// ("source int cannot be cast to target struct {}") at the Task boundary.
 func Auth_setRole(db any, userId any, role any) any {
-	return Db_updateById(db, "users", userId, map[string]any{"role": fmt.Sprintf("%v", role)})
+	capDb, capUid, capRole := db, userId, role
+	return func() any {
+		res := AnyTaskRun(Db_updateById(capDb, "users", capUid, map[string]any{"role": fmt.Sprintf("%v", capRole)}))
+		r, ok := res.(SkyResult[any, any])
+		if !ok || r.Tag != 0 {
+			return res
+		}
+		return Ok[any, any](struct{}{})
+	}
 }
 
 // Db.getField : String -> Dict String a -> String
