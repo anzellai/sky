@@ -623,7 +623,13 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// **131 since 2026-08-24**: the v0.22.0 Sky.Spa release added examples
 /// `61-app-kanban`, `62-app-notes`, `63-app-chat`, `64-app-native` → 63 dirs +
 /// 68 reject = 131; verdicts still identical (shared + one full-rebuild fallback).
-pub const SHARED_WORLD_EXPECTED: u64 = 131;
+/// **138 since 2026-09-06**: the three `kernel_member_unknown_{live,jobs,tui}.sky`
+/// reject fixtures added for the item-2 closure grew the reject corpus, plus new
+/// `examples/` directories landed on the branch → 138 items total; all verdicts
+/// still identical (137 shared, one full-rebuild fallback). This is a tier-only
+/// exact-count ratchet — it drifted undetected because only the release/T1
+/// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
+pub const SHARED_WORLD_EXPECTED: u64 = 138;
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -2992,7 +2998,12 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// verbs — adding four surfaces (`surfaces_total` 151 -> 155), so
 /// `surfaces.len() + 4` is now 159. The ratchet still holds (138 covered
 /// >= Asserted); the new surfaces are example/kernel-covered as above.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 159;
+///
+/// 159 -> 162: the `kernel-members` drift gate registered its coverage surfaces
+/// (`meta.kernel-members` CROSS_CUTTING + its GATE_SURFACES + CI_SURFACES entry),
+/// adding three surfaces (`surfaces_total` 155 -> 158), so `surfaces.len() + 4`
+/// is now 162. The ratchet still holds (139 covered >= Asserted).
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 162;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

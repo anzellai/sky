@@ -1257,34 +1257,20 @@ fn refs_of_file(src: &str, s: &Surfaces, q: &mut BTreeSet<(String, String)>, g: 
 // ------------------------------------------------------------ file discovery
 
 fn is_generated(path: &Path) -> bool {
+    // Single source of truth: `crate::GENERATED_DIRS`. This scanner and
+    // `roundtrip_scan`'s `is_generated` (in main.rs) MUST skip exactly the same
+    // set — a directory scanned by one and skipped by the other makes an
+    // exact-count gate non-deterministic between a working tree that has run the
+    // examples (so `sky-out-rust/`, `.skyapp/`, `.split/`, `sky-ffi/` exist) and
+    // CI's fresh checkout. `sky-out-rust/` carries ~90 emitted `.sky` state
+    // entries from the differential-oracle runs; `.skyapp/<target>/` carries a
+    // full copy of a Std.App project's `.sky`. Sharing one const makes that drift
+    // impossible by construction (it is what turned `coverage-ledger --check` red
+    // on CI while it passed locally, and roundtrip red at a v0.23.0 tag).
     path.components().any(|c| {
-        matches!(
-            c.as_os_str().to_str(),
-            // The generated/gitignored trees a source scan must never enter. This
-            // MUST stay in step with the coerce-floor gate's `SKIP_DIRS` — a
-            // directory scanned by one gate and skipped by the other makes the
-            // ledger non-deterministic between a working tree that has run the
-            // examples (so `sky-out-rust/`, `sky-ffi/` exist) and CI's fresh
-            // checkout (which has neither). `sky-out-rust/` in particular carries
-            // ~90 emitted `.sky` state entries from the differential oracle runs;
-            // scanning them locally but not on CI is exactly the "detail field
-            // differs" drift that turned `coverage-ledger --check` red on CI while
-            // it passed locally.
-            Some("sky-out")
-                | Some("sky-out-rust")
-                | Some(".skycache")
-                | Some(".skydeps")
-                | Some(".split")
-                // `.skyapp/<target>/` is the Std.App derived-entry tree `sky build`
-                // stages for a dispatched entry (and `xtask build-run` now stages
-                // it too, via the CLI dispatch). Its generated `.sky` files must be
-                // skipped, or a tree that has run a Std.App example scans them while
-                // CI's fresh config-gates checkout does not — the exact "detail
-                // field differs" drift this list exists to prevent.
-                | Some(".skyapp")
-                | Some("sky-ffi")
-                | Some("node_modules")
-        )
+        c.as_os_str()
+            .to_str()
+            .is_some_and(|s| crate::GENERATED_DIRS.contains(&s))
     })
 }
 

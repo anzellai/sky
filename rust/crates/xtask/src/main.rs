@@ -167,24 +167,34 @@ fn repo_root() -> PathBuf {
     }
 }
 
+/// Generated / build-output directory names that a SOURCE scan must never enter.
+///
+/// This is the single source of truth for both source scanners in this crate —
+/// `is_generated` (below, used by `roundtrip_scan`) and
+/// `coverage_ledger::is_generated` — so the two cannot drift. Drift here is not
+/// cosmetic: it makes an exact-count gate (roundtrip / coverage-ledger)
+/// environment-dependent, because a tree that has run the examples grows these
+/// dirs (`.split/` alone holds ~24 spa-split `.sky` files; a Std.App `--target
+/// web` build stages a full copy of the project `.sky` under `.skyapp/web/`)
+/// while CI's fresh checkout does not. That drift shipped twice: roundtrip 203
+/// local vs 187 on CI (`.split`), then 319 vs 187 once Std.App builds staged
+/// `.skyapp/` — the reason a v0.23.0 tag-time gate went red by build state.
+pub(crate) const GENERATED_DIRS: &[&str] = &[
+    "sky-out",
+    "sky-out-rust",
+    ".skycache",
+    ".skydeps",
+    ".split",
+    ".skyapp",
+    "sky-ffi",
+    "node_modules",
+];
+
 fn is_generated(path: &Path) -> bool {
     path.components().any(|c| {
-        matches!(
-            c.as_os_str().to_str(),
-            // Must match the coverage-ledger scanner's skip-set — a directory one
-            // scanner enters and the other skips makes the roundtrip count differ
-            // between a tree that has run the examples (so `.split/`, `sky-out-rust/`,
-            // `sky-ffi/` exist — `.split/` alone holds ~24 spa-split `.sky` files)
-            // and CI's fresh checkout. That drift showed up as roundtrip 203 local
-            // vs 187 on CI.
-            Some("sky-out")
-                | Some("sky-out-rust")
-                | Some(".skycache")
-                | Some(".skydeps")
-                | Some(".split")
-                | Some("sky-ffi")
-                | Some("node_modules")
-        )
+        c.as_os_str()
+            .to_str()
+            .is_some_and(|s| GENERATED_DIRS.contains(&s))
     })
 }
 
