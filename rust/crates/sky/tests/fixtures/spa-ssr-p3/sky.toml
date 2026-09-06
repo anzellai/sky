@@ -1,0 +1,5 @@
+[project]
+name = "ssr-p3"
+
+[app]
+target = "web:app"

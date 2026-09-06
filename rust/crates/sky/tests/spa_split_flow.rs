@@ -1305,12 +1305,16 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     // The backend carries the SSR route, ahead of the static route.
     let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
         .expect("generated backend entry must exist");
+    // P3 renamed the handler's rendered model to `resolved` (the per-route,
+    // optionally data-settled model). This fixture is route-less with a
+    // `Cmd.none` init, so `resolved` folds to the pure init model (chrome-only) —
+    // the SSR route + render kernels are still exactly what P1 asserted.
     for needle in [
         "ssrHandler",
         "Server.api \"GET /{$}\" ssrHandler",
         "spaSsrPage",
-        "spaSsrRenderBody (spaView_ ssrModel)",
-        "spaSsrRenderHead spaHead_ ssrModel",
+        "spaSsrRenderBody (spaView_ resolved)",
+        "spaSsrRenderHead spaHead_ resolved",
         "spaSsrWasmName \"../frontend/dist\"",
     ] {
         assert!(
@@ -1325,6 +1329,14 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     assert!(
         ssr_at.is_some() && static_at.is_some() && ssr_at < static_at,
         "SSR-P1: the SSR route must precede the static route:\n{backend}"
+    );
+    // P3 fail-closed: this fixture's `init` is `Cmd.none` (its `File.writeFile`
+    // lives in a `Persist` branch, NOT in `init`), so the GET-safe allowlist scan
+    // finds no safe read → NO data-resolve settle is emitted, and the route
+    // renders the pure model. `Spa_ssrSettle` must be absent.
+    assert!(
+        !backend.contains("spaSsrSettle") && backend.contains("resolved =\n            routed"),
+        "SSR-P3 fail-closed: a `Cmd.none` init must NOT get a data-resolve settle:\n{backend}"
     );
 
     // Full end-to-end proof (Go-gated): the whole thing builds — a broken kernel
@@ -1344,6 +1356,274 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     );
 
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+fn ssr_p3_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-p3")
+}
+
+/// Wait until the generated Sky.Spa backend logs its `Sky server listening` line
+/// (the auto-split backend is a `Sky.Http.Server`, not a Sky.Live one, so its
+/// ready line differs from `wait_for_listening`'s). Returns true once seen.
+fn wait_for_spa_backend(log_path: &std::path::Path, tries: u32) -> bool {
+    use std::io::Read as _;
+    for _ in 0..tries {
+        if let Ok(mut f) = std::fs::File::open(log_path) {
+            let mut buf = String::new();
+            if f.read_to_string(&mut buf).is_ok() && buf.contains("Sky server listening") {
+                return true;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    false
+}
+
+/// SSR-P3 (design §4.1 + §4.2). A ROUTED `Std.App` app whose `init` reads real
+/// data via a curated GET-safe kernel (`File.readFile`) must:
+///
+///   * synthesise NAMED `spaRoutes_` / `spaNotFound_` bindings (so the route
+///     table reaches the backend, mirroring `spaHead_`);
+///   * per-route emit `GET /{$}` + `GET /items` (each a more-specific mux entry
+///     than `Server.static "/"`, so asset GETs still fall through) all pointing
+///     at an `ssrHandler` that resolves the request path (Spa_ssrResolveModel);
+///   * data-resolve: because `init`'s command is GET-safe, emit `Spa_ssrSettle`
+///     and render `resolved` (not the pure init model);
+///   * (Go-gated e2e) serve REAL per-route content: `GET /items` carries the
+///     resolved item list a crawler sees; `GET /` carries the Home content and
+///     NOT the items — proving per-route + data-resolved SSR end to end.
+#[test]
+fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_p3_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the SSR-P3 fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Synthesis: named route + notFound bindings reach the backend.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    assert!(
+        synth.contains("spaRoutes_ =") && synth.contains("|> Spa.withRoutes spaRoutes_"),
+        "SSR-P3: routes must be a NAMED `spaRoutes_` binding referenced by the config:\n{synth}"
+    );
+    assert!(
+        synth.contains("spaNotFound_ =") && synth.contains("|> Spa.withNotFound spaNotFound_"),
+        "SSR-P3: notFound must be a NAMED `spaNotFound_` binding:\n{synth}"
+    );
+
+    // The split ran → the emitted backend (per-route + settle) TYPE-CHECKED.
+    assert!(
+        log.contains("client/server split") || log.contains("Built Std.App entry"),
+        "SSR-P3: the split must run (the emitted backend type-checked):\n{log}"
+    );
+
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    for needle in [
+        // per-route resolver + registrations
+        "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path",
+        "Server.api \"GET /{$}\" ssrHandler",
+        "Server.api \"GET /items\" ssrHandler",
+        // data-resolved settle (init IS get-safe)
+        "spaSsrSettle routed cmd0 update",
+        "resolved =\n            spaSsrSettle routed cmd0 update",
+    ] {
+        assert!(
+            backend.contains(needle),
+            "SSR-P3: the generated backend must carry `{needle}`:\n{backend}"
+        );
+    }
+    // Per-route SSR routes must precede the static fallthrough.
+    let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
+    let static_at = backend.find("Server.static \"/\"");
+    assert!(
+        items_at.is_some() && static_at.is_some() && items_at < static_at,
+        "SSR-P3: per-route SSR routes must precede the static route:\n{backend}"
+    );
+
+    // ── Go-gated e2e: run the backend, curl each route, assert REAL per-route
+    // content. The backend reads `data/items.json` relative to its cwd, so run it
+    // from the backend dir with the data file staged there. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "SSR-P3: --target web:app must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    // Stage the data the settle reads (init: File.readFile "data/items.json").
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    std::fs::copy(proj.join("data/items.json"), backend_dir.join("data/items.json")).unwrap();
+
+    let port = 8973u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled SSR-P3 backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let mut buf = String::new();
+        use std::io::Read as _;
+        let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut buf));
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("SSR-P3 backend never reported listening on :{port}\nlog:\n{buf}");
+    }
+    let items_body = curl_body_p(port, "/items");
+    let home_body = curl_body_p(port, "/");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let items_body = items_body.expect("GET /items should return a body");
+    let home_body = home_body.expect("GET / should return a body");
+    // /items carries the RESOLVED, crawlable data + the SSR marker.
+    assert!(
+        items_body.contains("data-sky-ssr")
+            && items_body.contains("Item list:")
+            && items_body.contains("Alpha Widget")
+            && items_body.contains("Beta Gadget")
+            && items_body.contains("Gamma Gizmo"),
+        "SSR-P3: GET /items must carry the SERVER-RESOLVED item list (crawlable), \
+         not a loading state. Body was:\n{items_body}"
+    );
+    // / renders its OWN (Home) content and NOT the items — per-route proof.
+    assert!(
+        home_body.contains("Welcome home") && !home_body.contains("Alpha Widget"),
+        "SSR-P3: GET / must render Home's own content, not the /items data:\n{home_body}"
+    );
+}
+
+/// SSR-P3 fail-closed (design §4.2). An `init` whose command is NOT a curated
+/// GET-safe read — here `Time.now` (non-deterministic) — must NOT get a
+/// data-resolve settle: the allowlist scan errs toward chrome-only. Per-route
+/// resolution still works; only the settle is withheld, so the route renders the
+/// pure init model (exactly P1). This is the "a GET must never run a
+/// non-deterministic effect / mutate" boundary.
+#[test]
+fn spa_ssr_p3_fail_closed_when_init_is_not_get_safe() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let main_sky = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+type Page
+    = Home
+    | Stamp
+
+
+type alias Model =
+    { page : Page, stamp : Int }
+
+
+type Msg
+    = Load
+    | Got (Result Error Int)
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home, stamp = 0 }, Cmd.perform (Time.now ()) Got )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Load ->
+            ( model, Cmd.perform (Time.now ()) Got )
+
+        Got (Ok t) ->
+            ( { model | stamp = t }, Cmd.none )
+
+        Got (Err _) ->
+            ( { model | stamp = 0 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+        Home ->
+            Ui.column [] [ Ui.text "home" ]
+
+        Stamp ->
+            Ui.column [] [ Ui.text ("stamp " ++ String.fromInt model.stamp) ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" Home, App.route "/stamp" Stamp ]
+        |> App.withNotFound Home
+
+
+main =
+    App.run app
+"#;
+    let proj = scratch_std_app("ssr-failclosed", main_sky);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the fail-closed fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|_| panic!("generated backend must exist:\n{log}"));
+
+    // Per-route resolution STILL happens (routes are unaffected by the allowlist).
+    assert!(
+        backend.contains("spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path")
+            && backend.contains("Server.api \"GET /stamp\" ssrHandler"),
+        "SSR-P3 fail-closed: per-route SSR must still be emitted:\n{backend}"
+    );
+    // …but NO data-resolve settle for a Time.now init (fail-closed → chrome-only).
+    assert!(
+        !backend.contains("spaSsrSettle") && backend.contains("resolved =\n            routed"),
+        "SSR-P3 fail-closed: a non-deterministic (Time.now) init must NOT get a \
+         data-resolve settle — it must render the pure init model:\n{backend}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+// Full response BODY of `GET http://127.0.0.1:<port><path>` (P3 e2e helper).
+fn curl_body_p(port: u16, path: &str) -> Option<String> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let out = Command::new("curl").args(["-s", &url]).output().ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 /// BUG-3. When the SYNTHESISED client entry fails to type-check, the failure

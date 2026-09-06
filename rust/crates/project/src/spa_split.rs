@@ -1288,6 +1288,109 @@ fn shared_import_lines(
 // Backend generation — copy the app verbatim, swap `main`, append handlers.
 // ---------------------------------------------------------------------------
 
+/// The curated GET-safe kernel allowlist (design §4.2). These are the
+/// idempotent READ effects that are safe to run server-side on an SSR GET, so
+/// the first paint carries real data. There is NO type-level idempotency
+/// guarantee in Sky's uniform `Task Error a` boundary — this is a hand-curated
+/// list, matched against the app's `init` source. Anything NOT on this list
+/// (a write, a non-deterministic effect, an unrecognised shape) is fail-closed:
+/// the route renders the pure `init` model (chrome-only) and the client resolves
+/// the data post-hydrate, exactly as P1 did. Keep this list conservative — a GET
+/// that mutates or is non-deterministic is a correctness + security bug.
+const SSR_GET_SAFE_KERNELS: &[&str] = &[
+    "File.readFile",
+    "File.readFileLimit",
+    "File.readFileBytes",
+    "File.readDir",
+    "Http.get",
+    "Db.query",
+    "Db.queryDecode",
+    "Db.findOneByField",
+];
+
+/// Kernels that MUST NOT run on an SSR GET — writes + non-deterministic effects.
+/// Their presence anywhere in `init`'s source forces fail-closed (chrome-only),
+/// even if a GET-safe read is also present, because running `init`'s command
+/// would fire them. This is the explicit "GET must never mutate" denylist.
+const SSR_GET_UNSAFE_KERNELS: &[&str] = &[
+    "File.writeFile",
+    "File.writeFileBytes",
+    "File.appendFile",
+    "File.deleteFile",
+    "Http.post",
+    "Http.put",
+    "Http.delete",
+    "Http.patch",
+    "Db.exec",
+    "Db.execMany",
+    "Db.insert",
+    "Db.update",
+    "Db.delete",
+    "Time.now",
+    "Uuid.",
+    "Random.",
+    "Crypto.random",
+    "postJson",
+];
+
+/// Decide, FAIL-CLOSED, whether the app's `init` command is a curated GET-safe
+/// read that the SSR handler may settle server-side (design §4.2). Sound because
+/// it errs toward chrome-only: it returns true ONLY when `init`'s source
+/// mentions at least one GET-safe read kernel (`SSR_GET_SAFE_KERNELS`) AND
+/// mentions NO unsafe kernel (`SSR_GET_UNSAFE_KERNELS`). An `init` whose command
+/// is `Cmd.none`, or whose effect is reached through a helper this direct-body
+/// scan cannot see, does not match and stays chrome-only — never a false
+/// "safe". The per-effect, transitive positive allowlist (following the kernel
+/// identity through the compiler rather than the `init` text) is the documented
+/// follow-on; this text scan is deliberately conservative.
+fn init_cmd_is_get_safe(init_src: &str) -> bool {
+    if SSR_GET_UNSAFE_KERNELS
+        .iter()
+        .any(|k| init_src.contains(k))
+    {
+        return false;
+    }
+    SSR_GET_SAFE_KERNELS.iter().any(|k| init_src.contains(k))
+}
+
+/// Extract the literal route PATTERN strings from a synthesised `spaRoutes_`
+/// binding source (e.g. `List.concatMap App.spaRoute ([ App.route "/" Home,
+/// App.route "/items" Items ])`) so the backend can register one SSR GET handler
+/// per pattern. Per-pattern registration (not one wildcard) is what lets asset
+/// GETs fall through to `Server.static`: each literal pattern is a more-specific
+/// mux entry that beats the static catch-all, while `main.wasm` / `wasm_exec.js`
+/// match none of them (design §4.1). Only LITERAL patterns are extracted — a
+/// pattern built from a variable is not statically visible and simply is not
+/// pre-registered (its route resolves client-side); the root `/` is always
+/// covered by the `GET /{$}` fallback the caller keeps. Returns patterns in
+/// source order, de-duplicated, with the bare root `/` dropped (the caller emits
+/// it as the exact-root `GET /{$}`).
+fn spa_ssr_route_patterns(routes_src: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    // Walk each `App.route`/`App.routeInt`/`App.routeParam`/`Spa.route` head and
+    // take its first string-literal argument as the pattern.
+    for head in ["App.route", "App.routeInt", "App.routeParam", "Spa.route"] {
+        let mut rest = routes_src;
+        while let Some(i) = rest.find(head) {
+            let after = &rest[i + head.len()..];
+            // Find the first quote after the head (the pattern literal).
+            if let Some(q) = after.find('"') {
+                let tail = &after[q + 1..];
+                if let Some(end) = tail.find('"') {
+                    let pat = &tail[..end];
+                    if !pat.is_empty() && pat != "/" && !out.contains(&pat.to_string()) {
+                        out.push(pat.to_string());
+                    }
+                    rest = &tail[end + 1..];
+                    continue;
+                }
+            }
+            rest = &after[..];
+        }
+    }
+    out
+}
+
 fn gen_backend(
     file: &SourceFile,
     src: &str,
@@ -1332,6 +1435,38 @@ fn gen_backend(
     let has_synth_head = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaHead_"));
+    // Per-route SSR (design §4.1): the App→Spa synthesis emits named
+    // `spaRoutes_` / `spaNotFound_` bindings (main.rs synthesize_spa_source) so
+    // the SSR handler can resolve the REQUEST path to the route's page
+    // server-side (Spa_ssrResolveModel), rendering `/`, `/items`, … each to its
+    // own content instead of only the root P1 rendered. A route-less app has
+    // neither binding and keeps the root-only render.
+    let has_synth_routes = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaRoutes_"));
+    let has_synth_not_found = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaNotFound_"));
+    // Data-resolved SSR (design §4.2): the GET-safe allowlist, applied
+    // FAIL-CLOSED at synthesis over the app's `init` source. The settle
+    // (Spa_ssrSettle) runs `init`'s `cmd0` to a data-bearing model server-side —
+    // so the first paint carries REAL per-route content (the item list, the blog
+    // post body) a crawler sees — but ONLY when `init`'s command is provably a
+    // curated GET-safe read. See init_cmd_is_get_safe: this is where the
+    // "a GET must never mutate / run a non-deterministic effect" boundary is
+    // enforced. An `init` whose command is a write, is non-deterministic, or is
+    // any shape this scan cannot recognise gets NO settle and renders the pure
+    // `init` model (chrome-only, exactly P1) — the fail-closed default.
+    // Join EVERY decl named `init` (the type annotation and the value binding are
+    // separate decls) so the scan sees the body — matching only the annotation
+    // `init : () -> ( Model, Cmd Msg )` would miss the `File.readFile` in the body.
+    let init_src = file
+        .decls()
+        .filter(|d| decl_name(d).as_deref() == Some("init"))
+        .map(|d| slice(src, d.syntax()).to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let init_get_safe = init_cmd_is_get_safe(&init_src);
     let emit_ssr = !(server.is_empty() && !push_mode) && has_synth_view && has_synth_head;
     if emit_ssr {
         add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
@@ -1540,33 +1675,88 @@ fn gen_backend(
              -- the same frontend dist `Server.static` serves.\n\
              spaWasmName : String\n\
              spaWasmName =\n\
-             \x20   spaSsrWasmName \"../frontend/dist\"\n\n\n\
-             -- Server-render the ROOT route's first paint: resolve to the initial\n\
-             -- model (P1: init's pure result — the client re-runs the deterministic\n\
-             -- spaInit, so the model is not embedded; embedding is a P3 concern),\n\
-             -- render head + body to HTML, serve the assembled document with the\n\
-             -- server-rendered body inside a `data-sky-ssr`-marked #app.\n\
+             \x20   spaSsrWasmName \"../frontend/dist\"\n\n\n",
+        );
+        // Per-route resolver alias — resolves the request path to the route's
+        // page + model server-side (design §4.1). Emitted only when the app has
+        // routes; a route-less app renders the root.
+        if has_synth_routes {
+            handlers.push_str(
+                "-- Per-route SSR: resolve the request path to the route's page + model\n\
+                 -- exactly as the client does at boot (Spa_ssrResolveModel).\n\
+                 spaSsrResolveModel : any -> any -> model -> String -> model\n\
+                 spaSsrResolveModel =\n\
+                 \x20   Ffi.kernel \"Spa_ssrResolveModel\"\n\n\n",
+            );
+        }
+        // Data-resolved settle alias — runs init's GET-safe read to a settled,
+        // data-bearing model (design §4.2). Emitted ONLY when the fail-closed
+        // allowlist scan proved init's command GET-safe (init_get_safe).
+        if init_get_safe {
+            handlers.push_str(
+                "-- Data-resolved SSR: settle init's GET-safe read to a data-bearing\n\
+                 -- model server-side so the first paint carries REAL content a crawler\n\
+                 -- sees (Spa_ssrSettle). Emitted only because the allowlist scan proved\n\
+                 -- init's command is a curated GET-safe read (spa_split.rs).\n\
+                 spaSsrSettle : model -> any -> any -> model\n\
+                 spaSsrSettle =\n\
+                 \x20   Ffi.kernel \"Spa_ssrSettle\"\n\n\n",
+            );
+        }
+        // The handler body: resolve the route, optionally settle its data, render.
+        let req_param = if has_synth_routes { "req" } else { "_" };
+        let cmd_bind = if init_get_safe { "cmd0" } else { "_" };
+        let routed_expr = if has_synth_routes {
+            "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path"
+        } else {
+            "model0"
+        };
+        let resolved_expr = if init_get_safe {
+            "spaSsrSettle routed cmd0 update"
+        } else {
+            "routed"
+        };
+        handlers.push_str(&format!(
+            "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
+             -- run init, resolve the request path to this route's page + model, then\n\
+             -- (when init's command is GET-safe) settle its read to a data-bearing\n\
+             -- model so a crawler sees REAL per-route content; render head + body\n\
+             -- inside a `data-sky-ssr`-marked #app.\n\
              ssrHandler : Handler\n\
-             ssrHandler _ =\n\
+             ssrHandler {req_param} =\n\
              \x20   let\n\
-             \x20       ( ssrModel, _ ) =\n\
-             \x20           init ()\n\
+             \x20       ( model0, {cmd_bind} ) =\n\
+             \x20           init ()\n\n\
+             \x20       routed =\n\
+             \x20           {routed_expr}\n\n\
+             \x20       resolved =\n\
+             \x20           {resolved_expr}\n\
              \x20   in\n\
              \x20   Task.succeed\n\
              \x20       (Server.html\n\
              \x20           (spaSsrPage\n\
-             \x20               (spaSsrRenderHead spaHead_ ssrModel)\n\
-             \x20               (spaSsrRenderBody (spaView_ ssrModel))\n\
+             \x20               (spaSsrRenderHead spaHead_ resolved)\n\
+             \x20               (spaSsrRenderBody (spaView_ resolved))\n\
              \x20               spaWasmName\n\
              \x20               \"\"\n\
              \x20           )\n\
-             \x20       )\n\n\n",
-        );
-        // Registered AHEAD of the static route and matched at the ROOT ONLY
-        // (`GET /{$}`, Go 1.22 exact-root syntax) so asset GETs still reach the
-        // file server. Pushed before the static route below so the leading-comma
-        // → `[` rewrite still lands on the first list element.
+             \x20       )\n\n\n"
+        ));
+        // Register one SSR GET per LITERAL route pattern plus the exact root
+        // `GET /{$}` (Go 1.22). Each literal pattern is a more-specific mux entry
+        // than `Server.static "/"`, so app routes reach the SSR handler while
+        // asset GETs (main.wasm, wasm_exec.js) fall through to the file server.
         routes.push("        , Server.api \"GET /{$}\" ssrHandler".to_string());
+        if has_synth_routes {
+            let routes_src = file
+                .decls()
+                .find(|d| decl_name(d).as_deref() == Some("spaRoutes_"))
+                .map(|d| slice(src, d.syntax()).to_string())
+                .unwrap_or_default();
+            for pat in spa_ssr_route_patterns(&routes_src) {
+                routes.push(format!("        , Server.api \"GET {pat}\" ssrHandler"));
+            }
+        }
     }
 
     // The static-asset route is always the LAST element of the listen list.
