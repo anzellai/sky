@@ -47,7 +47,7 @@
   "config": {
     "_note": "counted over distinct paths: apps/ledger backs two member rows and must not have its sections counted twice.",
     "database_drivers": {
-      "sqlite": 12
+      "sqlite": 13
     },
     "paths_with_sky_toml": 56,
     "sections": {
@@ -15189,13 +15189,15 @@
       ]
     },
     {
-      "db_drivers": [],
+      "db_drivers": [
+        "sqlite"
+      ],
       "gate": null,
       "id": "examples/65-metadata-service",
       "modules_imported": 8,
       "path": "examples/65-metadata-service",
-      "refs_generous": 32,
-      "refs_qualified": 26,
+      "refs_generous": 33,
+      "refs_qualified": 27,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
