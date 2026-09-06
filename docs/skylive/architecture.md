@@ -359,21 +359,37 @@ The server stores a per-session event-handler table. When the client posts a tag
 
 ```go
 type SessionStore interface {
-    Get(ctx context.Context, id string) (*Session, error)
-    Put(ctx context.Context, id string, s *Session) error
-    Delete(ctx context.Context, id string) error
-    Sweep(ctx context.Context, olderThan time.Duration) error
+    Get(sid string) (*liveSession, bool)
+    Set(sid string, s *liveSession)
+    Delete(sid string)
+    NewID() string
+    Close() error
+    Broker() Broker
+    Ping() error
 }
 ```
 
+(See `runtime-go/rt/live_store.go`.) `Get` returns `(session, found)` — no
+`error`, no `context` — and `Set` is the upsert; there is no separate `Put`.
+TTL sweeping is not a method on the interface: each durable store runs its own
+`cleanupLoop` goroutine internally, so there is no `Sweep(ctx, olderThan)` for
+callers to drive.
+
 Implementations:
 
-- `memSessionStore` — `sync.Map`; lost on restart.
-- `sqliteSessionStore` — single-node persistence.
-- `redisSessionStore` — multi-instance via shared Redis.
-- `postgresSessionStore` — shared SQL backend.
+- `memoryStore` — `sync.Map`; lost on restart.
+- `sqliteStore` — single-node persistence.
+- `redisStore` — multi-instance via shared Redis.
+- `postgresStore` — shared SQL backend.
 
-Sessions are serialised as JSON. The model itself is always `any`-boxed Sky data structures, encoded via `SkyEncode`.
+Sessions are serialised with **`encoding/gob`**, not JSON (`encodeSession` /
+`decodeSession` in `live_store.go`). The persisted `storableSession` carries the
+TEA Model plus the auth-identity, revocation binding, analytics identity and
+out-seq, so a cache-cold instance that decodes it resumes the full session — the
+basis for the cross-replica session MOVE described above. The model itself is
+`any`-boxed Sky data structures, so every concrete type reachable behind an
+`any` field is registered for gob (`gobRegisterAll` at first render) before it
+can round-trip through a durable store.
 
 ## Concurrency
 
