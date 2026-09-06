@@ -644,3 +644,9 @@ symbol = "Std.Ui.MarkerFlags"
 reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
 owner  = "anzel"
 commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Css.floatStr"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
