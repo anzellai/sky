@@ -14228,10 +14228,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 17,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 71,
-      "refs_qualified": 67,
+      "refs_generous": 73,
+      "refs_qualified": 69,
       "role": "Layer2",
-      "sky_files": 20,
+      "sky_files": 21,
       "sky_toml_sections": []
     },
     {
