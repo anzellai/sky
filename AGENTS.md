@@ -21,8 +21,20 @@
 Sky is an Elm-family, purely-functional language that compiles to **typed Go**.
 One language for the whole stack: web UIs (Sky.Live), HTTP/JSON APIs, CLIs, TUIs,
 desktop apps, background jobs. The design goal is **"if it compiles, it works"** —
-no user-written FFI, no nulls, no runtime panics from well-typed code, clear
-errors, batteries-included stdlib.
+no user-written FFI, no nulls, no **silent** wrong answers, and no runtime panic
+from well-typed code, clear errors, batteries-included stdlib.
+
+**The one honest carve-out: partial arithmetic primitives fail LOUDLY, never
+silently.** A well-typed `10.0 / 0.0` has no answer Sky can represent (there is
+no `Inf`/`NaN` shape), so it raises a *classified* `DivisionByZero` — recovered
+per-request to a 500 in a server, or exit(1) + a structured log in a CLI — and
+is caught by the whole-app panic net (`docs/architecture/sky-stdlib-correctness.md`
+§2.9, the nine named panic classes). It is never a silent wrong value (integer
+`//`/`%` by zero *are* total and return 0, matching Elm). Code that divides by a
+value it does not control should zero-guard the divisor; a fallible
+`Maybe`-returning division is an offered convenience, not a soundness
+requirement. "No runtime panic" therefore means *no UNCLASSIFIED panic and no
+silent corruption* — the property a service actually needs.
 
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
 Haskell compiler lives under `legacy-haskell-compiler/` and serves as a
