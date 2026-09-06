@@ -19,6 +19,10 @@ node_modules/
 # Std.App per-target derived build trees (`sky build/run --target` on a
 # dispatched Std.App entry stages `main = App.run<Backend> …` here).
 .skyapp/
+# Sky.Spa auto-split output (`sky build` on a `Spa.app`/spa-target entry writes
+# the derived frontend-wasm + backend projects here). A generated artifact —
+# never committed. See rust/crates/xtask/src/build_run_gate.rs (manual-split gate).
+.split/
 
 # Environment and secrets
 .env

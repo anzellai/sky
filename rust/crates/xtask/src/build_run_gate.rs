@@ -76,6 +76,68 @@ const FFI_BUILD_ONLY: &[&str] = &["11-fyne-stopwatch"];
 /// can't be pinned. (02-go-stdlib: `Time.now |> Time.timeString` + `Http.get`.)
 const NONDETERMINISTIC_OUTPUT: &[&str] = &["02-go-stdlib"];
 
+/// Hand-authored multi-project splits — an example that is NOT a single project
+/// under a top-level `src/` but several sibling projects (a `Spa.app` client, a
+/// Sky.Http server, …). `corpus()`'s `read_dir` filter keys on a top-level
+/// `src/`, so these escape discovery ENTIRELY, and there is more than one entry
+/// to build, so a single classify+build cannot cover them. They are listed here
+/// explicitly with the real sub-entry each must fresh-build.
+///
+/// This is the exact class anzellai/sky#195 lived in: a `Spa.app` client whose
+/// `sky build` auto-split (frontend wasm + backend) was run by no gate, so a
+/// codegen regression in the split shipped green. `verify_manual_split` runs the
+/// real `sky build` from a clean slate and asserts the split artifact appeared.
+///
+/// Each tuple is `(example, &[(sub-project dir, artifact `sky build src/Main.sky`
+/// MUST produce)])`. The client's artifact is under `.split/`, which ONLY the
+/// auto-split path creates — asserting it proves the split actually ran, not that
+/// a bare native stub compiled.
+const MANUAL_SPLIT: &[(&str, &[(&str, &str)])] = &[
+    (
+        "60-spa-todos",
+        &[
+            // `Spa.app` client — bare `sky build` auto-splits. `.split/backend/…/app`
+            // exists ONLY when the split ran end-to-end (the #195 repro).
+            ("client", ".split/backend/sky-out/app"),
+            // Sky.Http server half — a normal `sky build` → `sky-out/app`.
+            ("server", "sky-out/app"),
+        ],
+    ),
+    (
+        // A two-app hub demo (Std.App web apps pushing telemetry to a console
+        // hub). Same blind spot as 60: no top-level `src/`, so `corpus()` never
+        // saw it and neither did example-sweep — it was fresh-built by no gate.
+        "39-hub-demo",
+        &[
+            ("billing-app", "sky-out/app"),
+            ("frontend-app", "sky-out/app"),
+        ],
+    ),
+];
+
+/// The sub-entries a manual-split example must fresh-build, or `None` when `name`
+/// is an ordinary single-project example.
+fn manual_split_entries(name: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    MANUAL_SPLIT
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, entries)| *entries)
+}
+
+/// Locate the `sky` binary: the SIBLING of the running xtask
+/// (`cargo build --workspace` produces both under `target/release/`, so CI — which
+/// never runs `build.sh`, hence `<root>/sky-out/sky` is absent there — and local
+/// both find one, and it is the SAME compiler version as xtask's in-process
+/// `build_example`). Falls back to the installed `sky-out/sky` only if the sibling
+/// is somehow missing.
+fn sky_binary(root: &Path) -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("sky")))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| root.join("sky-out").join("sky"))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Shape {
     Cli,
@@ -378,6 +440,16 @@ fn corpus(root: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
+    // Manual-split examples (60-spa-todos …) have no top-level `src/`, so the
+    // `read_dir` filter above cannot see them — append them explicitly so `--all`
+    // fresh-builds them via `verify_manual_split`. This is the read_dir blind spot
+    // that let anzellai/sky#195 escape every fresh-build gate.
+    for (name, _) in MANUAL_SPLIT {
+        let dir = root.join("examples").join(name);
+        if dir.is_dir() && !ds.iter().any(|d| d == name) {
+            ds.push((*name).to_string());
+        }
+    }
     ds.sort();
     ds
 }
@@ -483,6 +555,11 @@ fn std_app_dispatch_shape(dir: &Path) -> Option<Shape> {
 fn classify(dir: &Path, name: &str) -> Shape {
     if FFI_BUILD_ONLY.contains(&name) {
         return Shape::Ffi;
+    }
+    // A hand-authored multi-project split (no top-level `src/` — the main-body
+    // scan would misfire) is verified as a Spa build by `verify_manual_split`.
+    if manual_split_entries(name).is_some() {
+        return Shape::Spa;
     }
     // A dispatched Std.App entry's shape is the target `sky build` resolves for
     // it, NOT the `App.run` the main-body scan would (mis)read as Live. Checked
@@ -740,6 +817,13 @@ fn verify_one(
     // regenerate the same surfaces later in the SAME job, and `ensure_ffi_surface`
     // no-ops when the surface is already present (`need` is false), so the cost
     // is paid once and reused, just moved earlier so `--all` is comprehensive.
+    // A hand-authored multi-project split (60-spa-todos: a `Spa.app` client +
+    // a Sky.Http server, no top-level `src/`) is fresh-built entry-by-entry via
+    // the real `sky build` — the auto-split path anzellai/sky#195 broke. Handled
+    // FIRST, before the single-project machinery below (which assumes `dir/src`).
+    if let Some(entries) = manual_split_entries(name) {
+        return verify_manual_split(root, dir, name, entries, verbose);
+    }
     ensure_ffi_surface(root, dir);
     // A dispatched Std.App entry cannot go through the in-process build_example
     // below: that emits the `App.run` runTui placeholder (a binary that builds
@@ -903,16 +987,7 @@ fn verify_std_app(
     bless: bool,
     verbose: bool,
 ) -> Row {
-    // The `sky` binary SIBLING to the running xtask — `cargo build --workspace`
-    // produces both under target/release/, so this exists on CI (which never
-    // runs build.sh, so `<root>/sky-out/sky` is ABSENT there) and locally, and
-    // is the SAME compiler version as xtask's in-process build_example. Fall back
-    // to the installed sky-out/sky only if the sibling is somehow missing.
-    let sky = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("sky")))
-        .filter(|p| p.exists())
-        .unwrap_or_else(|| root.join("sky-out").join("sky"));
+    let sky = sky_binary(root);
     let build = Command::new(&sky)
         .arg("build")
         .arg("src/Main.sky")
@@ -1015,6 +1090,94 @@ fn verify_std_app(
             row.run_kind = "n/a";
         }
     }
+    row
+}
+
+/// Fresh-build a hand-authored multi-project split (60-spa-todos): for EACH
+/// sub-project, wipe its generated build dirs then run the REAL
+/// `sky build src/Main.sky` — the `Spa.app` auto-split path anzellai/sky#195
+/// broke — and assert the expected artifact appeared. Build-only: a successful
+/// auto-split `sky build` (frontend wasm + backend) IS the assertion #195 needed;
+/// no server run is required here (the split's runtime is covered by
+/// `spa_split_flow` + the example's own `run.sh`). A failed or partial split sets
+/// `build_ok = false` with `emitted = true`, so `gate_result`'s build_regressions
+/// check reds the gate — the failure #195 slipped past.
+fn verify_manual_split(
+    root: &Path,
+    dir: &Path,
+    name: &str,
+    entries: &[(&str, &str)],
+    verbose: bool,
+) -> Row {
+    let sky = sky_binary(root);
+    let mut row = Row {
+        name: name.into(),
+        shape: Shape::Spa,
+        emitted: true,
+        build_ok: false,
+        run_ok: None,
+        matched: None,
+        run_kind: "n/a",
+        blocker: String::new(),
+        rust_stdout: None,
+        oracle_stdout: None,
+    };
+    for (sub, artifact) in entries {
+        let subdir = dir.join(sub);
+        if !subdir.is_dir() {
+            row.blocker = format!("manual-split sub-project missing: {sub}/");
+            return row;
+        }
+        // Clean slate — the whole point is a FRESH from-source build (a stale
+        // `.split/` would let a broken auto-split pass on last run's artifacts).
+        for gen in [
+            ".split",
+            ".skyapp",
+            "sky-out",
+            "sky-out-rust",
+            ".skycache",
+            "dist",
+        ] {
+            let _ = std::fs::remove_dir_all(subdir.join(gen));
+        }
+        let out = match Command::new(&sky)
+            .arg("build")
+            .arg("src/Main.sky")
+            .current_dir(&subdir)
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => {
+                row.blocker = format!("{sub}: sky build spawn: {e}");
+                return row;
+            }
+        };
+        if !out.status.success() {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let ge = first_go_error(&combined);
+            row.blocker = if ge == "go build failed" || ge.is_empty() {
+                format!("{sub}: sky build (spa auto-split) failed")
+            } else {
+                format!("{sub}: {ge}")
+            };
+            return row;
+        }
+        // A `sky build` that exits 0 but produced no split artifact is exactly the
+        // hollow pass this gate exists to reject — assert the artifact is present.
+        if !subdir.join(artifact).exists() {
+            row.blocker =
+                format!("{sub}: sky build exited 0 but {artifact} absent (auto-split did not run)");
+            return row;
+        }
+        if verbose {
+            eprintln!("  [{name}] {sub}: sky build src/Main.sky → {artifact} ✓");
+        }
+    }
+    row.build_ok = true;
     row
 }
 
