@@ -1504,10 +1504,34 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
         "SSR-P3: GET /items must carry the SERVER-RESOLVED item list (crawlable), \
          not a loading state. Body was:\n{items_body}"
     );
-    // / renders its OWN (Home) content and NOT the items — per-route proof.
+    // The embedded #sky-model blob (design §4.5) carries the RESOLVED model as
+    // JSON — the route's page + the settled items — so the client can boot from
+    // it. It must be present and decode to the resolved data.
+    let blob_start = items_body
+        .find(r#"<script id="sky-model" type="application/json">"#)
+        .expect("SSR-P3: the #sky-model blob must be present");
+    let blob = &items_body[blob_start..];
+    let blob = &blob[..blob.find("</script>").expect("blob must close")];
     assert!(
-        home_body.contains("Welcome home") && !home_body.contains("Alpha Widget"),
-        "SSR-P3: GET / must render Home's own content, not the /items data:\n{home_body}"
+        blob.contains(r#""page":"Items""#)
+            && blob.contains("Alpha Widget")
+            && blob.contains("Gamma Gizmo"),
+        "SSR-P3: the #sky-model blob must decode to the RESOLVED model \
+         (page=Items + the settled items). Blob was:\n{blob}"
+    );
+    // / renders its OWN (Home) VIEW — "Welcome home", and NOT the Items view's
+    // "Item list:" header — proving per-route BODY rendering. (The embedded model
+    // blob DOES carry the settled items for every route, which is correct: the
+    // data is resolved once and the Home *view* simply does not display it.) So
+    // assert on the rendered body region, not the whole document.
+    let home_app = {
+        let s = home_body.find(r#"<div id="app""#).expect("home #app must exist");
+        let e = home_body.find(r#"<script id="sky-model""#).unwrap_or(home_body.len());
+        &home_body[s..e]
+    };
+    assert!(
+        home_app.contains("Welcome home") && !home_app.contains("Item list:"),
+        "SSR-P3: GET / must render Home's own view, not the Items view:\n{home_app}"
     );
 }
 

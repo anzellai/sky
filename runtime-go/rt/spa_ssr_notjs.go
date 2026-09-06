@@ -55,7 +55,8 @@ func Spa_ssrRenderBody(node any) string {
 // Spa_ssrPage is the `Ffi.kernel "Spa_ssrPage"` alias assembling the first-paint
 // document via the portable SpaSSRPage (spa_ssr.go): per-route head + the
 // server-rendered body inside a `data-sky-ssr`-marked `#app` + base CSS reset +
-// the (optional, P1-empty) embedded model + the content-hashed wasm loader.
+// the embedded resolved-model JSON (design §4.5 — the route-resolved, settled
+// model the client can boot from) + the content-hashed wasm loader.
 func Spa_ssrPage(head, body, wasmName, modelJSON any) string {
 	return SpaSSRPage(AsString(head), AsString(body), AsString(wasmName), AsString(modelJSON))
 }

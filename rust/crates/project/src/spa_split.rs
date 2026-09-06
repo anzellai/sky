@@ -1721,7 +1721,11 @@ fn gen_backend(
              -- run init, resolve the request path to this route's page + model, then\n\
              -- (when init's command is GET-safe) settle its read to a data-bearing\n\
              -- model so a crawler sees REAL per-route content; render head + body\n\
-             -- inside a `data-sky-ssr`-marked #app.\n\
+             -- inside a `data-sky-ssr`-marked #app; embed the resolved model as JSON\n\
+             -- (design §4.5) so the client can boot from it instead of re-running the\n\
+             -- effectful init. `Codec.auto` derives the model codec from the value —\n\
+             -- it compiles for ANY model (an unencodable field degrades the blob at\n\
+             -- runtime, it never breaks the build).\n\
              ssrHandler : Handler\n\
              ssrHandler {req_param} =\n\
              \x20   let\n\
@@ -1730,7 +1734,9 @@ fn gen_backend(
              \x20       routed =\n\
              \x20           {routed_expr}\n\n\
              \x20       resolved =\n\
-             \x20           {resolved_expr}\n\
+             \x20           {resolved_expr}\n\n\
+             \x20       modelJson =\n\
+             \x20           Codec.toJson (Codec.auto resolved) resolved\n\
              \x20   in\n\
              \x20   Task.succeed\n\
              \x20       (Server.html\n\
@@ -1738,7 +1744,7 @@ fn gen_backend(
              \x20               (spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
              \x20               spaWasmName\n\
-             \x20               \"\"\n\
+             \x20               modelJson\n\
              \x20           )\n\
              \x20       )\n\n\n"
         ));
