@@ -473,8 +473,23 @@ fn metric_diff(base: &Value, cur: &Value) -> String {
 ///   `assertions` RISES; charging that as a shrink makes every honest refactor
 ///   owe paperwork. The aggregate `assertions` and `cases` counts are still
 ///   fully ratcheted, which is where the real claim lives.
+/// * **`stdlib.exposing_all.entries`** and **`stdlib.exposing_all.modules`** are
+///   the size of the "no public-API curation yet" bucket — the modules whose
+///   header is `exposing (..)`. Migrating one to an explicit `exposing (list)`
+///   (a tracked task, per the `_note` these fields carry) RECLASSIFIES its whole
+///   top-level surface out of this bucket and into `explicit_exposing`: the
+///   bucket falls by the module's ENTIRE size (226 for `Std.Ui`), while
+///   `stdlib.entries/values/types` — the real denominators — fall only by the
+///   symbols actually un-exposed. Charging the bucket-move would demand a
+///   `[[removal]]` stanza for every symbol that STAYED public, i.e. junk
+///   accounting for surface that did not leave — the exact failure the two
+///   exclusions above exist to prevent. The genuine removals are still charged,
+///   on `stdlib.entries/values/types`, which remain fully ratcheted.
 fn is_diagnostic_metric(key: &str) -> bool {
-    key.ends_with(".vacuous_pass") || key.contains(".by_assertion_fn.")
+    key.ends_with(".vacuous_pass")
+        || key.contains(".by_assertion_fn.")
+        || key == "stdlib.exposing_all.entries"
+        || key == "stdlib.exposing_all.modules"
 }
 
 /// FAIL-ON-INCREASE for vacuity — the inverse ratchet.
@@ -785,6 +800,32 @@ mod tests {
         let err = ratchet(&tests_doc(9, 32, 148), &tests_doc(9, 32, 147), 0).unwrap_err();
         assert!(err.contains("DENOMINATOR SHRANK"), "{err}");
         assert!(err.contains("tests.examples.assertions: 148 -> 147"), "{err}");
+    }
+
+    /// Migrating a module from `exposing (..)` to an explicit `exposing (list)`
+    /// is a RECLASSIFICATION, not a surface removal. Its entries move from the
+    /// `exposing_all` bucket to `explicit_exposing`, so `exposing_all.entries`
+    /// falls by the module's whole size and `exposing_all.modules` by one — but
+    /// `stdlib.entries/values/types` fall only by the symbols actually un-exposed,
+    /// and those ARE still ratcheted. Charging the bucket-move would owe a stanza
+    /// for every symbol that stayed public (junk accounting).
+    #[test]
+    fn exposing_all_bucket_counts_are_diagnostic_not_ratcheted() {
+        // A 226-entry module migrates: exposing_all.entries 602->376, modules 6->5,
+        // and the 70 genuinely un-exposed symbols drop stdlib.entries 1923->1853.
+        let base = json!({ "removals_accounted": 3, "stdlib": {
+            "entries": 1923, "exposing_all": { "entries": 602, "modules": 6 } } });
+        let cur = json!({ "removals_accounted": 73, "stdlib": {
+            "entries": 1853, "exposing_all": { "entries": 376, "modules": 5 } } });
+        // 70 new stanzas cover the real -70 entries; the -226 / -1 bucket moves
+        // are not charged.
+        assert!(ratchet(&base, &cur, 73).is_ok());
+        // The real denominator is still ratcheted: one MORE un-exposed than
+        // accounted (stdlib.entries -71 against 70 new stanzas) fails.
+        let cur_over = json!({ "removals_accounted": 73, "stdlib": {
+            "entries": 1852, "exposing_all": { "entries": 376, "modules": 5 } } });
+        let err = ratchet(&base, &cur_over, 73).unwrap_err();
+        assert!(err.contains("stdlib.entries: 1923 -> 1852"), "{err}");
     }
 
     /// A metric that vanishes entirely is a decrease to zero, not a free pass.
