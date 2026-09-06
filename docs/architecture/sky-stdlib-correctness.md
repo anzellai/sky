@@ -515,6 +515,7 @@ exact runtime shape).
 | `andThenResult`   | `(a -> Result e b) -> Task e a -> Task e b`       |
 | `sequence`        | `List (Task e a) -> Task e (List a)`              |
 | `parallel`        | `List (Task e a) -> Task e (List a)`              |
+| `parallelN`       | `Int -> List (Task e a) -> Task e (List a)`       |
 | `perform`         | `Task e a -> (Result e a -> msg) -> Cmd msg`      |
 | `run`             | `Task e a -> Result e a` (synchronous main-only)  |
 | `lazy`            | `(() -> Task e a) -> Task e a`                    |
@@ -560,9 +561,17 @@ two-level error pattern (correlation ID + structured log + user
 message).
 
 **Known gaps**:
-* `parallel` does NOT cancel siblings on first failure (a Go
-  `context.Context` would be required). Documented runtime
-  behaviour, not a soundness bug.
+* `parallel` starts EVERY task at once (unbounded fan-out) and does
+  NOT cancel already-running siblings on first failure — documented
+  runtime behaviour, not a soundness bug. Under fan-out load (a
+  service dispatching to thousands of items) prefer **`parallelN
+  limit tasks`**, which caps the live worker count at `limit` via a
+  semaphore AND stops launching the tail of a batch once the first
+  `Err` is seen (so a doomed batch does not keep spawning work). Same
+  result contract as `parallel`; `limit` is clamped to ≥ 1. The
+  bounded fan-out is goroutine-leak-tested
+  (`runtime-go/rt/task_parallel_test.go`:
+  `TestTaskParallelN_BoundsConcurrency` + `_NoLeakOnEarlyError`).
 * `lazy` defers the task BODY, not the parent — so `lazy (\() ->
   Task.fail e)` returns a task that fails on first force; no
   difference from `Task.fail e` for non-side-effecting failures.

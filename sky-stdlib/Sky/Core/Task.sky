@@ -23,6 +23,7 @@ module Sky.Core.Task exposing
     , andThenResult
     , sequence
     , parallel
+    , parallelN
     , lazy
     , ShouldRetry(..)
     , RetryPolicy
@@ -129,6 +130,19 @@ sequence =
 parallel : List (Task e a) -> Task e (List a)
 parallel =
     Ffi.kernel "Task_parallel"
+
+
+-- | Like `parallel`, but runs at most `limit` tasks concurrently (a
+-- semaphore-bounded fan-out) and stops launching further tasks once the first
+-- error is observed.  Reach for this over `parallel` under fan-out load:
+-- `parallel` starts EVERY task at once, so fanning out to thousands of items is
+-- a goroutine / connection storm; `parallelN 16 tasks` caps the live worker
+-- count at 16.  Same result contract as `parallel` — input list order is
+-- preserved and the first `Err` short-circuits (the doomed batch's tail is
+-- never launched).  `limit` is clamped to at least 1.
+parallelN : Int -> List (Task e a) -> Task e (List a)
+parallelN =
+    Ffi.kernel "Task_parallelN"
 
 
 -- ─── Deferred computation ──────────────────────────────────────────

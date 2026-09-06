@@ -6790,6 +6790,75 @@ func Task_parallel(tasks any) any {
 	}
 }
 
+// Task_parallelN: like Task_parallel, but runs at most `limit` tasks
+// concurrently (a semaphore-bounded fan-out) and STOPS launching further tasks
+// once the first error is observed. Same result contract as Task_parallel:
+// input order preserved, first Err short-circuits, in-flight siblings drain in
+// the background with their results discarded (no goroutine leak — every worker
+// releases its slot and exits, its send falling through to ctx.Done).
+//
+// This is the primitive to reach for under fan-out load: `Task_parallel` spawns
+// len(tasks) goroutines at once (unbounded), which for a service fanning out to
+// thousands of items is a goroutine/FD/connection storm. `parallelN` caps the
+// live worker count at `limit` and, because the dispatcher halts on the first
+// error, never launches the tail of a doomed batch. `limit` is clamped to >= 1.
+func Task_parallelN(limit any, tasks any) any {
+	return func() any {
+		lim := AsInt(limit)
+		if lim < 1 {
+			lim = 1
+		}
+		xs := AsList(tasks)
+		n := len(xs)
+		if n == 0 {
+			return Ok[any, any]([]any{})
+		}
+		results := make([]any, n)
+		type item struct {
+			idx int
+			tag int
+			ok  any
+			err any
+		}
+		ch := make(chan item, n)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		sem := make(chan struct{}, lim)
+		// Dispatcher: acquire a slot before launching each task; stop launching
+		// entirely once ctx is cancelled (first error), so a failed batch does
+		// not keep spawning work. Runs in its own goroutine so the collector
+		// loop below can short-circuit without waiting for the whole fan-out.
+		go func() {
+			for i, t := range xs {
+				select {
+				case <-ctx.Done():
+					return
+				case sem <- struct{}{}:
+				}
+				go func(i int, t any) {
+					defer func() { <-sem }()
+					tag, okV, errV := anyResultView(SkyCall(t))
+					select {
+					case ch <- item{idx: i, tag: tag, ok: okV, err: errV}:
+					case <-ctx.Done():
+					}
+				}(i, t)
+			}
+		}()
+		received := 0
+		for received < n {
+			it := <-ch
+			received++
+			if it.tag != 0 {
+				cancel()
+				return Err[any, any](it.err)
+			}
+			results[it.idx] = it.ok
+		}
+		return Ok[any, any](results)
+	}
+}
+
 // Task_lazy : (() -> a) -> Task e a
 //
 // Defers a PURE thunk into a Task, so expensive computation only runs when the
