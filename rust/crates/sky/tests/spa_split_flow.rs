@@ -1643,6 +1643,197 @@ main =
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+fn ssr_db_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-db")
+}
+
+fn have_sqlite3() -> bool {
+    Command::new("sqlite3")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// SSR CLIENT-LEG (design §4.4/§4.5, blocker #3). An `init` that reads through a
+/// **`db` CAF** — the sky-lang.org shape. The `db` binding reaches `Db.open`, so
+/// the split routes it to the BACKEND ONLY; kept verbatim, the client `init`'s
+/// `Cmd.perform (Db.query db …)` would leave `Undefined name: db` in the wasm
+/// frontend. The client-leg fix STRIPS `init`'s command to `Cmd.none` in the
+/// frontend (the server settles the read + embeds `#sky-model`; the client boots
+/// from that blob), so the client tree compiles WITHOUT the `db` CAF while the
+/// backend still SSRs + embeds the resolved rows.
+#[test]
+fn spa_ssr_db_client_leg_excludes_the_db_caf() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_db_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the SSR db-init fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // ── The crux: the FRONTEND (wasm client) source compiles WITHOUT the `db`
+    // CAF. `init`'s command is stripped to `Cmd.none`; no `db`/`Db.*` reference
+    // survives into the client tree. This assertion holds without a Go toolchain
+    // (the frontend `.sky` is generated before any `go build`). ──
+    let frontend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
+    // Scan CODE only — the generated frontend carries the module doc comment,
+    // which legitimately mentions `db` / `Db.query`. Strip `--` line comments so
+    // the assertions test references in code, not prose.
+    let frontend_code = strip_line_comments(&frontend);
+    assert!(
+        !references_word_test(&frontend_code, "db"),
+        "SSR client-leg: the frontend tree must NOT reference the `db` CAF:\n{frontend}"
+    );
+    for needle in ["Db.query", "Db.open", "Std.Db"] {
+        assert!(
+            !frontend_code.contains(needle),
+            "SSR client-leg: the frontend tree must NOT reference `{needle}`:\n{frontend}"
+        );
+    }
+    // The strip landed: init returns `Cmd.none`, and the pure model is preserved.
+    assert!(
+        frontend_code.contains("init () =") && frontend_code.contains("Cmd.none"),
+        "SSR client-leg: the frontend `init` must be stripped to `Cmd.none`:\n{frontend}"
+    );
+
+    // ── The BACKEND still resolves + settles the read + embeds the model. ──
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|_| panic!("generated backend entry must exist:\n{log}"));
+    for needle in [
+        "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path",
+        "spaSsrSettle routed cmd0 update",
+        "Codec.toJson (Codec.auto resolved) resolved",
+    ] {
+        assert!(
+            backend.contains(needle),
+            "SSR client-leg: the backend must carry `{needle}`:\n{backend}"
+        );
+    }
+    // The `db` CAF DOES survive into the backend (it is server-owned).
+    assert!(
+        backend.contains("db =") && backend.contains("Db.open"),
+        "SSR client-leg: the `db` CAF must remain in the BACKEND tree:\n{backend}"
+    );
+
+    // ── Go-gated e2e: the whole thing builds, and (with sqlite3 to seed the DB)
+    // the embedded `#sky-model` carries the SERVER-RESOLVED rows a crawler sees. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "SSR client-leg: --target web:app must build end-to-end:\n{log}");
+    // The wasm frontend actually links with no `db`/`Db_*` symbol.
+    let fe_go = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
+    )
+    .unwrap_or_default();
+    if !fe_go.is_empty() {
+        assert!(
+            !fe_go.contains("Db_query") && !fe_go.contains("Db_open"),
+            "SSR client-leg: the emitted wasm frontend Go must contain no Db_* kernel"
+        );
+    }
+
+    if !required(Need::Sqlite3, have_sqlite3()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let db_path = backend_dir.join("app.db");
+    let seed = Command::new("sqlite3")
+        .arg(&db_path)
+        .arg("CREATE TABLE items(name TEXT); INSERT INTO items(name) VALUES('Alpha Widget'),('Beta Gadget'),('Gamma Gizmo');")
+        .status()
+        .expect("seed sqlite db");
+    assert!(seed.success(), "seeding the sqlite db must succeed");
+
+    let port = 8977u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(backend_dir.join("sky-out/app"))
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .env("SSR_DB_PATH", "app.db")
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled SSR db backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("SSR db backend never reported listening on :{port}");
+    }
+    let items_body = curl_body_p(port, "/items");
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let items_body = items_body.expect("GET /items should return a body");
+    let blob_start = items_body
+        .find(r#"<script id="sky-model" type="application/json">"#)
+        .expect("the #sky-model blob must be present");
+    let blob = &items_body[blob_start..];
+    let blob = &blob[..blob.find("</script>").expect("blob must close")];
+    assert!(
+        blob.contains(r#""page":"ItemsPage""#)
+            && blob.contains("Alpha Widget")
+            && blob.contains("Gamma Gizmo"),
+        "SSR client-leg: the #sky-model blob must decode to the SERVER-RESOLVED \
+         rows (from the `db` read the client never runs). Blob was:\n{blob}"
+    );
+    assert!(
+        items_body.contains("data-sky-ssr") && items_body.contains("Item list:"),
+        "SSR client-leg: GET /items must carry the server-rendered, crawlable body:\n{items_body}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// Drop `--` line comments (the generated frontend carries the module doc
+/// comment, which mentions `db`/`Db.*` in prose). No `--` appears inside a string
+/// literal in the generated frontend's decls, so a per-line cut at the first `--`
+/// is sufficient to isolate code.
+fn strip_line_comments(src: &str) -> String {
+    src.lines()
+        .map(|l| match l.find("--") {
+            Some(i) => &l[..i],
+            None => l,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whole-word membership test mirroring `spa_split::references_word` (that helper
+/// is crate-private). Used only to assert the frontend does not reference `db`.
+fn references_word_test(hay: &str, needle: &str) -> bool {
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let bytes = hay.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(needle) {
+        let i = from + rel;
+        let before_ok = i == 0 || !is_ident(bytes[i - 1]);
+        let after = i + needle.len();
+        let after_ok = after >= bytes.len() || !is_ident(bytes[after]);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = i + needle.len();
+    }
+    false
+}
+
 // Full response BODY of `GET http://127.0.0.1:<port><path>` (P3 e2e helper).
 fn curl_body_p(port: u16, path: &str) -> Option<String> {
     let url = format!("http://127.0.0.1:{port}{path}");

@@ -1,0 +1,116 @@
+module Main exposing (main)
+
+-- Sky.Spa SSR CLIENT-LEG fixture (design §4.4/§4.5): a routed `Std.App` app whose
+-- `init` reads real data through a **`db` CAF** — the sky-lang.org shape, unlike
+-- the P3 `File.readFile` fixture (which references no top-level effectful binding).
+--
+--   * `db` is a memoised `Task.run (Db.open …)` CAF. The auto-split routes it to
+--     the BACKEND ONLY (it reaches `Db.open`, a server effect), so it never
+--     reaches the wasm frontend.
+--   * `init`'s command is `Cmd.perform (Db.query db …) GotItems` — a curated
+--     GET-safe read that references the backend-only `db`. Kept verbatim, the
+--     client tree would fail to compile (`Undefined name: db`). The client-leg
+--     fix STRIPS `init`'s command to `Cmd.none` in the frontend (the server
+--     settles the read + embeds the resolved model in `#sky-model`; the client
+--     boots from that blob and never runs `cmd0`), so the frontend compiles
+--     WITHOUT `db`.
+--   * The `Reload` branch's `Db.query db` makes that branch SERVER (any effect ⇒
+--     server), which puts the app on the P1/P3 SSR path (so the backend emits the
+--     data-resolved settle + the `#sky-model` embed).
+--
+-- Built with `sky build --target web:app`: the backend SSRs the resolved rows +
+-- embeds `#sky-model`; the frontend compiles with NO reference to the `db` CAF.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Task as Task
+import Sky.Core.System as System
+import Std.Db as Db
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+-- One memoised connection (CAF) — reaches `Db.open`, so the split routes this
+-- binding to the BACKEND ONLY; it is absent from the wasm frontend.
+db : Db.Db
+db =
+    case Task.run (Db.open "sqlite" (System.getenvOr "SSR_DB_PATH" "app.db")) of
+        Ok c ->
+            c
+
+        Err _ ->
+            System.exit 1
+
+
+type Page
+    = Home
+    | ItemsPage
+
+
+type alias Model =
+    { page : Page
+    , items : List String
+    }
+
+
+type Msg
+    = Reload
+    | GotItems (Result Error (List (Dict String String)))
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home, items = [] }
+    , Cmd.perform (Db.query db "SELECT name FROM items ORDER BY name" []) GotItems
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Reload ->
+            ( model, Cmd.perform (Db.query db "SELECT name FROM items ORDER BY name" []) GotItems )
+
+        GotItems (Ok rows) ->
+            ( { model | items = List.map (\r -> Maybe.withDefault "" (Dict.get "name" r)) rows }, Cmd.none )
+
+        GotItems (Err _) ->
+            ( { model | items = [] }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+        Home ->
+            Ui.column []
+                [ Ui.text "Welcome home"
+                , Ui.link [] { url = "/items", label = Ui.text "See items" }
+                ]
+
+        ItemsPage ->
+            Ui.column []
+                (Ui.text "Item list:"
+                    :: List.map (\i -> Ui.text i) model.items
+                )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" Home, App.route "/items" ItemsPage ]
+        |> App.withNotFound Home
+
+
+main =
+    App.run app

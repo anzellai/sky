@@ -1382,6 +1382,95 @@ fn init_cmd_is_get_safe(init_src: &str) -> bool {
     saw_perform
 }
 
+/// The joined source of every decl named `init` (the type annotation and the
+/// value binding are separate decls), so a scan sees the body. Shared by the
+/// backend settle decision ([`init_cmd_is_get_safe`]) and the frontend
+/// init-command strip below.
+fn app_init_src(file: &SourceFile, src: &str) -> String {
+    file.decls()
+        .filter(|d| decl_name(d).as_deref() == Some("init"))
+        .map(|d| slice(src, d.syntax()).to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whole-word membership: `needle` occurs in `hay` bounded by non-identifier
+/// bytes on both sides (so `db` does NOT match inside `dbPool` / `mydb`). Used
+/// to decide whether the client `init` references a server-tainted top-level
+/// binding that the frontend drops.
+fn references_word(hay: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = hay.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(needle) {
+        let i = from + rel;
+        let before_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
+        let after = i + needle.len();
+        let after_ok = after >= bytes.len() || !is_ident_byte(bytes[after]);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = i + needle.len();
+    }
+    false
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Rewrite the client `init` VALUE decl so its returned command is `Cmd.none`,
+/// leaving the pure model expression unchanged — `init _ = ( <model>, <cmd> )`
+/// becomes `init _ = ( <model>, Cmd.none )`.
+///
+/// The crux of the SSR client-leg (design §4.4/§4.5, blocker #3). `spa_partition`
+/// routes a `Task.run` CAF (a `db` handle reaching `Db.open`/`Db.connect`) to the
+/// BACKEND ONLY — it never reaches the wasm frontend. But the client keeps `init`
+/// verbatim, so a DB-backed `init`'s `Cmd.perform (Db.query db …)` references the
+/// dropped `db` and the frontend fails to compile (`Undefined name: db`). Under
+/// SSR-on-by-default the backend SETTLES that GET-safe read and embeds the
+/// resolved model in `#sky-model`; the client boots from that blob and NEVER runs
+/// `init`'s command (the runtime drops `cmd0`). Stripping the command to
+/// `Cmd.none` therefore both COMPILES the client tree without `db` and matches the
+/// runtime behaviour — the server owns the read, the client must not.
+///
+/// Returns `None` when `init`'s body is not the expected `( model, cmd )` shape
+/// (possibly through a `let … in`); the caller then keeps it verbatim so a genuine
+/// mismatch surfaces as a normal compile error rather than a silent wrong strip.
+fn frontend_init_value_without_cmd(src: &str, init_val: &syntax::ast::Decl) -> Option<String> {
+    let vd = match init_val {
+        syntax::ast::Decl::Value(v) => v,
+        _ => return None,
+    };
+    // Drill through `let … in` to the returning expression.
+    let mut ret = vd.body()?;
+    while let syntax::ast::Expr::Let(l) = ret {
+        ret = l.body()?;
+    }
+    let tuple = match ret {
+        syntax::ast::Expr::Tuple(t) => t,
+        _ => return None,
+    };
+    let elems: Vec<syntax::ast::Expr> = tuple
+        .syntax()
+        .children()
+        .filter_map(syntax::ast::Expr::cast)
+        .collect();
+    if elems.len() != 2 {
+        return None;
+    }
+    let cmd_node = elems[1].syntax();
+    let decl_node = init_val.syntax();
+    let decl_start = u32::from(decl_node.text_range().start()) as usize;
+    let a = u32::from(cmd_node.text_range().start()) as usize - decl_start;
+    let b = u32::from(cmd_node.text_range().end()) as usize - decl_start;
+    let mut out = slice(src, decl_node).to_string();
+    out.replace_range(a..b, "Cmd.none");
+    Some(out)
+}
+
 /// Extract the literal route PATTERN strings from a synthesised `spaRoutes_`
 /// binding source (e.g. `List.concatMap App.spaRoute ([ App.route "/" Home,
 /// App.route "/items" Items ])`) so the backend can register one SSR GET handler
@@ -1489,12 +1578,7 @@ fn gen_backend(
     // Join EVERY decl named `init` (the type annotation and the value binding are
     // separate decls) so the scan sees the body — matching only the annotation
     // `init : () -> ( Model, Cmd Msg )` would miss the `File.readFile` in the body.
-    let init_src = file
-        .decls()
-        .filter(|d| decl_name(d).as_deref() == Some("init"))
-        .map(|d| slice(src, d.syntax()).to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let init_src = app_init_src(file, src);
     let init_get_safe = init_cmd_is_get_safe(&init_src);
     let emit_ssr = !(server.is_empty() && !push_mode) && has_synth_view && has_synth_head;
     if emit_ssr {
@@ -1864,6 +1948,19 @@ fn gen_frontend(
 
     let server_ctors: Vec<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
+    // Client `init` command strip (design §4.4/§4.5, blocker #3). When `init`'s
+    // command is a curated GET-safe read (settled server-side + embedded in
+    // `#sky-model`) AND that command references a server-tainted binding the
+    // frontend drops (a `db` `Task.run` CAF), keeping `init` verbatim leaves an
+    // `Undefined name` in the wasm client. Strip the command to `Cmd.none`: the
+    // client boots from the embedded model and never runs `cmd0`, so the read
+    // stays server-owned and the client tree compiles without `db`. Gated on BOTH
+    // conditions so a portable-kernel init (`File.readFile "lit"`, referencing no
+    // tainted binding) is left verbatim — no behaviour change for that case.
+    let init_src = app_init_src(file, src);
+    let strip_init_cmd =
+        init_cmd_is_get_safe(&init_src) && tainted.iter().any(|t| references_word(&init_src, t));
+
     // Decls: handle by name/kind.
     let mut body = String::new();
     for d in file.decls() {
@@ -1888,6 +1985,23 @@ fn gen_frontend(
             }
             (Some("update"), _) => {
                 // Regenerated below; skip both annotation + value.
+            }
+            (Some("init"), DeclKind::Value) if strip_init_cmd => {
+                // Strip `init`'s command to `Cmd.none` so the client tree compiles
+                // without the dropped `db` CAF (design §4.4/§4.5). The `init`
+                // annotation is unaffected and is copied verbatim by the catch-all.
+                match frontend_init_value_without_cmd(src, &d) {
+                    Some(rewritten) => {
+                        body.push_str(rewritten.trim_end());
+                        body.push_str("\n\n\n");
+                    }
+                    None => {
+                        // Unexpected shape — keep verbatim so a real mismatch
+                        // surfaces as a normal compile error, never a silent strip.
+                        body.push_str(slice(src, d.syntax()).trim_end());
+                        body.push_str("\n\n\n");
+                    }
+                }
             }
             (Some("Msg"), DeclKind::Union) => {
                 // Msg union + generated Applied<Msg> variants.
