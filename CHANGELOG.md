@@ -13,6 +13,53 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.23.1 — Sky.Spa fixes (2026-09-06)
+
+A patch release focused on **Sky.Spa**: `--target web:app` now works on real
+`Std.App` apps, plus bounded concurrency and `Std.Db` by-id fixes. No breaking
+changes — `sky upgrade` is safe from any v0.23.x.
+
+### Sky.Spa — `--target web:app` on real apps
+
+Two spa-split defects that broke the auto-split for non-toy apps:
+
+- **`App.webDefaults` no longer breaks the split.** The `App.app`→`Spa.app` view
+  synthesizer detected the view family with a substring match on `App.web`, which
+  also matched `App.webDefaults` — so a normal `Std.Ui` `App.app` web app that used
+  `App.withConfig (WebConfig { App.webDefaults | … })` was misclassified as an
+  `App.web` (`Std.Html`) app and failed with `Html Msg vs Element Msg`. Detection
+  is now at a call boundary, so `App.webDefaults` is never mistaken for the
+  `App.web` builder. This hit essentially every real `Std.App` web app trying
+  `--target web:app`.
+- **Explicit `Spa.postJson`/`getJson` branches stay client-side (#195).** spa-split's
+  taint analysis was classifying a client-local branch whose only server contact is
+  an explicit `Spa.postJson` (with its own codec) as server-tainted, then trying to
+  synthesize a whole-Model RPC and failing to derive a codec for an aliased record
+  field (`no codec for a field of type any`). `Std.Spa` is the client framework, so
+  such a branch is now correctly CLIENT. Fixes `examples/60-spa-todos`.
+- **No more silent builder drops / swallowed errors.** `App`→`Spa` synthesis now
+  warns when a builder step it cannot carry (`withHead`, `withRequest`, `withConfig`)
+  is dropped, and `--target web:app` reports the file:line of a synthesis type error
+  (plus the staged `.skyapp/web-app/` entry) instead of just an error count.
+
+### Other fixes
+
+- **`Task.parallelN limit tasks`** — bounded, cancellable-launch fan-out for
+  `Task e a`, so concurrent work under load can't storm goroutines/connections
+  (`Task.parallel` remains unbounded — reach for `parallelN` at scale).
+- **`Std.Db` by-id contract** — `getById`/`updateById`/`deleteById` handle a
+  String-typed numeric id without panicking; `getById` returns `Ok (Just row)` /
+  `Ok Nothing`; `setRole` returns unit; a decode path that returned `Nothing` for
+  every row is fixed.
+
+### Under the hood
+
+- The example sweep now fresh-builds every SPA / `Std.App` example (`--target
+  web:app` auto-split), with a structural gate that fails if any example escapes
+  every build gate — closing the CI gap that let the #195 breakage ship green.
+- A cross-replica Sky.Live session-continuity gate (two `./app` on a shared
+  PostgreSQL store, cookie A→B); release-gate count ratchets made deterministic.
+
 ## v0.23.0 — one app builder, typed secrets (2026-08-28)
 
 The whole app surface now goes through a single builder, and every secret in the
