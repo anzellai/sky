@@ -14,9 +14,11 @@ module Main exposing (main)
 --     settles the read + embeds the resolved model in `#sky-model`; the client
 --     boots from that blob and never runs `cmd0`), so the frontend compiles
 --     WITHOUT `db`.
---   * The `Reload` branch's `Db.query db` makes that branch SERVER (any effect ⇒
---     server), which puts the app on the P1/P3 SSR path (so the backend emits the
---     data-resolved settle + the `#sky-model` embed).
+--   * `update` is PURELY NAVIGATIONAL (a `Go` page switch) — there is NO server
+--     branch. This is the sky-lang.org content-site shape: a DB read at `init`,
+--     client-side navigation, and no RPC. SSR is emitted anyway because `init`'s
+--     command is a GET-safe read to settle (the `init_get_safe` arm of emit_ssr),
+--     so the backend settles + embeds even with an empty server set.
 --
 -- Built with `sky build --target web:app`: the backend SSRs the resolved rows +
 -- embeds `#sky-model`; the frontend compiles with NO reference to the `db` CAF.
@@ -56,8 +58,7 @@ type alias Model =
 
 
 type Msg
-    = Reload
-    | GotItems (Result Error (List (Dict String String)))
+    = GotItems (Result Error (List (Dict String String)))
 
 
 init : () -> ( Model, Cmd Msg )
@@ -67,12 +68,12 @@ init () =
     )
 
 
+-- No effect in any arm ⇒ NO server branch. Navigation between `/` and `/items`
+-- is by route (sky-nav sets `page`), not by an `update` message. The app is on
+-- the SSR path only because `init`'s command is a GET-safe read to settle.
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        Reload ->
-            ( model, Cmd.perform (Db.query db "SELECT name FROM items ORDER BY name" []) GotItems )
-
         GotItems (Ok rows) ->
             ( { model | items = List.map (\r -> Maybe.withDefault "" (Dict.get "name" r)) rows }, Cmd.none )
 

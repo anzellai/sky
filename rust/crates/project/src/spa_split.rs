@@ -1625,7 +1625,18 @@ fn gen_backend(
     // `init : () -> ( Model, Cmd Msg )` would miss the `File.readFile` in the body.
     let init_src = app_init_src(file, src);
     let init_get_safe = init_cmd_is_get_safe(&init_src);
-    let emit_ssr = !(server.is_empty() && !push_mode) && has_synth_view && has_synth_head;
+    // Emit the SSR route for a synthesised (`Std.App`) app when the backend has
+    // real per-request work to do: EITHER a server branch / push, OR a GET-safe
+    // `init` read to settle (the sky-lang.org content-site shape — a DB read at
+    // `init` with a purely-navigational `update` and therefore NO server branch).
+    // Without the `init_get_safe` arm that shape falls to a static-only backend
+    // (no SSR, no `#sky-model`), so the client-leg strip would compile but the
+    // client would boot to empty data. `has_synth_view && has_synth_head` scopes
+    // this to the synthesis output, whose `init`/`view` are plain TEA safe to run
+    // server-side (a hand-authored Sky.Spa client, whose `init`/`view` reference
+    // client-only `Std.Spa`, has no `spaView_`/`spaHead_` and keeps today's shell).
+    let emit_ssr =
+        (!(server.is_empty() && !push_mode) || init_get_safe) && has_synth_view && has_synth_head;
     if emit_ssr {
         add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
         add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
@@ -1654,7 +1665,14 @@ fn gen_backend(
     // (When there ARE server branches, `update` is reused by the RPC handlers and
     // — in a well-formed auto-split input — contains no `Std.Spa` references, so
     // it is copied verbatim as before.)
-    let static_only_backend = server.is_empty() && !push_mode;
+    //
+    // EXCEPTION to the exception: when SSR is emitted for a GET-safe `init` on a
+    // synthesised app with no server branch (`emit_ssr && server.is_empty()`), the
+    // backend DOES run app logic — the SSR handler settles `init` + renders
+    // `spaView_`/`spaHead_` — so it must copy those decls. `emit_ssr`'s
+    // `has_synth_view && has_synth_head` guard already restricts this to the
+    // synthesis output, whose decls carry no client-only `Std.Spa` reference.
+    let static_only_backend = server.is_empty() && !push_mode && !emit_ssr;
     let mut body = String::new();
     if !static_only_backend {
         for d in file.decls() {
