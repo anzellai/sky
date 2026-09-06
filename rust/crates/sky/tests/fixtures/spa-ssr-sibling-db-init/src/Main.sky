@@ -1,0 +1,70 @@
+module Main exposing (main)
+
+-- Sky.Spa auto-split INPUT for GAP-2: `init` is factored into the SIBLING module
+-- `Boot` and reads through the backend-only `db` CAF in `Conn`. The frontend
+-- init-command strip must resolve `init` through the import graph (not the entry
+-- source only) and rewrite its command to `Cmd.none`, dropping the now-dangling
+-- `Conn` (backend-only) + `Std.Db` (server-only) imports from `Boot`'s frontend
+-- copy — exactly as an ENTRY `init` is stripped. `withRoutes` carries page routes
+-- only (the mixed-with-`App.api` case is `spa-ssr-mixed-routes`).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import State exposing (..)
+import Boot exposing (init)
+import Routes
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigate page ->
+            ( { model | page = page }, Cmd.none )
+
+        GotItems (Ok rows) ->
+            ( { model | items = List.map (\r -> Maybe.withDefault "" (Dict.get "name" r)) rows }, Cmd.none )
+
+        GotItems (Err _) ->
+            ( { model | items = [] }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+
+        HomePage ->
+            Ui.column []
+                [ Ui.text "Welcome home"
+                , Ui.link [] { url = "/items", label = Ui.text "See items" }
+                ]
+
+        ItemsPage ->
+            Ui.column []
+                (Ui.text "Item list:" :: List.map (\i -> Ui.text i) model.items)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes Routes.routes
+        |> App.withNotFound Routes.notFound
+
+
+main =
+    App.run app

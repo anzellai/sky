@@ -1,0 +1,5 @@
+[project]
+name = "ssr-sibling-db-init"
+
+[app]
+target = "web:app"

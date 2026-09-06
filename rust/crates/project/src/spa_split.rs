@@ -845,14 +845,44 @@ pub fn generate(
     // `init` source for the curated GET-safe read decision. Scanning only the
     // entry (the old `app_init_src(file, src)`) missed a sibling `init`, so the
     // SSR settle was skipped and the first paint shipped an empty `#sky-model`.
-    let init_src = match spa_partition::find_config_field_def(&db, &check_ids, entry, "init") {
-        Some(init_def) => {
-            let imod = db.def_loc(init_def).map(|l| l.module).unwrap_or(entry);
-            let iparse = db.module_parse(imod);
-            let isrc = iparse.syntax().text().to_string();
-            app_init_src(&iparse.tree(), &isrc)
-        }
-        None => app_init_src(&file, &src),
+    let init_def = spa_partition::find_config_field_def(&db, &check_ids, entry, "init");
+    let init_mod = init_def
+        .and_then(|d| db.def_loc(d).map(|l| l.module))
+        .unwrap_or(entry);
+    let init_in_entry = init_mod == entry;
+    let init_src = {
+        let iparse = db.module_parse(init_mod);
+        let isrc = iparse.syntax().text().to_string();
+        app_init_src(&iparse.tree(), &isrc)
+    };
+
+    // ---- GAP-2: the frontend init-command strip is init-MODULE-aware ----
+    // The client keeps `init` but must NOT run its command when that command is a
+    // curated GET-safe read reaching a server-tainted binding the frontend drops
+    // (a `db` CAF): the server settles the read + embeds `#sky-model`, and the
+    // client boots from that blob. This decision was previously computed from the
+    // ENTRY source only (`gen_frontend`), so a sibling-module `init` (the
+    // sky-lang.org shape — `init` in `Boot`/`Model`, not the entry) was copied
+    // VERBATIM into the wasm frontend with its `Cmd.perform (Db.query db …)`,
+    // leaving `Undefined name: db` + the server-only `Db.query` kernel. Compute
+    // it here from the RESOLVED init module so a sibling init is stripped in its
+    // own module copy (below), exactly as an entry init is stripped in
+    // `gen_frontend`.
+    let strip_init_cmd = init_cmd_is_get_safe(&init_src)
+        && tainted_names.iter().any(|t| references_word(&init_src, t));
+    // `init`'s PURE model expr — the client SSR model decoder is derived from it
+    // (`Codec.fromJson (Codec.auto <model>)`). Read from whichever module
+    // declares `init`, so the decoder is emitted for a sibling init too.
+    let init_pure_model: Option<String> = if strip_init_cmd {
+        let iparse = db.module_parse(init_mod);
+        let isrc = iparse.syntax().text().to_string();
+        iparse
+            .tree()
+            .decls()
+            .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))
+            .and_then(|d| init_pure_model_expr(&isrc, &d))
+    } else {
+        None
     };
 
     // ---- write the three trees ----
@@ -887,6 +917,9 @@ pub fn generate(
         &update_anno,
         &model_ty,
         &backend_only_names,
+        strip_init_cmd,
+        init_in_entry,
+        init_pure_model.as_deref(),
     )?;
 
     let mut files: Vec<String> = Vec::new();
@@ -952,6 +985,16 @@ pub fn generate(
         write(&format!("backend/src/{rel}"), &text, &mut files)?;
         let frontend_text = if Some(*m) == msg_module {
             inject_applied_variants_into_module(&mparse.tree(), &text, &server)
+        } else if strip_init_cmd && !init_in_entry && *m == init_mod {
+            // GAP-2: the sibling that declares `init` reads through a
+            // backend-only `db` CAF. Copied verbatim it would leave
+            // `Undefined name: db` + the server-only `Db.query` kernel in the
+            // wasm frontend. Strip its command to `Cmd.none` (the server
+            // settles the read + embeds `#sky-model`) and drop the now-dangling
+            // server-only / backend-only imports — the same treatment an ENTRY
+            // `init` already gets in `gen_frontend`.
+            frontend_sibling_with_stripped_init(&text, &mparse.tree(), &backend_only_names)
+                .unwrap_or_else(|| text.clone())
         } else {
             text.clone()
         };
@@ -1558,6 +1601,105 @@ fn frontend_init_value_without_cmd(src: &str, init_val: &syntax::ast::Decl) -> O
     let mut out = slice(src, decl_node).to_string();
     out.replace_range(a..b, "Cmd.none");
     Some(out)
+}
+
+/// GAP-2: transform a SIBLING module's FRONTEND copy when that module declares
+/// the app's `init` and the init command must be stripped (a GET-safe read
+/// through a backend-only `db` CAF). Rewrites the `init` value decl's command to
+/// `Cmd.none` in place, then drops the imports that the strip leaves dangling —
+/// a backend-only PROJECT module (never present in the frontend tree) or a
+/// server-only module no longer referenced. Returns `None` if the module has no
+/// `init` value decl in the expected `( model, cmd )` shape (the caller then keeps
+/// the module verbatim so a genuine mismatch surfaces as a normal compile error).
+fn frontend_sibling_with_stripped_init(
+    msrc: &str,
+    mfile: &SourceFile,
+    backend_only: &HashSet<String>,
+) -> Option<String> {
+    let init_decl = mfile
+        .decls()
+        .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))?;
+    let rewritten = frontend_init_value_without_cmd(msrc, &init_decl)?;
+    let node = init_decl.syntax();
+    let a = u32::from(node.text_range().start()) as usize;
+    let b = u32::from(node.text_range().end()) as usize;
+    let mut out = String::with_capacity(msrc.len());
+    out.push_str(&msrc[..a]);
+    out.push_str(&rewritten);
+    out.push_str(&msrc[b..]);
+    Some(drop_dangling_sibling_imports(&out, backend_only))
+}
+
+/// Drop `import` lines that a sibling's init-strip leaves dangling: a backend-only
+/// PROJECT module (which is never emitted into the wasm frontend, so any import of
+/// it is `E1001`) always goes; a server-only module (`Std.Db`, `Sky.Core.File`, …)
+/// goes only when none of the names it binds (its alias + any `exposing (…)`
+/// names) is still referenced in the module's code after the strip. Mirrors the
+/// server-only import drop `gen_frontend` applies to the entry, but usage-gated so
+/// a legitimately-used server-only import (a pure sibling reading a literal path)
+/// is untouched.
+fn drop_dangling_sibling_imports(src: &str, backend_only: &HashSet<String>) -> String {
+    // The module's code with comments + import lines removed, so an import's own
+    // text does not count as a reference to itself.
+    let body: String = strip_sky_comments(src)
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("import "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut out = String::new();
+    for line in src.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("import ") {
+            let path = rest.split_whitespace().next().unwrap_or("");
+            if backend_only.contains(path) {
+                continue; // never exists in the frontend tree
+            }
+            if is_server_only_module(path) {
+                let names = import_referenceable_names(rest);
+                if !names.iter().any(|n| references_word(&body, n)) {
+                    continue; // unused after the strip
+                }
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// The names an `import` clause binds into scope: its alias (`import X.Y as A` → `A`,
+/// else the last path segment `Y`) plus every name in an `exposing (…)` list
+/// (`Foo(..)` → `Foo`). `rest` is the import text after the `import ` keyword.
+fn import_referenceable_names(rest: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let path = rest.split_whitespace().next().unwrap_or("");
+    // alias, else the last dotted segment.
+    let alias = rest
+        .split_whitespace()
+        .position(|t| t == "as")
+        .and_then(|i| rest.split_whitespace().nth(i + 1))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| path.rsplit('.').next().unwrap_or(path).to_string());
+    if !alias.is_empty() {
+        names.push(alias);
+    }
+    if let Some(open) = rest.find("exposing") {
+        if let Some(lp) = rest[open..].find('(') {
+            let after = &rest[open + lp + 1..];
+            if let Some(rp) = after.rfind(')') {
+                for tok in after[..rp].split(',') {
+                    let name: String = tok
+                        .trim()
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                        .collect();
+                    if !name.is_empty() {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+    }
+    names
 }
 
 /// Wire `|> Spa.withModelDecoder spaModelDecoder_` onto the config builder chain
@@ -2189,6 +2331,15 @@ fn gen_frontend(
     update_anno: &str,
     model_ty: &str,
     backend_only: &HashSet<String>,
+    // GAP-2: the init-command strip decision is resolved by the caller from
+    // init's DECLARING module (entry or sibling). `init_strip` is the strip
+    // decision, `init_in_entry` whether `init` is declared in the entry (only
+    // then does gen_frontend strip it here — a sibling init is stripped in its
+    // own module copy), and `init_pure_model` is init's pure model expr for the
+    // client SSR model decoder (Some iff `init_strip`).
+    init_strip: bool,
+    init_in_entry: bool,
+    init_pure_model: Option<&str>,
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -2214,9 +2365,12 @@ fn gen_frontend(
     // stays server-owned and the client tree compiles without `db`. Gated on BOTH
     // conditions so a portable-kernel init (`File.readFile "lit"`, referencing no
     // tainted binding) is left verbatim — no behaviour change for that case.
-    let init_src = app_init_src(file, src);
-    let strip_init_cmd =
-        init_cmd_is_get_safe(&init_src) && tainted.iter().any(|t| references_word(&init_src, t));
+    // The ENTRY init decl is stripped HERE only when `init` is declared in the
+    // entry; a sibling-module init is stripped in its own module copy (the caller's
+    // sibling-copy loop), so gen_frontend must not also try to strip a non-existent
+    // entry `init` decl. The strip decision itself (`init_strip`) is the caller's,
+    // computed from init's DECLARING module.
+    let strip_entry_init = init_strip && init_in_entry;
 
     // Client model DECODER (design §4.5, blocker #1/#2). When `init`'s command is
     // stripped, the client boots from the SSR-embedded `#sky-model` blob instead
@@ -2226,11 +2380,10 @@ fn gen_frontend(
     // so it is not server-tainted): `Codec.fromJson (Codec.auto <model>) json`.
     // Emitted into the frontend + wired onto the config's `main` here (not in the
     // App→Spa synthesis) so the decoder is never seen by the taint analysis as
-    // reaching `db`.
-    let decoder_blank = if strip_init_cmd {
-        file.decls()
-            .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))
-            .and_then(|d| init_pure_model_expr(src, &d))
+    // reaching `db`. The pure model expr comes from init's DECLARING module (entry
+    // or sibling), resolved by the caller, so a sibling init gets a decoder too.
+    let decoder_blank = if init_strip {
+        init_pure_model.map(|s| s.to_string())
     } else {
         None
     };
@@ -2271,7 +2424,7 @@ fn gen_frontend(
             (Some("update"), _) => {
                 // Regenerated below; skip both annotation + value.
             }
-            (Some("init"), DeclKind::Value) if strip_init_cmd => {
+            (Some("init"), DeclKind::Value) if strip_entry_init => {
                 // Strip `init`'s command to `Cmd.none` so the client tree compiles
                 // without the dropped `db` CAF (design §4.4/§4.5). The `init`
                 // annotation is unaffected and is copied verbatim by the catch-all.

@@ -1651,6 +1651,117 @@ fn ssr_db_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-db")
 }
 
+fn ssr_sibling_db_init_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-sibling-db-init")
+}
+
+/// GAP-2 (sibling-module init strip). The `db`-CAF SSR client-leg, but with
+/// `init` factored into the SIBLING module `Boot` (the sky-lang.org shape),
+/// resolved through the import graph — not the entry source. Before the fix the
+/// frontend init-command strip read the ENTRY only, so the sibling `Boot.init`
+/// was copied VERBATIM into the wasm frontend with its `Cmd.perform (Db.query db
+/// …)`, leaving `Undefined name: db` + the server-only `Db.query` kernel. The fix
+/// strips the sibling's init to `Cmd.none` in its frontend copy, drops the
+/// dangling `Conn` (backend-only) + `Std.Db` (server-only) imports, and still
+/// emits + wires the client model decoder from the sibling init's pure model.
+#[test]
+fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_sibling_db_init_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the sibling-db-init fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // ── The crux: the FRONTEND copy of the SIBLING `Boot` module is stripped to
+    // `Cmd.none` and carries no `db` / `Db.*` / backend-only-module reference.
+    // Holds without a Go toolchain (the `.sky` is generated before any go build). ──
+    let boot = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/src/Boot.sky"),
+    )
+    .unwrap_or_else(|_| panic!("generated frontend Boot.sky must exist:\n{log}"));
+    let boot_code = strip_line_comments(&boot);
+    assert!(
+        boot_code.contains("Cmd.none"),
+        "GAP-2: the sibling `Boot.init` must be stripped to `Cmd.none`:\n{boot}"
+    );
+    assert!(
+        !references_word_test(&boot_code, "db"),
+        "GAP-2: the frontend `Boot` must NOT reference the `db` CAF:\n{boot}"
+    );
+    for needle in ["Db.query", "import Std.Db", "import Conn"] {
+        assert!(
+            !boot_code.contains(needle),
+            "GAP-2: the frontend `Boot` must NOT contain `{needle}`:\n{boot}"
+        );
+    }
+
+    // The model DECODER is still emitted + wired (derived from the SIBLING init's
+    // pure model), so the client boots from `#sky-model` — symmetric with the
+    // backend embed.
+    let fe_main = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"),
+    )
+    .unwrap_or_else(|_| panic!("generated frontend Main.sky must exist:\n{log}"));
+    let fe_main_code = strip_line_comments(&fe_main);
+    assert!(
+        fe_main_code.contains("spaModelDecoder_ jsonStr_ =")
+            && fe_main_code.contains("Codec.fromJson (Codec.auto")
+            && fe_main_code.contains("|> Spa.withModelDecoder spaModelDecoder_")
+            && fe_main_code.contains("import Std.Codec"),
+        "GAP-2: the frontend must emit + wire a model decoder for the sibling init:\n{fe_main}"
+    );
+
+    // ── The BACKEND keeps the `db` CAF (in `Conn`) + settles the read. ──
+    let backend = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/backend/src/Conn.sky"),
+    )
+    .unwrap_or_else(|_| panic!("generated backend Conn.sky must exist:\n{log}"));
+    assert!(
+        backend.contains("db =") && backend.contains("Db.open"),
+        "GAP-2: the `db` CAF must remain in the BACKEND `Conn` module:\n{backend}"
+    );
+    let backend_main = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/backend/src/Main.sky"),
+    )
+    .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
+    assert!(
+        backend_main.contains("spaSsrSettle routed cmd0 update"),
+        "GAP-2: the sibling init must be resolved GET-safe → a data-resolve settle:\n{backend_main}"
+    );
+
+    // ── Go-gated e2e: the whole thing builds; the wasm frontend links with no
+    // `Db_*` kernel. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "GAP-2: --target web:app must build end-to-end:\n{log}"
+    );
+    let fe_go = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
+    )
+    .unwrap_or_default();
+    if !fe_go.is_empty() {
+        assert!(
+            !fe_go.contains("Db_query") && !fe_go.contains("Db_open"),
+            "GAP-2: the emitted wasm frontend Go must contain no Db_* kernel"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 fn have_sqlite3() -> bool {
     Command::new("sqlite3")
         .arg("--version")

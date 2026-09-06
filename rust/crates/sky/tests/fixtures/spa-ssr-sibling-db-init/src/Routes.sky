@@ -1,0 +1,20 @@
+module Routes exposing (routes, notFound)
+
+-- The PAGE route table, factored into a shared module (the sky-lang.org shape).
+-- These are `App.route` page routes only — the server `App.api` endpoints live
+-- in the entry's `apiRoutes`, and the entry composes them as
+-- `App.withRoutes (Routes.routes ++ apiRoutes)`.
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import State exposing (Page(..))
+
+
+routes : List any
+routes =
+    [ App.route "/" HomePage, App.route "/items" ItemsPage ]
+
+
+notFound : Page
+notFound =
+    HomePage
