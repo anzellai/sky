@@ -11,17 +11,29 @@ measurement lives in [`docs/perf/http-metadata-service-capacity.md`](../../docs/
 
 | Method + path | Behaviour |
 |---|---|
+| `GET /` | JSON banner — service name + endpoint pointers, no DB touch |
 | `GET /healthz` | `{"status":"ok"}` — no DB touch |
 | `GET /metadata/:key` | one row by primary key, or `404` |
 | `GET /metadata?limit=N` | first N rows, ordered by key (default 50) |
 
 ## Run
 
+This example **ships on SQLite** (`[database] driver = "sqlite"`, a single
+in-process file) so it runs anywhere with zero external setup — a bare
+`./sky-out/app` needs no cluster, bundle, or DSN. Because `Std.Db` is
+dialect-safe, the same app code runs against embedded PostgreSQL (the production
+tier) with a one-line config swap (`[database] embedded = true`); that is the
+configuration the [capacity baseline](../../docs/perf/http-metadata-service-capacity.md)
+was measured on.
+
 ```bash
-# embedded PostgreSQL 18.6 (sky run supervises a per-project cluster), binds :8137
+# SQLite (shipped default) — binds :8137
 sky run src/Main.sky
+# or the bare built binary, no sky run / no env needed:
+sky build src/Main.sky && ./sky-out/app
 
 # in another shell:
+curl -s http://127.0.0.1:8137/                 # JSON banner
 curl -s http://127.0.0.1:8137/healthz
 curl -s http://127.0.0.1:8137/metadata/svc-0042
 curl -s 'http://127.0.0.1:8137/metadata?limit=3'

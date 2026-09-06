@@ -40,7 +40,14 @@ main =
     Db.connect ()
         |> Task.andThen
                (\db ->
-                   setupSchema db |> Task.andThen (\_ -> seed db)
+                   -- Startup DB setup is best-effort: a transient DB hiccup
+                   -- must not crash the boot. If schema/seed fail, the server
+                   -- still starts (reads will surface the error per-request,
+                   -- and /healthz stays DB-free), so the process never exits
+                   -- on start.
+                   setupSchema db
+                       |> Task.andThen (\_ -> seed db)
+                       |> Task.onError (\_ -> Task.succeed ())
                        |> Task.andThen (\_ -> startServer db))
 
 
@@ -148,13 +155,23 @@ startServer db =
     in
         Server.listen
             servicePort
-            [ Server.get "/healthz" handleHealth
+            [ Server.get "/" handleRoot
+            , Server.get "/healthz" handleHealth
             , Server.get "/metadata" (handleList db)
             , Server.get "/metadata/:key" (handleGet db)
             ]
 
 
 -- ─── Handlers ────────────────────────────────────────────────────
+-- A small JSON banner at the root: names the service and points at the two
+-- data endpoints + the health check. No DB touch, so `curl /` always answers.
+handleRoot : Handler
+handleRoot _ =
+    Task.succeed
+        (Server.json
+            "{\"service\":\"metadata-service\",\"endpoints\":[\"/healthz\",\"/metadata?limit=N\",\"/metadata/:key\"]}")
+
+
 handleHealth : Handler
 handleHealth _ =
     Task.succeed (Server.json "{\"status\":\"ok\"}")

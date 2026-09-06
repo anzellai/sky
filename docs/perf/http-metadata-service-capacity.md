@@ -27,6 +27,35 @@ trial workload:
   memoised CAF shared across handlers.
 - A `metadata` table (PK on `key`) seeded with **500 rows** at startup.
 
+> **The example now SHIPS on SQLite; the PostgreSQL numbers below stand.**
+> `examples/65-metadata-service/sky.toml` ships `[database] driver = "sqlite"`
+> (a single in-process file, no cluster/bundle/DSN) so the example runs anywhere
+> — including CI's `build-run` gate, which starts the bare `./app` binary with
+> no `sky run`, no cluster, and no injected DSN (an `embedded = true` app exits
+> on start there, because it cannot reach a PostgreSQL cluster). Because
+> `Std.Db` is dialect-safe, this is a **one-line config swap** back to embedded
+> PostgreSQL (`[database] embedded = true`) with **no code change** — that
+> PostgreSQL configuration is the production target, and it is what every number
+> in the "The measurement" section below was measured on. The PostgreSQL figures
+> are real and were not re-run; they are not restated for SQLite.
+>
+> **A local SQLite data point for the shipped default** (same host as the run
+> below — Apple M1 Mac mini, Sky `48a6a4be`, closed-loop `load/loadgen.go`, 5 s
+> per level after a 1 s warm-up):
+>
+> | Endpoint | conc | req/s | p50 ms | p99 ms | err % |
+> |---|---|---|---|---|---|
+> | `GET /metadata/:key` (indexed single-row) | 8 | 5,695.7 | 1.38 | 2.31 | 0.00 |
+> | `GET /metadata/:key` (indexed single-row) | 64 | 5,686.2 | 8.29 | 45.72 | 0.00 |
+> | `GET /healthz` (server ceiling) | 64 | 38,613.1 | 1.23 | 6.75 | 0.00 |
+>
+> On this host the SQLite single-row read path lands in the same ~5.7k req/s
+> band as embedded PostgreSQL — the DB read, not HTTP/JSON, is the bound in both
+> (the `/healthz` framework ceiling is ~7× higher). Treat this as an
+> order-of-magnitude sanity point, not a substitute for the PostgreSQL sweep:
+> SQLite is single-writer and single-file, so it does not carry the production
+> tier's concurrency or multi-instance story.
+
 | Endpoint | Read | Verified |
 |---|---|---|
 | `GET /healthz` | none (server ceiling) | `200 {"status":"ok"}` |

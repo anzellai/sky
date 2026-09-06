@@ -7,9 +7,15 @@ root = "src"
 
 # A stateless JSON metadata service, read-backed by Std.Db. This is the shape
 # of the internal "core-metadata" trial workload: no Sky.Live, no SSE, no
-# sessions — just HTTP → SQL read → JSON. Postgres is the production tier, so
-# it runs on the repo's embedded PostgreSQL: `sky run` supervises a per-project
-# cluster and injects the DSN (docs/skydb/embedded-postgres.md). The app never
-# learns which tier it is in — it just calls `Db.connect ()`.
+# sessions — just HTTP → SQL read → JSON.
+#
+# The example SHIPS on SQLite (in-process, single-file, zero external setup) so
+# it runs anywhere — including CI's build-run gate, which starts the bare
+# `./app` binary with no `sky run`, no cluster, and no DSN. Because `Std.Db` is
+# dialect-safe, the exact same app code runs against embedded PostgreSQL (the
+# production tier) with a one-line config swap (`embedded = true`); that is the
+# configuration the load baseline in
+# docs/perf/http-metadata-service-capacity.md was measured on.
 [database]
-embedded = true
+driver = "sqlite"
+path = "metadata.db"

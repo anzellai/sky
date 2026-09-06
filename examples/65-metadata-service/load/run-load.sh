@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # run-load.sh — drive the metadata-service load harness.
 #
-# Assumes the app is already running (sky run src/Main.sky from the project dir,
-# embedded PostgreSQL). Sweeps concurrency levels against the two read paths and
+# Assumes the app is already running (sky run src/Main.sky from the project dir;
+# SQLite by default, or embedded PostgreSQL for the production-tier baseline).
+# Sweeps concurrency levels against the two read paths and
 # prints throughput / p50 / p90 / p99 / error% per level.
 #
 #   ./load/run-load.sh                       # default sweep, localhost:8137
