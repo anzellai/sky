@@ -93,6 +93,94 @@ func TestSpaHydratable_divergenceDeepInTreeIsCaught(t0 *testing.T) {
 	}
 }
 
+// ── SSR client-leg: the JSON blob → typed model decode (design §4.5) ──
+//
+// The wasm boot path (spaBootFromSSRModel) reads the `#sky-model` blob from the
+// DOM (js-only) and hands it to the PORTABLE spaDecodeModelBlob, which applies
+// the app's model decoder (`Spa_withModelDecoder`) and extracts the Ok model.
+// These tests exercise that portable core without a browser: a fake decoder
+// closure stands in for the synthesised `\s -> Codec.fromJson (Codec.auto blank)`
+// so the round-trip (blob → typed model, and the fall-back paths) is host-tested.
+
+// A typed model shape standing in for the app's Main_Model_R — the decode must
+// return THIS Go type (not a map[string]any) so the reflect-free adapters' hard
+// `a0.(modelR)` assertion holds.
+type ssrTestModel struct {
+	Page  string
+	Items []string
+}
+
+func TestSpaDecodeModelBlob_returnsTypedModelOnOk(t0 *testing.T) {
+	want := ssrTestModel{Page: "ItemsPage", Items: []string{"Alpha", "Beta"}}
+	// A decoder that parses the blob and returns Ok(typed model), like the
+	// synthesised `Codec.fromJson (Codec.auto blank)` does.
+	decoder := func(blob any) any {
+		if s, ok := blob.(string); ok && strings.Contains(s, "ItemsPage") {
+			return Ok[SkyADT, any](want)
+		}
+		return Err[SkyADT, any](SkyADT{SkyName: "Error"})
+	}
+	got, ok := spaDecodeModelBlob(`{"page":"ItemsPage","items":["Alpha","Beta"]}`, decoder)
+	if !ok {
+		t0.Fatalf("a decoder returning Ok must yield (model, true)")
+	}
+	m, isTyped := got.(ssrTestModel)
+	if !isTyped {
+		t0.Fatalf("decode must return the TYPED model, got %T", got)
+	}
+	if m.Page != "ItemsPage" || len(m.Items) != 2 || m.Items[0] != "Alpha" {
+		t0.Fatalf("decoded model mismatch: %+v", m)
+	}
+}
+
+func TestSpaDecodeModelBlob_fallsBackOnErr(t0 *testing.T) {
+	decoder := func(any) any { return Err[SkyADT, any](SkyADT{SkyName: "Error"}) }
+	if _, ok := spaDecodeModelBlob(`{"bad":true}`, decoder); ok {
+		t0.Fatalf("a decoder returning Err must yield ok=false (fall back to init)")
+	}
+}
+
+func TestSpaDecodeModelBlob_noDecoderOrEmptyBlob(t0 *testing.T) {
+	called := false
+	decoder := func(any) any { called = true; return Ok[SkyADT, any](ssrTestModel{}) }
+	// Empty / whitespace blob → no decode attempted.
+	if _, ok := spaDecodeModelBlob("   ", decoder); ok {
+		t0.Fatalf("an empty blob must yield ok=false")
+	}
+	if called {
+		t0.Fatalf("the decoder must not run on an empty blob")
+	}
+	// Nil decoder (no Spa_withModelDecoder wired) → no decode.
+	if _, ok := spaDecodeModelBlob(`{"page":"Home"}`, nil); ok {
+		t0.Fatalf("a nil decoder must yield ok=false")
+	}
+}
+
+func TestSpaResultOk_tagsAndReflectionFallback(t0 *testing.T) {
+	// Concrete SkyResult[any,any].
+	if v, ok := spaResultOk(Ok[any, any]("x")); !ok || v.(string) != "x" {
+		t0.Fatalf("Ok[any,any] must extract its value")
+	}
+	if _, ok := spaResultOk(Err[any, any]("boom")); ok {
+		t0.Fatalf("Err[any,any] must report not-ok")
+	}
+	// The decoder's real erased shape: SkyResult[SkyADT, any].
+	if v, ok := spaResultOk(Ok[SkyADT, any](42)); !ok || v.(int) != 42 {
+		t0.Fatalf("Ok[SkyADT,any] must extract its value")
+	}
+	// Reflection fallback for any other E/A instantiation.
+	if v, ok := spaResultOk(SkyResult[string, int]{Tag: 0, OkValue: 7}); !ok || v.(int) != 7 {
+		t0.Fatalf("reflection fallback must extract Ok of an arbitrary SkyResult[E,A]")
+	}
+	if _, ok := spaResultOk(SkyResult[string, int]{Tag: 1, ErrValue: "e"}); ok {
+		t0.Fatalf("reflection fallback must report not-ok for an Err")
+	}
+	// A non-Result value is never Ok.
+	if _, ok := spaResultOk("not a result"); ok {
+		t0.Fatalf("a non-Result value must report not-ok")
+	}
+}
+
 func TestSpaSSRPage_servesRealBodyHeadModelNotEmptyDiv(t0 *testing.T) {
 	body := `<h1 sky-id="r.0#h1">Welcome</h1>`
 	head := `<title>Welcome — My Site</title><meta name="description" content="hi">`

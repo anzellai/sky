@@ -153,6 +153,15 @@ func Spa_withOnNavigate(fn, cfg any) any { return spaCfgSet(cfg, "OnNavigate", f
 // GET). Stored on the config map so it survives the withX builder chain.
 func Spa_withHead(fn, cfg any) any { return spaCfgSet(cfg, "Head", fn) }
 
+// Spa_withModelDecoder stores the `String -> Result Error model` decoder under
+// "ModelDecoder". The wasm client applies it to the SSR-embedded `#sky-model`
+// JSON blob to reconstruct the TYPED initial model (design §4.5), booting from
+// the server-resolved data instead of re-running the effectful `init`. The
+// server IGNORES it (it embeds via Codec.toJson; the decode is a client concern),
+// exactly as `Head` is a server concern the client ignores. Stored on the config
+// map so it survives the withX builder chain.
+func Spa_withModelDecoder(fn, cfg any) any { return spaCfgSet(cfg, "ModelDecoder", fn) }
+
 // ── Route matching (portable pure helpers) ──────────────────────────
 //
 // Reimplements Sky.Live's matchRoute / splitPath algorithm (live.go:1600-1624)

@@ -122,6 +122,20 @@ func spaRun(cfg any) any {
 	spaModel = pair.V0
 	cmd0 := pair.V1
 
+	// SSR client-leg (design §4.5): when the mount was server-rendered
+	// (`data-sky-ssr`) AND an embedded `#sky-model` blob is present, DECODE it
+	// into the typed model and boot from THAT — the server already resolved the
+	// GET-safe first-paint read, so the client must NOT re-run `init`'s command
+	// (which, for a DB-backed init, is not even present in the client tree — its
+	// `db` CAF is backend-only). Priming from the blob uses the app's model
+	// decoder (Spa_withModelDecoder) so the value has the exact Go shape the
+	// reflect-free adapters assert. Absent the marker/blob/decoder (a pure CDN
+	// deploy, or an app with no SSR), keep today's behaviour: run init's cmd0.
+	if ssrModel, ok := spaBootFromSSRModel(doc, spaRoot, Field(cfg, "ModelDecoder")); ok {
+		spaModel = ssrModel
+		cmd0 = nil // server settled the first-paint read; do not re-fire it
+	}
+
 	// Deep-link: resolve the initial URL and set the model's Page BEFORE the
 	// first paint, so a load straight onto /about renders About. Only when the
 	// app registered routes.
@@ -142,6 +156,32 @@ func spaRun(cfg any) any {
 	}
 
 	select {} // keep the Go runtime alive to service events
+}
+
+// spaBootFromSSRModel reads the SSR-embedded initial model and decodes it into
+// the typed model (design §4.5, the client-leg boot path). It returns
+// (model, true) only when ALL of: the mount carries the `data-sky-ssr` marker,
+// a `#sky-model` script element with non-empty JSON text is present, a model
+// decoder was wired (Spa_withModelDecoder), and the decode succeeds. The DOM
+// reads live here (js-only); the JSON→typed-model decode is the portable
+// spaDecodeModelBlob, so the round-trip is host-testable without a browser.
+func spaBootFromSSRModel(doc, mount js.Value, decoder any) (any, bool) {
+	if decoder == nil || !mount.Truthy() {
+		return nil, false
+	}
+	// The mount must carry the SSR marker the backend stamps on `#app`.
+	if !spaHasAttr(mount, spaSSRMarker) {
+		return nil, false
+	}
+	el := doc.Call("getElementById", "sky-model")
+	if !el.Truthy() {
+		return nil, false
+	}
+	txt := el.Get("textContent")
+	if txt.Type() != js.TypeString {
+		return nil, false
+	}
+	return spaDecodeModelBlob(txt.String(), decoder)
 }
 
 // spaCurrentPath reads location.pathname, defaulting to "/".

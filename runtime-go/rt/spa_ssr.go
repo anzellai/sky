@@ -19,7 +19,10 @@ package rt
 //     model, wasm loader) that the SSR backend route serves in place of the
 //     empty-#app static shell.
 
-import "strings"
+import (
+	"reflect"
+	"strings"
+)
 
 // spaSSRMarker is the attribute the SSR backend stamps on the mount so the wasm
 // boot path knows the HTML was server-rendered and takes the hydrate branch
@@ -79,6 +82,53 @@ func spaHydratableVNode(n VNode) (bool, string) {
 		}
 	}
 	return true, ""
+}
+
+// spaDecodeModelBlob turns the SSR-embedded `#sky-model` JSON blob back into the
+// TYPED initial model by applying the app's model DECODER (design §4.5). The
+// decoder is the Sky closure `\s -> Codec.fromJson (Codec.auto blank) s` the
+// auto-split wires onto `Spa.config` (`Spa_withModelDecoder`, stored under
+// "ModelDecoder"); applying it reconstructs a value of the SAME Go shape the
+// backend embedded, which is exactly what the reflect-free client adapters
+// assert (`a0.(Main_Model_R)`) — so priming `spaModel` from it never trips the
+// hard type assertions a generic `map[string]any` prime would.
+//
+// Portable (no build tag) so a host Go test can exercise the JSON→typed-model
+// round-trip without a browser. Returns (model, true) only on a decode Ok; a nil
+// decoder, an empty blob, or a decode Err returns (nil, false) so the caller
+// falls back to running `init` — never a wrong/partial prime.
+func spaDecodeModelBlob(blob string, decoder any) (any, bool) {
+	if decoder == nil || strings.TrimSpace(blob) == "" {
+		return nil, false
+	}
+	return spaResultOk(sky_call(decoder, blob))
+}
+
+// spaResultOk extracts the Ok value of a Sky `Result` produced by a `sky_call`.
+// The decoder is typed `String -> Result Error a`, so its erased return is a
+// `SkyResult[SkyADT, any]` (Error erases to SkyADT) or a `SkyResult[any, any]`;
+// a reflection fallback handles any other `E`/`A` instantiation so the extractor
+// is not coupled to one monomorphisation. Returns (OkValue, true) when the tag
+// is Ok (0); (nil, false) for an Err or an unrecognised value.
+func spaResultOk(r any) (any, bool) {
+	switch v := r.(type) {
+	case SkyResult[any, any]:
+		return v.OkValue, v.Tag == 0
+	case SkyResult[SkyADT, any]:
+		return v.OkValue, v.Tag == 0
+	case nil:
+		return nil, false
+	}
+	// Reflection fallback: read the {Tag, OkValue} fields of any SkyResult[E,A].
+	rv := reflect.ValueOf(r)
+	if rv.Kind() == reflect.Struct {
+		tag := rv.FieldByName("Tag")
+		ok := rv.FieldByName("OkValue")
+		if tag.IsValid() && ok.IsValid() && tag.Kind() == reflect.Int {
+			return ok.Interface(), tag.Int() == 0
+		}
+	}
+	return nil, false
 }
 
 // SpaSSRPage assembles the first-paint HTML document served by the SSR backend

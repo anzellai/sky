@@ -1440,11 +1440,62 @@ fn is_ident_byte(b: u8) -> bool {
 /// (possibly through a `let … in`); the caller then keeps it verbatim so a genuine
 /// mismatch surfaces as a normal compile error rather than a silent wrong strip.
 fn frontend_init_value_without_cmd(src: &str, init_val: &syntax::ast::Decl) -> Option<String> {
+    let (_model, cmd) = init_return_tuple(init_val)?;
+    let cmd_node = cmd.syntax();
+    let decl_node = init_val.syntax();
+    let decl_start = u32::from(decl_node.text_range().start()) as usize;
+    let a = u32::from(cmd_node.text_range().start()) as usize - decl_start;
+    let b = u32::from(cmd_node.text_range().end()) as usize - decl_start;
+    let mut out = slice(src, decl_node).to_string();
+    out.replace_range(a..b, "Cmd.none");
+    Some(out)
+}
+
+/// Wire `|> Spa.withModelDecoder spaModelDecoder_` onto the config builder chain
+/// in `main` (the synthesised `main = Spa.app (Spa.config {…} |> Spa.with… )`).
+/// Inserts the builder as its own line, indented to match the chain, immediately
+/// before the line that closes the `Spa.app` argument. Idempotent; a `main` with
+/// no closing paren is returned unchanged (the decoder binding then stays unused,
+/// never a compile break).
+fn inject_model_decoder_into_main(main_text: &str) -> String {
+    if main_text.contains("Spa.withModelDecoder") {
+        return main_text.to_string();
+    }
+    // The builder chain lives in the VALUE decl (`main = Spa.app (Spa.config …)`),
+    // never the type annotation (`main : Task Error ()`, whose `()` would
+    // otherwise catch `rfind(')')`). Only inject into the decl that builds the app.
+    if !main_text.contains("Spa.app") && !main_text.contains("Spa.config") {
+        return main_text.to_string();
+    }
+    let close = match main_text.rfind(')') {
+        Some(i) => i,
+        None => return main_text.to_string(),
+    };
+    // Start of the line that holds the closing paren.
+    let line_start = main_text[..close].rfind('\n').map(|n| n + 1).unwrap_or(0);
+    let mut out = main_text.to_string();
+    out.insert_str(line_start, "            |> Spa.withModelDecoder spaModelDecoder_\n");
+    out
+}
+
+/// The pure MODEL expression of `init` (the first element of its returned
+/// `( model, cmd )` tuple), as source text. Used to derive the SSR model DECODER
+/// blank client-side: `Codec.fromJson (Codec.auto <model>) json` (design §4.5).
+/// The model expression is pure (no `db` reference in the standard shape), so the
+/// derived decoder is NOT server-tainted and survives into the frontend tree.
+fn init_pure_model_expr(src: &str, init_val: &syntax::ast::Decl) -> Option<String> {
+    let (model, _cmd) = init_return_tuple(init_val)?;
+    Some(slice(src, model.syntax()).to_string())
+}
+
+/// Drill `init`'s value body (through any `let … in`) to its returning
+/// `( model, cmd )` tuple and return the two element exprs. `None` when the body
+/// is not a 2-tuple.
+fn init_return_tuple(init_val: &syntax::ast::Decl) -> Option<(syntax::ast::Expr, syntax::ast::Expr)> {
     let vd = match init_val {
         syntax::ast::Decl::Value(v) => v,
         _ => return None,
     };
-    // Drill through `let … in` to the returning expression.
     let mut ret = vd.body()?;
     while let syntax::ast::Expr::Let(l) = ret {
         ret = l.body()?;
@@ -1453,22 +1504,16 @@ fn frontend_init_value_without_cmd(src: &str, init_val: &syntax::ast::Decl) -> O
         syntax::ast::Expr::Tuple(t) => t,
         _ => return None,
     };
-    let elems: Vec<syntax::ast::Expr> = tuple
+    let mut elems = tuple
         .syntax()
         .children()
-        .filter_map(syntax::ast::Expr::cast)
-        .collect();
-    if elems.len() != 2 {
-        return None;
+        .filter_map(syntax::ast::Expr::cast);
+    let model = elems.next()?;
+    let cmd = elems.next()?;
+    if elems.next().is_some() {
+        return None; // not a 2-tuple
     }
-    let cmd_node = elems[1].syntax();
-    let decl_node = init_val.syntax();
-    let decl_start = u32::from(decl_node.text_range().start()) as usize;
-    let a = u32::from(cmd_node.text_range().start()) as usize - decl_start;
-    let b = u32::from(cmd_node.text_range().end()) as usize - decl_start;
-    let mut out = slice(src, decl_node).to_string();
-    out.replace_range(a..b, "Cmd.none");
-    Some(out)
+    Some((model, cmd))
 }
 
 /// Extract the literal route PATTERN strings from a synthesised `spaRoutes_`
@@ -1961,6 +2006,26 @@ fn gen_frontend(
     let strip_init_cmd =
         init_cmd_is_get_safe(&init_src) && tainted.iter().any(|t| references_word(&init_src, t));
 
+    // Client model DECODER (design §4.5, blocker #1/#2). When `init`'s command is
+    // stripped, the client boots from the SSR-embedded `#sky-model` blob instead
+    // of re-running `init` — so it needs a `String -> Result Error model` decoder
+    // symmetric with the backend's `Codec.toJson (Codec.auto model)` embed. Derive
+    // it CLIENT-SIDE from `init`'s PURE model expression (which references no `db`,
+    // so it is not server-tainted): `Codec.fromJson (Codec.auto <model>) json`.
+    // Emitted into the frontend + wired onto the config's `main` here (not in the
+    // App→Spa synthesis) so the decoder is never seen by the taint analysis as
+    // reaching `db`.
+    let decoder_blank = if strip_init_cmd {
+        file.decls()
+            .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))
+            .and_then(|d| init_pure_model_expr(src, &d))
+    } else {
+        None
+    };
+    if decoder_blank.is_some() && !has_module(imports, "Std.Codec") {
+        import_lines.push("import Std.Codec as Codec".to_string());
+    }
+
     // Decls: handle by name/kind.
     let mut body = String::new();
     for d in file.decls() {
@@ -1979,8 +2044,16 @@ fn gen_frontend(
         }
         match (name, decl_kind(&d)) {
             (Some("main"), _) => {
-                // Keep `main = Spa.app …` verbatim.
-                body.push_str(slice(src, d.syntax()).trim_end());
+                // Keep `main = Spa.app …` verbatim — but when a client model
+                // decoder is emitted, wire it onto the config builder chain so the
+                // driver can boot from `#sky-model` (design §4.5).
+                let main_text = slice(src, d.syntax());
+                let main_text = if decoder_blank.is_some() {
+                    inject_model_decoder_into_main(main_text)
+                } else {
+                    main_text.to_string()
+                };
+                body.push_str(main_text.trim_end());
                 body.push_str("\n\n\n");
             }
             (Some("update"), _) => {
@@ -2020,6 +2093,19 @@ fn gen_frontend(
                 body.push_str("\n\n\n");
             }
         }
+    }
+
+    // The client model decoder (design §4.5) — symmetric with the backend embed.
+    // `Codec.auto` derives the codec from the model's TYPE, so a blank with empty
+    // collections / a default ADT ctor decodes populated JSON correctly (verified
+    // host-side); an unencodable field degrades the decode to Err at runtime (the
+    // driver then falls back to `init`), it never breaks the build.
+    if let Some(model) = &decoder_blank {
+        body.push_str(&format!(
+            "spaModelDecoder_ : String -> Result Error {model_ty}\n\
+             spaModelDecoder_ jsonStr_ =\n    \
+             Codec.fromJson (Codec.auto ({model})) jsonStr_\n\n\n"
+        ));
     }
 
     // The regenerated update.

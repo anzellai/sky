@@ -1708,6 +1708,15 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
         frontend_code.contains("init () =") && frontend_code.contains("Cmd.none"),
         "SSR client-leg: the frontend `init` must be stripped to `Cmd.none`:\n{frontend}"
     );
+    // The model DECODER (blocker #1/#2) is emitted + wired onto the config, so the
+    // client can boot from `#sky-model` — symmetric with the backend embed.
+    assert!(
+        frontend_code.contains("spaModelDecoder_ jsonStr_ =")
+            && frontend_code.contains("Codec.fromJson (Codec.auto")
+            && frontend_code.contains("|> Spa.withModelDecoder spaModelDecoder_")
+            && frontend_code.contains("import Std.Codec"),
+        "SSR client-leg: the frontend must emit + wire a model decoder:\n{frontend}"
+    );
 
     // ── The BACKEND still resolves + settles the read + embeds the model. ──
     let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))

@@ -82,6 +82,7 @@ module Std.Spa exposing
     , withNotFound
     , withOnNavigate
     , withHead
+    , withModelDecoder
     , getJson
     , postJson
     )
@@ -207,6 +208,21 @@ withOnNavigate =
 withHead : (model -> List (Html msg)) -> AppConfig model msg -> AppConfig model msg
 withHead =
     Ffi.kernel "Spa_withHead"
+
+
+-- | Set the model DECODER — `decode json` turns the SSR-embedded `#sky-model`
+-- JSON blob (the string the backend wrote with `Codec.toJson (Codec.auto model)`)
+-- back into the TYPED initial model, so the wasm client boots from the
+-- server-resolved data instead of re-running the effectful `init` (design §4.5).
+-- Symmetric with the backend embed: `\s -> Codec.fromJson (Codec.auto blank) s`.
+-- The auto-split synthesises this from the app's `init` when the SSR backend
+-- settles a GET-safe read; a hand-authored Sky.Spa app can set it directly to
+-- hydrate from an embedded model. The client uses it ONLY when the mount carries
+-- `data-sky-ssr` and a `#sky-model` blob is present; otherwise `init` runs as
+-- usual.
+withModelDecoder : (String -> Result Error model) -> AppConfig model msg -> AppConfig model msg
+withModelDecoder =
+    Ffi.kernel "Spa_withModelDecoder"
 
 
 -- | `getJson codec url toMsg` — GET `url` from the stateless backend and decode
