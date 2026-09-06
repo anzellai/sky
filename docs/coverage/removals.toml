@@ -224,3 +224,423 @@ cannot tell a design-doc/RFC/meta reference or a user-convention from a real \
 runtime setting."""
 owner  = "anzel"
 commit = "pending-merge"
+
+[[removal]]
+symbol = "Std.Ui.rowMarker"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.colMarker"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.wrapMarker"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.gridMarker"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.paragraphMarker"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.textColumnMarker"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.renderElement"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.pickSemanticTag"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.defaultTagIn"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.tagForDescription"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.renderNodeAs"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.propagateFillToContainer"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.anyChildMainAxisFill"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.elementHasMainAxisFill"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.attrsHaveMainAxisFill"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.isHeightFillAttr"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.isWidthFillAttr"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.isFillLength"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.hasExplicitWidth"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.hasExplicitHeight"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.isWidthAttr"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.isHeightAttr"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.collectNearby"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.toNearbyPair"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.renderNearby"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.locationCss"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.dispatchTag"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.collectHtmlAttrs"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.toAttrAttribute"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.ariaForDescription"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.kernelAttr"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.noMarkerFlags"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.markerFlags"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.markerFlagStep"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.layoutContextFromFlags"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.layoutContextFor"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.hasMarker"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.isMarker"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.buildStyleString"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.buildStyleStringWith"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.findGridMin"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.findGridTemplate"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.findGridTracksRaw"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.takeBeforePipe"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.takeAfterPipe"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.joinWithPipe"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.displayIn"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.gridDisplayIn"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.displayFor"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.collectStyle"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.widthCssIn"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.widthFillFor"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.heightCssIn"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.heightFillFor"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.widthCss"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.heightCss"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.alignXCss"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.alignYCss"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.alignSelfX"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.alignSelfY"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.pickTransitionShorthand"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.isTransitionOptOut"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.pickAnimation"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.encodeAnimations"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.encodeAnimationEntry"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.pseudoRuleEntry"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.encodeOneEntry"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.mediaQueryRulesCss"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.LayoutContext"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.MarkerFlags"
+reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
+owner  = "anzel"
+commit = "b1-curate-ui-css (pending squash)"
