@@ -2,9 +2,13 @@
 
 [sky-lang.org](https://sky-lang.org) · [Docs & tour](https://anzellai.github.io/sky/) · [Examples](examples/)
 
-> **Status: v0.23.x** — public APIs are stable for the
-> v1.0 line; minor versions ship features additively. Internals can
-> still change between minor versions. The compiler is written in
+> **Status: v0.23.x — pre-1.0 (0.x).** Sky is on its way to v1 and the API is
+> not frozen yet: a minor version **may include breaking changes**, each
+> documented under a **`⚠ Breaking`** heading in
+> [CHANGELOG.md](CHANGELOG.md) with a concrete migration and surfaced on `sky
+> upgrade`. Pin your version and read the notes before moving a minor — see
+> [VERSIONING.md](VERSIONING.md) for the full stability + deprecation policy.
+> The compiler is written in
 > Rust (cargo workspace at `rust/`) — the typed-Go output and the
 > "if it compiles, it works" guarantee carry over unchanged. The
 > retired Haskell compiler stays under `legacy-haskell-compiler/` as
