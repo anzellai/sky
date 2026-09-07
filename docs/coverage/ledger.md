@@ -34,8 +34,8 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 9.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 731 | 39.5% |
-| symbols unreferenced under the generous rule | 646 | 34.9% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 718 | 38.8% |
+| symbols unreferenced under the generous rule | 633 | 34.2% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -208,7 +208,7 @@ None.
 | `stdlib.Std.Css` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Csv` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Db.Decode` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Db.Decode` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db.Migrate` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Db.Schema` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db.Store` | stdlib | Asserted | Falsified | stronger |

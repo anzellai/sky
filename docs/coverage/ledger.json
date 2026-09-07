@@ -263,7 +263,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1138,
+      "expected_assertions": 1154,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -8331,20 +8331,30 @@
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
+        "class": "Asserted",
         "evidence": [
           {
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
-        "strength": 0
+        "strength": 3
       },
       "description": "the Std.Db.Decode public API",
       "id": "stdlib.Std.Db.Decode",
@@ -12074,9 +12084,8 @@
           ]
         },
         "Sky.Core.List": {
-          "count": 2,
+          "count": 1,
           "symbols": [
-            "sort",
             "sortWith"
           ]
         },
@@ -12440,23 +12449,6 @@
             "vw",
             "whiteSpace",
             "wordBreak"
-          ]
-        },
-        "Std.Db": {
-          "count": 12,
-          "symbols": [
-            "defaultMigration",
-            "deleteById",
-            "findByConditions",
-            "findManyByField",
-            "getByIdDecode",
-            "insertFields",
-            "insertFieldsReturning",
-            "unsafeFindWhere",
-            "updateById",
-            "updateFields",
-            "withSql",
-            "withTransaction"
           ]
         },
         "Std.Db.Decode": {
@@ -12967,8 +12959,8 @@
           ]
         }
       },
-      "count": 646,
-      "pct_of_denominator": 34.9
+      "count": 633,
+      "pct_of_denominator": 34.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13088,9 +13080,8 @@
           ]
         },
         "Sky.Core.List": {
-          "count": 2,
+          "count": 1,
           "symbols": [
-            "sort",
             "sortWith"
           ]
         },
@@ -13472,23 +13463,6 @@
             "whiteSpace",
             "wordBreak",
             "zIndex"
-          ]
-        },
-        "Std.Db": {
-          "count": 12,
-          "symbols": [
-            "defaultMigration",
-            "deleteById",
-            "findByConditions",
-            "findManyByField",
-            "getByIdDecode",
-            "insertFields",
-            "insertFieldsReturning",
-            "unsafeFindWhere",
-            "updateById",
-            "updateFields",
-            "withSql",
-            "withTransaction"
           ]
         },
         "Std.Db.Decode": {
@@ -14059,8 +14033,8 @@
           ]
         }
       },
-      "count": 731,
-      "pct_of_denominator": 39.5
+      "count": 718,
+      "pct_of_denominator": 38.8
     }
   },
   "units": [
@@ -15203,12 +15177,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 37,
+      "modules_imported": 38,
       "path": "tests/conformance",
-      "refs_generous": 490,
-      "refs_qualified": 479,
+      "refs_generous": 512,
+      "refs_qualified": 501,
       "role": "Conformance",
-      "sky_files": 29,
+      "sky_files": 30,
       "sky_toml_sections": []
     }
   ]

@@ -1,0 +1,407 @@
+module StdDbLifecycleConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for the Std.Db effectful LIFECYCLE surface, against
+an in-process sqlite DB. Complements StdDbCoverageTest (pure SqlValue/SqlField
+constructors + row accessors) by exercising the DB-touching kernels that a real
+app drives: schema migration, the DEFAULT-omittable INSERT family, id/decoder
+reads, PATCH updates, deletes, the parameterised finders, the raw-WHERE escape
+hatch, and transaction commit/rollback. Every case asserts a documented
+semantic against real rows. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
+import Std.Db as Db
+import Std.Db.Decode as Decode
+import Sky.Test as Test exposing (Test)
+
+type alias Item =
+    { id : Int
+    , name : String
+    , qty : Int
+    , status : String
+    }
+
+
+schemaMigration : Db.Migration
+schemaMigration =
+    Db.defaultMigration "0001_db_items"
+        |> Db.withSql
+               ("CREATE TABLE db_items "
+                   ++ "( id INTEGER PRIMARY KEY AUTOINCREMENT"
+                   ++ ", name TEXT NOT NULL"
+                   ++ ", qty INTEGER NOT NULL"
+                   ++ ", status TEXT NOT NULL DEFAULT 'pending' )")
+
+
+itemDecoder : Decode.Decoder Item
+itemDecoder =
+    Decode.succeed (\i n q s -> { id = i, name = n, qty = q, status = s })
+        |> Decode.andMap (Decode.int "id")
+        |> Decode.andMap (Decode.string "name")
+        |> Decode.andMap (Decode.int "qty")
+        |> Decode.andMap (Decode.string "status")
+
+
+returnDecoder : Decode.Decoder { id : Int
+, name : String
+}
+returnDecoder =
+    Decode.map2
+        (\i n -> { id = i, name = n })
+        (Decode.int "id")
+        (Decode.string "name")
+
+
+setup : () -> Result Error Db
+setup _ =
+    case Task.run (Db.open "sqlite" "/tmp/sky-stddb-lifecycle-conformance.db") of
+
+        Err e ->
+            Err e
+
+        Ok db ->
+            let
+                _ = Task.run (Db.execRaw db "DROP TABLE IF EXISTS db_items")
+                _ =
+                    Task.run
+                        (Db.execRaw db "DROP TABLE IF EXISTS _sky_migrations")
+            in
+                Ok db
+
+
+-- Read one TEXT column of a row fetched by (string) id, or a sentinel.
+rowText : Db -> String -> String -> String
+rowText db rowId col =
+    case Result.withDefault Nothing (Task.run (Db.getById db "db_items" rowId)) of
+
+        Just row ->
+            Db.getString col row
+
+        Nothing ->
+            "MISSING"
+
+
+rowInt : Db -> String -> String -> Int
+rowInt db rowId col =
+    case Result.withDefault Nothing (Task.run (Db.getById db "db_items" rowId)) of
+
+        Just row ->
+            Db.getInt col row
+
+        Nothing ->
+            -1
+
+
+intIds : List (Dict String String) -> List Int
+intIds rows =
+    List.map (\r -> Db.getInt "id" r) rows
+
+
+isErrResult : Result e a -> Bool
+isErrResult r =
+    case r of
+
+        Err _ ->
+            True
+
+        Ok _ ->
+            False
+
+
+tests : List Test
+tests =
+    case setup () of
+
+        Err _ ->
+            [ Test.test
+                  "setup"
+                  (\_ -> Test.fail "DB setup (sqlite open) failed")
+            ]
+
+        Ok db ->
+            [ Test.test
+                  "defaultMigration + withSql + migrate applies the named migration"
+                  (\_ ->
+                      Test.equal
+                          [ "0001_db_items" ]
+                          (Result.withDefault
+                              []
+                              (Task.run (Db.migrate db [ schemaMigration ]))))
+            , Test.test
+                  "migrate is idempotent — a second run applies nothing"
+                  (\_ ->
+                      Test.equal
+                          []
+                          (Result.withDefault
+                              [ "unexpected" ]
+                              (Task.run (Db.migrate db [ schemaMigration ]))))
+            , Test.test
+                  "insertFields sets named cols; OmitField lets the DB apply DEFAULT"
+                  (\_ ->
+                      Test.equal
+                          1
+                          (Result.withDefault
+                              (-1)
+                              (Task.run
+                                  (Db.insertFields
+                                      db
+                                      "db_items"
+                                      [ ( "name"
+                                        , Db.SetField (Db.SqlString "Widget")
+                                        )
+                                      , ( "qty", Db.SetField (Db.SqlInt 5) )
+                                      , ( "status", Db.OmitField )
+                                      ]))))
+            , Test.test
+                  "getById returns the row; OmitField status defaulted to 'pending'"
+                  (\_ -> Test.equal "pending" (rowText db "1" "status"))
+            , Test.test
+                  "getById on an absent id returns Nothing"
+                  (\_ ->
+                      Test.equal
+                          Nothing
+                          (Result.withDefault
+                              (Just Dict.empty)
+                              (Task.run (Db.getById db "db_items" "9999"))))
+            , Test.test
+                  "insertFieldsReturning inserts and decodes the RETURNING projection"
+                  (\_ ->
+                      Test.equal
+                          [ { id = 2, name = "Gadget" } ]
+                          (Result.withDefault
+                              []
+                              (Task.run
+                                  (Db.insertFieldsReturning
+                                      db
+                                      "db_items"
+                                      [ ( "name"
+                                        , Db.SetField (Db.SqlString "Gadget")
+                                        )
+                                      , ( "qty", Db.SetField (Db.SqlInt 9) )
+                                      , ( "status", Db.OmitField )
+                                      ]
+                                      "id, name"
+                                      returnDecoder))))
+            , Test.test
+                  "getByIdDecode returns the typed record for an existing Int id"
+                  (\_ ->
+                      Test.equal
+                          (Just
+                              { id = 2
+                              , name = "Gadget"
+                              , qty = 9
+                              , status = "pending"
+                              })
+                          (Result.withDefault
+                              Nothing
+                              (Task.run
+                                  (Db.getByIdDecode db "db_items" 2 itemDecoder))))
+            , Test.test
+                  "getByIdDecode returns Nothing for an absent Int id"
+                  (\_ ->
+                      Test.equal
+                          Nothing
+                          (Result.withDefault
+                              (Just
+                                  { id = -1
+                                  , name = "?"
+                                  , qty = -1
+                                  , status = "?"
+                                  })
+                              (Task.run
+                                  (Db.getByIdDecode
+                                      db
+                                      "db_items"
+                                      9999
+                                      itemDecoder))))
+            , Test.test
+                  "updateById patches the named columns (Dict fields), returns 1"
+                  (\_ ->
+                      let
+                          n =
+                              Result.withDefault
+                                  (-1)
+                                  (Task.run
+                                      (Db.updateById
+                                          db
+                                          "db_items"
+                                          "1"
+                                          (Dict.fromList
+                                              [ ( "name", "Renamed" ) ])))
+                      in
+                          Test.equal
+                              ( 1, "Renamed" )
+                              ( n, rowText db "1" "name" ))
+            , Test.test
+                  "updateFields SETs SetField cols and leaves OmitField cols intact"
+                  (\_ ->
+                      let
+                          n =
+                              Result.withDefault
+                                  (-1)
+                                  (Task.run
+                                      (Db.updateFields
+                                          db
+                                          "db_items"
+                                          [ ( "id", Db.SqlInt 1 ) ]
+                                          [ ( "qty"
+                                            , Db.SetField (Db.SqlInt 50)
+                                            )
+                                          , ( "status", Db.OmitField )
+                                          ]))
+                      in
+                          Test.equal
+                              ( 1, 50, "pending" )
+                              ( n
+                              , rowInt db "1" "qty"
+                              , rowText db "1" "status"
+                              ))
+            , Test.test
+                  "findManyByField returns every row matching an equality on a column"
+                  (\_ ->
+                      -- qty changed to 50; status (pending) untouched by OmitField
+                      Test.equal
+                          [ 1, 2 ]
+                          (List.sort
+                              (intIds
+                                  (Result.withDefault
+                                      []
+                                      (Task.run
+                                          (Db.findManyByField
+                                              db
+                                              "db_items"
+                                              "status"
+                                              "pending"))))))
+            , Test.test
+                  "findByConditions AND-joins equality on every key of the Dict"
+                  (\_ ->
+                      Test.equal
+                          [ 2 ]
+                          (intIds
+                              (Result.withDefault
+                                  []
+                                  (Task.run
+                                      (Db.findByConditions
+                                          db
+                                          "db_items"
+                                          (Dict.fromList
+                                              [ ( "status", "pending" )
+                                              , ( "name", "Gadget" )
+                                              ]))))))
+            , Test.test
+                  "unsafeFindWhere runs a raw parameterised WHERE clause"
+                  (\_ ->
+                      Test.equal
+                          [ 1 ]
+                          (intIds
+                              (Result.withDefault
+                                  []
+                                  (Task.run
+                                      (Db.unsafeFindWhere
+                                          db
+                                          "db_items"
+                                          "qty > ?"
+                                          [ Db.SqlInt 10 ])))))
+            , Test.test
+                  "deleteById removes exactly the row and returns 1"
+                  (\_ ->
+                      let
+                          n =
+                              Result.withDefault
+                                  (-1)
+                                  (Task.run (Db.deleteById db "db_items" "2"))
+                      in
+                          Test.equal
+                              ( 1, Nothing )
+                              ( n
+                              , Result.withDefault
+                                    (Just Dict.empty)
+                                    (Task.run (Db.getById db "db_items" "2"))
+                              ))
+            , Test.test
+                  "withTransaction COMMITS the block's writes when it returns Ok"
+                  (\_ ->
+                      let
+                          _ =
+                              Task.run
+                                  (Db.withTransaction
+                                      db
+                                      (\tx ->
+                                          Db.insertFields
+                                              tx
+                                              "db_items"
+                                              [ ( "name"
+                                                , Db.SetField
+                                                      (Db.SqlString "Committed")
+                                                )
+                                              , ( "qty"
+                                                , Db.SetField (Db.SqlInt 1)
+                                                )
+                                              , ( "status"
+                                                , Db.SetField
+                                                      (Db.SqlString "done")
+                                                )
+                                              ]))
+                          present =
+                              List.length
+                                  (Result.withDefault
+                                      []
+                                      (Task.run
+                                          (Db.findManyByField
+                                              db
+                                              "db_items"
+                                              "name"
+                                              "Committed")))
+                      in
+                          Test.equal 1 present)
+            , Test.test
+                  "withTransaction ROLLS BACK the block's writes when it returns Err"
+                  (\_ ->
+                      let
+                          outcome =
+                              Task.run
+                                  (Db.withTransaction
+                                      db
+                                      (\tx ->
+                                          Db.insertFields
+                                              tx
+                                              "db_items"
+                                              [ ( "name"
+                                                , Db.SetField
+                                                      (Db.SqlString "RolledBack")
+                                                )
+                                              , ( "qty"
+                                                , Db.SetField (Db.SqlInt 1)
+                                                )
+                                              , ( "status"
+                                                , Db.SetField
+                                                      (Db.SqlString "done")
+                                                )
+                                              ]
+                                              |> Task.andThen
+                                                     (\_ ->
+                                                         Task.fail
+                                                             (Error.io
+                                                                 "force rollback"))))
+                          leaked =
+                              List.length
+                                  (Result.withDefault
+                                      []
+                                      (Task.run
+                                          (Db.findManyByField
+                                              db
+                                              "db_items"
+                                              "name"
+                                              "RolledBack")))
+                      in
+                          Test.equal ( True, 0 ) ( isErrResult outcome, leaked ))
+            ]
+                        -- the outer task errored AND the inserted row was rolled back
+
+
+main =
+    Test.runMain tests
