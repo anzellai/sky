@@ -1907,6 +1907,22 @@ fn build_std_app(
             true,
         ) {
             Ok(od) => {
+                // FINDING C: copy the app's DECLARED static-file dir into the
+                // frontend `dist/` from the ORIGINAL project — the authority,
+                // since the synthesised Spa entry the split saw has dropped the
+                // `App.withConfig (WebConfig { static = … })` declaration. Runs
+                // AFTER the frontend build so `stage_web_bundle` (which only
+                // replaces the wasm + index.html) cannot clobber it; the
+                // generated backend then serves the same assets the Live build
+                // did. No-op when the app declares no static dir.
+                if let Err(e) = project::spa_split::stage_declared_static_into_dist(
+                    &entry_src,
+                    project_dir,
+                    &od,
+                ) {
+                    eprintln!("sky build --target {}: {e}", tgt.canonical());
+                    return ExitCode::FAILURE;
+                }
                 let backend = od.join("backend").join("sky-out").join("app");
                 println!(
                     "\nBuilt Std.App entry ({}) → {}  (wasm frontend + /_rpc).",

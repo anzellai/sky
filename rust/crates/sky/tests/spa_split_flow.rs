@@ -1990,6 +1990,87 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
     );
 }
 
+fn static_assets_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-static-assets")
+}
+
+/// FINDING C. A `Std.App` web app that DECLARES a served static-file dir
+/// (`static = "brand"`, mounted at `staticUrl = "/brand"`) with a real asset at
+/// `brand/screenshots/spa-web.png`. The Live runtime mounts that dir; the split
+/// backend serves only `frontend/dist`, so before the fix every `/brand/…` asset
+/// 404'd under `--target web:app`. The split must copy the declared dir into
+/// `frontend/dist/brand/` (at the mount prefix, structure preserved) so the
+/// generated backend's `Server.static "/" "../frontend/dist"` serves it. The
+/// dir is written by the split GENERATOR (before any build), so this holds
+/// without a Go toolchain.
+#[test]
+fn declared_static_dir_is_propagated_into_the_frontend_dist() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&static_assets_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the static-assets fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The declared static dir lands in the frontend dist at the mount prefix,
+    // structure preserved — so the backend serves `/brand/screenshots/spa-web.png`
+    // same-origin. Written by the generator, so it holds even without Go.
+    let asset = proj.join(".skyapp/web-app/.split/frontend/dist/brand/screenshots/spa-web.png");
+    assert!(
+        asset.is_file(),
+        "FINDING C: the declared static dir must be copied into the frontend \
+         dist at its mount prefix (expected {} — split log:\n{log})",
+        asset.display()
+    );
+    // Byte-identical to the source asset (a real copy, not a stub).
+    let want = std::fs::read(
+        static_assets_fixture_dir().join("brand/screenshots/spa-web.png"),
+    )
+    .unwrap();
+    let got = std::fs::read(&asset).unwrap();
+    assert_eq!(
+        got, want,
+        "FINDING C: the propagated asset must be byte-identical to the source"
+    );
+    // Directory structure is preserved (the top-level asset too).
+    assert!(
+        proj.join(".skyapp/web-app/.split/frontend/dist/brand/logo.png").is_file(),
+        "FINDING C: nested + top-level assets under the static dir must be copied"
+    );
+
+    // ── Go-gated e2e: the whole `--target web:app` build succeeds and the wasm
+    // frontend is staged ALONGSIDE the propagated static dir (stage_web_bundle
+    // must not clobber it). ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "FINDING C: --target web:app must build end-to-end:\n{log}"
+    );
+    let dist = proj.join(".skyapp/web-app/.split/frontend/dist");
+    assert!(
+        dist_has_wasm(&dist),
+        "FINDING C: the wasm frontend must build to a content-hashed main.<hash>.wasm:\n{log}"
+    );
+    assert!(
+        dist.join("brand/screenshots/spa-web.png").is_file(),
+        "FINDING C: the propagated static asset must survive the frontend build \
+         (stage_web_bundle must not wipe dist/):\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 fn have_sqlite3() -> bool {
     Command::new("sqlite3")
         .arg("--version")

@@ -1,0 +1,81 @@
+module Main exposing (main)
+
+-- A pure Std.App `App.app` web app that DECLARES a static-file directory it
+-- serves — `static = "brand"` mounted at `staticUrl = "/brand"` — with a real
+-- asset at `brand/screenshots/spa-web.png` (the sky-lang.org landing-page
+-- screenshot shape). The Live runtime mounts that dir; the Sky.Spa split has no
+-- Live mount, so before FINDING C the split backend served only `frontend/dist`
+-- and every `/brand/…` asset 404'd under `--target web:app`. The fix copies the
+-- declared static dir into `frontend/dist/brand/`, so the generated backend's
+-- `Server.static "/" "../frontend/dist"` serves them same-origin at the SAME URL.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { count : Int }
+
+
+type Msg
+    = Increment
+    | Decrement
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("count: " ++ String.fromInt model.count)
+        , Ui.image [] { src = "/brand/screenshots/spa-web.png", description = "screenshot" }
+        , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withConfig
+               (App.WebConfig
+                   { App.webDefaults
+                       | port = 9090
+                       , static = Just "brand"
+                       , staticUrl = Just "/brand"
+                   }
+               )
+
+
+main : Task Error ()
+main =
+    App.run app

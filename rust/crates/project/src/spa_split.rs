@@ -1038,6 +1038,18 @@ pub fn generate(
     // the declared asset files/dirs alongside it so it can stage them into dist/.
     propagate_bundle_assets(&src, project_dir, &out_dir.join("frontend"))?;
 
+    // ---- FINDING C: propagate the app's DECLARED static-file dir into dist/ ----
+    // A `Std.App` web app can serve a static-file directory (WebConfig `static` /
+    // `Live.withStatic`, mounted at `staticUrl`, default `/static`; or sky.toml
+    // `[live] static`). The Live runtime mounts it; the split has NO Live mount —
+    // the generated backend only serves the frontend `dist/`. So the declared
+    // static dir must be copied into `dist/<mount-prefix>/`, or every asset the
+    // Live build served 404s under `--target web:app`. (Assets the compiler
+    // cannot SEE — e.g. a reverse-proxy / Caddy static route configured only at
+    // deploy time, as with sky-lang.org's `/brand/…` — are out of reach here by
+    // construction: declare them to the app, or keep serving them at the proxy.)
+    propagate_static_dir(&src, project_dir, &out_dir.join("frontend"))?;
+
     // ---- propagate external dependencies (Sky `.skydeps/`, Go `sky-ffi/`) ----
     // so `sky build --target` run on the generated frontend/backend can resolve
     // the same third-party imports the app declared.
@@ -1128,6 +1140,140 @@ fn propagate_bundle_assets(src: &str, project_dir: &Path, frontend_dir: &Path) -
         }
     }
     Ok(())
+}
+
+/// The app's declared static-file directory + its URL mount prefix, or `None`.
+/// Sources, in order: the entry's `App.withConfig (WebConfig { static = Just
+/// "<dir>", staticUrl = Just "<url>" })` fields (the Std.App shape), then
+/// `sky.toml` `[live] static`. The prefix defaults to `/static` (the Live
+/// runtime default, live.go). The returned prefix is normalised — leading and
+/// trailing slashes trimmed — so it is the relative path under `dist/` the dir
+/// is copied into (`""` = the dist root, when the app mounts static at `/`).
+fn app_static_mount(src: &str, project_dir: &Path) -> Option<(String, String)> {
+    let dir = scan_config_string_field(src, "static").or_else(|| toml_live_static(project_dir))?;
+    let url = scan_config_string_field(src, "staticUrl").unwrap_or_else(|| "/static".to_string());
+    Some((dir, url.trim_matches('/').to_string()))
+}
+
+/// Find a record field `field = Just "<s>"` / `field = "<s>"` in `src` and return
+/// `<s>`. `field` is matched as a whole word (so `static` does not match
+/// `staticUrl`), comments stripped first. Returns `None` when the field is
+/// absent or set to a non-string (`Nothing`, the `webDefaults` default) — the
+/// non-string guard stops it scooping up an unrelated later literal.
+fn scan_config_string_field(src: &str, field: &str) -> Option<String> {
+    let src = strip_sky_comments(src);
+    let src = src.as_str();
+    let bytes = src.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0;
+    while let Some(rel) = src[from..].find(field) {
+        let at = from + rel;
+        from = at + field.len();
+        let before_ok = at == 0 || !is_word(bytes[at - 1]);
+        let after_ok = bytes
+            .get(at + field.len())
+            .map(|b| !is_word(*b))
+            .unwrap_or(true);
+        if !before_ok || !after_ok {
+            continue;
+        }
+        // Expect `= [Just] "<s>"`, only whitespace / the `Just` ctor between.
+        let mut rest = src[at + field.len()..].trim_start();
+        let Some(after_eq) = rest.strip_prefix('=') else {
+            continue;
+        };
+        rest = after_eq.trim_start();
+        if let Some(j) = rest.strip_prefix("Just") {
+            rest = j.trim_start();
+        }
+        // The next char MUST open a string literal — otherwise this field is not
+        // a string (e.g. `Nothing`) and we do not scan past it.
+        if let Some(after_q) = rest.strip_prefix('"') {
+            if let Some(end) = after_q.find('"') {
+                return Some(after_q[..end].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// `sky.toml` `[live] static = "<dir>"`, or `None`. A section-scoped scan — the
+/// field is only read while inside the `[live]` table.
+fn toml_live_static(project_dir: &Path) -> Option<String> {
+    let toml = std::fs::read_to_string(project_dir.join("sky.toml")).ok()?;
+    let mut in_live = false;
+    for line in toml.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            in_live = l == "[live]";
+            continue;
+        }
+        if in_live {
+            if let Some(rest) = l.strip_prefix("static") {
+                // `static` (not `staticUrl`): the next non-space must be `=`.
+                if let Some(v) = rest.trim_start().strip_prefix('=') {
+                    let v = v.trim().trim_matches('"');
+                    if !v.is_empty() {
+                        return Some(v.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Copy the app's declared static-file directory (see [`app_static_mount`], read
+/// from `entry_src` + `source_root`) into `dist/<mount-prefix>/`, so the split
+/// backend's `Server.static "/" "../frontend/dist"` serves it same-origin at the
+/// SAME URL the Live runtime mounted it — closing the `--target web:app` 404 for
+/// every asset the Live build served (FINDING C). No-op when the app declares no
+/// static dir, or the declared dir is absent (a missing declared dir is an
+/// authoring/deploy concern, not a split failure — the Live build would 404 it
+/// identically). `dist/` need not exist yet: `copy_tree` creates it, and the
+/// frontend build (`stage_web_bundle`) only replaces the wasm + index.html,
+/// leaving these files in place; called after that build, they simply coexist.
+fn copy_static_dir(entry_src: &str, source_root: &Path, dist: &Path) -> Result<(), String> {
+    let Some((dir, rel)) = app_static_mount(entry_src, source_root) else {
+        return Ok(());
+    };
+    let from = source_root.join(&dir);
+    if !from.is_dir() {
+        return Ok(());
+    }
+    let to = if rel.is_empty() {
+        dist.to_path_buf()
+    } else {
+        dist.join(&rel)
+    };
+    copy_tree(&from, &to)
+}
+
+/// The split generator's own static-dir propagation: reads the entry it was
+/// given (the direct `sky spa-split` path, whose entry still carries the
+/// `WebConfig` static declaration, or an app whose static dir is declared in
+/// `sky.toml [live]`) and copies into `frontend/dist`. For the `--target
+/// web:app` path the entry generate sees is the SYNTHESISED Spa entry, which no
+/// longer carries the `App.withConfig` declaration — so that path drives the copy
+/// from the ORIGINAL entry via [`stage_declared_static_into_dist`] instead; this
+/// call then no-ops (nothing declared in the synthesised source / staged toml).
+fn propagate_static_dir(src: &str, project_dir: &Path, frontend_dir: &Path) -> Result<(), String> {
+    copy_static_dir(src, project_dir, &frontend_dir.join("dist"))
+}
+
+/// Copy the app's declared static dir into `out_dir/frontend/dist` from the
+/// ORIGINAL project (`entry_src` + `source_root`) — the authority for a
+/// `--target web:app` build, whose synthesised Spa entry has DROPPED the
+/// `App.withConfig (WebConfig { static = … })` declaration the split generator
+/// would otherwise read. Called by `sky build` after the split + frontend build
+/// so the generated backend serves the same static assets the Live build did
+/// (FINDING C). No-op when the app declares no static dir.
+pub fn stage_declared_static_into_dist(
+    entry_src: &str,
+    source_root: &Path,
+    out_dir: &Path,
+) -> Result<(), String> {
+    copy_static_dir(entry_src, source_root, &out_dir.join("frontend").join("dist"))
 }
 
 /// Reconstruct the `[dependencies]` (Sky packages) and `["go.dependencies"]` (Go
