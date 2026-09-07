@@ -263,7 +263,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1123,
+      "expected_assertions": 1138,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -6568,6 +6568,11 @@
             "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -6609,6 +6614,11 @@
             "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -12231,9 +12241,8 @@
           ]
         },
         "Sky.Test": {
-          "count": 5,
+          "count": 4,
           "symbols": [
-            "expectErrorKind",
             "jsonReport",
             "run",
             "summarise",
@@ -12286,23 +12295,6 @@
             "withBase",
             "withOnNavigate",
             "withRequest"
-          ]
-        },
-        "Std.Auth": {
-          "count": 12,
-          "symbols": [
-            "AccessState",
-            "disableUser",
-            "enableUser",
-            "isDisabled",
-            "isRevoked",
-            "login",
-            "register",
-            "revokeUser",
-            "setRole",
-            "setSlidingCookie",
-            "signSlidingToken",
-            "userAccessState"
           ]
         },
         "Std.Bundle": {
@@ -12451,13 +12443,12 @@
           ]
         },
         "Std.Db": {
-          "count": 13,
+          "count": 12,
           "symbols": [
             "defaultMigration",
             "deleteById",
             "findByConditions",
             "findManyByField",
-            "getById",
             "getByIdDecode",
             "insertFields",
             "insertFieldsReturning",
@@ -12976,8 +12967,8 @@
           ]
         }
       },
-      "count": 660,
-      "pct_of_denominator": 35.6
+      "count": 646,
+      "pct_of_denominator": 34.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13269,10 +13260,9 @@
           ]
         },
         "Sky.Test": {
-          "count": 6,
+          "count": 5,
           "symbols": [
             "Test",
-            "expectErrorKind",
             "jsonReport",
             "run",
             "summarise",
@@ -13326,23 +13316,6 @@
             "withBase",
             "withOnNavigate",
             "withRequest"
-          ]
-        },
-        "Std.Auth": {
-          "count": 12,
-          "symbols": [
-            "AccessState",
-            "disableUser",
-            "enableUser",
-            "isDisabled",
-            "isRevoked",
-            "login",
-            "register",
-            "revokeUser",
-            "setRole",
-            "setSlidingCookie",
-            "signSlidingToken",
-            "userAccessState"
           ]
         },
         "Std.Bundle": {
@@ -13502,13 +13475,12 @@
           ]
         },
         "Std.Db": {
-          "count": 13,
+          "count": 12,
           "symbols": [
             "defaultMigration",
             "deleteById",
             "findByConditions",
             "findManyByField",
-            "getById",
             "getByIdDecode",
             "insertFields",
             "insertFieldsReturning",
@@ -14087,8 +14059,8 @@
           ]
         }
       },
-      "count": 745,
-      "pct_of_denominator": 40.2
+      "count": 731,
+      "pct_of_denominator": 39.5
     }
   },
   "units": [
@@ -15231,12 +15203,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 36,
+      "modules_imported": 37,
       "path": "tests/conformance",
-      "refs_generous": 470,
-      "refs_qualified": 461,
+      "refs_generous": 490,
+      "refs_qualified": 479,
       "role": "Conformance",
-      "sky_files": 28,
+      "sky_files": 29,
       "sky_toml_sections": []
     }
   ]

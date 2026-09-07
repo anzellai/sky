@@ -1,0 +1,273 @@
+module AuthLifecycleConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for the Std.Auth account LIFECYCLE, against an
+in-process sqlite DB. Complements JwtAuthConformanceTest (pure bcrypt/JWT
+primitives) by exercising the DB-touching security kernels a real app depends
+on: register/login, role assignment, the pull-model ban (disable/enable) and
+session-invalidation (revoke) flows, the combined access-state verdict, and the
+sliding-session token. Every case asserts a documented security semantic. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error, ErrorKind(..))
+import Sky.Core.Secret as Secret exposing (Secret)
+import Std.Db as Db
+import Std.Auth as Auth exposing (AccessState(..))
+import Sky.Http.Server as Server exposing (Request, Response)
+import Sky.Test as Test exposing (Test)
+
+
+slidingSecret : Secret
+slidingSecret =
+    -- 32 bytes exactly — coerceAuthSecret rejects anything shorter.
+    Secret.fromString "0123456789abcdef0123456789abcdef"
+
+
+shortSecret : Secret
+shortSecret =
+    Secret.fromString "tooShort"
+
+
+slidingWindow : { windowSeconds : Int
+, maxLifetimeSeconds : Int
+}
+slidingWindow =
+    { windowSeconds = 900, maxLifetimeSeconds = 86400 }
+
+
+invertedWindow : { windowSeconds : Int
+, maxLifetimeSeconds : Int
+}
+invertedWindow =
+    { windowSeconds = 86400, maxLifetimeSeconds = 900 }
+
+
+-- A userAccessState verdict, annotated to pin the qualified Auth.AccessState ref.
+disabledState : Auth.AccessState
+disabledState =
+    Disabled
+
+
+-- A bare inbound Request literal (no live server needed — Request is a
+-- transparent record alias).
+blankRequest : Request
+blankRequest =
+    { method = "GET"
+    , path = "/login"
+    , body = ""
+    , headers = Dict.empty
+    , params = Dict.empty
+    , query = Dict.empty
+    , cookies = Dict.empty
+    , remoteAddr = "127.0.0.1"
+    }
+
+
+roleOf : Db -> String -> String
+roleOf db uid =
+    case Result.withDefault Nothing (Task.run (Db.getById db "users" uid)) of
+
+        Just row ->
+            Db.getString "role" row
+
+        Nothing ->
+            "MISSING"
+
+
+setup : () -> Result Error Db
+setup _ =
+    case Task.run (Db.open "sqlite" "/tmp/sky-auth-lifecycle-conformance.db") of
+
+        Err e ->
+            Err e
+
+        Ok db ->
+            let
+                _ = Task.run (Db.execRaw db "DROP TABLE IF EXISTS users")
+                _ =
+                    Task.run
+                        (Db.execRaw db "DROP TABLE IF EXISTS sky_revocations")
+            in
+                Ok db
+
+
+tests : List Test
+tests =
+    case setup () of
+
+        Err _ ->
+            [ Test.test
+                  "setup"
+                  (\_ -> Test.fail "DB setup (sqlite open) failed")
+            ]
+
+        Ok db ->
+            [ Test.test
+                  "register bootstraps the schema and returns sequential ids"
+                  (\_ ->
+                      let
+                          r1 =
+                              Result.withDefault
+                                  (-1)
+                                  (Task.run
+                                      (Auth.register
+                                          db
+                                          "ada@example.com"
+                                          "password1"))
+                          r2 =
+                              Result.withDefault
+                                  (-1)
+                                  (Task.run
+                                      (Auth.register
+                                          db
+                                          "grace@example.com"
+                                          "password2"))
+                      in
+                          Test.equal ( 1, 2 ) ( r1, r2 ))
+            , Test.test
+                  "register rejects a duplicate email (UNIQUE violation)"
+                  (\_ ->
+                      Test.err
+                          (Task.run
+                              (Auth.register db "ada@example.com" "password1")))
+            , Test.test
+                  "login with the correct password returns the user id"
+                  (\_ ->
+                      Test.equal
+                          1
+                          (Result.withDefault
+                              (-1)
+                              (Task.run
+                                  (Auth.login db "ada@example.com" "password1"))))
+            , Test.test
+                  "login with a wrong password fails with PermissionDenied"
+                  (\_ ->
+                      Test.expectErrorKind
+                          PermissionDenied
+                          (Task.run (Auth.login db "ada@example.com" "nope")))
+            , Test.test
+                  "setRole assigns the user's role"
+                  (\_ ->
+                      let
+                          _ = Task.run (Auth.setRole db 1 "admin")
+                      in
+                          Test.equal "admin" (roleOf db "1"))
+            , Test.test
+                  "disableUser bans re-login BEFORE the password check"
+                  (\_ ->
+                      let
+                          _ = Task.run (Auth.disableUser db "1")
+                      in
+                          Test.expectErrorKind
+                              PermissionDenied
+                              (Task.run
+                                  (Auth.login db "ada@example.com" "password1")))
+            , Test.test
+                  "isDisabled reports the ban"
+                  (\_ ->
+                      Test.equal
+                          True
+                          (Result.withDefault
+                              False
+                              (Task.run (Auth.isDisabled db "1"))))
+            , Test.test
+                  "userAccessState reports Disabled while banned (disabled outranks all)"
+                  (\_ ->
+                      Test.equal
+                          disabledState
+                          (Result.withDefault
+                              Active
+                              (Task.run (Auth.userAccessState db "1" 0))))
+            , Test.test
+                  "enableUser clears the ban; isDisabled goes False and login works again"
+                  (\_ ->
+                      let
+                          _ = Task.run (Auth.enableUser db "1")
+                          stillDisabled =
+                              Result.withDefault
+                                  True
+                                  (Task.run (Auth.isDisabled db "1"))
+                          loginId =
+                              Result.withDefault
+                                  (-1)
+                                  (Task.run
+                                      (Auth.login
+                                          db
+                                          "ada@example.com"
+                                          "password1"))
+                      in
+                          Test.equal ( False, 1 ) ( stillDisabled, loginId ))
+            , Test.test
+                  "revokeUser invalidates tokens issued BEFORE the revoke, not after"
+                  (\_ ->
+                      let
+                          _ = Task.run (Auth.revokeUser db "2")
+                          preRevoke =
+                              Result.withDefault
+                                  False
+                                  (Task.run (Auth.isRevoked db "2" 0))
+                          postRevoke =
+                              Result.withDefault
+                                  True
+                                  (Task.run (Auth.isRevoked db "2" 9999999999))
+                      in
+                          Test.equal ( True, False ) ( preRevoke, postRevoke ))
+            , Test.test
+                  "userAccessState reports Revoked for a revoked-but-enabled user"
+                  (\_ ->
+                      -- a token stamped at t=0 predates the revoke → revoked;
+                      -- one stamped far in the future postdates it → live
+                      Test.equal
+                          Revoked
+                          (Result.withDefault
+                              Active
+                              (Task.run (Auth.userAccessState db "2" 0))))
+            , Test.test
+                  "signSlidingToken issues a token when window <= maxLifetime"
+                  (\_ ->
+                      Test.ok
+                          (Auth.signSlidingToken
+                              slidingSecret
+                              { sub = "1" }
+                              slidingWindow))
+            , Test.test
+                  "signSlidingToken rejects window > maxLifetime (would break the cap)"
+                  (\_ ->
+                      Test.expectErrorKind
+                          InvalidInput
+                          (Auth.signSlidingToken
+                              slidingSecret
+                              { sub = "1" }
+                              invertedWindow))
+            , Test.test
+                  "signSlidingToken rejects a secret shorter than 32 bytes"
+                  (\_ ->
+                      Test.expectErrorKind
+                          InvalidInput
+                          (Auth.signSlidingToken
+                              shortSecret
+                              { sub = "1" }
+                              slidingWindow))
+            , Test.test
+                  "setSlidingCookie is a safe pass-through when no sliding config is registered"
+                  (\_ ->
+                      let
+                          base = Server.text "ok"
+                      in
+                          Test.equal
+                              base
+                              (Auth.setSlidingCookie
+                                  blankRequest
+                                  "some.jwt.token"
+                                  base))
+            ]
+                        -- With no live Live app (no withAuthSliding), the setter returns the
+                        -- response unchanged rather than corrupting it. The live cookie-setting
+                        -- path is asserted end-to-end by auth_sliding_flow.rs.
+
+
+main =
+    Test.runMain tests
