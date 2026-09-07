@@ -53,6 +53,20 @@ upgrade: all three can hit a real app.
   frontend `dist/`, so the backend serves it same-origin at the same URL Sky.Live
   would.
 
+### Type checker — a module's verdict no longer depends on unrelated modules
+
+- **A stdlib signature that names a type without importing it is now resolved
+  deterministically.** A handful of stdlib signatures (e.g. `Auth.setSlidingCookie
+  : Request -> …`) name a type without an explicit `import`, relying on a
+  program-wide alias fallback. That fallback was last-writer-wins, so in a
+  multi-module project where an unrelated module declared a same-named type (e.g.
+  a test's local `Request`), the last-loaded definition could win and shrink the
+  signature's type — making a well-typed module FAIL to type-check purely because
+  of another module elsewhere in the project (and pass when compiled alone). The
+  fallback is now first-writer-wins; since the loader adds the stdlib before any
+  project module, the stdlib definition always wins and a module's verdict is
+  independent of unrelated modules. Emission is unchanged for non-colliding names.
+
 ## v0.23.1 — Sky.Spa fixes (2026-09-06)
 
 A patch release focused on **Sky.Spa**: `--target web:app` now works on real
