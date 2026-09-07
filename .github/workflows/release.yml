@@ -390,6 +390,21 @@ jobs:
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t4
 
+      # T2/T3/T4 build+run every fixture, the Postgres app builds, and the
+      # pre-release tier — the Go build cache (GOCACHE), rust/target, the emitted
+      # Go per example, and leaked go-build $WORK temp dirs pile up. The falsifier
+      # (rebuilds the cargo workspace under ~30 mutations + every Go fixture) and
+      # the full sweep (rebuilds every example clean-slate) then need that space
+      # back: v0.23.2 exhausted even a disk-freed runner here with
+      # `no space left on device`. Reclaim before the two heaviest steps.
+      - name: Reclaim disk before the falsifier + full sweep
+        run: |
+          df -h / | tail -1
+          go clean -cache 2>/dev/null || true
+          find examples -type d \( -name 'sky-out*' -o -name '.skycache' -o -name '.skydeps' \) -prune -exec rm -rf {} + 2>/dev/null || true
+          rm -rf /tmp/sky-* /tmp/go-build* 2>/dev/null || true
+          df -h / | tail -1
+
       # Falsifier verification — the deepest check in the repo. `--require-proofs`
       # on the tier lines above DEMOTES a PASS whose proof lapsed, but only this
       # run ESTABLISHES that a gate's declared mutation still reddens it. It ran
@@ -410,6 +425,14 @@ jobs:
       # was installed by the `bash scripts/build.sh` step above (the sweep
       # resolves that path and refuses a stale one via require_fresh_compiler),
       # and it does the per-example FFI `sky install` itself.
+      - name: Reclaim disk before the full example sweep
+        run: |
+          df -h / | tail -1
+          go clean -cache 2>/dev/null || true
+          find examples -type d \( -name 'sky-out*' -o -name '.skycache' -o -name '.skydeps' \) -prune -exec rm -rf {} + 2>/dev/null || true
+          rm -rf /tmp/sky-* /tmp/go-build* 2>/dev/null || true
+          df -h / | tail -1
+
       - name: Full example sweep (clean-slate build AND run of every example, incl. FFI/Std.Db)
         working-directory: .
         run: scripts/example-sweep.sh
