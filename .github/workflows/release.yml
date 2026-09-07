@@ -231,6 +231,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The full-tier release gate builds AND runs every corpus fixture (T2),
+      # the Postgres app builds (T3), and clean-slate-builds every example incl.
+      # FFI/Std.Db (the full sweep) — all on ONE runner. A stock ubuntu runner
+      # ships ~14 GB free, which the accumulated Go build output exhausts partway
+      # through (v0.23.2's first attempt died at the falsifier step with
+      # `no space left on device`). Reclaim the ~30 GB of preinstalled toolchains
+      # this gate never uses, up front, so the build output has room.
+      - name: Free up runner disk space
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          df -h / | tail -1
+
       - uses: dtolnay/rust-toolchain@stable
 
       # `test-rest` shelled out to a real `go build` with no toolchain pin,
