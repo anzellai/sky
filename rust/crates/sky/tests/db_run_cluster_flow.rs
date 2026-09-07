@@ -566,6 +566,19 @@ fn both(o: &Output) -> String {
 /// connects, and queries. That is the "the binary never knows which tier it is
 /// in" principle, observed rather than asserted.
 #[test]
+// T1 tier-budget: the cluster-spinning e2e tests in this file (each a real
+// `go build` of the app + a real embedded PostgreSQL postmaster) are the single
+// heaviest real-DB group on the per-commit `test-sky` job. They are moved off
+// that critical path and run nightly via `cargo test -p sky -- --ignored`
+// (nightly-sweep.yml `harness-t3`). Their LOGIC stays gated per-commit: the ref
+// arithmetic is proved by the unit tests in `crates/sky/src/db_cluster.rs`
+// (which this file's own header names as the fast leg), and `sky db` cluster
+// supervision by `db_cluster_flow.rs`, both of which stay on `test-sky`. The two
+// negative-path tests below that need NO postmaster
+// (`an_explicit_dsn_alongside_embedded_refuses_to_run`,
+// `a_project_without_the_opt_in_gets_no_cluster_at_all`) deliberately keep their
+// per-commit signal and are NOT ignored.
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
 fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-basic") else {
@@ -611,6 +624,7 @@ fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
 /// Without the ref count this is a data-loss bug in the most literal sense: the
 /// second app is mid-transaction when its server is shut down underneath it.
 #[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
 fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-refs") else {
@@ -682,6 +696,7 @@ fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
 /// started, but the run's exit must not take it away — that distinction is the
 /// only reason the two verbs are separate.
 #[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
 fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-explicit") else {
@@ -738,6 +753,7 @@ fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
 /// that the NEXT ordinary `sky run` prunes the corpse, finds itself alone, and
 /// stops the cluster on its own way out.
 #[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
 fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-stale") else {
@@ -798,6 +814,7 @@ fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
 /// for the whole session: a rebuild must not cycle the database underneath the
 /// app it is replacing.
 #[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
 fn sky_watch_hands_the_same_cluster_to_the_app_it_spawns() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-watch") else {
@@ -906,6 +923,7 @@ fn an_explicit_dsn_alongside_embedded_refuses_to_run() {
 /// attempt — which on a first run also means an `initdb` the user never asked
 /// for, in a project they cannot run yet.
 #[test]
+#[ignore = "heavy real-DB e2e supervisor leg; runs nightly (--ignored). Kernel leg: crates/sky/src/db_cluster.rs unit tests + db_cluster_flow.rs"]
 fn a_build_failure_never_starts_a_cluster() {
     let _serial = one_at_a_time();
     let Some(fx) = Fixture::new("p4-badbuild") else {

@@ -588,6 +588,13 @@ fn combined(out: &Output) -> String {
 }
 
 #[test]
+// T1 tier-budget: heavy real-DB e2e leg (a real `go build` + embedded PostgreSQL,
+// driving `sky run`). Moved off the per-commit `test-sky` critical path; runs
+// nightly via `cargo test -p sky -- --ignored` (nightly-sweep.yml `harness-t3`).
+// The kernel-level fixes this file discovered are locked per-commit by
+// `runtime-go/rt/db_by_id_test.go` (as this file's header states), so retiering
+// the e2e leg leaves no per-commit coverage hole.
+#[ignore = "heavy real-DB e2e leg; runs nightly (--ignored). Kernel leg: runtime-go/rt/db_by_id_test.go"]
 fn auth_lifecycle_and_rbac_on_real_postgres() {
     let Some(fx) = Fixture::new("b8auth", APP_AUTH) else {
         // No Go (or no PostgreSQL when SKY_POSTGRES_BIN/PATH is empty) — gate
@@ -625,6 +632,10 @@ fn auth_lifecycle_and_rbac_on_real_postgres() {
 }
 
 #[test]
+// T1 tier-budget: heavy real-DB e2e leg (see the note on
+// `auth_lifecycle_and_rbac_on_real_postgres`). Runs nightly via `--ignored`.
+// Kernel leg: `runtime-go/rt/db_by_id_test.go`.
+#[ignore = "heavy real-DB e2e leg; runs nightly (--ignored). Kernel leg: runtime-go/rt/db_by_id_test.go"]
 fn db_transaction_rollback_and_by_id_on_real_postgres() {
     let Some(fx) = Fixture::new("b8db", APP_DB) else {
         required(Need::Go, have_go());

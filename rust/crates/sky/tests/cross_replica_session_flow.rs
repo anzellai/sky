@@ -553,6 +553,17 @@ fn button_handler_id(body: &str) -> Option<String> {
 // ── the gate ─────────────────────────────────────────────────────────────
 
 #[test]
+// T1 tier-budget: this is the SLOW cross-process e2e leg (two real `go build`s +
+// an embedded PostgreSQL + an HTTP cookie handoff). It is moved off the
+// per-commit `test-sky` critical path and runs nightly via
+// `cargo test -p sky -- --ignored` (nightly-sweep.yml `harness-t3`). The
+// store-level property it confirms is gated per-commit by the Go rt test
+// `runtime-go/rt/live_store_postgres_test.go`
+// (`TestPostgresStore_CrossInstanceRoundTrip`), which this file's own header
+// names as the already-covered leg — so retiering the e2e leg leaves no
+// per-commit coverage hole. Removing `#[ignore]` re-arms it per-commit; do that
+// only alongside a matching T1 budget cut.
+#[ignore = "heavy real-DB e2e leg; runs nightly (--ignored). Kernel leg: runtime-go/rt/live_store_postgres_test.go"]
 fn a_session_moves_from_replica_a_to_replica_b_over_a_shared_postgres_store() {
     // Both a Go toolchain (to `go build` the emitted app) and PostgreSQL (the
     // shared store) are required. Absent either, gate loudly — `required`

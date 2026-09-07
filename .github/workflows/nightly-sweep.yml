@@ -385,8 +385,38 @@ jobs:
           cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
           install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
           sky-out/sky --version
+      # The retiered heavy real-DB e2e leg (below) spins its OWN embedded
+      # PostgreSQL clusters via SKY_POSTGRES_BIN — it does NOT use the service
+      # container's DSN — so it needs the real initdb/pg_ctl/postgres binaries ON
+      # PATH, exactly as `rust-ci.yml`'s `test-sky` and `integration-postgres`
+      # install them. The service container above stays for the harness T3 app
+      # gates; the two coexist (integration-postgres carries both for the same
+      # reason).
+      - name: PostgreSQL binaries for the embedded-cluster e2e tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
       - name: 'Gate — Layer-2 app tier (harness tier T3)'
         run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t3
+      # The heavy real-DB e2e leg carried by `#[ignore]` in the `sky` crate's
+      # flow tests (`db_run_cluster_flow`, `cross_replica_session_flow`,
+      # `auth_db_lifecycle_flow`, and the pre-existing `std_app_flow` erasure
+      # renders). These are OFF the per-commit `test-sky` T1 critical path (T1
+      # tier-budget, docs/ci-test-architecture-v2.md §8.2) and run here, nightly,
+      # where the 90-min T3 ceiling has room. Each keeps its per-commit kernel
+      # leg (named in the `#[ignore]` reason), so this is the confirmation leg,
+      # not the sole owner. `SKY_LIVE_TESTS=require` makes a missing PostgreSQL /
+      # Go FAIL loudly rather than skip.
+      - name: 'Gate — heavy real-DB e2e leg (test-sky #[ignore]d tests)'
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --manifest-path rust/Cargo.toml -- --ignored
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh

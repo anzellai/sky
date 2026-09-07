@@ -289,7 +289,7 @@ jobs:
   # SETUP_INDEPENDENT_JOBS.
   test-sky:
     # Deliberately NO `needs: setup` — the same reasoning as `build-corpus`.
-    # test-sky is the LONGEST job in the graph (~720s of postgres-live + spa-split
+    # test-sky is among the LONGEST jobs in the graph (postgres-live + spa-split
     # + db-flow integration), and it consumes none of setup's OUTPUT: it restores
     # the shared cargo cache by `restore-keys` (Swatinem `shared-key: sky-linux`,
     # `save-if: false`) exactly as every setup-dependent job does. While it waited
@@ -333,6 +333,15 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
+      # A bare `cargo test` skips `#[ignore]`d tests. The heaviest real-DB e2e
+      # legs (`db_run_cluster_flow`'s 6 cluster-spinning tests,
+      # `cross_replica_session_flow`, `auth_db_lifecycle_flow`, plus
+      # `std_app_flow`'s erasure renders) carry `#[ignore]` to stay OFF this T1
+      # critical path — they added enough wall time to trip the T1 tier budget
+      # (docs/ci-test-architecture-v2.md §8.2). Each keeps a fast per-commit
+      # kernel leg (named in its `#[ignore]` reason); the ignored e2e leg runs
+      # nightly via `--ignored` in `nightly-sweep.yml`'s `harness-t3`. Re-arming
+      # any of them per-commit means finding the matching T1 budget first.
       - name: Tests — sky crate (postgres-live + db_*_flow integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
