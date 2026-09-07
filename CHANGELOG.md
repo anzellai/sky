@@ -13,6 +13,46 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.23.2 — Sky.Spa SSR/hydration fixes (2026-09-07)
+
+A patch release fixing three **Sky.Spa** auto-split (`--target web:app`) defects
+found taking a real `Std.App` site (a full Sky.Live app with routes, an admin
+area, and a DB-backed blog) to production as a client SPA. No breaking changes —
+`sky upgrade` is safe from any v0.23.x. If you build with `--target web:app`,
+upgrade: all three can hit a real app.
+
+### Sky.Spa — `--target web:app` end-to-end on a production app
+
+- **Nested-record collections no longer vanish on hydration.** A model with a
+  nested-record collection (e.g. `posts : List Post`) rendered on first paint via
+  SSR, then rendered **empty** after the wasm client hydrated — silently, with no
+  console error. The synthesized client model decoder was an inline
+  `Codec.fromJson (Codec.auto ({ …, posts = [] }))` literal; in the heavily
+  constrained split-frontend module that literal type-checks to a structural row
+  and lowers the empty collection with its element type erased to `[]any`, which
+  the runtime codec cannot decode — so the decode failed and the boot path fell
+  back to `init`'s empty model. The decoder now derives its codec from an
+  explicitly-annotated top-level blank (`spaModelBlank_ : Model`), pinning the
+  nominal element type so the SSR-embedded model round-trips into the client
+  losslessly. A non-empty `#sky-model` blob that fails to decode now logs a loud
+  `console.error` before falling back, so encoder/decoder drift can never again
+  hide as missing data. (`List String` never triggered it — a `String` element
+  round-trips through `[]any` unharmed; only nested records lost structure.)
+- **A page route that is also a `GET` API route no longer panics the backend at
+  boot.** When one path is both an `App.route` page and an `App.api "GET …"`
+  endpoint, the split registered both an SSR page handler and the API handler on
+  the same `GET` mux pattern, so the backend panicked on the duplicate pattern and
+  crash-looped. The split now dedupes by method+path — the explicit `App.api`
+  handler wins and the auto SSR page-mount for that exact method+path is
+  suppressed (a `POST` API route on a page path is a distinct pattern and is left
+  alone). Sky.Live was unaffected (single dispatcher).
+- **The app's declared static directory is served under `--target web:app`.** The
+  split backend served only the wasm `dist/`, so an app's declared `static` dir
+  (`WebConfig { static, staticUrl }` / `[live] static`) 404'd — e.g. a site's
+  `brand/` image assets. The split now copies the declared static dir into the
+  frontend `dist/`, so the backend serves it same-origin at the same URL Sky.Live
+  would.
+
 ## v0.23.1 — Sky.Spa fixes (2026-09-06)
 
 A patch release focused on **Sky.Spa**: `--target web:app` now works on real
