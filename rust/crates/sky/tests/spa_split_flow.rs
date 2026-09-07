@@ -1651,6 +1651,10 @@ fn ssr_db_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-db")
 }
 
+fn ssr_nested_record_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-nested-record")
+}
+
 fn ssr_sibling_db_init_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-sibling-db-init")
 }
@@ -2231,6 +2235,93 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
         items_body.contains("data-sky-ssr") && items_body.contains("Item list:"),
         "SSR client-leg: GET /items must carry the server-rendered, crawlable body:\n{items_body}"
     );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// HYDRATION-LOSS regression (the sky-lang.org blog bug). A model with a NESTED
+/// RECORD collection (`posts : List Post`) must survive the client hydration
+/// decoder. The decoder is `Codec.fromJson (Codec.auto blank)`; if `blank` is an
+/// INLINE literal (`Codec.auto ({ page = Home, posts = [] })`), the constrained
+/// split-frontend module type-checks it to a STRUCTURAL row and lowers the empty
+/// `posts = []` with its element type ERASED to `[]any`. `Codec.auto` then
+/// reflects `kind interface`, `Codec.fromJson` returns `Err`, and the boot path
+/// SILENTLY falls back to `init` — so every `Post` the server embedded in
+/// `#sky-model` is dropped on hydration, with no error (the home page, whose
+/// model needs no nested record, hydrated fine; the blog list collapsed to empty).
+/// The fix hoists the blank to a top-level ANNOTATED binding
+/// (`spaModelBlank_ : Model`) so codegen pins the nominal `List Post` element
+/// type and the decoder's `Codec.auto` matches the encoder's byte-for-byte.
+///
+/// `spa-ssr-db` never caught this: its model is `items : List String`, and a
+/// `String` element round-trips through `[]any` unharmed.
+#[test]
+fn spa_ssr_nested_record_model_blank_pins_the_nominal_type_so_hydration_is_lossless() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_nested_record_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the SSR nested-record fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // ── The FIX (no Go toolchain needed): the client model decoder must derive
+    // its `Codec.auto` from a top-level ANNOTATED blank binding, NOT an inline
+    // literal that erases nested element types to `[]any`. This is the
+    // deterministic RED→GREEN gate: pre-fix the frontend had no `spaModelBlank_`
+    // binding and used the inline `Codec.auto ({ … })` form. ──
+    let frontend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
+    let frontend_code = strip_line_comments(&frontend);
+    assert!(
+        frontend_code.contains("spaModelBlank_ :") && frontend_code.contains("spaModelBlank_ ="),
+        "SSR hydration: the client model blank must be a top-level ANNOTATED \
+         binding (`spaModelBlank_ : Model`) so its nested collection element types \
+         survive lowering:\n{frontend}"
+    );
+    assert!(
+        frontend_code.contains("Codec.fromJson (Codec.auto spaModelBlank_)"),
+        "SSR hydration: the decoder must derive `Codec.auto` from the annotated \
+         `spaModelBlank_` binding:\n{frontend}"
+    );
+    assert!(
+        !frontend_code.contains("Codec.fromJson (Codec.auto ({"),
+        "SSR hydration: the decoder must NOT use the inline blank literal that \
+         erases nested element types to `[]any`:\n{frontend}"
+    );
+
+    // ── Go-gated: the annotated blank type-checks in the constrained frontend
+    // module (the risk the fix takes on) and the frontend links, and the emitted
+    // Go pins the model's `posts` field to the nominal `Post` record — NOT `[]any`.
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "SSR nested-record: --target web:app must build end-to-end (the annotated \
+         blank must type-check in the constrained frontend module):\n{log}"
+    );
+    let fe_go = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
+    )
+    .unwrap_or_default();
+    if !fe_go.is_empty() {
+        assert!(
+            fe_go.contains("Posts []Main_Post_R"),
+            "SSR nested-record: the emitted frontend model must pin `posts` to the \
+             nominal `Post` record slice (`[]Main_Post_R`); an erased `[]any` field \
+             is what `codec_auto` cannot decode → silent hydration loss"
+        );
+    }
+
     let _ = std::fs::remove_dir_all(&proj);
 }
 

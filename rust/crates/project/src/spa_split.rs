@@ -2716,11 +2716,27 @@ fn gen_frontend(
     // collections / a default ADT ctor decodes populated JSON correctly (verified
     // host-side); an unencodable field degrades the decode to Err at runtime (the
     // driver then falls back to `init`), it never breaks the build.
+    //
+    // The blank MUST be an explicitly-annotated top-level binding, not an inline
+    // `Codec.auto ({..})` literal. In the heavily-constrained split-frontend module
+    // an inline model literal type-checks to a STRUCTURAL row whose empty
+    // collections / `Nothing` fields lower with their element type erased to
+    // `[]any` / `Maybe any`; `Codec.auto` then reflects `kind interface`, which
+    // `rt` cannot decode, so `fromJson` returns `Err` and the driver silently falls
+    // back to `init` — dropping every nested-record collection on hydration with no
+    // error (the SSR embed, derived from the runtime-typed model, carried the data
+    // fine, so this is a silent SSR/client divergence). Pinning the blank to the
+    // nominal `{model_ty}` via a top-level annotation makes codegen coerce those
+    // fields to their declared element types, so the decoder's `Codec.auto` matches
+    // the encoder's byte-for-byte and hydration is lossless.
     if let Some(model) = &decoder_blank {
         body.push_str(&format!(
-            "spaModelDecoder_ : String -> Result Error {model_ty}\n\
+            "spaModelBlank_ : {model_ty}\n\
+             spaModelBlank_ =\n    \
+             {model}\n\n\n\
+             spaModelDecoder_ : String -> Result Error {model_ty}\n\
              spaModelDecoder_ jsonStr_ =\n    \
-             Codec.fromJson (Codec.auto ({model})) jsonStr_\n\n\n"
+             Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_\n\n\n"
         ));
     }
 

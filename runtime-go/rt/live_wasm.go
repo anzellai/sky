@@ -181,7 +181,22 @@ func spaBootFromSSRModel(doc, mount js.Value, decoder any) (any, bool) {
 	if txt.Type() != js.TypeString {
 		return nil, false
 	}
-	return spaDecodeModelBlob(txt.String(), decoder)
+	blob := txt.String()
+	if model, ok := spaDecodeModelBlob(blob, decoder); ok {
+		return model, true
+	}
+	// A NON-EMPTY `#sky-model` blob that fails to decode is a silent SSR/client
+	// divergence: the server embedded typed data the client decoder could not
+	// reconstruct, so hydration drops it and falls back to `init` — with no error
+	// and (for a DB-backed init stripped to `Cmd.none`) empty nested collections.
+	// Surface it loudly so encoder/decoder drift can never hide as missing data
+	// again. An empty blob is the legitimate no-SSR path and stays quiet.
+	if strings.TrimSpace(blob) != "" {
+		if console := js.Global().Get("console"); console.Truthy() {
+			console.Call("error", "[sky.spa] #sky-model was present but failed to decode into the typed model; hydration fell back to init (nested-record collections will render empty). This is an SSR-embed / client-decoder model-codec divergence — see docs/skyspa/auto-split.md.")
+		}
+	}
+	return nil, false
 }
 
 // spaCurrentPath reads location.pathname, defaulting to "/".
