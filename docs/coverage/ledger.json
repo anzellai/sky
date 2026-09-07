@@ -263,7 +263,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1154,
+      "expected_assertions": 1165,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -12480,22 +12480,6 @@
             "createTable"
           ]
         },
-        "Std.Db.Store": {
-          "count": 11,
-          "symbols": [
-            "Cond",
-            "Table",
-            "dropProject",
-            "dropTable",
-            "dumpSchema",
-            "insertMany",
-            "migrate",
-            "pushProject",
-            "resetProject",
-            "resetTable",
-            "updateFields"
-          ]
-        },
         "Std.Db.Table": {
           "count": 14,
           "symbols": [
@@ -12959,8 +12943,8 @@
           ]
         }
       },
-      "count": 633,
-      "pct_of_denominator": 34.2
+      "count": 622,
+      "pct_of_denominator": 33.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13494,23 +13478,6 @@
             "createTable"
           ]
         },
-        "Std.Db.Store": {
-          "count": 12,
-          "symbols": [
-            "Cond",
-            "Store",
-            "Table",
-            "dropProject",
-            "dropTable",
-            "dumpSchema",
-            "insertMany",
-            "migrate",
-            "pushProject",
-            "resetProject",
-            "resetTable",
-            "updateFields"
-          ]
-        },
         "Std.Db.Table": {
           "count": 14,
           "symbols": [
@@ -14033,8 +14000,8 @@
           ]
         }
       },
-      "count": 718,
-      "pct_of_denominator": 38.8
+      "count": 706,
+      "pct_of_denominator": 38.1
     }
   },
   "units": [
@@ -15179,10 +15146,10 @@
       "id": "tests/conformance",
       "modules_imported": 38,
       "path": "tests/conformance",
-      "refs_generous": 512,
-      "refs_qualified": 501,
+      "refs_generous": 524,
+      "refs_qualified": 514,
       "role": "Conformance",
-      "sky_files": 30,
+      "sky_files": 31,
       "sky_toml_sections": []
     }
   ]

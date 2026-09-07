@@ -1,0 +1,226 @@
+module StdDbStoreLifecycleConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for the Std.Db.Store effectful LIFECYCLE, against an
+in-process sqlite DB. Complements StdDbStoreCoverageTest (pure builders +
+condition combinators) by exercising the schema/data management kernels a real
+app drives through a codec-backed Store: additive migration, bulk insert,
+Cond-driven PATCH, and the Project-level push/reset/drop operations plus the
+DB-free schema dump. Every case asserts a documented semantic against real
+rows. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.Error exposing (Error)
+import Std.Db as Db
+import Std.Db.Store as Store
+import Std.Codec as Codec exposing (Codec)
+import Sky.Test as Test exposing (Test)
+
+type alias Widget =
+    { id : String
+    , name : String
+    , qty : Int
+    }
+
+
+widgetCodec : Codec Widget
+widgetCodec =
+    Codec.auto { id = "", name = "", qty = 0 }
+
+
+-- `Store.Store` qualified type ref (covers the Store type symbol).
+widgets : Store.Store Widget
+widgets =
+    Store.fromCodec "store_widgets" widgetCodec |> Store.primaryKey "id"
+
+
+-- `Store.Table` qualified type ref (covers the Table type symbol).
+widgetsTable : Store.Table
+widgetsTable =
+    Store.toTable widgets
+
+
+widgetsProject : Store.Project
+widgetsProject =
+    Store.project [ widgetsTable ]
+
+
+-- `Store.Cond` qualified type ref (covers the Cond type symbol).
+w1Cond : Store.Cond
+w1Cond =
+    Store.eq "id" (Db.SqlString "w1")
+
+
+seed : List Widget
+seed =
+    [ { id = "w1", name = "Alpha", qty = 3 }
+    , { id = "w2", name = "Beta", qty = 7 }
+    , { id = "w3", name = "Gamma", qty = 5 }
+    ]
+
+
+rowCount : Db -> Int
+rowCount db =
+    List.length (Result.withDefault [] (Task.run (Store.all db widgets)))
+
+
+qtyOf : Db -> String -> Int
+qtyOf db wid =
+    case Result.withDefault
+             Nothing
+             (Task.run (Store.findBy db widgets "id" wid)) of
+
+        Just w ->
+            w.qty
+
+        Nothing ->
+            -1
+
+
+-- True iff selecting from the widgets table errors (e.g. after a drop).
+queryErrors : Db -> Bool
+queryErrors db =
+    case Task.run (Store.all db widgets) of
+
+        Err _ ->
+            True
+
+        Ok _ ->
+            False
+
+
+setup : () -> Result Error Db
+setup _ =
+    case Task.run (Db.open "sqlite" "/tmp/sky-store-lifecycle-conformance.db") of
+
+        Err e ->
+            Err e
+
+        Ok db ->
+            let
+                _ =
+                    Task.run
+                        (Db.execRaw db "DROP TABLE IF EXISTS store_widgets")
+                _ =
+                    Task.run
+                        (Db.execRaw db "DROP TABLE IF EXISTS _sky_migrations")
+            in
+                Ok db
+
+
+tests : List Test
+tests =
+    case setup () of
+
+        Err _ ->
+            [ Test.test
+                  "setup"
+                  (\_ -> Test.fail "DB setup (sqlite open) failed")
+            ]
+
+        Ok db ->
+            [ Test.test
+                  "migrate creates the table on first run (SQL applied)"
+                  (\_ ->
+                      Test.equal
+                          False
+                          (List.isEmpty
+                              (Result.withDefault
+                                  []
+                                  (Task.run (Store.migrate db widgets)))))
+            , Test.test
+                  "migrate is idempotent — a second run applies no SQL"
+                  (\_ ->
+                      Test.equal
+                          []
+                          (Result.withDefault
+                              [ "unexpected" ]
+                              (Task.run (Store.migrate db widgets))))
+            , Test.test
+                  "insertMany bulk-inserts every record in one statement"
+                  (\_ ->
+                      Test.equal
+                          3
+                          (Result.withDefault
+                              (-1)
+                              (Task.run (Store.insertMany db widgets seed))))
+            , Test.test
+                  "the three rows are readable back after insertMany"
+                  (\_ -> Test.equal 3 (rowCount db))
+            , Test.test
+                  "updateFields PATCHes only the Cond-matched row's named column"
+                  (\_ ->
+                      let
+                          n =
+                              Result.withDefault
+                                  (-1)
+                                  (Task.run
+                                      (Store.updateFields
+                                          db
+                                          widgets
+                                          w1Cond
+                                          [ ( "qty", Db.SqlInt 99 ) ]))
+                      in
+                          Test.equal
+                              ( 1, 99, 7 )
+                              ( n, qtyOf db "w1", qtyOf db "w2" ))
+            , Test.test
+                  "resetTable empties the data but keeps the table"
+                  (\_ ->
+                      -- w1.qty patched to 99; w2 (7) untouched
+                      let
+                          _ = Task.run (Store.resetTable db "store_widgets")
+                      in
+                          Test.equal 0 (rowCount db))
+            , Test.test
+                  "dropTable removes the table (a subsequent query errors)"
+                  (\_ ->
+                      let
+                          _ = Task.run (Store.dropTable db "store_widgets")
+                      in
+                          Test.equal True (queryErrors db))
+            , Test.test
+                  "pushProject recreates the missing table for the whole project"
+                  (\_ ->
+                      let
+                          applied =
+                              Result.withDefault
+                                  []
+                                  (Task.run (Store.pushProject db widgetsProject))
+                      in
+                          Test.equal
+                              ( False, 0 )
+                              ( List.isEmpty applied, rowCount db ))
+            , Test.test
+                  "resetProject empties every table the project declares"
+                  (\_ ->
+                      -- SQL was applied (table recreated) and the fresh table is empty + queryable
+                      let
+                          _ = Task.run (Store.insertMany db widgets seed)
+                          before = rowCount db
+                          _ =
+                              Task.run (Store.resetProject db widgetsProject)
+                      in
+                          Test.equal ( 3, 0 ) ( before, rowCount db ))
+            , Test.test
+                  "dropProject drops every project table (a subsequent query errors)"
+                  (\_ ->
+                      let
+                          applied =
+                              Result.withDefault
+                                  []
+                                  (Task.run (Store.dropProject db widgetsProject))
+                      in
+                          Test.equal
+                              ( False, True )
+                              ( List.isEmpty applied, queryErrors db ))
+            , Test.test
+                  "dumpSchema renders the project schema without a live DB"
+                  (\_ -> Test.ok (Task.run (Store.dumpSchema widgetsProject)))
+            ]
+
+
+main =
+    Test.runMain tests
