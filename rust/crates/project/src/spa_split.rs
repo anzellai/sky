@@ -838,6 +838,32 @@ pub fn generate(
         }
     }
 
+    // ---- FINDING A: dedupe page SSR mounts against `App.api` GET endpoints ----
+    // A path that is BOTH an `App.route` PAGE route (mounted below as
+    // `GET <path>` by the per-route SSR block) AND an `App.api "GET <path>"`
+    // server endpoint (mounted via `App.apiServerRoute spaApiRoutes_`) would
+    // register `GET <path>` on the Go 1.22 mux TWICE — `http.ServeMux` PANICS at
+    // boot on the duplicate pattern (rt_server.go), crash-looping the backend.
+    // The Live build tolerates this: its single `/` dispatcher resolves
+    // api-before-page inside ONE handler, so it never makes a second
+    // registration; the split, which mounts each route as its own mux entry, does.
+    // PRECEDENCE — the API handler WINS: an explicit `App.api "GET <path>"` is a
+    // deliberate server endpoint (the sky-lang.org `/admin/login` OAuth entry),
+    // so the auto-derived SSR page mount for the SAME method+path is suppressed
+    // and the request reaches the api handler. Dedupe on METHOD+PATH, not path:
+    // the SSR mounts are all `GET`, so only a GET api endpoint on a page path
+    // collides — an `App.api "POST <path>"` sharing a page path is a DISTINCT mux
+    // pattern and is left to mount. Scanned across every project module (the api
+    // table is often a sibling / entry `apiRoutes`), same as the page patterns.
+    let mut api_get_paths: HashSet<String> = HashSet::new();
+    for m in &check_ids {
+        let msrc = db.module_parse(*m).syntax().text().to_string();
+        for p in spa_api_get_paths(&msrc) {
+            api_get_paths.insert(p);
+        }
+    }
+    ssr_route_patterns.retain(|p| !api_get_paths.contains(p));
+
     // ---- resolve `init`'s DECLARING module for the GET-safe SSR scan (§4.2) ----
     // `init` may be factored into a SIBLING module (the sky-lang.org shape — its
     // `init` lives in `Model.sky`, not the entry). Resolve the config's `init`
@@ -1810,6 +1836,59 @@ fn spa_ssr_route_patterns(routes_src: &str) -> Vec<String> {
                 }
             }
             rest = &after[..];
+        }
+    }
+    out
+}
+
+/// The PATHS of every `App.api "GET <path>" …` / `Spa.api "GET <path>" …`
+/// endpoint in `routes_src`, its method verb parsed off the `"METHOD /path"`
+/// literal — the set the per-route SSR page mounts must NOT duplicate (FINDING
+/// A). Only GET endpoints are returned: the SSR page mounts are all
+/// `GET <path>`, so a GET api endpoint on the same path is the sole collision
+/// that double-registers a mux pattern; a `POST`/`PUT`/… endpoint on a page path
+/// is a distinct pattern. Comments are stripped first (a `--` / `{- -}` sample
+/// mentioning `App.api` must not be scraped as a real endpoint), matching
+/// `spa_ssr_route_patterns`. The head match is boundary-guarded so `App.api`
+/// does not fire inside the GENERATED `App.apiServerRoute` (this scan runs over
+/// original module sources, which have none, but the guard keeps it robust).
+fn spa_api_get_paths(routes_src: &str) -> Vec<String> {
+    let routes_src = strip_sky_comments(routes_src);
+    let routes_src = routes_src.as_str();
+    let mut out: Vec<String> = Vec::new();
+    for head in ["App.api", "Spa.api"] {
+        let mut rest = routes_src;
+        while let Some(i) = rest.find(head) {
+            let after = &rest[i + head.len()..];
+            // Boundary: `App.api` must be followed by the call's argument, i.e.
+            // whitespace or `(` (rejects `App.apiServerRoute`).
+            let boundary_ok = after
+                .chars()
+                .next()
+                .map(|c| c.is_whitespace() || c == '(')
+                .unwrap_or(false);
+            if !boundary_ok {
+                rest = after;
+                continue;
+            }
+            if let Some(q) = after.find('"') {
+                let tail = &after[q + 1..];
+                if let Some(end) = tail.find('"') {
+                    let lit = &tail[..end];
+                    let mut it = lit.split_whitespace();
+                    let method = it.next().unwrap_or("");
+                    let path = it.next().unwrap_or("");
+                    if method.eq_ignore_ascii_case("GET")
+                        && path.starts_with('/')
+                        && !out.contains(&path.to_string())
+                    {
+                        out.push(path.to_string());
+                    }
+                    rest = &tail[end + 1..];
+                    continue;
+                }
+            }
+            rest = after;
         }
     }
     out

@@ -1,0 +1,23 @@
+module Routes exposing (routes, notFound)
+
+-- PAGE route table (sky-lang.org shape). `/admin/login` is a PAGE route here AND
+-- a `GET` api endpoint in the entry's `apiRoutes` — the collision that
+-- double-registers `GET /admin/login` on the mux and boot-panics the split
+-- backend (FINDING A). The api endpoint must win; this page mount is suppressed.
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import State exposing (Page(..))
+
+
+routes : List any
+routes =
+    [ App.route "/" HomePage
+    , App.route "/items" ItemsPage
+    , App.route "/admin/login" LoginPage
+    ]
+
+
+notFound : Page
+notFound =
+    HomePage

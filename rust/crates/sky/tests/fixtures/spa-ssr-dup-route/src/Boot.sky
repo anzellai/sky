@@ -1,0 +1,17 @@
+module Boot exposing (init)
+
+-- Sibling `init` whose command is a curated GET-safe read through the
+-- backend-only `db` CAF (the sky-lang.org shape). Puts the app on the SSR path.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Std.Db as Db
+import Conn exposing (db)
+import State exposing (..)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = HomePage, items = [] }
+    , Cmd.perform (Db.query db "SELECT name FROM items ORDER BY name" []) GotItems
+    )

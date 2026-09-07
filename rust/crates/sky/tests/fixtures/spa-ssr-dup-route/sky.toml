@@ -1,0 +1,5 @@
+[project]
+name = "ssr-dup-route"
+
+[app]
+target = "web:app"

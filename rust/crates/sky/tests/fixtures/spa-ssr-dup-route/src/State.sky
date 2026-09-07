@@ -1,0 +1,25 @@
+module State exposing (..)
+
+-- Shared TEA state (the sky-lang.org shape — Page/Model/Msg factored into a pure
+-- module copied into BOTH trees).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Dict as Dict
+
+
+type Page
+    = HomePage
+    | ItemsPage
+    | LoginPage
+
+
+type alias Model =
+    { page : Page
+    , items : List String
+    }
+
+
+type Msg
+    = Navigate Page
+    | GotItems (Result Error (List (Dict String String)))

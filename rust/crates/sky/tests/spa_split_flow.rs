@@ -1879,6 +1879,117 @@ fn splits_mixed_page_and_api_routes() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+fn dup_route_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-dup-route")
+}
+
+/// FINDING A. A path that is BOTH an `App.route` PAGE route (`/admin/login`) AND
+/// an `App.api "GET /admin/login"` server endpoint (the sky-lang.org OAuth-entry
+/// shape). The App→Spa synthesis mounts the page route as a per-route SSR
+/// `Server.api "GET /admin/login" ssrHandler` AND the api endpoint via
+/// `App.apiServerRoute spaApiRoutes_`; both register `GET /admin/login` on Go's
+/// mux, which PANICS at boot on the duplicate pattern (`http.ServeMux`),
+/// crash-looping the backend. The api endpoint must WIN — the SSR page mount for
+/// the same METHOD+PATH is suppressed — so the backend boots. (The Live build
+/// tolerates the mix via its single `/` dispatcher, so this is split-only.)
+#[test]
+fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&dup_route_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the dup-route fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let backend_raw = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/backend/src/Main.sky"),
+    )
+    .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
+    // Strip `--` comments: the fixture's own doc comment is copied verbatim into
+    // the backend and mentions `Server.api "GET /admin/login" ssrHandler` in
+    // prose — a `.contains` on the raw source would match THAT, not a real
+    // registration. Assert against the code only.
+    let backend = strip_line_comments(&backend_raw);
+
+    // ── The api endpoints are mounted (the api handler is the winner). ──
+    assert!(
+        backend.contains("spaApiRoutes_ =")
+            && backend.contains("++ List.concatMap App.apiServerRoute spaApiRoutes_"),
+        "FINDING A: the api endpoints must still mount via `App.apiServerRoute`:\n{backend}"
+    );
+
+    // ── The colliding page's SSR GET mount is SUPPRESSED — the mux registers
+    // `GET /admin/login` exactly once (from the api side), so the backend boots.
+    // Before the fix the SSR block ALSO emitted this line → duplicate → panic. ──
+    assert!(
+        !backend.contains("Server.api \"GET /admin/login\" ssrHandler"),
+        "FINDING A: the SSR page mount for `/admin/login` must be suppressed \
+         (it collides with `App.api \"GET /admin/login\"`), else the mux \
+         double-registers and boot-panics:\n{backend}"
+    );
+
+    // ── Non-colliding page routes STILL SSR-mount (the dedupe is scoped to the
+    // exact method+path collision, not a blanket suppression). ──
+    assert!(
+        backend.contains("Server.api \"GET /items\" ssrHandler")
+            && backend.contains("Server.api \"GET /{$}\" ssrHandler"),
+        "FINDING A: non-colliding page routes must keep their SSR GET mounts:\n{backend}"
+    );
+
+    // ── Go-gated real proof: the built backend BOOTS without a
+    // duplicate-pattern panic (the actual failure this fixes). ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "FINDING A: --target web:app must build end-to-end:\n{log}"
+    );
+    let app_bin = proj.join(".skyapp/web-app/.split/backend/sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must exist:\n{log}");
+
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let boot_log = backend_dir.join("boot.log");
+    let logf = std::fs::File::create(&boot_log).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", "8973")
+        .stdout(logf.try_clone().unwrap())
+        .stderr(logf)
+        .spawn()
+        .expect("spawn the split backend");
+    // Give the mux setup (where the duplicate-pattern panic fires, before the
+    // listen loop) time to run, then check the process is still alive.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let status = child.try_wait().expect("poll the backend process");
+    let mut boot = String::new();
+    use std::io::Read as _;
+    let _ = std::fs::File::open(&boot_log).and_then(|mut f| f.read_to_string(&mut boot));
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    assert!(
+        status.is_none(),
+        "FINDING A: the split backend must BOOT, not exit at mux setup with a \
+         duplicate-registration panic. It exited early ({status:?}); boot log:\n{boot}"
+    );
+    assert!(
+        !boot.contains("multiple registrations") && !boot.contains("panic:"),
+        "FINDING A: the backend logged a mux/panic error at boot:\n{boot}"
+    );
+}
+
 fn have_sqlite3() -> bool {
     Command::new("sqlite3")
         .arg("--version")
