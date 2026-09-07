@@ -119,11 +119,17 @@ pub struct World {
     /// Union type `DefId` → its constructor names (disambiguates same-named
     /// unions across modules, e.g. a `Msg` in each of several modules).
     pub union_members_by_def: HashMap<DefId, Vec<String>>,
-    /// BARE-name alias table (last-writer-wins on same-named aliases across
-    /// modules). Kept for the emission path (`expand_ty` from `lower`, which
-    /// carries no module context) and as the unique-name fallback in `expand`.
-    /// Byte-identical to pre-#164 behaviour, so corpus emission + apps that
-    /// never collide alias names are unaffected.
+    /// BARE-name alias table (FIRST-writer-wins on same-named aliases across
+    /// modules — the loader adds stdlib + deps before the project's own
+    /// modules, so the stdlib definition of a colliding name is kept and an app
+    /// module can never overwrite it). Kept for the emission path (`expand_ty`
+    /// from `lower`, which carries no module context) and as the unique-name
+    /// fallback in `expand`. For a name with a single definer (the overwhelming
+    /// majority) first- and last-writer are identical, so corpus emission + apps
+    /// that never collide alias names are unaffected; the change only fixes the
+    /// collision case, where the previous last-writer-wins let an unrelated app
+    /// module poison a stdlib signature's un-imported bare-name reference (the
+    /// entry-passes / dependency-fails divergence — see `extend_decls` pass 1a).
     aliases: HashMap<String, AliasDef>,
     /// MODULE-QUALIFIED alias table, keyed by `"<defining-module>.<name>"`.
     /// This is the #164 fix: same-named aliases in different modules are
@@ -491,15 +497,41 @@ impl World {
                 if let ast::Decl::Alias(a) = &decl {
                     if let Some(name) = a.name().map(|t| t.text().to_string()) {
                         let params = decl_type_vars(a.syntax());
-                        // BARE table (last-writer-wins) — emission + unique fallback.
+                        // BARE table (FIRST-writer-wins) — emission + unique
+                        // fallback. `module_ids()` is load order, and the build
+                        // loader adds stdlib (then Sky-package deps) BEFORE the
+                        // project's own modules, so keeping the FIRST definition
+                        // makes this table's answer independent of which
+                        // *unrelated* app modules happen to be loaded: a stdlib
+                        // signature that references an un-imported alias by bare
+                        // name (e.g. `Std.Auth.setSlidingCookie : Request -> …`,
+                        // where `Request` lives in `Sky.Http.Server` and Auth
+                        // never imports it) resolves ONLY through this fallback,
+                        // and last-writer-wins let an app module that declared a
+                        // *different* same-named `type alias Request` silently
+                        // overwrite the entry and poison that signature — so the
+                        // module type-checked clean as a build entry but was
+                        // rejected as a non-entry dependency of a project that
+                        // also contained the collider. First-writer-wins closes
+                        // that entry-vs-dependency divergence. (A module's
+                        // reference to its OWN or an IMPORTED alias never reaches
+                        // this table — it resolves through HIR `type_refs` to the
+                        // module-qualified `alias_by_mod`, the #164 path — so this
+                        // only governs the un-imported leniency fallback, where a
+                        // *stable* choice is the only correct one. For a
+                        // non-colliding name first- and last-writer are identical,
+                        // so corpus emission is unaffected. The shared-world path
+                        // detects a case/stdlib bare-alias collision up front
+                        // (`fallback_reason` → `BareAliasCollision`) and rebuilds,
+                        // so it never depends on the overwrite either.)
                         let body_bare = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
-                        world.aliases.insert(
-                            name.clone(),
-                            AliasDef {
+                        world
+                            .aliases
+                            .entry(name.clone())
+                            .or_insert(AliasDef {
                                 params: params.clone(),
                                 body: body_bare,
-                            },
-                        );
+                            });
                         world.alias_keys.insert(format!("{mname}.{name}"));
                         if let Some(t) = a.ty() {
                             alias_stash.push((m, name, params, t));
