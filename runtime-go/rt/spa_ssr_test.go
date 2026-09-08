@@ -252,3 +252,27 @@ func TestSpaSSRPage_servesRealBodyHeadModelNotEmptyDiv(t0 *testing.T) {
 		t0.Fatalf("SSR page must load the content-hashed wasm:\n%s", page)
 	}
 }
+
+// A cold deep-link (`/blog/<slug>`) served by the SSR backend must reference its
+// assets by ROOT-ABSOLUTE URL (`/wasm_exec.js`, `/main.<hash>.wasm`), never by a
+// bare relative name. The static shell serves `../frontend/dist` at `/`, so a
+// relative `wasm_exec.js` on a two-segment page resolves to `/blog/wasm_exec.js`
+// (404 → text/html → "Go is not defined") and the wasm never boots. The leading
+// slash makes the URLs correct at any route depth.
+func TestSpaSSRPage_referencesRootAbsoluteAssets(t0 *testing.T) {
+	page := SpaSSRPage(`<title>Post</title>`, `<h1>Post</h1>`, "main.abc123.wasm", `{"page":"Post"}`)
+
+	if !strings.Contains(page, `<script src="/wasm_exec.js">`) {
+		t0.Fatalf("SSR page must load wasm_exec.js by root-absolute URL (/wasm_exec.js):\n%s", page)
+	}
+	// The bare relative form must be gone (it breaks on any 2+ segment path).
+	if strings.Contains(page, `<script src="wasm_exec.js">`) {
+		t0.Fatalf("SSR page must NOT reference a bare relative wasm_exec.js:\n%s", page)
+	}
+	if !strings.Contains(page, `fetch("/main.abc123.wasm")`) {
+		t0.Fatalf("SSR page must fetch the wasm by root-absolute URL:\n%s", page)
+	}
+	if strings.Contains(page, `fetch("main.abc123.wasm")`) {
+		t0.Fatalf("SSR page must NOT fetch a bare relative wasm name:\n%s", page)
+	}
+}

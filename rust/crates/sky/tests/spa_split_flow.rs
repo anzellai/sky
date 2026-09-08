@@ -1366,6 +1366,10 @@ fn ssr_p3_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-p3")
 }
 
+fn spa_deeplink_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-deeplink")
+}
+
 /// Wait until the generated Sky.Spa backend logs its `Sky server listening` line
 /// (the auto-split backend is a `Sky.Http.Server`, not a Sky.Live one, so its
 /// ready line differs from `wait_for_listening`'s). Returns true once seen.
@@ -1536,6 +1540,100 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     assert!(
         home_app.contains("Welcome home") && !home_app.contains("Item list:"),
         "SSR-P3: GET / must render Home's own view, not the Items view:\n{home_app}"
+    );
+}
+
+/// Fix 1 (cold deep-link is dark). A cold two-segment URL (`/blog/<slug>`) served
+/// by the SSR backend must reference its assets by ROOT-ABSOLUTE URL, so the
+/// browser fetches `/wasm_exec.js` + `/main.<hash>.wasm` at ANY route depth. With
+/// a bare relative `wasm_exec.js`, a `/blog/<slug>` document resolves it to
+/// `/blog/wasm_exec.js` (404 → text/html → "Go is not defined") and the wasm
+/// never boots. The Go-gated leg serves the real backend and confirms the SSR
+/// document's asset URLs are root-absolute AND that `/wasm_exec.js` is a 200
+/// JavaScript asset.
+#[test]
+fn spa_deep_link_ssr_references_root_absolute_assets() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_deeplink_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the deep-link fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The two-segment param route reaches the SSR handler (a more-specific mux
+    // entry than the static catch-all).
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    assert!(
+        backend.contains("Server.api \"GET /blog/:slug\" ssrHandler"),
+        "the /blog/:slug route must be a per-route SSR GET:\n{backend}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "deep-link fixture must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+
+    let port = 8974u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled deep-link backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("deep-link backend never reported listening on :{port}");
+    }
+    let deep_body = curl_body_p(port, "/blog/hello");
+    let asset = curl_status_ctype(port, "/wasm_exec.js");
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let deep_body = deep_body.expect("GET /blog/hello should return a body");
+    // The cold deep-link SSRs the Post route (crawlable) with the SSR marker.
+    assert!(
+        deep_body.contains("data-sky-ssr") && deep_body.contains("hello"),
+        "GET /blog/hello must SSR the Post route (marker + slug). Body was:\n{deep_body}"
+    );
+    // Assets are ROOT-ABSOLUTE — correct at this two-segment depth.
+    assert!(
+        deep_body.contains(r#"<script src="/wasm_exec.js">"#),
+        "the deep-link document must load /wasm_exec.js (root-absolute):\n{deep_body}"
+    );
+    assert!(
+        !deep_body.contains(r#"<script src="wasm_exec.js">"#),
+        "the deep-link document must NOT reference a bare relative wasm_exec.js:\n{deep_body}"
+    );
+    assert!(
+        deep_body.contains(r#"fetch("/main."#) && deep_body.contains(".wasm\")"),
+        "the deep-link document must fetch the wasm by root-absolute URL:\n{deep_body}"
+    );
+
+    // /wasm_exec.js is a REAL asset served by the static mount: 200 + JavaScript.
+    let (code, ctype) = asset.expect("GET /wasm_exec.js should answer");
+    let _ = std::fs::remove_dir_all(&proj);
+    assert_eq!(code, 200, "/wasm_exec.js must be 200, got {code} ({ctype})");
+    assert!(
+        ctype.contains("javascript"),
+        "/wasm_exec.js must be served as JavaScript, got Content-Type {ctype}"
     );
 }
 
@@ -2363,6 +2461,20 @@ fn curl_body_p(port: u16, path: &str) -> Option<String> {
     let url = format!("http://127.0.0.1:{port}{path}");
     let out = Command::new("curl").args(["-s", &url]).output().ok()?;
     Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+// HTTP status code + Content-Type of `GET http://127.0.0.1:<port><path>`.
+fn curl_status_ctype(port: u16, path: &str) -> Option<(u32, String)> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let out = Command::new("curl")
+        .args(["-s", "-o", "/dev/null", "-w", "%{http_code} %{content_type}", &url])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    let mut it = s.splitn(2, ' ');
+    let code = it.next()?.trim().parse::<u32>().ok()?;
+    let ctype = it.next().unwrap_or("").trim().to_string();
+    Some((code, ctype))
 }
 
 /// BUG-3. When the SYNTHESISED client entry fails to type-check, the failure

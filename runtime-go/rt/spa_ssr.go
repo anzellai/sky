@@ -166,10 +166,15 @@ func SpaSSRPage(headHTML, bodyHTML, wasmName, modelJSON string) string {
 	b.WriteString(`<script id="sky-model" type="application/json">`)
 	b.WriteString(escapeModelForScript(modelJSON))
 	b.WriteString(`</script>`)
-	// The wasm loader — same shape as the static shell.
-	b.WriteString(`<script src="wasm_exec.js"></script>`)
+	// The wasm loader — same shape as the static shell. Assets are referenced by
+	// ROOT-ABSOLUTE URL (leading `/`): the static shell serves `../frontend/dist`
+	// at `/`, so a bare relative `wasm_exec.js` on a cold two-segment deep-link
+	// (`/blog/<slug>`) resolves to `/blog/wasm_exec.js` (404 → text/html → "Go is
+	// not defined") and the wasm never boots. A leading slash is correct at any
+	// route depth.
+	b.WriteString(`<script src="/wasm_exec.js"></script>`)
 	b.WriteString(`<script>const go=new Go();WebAssembly.instantiateStreaming(fetch(`)
-	b.WriteString(jsStringLit(wasmName))
+	b.WriteString(jsStringLit(rootAbsoluteAsset(wasmName)))
 	b.WriteString(`),go.importObject).then((res)=>{go.run(res.instance);});</script>`)
 	b.WriteString(`</body></html>`)
 	return b.String()
@@ -181,6 +186,13 @@ func SpaSSRPage(headHTML, bodyHTML, wasmName, modelJSON string) string {
 // Replacing `<` with its JSON `<` escape keeps the payload valid JSON.
 func escapeModelForScript(json string) string {
 	return strings.ReplaceAll(json, "<", `<`)
+}
+
+// rootAbsoluteAsset makes an asset name served from the frontend dist root a
+// root-absolute URL by ensuring exactly one leading slash. The wasm name is a
+// bare `main.<hash>.wasm`; an already-rooted value is left unchanged.
+func rootAbsoluteAsset(name string) string {
+	return "/" + strings.TrimPrefix(name, "/")
 }
 
 // jsStringLit renders a double-quoted JS string literal for the wasm URL,

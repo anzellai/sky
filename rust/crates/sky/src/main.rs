@@ -4245,10 +4245,10 @@ const WASM_INDEX_HTML: &str = r#"<!doctype html>
   </head>
   <body>
     <div id="app"></div>
-    <script src="wasm_exec.js"></script>
+    <script src="/wasm_exec.js"></script>
     <script>
       const go = new Go();
-      WebAssembly.instantiateStreaming(fetch("{{WASM}}"), go.importObject).then((res) => {
+      WebAssembly.instantiateStreaming(fetch("/{{WASM}}"), go.importObject).then((res) => {
         go.run(res.instance);
       });
     </script>
@@ -9463,11 +9463,22 @@ mod tests {
         let hash = &n1["main.".len()..n1.len() - ".wasm".len()];
         assert_eq!(hash.len(), 12, "12-char content hash: {n1}");
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
-        // index.html references exactly that file, and wasm_exec.js is present.
+        // index.html references exactly that file by a ROOT-ABSOLUTE URL, and
+        // wasm_exec.js is present. The leading slash is load-bearing: the static
+        // shell is served at `/` and a cold deep-link (`/blog/<slug>`) resolves a
+        // bare relative `main.<hash>.wasm` against `/blog/`, 404ing the wasm.
         let index = std::fs::read_to_string(dist.join("index.html")).unwrap();
         assert!(
-            index.contains(&format!("fetch(\"{n1}\")")),
-            "index must fetch {n1}"
+            index.contains(&format!("fetch(\"/{n1}\")")),
+            "index must fetch the wasm by root-absolute URL /{n1}, got:\n{index}"
+        );
+        assert!(
+            !index.contains(&format!("fetch(\"{n1}\")")),
+            "index must NOT fetch a bare relative wasm name (breaks on deep links):\n{index}"
+        );
+        assert!(
+            index.contains(r#"<script src="/wasm_exec.js">"#),
+            "index must load wasm_exec.js by root-absolute URL:\n{index}"
         );
         assert!(dist.join("wasm_exec.js").is_file());
 
