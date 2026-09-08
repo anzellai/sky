@@ -268,6 +268,17 @@ func dispatchEvent(handler any, payload string) {
 	if spaDispatch == nil {
 		return
 	}
+	// The handler application (turning an onInput/onChange toMsg into a Msg)
+	// runs BEFORE step, so a panic here (e.g. an rt.Coerce in the toMsg) is
+	// outside step's guard. Recover it too: log loudly and drop this event,
+	// leaving the model untouched and the instance alive for the next event.
+	// step itself is guarded separately (spaTransition), so update/view panics
+	// are handled there.
+	defer func() {
+		if r := recover(); r != nil {
+			spaReportPanic("event", r)
+		}
+	}()
 	// Reflection-free (Sky.Spa client): a payload handler emits as
 	// `func(string) any` (onInput/onChange) or `func(any) any`; apply by TYPED
 	// ASSERTION rather than `reflect.Value.Call` (TinyGo cannot compile it). A

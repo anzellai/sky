@@ -384,20 +384,49 @@ func spaClosestAnchor(node js.Value) js.Value {
 // funnel through here, so the model mutation + render + effect + subscription
 // reconciliation always happen together and in order.
 func step(msg any) {
-	pair := spaUpdate(msg, spaModel)
-	spaModel = pair.V0
-	cmd := pair.V1
-	renderCurrent()
-	// A msg-driven render is the programmatic-Navigate case: the address bar
-	// still shows the previous page, so a [data-sky-path] change here is a real,
-	// Back-able navigation (push=true), mirroring Sky.Live's SSE-patch
-	// __skyRunPaths(document, true). The path-match guard makes it a no-op for a
-	// non-navigating msg (a timer tick, a form keystroke). Scroll to top only
-	// when the path actually moved.
-	spaSyncURLFromDOM(true)
-	spaScrollOnNavigate()
-	interpretCmd(asCmdT(cmd), spaDispatch)
-	reconcileSubs()
+	// The whole transition runs under the portable panic guard (spa_step.go):
+	// Sky.Live's server dispatch recovers a panicking update/view to a 500 and
+	// the session survives; this gives the wasm client the same net on its
+	// PRIMARY (click/keystroke) path. A classified panic (DivisionByZero from
+	// `10.0 / 0.0`, an rt.Coerce panic) from the user's update or view no longer
+	// kills the Go/wasm instance and white-screens the app — the last good model
+	// is kept, the panic is logged with a [sky.spa] prefix, and the next event
+	// still dispatches. The perform / timer / topic paths already recover; this
+	// closes the primary path.
+	spaModel = spaTransition(
+		msg, spaModel,
+		spaUpdate,
+		func(model any) {
+			spaModel = model
+			renderCurrent()
+		},
+		func(cmd any) {
+			// A msg-driven render is the programmatic-Navigate case: the address
+			// bar still shows the previous page, so a [data-sky-path] change here
+			// is a real, Back-able navigation (push=true), mirroring Sky.Live's
+			// SSE-patch __skyRunPaths(document, true). The path-match guard makes
+			// it a no-op for a non-navigating msg (a timer tick, a form
+			// keystroke). Scroll to top only when the path actually moved.
+			spaSyncURLFromDOM(true)
+			spaScrollOnNavigate()
+			interpretCmd(asCmdT(cmd), spaDispatch)
+			reconcileSubs()
+		},
+		spaReportPanic,
+	)
+}
+
+// spaReportPanic is the js sink spaTransition (and dispatchEvent) report a
+// recovered panic through: a loud, greppable console.error with a [sky.spa]
+// prefix, mirroring the message the perform / timer / topic recovers already
+// emit. Keeping the log here (not in spa_step.go) keeps the guard core
+// build-tag-free and host-testable.
+func spaReportPanic(stage string, r any) {
+	if c := js.Global().Get("console"); c.Truthy() {
+		c.Call("error",
+			"[sky.spa] "+stage+" panicked; kept last good model, instance still alive:",
+			fmt.Sprintf("%v", r))
+	}
 }
 
 // renderCurrent runs view(model) -> Html -> VNode and paints it to the DOM.
