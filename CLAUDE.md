@@ -10,6 +10,24 @@
 > Read AGENTS.md first. Then the rules below govern *how Claude Code operates*
 > when driving multi-step / autonomous work in this repo.
 
+## Response style (INVIOLABLE)
+
+Every response to the user, and every agent report, follows these rules.
+
+1. Write in ASD-STE100 Simplified Technical English. Keep each sentence short.
+   Put one idea in each sentence. Use the active voice. Use the present tense
+   where you can. Use common, approved words.
+2. Use British English spelling. For example, write behaviour, colour, organise,
+   licence, and whilst.
+3. Use plain punctuation. Do not use em-dashes, en-dashes, semicolons, or emoji.
+   Use full stops and commas.
+4. Do not use filler or marketing words. For example, do not write robust,
+   seamless, leverage, delve, comprehensive, powerful, or effortless. State the
+   fact plainly.
+
+This rule governs prose in chat and in reports. It does not change code, code
+comments, identifiers, or quoted output.
+
 @AGENTS.md
 
 ## Claude Code — operational rules
