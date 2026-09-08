@@ -1341,11 +1341,13 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         "SSR-P1: the SSR route must precede the static route:\n{backend}"
     );
     // P3 fail-closed: this fixture's `init` is `Cmd.none` (its `File.writeFile`
-    // lives in a `Persist` branch, NOT in `init`), so the GET-safe allowlist scan
-    // finds no safe read → NO data-resolve settle is emitted, and the route
-    // renders the pure model. `Spa_ssrSettle` must be absent.
+    // lives in a `Persist` branch, NOT in `init`) AND it has no `withOnNavigate`,
+    // so there is no GET-safe read to settle → NO data-resolve settle is emitted,
+    // and the route renders the pure model. `Spa_ssrSettle` must be absent. (No
+    // `withRoutes` either, so the pure model is `model0` directly, not a `routed`
+    // binding — fix 2 emits the route-resolve binding only when routes exist.)
     assert!(
-        !backend.contains("spaSsrSettle") && backend.contains("resolved =\n            routed"),
+        !backend.contains("spaSsrSettle") && backend.contains("resolved =\n            model0"),
         "SSR-P3 fail-closed: a `Cmd.none` init must NOT get a data-resolve settle:\n{backend}"
     );
 
@@ -1374,6 +1376,142 @@ fn ssr_p3_fixture_dir() -> PathBuf {
 
 fn spa_guard_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-guard")
+}
+
+fn spa_onnav_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-onnav")
+}
+
+/// Fix 2. A routed content site whose PER-ROUTE data is loaded in `onNavigate`
+/// (not in `init`, which is `Cmd.none`). The SSR settle must fire
+/// `onNavigate page` for the resolved route and settle its GET-safe read, so a
+/// direct GET of a deep route server-renders that route's REAL data — into the
+/// body a crawler sees AND the embedded `#sky-model` the client boots from.
+/// Before the fix the settle ran only `init`'s single (here empty) command, so a
+/// deep route rendered a blank body: RED. After: the route's data is present.
+///
+/// Two layers of proof:
+///   * emission (no Go): the backend `ssrHandler` fires `onNavigate` on the
+///     resolved route, runs it through `update`, and settles that command;
+///   * Go-gated e2e: `GET /a` carries "Alpha content", `GET /b` "Beta content",
+///     each in the rendered body and the `#sky-model` blob; `GET /` (no per-route
+///     data) carries an empty body — proving the data is per-route + server-resolved.
+#[test]
+fn spa_ssr_settles_per_route_onnavigate_data() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_onnav_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-ssr-onnav fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Synthesis: onNavigate is carried onto the client config.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    assert!(
+        synth.contains("|> Spa.withOnNavigate spaOnNavigate_"),
+        "fix 2: onNavigate must be carried onto the client Spa config:\n{synth}"
+    );
+
+    // Emission: the SSR handler fires onNavigate on the resolved route and
+    // settles its command (the per-route data load).
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    for needle in [
+        "spaOnNavigate_ preNav_.page",
+        "update navMsg_ preNav_",
+        "spaSsrSettle navModel_ navCmd_ update",
+    ] {
+        assert!(
+            backend.contains(needle),
+            "fix 2: the SSR handler must fire + settle onNavigate — missing `{needle}`:\n{backend}"
+        );
+    }
+
+    // ── Go-gated e2e: serve and assert REAL per-route data. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "fix 2: --target web:app must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    // Stage the per-route data the onNavigate reads settle.
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    std::fs::write(backend_dir.join("data/a.txt"), "Alpha content\n").unwrap();
+    std::fs::write(backend_dir.join("data/b.txt"), "Beta content\n").unwrap();
+
+    let port = 8977u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-ssr-onnav backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-ssr-onnav backend never reported listening on :{port}");
+    }
+    let a_body = curl_body_p(port, "/a");
+    let b_body = curl_body_p(port, "/b");
+    let home_body = curl_body_p(port, "/");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let a_body = a_body.expect("GET /a should return a body");
+    let b_body = b_body.expect("GET /b should return a body");
+    let home_body = home_body.expect("GET / should return a body");
+
+    // /a carries the SERVER-RESOLVED per-route data (the onNavigate read settled),
+    // both in the rendered body and the embedded #sky-model blob.
+    assert!(
+        a_body.contains("data-sky-ssr")
+            && a_body.contains("Route A")
+            && a_body.contains("Alpha content"),
+        "fix 2: GET /a must carry the onNavigate-resolved data in the body:\n{a_body}"
+    );
+    let a_blob_start = a_body
+        .find(r#"<script id="sky-model" type="application/json">"#)
+        .expect("fix 2: the #sky-model blob must be present on /a");
+    let a_blob = &a_body[a_blob_start..];
+    let a_blob = &a_blob[..a_blob.find("</script>").expect("blob must close")];
+    assert!(
+        a_blob.contains(r#""page":"a""#) && a_blob.contains("Alpha content"),
+        "fix 2: the /a #sky-model must carry the resolved page + body:\n{a_blob}"
+    );
+    // /b resolves to its OWN data.
+    assert!(
+        b_body.contains("Route B") && b_body.contains("Beta content"),
+        "fix 2: GET /b must carry its own resolved data (not /a's):\n{b_body}"
+    );
+    // / has no per-route onNavigate data → empty body (proves per-route, not global).
+    let home_app = {
+        let s = home_body.find(r#"<div id="app""#).expect("home #app must exist");
+        let e = home_body.find(r#"<script id="sky-model""#).unwrap_or(home_body.len());
+        &home_body[s..e]
+    };
+    assert!(
+        home_app.contains("Home page")
+            && !home_app.contains("Alpha content")
+            && !home_app.contains("Beta content"),
+        "fix 2: GET / must render Home with no per-route data:\n{home_app}"
+    );
 }
 
 /// Fix 5. `App.withGuard` / `App.withOnNavigate` / `App.withRequest` are CARRIED

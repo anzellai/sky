@@ -2183,6 +2183,18 @@ fn gen_backend(
     let has_synth_guard = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaGuard_"));
+    // Fix 2: `spaOnRequest_` seeds `init`'s SSR model from the real request
+    // (path / query / cookies / headers), and `spaOnNavigate_` is fired per
+    // resolved route so per-route data (not just init's path-independent read)
+    // is settled into the embedded `#sky-model`. Both settle under the
+    // goroutine-local SSR-safe guard (spa_ssr_safe.go), so a destructive effect
+    // in the folded command self-suppresses — a GET never mutates.
+    let has_synth_on_request = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaOnRequest_"));
+    let has_synth_on_navigate = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaOnNavigate_"));
     // Data-resolved SSR (design §4.2): the GET-safe allowlist, applied
     // FAIL-CLOSED at synthesis over the app's `init` source. The settle
     // (Spa_ssrSettle) runs `init`'s `cmd0` to a data-bearing model server-side —
@@ -2209,8 +2221,16 @@ fn gen_backend(
     // this to the synthesis output, whose `init`/`view` are plain TEA safe to run
     // server-side (a hand-authored Sky.Spa client, whose `init`/`view` reference
     // client-only `Std.Spa`, has no `spaView_`/`spaHead_` and keeps today's shell).
-    let emit_ssr =
-        (!(server.is_empty() && !push_mode) || init_get_safe) && has_synth_view && has_synth_head;
+    // Fix 2: a routed `onNavigate` is ALSO real per-request work to settle — the
+    // per-route data lives in `onNavigate page`'s command, not in `init`. Its
+    // reads settle under the SSR-safe guard, so this needs no static allowlist
+    // proof (a destructive effect in the fired command self-suppresses at
+    // runtime — spa_ssr_safe.go). So SSR now emits for the onNavigate content-site
+    // shape (`init = Cmd.none`, per-route data loaded on navigation) too.
+    let nav_ssr = has_synth_routes && has_synth_on_navigate;
+    let emit_ssr = (!(server.is_empty() && !push_mode) || init_get_safe || nav_ssr)
+        && has_synth_view
+        && has_synth_head;
     if emit_ssr {
         add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
         add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
@@ -2474,54 +2494,117 @@ fn gen_backend(
                  \x20   Ffi.kernel \"Spa_ssrResolveModel\"\n\n\n",
             );
         }
-        // Data-resolved settle alias — runs init's GET-safe read to a settled,
-        // data-bearing model (design §4.2). Emitted ONLY when the fail-closed
-        // allowlist scan proved init's command GET-safe (init_get_safe).
-        if init_get_safe {
+        // Settle decisions (fix 2). `settle_init` settles init's GET-safe read
+        // (design §4.2, unchanged gate). `settle_nav` fires the app's
+        // `onNavigate page` for the resolved route and settles ITS reads, so
+        // per-route data (not only init's path-independent read) reaches the
+        // embedded `#sky-model`. `seed_req` seeds init's model from the real
+        // request via `withRequest`. All three settle through `Spa_ssrSettle`,
+        // which runs under the goroutine-local SSR-safe guard — a destructive
+        // effect in any folded command self-suppresses (a GET never mutates),
+        // so `settle_nav`/`seed_req` need no static allowlist proof.
+        let settle_init = init_get_safe;
+        let settle_nav = nav_ssr;
+        let seed_req = has_synth_on_request;
+        let ssr_guard = has_synth_guard && nav_ssr;
+        if settle_init || settle_nav || seed_req {
             handlers.push_str(
-                "-- Data-resolved SSR: settle init's GET-safe read to a data-bearing\n\
-                 -- model server-side so the first paint carries REAL content a crawler\n\
-                 -- sees (Spa_ssrSettle). Emitted only because the allowlist scan proved\n\
-                 -- init's command is a curated GET-safe read (spa_split.rs).\n\
+                "-- Data-resolved SSR (design §4.2): settle a GET-safe read to a\n\
+                 -- data-bearing model server-side so the first paint carries REAL\n\
+                 -- content a crawler sees. Runs under the SSR-safe guard\n\
+                 -- (runtime-go/rt/spa_ssr_safe.go): a destructive effect in the\n\
+                 -- folded command self-suppresses — a GET never mutates.\n\
                  spaSsrSettle : model -> any -> any -> model\n\
                  spaSsrSettle =\n\
                  \x20   Ffi.kernel \"Spa_ssrSettle\"\n\n\n",
             );
         }
-        // The handler body: resolve the route, optionally settle its data, render.
-        let req_param = if has_synth_routes { "req" } else { "_" };
-        let cmd_bind = if init_get_safe { "cmd0" } else { "_" };
-        let routed_expr = if has_synth_routes {
-            "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path"
+        // The request param is needed for route resolution (`req.path`) AND for
+        // the `withRequest` seed (`req`).
+        let req_param = if has_synth_routes || seed_req { "req" } else { "_" };
+        // Build the let-binding block. Bindings sit at 8 spaces, `in` at 4, body
+        // at 4. The settle chain NESTS `spaSsrSettle` calls (no intermediate
+        // bindings + no `Cmd.batch`), so the no-seed/no-nav common case emits the
+        // exact same `resolved = spaSsrSettle routed cmd0 update` as before.
+        let mut lets = String::new();
+        let cmd0_bind = if settle_init { "cmd0" } else { "_" };
+        lets.push_str(&format!(
+            "        ( model0, {cmd0_bind} ) =\n            init ()\n\n"
+        ));
+        // withRequest: refine init's model from the real request (path / query /
+        // cookies / headers), exactly as Sky.Live seeds a session at start. Fixes
+        // the seed to `()`, so `init` stays portable while the request arrives
+        // through this web-only channel.
+        let seed_base = if seed_req {
+            lets.push_str(
+                "        ( modelSeeded_, cmdSeed_ ) =\n            spaOnRequest_ req model0\n\n",
+            );
+            "modelSeeded_"
         } else {
             "model0"
         };
-        let resolved_expr = if init_get_safe {
-            "spaSsrSettle routed cmd0 update"
+        // Resolve the request path to the route's page (sets model.page).
+        let route_base = if has_synth_routes {
+            lets.push_str(&format!(
+                "        routed =\n            spaSsrResolveModel spaRoutes_ spaNotFound_ {seed_base} req.path\n\n"
+            ));
+            "routed".to_string()
         } else {
-            "routed"
+            seed_base.to_string()
         };
+        // The settle chain over the routed model: settle init's read, then the
+        // request-seed's read, by NESTING (each runs under the SSR-safe guard).
+        let mut chain = route_base.clone();
+        if settle_init {
+            chain = format!("spaSsrSettle {chain} cmd0 update");
+        }
+        if seed_req {
+            chain = if settle_init {
+                format!("spaSsrSettle ({chain}) cmdSeed_ update")
+            } else {
+                format!("spaSsrSettle {chain} cmdSeed_ update")
+            };
+        }
+        // onNavigate: fire `onNavigate page` for the resolved route, run it
+        // through `update` to a (model, cmd), and settle that command — the
+        // per-route data load. When a guard is present it authorises the
+        // navigation FIRST: a denied navigation renders the pre-nav model with NO
+        // protected data settled (never a server-side data leak) and never runs
+        // the load. The guard is the TRUSTED server-side check (fix 5).
+        if settle_nav {
+            lets.push_str(&format!("        preNav_ =\n            {chain}\n\n"));
+            lets.push_str(
+                "        navMsg_ =\n            spaOnNavigate_ preNav_.page\n\n\
+                 \x20       ( navModel_, navCmd_ ) =\n            update navMsg_ preNav_\n\n",
+            );
+            let settle_expr = "spaSsrSettle navModel_ navCmd_ update";
+            if ssr_guard {
+                lets.push_str(&format!(
+                    "        resolved =\n            case spaGuard_ navMsg_ preNav_ of\n\
+                     \x20               Err _ ->\n                    preNav_\n\n\
+                     \x20               Ok _ ->\n                    {settle_expr}\n\n"
+                ));
+            } else {
+                lets.push_str(&format!("        resolved =\n            {settle_expr}\n\n"));
+            }
+        } else {
+            lets.push_str(&format!("        resolved =\n            {chain}\n\n"));
+        }
+        lets.push_str("        modelJson =\n            Codec.toJson (Codec.auto resolved) resolved\n");
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
-             -- run init, resolve the request path to this route's page + model, then\n\
-             -- (when init's command is GET-safe) settle its read to a data-bearing\n\
-             -- model so a crawler sees REAL per-route content; render head + body\n\
-             -- inside a `data-sky-ssr`-marked #app; embed the resolved model as JSON\n\
-             -- (design §4.5) so the client can boot from it instead of re-running the\n\
-             -- effectful init. `Codec.auto` derives the model codec from the value —\n\
-             -- it compiles for ANY model (an unencodable field degrades the blob at\n\
-             -- runtime, it never breaks the build).\n\
+             -- run init, seed it from the request (withRequest), resolve the path to\n\
+             -- this route's page, settle init's read AND the route's onNavigate read\n\
+             -- to a data-bearing model so a crawler sees REAL per-route content;\n\
+             -- render head + body inside a `data-sky-ssr`-marked #app; embed the\n\
+             -- resolved model as JSON (design §4.5) so the client boots from it\n\
+             -- instead of re-running the effectful init. `Codec.auto` derives the\n\
+             -- model codec from the value — it compiles for ANY model (an\n\
+             -- unencodable field degrades the blob at runtime, never breaks the build).\n\
              ssrHandler : Handler\n\
              ssrHandler {req_param} =\n\
              \x20   let\n\
-             \x20       ( model0, {cmd_bind} ) =\n\
-             \x20           init ()\n\n\
-             \x20       routed =\n\
-             \x20           {routed_expr}\n\n\
-             \x20       resolved =\n\
-             \x20           {resolved_expr}\n\n\
-             \x20       modelJson =\n\
-             \x20           Codec.toJson (Codec.auto resolved) resolved\n\
+             {lets}\
              \x20   in\n\
              \x20   Task.succeed\n\
              \x20       (Server.html\n\

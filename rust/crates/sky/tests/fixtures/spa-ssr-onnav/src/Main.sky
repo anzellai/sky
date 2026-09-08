@@ -1,0 +1,94 @@
+module Main exposing (main)
+
+-- Fix 2 fixture: a routed `Std.App` content site whose PER-ROUTE data is loaded
+-- in `onNavigate`, not in `init`. `init` is `Cmd.none`, so the pre-fix SSR (which
+-- only settled `init`'s single path-independent command) rendered every deep
+-- route with an EMPTY body. With fix 2 the SSR settle fires `onNavigate page` for
+-- the resolved route and settles its GET-safe read, so a direct GET of `/a` or
+-- `/b` server-renders that route's REAL content into the body AND the embedded
+-- `#sky-model` a crawler sees.
+--
+-- `page` is a plain `String` (the route id) and the single `Enter page` branch
+-- loads `data/<page>.txt` from the variable, so the auto-split's RPC wire needs
+-- no custom `Codec Page` and hits no literal-pattern Msg arg — the fixture
+-- isolates the SSR-settle behaviour.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { page : String
+    , body : String
+    }
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = "home", body = "" }, Cmd.none )
+
+
+type Msg
+    = Enter String
+    | Loaded (Result Error String)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Enter page ->
+            ( { model | page = page }
+            , Cmd.perform (File.readFile ("data/" ++ page ++ ".txt")) Loaded
+            )
+
+        Loaded (Ok raw) ->
+            ( { model | body = String.trim raw }, Cmd.none )
+
+        Loaded (Err _) ->
+            ( { model | body = "" }, Cmd.none )
+
+
+onNav : String -> Msg
+onNav page =
+    Enter page
+
+
+view : Model -> Element Msg
+view model =
+    if model.page == "a" then
+        Ui.column [] [ Ui.text "Route A", Ui.text ("Body: " ++ model.body) ]
+
+    else if model.page == "b" then
+        Ui.column [] [ Ui.text "Route B", Ui.text ("Body: " ++ model.body) ]
+
+    else
+        Ui.text "Home page"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+            [ App.route "/" "home"
+            , App.route "/a" "a"
+            , App.route "/b" "b"
+            ]
+        |> App.withNotFound "home"
+        |> App.withOnNavigate onNav
+
+
+main : Task Error ()
+main =
+    App.run app

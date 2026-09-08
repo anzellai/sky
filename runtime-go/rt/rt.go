@@ -7721,6 +7721,9 @@ func File_readFileBytes(path any) any {
 
 func File_writeFile(path any, content any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("file.writeFile"); r != nil {
+			return r
+		}
 		return WithFileSpan("writeFile", fmt.Sprintf("%v", path), func() any {
 			err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
 			if err != nil {
@@ -7733,6 +7736,9 @@ func File_writeFile(path any, content any) any {
 
 func File_append(path any, content any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("file.append"); r != nil {
+			return r
+		}
 		return WithFileSpan("append", fmt.Sprintf("%v", path), func() any {
 			f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
@@ -7757,6 +7763,9 @@ func File_exists(path any) any {
 
 func File_remove(path any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("file.remove"); r != nil {
+			return r
+		}
 		err := os.Remove(fmt.Sprintf("%v", path))
 		if err != nil {
 			return Err[any, any](ErrFfi(err.Error()))
@@ -7767,6 +7776,9 @@ func File_remove(path any) any {
 
 func File_mkdirAll(path any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("file.mkdirAll"); r != nil {
+			return r
+		}
 		err := os.MkdirAll(fmt.Sprintf("%v", path), 0755)
 		if err != nil {
 			return Err[any, any](ErrFfi(err.Error()))
