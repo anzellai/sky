@@ -13,6 +13,36 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.23.3 — Sky.Spa raw-HTML hydration fix (2026-09-08)
+
+A patch release fixing a **Sky.Spa** (`--target web:app`) client-hydration bug in
+`Html.raw`. No breaking changes — `sky upgrade` is safe from any v0.23.x.
+
+### Sky.Spa — `Html.raw` content survives client hydration
+
+- **A `<style>` (or any raw HTML) injected via `Html.raw` in the view no longer
+  vanishes when the wasm client hydrates.** SSR wrote a raw node's content inline
+  into its parent (a real `<style>` with its CSS as text), but the wasm client
+  wrapped raw content in a `<span>` and set `span.innerHTML` — so a `<style>`'s
+  CSS ended up inside an inert `<span>` and was never applied, and the SSR node
+  was wiped-and-rebuilt on first paint. A site that injected global CSS (syntax
+  highlighting, a responsive/hamburger nav, an overflow guard) through a body
+  `Html.raw` `<style>` lost all of it on the SPA — the nav failed to collapse on
+  mobile and horizontal overflow was no longer clipped. The client now renders a
+  raw node's content **byte-identically to SSR** (inline into the parent, parsed
+  in the parent's element context so a `<style>`'s CSS applies), adopts the
+  SSR-rendered raw node **in place** instead of rebuilding it, and — a related
+  latent bug — the diff now reconciles a raw node whose text **changes** (dynamic
+  raw content had silently stopped updating, on the Sky.Live server path too).
+  `Html.raw` remains the trusted-raw escape hatch: content is passed through
+  verbatim, never double-escaped.
+
+### Under the hood
+
+- **CI**: the macOS determinism `repro` gate now shards 3-way so the T1 tier
+  stays under its time budget after the coverage additions; the release gate
+  reclaims disk between its heaviest tiers so the full-suite run fits a runner.
+
 ## v0.23.2 — Sky.Spa SSR/hydration fixes (2026-09-07)
 
 A patch release fixing three **Sky.Spa** auto-split (`--target web:app`) defects
