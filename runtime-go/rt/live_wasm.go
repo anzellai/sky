@@ -58,6 +58,12 @@ var (
 	spaRoutes     []spaRoute
 	spaNotFound   any
 	spaOnNavigate any
+	// spaLastSettledPath tracks the URL pathname as of the last settled render,
+	// so a render that MOVED the path (a genuine navigation) scrolls the new page
+	// to the top while an in-place update (a timer tick, a filter change that
+	// keeps the path) leaves scroll alone. This is the wasm counterpart of
+	// live.go's __skyLastPath / __skyDidNavigate. Empty until the first mount.
+	spaLastSettledPath string
 )
 
 type spaTimer struct {
@@ -144,6 +150,13 @@ func spaRun(cfg any) any {
 	}
 
 	renderCurrent()
+	// Reconcile the address bar to the mounted view's [data-sky-path] marker
+	// (push=false: the loaded URL is already correct — a mount must never mint a
+	// history entry). Then seed the navigation tracker to the mounted path so the
+	// FIRST later navigation scrolls to top while the mount itself does not move
+	// the (deep-link-restored) scroll position.
+	spaSyncURLFromDOM(false)
+	spaLastSettledPath = spaCurrentPath()
 	interpretCmd(asCmdT(cmd0), spaDispatch)
 	reconcileSubs()
 
@@ -257,6 +270,12 @@ func spaNavigate(path string) {
 		return
 	}
 	renderCurrent()
+	// A click-interceptor / popstate render: the URL is ALREADY correct (the
+	// click handler pushed it, popstate is browser-driven), so reconcile any
+	// [data-sky-path] marker with replaceState only (push=false) — never a second
+	// entry. Scroll to top on a genuine path change (matches live.go __skyPatch).
+	spaSyncURLFromDOM(false)
+	spaScrollOnNavigate()
 	reconcileSubs()
 }
 
@@ -369,6 +388,14 @@ func step(msg any) {
 	spaModel = pair.V0
 	cmd := pair.V1
 	renderCurrent()
+	// A msg-driven render is the programmatic-Navigate case: the address bar
+	// still shows the previous page, so a [data-sky-path] change here is a real,
+	// Back-able navigation (push=true), mirroring Sky.Live's SSE-patch
+	// __skyRunPaths(document, true). The path-match guard makes it a no-op for a
+	// non-navigating msg (a timer tick, a form keystroke). Scroll to top only
+	// when the path actually moved.
+	spaSyncURLFromDOM(true)
+	spaScrollOnNavigate()
 	interpretCmd(asCmdT(cmd), spaDispatch)
 	reconcileSubs()
 }
@@ -408,6 +435,100 @@ func renderCurrent() {
 		spaApplyPatches(patches, spaPrev, &vn)
 	}
 	spaPrev = &vn
+}
+
+// spaSyncURLFromDOM scans the freshly-rendered view for `[data-sky-path]` /
+// `[data-sky-query]` markers and syncs the browser address bar to them via the
+// History API — the wasm counterpart of Sky.Live's injected __skyRunPaths
+// (live.go). It is the missing half of client routing: the Spa route table maps
+// URL→Page (deep-link / popstate / intercepted <a href> click), and this maps
+// Page→URL for a MODEL-DRIVEN navigation (an `onClick (Navigate …)` Msg), which
+// otherwise updated content but left the URL stale.
+//
+// `push` is the caller's history intent, identical to __skyRunPaths' second arg:
+//   - true  — a msg-driven render (`step`): the address bar still shows the
+//     previous page, so a path change is a real, Back-able navigation (pushState).
+//   - false — mount / popstate / an intercepted click: the correct URL is already
+//     in the bar, so reconcile with replaceState only, never minting a second
+//     entry (which would make Back need two presses per page).
+//
+// The per-marker DECISION is the portable spaPathSyncOp / spaQuerySyncOp (see
+// spa_urlsync.go); this function only reads the DOM + location and applies the
+// resulting History op. location is re-read after each applied op so a following
+// marker sees the updated bar — matching __skyRunPaths, which reads location.*
+// live inside its loop. A route-less app (a counter) whose view has no markers
+// simply gets an empty query set, so this is a safe no-op there.
+func spaSyncURLFromDOM(push bool) {
+	if !spaRoot.Truthy() {
+		return
+	}
+	loc := js.Global().Get("location")
+	hist := js.Global().Get("history")
+	if !loc.Truthy() || !hist.Truthy() {
+		return
+	}
+	readLoc := func() (string, string) {
+		path := "/"
+		if p := loc.Get("pathname"); p.Type() == js.TypeString && p.String() != "" {
+			path = p.String()
+		}
+		search := ""
+		if s := loc.Get("search"); s.Type() == js.TypeString {
+			search = s.String()
+		}
+		return path, search
+	}
+	apply := func(op spaURLOp) {
+		switch op.kind {
+		case "push":
+			hist.Call("pushState", js.Null(), "", op.url)
+		case "replace":
+			hist.Call("replaceState", js.Null(), "", op.url)
+		}
+	}
+
+	pels := spaRoot.Call("querySelectorAll", "[data-sky-path]")
+	for i := 0; i < pels.Length(); i++ {
+		pv := pels.Index(i).Call("getAttribute", "data-sky-path")
+		if pv.Type() != js.TypeString || pv.String() == "" {
+			continue
+		}
+		curPath, curSearch := readLoc()
+		apply(spaPathSyncOp(pv.String(), curPath, curSearch, push))
+	}
+
+	qels := spaRoot.Call("querySelectorAll", "[data-sky-query]")
+	for j := 0; j < qels.Length(); j++ {
+		q := ""
+		if qv := qels.Index(j).Call("getAttribute", "data-sky-query"); qv.Type() == js.TypeString {
+			q = qv.String()
+		}
+		curPath, curSearch := readLoc()
+		apply(spaQuerySyncOp(q, curPath, curSearch))
+	}
+}
+
+// spaScrollOnNavigate scrolls the new page to the top when the URL pathname
+// changed since the last settled render, and leaves scroll untouched otherwise —
+// the wasm counterpart of live.go's `if (__skyDidNavigate()) window.scrollTo(0,0)`.
+// Call it AFTER spaSyncURLFromDOM so the pathname compared is the post-sync one
+// (a model-driven Navigate has just pushed the new URL). A same-page update (a
+// timer tick, a filter change that keeps the path) is a no-op.
+func spaScrollOnNavigate() {
+	loc := js.Global().Get("location")
+	if !loc.Truthy() {
+		return
+	}
+	cur := "/"
+	if p := loc.Get("pathname"); p.Type() == js.TypeString && p.String() != "" {
+		cur = p.String()
+	}
+	if cur != spaLastSettledPath {
+		spaLastSettledPath = cur
+		if w := js.Global(); w.Truthy() {
+			w.Call("scrollTo", 0, 0)
+		}
+	}
 }
 
 // snapshotFocusedInput reports the currently-focused form field's live DOM
