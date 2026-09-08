@@ -1734,6 +1734,20 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 			}
 			continue
 		}
+		if oc.Kind == "raw" && nc.Kind == "raw" {
+			// A raw node's text IS its parent's innerHTML (Std.Html.raw). It has
+			// no sky-id of its own to address, so when the raw string changes we
+			// re-serialise the parent's children and replace the subtree — the
+			// same HTML-patch shape the browser applier (client spaSetChildren /
+			// server __skyApplyPatches) already handles. Unchanged raw emits
+			// nothing, so a static <style>/embed is never needlessly re-rendered.
+			if oc.Text != nc.Text && old.SkyID != "" {
+				html := renderChildrenHTML(new_.Children)
+				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+				return
+			}
+			continue
+		}
 		if oc.Tag != nc.Tag || oc.Kind != nc.Kind {
 			// Tag mismatch: replace subtree at the parent.
 			if old.SkyID != "" {

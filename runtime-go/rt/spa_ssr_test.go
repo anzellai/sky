@@ -6,15 +6,21 @@ import (
 )
 
 // The Sky.Spa SSR + hydration exit-criterion (design docs/skyspa/ssr-design.md
-// §4.4 / §8 risk 1). The `sky-id`-presence check is NOT sufficient: three
+// §4.4 / §8 risk 1). The `sky-id`-presence check is NOT sufficient: two
 // server/client DOM divergences line up by sky-id yet corrupt on the first
-// structural diff — `raw` nodes (server inline vs client <span>-wrap), adjacent
-// text children (server concatenates → one browser text node vs client keeps N),
-// and `textarea` (server splices value as child text vs client models a
-// property). `spaHydratableVNode` is the POSITIVE structural check a hydrate
-// walk consults to fall back to a full `spaMount` rebuild instead of adopting a
-// mismatched tree. These tests pin that it flags each divergence and passes a
-// clean tree.
+// structural diff — adjacent text children (server concatenates → one browser
+// text node vs client keeps N), and `textarea` (server splices value as child
+// text vs client models a property). `spaHydratableVNode` is the POSITIVE
+// structural check a hydrate walk consults to fall back to a full `spaMount`
+// rebuild instead of adopting a mismatched tree. These tests pin that it flags
+// each divergence and passes a clean tree.
+//
+// A `raw` node is NO LONGER a divergence: the client now renders raw HTML
+// inline into its parent (dom_render_wasm.go spaSetChildren → renderChildrenHTML),
+// byte-identical to the SSR serialisation, so a lone raw child hydrates in place
+// rather than forcing a wipe-and-rebuild that used to drop a <style>'s CSS on the
+// first client paint (View.Common.globalCss on sky-lang.org). A raw node
+// ADJACENT to a textual sibling is still caught by the adjacency guard.
 
 // `el(tag, attrs, children...)` + `txt(s)` are shared test helpers from
 // live_skyid_test.go. `rawNode` is local to the SSR parity tests.
@@ -34,16 +40,41 @@ func TestSpaHydratable_cleanTreeIsHydratable(t0 *testing.T) {
 	}
 }
 
-func TestSpaHydratable_rawNodeIsNotHydratable(t0 *testing.T) {
-	// Server writes raw n.Text inline (live_core.go:444); client buildDOM wraps
-	// it in a <span> (dom_render_wasm.go:74-78) → structural divergence.
+func TestSpaHydratable_loneRawNodeIsHydratable(t0 *testing.T) {
+	// The client now renders a raw node INLINE into its parent (SSR parity), so a
+	// lone raw child is byte-structurally identical on both sides and hydratable.
+	// Pre-fix the client wrapped it in a <span>, so this was (wrongly) rejected.
 	vn := el("div", nil, rawNode("<b>markup</b>"))
 	ok, reason := spaHydratableVNode(vn)
-	if ok {
-		t0.Fatalf("a raw node must NOT be hydratable (server inline vs client <span>-wrap)")
+	if !ok {
+		t0.Fatalf("a lone raw node must be hydratable now the client renders it inline, got reason %q", reason)
 	}
-	if !strings.Contains(reason, "raw") {
-		t0.Fatalf("reason must name the raw divergence, got %q", reason)
+}
+
+func TestSpaHydratable_styleWithRawCssIsHydratable(t0 *testing.T) {
+	// The exact sky-lang.org regression: View.Common.globalCss =
+	// Ui.html (Html.node "style" [] [Html.raw css]) mounted in the body. SSR
+	// paints the <style>'s CSS; the wasm client must adopt it, not wipe it.
+	vn := el("div", nil,
+		el("style", nil, rawNode("nav{display:none}@media(max-width:600px){nav{display:block}}")),
+		el("main", nil, txt("content")),
+	)
+	ok, reason := spaHydratableVNode(vn)
+	if !ok {
+		t0.Fatalf("a <style> carrying raw CSS must be hydratable (SSR content adopted, not wiped), got reason %q", reason)
+	}
+}
+
+func TestSpaHydratable_rawAdjacentToTextIsNotHydratable(t0 *testing.T) {
+	// A raw run next to a text sibling still coalesces in the browser the way
+	// adjacent text does, so the adjacency guard must still reject it.
+	vn := el("p", nil, txt("before "), rawNode("<b>x</b>"))
+	ok, reason := spaHydratableVNode(vn)
+	if ok {
+		t0.Fatalf("raw adjacent to text must NOT be hydratable (browser coalesces the run)")
+	}
+	if !strings.Contains(reason, "adjacent") {
+		t0.Fatalf("reason must name the adjacency divergence, got %q", reason)
 	}
 }
 
@@ -84,12 +115,12 @@ func TestSpaHydratable_emptyTextareaIsHydratable(t0 *testing.T) {
 }
 
 func TestSpaHydratable_divergenceDeepInTreeIsCaught(t0 *testing.T) {
-	// The check must recurse — a raw node nested several levels down still makes
-	// the whole tree non-hydratable (a subtree diff would corrupt).
-	vn := el("div", nil, el("section", nil, el("article", nil, rawNode("<i>x</i>"))))
+	// The check must recurse — a divergence (adjacent text) nested several levels
+	// down still makes the whole tree non-hydratable (a subtree diff would corrupt).
+	vn := el("div", nil, el("section", nil, el("article", nil, txt("a"), txt("b"))))
 	ok, _ := spaHydratableVNode(vn)
 	if ok {
-		t0.Fatalf("a raw node deep in the tree must make the tree non-hydratable")
+		t0.Fatalf("a divergence deep in the tree must make the tree non-hydratable")
 	}
 }
 

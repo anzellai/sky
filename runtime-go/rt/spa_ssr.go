@@ -31,26 +31,32 @@ import (
 const spaSSRMarker = "data-sky-ssr"
 
 // spaHydratableVNode is the recursive structural parity check. It returns false
-// (with a reason) when the tree contains any of the three known server/client
-// DOM divergences that a `sky-id`-presence check cannot see:
+// (with a reason) when the tree contains one of the known server/client DOM
+// divergences that a `sky-id`-presence check cannot see:
 //
-//   - a "raw" node: the server writes n.Text INLINE (live_core.go:444) while the
-//     client buildDOM WRAPS it in a <span> (dom_render_wasm.go:74-78), so the
-//     hydrated DOM has one fewer/other element than the client tree believes.
-//   - adjacent text children: the server concatenates escaped text into one run
-//     (live_core.go:440), which the browser parses to a SINGLE text node, while
-//     the client keeps them as N separate VNode/text children.
+//   - adjacent text/raw children: the server concatenates escaped text into one
+//     run (live_core.go:440), which the browser parses to a SINGLE text node,
+//     while the client keeps them as N separate VNode children. A raw run
+//     adjacent to text coalesces the same way.
 //   - a <textarea> carrying a value: the server splices the value as child text
 //     (live_core.go textarea block) while the client models it as the DOM
 //     `.value` property, so the child structure differs.
 //
-// Anything else — element trees with at most one text child per parent and no
-// raw/valued-textarea — is byte-structurally identical on both sides and safe to
-// hydrate.
+// A lone "raw" node is NO LONGER a divergence: the client now renders raw HTML
+// inline into its parent (dom_render_wasm.go spaSetChildren → renderChildrenHTML),
+// byte-identical to the SSR serialisation (live_core.go:444). Hydration binds
+// elements by sky-id and never descends into raw content, so the SSR-rendered
+// raw (e.g. a <style>'s CSS) is adopted verbatim rather than wiped by a full
+// rebuild. The adjacency guard below still rejects a raw node next to a textual
+// sibling.
+//
+// Anything else — element trees with at most one textual (text/raw) child per
+// parent and no valued-textarea — is byte-structurally identical on both sides
+// and safe to hydrate.
 func spaHydratableVNode(n VNode) (bool, string) {
 	switch n.Kind {
 	case "raw":
-		return false, "raw node: server renders inline, client wraps in <span> (structural mismatch)"
+		return true, ""
 	case "text":
 		return true, ""
 	}

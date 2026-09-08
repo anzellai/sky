@@ -137,8 +137,15 @@ func buildDOM(el VNode) js.Value {
 	case "text":
 		return doc.Call("createTextNode", el.Text)
 	case "raw":
-		// Raw HTML: wrap in a <span> and set innerHTML. Std.Html.raw is the
-		// only source and it is author-controlled markup.
+		// A raw node's content is its PARENT's innerHTML (Std.Html.raw), exactly
+		// as SSR serialises it inline (live_core.go renderVNodeInto). It is never
+		// a standalone DOM node, so buildDOM is not called on a raw child — the
+		// element case below routes children through spaSetChildren, which
+		// innerHTMLs a raw-containing child list verbatim. This case is reached
+		// only if a raw node is a render ROOT (no parent to inject into); we then
+		// isolate it in a <span> as a last resort. Wrapping a raw CHILD in a
+		// <span> was the hydration bug: a <style>'s CSS wrapped in a <span> is
+		// never applied, so a server-rendered stylesheet vanished on first paint.
 		span := doc.Call("createElement", "span")
 		span.Set("innerHTML", el.Text)
 		return span
@@ -155,10 +162,47 @@ func buildDOM(el VNode) js.Value {
 			reflectInputProp(n, k, v)
 		}
 		bindNodeEvents(n, el)
-		for i := range el.Children {
-			n.Call("appendChild", buildDOM(el.Children[i]))
-		}
+		spaSetChildren(n, el.Children)
 		return n
+	}
+}
+
+// spaChildrenContainRaw reports whether any direct child is a raw-HTML node.
+func spaChildrenContainRaw(children []VNode) bool {
+	for i := range children {
+		if children[i].Kind == "raw" {
+			return true
+		}
+	}
+	return false
+}
+
+// spaSetChildren populates parent's children from a VNode list.
+//
+// The default path builds a real DOM node per child (createElement + real event
+// listeners), preserving node identity for focus/caret handling.
+//
+// When ANY child is a raw-HTML node, that per-child path is wrong: a raw node's
+// content is the PARENT's innerHTML (Std.Html.raw — the trusted-raw-HTML escape
+// hatch), which cannot be modelled as a standalone child DOM node. So the
+// raw-present case serialises the ENTIRE child list with the SSR renderer
+// (renderChildrenHTML) and assigns parent.innerHTML once — byte-identical to
+// what SSR produced and parsed in the parent's own element context (so a
+// <style>'s CSS becomes the style element's text and is applied, not wrapped in
+// a spurious <span>). It then walks the children binding real event listeners +
+// reflecting input props onto the freshly-parsed descendant elements by sky-id
+// (hydrateVNode), so interactive siblings of a raw node stay wired. Raw content
+// itself carries no sky-id and is left verbatim.
+func spaSetChildren(parent js.Value, children []VNode) {
+	if spaChildrenContainRaw(children) {
+		parent.Set("innerHTML", renderChildrenHTML(children))
+		for i := range children {
+			hydrateVNode(parent, children[i])
+		}
+		return
+	}
+	for i := range children {
+		parent.Call("appendChild", buildDOM(children[i]))
 	}
 }
 
@@ -415,9 +459,7 @@ func rebuildChildrenPreservingFocus(el js.Value, id string, oldRoot, newRoot *VN
 		}
 	}
 	el.Set("innerHTML", "")
-	for i := range newSub.Children {
-		el.Call("appendChild", buildDOM(newSub.Children[i]))
-	}
+	spaSetChildren(el, newSub.Children)
 
 	if focSid != "" {
 		nf := doc.Call("querySelector", `[sky-id="`+escAttr(focSid)+`"]`)
