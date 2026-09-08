@@ -265,6 +265,11 @@ pub struct SpaSplitReport {
     /// Server-tainted top-level bindings OMITTED from the frontend source.
     pub excluded: Vec<String>,
     pub notes: Vec<String>,
+    /// Build-time WARNINGS the author must see (printed prominently by the CLI).
+    /// Currently: a model field whose type `Codec.auto` cannot round-trip through
+    /// the SSR model embed, caught at build time rather than as a runtime
+    /// console.error + silent fall-back to `init`.
+    pub warnings: Vec<String>,
 }
 
 /// Modules the frontend must NOT import — physically server-only effect
@@ -324,6 +329,87 @@ struct Wire {
 }
 
 /// Look a Model field's typed entry up by name.
+/// A model field's type that `Codec.auto` cannot faithfully round-trip through
+/// the Sky.Spa SSR model embed, returning the surface type label to name in the
+/// diagnostic (or `None` when the field round-trips).
+///
+/// The SSR first paint embeds `Codec.toJson (Codec.auto model)` and the client
+/// decodes it with the symmetric `Codec.fromJson (Codec.auto blank)`. Most
+/// stdlib shapes round-trip: the runtime encoder/decoder (runtime-go
+/// codec_auto.go) has arms for `List`, `Maybe`, `Dict`, `Set`, `Decimal`,
+/// `Money`, and general data-carrying ADTs, each covered by codec_auto_test.go —
+/// so they are deliberately NOT flagged (flagging a type that works would be a
+/// false positive on a shipping app).
+///
+/// The type that provably CANNOT survive the round-trip is the opaque `Secret`:
+/// `rt.Secret` carries an unexported field and a `MarshalJSON` that redacts
+/// itself in every JSON path, so an embedded secret comes back as a redacted /
+/// empty value — a silent SSR-embed vs client-decode divergence — and, worse, a
+/// real secret must never be embedded in the first-paint HTML the client can
+/// read. Detected on the resolved type's nominal tail (the same tail-segment
+/// convention `field_ty_codec` uses), with a surface-name fallback.
+fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
+    // The nominal tail, e.g. `Sky.Core.Set.Set` -> "Set". Same tail convention
+    // `field_ty_codec` uses.
+    fn tail(name: &str) -> &str {
+        name.rsplit('.').next().unwrap_or(name)
+    }
+    // Find a provably un-round-trippable nominal ANYWHERE in the type — top
+    // level or nested inside List / Maybe / Dict / Tuple / a record field. Two
+    // shapes qualify, and only these two (Money / Decimal / Dict / Maybe / List /
+    // Time.Posix / data-carrying ADTs all round-trip, covered by
+    // codec_auto_test.go — flagging one would be a false positive on a shipping
+    // app):
+    //   * "Secret" — rt.Secret redacts itself in every JSON path.
+    //   * "Set" — it has no goty arm, so a Set field erases to Go `any`; the
+    //     encode side emits an array but `Codec.auto`'s decode has no `Set` arm
+    //     and errors ("cannot decode kind interface").
+    fn scan(t: &ty::Ty) -> Option<&'static str> {
+        match t {
+            ty::Ty::App(name, args) => {
+                match tail(name.as_str()) {
+                    "Secret" => return Some("Secret"),
+                    "Set" => return Some("Set"),
+                    _ => {}
+                }
+                args.iter().find_map(scan)
+            }
+            ty::Ty::Record(fields, _) => fields.iter().find_map(|(_, t)| scan(t)),
+            ty::Ty::Tuple(items) => items.iter().find_map(scan),
+            ty::Ty::Fun(a, b) => scan(a).or_else(|| scan(b)),
+            _ => None,
+        }
+    }
+    let why = |kind: &str| -> String {
+        if kind == "Secret" {
+            "`Secret` redacts itself in every JSON path (rt.Secret.MarshalJSON), so the first paint would embed a redacted/empty value and the client would decode it back wrong — a silent SSR-embed vs client-decode divergence — and a secret must never be embedded in client-readable HTML. Keep the secret server-side (out of the client model), or model a non-secret handle the client can safely carry.".to_string()
+        } else {
+            "`Set a` has no Go representation of its own — it erases to `any`. The SSR embed encodes it as a JSON array, but `Codec.auto`'s client decode has no `Set` arm and fails (\"cannot decode kind interface\"), so the first paint falls back to `init` (empty) while Sky.Live renders the Set. Model the field as a `List a` (dedup in `update`), which round-trips.".to_string()
+        }
+    };
+    if let Some(t) = &f.ty {
+        if let Some(kind) = scan(t) {
+            return Some((f.ty_name.clone(), why(kind)));
+        }
+    }
+    // Resolved type unavailable — fall back to the surface rendering. Tokenise
+    // it (a rendered application is `Set String`, `Maybe Secret`, `{ k : Secret }`)
+    // and match any token's nominal tail, so a nested occurrence is still caught.
+    if f.ty.is_none() {
+        for tok in f
+            .ty_name
+            .split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_')
+        {
+            match tail(tok) {
+                "Secret" => return Some((f.ty_name.clone(), why("Secret"))),
+                "Set" => return Some((f.ty_name.clone(), why("Set"))),
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn lookup_field(model_fields: &[ModelFieldTy], name: &str) -> ModelFieldTy {
     model_fields
         .iter()
@@ -563,6 +649,7 @@ pub fn generate(
     }
 
     let mut notes: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     // ---- multi-module routing (§17) ----
     // Every project module other than the entry is classified by whether it
@@ -929,7 +1016,7 @@ pub fn generate(
             "note: --broker <url> was given but the app has no Cmd.publish / Sub.subscribeTopic, so no push broker is generated; the flag is ignored.".into(),
         );
     }
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode, broker_url, &ssr_route_patterns, &init_src)?;
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode, broker_url, &ssr_route_patterns, &init_src, &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -1063,6 +1150,7 @@ pub fn generate(
         client_branches: client_names,
         excluded: tainted_names,
         notes,
+        warnings,
     })
 }
 
@@ -2122,6 +2210,7 @@ fn gen_backend(
     broker_url: Option<&str>,
     ssr_route_patterns: &[String],
     init_src: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -2174,6 +2263,27 @@ fn gen_backend(
     let has_synth_api_routes = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaApiRoutes_"));
+    // Fix 5: the App→Spa synthesis (main.rs synthesize_spa_source) carries
+    // `App.withGuard` into a NAMED top-level `spaGuard_` binding so this backend
+    // can reference it. It is the per-Msg authorisation guard the backend
+    // enforces on every `/_rpc/<Msg>` handler BEFORE `update` runs — the TRUSTED
+    // check, because the wasm client is untrusted and can forge any RPC call. A
+    // hand-authored Sky.Spa backend has no such binding.
+    let has_synth_guard = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaGuard_"));
+    // Fix 2: `spaOnRequest_` seeds `init`'s SSR model from the real request
+    // (path / query / cookies / headers), and `spaOnNavigate_` is fired per
+    // resolved route so per-route data (not just init's path-independent read)
+    // is settled into the embedded `#sky-model`. Both settle under the
+    // goroutine-local SSR-safe guard (spa_ssr_safe.go), so a destructive effect
+    // in the folded command self-suppresses — a GET never mutates.
+    let has_synth_on_request = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaOnRequest_"));
+    let has_synth_on_navigate = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaOnNavigate_"));
     // Data-resolved SSR (design §4.2): the GET-safe allowlist, applied
     // FAIL-CLOSED at synthesis over the app's `init` source. The settle
     // (Spa_ssrSettle) runs `init`'s `cmd0` to a data-bearing model server-side —
@@ -2200,11 +2310,37 @@ fn gen_backend(
     // this to the synthesis output, whose `init`/`view` are plain TEA safe to run
     // server-side (a hand-authored Sky.Spa client, whose `init`/`view` reference
     // client-only `Std.Spa`, has no `spaView_`/`spaHead_` and keeps today's shell).
-    let emit_ssr =
-        (!(server.is_empty() && !push_mode) || init_get_safe) && has_synth_view && has_synth_head;
+    // Fix 2: a routed `onNavigate` is ALSO real per-request work to settle — the
+    // per-route data lives in `onNavigate page`'s command, not in `init`. Its
+    // reads settle under the SSR-safe guard, so this needs no static allowlist
+    // proof (a destructive effect in the fired command self-suppresses at
+    // runtime — spa_ssr_safe.go). So SSR now emits for the onNavigate content-site
+    // shape (`init = Cmd.none`, per-route data loaded on navigation) too.
+    let nav_ssr = has_synth_routes && has_synth_on_navigate;
+    let emit_ssr = (!(server.is_empty() && !push_mode) || init_get_safe || nav_ssr)
+        && has_synth_view
+        && has_synth_head;
     if emit_ssr {
         add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
         add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
+        // Fix 7: the SSR first paint embeds the WHOLE model via
+        // `Codec.toJson (Codec.auto resolved)` and the client decodes it with the
+        // symmetric `Codec.fromJson (Codec.auto blank)`. `Codec.auto` compiles for
+        // ANY model, so a field whose type it cannot round-trip (today: the opaque
+        // `Secret`) used to fail ONLY at runtime — a console.error + a silent
+        // fall-back to `init` (empty) while Sky.Live rendered the real value.
+        // Catch it HERE, at `sky build --target web:app`, naming the field + type.
+        // (A Secret carried in an RPC read/write set is already a HARD build error
+        // in build_wire; this covers the SSR-embed path, which build_wire never
+        // sees because it runs `Codec.auto` over the whole value at runtime.)
+        for f in model_fields {
+            if let Some((ty_label, why)) = codec_auto_unencodable(f) {
+                warnings.push(format!(
+                    "model field `{}` has type `{}`, which `Codec.auto` cannot round-trip through the Sky.Spa SSR model embed. {}",
+                    f.name, ty_label, why
+                ));
+            }
+        }
     }
     if push_mode {
         // Server→client PUSH machinery (docs/skyspa/auto-split.md §16).
@@ -2261,6 +2397,12 @@ fn gen_backend(
     let mut handlers = String::new();
     let mut routes: Vec<String> = Vec::new();
     handlers.push_str("badRequest : String -> Response\nbadRequest msg =\n    Server.withStatus 400 (Server.text msg)\n\n\n");
+    // Fix 5: the 403 the server-side guard returns when it DENIES a message. A
+    // denied `/_rpc/<Msg>` never runs `update` (no effect fires); a denied SSR
+    // navigation renders the NotFound shell with no protected data settled.
+    if has_synth_guard {
+        handlers.push_str("forbidden : String -> Response\nforbidden msg =\n    Server.withStatus 403 (Server.text msg)\n\n\n");
+    }
 
     // Server→client PUSH: one process-shared broker, a Cmd-publish interpreter,
     // and the SSE stream handler body — all thin kernel aliases (spa_push.go).
@@ -2306,7 +2448,7 @@ fn gen_backend(
         };
 
         // The model the branch runs against.
-        let run_setup = if io.reads_whole_model {
+        let mut run_setup = if io.reads_whole_model {
             // Req IS the whole model.
             "                m =\n                    p\n".to_string()
         } else if io.read_fields.is_empty() {
@@ -2324,6 +2466,22 @@ fn gen_backend(
             format!(
                 "                ( base, _ ) =\n                    init ()\n\n                m =\n                    {{ base | {sets} }}\n"
             )
+        };
+        // Fix 5 (Judge finding 5): re-apply the `App.withRequest` hook
+        // (`spaOnRequest_`) to the model server-side BEFORE the guard and update
+        // run. `m` above is built from the wire payload `p`, which the wasm
+        // client can FORGE — so a guard or an update that reads an identity /
+        // session field off `m` would trust client-supplied data. `spaOnRequest_
+        // req m` overwrites those fields from the REAL request (cookies /
+        // headers / the server session), exactly as Sky.Live derives them from
+        // server session state. Only when the app declared `withRequest`; the
+        // model the guard + update see is `guard_model`.
+        let guard_model = if has_synth_on_request {
+            run_setup
+                .push_str("\n                ( mReq, _ ) =\n                    spaOnRequest_ req m\n");
+            "mReq"
+        } else {
+            "m"
         };
         // The Msg constructor to run (args come from the wire payload).
         let ctor_app = if io.msg_args.is_empty() {
@@ -2360,13 +2518,41 @@ fn gen_backend(
                 "cmd",
                 format!(
                     "spaInterpretPublish spaBroker cmd\n\
-                     \x20               |> Task.andThen (\\_ -> Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val})))"
+                     \x20                       |> Task.andThen (\\_ -> Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val})))"
                 ),
             )
         } else {
             (
                 "_",
                 format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
+            )
+        };
+        // Fix 5: enforce the server-side guard BEFORE `update` runs. `spaGuard_
+        // <msg> m` returns `Err` to reject the message — the handler answers 403
+        // and NEVER runs the effect. This is the trusted authorisation point: the
+        // wasm client can forge any `/_rpc` call, so the guard cannot live only on
+        // the client. When the app declares no guard, the update runs directly as
+        // before. `Result.` is imported via `Sky.Core.Prelude` in the entry, and
+        // the guard body is threaded verbatim from `App.withGuard`.
+        let run_and_answer = if has_synth_guard {
+            format!(
+                "\x20           case spaGuard_ {ctor_app} {guard_model} of\n\
+                 \x20               Err ge ->\n\
+                 \x20                   Task.succeed (forbidden (Error.toString ge))\n\n\
+                 \x20               Ok _ ->\n\
+                 \x20                   let\n\
+                 \x20                       ( m2, {cmd_binder} ) =\n\
+                 \x20                           update {ctor_app} {guard_model}\n\
+                 \x20                   in\n\
+                 \x20                   {answer}\n"
+            )
+        } else {
+            format!(
+                "\x20           let\n\
+                 \x20               ( m2, {cmd_binder} ) =\n\
+                 \x20                   update {ctor_app} {guard_model}\n\
+                 \x20           in\n\
+                 \x20           {answer}\n"
             )
         };
         handlers.push_str(&format!(
@@ -2378,10 +2564,8 @@ fn gen_backend(
              \x20       Ok p ->\n\
              \x20           let\n\
              {run_setup}\n\
-             \x20               ( m2, {cmd_binder} ) =\n\
-             \x20                   update {ctor_app} m\n\
              \x20           in\n\
-             \x20           {answer}\n\n\
+             {run_and_answer}\n\
              \x20       Err e ->\n\
              \x20           Task.succeed (badRequest (Error.toString e))\n\n\n"
         ));
@@ -2433,54 +2617,117 @@ fn gen_backend(
                  \x20   Ffi.kernel \"Spa_ssrResolveModel\"\n\n\n",
             );
         }
-        // Data-resolved settle alias — runs init's GET-safe read to a settled,
-        // data-bearing model (design §4.2). Emitted ONLY when the fail-closed
-        // allowlist scan proved init's command GET-safe (init_get_safe).
-        if init_get_safe {
+        // Settle decisions (fix 2). `settle_init` settles init's GET-safe read
+        // (design §4.2, unchanged gate). `settle_nav` fires the app's
+        // `onNavigate page` for the resolved route and settles ITS reads, so
+        // per-route data (not only init's path-independent read) reaches the
+        // embedded `#sky-model`. `seed_req` seeds init's model from the real
+        // request via `withRequest`. All three settle through `Spa_ssrSettle`,
+        // which runs under the goroutine-local SSR-safe guard — a destructive
+        // effect in any folded command self-suppresses (a GET never mutates),
+        // so `settle_nav`/`seed_req` need no static allowlist proof.
+        let settle_init = init_get_safe;
+        let settle_nav = nav_ssr;
+        let seed_req = has_synth_on_request;
+        let ssr_guard = has_synth_guard && nav_ssr;
+        if settle_init || settle_nav || seed_req {
             handlers.push_str(
-                "-- Data-resolved SSR: settle init's GET-safe read to a data-bearing\n\
-                 -- model server-side so the first paint carries REAL content a crawler\n\
-                 -- sees (Spa_ssrSettle). Emitted only because the allowlist scan proved\n\
-                 -- init's command is a curated GET-safe read (spa_split.rs).\n\
+                "-- Data-resolved SSR (design §4.2): settle a GET-safe read to a\n\
+                 -- data-bearing model server-side so the first paint carries REAL\n\
+                 -- content a crawler sees. Runs under the SSR-safe guard\n\
+                 -- (runtime-go/rt/spa_ssr_safe.go): a destructive effect in the\n\
+                 -- folded command self-suppresses — a GET never mutates.\n\
                  spaSsrSettle : model -> any -> any -> model\n\
                  spaSsrSettle =\n\
                  \x20   Ffi.kernel \"Spa_ssrSettle\"\n\n\n",
             );
         }
-        // The handler body: resolve the route, optionally settle its data, render.
-        let req_param = if has_synth_routes { "req" } else { "_" };
-        let cmd_bind = if init_get_safe { "cmd0" } else { "_" };
-        let routed_expr = if has_synth_routes {
-            "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path"
+        // The request param is needed for route resolution (`req.path`) AND for
+        // the `withRequest` seed (`req`).
+        let req_param = if has_synth_routes || seed_req { "req" } else { "_" };
+        // Build the let-binding block. Bindings sit at 8 spaces, `in` at 4, body
+        // at 4. The settle chain NESTS `spaSsrSettle` calls (no intermediate
+        // bindings + no `Cmd.batch`), so the no-seed/no-nav common case emits the
+        // exact same `resolved = spaSsrSettle routed cmd0 update` as before.
+        let mut lets = String::new();
+        let cmd0_bind = if settle_init { "cmd0" } else { "_" };
+        lets.push_str(&format!(
+            "        ( model0, {cmd0_bind} ) =\n            init ()\n\n"
+        ));
+        // withRequest: refine init's model from the real request (path / query /
+        // cookies / headers), exactly as Sky.Live seeds a session at start. Fixes
+        // the seed to `()`, so `init` stays portable while the request arrives
+        // through this web-only channel.
+        let seed_base = if seed_req {
+            lets.push_str(
+                "        ( modelSeeded_, cmdSeed_ ) =\n            spaOnRequest_ req model0\n\n",
+            );
+            "modelSeeded_"
         } else {
             "model0"
         };
-        let resolved_expr = if init_get_safe {
-            "spaSsrSettle routed cmd0 update"
+        // Resolve the request path to the route's page (sets model.page).
+        let route_base = if has_synth_routes {
+            lets.push_str(&format!(
+                "        routed =\n            spaSsrResolveModel spaRoutes_ spaNotFound_ {seed_base} req.path\n\n"
+            ));
+            "routed".to_string()
         } else {
-            "routed"
+            seed_base.to_string()
         };
+        // The settle chain over the routed model: settle init's read, then the
+        // request-seed's read, by NESTING (each runs under the SSR-safe guard).
+        let mut chain = route_base.clone();
+        if settle_init {
+            chain = format!("spaSsrSettle {chain} cmd0 update");
+        }
+        if seed_req {
+            chain = if settle_init {
+                format!("spaSsrSettle ({chain}) cmdSeed_ update")
+            } else {
+                format!("spaSsrSettle {chain} cmdSeed_ update")
+            };
+        }
+        // onNavigate: fire `onNavigate page` for the resolved route, run it
+        // through `update` to a (model, cmd), and settle that command — the
+        // per-route data load. When a guard is present it authorises the
+        // navigation FIRST: a denied navigation renders the pre-nav model with NO
+        // protected data settled (never a server-side data leak) and never runs
+        // the load. The guard is the TRUSTED server-side check (fix 5).
+        if settle_nav {
+            lets.push_str(&format!("        preNav_ =\n            {chain}\n\n"));
+            lets.push_str(
+                "        navMsg_ =\n            spaOnNavigate_ preNav_.page\n\n\
+                 \x20       ( navModel_, navCmd_ ) =\n            update navMsg_ preNav_\n\n",
+            );
+            let settle_expr = "spaSsrSettle navModel_ navCmd_ update";
+            if ssr_guard {
+                lets.push_str(&format!(
+                    "        resolved =\n            case spaGuard_ navMsg_ preNav_ of\n\
+                     \x20               Err _ ->\n                    preNav_\n\n\
+                     \x20               Ok _ ->\n                    {settle_expr}\n\n"
+                ));
+            } else {
+                lets.push_str(&format!("        resolved =\n            {settle_expr}\n\n"));
+            }
+        } else {
+            lets.push_str(&format!("        resolved =\n            {chain}\n\n"));
+        }
+        lets.push_str("        modelJson =\n            Codec.toJson (Codec.auto resolved) resolved\n");
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
-             -- run init, resolve the request path to this route's page + model, then\n\
-             -- (when init's command is GET-safe) settle its read to a data-bearing\n\
-             -- model so a crawler sees REAL per-route content; render head + body\n\
-             -- inside a `data-sky-ssr`-marked #app; embed the resolved model as JSON\n\
-             -- (design §4.5) so the client can boot from it instead of re-running the\n\
-             -- effectful init. `Codec.auto` derives the model codec from the value —\n\
-             -- it compiles for ANY model (an unencodable field degrades the blob at\n\
-             -- runtime, it never breaks the build).\n\
+             -- run init, seed it from the request (withRequest), resolve the path to\n\
+             -- this route's page, settle init's read AND the route's onNavigate read\n\
+             -- to a data-bearing model so a crawler sees REAL per-route content;\n\
+             -- render head + body inside a `data-sky-ssr`-marked #app; embed the\n\
+             -- resolved model as JSON (design §4.5) so the client boots from it\n\
+             -- instead of re-running the effectful init. `Codec.auto` derives the\n\
+             -- model codec from the value — it compiles for ANY model (an\n\
+             -- unencodable field degrades the blob at runtime, never breaks the build).\n\
              ssrHandler : Handler\n\
              ssrHandler {req_param} =\n\
              \x20   let\n\
-             \x20       ( model0, {cmd_bind} ) =\n\
-             \x20           init ()\n\n\
-             \x20       routed =\n\
-             \x20           {routed_expr}\n\n\
-             \x20       resolved =\n\
-             \x20           {resolved_expr}\n\n\
-             \x20       modelJson =\n\
-             \x20           Codec.toJson (Codec.auto resolved) resolved\n\
+             {lets}\
              \x20   in\n\
              \x20   Task.succeed\n\
              \x20       (Server.html\n\
@@ -2519,7 +2766,22 @@ fn gen_backend(
     // no RPC/push routes, so without this the list would open `[ , Server.static`
     // — a leading comma the parser rejects. With it, `routes` is never empty and
     // the first `        ,` always becomes the opening `        [`.
-    routes.push("        , Server.static \"/\" \"../frontend/dist\"".to_string());
+    //
+    // When the backend SSRs (≥1 server branch) AND has a route table (so a
+    // `spaNotFound_` page exists), the static catch-all becomes
+    // `Server.staticNotFound … ssrHandler`: a genuinely-unmatched cold path
+    // (no such asset) falls through to the SSR handler, which resolves the
+    // unmatched path to the NotFound page (Spa_ssrResolveModel) and renders the
+    // shell — exactly as Sky.Live does — instead of a bare file-server 404. A
+    // request that maps to a REAL asset still serves the file, so wasm_exec.js /
+    // main.<hash>.wasm are never shadowed.
+    if emit_ssr && has_synth_routes {
+        routes.push(
+            "        , Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler".to_string(),
+        );
+    } else {
+        routes.push("        , Server.static \"/\" \"../frontend/dist\"".to_string());
+    }
 
     // serverPort + main.
     let route_block = {
@@ -2773,6 +3035,15 @@ fn gen_frontend_update(
         .ok_or_else(|| "`update` has no `case … of` to rewrite".to_string())?;
     let case = syntax::ast::CaseExpr::cast(case_node).unwrap();
 
+    // Item 4: when the app declared `App.withRpcError` (carried by the App→Spa
+    // synthesis into a `spaRpcError_ : Error -> Msg` binding), route a failed RPC
+    // INTO `update` via that constructor, so the app's own view can show the
+    // error — parity with Sky.Live's `Cmd.perform task ToMsg` error arm. Absent
+    // the hook, keep the loud-log floor (model kept, perform site reports).
+    let has_rpc_error = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaRpcError_"));
+
     let mut arms_out = String::new();
     for arm in case.arms() {
         let pat = arm.pattern().map(|p| p.syntax().clone());
@@ -2831,8 +3102,25 @@ fn gen_frontend_update(
                 .join(", ");
             format!("            ( {{ {model_param} | {sets} }}, Cmd.none )")
         };
+        // The Err arm. When the app declared `App.withRpcError`, route the error
+        // INTO `update` via `spaRpcError_ e` so the app's own view can show it
+        // (item 4 — parity with Sky.Live's `Cmd.perform task ToMsg` error arm).
+        // Otherwise keep the model (the write-set never applied): the failure is
+        // still NOT swallowed silently — the client's perform choke point surfaces
+        // every non-network RPC Err loudly (runtime-go spa_neterror.go /
+        // live_wasm.go performTask) and a network Err arms the retry overlay — so
+        // keeping the model is the correct floor, not a discard.
+        let err_arm = if has_rpc_error {
+            format!(
+                "        Applied{m} (Err e) ->\n            -- item 4: route the failed RPC into the app's own update.\n            update (spaRpcError_ e) {model_param}\n\n"
+            )
+        } else {
+            format!(
+                "        Applied{m} (Err _) ->\n            -- transport error surfaced loudly by the client perform site\n            -- (runtime-go performTask); model kept (write-set did not apply).\n            ( {model_param}, Cmd.none )\n\n"
+            )
+        };
         arms_out.push_str(&format!(
-            "        Applied{m} (Ok resp) ->\n{apply}\n\n        Applied{m} (Err _) ->\n            ( {model_param}, Cmd.none )\n\n"
+            "        Applied{m} (Ok resp) ->\n{apply}\n\n{err_arm}"
         ));
     }
 
@@ -2999,5 +3287,78 @@ fn model_type_name(file: &SourceFile, src: &str) -> Option<String> {
         None
     } else {
         Some(name.to_string())
+    }
+}
+
+#[cfg(test)]
+mod fix7_tests {
+    use super::*;
+
+    fn field(name: &str, ty_name: &str, ty: Option<ty::Ty>) -> ModelFieldTy {
+        ModelFieldTy {
+            name: name.to_string(),
+            ty_name: ty_name.to_string(),
+            codec: None,
+            ty,
+        }
+    }
+
+    // Fix 7 — the SSR model embed round-trips the whole model through
+    // `Codec.auto`. Two shapes provably cannot survive it and MUST be flagged at
+    // build time, ANYWHERE in a field's type (top level or nested):
+    //   * `Secret` — rt.Secret redacts itself in every JSON path.
+    //   * `Set a` — no goty arm, so it erases to `any`; the decode side has no
+    //     `Set` arm and errors ("cannot decode kind interface").
+    // Types the runtime codec DOES round-trip (Int / String / List / Maybe /
+    // Money / Decimal / Dict, per codec_auto_test.go) must NOT be flagged — that
+    // would be a false positive on a working app.
+    //
+    // RED before the fix: the detector matched only a TOP-LEVEL `Secret` tail, so
+    // a `Set` field and a nested `Secret` (`Maybe Secret`, a record field) both
+    // slipped through and degraded silently at runtime.
+    #[test]
+    fn secret_and_set_are_flagged_others_are_not() {
+        let flagged = |f: &ModelFieldTy| codec_auto_unencodable(f).is_some();
+        let reason = |f: &ModelFieldTy| codec_auto_unencodable(f).map(|(_, why)| why).unwrap_or_default();
+
+        // Secret — resolved folded name, bare name, and surface fallback.
+        assert!(flagged(&field("token", "Secret", Some(ty::Ty::app("Sky.Core.Secret.Secret", vec![])))));
+        assert!(flagged(&field("token", "Secret", Some(ty::Ty::app("Secret", vec![])))));
+        assert!(flagged(&field("token", "Secret", None)));
+
+        // Set — top-level and via the surface fallback. Judge finding 2.
+        let set = field("tags", "Set String", Some(ty::Ty::app("Set", vec![ty::Ty::app("String", vec![])])));
+        assert!(flagged(&set));
+        assert!(reason(&set).contains("Set"), "Set reason must name Set: {}", reason(&set));
+        assert!(flagged(&field("tags", "Set String", None)));
+
+        // Nested Secret — inside Maybe, inside List, inside a record field.
+        assert!(flagged(&field("t", "Maybe Secret", Some(ty::Ty::app("Maybe", vec![ty::Ty::app("Secret", vec![])])))));
+        assert!(flagged(&field("t", "List Secret", Some(ty::Ty::app("List", vec![ty::Ty::app("Secret", vec![])])))));
+        assert!(flagged(&field(
+            "cfg",
+            "{ key : Secret }",
+            Some(ty::Ty::Record(vec![(base::Name::new("key"), ty::Ty::app("Secret", vec![]))], None)),
+        )));
+
+        // Nested Set — inside Maybe.
+        assert!(flagged(&field("m", "Maybe (Set Int)", Some(ty::Ty::app("Maybe", vec![ty::Ty::app("Set", vec![ty::Ty::app("Int", vec![])])])))));
+
+        // Types the runtime codec round-trips must NOT be flagged.
+        for (ty_name, t) in [
+            ("Int", ty::Ty::app("Int", vec![])),
+            ("String", ty::Ty::app("String", vec![])),
+            ("Money", ty::Ty::app("Std.Money.Money", vec![])),
+            ("Decimal", ty::Ty::app("Std.Decimal.Decimal", vec![])),
+            ("List Todo", ty::Ty::app("List", vec![ty::Ty::app("Todo", vec![])])),
+            ("Maybe Int", ty::Ty::app("Maybe", vec![ty::Ty::app("Int", vec![])])),
+            ("Dict String Int", ty::Ty::app("Dict", vec![ty::Ty::app("String", vec![]), ty::Ty::app("Int", vec![])])),
+        ] {
+            let f = field("f", ty_name, Some(t));
+            assert!(
+                !flagged(&f),
+                "{ty_name} round-trips via Codec.auto and must not be flagged"
+            );
+        }
     }
 }

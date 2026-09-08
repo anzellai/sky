@@ -13,6 +13,54 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.23.4 — Sky.Spa versus Sky.Live parity (2026-09-08)
+
+A patch release closing seven behaviour gaps between the **Sky.Spa** client
+(`--target web:app`) and the **Sky.Live** server-driven runtime, so a
+`Std.App` app behaves the same on either target. No breaking changes.
+`sky upgrade` is safe from any v0.23.x. One additive builder, `App.withRpcError`,
+is new and opt-in.
+
+### Sky.Spa — parity with Sky.Live
+
+- **A cold deep link now boots.** The SSR shell referenced `wasm_exec.js` and the
+  wasm by a relative path, so a load straight onto `/blog/<slug>` fetched
+  `/blog/wasm_exec.js` (404) and the wasm never started. Both are now
+  root-absolute (`/wasm_exec.js`, `/<name>.wasm`).
+- **SSR fills per-route data like Sky.Live.** The server settle now seeds `init`
+  from the real request (`withRequest`), fires `onNavigate` for the resolved
+  route, and settles each command, so a deep route's first paint carries real
+  content. A destructive effect that a GET settle would run self-suppresses, and
+  that suppressor now also covers `Store.insert`/`upsert` and
+  `File.copy`/`File.rename` (a GET can never mutate).
+- **A panic in the wasm client no longer white-screens the app.** A classified
+  panic (a `DivisionByZero`, an `rt.Coerce` panic) from `update` or `view` on a
+  click, a keystroke, or a `sky-nav`/popstate navigation is recovered: the last
+  good model is kept and the next event still dispatches, mirroring Sky.Live's
+  server dispatch.
+- **A failed RPC can reach your `update`.** A failed `POST /_rpc/<Msg>` was
+  surfaced loudly (a console error, a retry overlay) and kept the model, but had
+  no route into the app's own error handling. The new opt-in
+  `App.withRpcError (\err -> SomeMsg err)` dispatches the error into `update`, so
+  your view can show it. Without it the loud-log behaviour stands.
+- **`withRequest`, `withGuard`, `withOnNavigate` survive the App-to-Spa
+  synthesis, and the guard is enforced server-side.** The `/_rpc` handler
+  re-applies `withRequest` to the model before the guard runs, so the guard reads
+  request-derived identity fields, not the client-supplied wire payload the wasm
+  client can forge.
+- **An unknown deep path server-renders the NotFound page** (a real 200 SSR of
+  your NotFound view) instead of a bare static 404, via a new
+  `Server.staticNotFound` catch-all.
+- **A model field `Codec.auto` cannot round-trip is caught at build time**, not
+  left to degrade at runtime. The check now flags a `Set` field (it erases to
+  Go `any`, so the SSR embed cannot decode it back) and a `Secret` nested inside
+  a `Maybe`/`List`/`Dict`/record, not only a top-level `Secret`.
+
+### Under the hood
+
+- New builder `App.withRpcError : (Error -> msg) -> App … -> App …`. Web (Sky.Live)
+  and terminal targets have no RPC boundary and ignore it.
+
 ## v0.23.3 — Sky.Spa raw-HTML hydration fix (2026-09-08)
 
 A patch release fixing a **Sky.Spa** (`--target web:app`) client-hydration bug in

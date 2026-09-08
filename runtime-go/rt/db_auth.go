@@ -607,6 +607,9 @@ func sqlCurrencyToCode(v any) string {
 // inject SQL.
 func Db_updateFields(db any, table any, whereCols any, setFields any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("db.updateFields"); r != nil {
+			return r
+		}
 		return WithDbSpan(dbSystemOf(db), "updateFields", stmtAttr(table), func() any {
 			d, ok := db.(*SkyDb)
 			if !ok {
@@ -717,6 +720,9 @@ func Db_updateFields(db any, table any, whereCols any, setFields any) any {
 // matches Db.exec / Db.updateFields end-to-end.  #585.
 func Db_insertFields(db any, table any, setFields any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("db.insertFields"); r != nil {
+			return r
+		}
 		return WithDbSpan(dbSystemOf(db), "insertFields", stmtAttr(table), func() any {
 			d, ok := db.(*SkyDb)
 			if !ok {
@@ -817,6 +823,9 @@ func dbBuildInsertFields(kernelName, table string, setList []any) (string, []any
 // other RETURNING use already in Std.Db.  #586.
 func Db_insertFieldsReturning(db any, table any, setFields any, projection any, decoder any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("db.insertFieldsReturning"); r != nil {
+			return r
+		}
 		return WithDbSpan(dbSystemOf(db), "insertFieldsReturning", stmtAttr(table), func() any {
 			d, ok := db.(*SkyDb)
 			if !ok {
@@ -947,6 +956,9 @@ func validSqlIdent(s string) bool {
 // Cmd.perform / Task.run boundary.
 func Db_exec(db any, query any, args any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("db.exec"); r != nil {
+			return r
+		}
 		return WithDbSpan(dbSystemOf(db), "exec", stmtAttr(query), func() any {
 			d, ok := db.(*SkyDb)
 			if !ok {
@@ -1125,6 +1137,9 @@ func dbAnyToStringMap(v any) (map[string]any, bool) {
 func Db_insertRow(db any, table any, row any) any {
 	capDb, capTable, capRow := db, table, row
 	return func() any {
+		if r := ssrSuppressedWrite("db.insertRow"); r != nil {
+			return r
+		}
 		return WithDbSpan(dbSystemOf(capDb), "insertRow",
 			"INSERT INTO "+safeTable(capTable),
 			func() any { return dbInsertRowBody(capDb, capTable, capRow) })
@@ -1235,6 +1250,9 @@ func Db_getById(db any, table any, id any) any {
 func Db_updateById(db any, table any, id any, row any) any {
 	capDb, capTable, capId, capRow := db, table, id, row
 	return func() any {
+		if r := ssrSuppressedWrite("db.updateById"); r != nil {
+			return r
+		}
 		d, ok := capDb.(*SkyDb)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("db.updateById: not a Db"))
@@ -1277,6 +1295,9 @@ func Db_updateById(db any, table any, id any, row any) any {
 func Db_deleteById(db any, table any, id any) any {
 	capDb, capTable, capId := db, table, id
 	return func() any {
+		if r := ssrSuppressedWrite("db.deleteById"); r != nil {
+			return r
+		}
 		d, ok := capDb.(*SkyDb)
 		if !ok {
 			return Err[any, any](ErrInvalidInput("db.deleteById: not a Db"))

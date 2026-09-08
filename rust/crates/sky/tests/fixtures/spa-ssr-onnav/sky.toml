@@ -1,0 +1,5 @@
+[project]
+name = "ssr-onnav"
+
+[app]
+target = "web:app"

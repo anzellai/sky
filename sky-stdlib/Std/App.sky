@@ -63,6 +63,7 @@ module Std.App exposing
     , withOnKey
     , withOnNavigate
     , withRequest
+    , withRpcError
     , baseDefaults
     , webDefaults
     , tabletDefaults
@@ -350,6 +351,7 @@ type App fallback seed page model msg key
 , onKey : Maybe (key -> msg)
 , onNavigate : Maybe (page -> msg)
 , onRequest : Maybe (Request -> model -> ( model, Cmd msg ))
+, rpcError : Maybe (Error -> msg)
 }
 
 
@@ -377,6 +379,7 @@ app cfg =
         , onKey = Nothing
         , onNavigate = Nothing
         , onRequest = Nothing
+        , rpcError = Nothing
         }
 
 
@@ -407,6 +410,7 @@ web cfg =
         , onKey = Nothing
         , onNavigate = Nothing
         , onRequest = Nothing
+        , rpcError = Nothing
         }
 
 
@@ -436,6 +440,7 @@ cli cfg =
         , onKey = Nothing
         , onNavigate = Nothing
         , onRequest = Nothing
+        , rpcError = Nothing
         }
 
 
@@ -467,6 +472,7 @@ tui cfg =
         , onKey = Nothing
         , onNavigate = Nothing
         , onRequest = Nothing
+        , rpcError = Nothing
         }
 
 
@@ -670,6 +676,21 @@ withOnNavigate onNav (App a) =
 withRequest : (Request -> model -> ( model, Cmd msg )) -> App fallback () page model msg key -> App fallback () page model msg key
 withRequest onReq (App a) =
     App { a | onRequest = Just onReq }
+
+
+-- | Route a FAILED RPC into your own `update`. On the `web:app` (Sky.Spa)
+-- target every server branch runs as a `POST /_rpc/<Msg>` round-trip; when one
+-- fails (a 5xx the backend answered, a response the shared codec cannot decode,
+-- or a network drop that never reaches the retry overlay), the client folds
+-- nothing back and — without this hook — keeps the model and logs the failure
+-- to the console. `withRpcError (\err -> SomeMsg err)` instead dispatches
+-- `SomeMsg err` into your `update`, so your own view can show the error, mirror
+-- Sky.Live's `Cmd.perform task ToMsg` error arm. Web/terminal targets have no
+-- RPC boundary and ignore it (the failure, if any, surfaces through the task's
+-- own `ToMsg` there).
+withRpcError : (Error -> msg) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withRpcError onErr (App a) =
+    App { a | rpcError = Just onErr }
 
 
 -- | The unified entry: `main = App.run app`. The build resolves `--target` and

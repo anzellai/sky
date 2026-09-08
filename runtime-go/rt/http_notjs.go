@@ -66,6 +66,9 @@ func Http_post(url any, body any) any {
 	u := fmt.Sprintf("%v", url)
 	b := fmt.Sprintf("%v", body)
 	return func() any {
+		if r := ssrSuppressedWrite("http.post"); r != nil {
+			return r
+		}
 		return WithHTTPClientSpan("POST", u, func() any {
 			req, err := http.NewRequest("POST", u, strings.NewReader(b))
 			if err != nil {

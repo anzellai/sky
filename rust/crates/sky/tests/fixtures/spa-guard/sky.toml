@@ -1,0 +1,5 @@
+[project]
+name = "spa-guard"
+
+[app]
+target = "web:app"

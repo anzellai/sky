@@ -574,6 +574,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "delete",
             "api",
             "static",
+            "staticNotFound",
             "text",
             "json",
             "html",

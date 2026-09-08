@@ -1,0 +1,95 @@
+module Main exposing (main)
+
+-- Sky.Spa deep-link + NotFound SSR fixture. A routed `Std.App` app with:
+--
+--   * a TWO-SEGMENT param route `/blog/:slug` (Post) — the cold deep-link that
+--     used to load `wasm_exec.js` by a bare relative name and so resolve it to
+--     `/blog/wasm_exec.js` (404), leaving the page dark;
+--   * a distinctive NotFound page so a genuinely-unmatched cold path can be told
+--     apart from Home when the backend SSRs the fallback.
+--
+-- `update`'s `Reload` branch reads a file (an effect ⇒ SERVER branch), which is
+-- what puts the app on the SSR path (a fully-client app gets a static-only
+-- backend with no SSR handler). `init` is `Cmd.none`, so there is no data-settle
+-- round — the SSR just renders each route's own view.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+type Page
+    = Home
+    | Post String
+    | NotFoundPage
+
+
+type alias Model =
+    { page : Page
+    , note : String
+    }
+
+
+type Msg
+    = Reload
+    | Reloaded (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home, note = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Reload ->
+            ( model, Cmd.perform (File.readFile "data/note.txt") Reloaded )
+
+        Reloaded (Ok raw) ->
+            ( { model | note = raw }, Cmd.none )
+
+        Reloaded (Err _) ->
+            ( { model | note = "" }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+        Home ->
+            Ui.column []
+                [ Ui.text "Welcome home"
+                , Ui.link [] { url = "/blog/hello", label = Ui.text "Read hello" }
+                ]
+
+        Post slug ->
+            Ui.column []
+                [ Ui.text "Blog post"
+                , Ui.text slug
+                ]
+
+        NotFoundPage ->
+            Ui.column []
+                [ Ui.text "No such page here"
+                ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" Home, App.routeParam "/blog/:slug" Post ]
+        |> App.withNotFound NotFoundPage
+
+
+main =
+    App.run app

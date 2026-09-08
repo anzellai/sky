@@ -130,6 +130,12 @@ func Spa_ssrResolveModel(routesV, notFound, model, path any) any {
 // (design §10 q1: a single read-round covers "load the page's data once"); the
 // update's returned follow-up Cmd is intentionally not chased, bounding the GET.
 func Spa_ssrSettle(model, cmd, update any) any {
+	// Mark this (request) goroutine as settling, so any DESTRUCTIVE kernel the
+	// folded command runs self-suppresses (spa_ssr_safe.go) — a GET must not
+	// mutate. The read leaves settle normally. Synchronous, so the mark reliably
+	// bounds exactly the settle's effects.
+	enterSsrSettle()
+	defer exitSsrSettle()
 	return spaSsrSettleRound(model, cmd, update)
 }
 

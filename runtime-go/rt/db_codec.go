@@ -319,6 +319,14 @@ func rawToSqlArg(raw any, kind string) any {
 // The statement is passed through `d.rebind` — it is composed with literal `?`
 // (see the placeholder loops below), and Postgres rejects those.
 func storeWriteResult(d *SkyDb, verb, sqlText string, params []any, pk, pkKind string) any {
+	// SSR settle guard: Store.insert/upsert-returning reach the driver HERE, not
+	// through Db_exec, so the destructive-kernel suppressor must be repeated on
+	// this path — otherwise a `Store.insert` batched into an onNavigate/init
+	// command mutates the database during a GET server-side render (Store is the
+	// pinned default write path). See spa_ssr_safe.go.
+	if r := ssrSuppressedWrite("store.write:" + verb); r != nil {
+		return r
+	}
 	// These kernels used to reach the driver via Db_exec, which binds every
 	// argument through dbBindArg — that is what turns a `Store.defaultWith`
 	// SqlValue ADT into a driver-friendly Go value. Bypassing Db_exec means

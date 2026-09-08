@@ -39,6 +39,7 @@ module Sky.Http.Server exposing
     , cookie
     , withCookie
     , static
+    , staticNotFound
     )
 
 import Sky.Ffi as Ffi
@@ -286,3 +287,14 @@ withCookie =
 static : String -> String -> Route
 static =
     Ffi.kernel "Server_static"
+
+
+-- | `staticNotFound urlPrefix diskPath handler` — like [`static`], but a
+-- request that maps to NO file under `diskPath` falls through to `handler`
+-- (a not-found renderer) instead of a bare file-server 404. Real files still
+-- serve from disk (path-traversal protection / MIME / Range intact); only a
+-- genuine 404 reaches the handler. Used by the Sky.Spa auto-split so a cold
+-- unmatched deep-link boots the shell and server-renders the NotFound page.
+staticNotFound : String -> String -> Handler -> Route
+staticNotFound =
+    Ffi.kernel "Server_staticNotFound"

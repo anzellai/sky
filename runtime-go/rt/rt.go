@@ -7721,6 +7721,9 @@ func File_readFileBytes(path any) any {
 
 func File_writeFile(path any, content any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("file.writeFile"); r != nil {
+			return r
+		}
 		return WithFileSpan("writeFile", fmt.Sprintf("%v", path), func() any {
 			err := os.WriteFile(fmt.Sprintf("%v", path), []byte(fmt.Sprintf("%v", content)), 0644)
 			if err != nil {
@@ -7733,6 +7736,9 @@ func File_writeFile(path any, content any) any {
 
 func File_append(path any, content any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("file.append"); r != nil {
+			return r
+		}
 		return WithFileSpan("append", fmt.Sprintf("%v", path), func() any {
 			f, err := os.OpenFile(fmt.Sprintf("%v", path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
@@ -7757,6 +7763,9 @@ func File_exists(path any) any {
 
 func File_remove(path any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("file.remove"); r != nil {
+			return r
+		}
 		err := os.Remove(fmt.Sprintf("%v", path))
 		if err != nil {
 			return Err[any, any](ErrFfi(err.Error()))
@@ -7767,6 +7776,9 @@ func File_remove(path any) any {
 
 func File_mkdirAll(path any) any {
 	return func() any {
+		if r := ssrSuppressedWrite("file.mkdirAll"); r != nil {
+			return r
+		}
 		err := os.MkdirAll(fmt.Sprintf("%v", path), 0755)
 		if err != nil {
 			return Err[any, any](ErrFfi(err.Error()))
@@ -7875,6 +7887,9 @@ func File_tempDir(prefix any) any {
 }
 
 func File_copy(src any, dst any) any {
+	if r := ssrSuppressedWrite("file.copy"); r != nil {
+		return r
+	}
 	srcPath := AsString(src)
 	dstPath := AsString(dst)
 	in, err := os.Open(srcPath)
@@ -7894,6 +7909,9 @@ func File_copy(src any, dst any) any {
 }
 
 func File_rename(src any, dst any) any {
+	if r := ssrSuppressedWrite("file.rename"); r != nil {
+		return r
+	}
 	err := os.Rename(AsString(src), AsString(dst))
 	if err != nil {
 		return Err[any, any](ErrIo(err.Error()))
@@ -8934,6 +8952,14 @@ type SkyRoute struct {
 	// Range requests, and MIME type detection without re-implementing
 	// any of it on the Sky side.
 	StaticDir string
+
+	// NotFound — a Sky Handler set only by Server_staticNotFound. When
+	// present on a static route, Server_listen wraps the file server so a
+	// genuine 404 (no such file) falls through to this handler instead of
+	// the bare file-server 404. The Sky.Spa auto-split uses it to SSR the
+	// app's NotFound page on a cold unmatched deep-link, while real assets
+	// still serve from the file server. Nil for a plain Server_static route.
+	NotFound any
 }
 
 // SkyRequest wraps an HTTP request
@@ -10008,6 +10034,30 @@ func Server_static(urlPrefix any, dir any) any {
 		// FIRST and never reaches the handler call site for a
 		// static route.
 		Handler: nil,
+	}
+}
+
+// Server_staticNotFound is Server_static plus an SPA NotFound fallback: files
+// under `dir` still serve from Go's http.FileServer (path-traversal protection,
+// MIME, Range, Last-Modified all intact), but a request that resolves to NO file
+// falls through to `handler` (a Sky Handler) instead of a bare file-server 404.
+// The Sky.Spa auto-split registers it as the `/` catch-all so a cold unmatched
+// deep-link SSRs the app's NotFound page (booting the wasm shell), while real
+// assets (wasm_exec.js, main.<hash>.wasm) are served as files.
+func Server_staticNotFound(urlPrefix any, dir any, handler any) any {
+	prefix := fmt.Sprintf("%v", urlPrefix)
+	if prefix == "" || prefix[0] != '/' {
+		prefix = "/" + prefix
+	}
+	if prefix[len(prefix)-1] != '/' {
+		prefix = prefix + "/"
+	}
+	return SkyRoute{
+		Method:    "GET",
+		Path:      prefix,
+		StaticDir: fmt.Sprintf("%v", dir),
+		Handler:   nil,
+		NotFound:  handler,
 	}
 }
 

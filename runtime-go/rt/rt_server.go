@@ -42,6 +42,246 @@ func System_exit(code any) any {
 	return struct{}{}
 }
 
+// dispatchSkyHandler runs one Sky HTTP handler for a request and writes its
+// response: panic recovery, body bounding, cookie/header/form/query/param
+// marshalling, Task→SkyResult→SkyResponse extraction, WebSocket/stream handling,
+// the default+override Content-Type, security headers, and HTML CSRF + dev-banner
+// injection. It is shared by the per-route mux handlers and the Server.static SPA
+// NotFound fallback (a genuine file-server 404 SSRs the app's NotFound page
+// through this same path, so the fallback page gets identical treatment).
+func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, paramNames []string) {
+	// Panic recovery — one bad handler mustn't kill the process.
+	// Audit P1-5: prod-mode logs omit the Go stack trace from
+	// stderr (to avoid leaking internal paths + memory
+	// addresses) and write the full frame to .skylog/panic.log
+	// for post-mortem inspection. Dev mode keeps the full
+	// stack on stderr for fast-feedback debugging.
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			return
+		}
+		// http.ErrAbortHandler is Go's sentinel value
+		// handlers use to abort cleanly (httputil.
+		// ReverseProxy panics with it when a client
+		// disconnects mid-SSE-stream). Re-panic so
+		// net/http's own handler-recover treats it as
+		// the no-op abort it's meant to be.
+		if rec == http.ErrAbortHandler {
+			panic(rec)
+		}
+		logPanicFrame(req.Method, req.URL.Path, rec)
+		w.WriteHeader(500)
+		fmt.Fprint(w, "Internal Server Error")
+	}()
+	// Bound body read to prevent memory exhaustion.
+	req.Body = http.MaxBytesReader(w, req.Body, serverMaxBodyBytes)
+
+	skyReq := SkyRequest{
+		Method:     req.Method,
+		Path:       req.URL.Path,
+		Headers:    make(map[string]any),
+		Params:     make(map[string]any),
+		Query:      make(map[string]any),
+		Cookies:    make(map[string]string),
+		RemoteAddr: req.RemoteAddr,
+	}
+	for _, ck := range req.Cookies() {
+		skyReq.Cookies[ck.Name] = ck.Value
+	}
+	for k, v := range req.Header {
+		if len(v) > 0 {
+			skyReq.Headers[k] = v[0]
+		}
+	}
+	if req.Body != nil {
+		bodyBytes, err := io.ReadAll(req.Body)
+		if err != nil {
+			w.WriteHeader(413) // Payload Too Large
+			fmt.Fprint(w, "request body too large")
+			return
+		}
+		skyReq.Body = string(bodyBytes)
+	}
+	// Parse form data (application/x-www-form-urlencoded)
+	// from the body so Server.formValue works.
+	if req.Method == "POST" || req.Method == "PUT" || req.Method == "PATCH" {
+		skyReq.Form = make(map[string]string)
+		ct := req.Header.Get("Content-Type")
+		if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || ct == "" {
+			vals, err := url.ParseQuery(skyReq.Body)
+			if err == nil {
+				for k, v := range vals {
+					if len(v) > 0 {
+						skyReq.Form[k] = v[0]
+					}
+				}
+			}
+		}
+	}
+	for k, v := range req.URL.Query() {
+		if len(v) > 0 {
+			skyReq.Query[k] = v[0]
+		}
+	}
+	// URL path captures — Server.param reads these. paramNames was
+	// derived from the `:name` segments this route registered.
+	for _, pn := range paramNames {
+		skyReq.Params[pn] = req.PathValue(pn)
+	}
+
+	// Call the Sky handler and invoke the returned Task
+	// thunk. SkyCall uses reflect so it accepts any
+	// callable shape (any/typed codegen both work).
+	// anyTaskInvoke normalises the thunk regardless of
+	// whether it's `func() any`, `SkyTask[any, any]`, or
+	// an already-resolved SkyResult.
+	task := SkyCall(handler, skyReq)
+	result := any(anyTaskInvoke(task))
+
+	// Accept both the bare SkyResult[any,any] AND the
+	// wider typed SkyResult shapes that typed codegen may
+	// now emit. Fall back via reflect.
+	resp, ok := result.(SkyResult[any, any])
+	if !ok {
+		rv := reflect.ValueOf(result)
+		if rv.IsValid() && rv.Kind() == reflect.Struct {
+			tagF := rv.FieldByName("Tag")
+			okF := rv.FieldByName("OkValue")
+			if tagF.IsValid() && okF.IsValid() {
+				resp = SkyResult[any, any]{
+					Tag:     int(tagF.Int()),
+					OkValue: okF.Interface(),
+				}
+				ok = true
+			}
+		}
+	}
+	if ok && resp.Tag == 0 {
+		// v0.15.44: bridge typed Sky_Http_Server_Response_R
+		// (record alias declared in Layer-3 Server.sky) into
+		// the runtime SkyResponse shape. Older handlers that
+		// return bare `rt.SkyResponse` (FFI direct path,
+		// Server_text/json/html before Layer-3 wrap) keep
+		// the fast-path assertion via asSkyResponse.
+		skyResp, okR := asSkyResponse(resp.OkValue)
+		if !okR {
+			w.WriteHeader(500)
+			fmt.Fprint(w, "Internal Server Error")
+			return
+		}
+		// v0.15.46: WebSocket upgrade.  The user's handler returned
+		// Server.WebSocket.upgrade; asSkyResponse has already resolved
+		// the cfg out of the pending registry into WSUpgrade (draining
+		// the token). Hijack the connection and run the upgrade-and-loop
+		// dance.
+		if skyResp.WSUpgrade != nil {
+			serveWebSocketUpgrade(w, req, *skyResp.WSUpgrade)
+			return
+		}
+		// Streaming response (Sky.Http.Server.Stream): dispatch
+		// the user's handler over a chunk-writer instead of
+		// buffering the body. The branch sets headers + flushes,
+		// then drives the handler Task to completion. After
+		// return the connection closes naturally.
+		if skyResp.StreamHandler != nil {
+			serveStreamingResponse(w, req, skyResp)
+			return
+		}
+		// Apply the response's default ContentType FIRST so the
+		// Headers map (populated by Server.withHeader) can
+		// override it. Otherwise an explicit
+		// `withHeader "Content-Type" "application/javascript"`
+		// applied to a Server.text/json/html response would be
+		// silently clobbered by the default ("text/plain" etc).
+		if skyResp.ContentType != "" {
+			w.Header().Set("Content-Type", skyResp.ContentType)
+		}
+		applySkyResponseHeaders(w.Header(), req, skyResp)
+		// Safe-by-default security headers (callers can override);
+		// honours SKY_LIVE_FRAME_ANCESTORS for embeddable deploys.
+		setSecurityHeaders(w.Header())
+		// CSRF auto-injection: for HTML responses, walk every
+		// `<form method="POST">` (case-insensitive on both tag
+		// and attribute) and inject a hidden `__sky_csrf` input
+		// just inside the opening tag. The submitted token will
+		// match the cookie via the `r.FormValue("__sky_csrf")`
+		// fallback in the CSRF middleware. Skip injection when
+		// the form already declares the field (idempotent on
+		// double-render). User code stays clean — no per-form
+		// boilerplate.
+		body := skyResp.Body
+		if strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
+			tok := CurrentCsrfToken(req)
+			if tok != "" {
+				body = injectCsrfIntoForms(body, tok)
+			}
+			// Dev-only "🔍 Console" floating link. Injected
+			// just before </body> so it lives outside any
+			// user route container. Returns "" in production
+			// (productionFromEnv() == true), making this a
+			// no-op for staging / prod deployments.
+			if banner := devBannerHTML(); banner != "" {
+				body = injectDevBanner(body, banner)
+			}
+		}
+		if skyResp.Status > 0 {
+			w.WriteHeader(skyResp.Status)
+		}
+		fmt.Fprint(w, body)
+	} else {
+		w.WriteHeader(500)
+		fmt.Fprint(w, "Internal Server Error")
+	}
+}
+
+// spaNotFoundInterceptWriter wraps a ResponseWriter for a static file server so a
+// 404 status is CAUGHT rather than written: WriteHeader(404) sets swallowed404
+// and suppresses the file server's "404 page not found" body, leaving the real
+// ResponseWriter untouched so the SPA NotFound fallback can render its own page.
+// Every other status (200, 206, 301, 304, …) passes straight through.
+type spaNotFoundInterceptWriter struct {
+	http.ResponseWriter
+	swallowed404 bool
+}
+
+func (w *spaNotFoundInterceptWriter) WriteHeader(code int) {
+	if code == http.StatusNotFound {
+		w.swallowed404 = true
+		return
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *spaNotFoundInterceptWriter) Write(b []byte) (int, error) {
+	if w.swallowed404 {
+		// Discard the file server's 404 body; the fallback writes the real one.
+		return len(b), nil
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// spaStaticFallbackHandler serves static files from `fileHandler`, falling back
+// to the Sky `notFound` handler (which SSRs the app's NotFound page) ONLY on a
+// genuine file-server 404. A request that maps to a real file is served as the
+// file (200) and never reaches the fallback, so real assets (wasm_exec.js,
+// main.<hash>.wasm) are never shadowed — this is the SPA deep-link contract:
+// unmatched app paths SSR NotFound, real files still serve.
+func spaStaticFallbackHandler(fileHandler http.Handler, notFound any) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		iw := &spaNotFoundInterceptWriter{ResponseWriter: w}
+		fileHandler.ServeHTTP(iw, req)
+		if !iw.swallowed404 {
+			return
+		}
+		// Genuine 404 → SSR the NotFound page. Drop the file server's stale
+		// content headers so the Sky handler sets its own (text/html + length).
+		w.Header().Del("Content-Type")
+		w.Header().Del("Content-Length")
+		dispatchSkyHandler(w, req, notFound, nil)
+	})
+}
+
 func Server_listen(port any, routes any) any {
 	p := AsInt(port)
 	routeList := AsList(routes)
@@ -89,7 +329,16 @@ func Server_listen(port any, routes any) any {
 			if len(stripPattern) > 1 && stripPattern[len(stripPattern)-1] == '/' {
 				stripPattern = stripPattern[:len(stripPattern)-1]
 			}
-			mux.Handle(pattern, gzipStatic(http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir)))))
+			fileHandler := gzipStatic(http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir))))
+			// SPA NotFound fallback (Server.staticNotFound): a request that maps to
+			// a REAL file is still served by the file server (200); only a genuine
+			// 404 falls through to the Sky handler, which SSRs the app's NotFound
+			// page. Without a fallback the route is a plain static mount.
+			if route.NotFound != nil {
+				mux.Handle(pattern, spaStaticFallbackHandler(fileHandler, route.NotFound))
+			} else {
+				mux.Handle(pattern, fileHandler)
+			}
 			continue
 		}
 
@@ -109,189 +358,7 @@ func Server_listen(port any, routes any) any {
 			muxPattern = route.Method + " " + translated
 		}
 		mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
-			// Panic recovery — one bad handler mustn't kill the process.
-			// Audit P1-5: prod-mode logs omit the Go stack trace from
-			// stderr (to avoid leaking internal paths + memory
-			// addresses) and write the full frame to .skylog/panic.log
-			// for post-mortem inspection. Dev mode keeps the full
-			// stack on stderr for fast-feedback debugging.
-			defer func() {
-				rec := recover()
-				if rec == nil {
-					return
-				}
-				// http.ErrAbortHandler is Go's sentinel value
-				// handlers use to abort cleanly (httputil.
-				// ReverseProxy panics with it when a client
-				// disconnects mid-SSE-stream). Re-panic so
-				// net/http's own handler-recover treats it as
-				// the no-op abort it's meant to be.
-				if rec == http.ErrAbortHandler {
-					panic(rec)
-				}
-				logPanicFrame(req.Method, req.URL.Path, rec)
-				w.WriteHeader(500)
-				fmt.Fprint(w, "Internal Server Error")
-			}()
-			// Bound body read to prevent memory exhaustion.
-			req.Body = http.MaxBytesReader(w, req.Body, serverMaxBodyBytes)
-
-			skyReq := SkyRequest{
-				Method:     req.Method,
-				Path:       req.URL.Path,
-				Headers:    make(map[string]any),
-				Params:     make(map[string]any),
-				Query:      make(map[string]any),
-				Cookies:    make(map[string]string),
-				RemoteAddr: req.RemoteAddr,
-			}
-			for _, ck := range req.Cookies() {
-				skyReq.Cookies[ck.Name] = ck.Value
-			}
-			for k, v := range req.Header {
-				if len(v) > 0 {
-					skyReq.Headers[k] = v[0]
-				}
-			}
-			if req.Body != nil {
-				bodyBytes, err := io.ReadAll(req.Body)
-				if err != nil {
-					w.WriteHeader(413) // Payload Too Large
-					fmt.Fprint(w, "request body too large")
-					return
-				}
-				skyReq.Body = string(bodyBytes)
-			}
-			// Parse form data (application/x-www-form-urlencoded)
-			// from the body so Server.formValue works.
-			if req.Method == "POST" || req.Method == "PUT" || req.Method == "PATCH" {
-				skyReq.Form = make(map[string]string)
-				ct := req.Header.Get("Content-Type")
-				if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || ct == "" {
-					vals, err := url.ParseQuery(skyReq.Body)
-					if err == nil {
-						for k, v := range vals {
-							if len(v) > 0 {
-								skyReq.Form[k] = v[0]
-							}
-						}
-					}
-				}
-			}
-			for k, v := range req.URL.Query() {
-				if len(v) > 0 {
-					skyReq.Query[k] = v[0]
-				}
-			}
-			// URL path captures — Server.param reads these. paramNames was
-			// derived from the `:name` segments this route registered.
-			for _, pn := range paramNames {
-				skyReq.Params[pn] = req.PathValue(pn)
-			}
-
-			// Call the Sky handler and invoke the returned Task
-			// thunk. SkyCall uses reflect so it accepts any
-			// callable shape (any/typed codegen both work).
-			// anyTaskInvoke normalises the thunk regardless of
-			// whether it's `func() any`, `SkyTask[any, any]`, or
-			// an already-resolved SkyResult.
-			task := SkyCall(handler, skyReq)
-			result := any(anyTaskInvoke(task))
-
-			// Accept both the bare SkyResult[any,any] AND the
-			// wider typed SkyResult shapes that typed codegen may
-			// now emit. Fall back via reflect.
-			resp, ok := result.(SkyResult[any, any])
-			if !ok {
-				rv := reflect.ValueOf(result)
-				if rv.IsValid() && rv.Kind() == reflect.Struct {
-					tagF := rv.FieldByName("Tag")
-					okF := rv.FieldByName("OkValue")
-					if tagF.IsValid() && okF.IsValid() {
-						resp = SkyResult[any, any]{
-							Tag:     int(tagF.Int()),
-							OkValue: okF.Interface(),
-						}
-						ok = true
-					}
-				}
-			}
-			if ok && resp.Tag == 0 {
-				// v0.15.44: bridge typed Sky_Http_Server_Response_R
-				// (record alias declared in Layer-3 Server.sky) into
-				// the runtime SkyResponse shape. Older handlers that
-				// return bare `rt.SkyResponse` (FFI direct path,
-				// Server_text/json/html before Layer-3 wrap) keep
-				// the fast-path assertion via asSkyResponse.
-				skyResp, okR := asSkyResponse(resp.OkValue)
-				if !okR {
-					w.WriteHeader(500)
-					fmt.Fprint(w, "Internal Server Error")
-					return
-				}
-				// v0.15.46: WebSocket upgrade.  The user's handler returned
-				// Server.WebSocket.upgrade; asSkyResponse has already resolved
-				// the cfg out of the pending registry into WSUpgrade (draining
-				// the token). Hijack the connection and run the upgrade-and-loop
-				// dance.
-				if skyResp.WSUpgrade != nil {
-					serveWebSocketUpgrade(w, req, *skyResp.WSUpgrade)
-					return
-				}
-				// Streaming response (Sky.Http.Server.Stream): dispatch
-				// the user's handler over a chunk-writer instead of
-				// buffering the body. The branch sets headers + flushes,
-				// then drives the handler Task to completion. After
-				// return the connection closes naturally.
-				if skyResp.StreamHandler != nil {
-					serveStreamingResponse(w, req, skyResp)
-					return
-				}
-				// Apply the response's default ContentType FIRST so the
-				// Headers map (populated by Server.withHeader) can
-				// override it. Otherwise an explicit
-				// `withHeader "Content-Type" "application/javascript"`
-				// applied to a Server.text/json/html response would be
-				// silently clobbered by the default ("text/plain" etc).
-				if skyResp.ContentType != "" {
-					w.Header().Set("Content-Type", skyResp.ContentType)
-				}
-				applySkyResponseHeaders(w.Header(), req, skyResp)
-				// Safe-by-default security headers (callers can override);
-				// honours SKY_LIVE_FRAME_ANCESTORS for embeddable deploys.
-				setSecurityHeaders(w.Header())
-				// CSRF auto-injection: for HTML responses, walk every
-				// `<form method="POST">` (case-insensitive on both tag
-				// and attribute) and inject a hidden `__sky_csrf` input
-				// just inside the opening tag. The submitted token will
-				// match the cookie via the `r.FormValue("__sky_csrf")`
-				// fallback in the CSRF middleware. Skip injection when
-				// the form already declares the field (idempotent on
-				// double-render). User code stays clean — no per-form
-				// boilerplate.
-				body := skyResp.Body
-				if strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
-					tok := CurrentCsrfToken(req)
-					if tok != "" {
-						body = injectCsrfIntoForms(body, tok)
-					}
-					// Dev-only "🔍 Console" floating link. Injected
-					// just before </body> so it lives outside any
-					// user route container. Returns "" in production
-					// (productionFromEnv() == true), making this a
-					// no-op for staging / prod deployments.
-					if banner := devBannerHTML(); banner != "" {
-						body = injectDevBanner(body, banner)
-					}
-				}
-				if skyResp.Status > 0 {
-					w.WriteHeader(skyResp.Status)
-				}
-				fmt.Fprint(w, body)
-			} else {
-				w.WriteHeader(500)
-				fmt.Fprint(w, "Internal Server Error")
-			}
+			dispatchSkyHandler(w, req, handler, paramNames)
 		})
 	}
 

@@ -1083,7 +1083,7 @@ app =
         }
         |> App.withNotFound ()
         |> App.withHead pageHead
-        |> App.withGuard (\_ _ -> Ok ())
+        |> App.withOnKey (\_ -> Noop)
 
 
 main : Task Error ()
@@ -1108,9 +1108,10 @@ main =
         "BUG-2: a dropped builder step must be reported, not dropped silently:\n{log}"
     );
     // The dropped LIST (the segment after `client entry: `) must name the
-    // server-only `withGuard`. `withRoutes`/`withNotFound`/`withHead` are all
-    // CARRIED, so although they may appear in the warning's explanatory prose,
-    // they must NOT be in the dropped list.
+    // genuinely-uncarried `withOnKey` (terminal-only). `withRoutes`/`withNotFound`/
+    // `withHead`/`withOnNavigate`/`withRequest`/`withGuard` are all CARRIED, so
+    // although they may appear in the warning's explanatory prose, they must NOT be
+    // in the dropped list.
     let dropped_list = log
         .split("client entry: ")
         .nth(1)
@@ -1118,8 +1119,8 @@ main =
         .unwrap_or("")
         .to_string();
     assert!(
-        dropped_list.contains("withGuard"),
-        "BUG-2: `App.withGuard` (server-only) must be named in the dropped list, got `{dropped_list}`:\n{log}"
+        dropped_list.contains("withOnKey"),
+        "BUG-2: `App.withOnKey` (terminal-only) must be named in the dropped list, got `{dropped_list}`:\n{log}"
     );
     assert!(
         !dropped_list.contains("withHead"),
@@ -1128,6 +1129,11 @@ main =
     assert!(
         !dropped_list.contains("withNotFound"),
         "withNotFound is carried into the Spa entry and must not be in the dropped list `{dropped_list}`"
+    );
+    // Fix 5: withGuard is carried (enforced server-side) — must NOT be dropped.
+    assert!(
+        !dropped_list.contains("withGuard"),
+        "Fix 5: `App.withGuard` is now carried (enforced server-side) and must NOT be in the dropped list `{dropped_list}`:\n{log}"
     );
 
     let _ = std::fs::remove_dir_all(&proj);
@@ -1335,11 +1341,13 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         "SSR-P1: the SSR route must precede the static route:\n{backend}"
     );
     // P3 fail-closed: this fixture's `init` is `Cmd.none` (its `File.writeFile`
-    // lives in a `Persist` branch, NOT in `init`), so the GET-safe allowlist scan
-    // finds no safe read → NO data-resolve settle is emitted, and the route
-    // renders the pure model. `Spa_ssrSettle` must be absent.
+    // lives in a `Persist` branch, NOT in `init`) AND it has no `withOnNavigate`,
+    // so there is no GET-safe read to settle → NO data-resolve settle is emitted,
+    // and the route renders the pure model. `Spa_ssrSettle` must be absent. (No
+    // `withRoutes` either, so the pure model is `model0` directly, not a `routed`
+    // binding — fix 2 emits the route-resolve binding only when routes exist.)
     assert!(
-        !backend.contains("spaSsrSettle") && backend.contains("resolved =\n            routed"),
+        !backend.contains("spaSsrSettle") && backend.contains("resolved =\n            model0"),
         "SSR-P3 fail-closed: a `Cmd.none` init must NOT get a data-resolve settle:\n{backend}"
     );
 
@@ -1364,6 +1372,289 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
 
 fn ssr_p3_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-p3")
+}
+
+fn spa_guard_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-guard")
+}
+
+fn spa_onnav_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-onnav")
+}
+
+/// Fix 2. A routed content site whose PER-ROUTE data is loaded in `onNavigate`
+/// (not in `init`, which is `Cmd.none`). The SSR settle must fire
+/// `onNavigate page` for the resolved route and settle its GET-safe read, so a
+/// direct GET of a deep route server-renders that route's REAL data — into the
+/// body a crawler sees AND the embedded `#sky-model` the client boots from.
+/// Before the fix the settle ran only `init`'s single (here empty) command, so a
+/// deep route rendered a blank body: RED. After: the route's data is present.
+///
+/// Two layers of proof:
+///   * emission (no Go): the backend `ssrHandler` fires `onNavigate` on the
+///     resolved route, runs it through `update`, and settles that command;
+///   * Go-gated e2e: `GET /a` carries "Alpha content", `GET /b` "Beta content",
+///     each in the rendered body and the `#sky-model` blob; `GET /` (no per-route
+///     data) carries an empty body — proving the data is per-route + server-resolved.
+#[test]
+fn spa_ssr_settles_per_route_onnavigate_data() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_onnav_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-ssr-onnav fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Synthesis: onNavigate is carried onto the client config.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    assert!(
+        synth.contains("|> Spa.withOnNavigate spaOnNavigate_"),
+        "fix 2: onNavigate must be carried onto the client Spa config:\n{synth}"
+    );
+
+    // Emission: the SSR handler fires onNavigate on the resolved route and
+    // settles its command (the per-route data load).
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    for needle in [
+        "spaOnNavigate_ preNav_.page",
+        "update navMsg_ preNav_",
+        "spaSsrSettle navModel_ navCmd_ update",
+    ] {
+        assert!(
+            backend.contains(needle),
+            "fix 2: the SSR handler must fire + settle onNavigate — missing `{needle}`:\n{backend}"
+        );
+    }
+
+    // ── Go-gated e2e: serve and assert REAL per-route data. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "fix 2: --target web:app must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    // Stage the per-route data the onNavigate reads settle.
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    std::fs::write(backend_dir.join("data/a.txt"), "Alpha content\n").unwrap();
+    std::fs::write(backend_dir.join("data/b.txt"), "Beta content\n").unwrap();
+
+    let port = 8977u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-ssr-onnav backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-ssr-onnav backend never reported listening on :{port}");
+    }
+    let a_body = curl_body_p(port, "/a");
+    let b_body = curl_body_p(port, "/b");
+    let home_body = curl_body_p(port, "/");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let a_body = a_body.expect("GET /a should return a body");
+    let b_body = b_body.expect("GET /b should return a body");
+    let home_body = home_body.expect("GET / should return a body");
+
+    // /a carries the SERVER-RESOLVED per-route data (the onNavigate read settled),
+    // both in the rendered body and the embedded #sky-model blob.
+    assert!(
+        a_body.contains("data-sky-ssr")
+            && a_body.contains("Route A")
+            && a_body.contains("Alpha content"),
+        "fix 2: GET /a must carry the onNavigate-resolved data in the body:\n{a_body}"
+    );
+    let a_blob_start = a_body
+        .find(r#"<script id="sky-model" type="application/json">"#)
+        .expect("fix 2: the #sky-model blob must be present on /a");
+    let a_blob = &a_body[a_blob_start..];
+    let a_blob = &a_blob[..a_blob.find("</script>").expect("blob must close")];
+    assert!(
+        a_blob.contains(r#""page":"a""#) && a_blob.contains("Alpha content"),
+        "fix 2: the /a #sky-model must carry the resolved page + body:\n{a_blob}"
+    );
+    // /b resolves to its OWN data.
+    assert!(
+        b_body.contains("Route B") && b_body.contains("Beta content"),
+        "fix 2: GET /b must carry its own resolved data (not /a's):\n{b_body}"
+    );
+    // / has no per-route onNavigate data → empty body (proves per-route, not global).
+    let home_app = {
+        let s = home_body.find(r#"<div id="app""#).expect("home #app must exist");
+        let e = home_body.find(r#"<script id="sky-model""#).unwrap_or(home_body.len());
+        &home_body[s..e]
+    };
+    assert!(
+        home_app.contains("Home page")
+            && !home_app.contains("Alpha content")
+            && !home_app.contains("Beta content"),
+        "fix 2: GET / must render Home with no per-route data:\n{home_app}"
+    );
+}
+
+/// Fix 5. `App.withGuard` / `App.withOnNavigate` / `App.withRequest` are CARRIED
+/// through the App→Spa synthesis (never named in the drop warning), and the
+/// per-Msg guard is enforced SERVER-side: the generated `POST /_rpc/<Msg>`
+/// handler calls `spaGuard_ <msg> m` BEFORE `update`, answering 403 on `Err`
+/// and never running the effect. This is the trusted authorisation point — the
+/// wasm client is untrusted, so a client that skips its own guard still cannot
+/// fire the effect.
+///
+/// Two layers of proof:
+///   * synthesis + emission (no Go): the three builders reach named bindings;
+///     the backend's `saveHandler` calls `spaGuard_` ahead of `update`.
+///   * Go-gated e2e: a valid `POST /_rpc/Save` that the guard DENIES returns 403
+///     and leaves the write target untouched (the effect never ran).
+#[test]
+fn spa_guard_is_enforced_server_side_on_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_guard_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-guard fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Synthesis: the three builders are carried into NAMED bindings.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    for needle in [
+        "spaGuard_ =",
+        "spaOnNavigate_ =",
+        "spaOnRequest_ =",
+        "|> Spa.withOnNavigate spaOnNavigate_",
+    ] {
+        assert!(
+            synth.contains(needle),
+            "fix 5: the synthesised entry must carry `{needle}`:\n{synth}"
+        );
+    }
+    // None of the three may appear in the drop warning's dropped LIST.
+    let dropped_list = log
+        .split("client entry: ")
+        .nth(1)
+        .and_then(|s| s.split('.').next())
+        .unwrap_or("")
+        .to_string();
+    for banned in ["withGuard", "withOnNavigate", "withRequest"] {
+        assert!(
+            !dropped_list.contains(banned),
+            "fix 5: `{banned}` is carried and must NOT be in the dropped list `{dropped_list}`:\n{log}"
+        );
+    }
+
+    // Emission: the backend enforces the guard on the `/_rpc/Save` handler,
+    // ahead of `update`, and has a `forbidden` (403) responder.
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    // The fixture declares `withRequest`, so the guard + update run against the
+    // REQUEST-SEEDED model `mReq` (`spaOnRequest_ req m`), NOT the raw client
+    // payload model `m`. This closes Judge finding 5: the wasm client can forge
+    // any field of `m`, so a guard reading an identity / session field off the
+    // payload would trust forged data; re-applying withRequest overwrites those
+    // fields from the real request before the guard runs.
+    assert!(
+        backend.contains("case spaGuard_ (Save p.content) mReq of"),
+        "fix 5: the guard must run against the request-seeded model mReq, not the forgeable payload m:\n{backend}"
+    );
+    assert!(
+        backend.contains("Task.succeed (forbidden"),
+        "fix 5: a denied guard must answer 403 (forbidden):\n{backend}"
+    );
+    let reseed_at = backend
+        .find("spaOnRequest_ req m")
+        .expect("fix 5: the /_rpc handler must re-apply withRequest server-side");
+    let guard_at = backend
+        .find("case spaGuard_ (Save p.content) mReq of")
+        .expect("guard check present");
+    let update_at = backend
+        .find("update (Save p.content) mReq")
+        .expect("update present");
+    assert!(
+        reseed_at < guard_at && guard_at < update_at,
+        "fix 5: the request re-seed must precede the guard, and the guard must precede the update:\n{backend}"
+    );
+
+    // ── Go-gated e2e: a denied Save returns 403 and never runs the write. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "fix 5: --target web:app must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    // Stage the write target with a known sentinel so we can prove it is UNCHANGED.
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    std::fs::write(backend_dir.join("data/out.txt"), "seed\n").unwrap();
+
+    let port = 8974u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-guard backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-guard backend never reported listening on :{port}");
+    }
+    // A VALID request body (decodes to SaveReq) so the handler reaches the guard,
+    // not the 400 decode-error path. The guard DENIES Save → 403.
+    let posted = curl_post_status_body(port, "/_rpc/Save", r#"{"content":"pwned"}"#);
+    let after = std::fs::read_to_string(backend_dir.join("data/out.txt")).unwrap_or_default();
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let (code, _body) = posted.expect("POST /_rpc/Save should return");
+    assert_eq!(
+        code, 403,
+        "fix 5: a guard-denied /_rpc/Save must return 403 (the trusted server-side enforcement)"
+    );
+    assert_eq!(
+        after, "seed\n",
+        "fix 5: the denied effect must NOT run — data/out.txt must be unchanged, was {after:?}"
+    );
+}
+
+fn spa_deeplink_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-deeplink")
 }
 
 /// Wait until the generated Sky.Spa backend logs its `Sky server listening` line
@@ -1448,12 +1739,14 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
             "SSR-P3: the generated backend must carry `{needle}`:\n{backend}"
         );
     }
-    // Per-route SSR routes must precede the static fallthrough.
+    // Per-route SSR routes must precede the static fallthrough. Fix 6: the
+    // catch-all is `Server.staticNotFound … ssrHandler`, so a cold unmatched path
+    // SSRs the NotFound page instead of a bare file-server 404.
     let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
-    let static_at = backend.find("Server.static \"/\"");
+    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
-        "SSR-P3: per-route SSR routes must precede the static route:\n{backend}"
+        "SSR-P3: per-route SSR routes must precede the static NotFound fallback:\n{backend}"
     );
 
     // ── Go-gated e2e: run the backend, curl each route, assert REAL per-route
@@ -1536,6 +1829,197 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     assert!(
         home_app.contains("Welcome home") && !home_app.contains("Item list:"),
         "SSR-P3: GET / must render Home's own view, not the Items view:\n{home_app}"
+    );
+}
+
+/// Fix 1 (cold deep-link is dark). A cold two-segment URL (`/blog/<slug>`) served
+/// by the SSR backend must reference its assets by ROOT-ABSOLUTE URL, so the
+/// browser fetches `/wasm_exec.js` + `/main.<hash>.wasm` at ANY route depth. With
+/// a bare relative `wasm_exec.js`, a `/blog/<slug>` document resolves it to
+/// `/blog/wasm_exec.js` (404 → text/html → "Go is not defined") and the wasm
+/// never boots. The Go-gated leg serves the real backend and confirms the SSR
+/// document's asset URLs are root-absolute AND that `/wasm_exec.js` is a 200
+/// JavaScript asset.
+#[test]
+fn spa_deep_link_ssr_references_root_absolute_assets() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_deeplink_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the deep-link fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The two-segment param route reaches the SSR handler (a more-specific mux
+    // entry than the static catch-all).
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    assert!(
+        backend.contains("Server.api \"GET /blog/:slug\" ssrHandler"),
+        "the /blog/:slug route must be a per-route SSR GET:\n{backend}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "deep-link fixture must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+
+    let port = 8974u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled deep-link backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("deep-link backend never reported listening on :{port}");
+    }
+    let deep_body = curl_body_p(port, "/blog/hello");
+    let asset = curl_status_ctype(port, "/wasm_exec.js");
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let deep_body = deep_body.expect("GET /blog/hello should return a body");
+    // The cold deep-link SSRs the Post route (crawlable) with the SSR marker.
+    assert!(
+        deep_body.contains("data-sky-ssr") && deep_body.contains("hello"),
+        "GET /blog/hello must SSR the Post route (marker + slug). Body was:\n{deep_body}"
+    );
+    // Assets are ROOT-ABSOLUTE — correct at this two-segment depth.
+    assert!(
+        deep_body.contains(r#"<script src="/wasm_exec.js">"#),
+        "the deep-link document must load /wasm_exec.js (root-absolute):\n{deep_body}"
+    );
+    assert!(
+        !deep_body.contains(r#"<script src="wasm_exec.js">"#),
+        "the deep-link document must NOT reference a bare relative wasm_exec.js:\n{deep_body}"
+    );
+    assert!(
+        deep_body.contains(r#"fetch("/main."#) && deep_body.contains(".wasm\")"),
+        "the deep-link document must fetch the wasm by root-absolute URL:\n{deep_body}"
+    );
+
+    // /wasm_exec.js is a REAL asset served by the static mount: 200 + JavaScript.
+    let (code, ctype) = asset.expect("GET /wasm_exec.js should answer");
+    let _ = std::fs::remove_dir_all(&proj);
+    assert_eq!(code, 200, "/wasm_exec.js must be 200, got {code} ({ctype})");
+    assert!(
+        ctype.contains("javascript"),
+        "/wasm_exec.js must be served as JavaScript, got Content-Type {ctype}"
+    );
+}
+
+/// Fix 6 (unknown deep path does not SSR the NotFound page). A cold load of an
+/// unknown path used to match no mux pattern and fall through to `Server.static`,
+/// returning a bare file-server 404. With the SPA NotFound fallback the catch-all
+/// is `Server.staticNotFound … ssrHandler`, so an unmatched app path boots the
+/// shell and SSRs the NotFound page (`data-sky-ssr` + the NotFound view) exactly
+/// as a known route would, while a request that maps to a REAL asset still serves
+/// the file. RED before the fix (a plain `Server.static` catch-all → 404).
+#[test]
+fn spa_unknown_deep_path_ssrs_the_not_found_page() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_deeplink_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the deep-link fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Backend-source: the static catch-all is the SPA NotFound fallback, NOT a
+    // bare `Server.static` (which would 404 unmatched paths).
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    assert!(
+        backend.contains("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler"),
+        "the static catch-all must be the SPA NotFound fallback:\n{backend}"
+    );
+    assert!(
+        !backend.contains("Server.static \"/\" \"../frontend/dist\""),
+        "an SSR+routed app must NOT emit a bare Server.static catch-all:\n{backend}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "deep-link fixture must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+
+    let port = 8975u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled deep-link backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("deep-link backend never reported listening on :{port}");
+    }
+    let unknown_status = curl_status_ctype(port, "/some/unknown/deep/path");
+    let unknown_body = curl_body_p(port, "/some/unknown/deep/path");
+    let asset = curl_status_ctype(port, "/wasm_exec.js");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    // An unmatched deep path SSRs the NotFound page — 200, not a bare 404.
+    let (code, ctype) = unknown_status.expect("GET unknown path should answer");
+    assert_eq!(code, 200, "unmatched path must SSR NotFound (200), got {code} ({ctype})");
+    assert!(
+        ctype.starts_with("text/html"),
+        "the NotFound SSR must be text/html, got {ctype}"
+    );
+    let unknown_body = unknown_body.expect("GET unknown path should return a body");
+    assert!(
+        unknown_body.contains("data-sky-ssr")
+            && unknown_body.contains("No such page here")
+            && unknown_body.contains(r#"<script src="/wasm_exec.js">"#),
+        "the unmatched path must SSR the NotFound page inside the shell:\n{unknown_body}"
+    );
+    assert!(
+        !unknown_body.contains("404 page not found"),
+        "the bare file-server 404 must be suppressed:\n{unknown_body}"
+    );
+
+    // A REAL asset is NOT shadowed by the fallback: still 200 JavaScript.
+    let (acode, actype) = asset.expect("GET /wasm_exec.js should answer");
+    assert_eq!(acode, 200, "/wasm_exec.js must still be 200, got {acode} ({actype})");
+    assert!(
+        actype.contains("javascript"),
+        "/wasm_exec.js must serve as JavaScript, got {actype}"
     );
 }
 
@@ -1834,12 +2318,12 @@ fn splits_mixed_page_and_api_routes() {
         "GAP-1: the api handlers must remain in the BACKEND tree:\n{backend}"
     );
 
-    // ── GAP-1 page routes still SSR, ahead of the static fallthrough. ──
+    // ── GAP-1 page routes still SSR, ahead of the static NotFound fallback. ──
     let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
-    let static_at = backend.find("Server.static \"/\"");
+    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
-        "GAP-1: page routes must SSR ahead of the static fallthrough:\n{backend}"
+        "GAP-1: page routes must SSR ahead of the static NotFound fallback:\n{backend}"
     );
 
     // ── GAP-2 within the mixed app: the sibling `Boot.init` is stripped. ──
@@ -2365,6 +2849,46 @@ fn curl_body_p(port: u16, path: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+// POST a JSON `body` to `path` and return (status_code, response_body). Used by
+// the server-side guard test (fix 5): a denied `/_rpc/<Msg>` must answer 403.
+fn curl_post_status_body(port: u16, path: &str, body: &str) -> Option<(u32, String)> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let out = Command::new("curl")
+        .args([
+            "-s",
+            "-w",
+            "\n%{http_code}",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            body,
+            &url,
+        ])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    let idx = s.rfind('\n')?;
+    let (resp_body, code) = s.split_at(idx);
+    let code = code.trim().parse::<u32>().ok()?;
+    Some((code, resp_body.to_string()))
+}
+
+// HTTP status code + Content-Type of `GET http://127.0.0.1:<port><path>`.
+fn curl_status_ctype(port: u16, path: &str) -> Option<(u32, String)> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let out = Command::new("curl")
+        .args(["-s", "-o", "/dev/null", "-w", "%{http_code} %{content_type}", &url])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    let mut it = s.splitn(2, ' ');
+    let code = it.next()?.trim().parse::<u32>().ok()?;
+    let ctype = it.next().unwrap_or("").trim().to_string();
+    Some((code, ctype))
+}
+
 /// BUG-3. When the SYNTHESISED client entry fails to type-check, the failure
 /// must surface the actual diagnostic (file:line + caret), plus a pointer to the
 /// staged entry — not a bare `1 type error(s)` count that discards where the
@@ -2552,10 +3076,10 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
         "GAP-C: the `/items` route (literal in the sibling `Routes`) must be SSR-registered:\n{backend}"
     );
     let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
-    let static_at = backend.find("Server.static \"/\"");
+    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
-        "GAP-C: per-route SSR routes must precede the static fallthrough:\n{backend}"
+        "GAP-C: per-route SSR routes must precede the static NotFound fallback:\n{backend}"
     );
 
     // ── Go-gated: the wasm FRONTEND built + the backend serves REAL per-route

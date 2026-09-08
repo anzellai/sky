@@ -172,6 +172,33 @@ At session init the `Sky.Http.Server.Request` carries `method` / `path` /
 init is a GET-time hook; read a POST body in a route handler or an `update`
 command instead.
 
+## Handling a failed RPC — `App.withRpcError`
+
+On the `web:app` (Sky.Spa) target each server branch runs as a `POST
+/_rpc/<Msg>` round-trip. When one fails — a 5xx the backend answered, a response
+the shared codec cannot decode, or a network drop — the client keeps the model
+(the write-set never applied) and reports the failure loudly to the console, and
+a network drop arms a retry overlay. That is safe, but silent to your UI.
+
+`App.withRpcError (\err -> RpcFailed err)` routes the error **into your own
+`update`** instead, so your view can show it — parity with Sky.Live's
+`Cmd.perform task ToMsg` error arm:
+
+```elm
+type Msg
+    = LoadPosts
+    | RpcFailed Error
+    | ...
+
+App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+    |> App.withNotFound NotFound
+    |> App.withRpcError (\err -> RpcFailed err)
+```
+
+`withRpcError : (Error -> msg) -> App … -> App …`. It is opt-in: without it the
+loud-log floor stands. Web (Sky.Live) and terminal targets have no RPC boundary
+and ignore the hook — there a failed task surfaces through its own `ToMsg`.
+
 ## View adapter
 
 You write one `view : model -> Element msg`. `Std.App` adapts it per backend:
