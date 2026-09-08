@@ -8934,6 +8934,14 @@ type SkyRoute struct {
 	// Range requests, and MIME type detection without re-implementing
 	// any of it on the Sky side.
 	StaticDir string
+
+	// NotFound — a Sky Handler set only by Server_staticNotFound. When
+	// present on a static route, Server_listen wraps the file server so a
+	// genuine 404 (no such file) falls through to this handler instead of
+	// the bare file-server 404. The Sky.Spa auto-split uses it to SSR the
+	// app's NotFound page on a cold unmatched deep-link, while real assets
+	// still serve from the file server. Nil for a plain Server_static route.
+	NotFound any
 }
 
 // SkyRequest wraps an HTTP request
@@ -10008,6 +10016,30 @@ func Server_static(urlPrefix any, dir any) any {
 		// FIRST and never reaches the handler call site for a
 		// static route.
 		Handler: nil,
+	}
+}
+
+// Server_staticNotFound is Server_static plus an SPA NotFound fallback: files
+// under `dir` still serve from Go's http.FileServer (path-traversal protection,
+// MIME, Range, Last-Modified all intact), but a request that resolves to NO file
+// falls through to `handler` (a Sky Handler) instead of a bare file-server 404.
+// The Sky.Spa auto-split registers it as the `/` catch-all so a cold unmatched
+// deep-link SSRs the app's NotFound page (booting the wasm shell), while real
+// assets (wasm_exec.js, main.<hash>.wasm) are served as files.
+func Server_staticNotFound(urlPrefix any, dir any, handler any) any {
+	prefix := fmt.Sprintf("%v", urlPrefix)
+	if prefix == "" || prefix[0] != '/' {
+		prefix = "/" + prefix
+	}
+	if prefix[len(prefix)-1] != '/' {
+		prefix = prefix + "/"
+	}
+	return SkyRoute{
+		Method:    "GET",
+		Path:      prefix,
+		StaticDir: fmt.Sprintf("%v", dir),
+		Handler:   nil,
+		NotFound:  handler,
 	}
 }
 

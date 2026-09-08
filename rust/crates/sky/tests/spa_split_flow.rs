@@ -1452,12 +1452,14 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
             "SSR-P3: the generated backend must carry `{needle}`:\n{backend}"
         );
     }
-    // Per-route SSR routes must precede the static fallthrough.
+    // Per-route SSR routes must precede the static fallthrough. Fix 6: the
+    // catch-all is `Server.staticNotFound … ssrHandler`, so a cold unmatched path
+    // SSRs the NotFound page instead of a bare file-server 404.
     let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
-    let static_at = backend.find("Server.static \"/\"");
+    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
-        "SSR-P3: per-route SSR routes must precede the static route:\n{backend}"
+        "SSR-P3: per-route SSR routes must precede the static NotFound fallback:\n{backend}"
     );
 
     // ── Go-gated e2e: run the backend, curl each route, assert REAL per-route
@@ -1634,6 +1636,103 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
     assert!(
         ctype.contains("javascript"),
         "/wasm_exec.js must be served as JavaScript, got Content-Type {ctype}"
+    );
+}
+
+/// Fix 6 (unknown deep path does not SSR the NotFound page). A cold load of an
+/// unknown path used to match no mux pattern and fall through to `Server.static`,
+/// returning a bare file-server 404. With the SPA NotFound fallback the catch-all
+/// is `Server.staticNotFound … ssrHandler`, so an unmatched app path boots the
+/// shell and SSRs the NotFound page (`data-sky-ssr` + the NotFound view) exactly
+/// as a known route would, while a request that maps to a REAL asset still serves
+/// the file. RED before the fix (a plain `Server.static` catch-all → 404).
+#[test]
+fn spa_unknown_deep_path_ssrs_the_not_found_page() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_deeplink_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the deep-link fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Backend-source: the static catch-all is the SPA NotFound fallback, NOT a
+    // bare `Server.static` (which would 404 unmatched paths).
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    assert!(
+        backend.contains("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler"),
+        "the static catch-all must be the SPA NotFound fallback:\n{backend}"
+    );
+    assert!(
+        !backend.contains("Server.static \"/\" \"../frontend/dist\""),
+        "an SSR+routed app must NOT emit a bare Server.static catch-all:\n{backend}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "deep-link fixture must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+
+    let port = 8975u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled deep-link backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("deep-link backend never reported listening on :{port}");
+    }
+    let unknown_status = curl_status_ctype(port, "/some/unknown/deep/path");
+    let unknown_body = curl_body_p(port, "/some/unknown/deep/path");
+    let asset = curl_status_ctype(port, "/wasm_exec.js");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    // An unmatched deep path SSRs the NotFound page — 200, not a bare 404.
+    let (code, ctype) = unknown_status.expect("GET unknown path should answer");
+    assert_eq!(code, 200, "unmatched path must SSR NotFound (200), got {code} ({ctype})");
+    assert!(
+        ctype.starts_with("text/html"),
+        "the NotFound SSR must be text/html, got {ctype}"
+    );
+    let unknown_body = unknown_body.expect("GET unknown path should return a body");
+    assert!(
+        unknown_body.contains("data-sky-ssr")
+            && unknown_body.contains("No such page here")
+            && unknown_body.contains(r#"<script src="/wasm_exec.js">"#),
+        "the unmatched path must SSR the NotFound page inside the shell:\n{unknown_body}"
+    );
+    assert!(
+        !unknown_body.contains("404 page not found"),
+        "the bare file-server 404 must be suppressed:\n{unknown_body}"
+    );
+
+    // A REAL asset is NOT shadowed by the fallback: still 200 JavaScript.
+    let (acode, actype) = asset.expect("GET /wasm_exec.js should answer");
+    assert_eq!(acode, 200, "/wasm_exec.js must still be 200, got {acode} ({actype})");
+    assert!(
+        actype.contains("javascript"),
+        "/wasm_exec.js must serve as JavaScript, got {actype}"
     );
 }
 
@@ -1932,12 +2031,12 @@ fn splits_mixed_page_and_api_routes() {
         "GAP-1: the api handlers must remain in the BACKEND tree:\n{backend}"
     );
 
-    // ── GAP-1 page routes still SSR, ahead of the static fallthrough. ──
+    // ── GAP-1 page routes still SSR, ahead of the static NotFound fallback. ──
     let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
-    let static_at = backend.find("Server.static \"/\"");
+    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
-        "GAP-1: page routes must SSR ahead of the static fallthrough:\n{backend}"
+        "GAP-1: page routes must SSR ahead of the static NotFound fallback:\n{backend}"
     );
 
     // ── GAP-2 within the mixed app: the sibling `Boot.init` is stripped. ──
@@ -2664,10 +2763,10 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
         "GAP-C: the `/items` route (literal in the sibling `Routes`) must be SSR-registered:\n{backend}"
     );
     let items_at = backend.find("Server.api \"GET /items\" ssrHandler");
-    let static_at = backend.find("Server.static \"/\"");
+    let static_at = backend.find("Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler");
     assert!(
         items_at.is_some() && static_at.is_some() && items_at < static_at,
-        "GAP-C: per-route SSR routes must precede the static fallthrough:\n{backend}"
+        "GAP-C: per-route SSR routes must precede the static NotFound fallback:\n{backend}"
     );
 
     // ── Go-gated: the wasm FRONTEND built + the backend serves REAL per-route

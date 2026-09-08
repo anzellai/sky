@@ -413,6 +413,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Server", "queryParam", "rt.Server_queryParam"),
     ("Server", "header", "rt.Server_header"),
     ("Server", "static", "rt.Server_static"),
+    ("Server", "staticNotFound", "rt.Server_staticNotFound"),
     ("Server", "getCookie", "rt.Server_getCookie"),
     ("Server", "cookie", "rt.Server_cookie"),
     ("Server", "withCookie", "rt.Server_withCookie"),

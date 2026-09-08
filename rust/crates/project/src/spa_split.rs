@@ -2519,7 +2519,22 @@ fn gen_backend(
     // no RPC/push routes, so without this the list would open `[ , Server.static`
     // — a leading comma the parser rejects. With it, `routes` is never empty and
     // the first `        ,` always becomes the opening `        [`.
-    routes.push("        , Server.static \"/\" \"../frontend/dist\"".to_string());
+    //
+    // When the backend SSRs (≥1 server branch) AND has a route table (so a
+    // `spaNotFound_` page exists), the static catch-all becomes
+    // `Server.staticNotFound … ssrHandler`: a genuinely-unmatched cold path
+    // (no such asset) falls through to the SSR handler, which resolves the
+    // unmatched path to the NotFound page (Spa_ssrResolveModel) and renders the
+    // shell — exactly as Sky.Live does — instead of a bare file-server 404. A
+    // request that maps to a REAL asset still serves the file, so wasm_exec.js /
+    // main.<hash>.wasm are never shadowed.
+    if emit_ssr && has_synth_routes {
+        routes.push(
+            "        , Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler".to_string(),
+        );
+    } else {
+        routes.push("        , Server.static \"/\" \"../frontend/dist\"".to_string());
+    }
 
     // serverPort + main.
     let route_block = {
