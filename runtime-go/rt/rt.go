@@ -7887,6 +7887,9 @@ func File_tempDir(prefix any) any {
 }
 
 func File_copy(src any, dst any) any {
+	if r := ssrSuppressedWrite("file.copy"); r != nil {
+		return r
+	}
 	srcPath := AsString(src)
 	dstPath := AsString(dst)
 	in, err := os.Open(srcPath)
@@ -7906,6 +7909,9 @@ func File_copy(src any, dst any) any {
 }
 
 func File_rename(src any, dst any) any {
+	if r := ssrSuppressedWrite("file.rename"); r != nil {
+		return r
+	}
 	err := os.Rename(AsString(src), AsString(dst))
 	if err != nil {
 		return Err[any, any](ErrIo(err.Error()))
