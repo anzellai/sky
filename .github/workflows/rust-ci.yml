@@ -54,6 +54,16 @@ env:
   # truth: `ci-green` reads these, nothing hard-codes a number.
   T1_CEILING_SECONDS: '900'
   T1_GRACE_PERCENT: '10'
+  # macOS jobs are budgeted SEPARATELY from the Linux T1 latency tier — GitHub's
+  # macOS runners vary 2-3x for identical work (a determinism shard measured
+  # 690s and 1534s in the SAME run), which is runner availability, not test
+  # design (§8.2 excludes queue time for the same reason). This ceiling clears
+  # the observed variance with headroom, so a breach means a REAL macOS
+  # slowdown. Raising the Linux ceiling is still forbidden; this one is a
+  # different, macOS-specific axis. `assert-tier-budget.sh` enforces it via
+  # MACOS_JOBS.
+  MACOS_CEILING_SECONDS: '1800'
+  MACOS_GRACE_PERCENT: '20'
   # Ceiling for the Go build + module caches, in MiB. The module cache reached
   # 75 GB locally because example FFI deps float on `"latest"`; GitHub's cache
   # is 10 GB for the WHOLE repo, so an unbounded Go cache does not just waste
@@ -287,18 +297,21 @@ jobs:
   # NOT repeated (test-rest's `--all-targets` clippy and `--workspace --doc`
   # already cover sky). Setup-dependent (needs: setup) — NOT in
   # SETUP_INDEPENDENT_JOBS.
+  # test-sky is SHARDED across two sibling jobs (`test-sky` + `test-sky-2`),
+  # `cargo nextest --partition hash:1/2` and `2/2`. nextest partitions at TEST
+  # granularity by a stable name hash, so it is disjoint-and-total by
+  # construction (every non-ignored test runs in exactly one shard, no manifest
+  # to maintain) AND it spreads the many `sky build --target web:app` flow tests
+  # (spa_split_flow alone drives ~55 full builds) evenly — one unsharded job had
+  # grown to ~1045s against the 990s ceiling as SPA coverage accumulated. Two
+  # explicitly-named jobs, NOT a `matrix` (a matrix leg reports to the REST API
+  # as `name (leg)`, and the budget assertion matches whole space-separated job
+  # names — a name with a space could never match SETUP_INDEPENDENT_JOBS).
+  # `#[ignore]`d heavy e2e legs still run nightly via `--ignored`.
+  # nextest does NOT run doctests; shard 1 runs `cargo test --doc` so they are
+  # covered exactly once. Deliberately NO `needs: setup` (same reasoning as
+  # `build-corpus`); both shards are in SETUP_INDEPENDENT_JOBS.
   test-sky:
-    # Deliberately NO `needs: setup` — the same reasoning as `build-corpus`.
-    # test-sky is among the LONGEST jobs in the graph (postgres-live + spa-split
-    # + db-flow integration), and it consumes none of setup's OUTPUT: it restores
-    # the shared cargo cache by `restore-keys` (Swatinem `shared-key: sky-linux`,
-    # `save-if: false`) exactly as every setup-dependent job does. While it waited
-    # on setup, the T1 tier was `setup(~270s) + test-sky(~720s) ≈ 990s` — pinned
-    # against the ceiling and flapping over it on setup variance. Run alongside
-    # setup instead and the tier is `setup + max(OTHER dependent) = setup +
-    # config-gates(~520s) ≈ 790s`, while test-sky itself (independent) stays well
-    # under the ceiling. Listed in SETUP_INDEPENDENT_JOBS so the budget assertion
-    # charges it correctly.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -328,25 +341,73 @@ jobs:
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
           done
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      # A bare `cargo test` skips `#[ignore]`d tests. The heaviest real-DB e2e
-      # legs (`db_run_cluster_flow`'s 6 cluster-spinning tests,
-      # `cross_replica_session_flow`, `auth_db_lifecycle_flow`, plus
-      # `std_app_flow`'s erasure renders) carry `#[ignore]` to stay OFF this T1
-      # critical path — they added enough wall time to trip the T1 tier budget
-      # (docs/ci-test-architecture-v2.md §8.2). Each keeps a fast per-commit
-      # kernel leg (named in its `#[ignore]` reason); the ignored e2e leg runs
-      # nightly via `--ignored` in `nightly-sweep.yml`'s `harness-t3`. Re-arming
-      # any of them per-commit means finding the matching T1 budget first.
-      - name: Tests — sky crate (postgres-live + db_*_flow integration)
+      # sky is a BIN-ONLY crate (no lib target), so it has no doctests — `cargo
+      # test -p sky` never ran any, and nextest (unit + integration) covers
+      # exactly what the old `cargo test -p sky` did. No `--doc` step (it would
+      # error "no library targets found").
+      - name: Tests — sky crate shard 1/2 (nextest partition; postgres-live + integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo test -p sky --locked
+        run: cargo nextest run -p sky --locked --partition hash:1/2
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  test-sky-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-test-sky-
+      - name: PostgreSQL + sqlite3 for the live tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Tests — sky crate shard 2/2 (nextest partition; postgres-live + integration)
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition hash:2/2
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1304,6 +1365,7 @@ jobs:
       - test-ty
       - test-rest
       - test-sky
+      - test-sky-2
       - parity-accept
       - parity-reject
       - repro
@@ -1359,20 +1421,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           # These do NOT `needs: setup` — `integration-postgres` builds no Rust
-          # at all, `macos-determinism` is a different OS with its own cache a
-          # Linux `setup` cannot prime, and `build-corpus` consumes none of
-          # setup's OUTPUT (it runs its own `cargo build --workspace`, restoring
-          # the shared cargo cache by `restore-keys` like every other job), and
-          # the two `licence-gate-*` jobs compile C fixtures and run two shell
-          # scripts — no Rust at all.
+          # at all, `build-corpus` consumes none of setup's OUTPUT (it runs its
+          # own `cargo build --workspace`, restoring the shared cargo cache by
+          # `restore-keys` like every other job), the two `test-sky` shards run
+          # alongside setup, and `licence-gate-linux` runs shell scripts.
           # They start alongside `setup`, so charging them its time would
           # overstate the tier.
+          #
+          # macOS jobs are NOT here — they are in MACOS_JOBS with their own
+          # ceiling. GitHub's macOS runners vary 2-3x for identical work (a
+          # determinism shard measured 690s and 1534s in the SAME run), so a
+          # Linux wall-clock budget on them made the release flap on runner
+          # speed. They stay REQUIRED correctness gates (`ci-green.needs`) with
+          # their own `timeout-minutes` backstop; MACOS_CEILING only fails a
+          # genuine macOS slowdown, never a slow-runner outlier.
           #
           # These names are SPACE-SEPARATED and matched whole, so a job whose
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour build-corpus build-corpus-2 erasure-fuzz test-sky licence-gate-linux licence-gate-macos'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-corpus build-corpus-2 erasure-fuzz test-sky test-sky-2 licence-gate-linux'
+          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour licence-gate-macos'
         run: |
           set -euo pipefail
           gh api \

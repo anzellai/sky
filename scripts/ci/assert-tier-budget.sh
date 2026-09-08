@@ -39,6 +39,17 @@ grace="${T1_GRACE_PERCENT:-0}"
 setup_name="${SETUP_JOB_NAME:-setup}"
 ignore="${IGNORE_JOBS:-ci-green}"
 independent="${SETUP_INDEPENDENT_JOBS:-}"
+# macOS jobs get their OWN ceiling, not the Linux T1 one. GitHub's macOS runners
+# vary 2-3x for identical work (a determinism shard measured 690s and 1534s in
+# the SAME run), so charging their wall time to the Linux latency budget makes
+# the release flap on runner speed — which §8.2 already excludes as "runner
+# availability, not test design" (it drops queue time for the same reason). They
+# stay REQUIRED correctness gates with their own per-job `timeout-minutes` as the
+# runaway backstop; this ceiling only fails a GENUINE macOS slowdown (well past
+# the observed variance), never a slow-runner outlier. Empty = no macOS jobs.
+macos_jobs="${MACOS_JOBS:-}"
+macos_ceiling="${MACOS_CEILING_SECONDS:-0}"
+macos_grace="${MACOS_GRACE_PERCENT:-0}"
 
 payload="${1:-}"
 if [ -n "$payload" ] && [ -f "$payload" ]; then
@@ -65,6 +76,7 @@ fi
 setup_elapsed=""
 dep_max=0;   dep_name="(none)"
 indep_max=0; indep_name="(none)"
+macos_max=0; macos_name="(none)"
 
 is_in() { # is_in <needle> <space-separated haystack>
   local n="$1" h="$2" x
@@ -78,7 +90,11 @@ while IFS=$'\t' read -r name secs; do
   [ -n "$name" ] || continue
   printf '  %-28s %6ss\n' "$name" "$secs"
   is_in "$name" "$ignore" && continue
-  if [ "$name" = "$setup_name" ]; then
+  if is_in "$name" "$macos_jobs"; then
+    # macOS jobs are budgeted separately (see macos_ceiling below), never
+    # charged to the Linux dependent/independent tier total.
+    if [ "$secs" -gt "$macos_max" ]; then macos_max="$secs"; macos_name="$name"; fi
+  elif [ "$name" = "$setup_name" ]; then
     setup_elapsed="$secs"
   elif is_in "$name" "$independent"; then
     if [ "$secs" -gt "$indep_max" ]; then indep_max="$secs"; indep_name="$name"; fi
@@ -108,10 +124,29 @@ echo "  tier total (max of the two)           ${total}s"
 echo "  ceiling ${ceiling}s + ${grace}% grace = ${allowed}s"
 echo
 
+fail=0
 if [ "$total" -gt "$allowed" ]; then
   echo "::error::T1 TIER BUDGET EXCEEDED: ${total}s > ${allowed}s (chain: setup ${setup_elapsed}s + ${dep_name} ${dep_max}s; independent: ${indep_name} ${indep_max}s)." >&2
   echo "::error::Fix the critical path. Do NOT raise T1_CEILING_SECONDS — that is the silent budget drift this gate exists to catch." >&2
-  exit 1
+  fail=1
+else
+  echo "T1 tier budget OK: ${total}s <= ${allowed}s"
 fi
 
-echo "T1 tier budget OK: ${total}s <= ${allowed}s"
+# macOS jobs, budgeted separately (see macos_jobs comment). Only enforced when a
+# ceiling is configured AND at least one macOS job ran.
+if [ -n "$macos_jobs" ] && [ "$macos_ceiling" -gt 0 ] && [ "$macos_name" != "(none)" ]; then
+  macos_allowed=$(( macos_ceiling + (macos_ceiling * macos_grace / 100) ))
+  echo
+  echo "  slowest macOS job (${macos_name})        ${macos_max}s"
+  echo "  macOS ceiling ${macos_ceiling}s + ${macos_grace}% grace = ${macos_allowed}s"
+  if [ "$macos_max" -gt "$macos_allowed" ]; then
+    echo "::error::MACOS TIER BUDGET EXCEEDED: ${macos_max}s > ${macos_allowed}s (${macos_name})." >&2
+    echo "::error::This ceiling clears normal macOS runner variance, so a breach is a REAL macOS slowdown — fix it. If GitHub's macOS runners have genuinely regressed fleet-wide, raise MACOS_CEILING_SECONDS with a dated note, never the Linux T1 ceiling." >&2
+    fail=1
+  else
+    echo "macOS tier budget OK: ${macos_max}s <= ${macos_allowed}s"
+  fi
+fi
+
+exit "$fail"
