@@ -1083,7 +1083,7 @@ app =
         }
         |> App.withNotFound ()
         |> App.withHead pageHead
-        |> App.withGuard (\_ _ -> Ok ())
+        |> App.withOnKey (\_ -> Noop)
 
 
 main : Task Error ()
@@ -1108,9 +1108,10 @@ main =
         "BUG-2: a dropped builder step must be reported, not dropped silently:\n{log}"
     );
     // The dropped LIST (the segment after `client entry: `) must name the
-    // server-only `withGuard`. `withRoutes`/`withNotFound`/`withHead` are all
-    // CARRIED, so although they may appear in the warning's explanatory prose,
-    // they must NOT be in the dropped list.
+    // genuinely-uncarried `withOnKey` (terminal-only). `withRoutes`/`withNotFound`/
+    // `withHead`/`withOnNavigate`/`withRequest`/`withGuard` are all CARRIED, so
+    // although they may appear in the warning's explanatory prose, they must NOT be
+    // in the dropped list.
     let dropped_list = log
         .split("client entry: ")
         .nth(1)
@@ -1118,8 +1119,8 @@ main =
         .unwrap_or("")
         .to_string();
     assert!(
-        dropped_list.contains("withGuard"),
-        "BUG-2: `App.withGuard` (server-only) must be named in the dropped list, got `{dropped_list}`:\n{log}"
+        dropped_list.contains("withOnKey"),
+        "BUG-2: `App.withOnKey` (terminal-only) must be named in the dropped list, got `{dropped_list}`:\n{log}"
     );
     assert!(
         !dropped_list.contains("withHead"),
@@ -1128,6 +1129,11 @@ main =
     assert!(
         !dropped_list.contains("withNotFound"),
         "withNotFound is carried into the Spa entry and must not be in the dropped list `{dropped_list}`"
+    );
+    // Fix 5: withGuard is carried (enforced server-side) — must NOT be dropped.
+    assert!(
+        !dropped_list.contains("withGuard"),
+        "Fix 5: `App.withGuard` is now carried (enforced server-side) and must NOT be in the dropped list `{dropped_list}`:\n{log}"
     );
 
     let _ = std::fs::remove_dir_all(&proj);
@@ -1364,6 +1370,140 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
 
 fn ssr_p3_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-p3")
+}
+
+fn spa_guard_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-guard")
+}
+
+/// Fix 5. `App.withGuard` / `App.withOnNavigate` / `App.withRequest` are CARRIED
+/// through the App→Spa synthesis (never named in the drop warning), and the
+/// per-Msg guard is enforced SERVER-side: the generated `POST /_rpc/<Msg>`
+/// handler calls `spaGuard_ <msg> m` BEFORE `update`, answering 403 on `Err`
+/// and never running the effect. This is the trusted authorisation point — the
+/// wasm client is untrusted, so a client that skips its own guard still cannot
+/// fire the effect.
+///
+/// Two layers of proof:
+///   * synthesis + emission (no Go): the three builders reach named bindings;
+///     the backend's `saveHandler` calls `spaGuard_` ahead of `update`.
+///   * Go-gated e2e: a valid `POST /_rpc/Save` that the guard DENIES returns 403
+///     and leaves the write target untouched (the effect never ran).
+#[test]
+fn spa_guard_is_enforced_server_side_on_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_guard_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-guard fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Synthesis: the three builders are carried into NAMED bindings.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    for needle in [
+        "spaGuard_ =",
+        "spaOnNavigate_ =",
+        "spaOnRequest_ =",
+        "|> Spa.withOnNavigate spaOnNavigate_",
+    ] {
+        assert!(
+            synth.contains(needle),
+            "fix 5: the synthesised entry must carry `{needle}`:\n{synth}"
+        );
+    }
+    // None of the three may appear in the drop warning's dropped LIST.
+    let dropped_list = log
+        .split("client entry: ")
+        .nth(1)
+        .and_then(|s| s.split('.').next())
+        .unwrap_or("")
+        .to_string();
+    for banned in ["withGuard", "withOnNavigate", "withRequest"] {
+        assert!(
+            !dropped_list.contains(banned),
+            "fix 5: `{banned}` is carried and must NOT be in the dropped list `{dropped_list}`:\n{log}"
+        );
+    }
+
+    // Emission: the backend enforces the guard on the `/_rpc/Save` handler,
+    // ahead of `update`, and has a `forbidden` (403) responder.
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    assert!(
+        backend.contains("case spaGuard_ (Save p.content) m of"),
+        "fix 5: the backend must call the guard on the Save RPC handler:\n{backend}"
+    );
+    assert!(
+        backend.contains("Task.succeed (forbidden"),
+        "fix 5: a denied guard must answer 403 (forbidden):\n{backend}"
+    );
+    let guard_at = backend
+        .find("case spaGuard_ (Save p.content) m of")
+        .expect("guard check present");
+    let update_at = backend
+        .find("update (Save p.content) m")
+        .expect("update present");
+    assert!(
+        guard_at < update_at,
+        "fix 5: the guard check must PRECEDE the update in the handler:\n{backend}"
+    );
+
+    // ── Go-gated e2e: a denied Save returns 403 and never runs the write. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "fix 5: --target web:app must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    // Stage the write target with a known sentinel so we can prove it is UNCHANGED.
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    std::fs::write(backend_dir.join("data/out.txt"), "seed\n").unwrap();
+
+    let port = 8974u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-guard backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-guard backend never reported listening on :{port}");
+    }
+    // A VALID request body (decodes to SaveReq) so the handler reaches the guard,
+    // not the 400 decode-error path. The guard DENIES Save → 403.
+    let posted = curl_post_status_body(port, "/_rpc/Save", r#"{"content":"pwned"}"#);
+    let after = std::fs::read_to_string(backend_dir.join("data/out.txt")).unwrap_or_default();
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let (code, _body) = posted.expect("POST /_rpc/Save should return");
+    assert_eq!(
+        code, 403,
+        "fix 5: a guard-denied /_rpc/Save must return 403 (the trusted server-side enforcement)"
+    );
+    assert_eq!(
+        after, "seed\n",
+        "fix 5: the denied effect must NOT run — data/out.txt must be unchanged, was {after:?}"
+    );
 }
 
 fn spa_deeplink_fixture_dir() -> PathBuf {
@@ -2560,6 +2700,32 @@ fn curl_body_p(port: u16, path: &str) -> Option<String> {
     let url = format!("http://127.0.0.1:{port}{path}");
     let out = Command::new("curl").args(["-s", &url]).output().ok()?;
     Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+// POST a JSON `body` to `path` and return (status_code, response_body). Used by
+// the server-side guard test (fix 5): a denied `/_rpc/<Msg>` must answer 403.
+fn curl_post_status_body(port: u16, path: &str, body: &str) -> Option<(u32, String)> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let out = Command::new("curl")
+        .args([
+            "-s",
+            "-w",
+            "\n%{http_code}",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            body,
+            &url,
+        ])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    let idx = s.rfind('\n')?;
+    let (resp_body, code) = s.split_at(idx);
+    let code = code.trim().parse::<u32>().ok()?;
+    Some((code, resp_body.to_string()))
 }
 
 // HTTP status code + Content-Type of `GET http://127.0.0.1:<port><path>`.

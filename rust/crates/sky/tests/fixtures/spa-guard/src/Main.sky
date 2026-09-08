@@ -1,0 +1,109 @@
+module Main exposing (main)
+
+-- Fix 5 fixture: a routed `Std.App` app with a SERVER branch (`Save` performs a
+-- `File.writeFile`, so the auto-split mounts a `POST /_rpc/Save` handler) and an
+-- `App.withGuard`. The guard DENIES `Save`, so the generated backend must answer
+-- 403 and NEVER run the write. The guard is enforced SERVER-side — the wasm
+-- client is untrusted, so a client that skips its own guard cannot fire the
+-- effect. `withOnNavigate` / `withRequest` are also carried (fix 5) so the drop
+-- warning never names them.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Http.Server as Server
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+type Page
+    = Home
+    | Admin
+
+
+type alias Model =
+    { page : Page
+    , saved : String
+    }
+
+
+type Msg
+    = Save String
+    | Saved (Result Error ())
+    | Nav Page
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home, saved = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Save content ->
+            ( model, Cmd.perform (File.writeFile "data/out.txt" content) Saved )
+
+        Saved _ ->
+            ( { model | saved = "written" }, Cmd.none )
+
+        Nav p ->
+            ( { model | page = p }, Cmd.none )
+
+
+-- The trusted authorisation guard: DENY every `Save` (writes disabled here).
+guard : Msg -> Model -> Result Error ()
+guard msg _ =
+    case msg of
+        Save _ ->
+            Err (Error.unexpected "writes are not authorised")
+
+        _ ->
+            Ok ()
+
+
+onNav : Page -> Msg
+onNav p =
+    Nav p
+
+
+seedReq : Server.Request -> Model -> ( Model, Cmd Msg )
+seedReq _ model =
+    ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+        Home ->
+            Ui.column []
+                [ Ui.text "Home"
+                , Ui.link [] { url = "/admin", label = Ui.text "Admin" }
+                ]
+
+        Admin ->
+            Ui.text "Admin area"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" Home, App.route "/admin" Admin ]
+        |> App.withNotFound Home
+        |> App.withOnNavigate onNav
+        |> App.withRequest seedReq
+        |> App.withGuard guard
+
+
+main : Task Error ()
+main =
+    App.run app

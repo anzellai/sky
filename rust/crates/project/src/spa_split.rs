@@ -2174,6 +2174,15 @@ fn gen_backend(
     let has_synth_api_routes = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaApiRoutes_"));
+    // Fix 5: the App→Spa synthesis (main.rs synthesize_spa_source) carries
+    // `App.withGuard` into a NAMED top-level `spaGuard_` binding so this backend
+    // can reference it. It is the per-Msg authorisation guard the backend
+    // enforces on every `/_rpc/<Msg>` handler BEFORE `update` runs — the TRUSTED
+    // check, because the wasm client is untrusted and can forge any RPC call. A
+    // hand-authored Sky.Spa backend has no such binding.
+    let has_synth_guard = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaGuard_"));
     // Data-resolved SSR (design §4.2): the GET-safe allowlist, applied
     // FAIL-CLOSED at synthesis over the app's `init` source. The settle
     // (Spa_ssrSettle) runs `init`'s `cmd0` to a data-bearing model server-side —
@@ -2261,6 +2270,12 @@ fn gen_backend(
     let mut handlers = String::new();
     let mut routes: Vec<String> = Vec::new();
     handlers.push_str("badRequest : String -> Response\nbadRequest msg =\n    Server.withStatus 400 (Server.text msg)\n\n\n");
+    // Fix 5: the 403 the server-side guard returns when it DENIES a message. A
+    // denied `/_rpc/<Msg>` never runs `update` (no effect fires); a denied SSR
+    // navigation renders the NotFound shell with no protected data settled.
+    if has_synth_guard {
+        handlers.push_str("forbidden : String -> Response\nforbidden msg =\n    Server.withStatus 403 (Server.text msg)\n\n\n");
+    }
 
     // Server→client PUSH: one process-shared broker, a Cmd-publish interpreter,
     // and the SSE stream handler body — all thin kernel aliases (spa_push.go).
@@ -2360,13 +2375,41 @@ fn gen_backend(
                 "cmd",
                 format!(
                     "spaInterpretPublish spaBroker cmd\n\
-                     \x20               |> Task.andThen (\\_ -> Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val})))"
+                     \x20                       |> Task.andThen (\\_ -> Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val})))"
                 ),
             )
         } else {
             (
                 "_",
                 format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
+            )
+        };
+        // Fix 5: enforce the server-side guard BEFORE `update` runs. `spaGuard_
+        // <msg> m` returns `Err` to reject the message — the handler answers 403
+        // and NEVER runs the effect. This is the trusted authorisation point: the
+        // wasm client can forge any `/_rpc` call, so the guard cannot live only on
+        // the client. When the app declares no guard, the update runs directly as
+        // before. `Result.` is imported via `Sky.Core.Prelude` in the entry, and
+        // the guard body is threaded verbatim from `App.withGuard`.
+        let run_and_answer = if has_synth_guard {
+            format!(
+                "\x20           case spaGuard_ {ctor_app} m of\n\
+                 \x20               Err ge ->\n\
+                 \x20                   Task.succeed (forbidden (Error.toString ge))\n\n\
+                 \x20               Ok _ ->\n\
+                 \x20                   let\n\
+                 \x20                       ( m2, {cmd_binder} ) =\n\
+                 \x20                           update {ctor_app} m\n\
+                 \x20                   in\n\
+                 \x20                   {answer}\n"
+            )
+        } else {
+            format!(
+                "\x20           let\n\
+                 \x20               ( m2, {cmd_binder} ) =\n\
+                 \x20                   update {ctor_app} m\n\
+                 \x20           in\n\
+                 \x20           {answer}\n"
             )
         };
         handlers.push_str(&format!(
@@ -2378,10 +2421,8 @@ fn gen_backend(
              \x20       Ok p ->\n\
              \x20           let\n\
              {run_setup}\n\
-             \x20               ( m2, {cmd_binder} ) =\n\
-             \x20                   update {ctor_app} m\n\
              \x20           in\n\
-             \x20           {answer}\n\n\
+             {run_and_answer}\n\
              \x20       Err e ->\n\
              \x20           Task.succeed (badRequest (Error.toString e))\n\n\n"
         ));

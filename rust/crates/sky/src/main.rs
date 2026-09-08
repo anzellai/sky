@@ -1166,11 +1166,29 @@ struct AppFields {
     /// argument may span lines (a `sky fmt`-wrapped `\m -> [ … ]`), so it is
     /// gathered by bracket-balancing, not by taking the first physical line.
     head: Option<String>,
+    /// `App.withOnNavigate <fn>` — the navigation hook (`page -> msg`). Carried
+    /// into `|> Spa.withOnNavigate spaOnNavigate_` (the Spa runtime already runs
+    /// it on the client) AND into a NAMED top-level binding the SSR backend fires
+    /// per resolved route (fix 2). May span lines, so gathered by bracket-balance.
+    on_navigate: Option<String>,
+    /// `App.withRequest <fn>` — the request seed hook
+    /// (`Request -> model -> ( model, Cmd msg )`). Carried into a NAMED top-level
+    /// binding `spaOnRequest_` the SSR backend applies to seed `init`'s model from
+    /// the real request (fix 2). The wasm client hydrates from `#sky-model`, so it
+    /// does not re-run the request logic. May span lines.
+    on_request: Option<String>,
+    /// `App.withGuard <fn>` — the per-Msg authorisation guard
+    /// (`msg -> model -> Result Error ()`). Carried into a NAMED top-level binding
+    /// `spaGuard_` the generated backend calls on every `/_rpc/<Msg>` handler AND
+    /// on SSR route resolution BEFORE any effect runs (fix 5 — the TRUSTED
+    /// enforcement is server-side, the client is untrusted). May span lines.
+    guard: Option<String>,
     /// `App.with…` builder steps present in the source that the synthesis does
-    /// NOT carry into the derived `Spa.app` entry (everything except the
-    /// carried `withRoutes` / `withNotFound`). Reported as a warning so the drop
-    /// is never silent — a user's `withHead` (SEO) / `withRequest` hooks must
-    /// not vanish invisibly from the client build.
+    /// NOT carry into the derived `Spa.app` entry (everything except the carried
+    /// `withRoutes` / `withNotFound` / `withHead` / `withOnNavigate` /
+    /// `withRequest` / `withGuard`). Reported as a warning so the drop is never
+    /// silent — a genuinely uncarried builder (`withConfig`, `withOnKey`) must not
+    /// vanish invisibly from the client build.
     dropped_builders: Vec<String>,
 }
 
@@ -1238,6 +1256,7 @@ fn match_record_field(trimmed: &str, field: &str) -> Option<String> {
 fn extract_app_fields(src: &str) -> Option<AppFields> {
     let (mut init, mut update, mut view, mut subscriptions) = (None, None, None, None);
     let (mut routes, mut not_found, mut head) = (None, None, None);
+    let (mut on_navigate, mut on_request, mut guard) = (None, None, None);
     let mut dropped_builders: Vec<String> = Vec::new();
     let lines: Vec<&str> = src.lines().collect();
     let mut i = 0;
@@ -1276,6 +1295,35 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
             head = Some(arg);
             i += consumed;
             continue;
+        } else if let Some(rest) = strip_app_builder(t, "withOnNavigate") {
+            // CARRY `withOnNavigate` (fix 5): the Spa runtime already runs the
+            // `page -> msg` hook on the client (`Spa_withOnNavigate`), and the SSR
+            // settle (fix 2) fires it per resolved route. Its argument may span
+            // lines (a `sky fmt`-wrapped `\page -> case page of …`), so gather by
+            // bracket-balance like `withHead`. Captured here → NOT dropped.
+            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
+            on_navigate = Some(arg);
+            i += consumed;
+            continue;
+        } else if let Some(rest) = strip_app_builder(t, "withRequest") {
+            // CARRY `withRequest` (fix 5 / fix 2): the request seed hook
+            // (`Request -> model -> ( model, Cmd msg )`). The SSR backend applies
+            // it to seed `init`'s model from the real request. Argument may span
+            // lines (a multi-line `\req model -> …`). Captured here → NOT dropped.
+            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
+            on_request = Some(arg);
+            i += consumed;
+            continue;
+        } else if let Some(rest) = strip_app_builder(t, "withGuard") {
+            // CARRY `withGuard` (fix 5): the per-Msg authorisation guard
+            // (`msg -> model -> Result Error ()`). The generated backend enforces
+            // it on every `/_rpc/<Msg>` handler AND on SSR route resolution before
+            // any effect runs — the client is untrusted, so the TRUSTED check is
+            // server-side. Argument may span lines. Captured here → NOT dropped.
+            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
+            guard = Some(arg);
+            i += consumed;
+            continue;
         } else if let Some(rest) = t.strip_prefix("|> App.with") {
             // Any OTHER `|> App.withX …` builder step: the synthesis does not
             // carry it into the derived Spa entry. Record the step name so the
@@ -1299,6 +1347,9 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
         routes,
         not_found,
         head,
+        on_navigate,
+        on_request,
+        guard,
         dropped_builders,
     })
 }
@@ -1698,9 +1749,10 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
         eprintln!(
             "sky build --target <spa>: warning: {n} `App.with…` builder step(s) were NOT carried \
              into the synthesised client entry: {list}.\n  \
-             Only `withRoutes` + `withNotFound` + `withHead` cross the App→Spa synthesis. \
-             Server-only steps (`withConfig`, `withRequest`) do not apply to the wasm client; any \
-             other client-relevant step must be re-expressed in a `Std.Spa` entry.",
+             `withRoutes` + `withNotFound` + `withHead` + `withOnNavigate` + `withRequest` + \
+             `withGuard` cross the App→Spa synthesis (the last two enforced server-side). Other \
+             steps (`withConfig`, `withOnKey`) do not apply to the wasm client; any other \
+             client-relevant step must be re-expressed in a `Std.Spa` entry.",
             n = fields.dropped_builders.len(),
             list = fields.dropped_builders.join(", "),
         );
@@ -1773,6 +1825,38 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
         ),
         None => ("spaHead_ _ =\n    []\n\n\n".to_string(), String::new()),
     };
+    // Carry `App.withOnNavigate` (fix 5). A NAMED top-level `spaOnNavigate_`
+    // binding — like `spaHead_` — reaches the generated BACKEND verbatim (the
+    // backend copies every top-level decl except `main`), where the SSR settle
+    // fires it per resolved route (fix 2). The CLIENT also references it via
+    // `|> Spa.withOnNavigate spaOnNavigate_`, so the wasm driver runs the nav
+    // hook on every in-app navigation exactly as Sky.Live does.
+    let (on_navigate_binding, on_navigate_line) = match &fields.on_navigate {
+        Some(f) => (
+            format!("spaOnNavigate_ =\n    ({f})\n\n\n"),
+            "\n            |> Spa.withOnNavigate spaOnNavigate_".to_string(),
+        ),
+        None => (String::new(), String::new()),
+    };
+    // Carry `App.withRequest` (fix 5 / fix 2). A NAMED top-level `spaOnRequest_`
+    // binding the SSR backend applies to seed `init`'s model from the real
+    // request (`Request -> model -> ( model, Cmd msg )`). It is NOT wired onto the
+    // client `Spa.config` (Std.Spa has no client `withRequest` — the wasm client
+    // hydrates from the SSR-embedded `#sky-model`, so it never re-runs the request
+    // logic). Emitted whenever the app declares it so the backend can reference it.
+    let on_request_binding = match &fields.on_request {
+        Some(f) => format!("spaOnRequest_ =\n    ({f})\n\n\n"),
+        None => String::new(),
+    };
+    // Carry `App.withGuard` (fix 5). A NAMED top-level `spaGuard_` binding the
+    // generated backend calls on every `/_rpc/<Msg>` handler AND on SSR route
+    // resolution BEFORE any effect runs. The client is untrusted (the user
+    // controls the wasm), so this is the TRUSTED authorisation point — enforced
+    // server-side, never client-only.
+    let guard_binding = match &fields.guard {
+        Some(g) => format!("spaGuard_ =\n    ({g})\n\n\n"),
+        None => String::new(),
+    };
     // `App.web`'s `view` already returns laid-out `Html` (Std.Html), while
     // `App.app`'s returns a Std.Ui `Element`. The synthesised `Spa.config.view`
     // needs `model -> Html`, so lay out the Element view but PASS THROUGH the
@@ -1789,6 +1873,9 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
          {routes_binding}\
          {not_found_binding}\
          {head_binding}\
+         {on_navigate_binding}\
+         {on_request_binding}\
+         {guard_binding}\
          spaView_ model_ =\n    \
          {spa_view_body}\n\n\n\
          main : Task Error ()\n\
@@ -1799,17 +1886,21 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
          , update = {update}\n            \
          , view = spaView_\n            \
          , subscriptions = {subscriptions}\n            \
-         }}{routes_line}{not_found_line}{head_line}\n        \
+         }}{routes_line}{not_found_line}{head_line}{on_navigate_line}\n        \
          )\n",
         routes_binding = routes_binding,
         not_found_binding = not_found_binding,
         head_binding = head_binding,
+        on_navigate_binding = on_navigate_binding,
+        on_request_binding = on_request_binding,
+        guard_binding = guard_binding,
         init = fields.init,
         update = fields.update,
         subscriptions = fields.subscriptions,
         routes_line = routes_line,
         not_found_line = not_found_line,
         head_line = head_line,
+        on_navigate_line = on_navigate_line,
     ));
     Some(out)
 }
