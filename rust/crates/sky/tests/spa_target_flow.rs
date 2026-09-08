@@ -120,3 +120,115 @@ fn unknown_target_is_rejected_before_building() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A minimal Std.App `App.app` app whose model carries a `Secret` field and
+/// whose `Persist` server branch touches only `count` (so the Secret is NOT on
+/// any RPC wire — a wire Secret is already a hard build error in build_wire).
+/// Building this `--target web:app` synthesises the SSR handler, which embeds
+/// the WHOLE model via `Codec.auto` — the path a Secret silently diverges on.
+const SECRET_MODEL_APP: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Sky.Core.Secret as Secret exposing (Secret)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { token : Secret
+    , count : Int
+    }
+
+
+type Msg
+    = Increment
+    | Persist
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { token = Secret.unsafeFromString "hunter2", count = 0 }, Cmd.none )
+
+
+persist : Int -> Task Error ()
+persist k =
+    File.writeFile "count.txt" (String.fromInt k)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Persist ->
+            let
+                _ =
+                    Task.run (persist model.count)
+            in
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column []
+        [ Ui.text ("count: " ++ String.fromInt model.count)
+        , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
+        , Ui.el [ Ui.onClick Persist ] (Ui.text "save")
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main : Task Error ()
+main =
+    App.run app
+"#;
+
+/// Fix 7 — a model field whose type `Codec.auto` cannot round-trip through the
+/// SSR model embed (the opaque `Secret`) must be caught at BUILD time, naming
+/// the field + its type, not left to a runtime console.error + a silent
+/// fall-back to `init`. Build the Secret-model app `--target web:app` and assert
+/// the build-time warning names the field. RED before the fix: silent.
+#[test]
+fn web_app_warns_on_a_secret_model_field_the_ssr_embed_cannot_round_trip() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("secretmodel");
+    std::fs::write(dir.join("src").join("Main.sky"), SECRET_MODEL_APP).unwrap();
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        log.contains("warning [sky.spa]") && log.contains("`token`") && log.contains("Secret"),
+        "web:app build must warn about the Secret model field the SSR embed cannot round-trip:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

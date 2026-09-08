@@ -2234,6 +2234,9 @@ fn spa_split_and_build(
     for n in &report.notes {
         println!("  note: {n}");
     }
+    for w in &report.warnings {
+        eprintln!("  warning [sky.spa]: {w}");
+    }
     let od = PathBuf::from(&report.out_dir);
     if !do_build {
         return Ok(od);

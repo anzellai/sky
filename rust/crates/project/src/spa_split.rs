@@ -265,6 +265,11 @@ pub struct SpaSplitReport {
     /// Server-tainted top-level bindings OMITTED from the frontend source.
     pub excluded: Vec<String>,
     pub notes: Vec<String>,
+    /// Build-time WARNINGS the author must see (printed prominently by the CLI).
+    /// Currently: a model field whose type `Codec.auto` cannot round-trip through
+    /// the SSR model embed, caught at build time rather than as a runtime
+    /// console.error + silent fall-back to `init`.
+    pub warnings: Vec<String>,
 }
 
 /// Modules the frontend must NOT import — physically server-only effect
@@ -324,6 +329,39 @@ struct Wire {
 }
 
 /// Look a Model field's typed entry up by name.
+/// A model field's type that `Codec.auto` cannot faithfully round-trip through
+/// the Sky.Spa SSR model embed, returning the surface type label to name in the
+/// diagnostic (or `None` when the field round-trips).
+///
+/// The SSR first paint embeds `Codec.toJson (Codec.auto model)` and the client
+/// decodes it with the symmetric `Codec.fromJson (Codec.auto blank)`. Most
+/// stdlib shapes round-trip: the runtime encoder/decoder (runtime-go
+/// codec_auto.go) has arms for `List`, `Maybe`, `Dict`, `Set`, `Decimal`,
+/// `Money`, and general data-carrying ADTs, each covered by codec_auto_test.go —
+/// so they are deliberately NOT flagged (flagging a type that works would be a
+/// false positive on a shipping app).
+///
+/// The type that provably CANNOT survive the round-trip is the opaque `Secret`:
+/// `rt.Secret` carries an unexported field and a `MarshalJSON` that redacts
+/// itself in every JSON path, so an embedded secret comes back as a redacted /
+/// empty value — a silent SSR-embed vs client-decode divergence — and, worse, a
+/// real secret must never be embedded in the first-paint HTML the client can
+/// read. Detected on the resolved type's nominal tail (the same tail-segment
+/// convention `field_ty_codec` uses), with a surface-name fallback.
+fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<String> {
+    let is_secret = |name: &str| name.rsplit('.').next().unwrap_or(name) == "Secret";
+    if let Some(ty::Ty::App(name, _)) = &f.ty {
+        if is_secret(name.as_str()) {
+            return Some(f.ty_name.clone());
+        }
+    }
+    // Resolved type unavailable — fall back to the surface rendering.
+    if f.ty.is_none() && is_secret(&f.ty_name) {
+        return Some(f.ty_name.clone());
+    }
+    None
+}
+
 fn lookup_field(model_fields: &[ModelFieldTy], name: &str) -> ModelFieldTy {
     model_fields
         .iter()
@@ -563,6 +601,7 @@ pub fn generate(
     }
 
     let mut notes: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     // ---- multi-module routing (§17) ----
     // Every project module other than the entry is classified by whether it
@@ -929,7 +968,7 @@ pub fn generate(
             "note: --broker <url> was given but the app has no Cmd.publish / Sub.subscribeTopic, so no push broker is generated; the flag is ignored.".into(),
         );
     }
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode, broker_url, &ssr_route_patterns, &init_src)?;
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode, broker_url, &ssr_route_patterns, &init_src, &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -1063,6 +1102,7 @@ pub fn generate(
         client_branches: client_names,
         excluded: tainted_names,
         notes,
+        warnings,
     })
 }
 
@@ -2122,6 +2162,7 @@ fn gen_backend(
     broker_url: Option<&str>,
     ssr_route_patterns: &[String],
     init_src: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -2234,6 +2275,24 @@ fn gen_backend(
     if emit_ssr {
         add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
         add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
+        // Fix 7: the SSR first paint embeds the WHOLE model via
+        // `Codec.toJson (Codec.auto resolved)` and the client decodes it with the
+        // symmetric `Codec.fromJson (Codec.auto blank)`. `Codec.auto` compiles for
+        // ANY model, so a field whose type it cannot round-trip (today: the opaque
+        // `Secret`) used to fail ONLY at runtime — a console.error + a silent
+        // fall-back to `init` (empty) while Sky.Live rendered the real value.
+        // Catch it HERE, at `sky build --target web:app`, naming the field + type.
+        // (A Secret carried in an RPC read/write set is already a HARD build error
+        // in build_wire; this covers the SSR-embed path, which build_wire never
+        // sees because it runs `Codec.auto` over the whole value at runtime.)
+        for f in model_fields {
+            if let Some(ty_label) = codec_auto_unencodable(f) {
+                warnings.push(format!(
+                    "model field `{}` has type `{}`, which `Codec.auto` cannot round-trip through the Sky.Spa SSR model embed. `Secret` redacts itself in every JSON path (rt.Secret.MarshalJSON), so the first paint would embed a redacted/empty value and the client would decode it back wrong — a silent SSR-embed vs client-decode divergence — and a secret must never be embedded in client-readable HTML. Keep the secret server-side (out of the client model), or model a non-secret handle the client can safely carry.",
+                    f.name, ty_label
+                ));
+            }
+        }
     }
     if push_mode {
         // Server→client PUSH machinery (docs/skyspa/auto-split.md §16).
@@ -3146,5 +3205,58 @@ fn model_type_name(file: &SourceFile, src: &str) -> Option<String> {
         None
     } else {
         Some(name.to_string())
+    }
+}
+
+#[cfg(test)]
+mod fix7_tests {
+    use super::*;
+
+    fn field(name: &str, ty_name: &str, ty: Option<ty::Ty>) -> ModelFieldTy {
+        ModelFieldTy {
+            name: name.to_string(),
+            ty_name: ty_name.to_string(),
+            codec: None,
+            ty,
+        }
+    }
+
+    // Fix 7 — the SSR model embed round-trips the whole model through
+    // `Codec.auto`. A `Secret` field cannot survive it (rt.Secret redacts itself
+    // in every JSON path), so the split must flag it at build time. Types the
+    // runtime codec DOES round-trip (Int / String / List / Money / Decimal /
+    // Dict / Set, per codec_auto_test.go) must NOT be flagged — that would be a
+    // false positive on a working app.
+    //
+    // RED before the fix: codec_auto_unencodable did not exist and the divergence
+    // surfaced only as a runtime console.error + a silent fall-back to init.
+    #[test]
+    fn secret_field_is_flagged_others_are_not() {
+        // Resolved type present (the folded nominal name).
+        let secret = field("token", "Secret", Some(ty::Ty::app("Sky.Core.Secret.Secret", vec![])));
+        assert_eq!(codec_auto_unencodable(&secret).as_deref(), Some("Secret"));
+
+        // A bare folded name also resolves.
+        let secret_bare = field("token", "Secret", Some(ty::Ty::app("Secret", vec![])));
+        assert_eq!(codec_auto_unencodable(&secret_bare).as_deref(), Some("Secret"));
+
+        // Surface-name fallback when the resolved type is unavailable.
+        let secret_surface = field("token", "Secret", None);
+        assert_eq!(codec_auto_unencodable(&secret_surface).as_deref(), Some("Secret"));
+
+        // Types the runtime codec round-trips must NOT be flagged.
+        for (ty_name, t) in [
+            ("Int", ty::Ty::app("Int", vec![])),
+            ("String", ty::Ty::app("String", vec![])),
+            ("Money", ty::Ty::app("Std.Money.Money", vec![])),
+            ("Decimal", ty::Ty::app("Std.Decimal.Decimal", vec![])),
+            ("List Todo", ty::Ty::app("List", vec![ty::Ty::app("Todo", vec![])])),
+        ] {
+            let f = field("f", ty_name, Some(t));
+            assert!(
+                codec_auto_unencodable(&f).is_none(),
+                "{ty_name} round-trips via Codec.auto and must not be flagged"
+            );
+        }
     }
 }
