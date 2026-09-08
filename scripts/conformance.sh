@@ -111,7 +111,14 @@ throttle() { # throttle <max>
 run_one() { # run_one <suite> <base> <report>
     local suite="$1" base="$2" report="$3"
     export SKY_TEST_JSON="$report"
-    with_timeout 180 "$SKY" test "$suite" --out "sky-out-conf-$base" \
+    # 360s, not 180: the DB-backed B1 suites (AuthLifecycle / StdDbLifecycle /
+    # StdDbStoreLifecycle) pull the modernc-sqlite + bcrypt Go deps, and the
+    # FIRST such suite bears their one-time COLD `go build` on a fresh runner —
+    # which alone runs past 180s (the suite's own run is ~10s). behaviour-docs
+    # has no cache-warming step before it (unlike release.yml's example-sweep),
+    # so AuthLifecycle timed out (rc=124) flakily right at the old bound. The
+    # bound stays a real hang-detector; a genuine hang is still a bug to bisect.
+    with_timeout 360 "$SKY" test "$suite" --out "sky-out-conf-$base" \
         > "$WORK/$base.log" 2>&1
     echo $? >| "$WORK/$base.rc"
 }
