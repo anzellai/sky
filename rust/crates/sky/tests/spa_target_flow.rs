@@ -232,3 +232,115 @@ fn web_app_warns_on_a_secret_model_field_the_ssr_embed_cannot_round_trip() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// Mirrors SECRET_MODEL_APP exactly (so the SSR model embed IS emitted — a
+// server branch makes emit_ssr true), swapping the un-round-trippable field
+// from `token : Secret` to `tags : Set String`. This isolates the Set field as
+// the only variable.
+const SET_MODEL_APP: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Sky.Core.Set as Set exposing (Set)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { tags : Set String
+    , count : Int
+    }
+
+
+type Msg
+    = Increment
+    | Persist
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { tags = Set.fromList [ "a", "b" ], count = 0 }, Cmd.none )
+
+
+persist : Int -> Task Error ()
+persist k =
+    File.writeFile "count.txt" (String.fromInt k)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Persist ->
+            let
+                _ =
+                    Task.run (persist model.count)
+            in
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column []
+        [ Ui.text ("count: " ++ String.fromInt model.count)
+        , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
+        , Ui.el [ Ui.onClick Persist ] (Ui.text "save")
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main : Task Error ()
+main =
+    App.run app
+"#;
+
+/// Fix 7 completeness (Judge finding 2) — a `Set` model field ALSO cannot
+/// round-trip the SSR embed: it erases to Go `any`, so the client decode fails
+/// ("cannot decode kind interface") and the first paint falls back to `init`
+/// while Sky.Live renders the Set. It must be caught at BUILD time, not left to
+/// degrade at runtime. RED before the fix: the detector matched only a
+/// top-level `Secret` tail, so a Set field slipped through silently.
+#[test]
+fn web_app_warns_on_a_set_model_field_the_ssr_embed_cannot_round_trip() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("setmodel");
+    std::fs::write(dir.join("src").join("Main.sky"), SET_MODEL_APP).unwrap();
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        log.contains("warning [sky.spa]") && log.contains("`tags`") && log.contains("Set"),
+        "web:app build must warn about the Set model field the SSR embed cannot round-trip:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

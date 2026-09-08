@@ -348,16 +348,64 @@ struct Wire {
 /// real secret must never be embedded in the first-paint HTML the client can
 /// read. Detected on the resolved type's nominal tail (the same tail-segment
 /// convention `field_ty_codec` uses), with a surface-name fallback.
-fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<String> {
-    let is_secret = |name: &str| name.rsplit('.').next().unwrap_or(name) == "Secret";
-    if let Some(ty::Ty::App(name, _)) = &f.ty {
-        if is_secret(name.as_str()) {
-            return Some(f.ty_name.clone());
+fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
+    // The nominal tail, e.g. `Sky.Core.Set.Set` -> "Set". Same tail convention
+    // `field_ty_codec` uses.
+    fn tail(name: &str) -> &str {
+        name.rsplit('.').next().unwrap_or(name)
+    }
+    // Find a provably un-round-trippable nominal ANYWHERE in the type — top
+    // level or nested inside List / Maybe / Dict / Tuple / a record field. Two
+    // shapes qualify, and only these two (Money / Decimal / Dict / Maybe / List /
+    // Time.Posix / data-carrying ADTs all round-trip, covered by
+    // codec_auto_test.go — flagging one would be a false positive on a shipping
+    // app):
+    //   * "Secret" — rt.Secret redacts itself in every JSON path.
+    //   * "Set" — it has no goty arm, so a Set field erases to Go `any`; the
+    //     encode side emits an array but `Codec.auto`'s decode has no `Set` arm
+    //     and errors ("cannot decode kind interface").
+    fn scan(t: &ty::Ty) -> Option<&'static str> {
+        match t {
+            ty::Ty::App(name, args) => {
+                match tail(name.as_str()) {
+                    "Secret" => return Some("Secret"),
+                    "Set" => return Some("Set"),
+                    _ => {}
+                }
+                args.iter().find_map(scan)
+            }
+            ty::Ty::Record(fields, _) => fields.iter().find_map(|(_, t)| scan(t)),
+            ty::Ty::Tuple(items) => items.iter().find_map(scan),
+            ty::Ty::Fun(a, b) => scan(a).or_else(|| scan(b)),
+            _ => None,
         }
     }
-    // Resolved type unavailable — fall back to the surface rendering.
-    if f.ty.is_none() && is_secret(&f.ty_name) {
-        return Some(f.ty_name.clone());
+    let why = |kind: &str| -> String {
+        if kind == "Secret" {
+            "`Secret` redacts itself in every JSON path (rt.Secret.MarshalJSON), so the first paint would embed a redacted/empty value and the client would decode it back wrong — a silent SSR-embed vs client-decode divergence — and a secret must never be embedded in client-readable HTML. Keep the secret server-side (out of the client model), or model a non-secret handle the client can safely carry.".to_string()
+        } else {
+            "`Set a` has no Go representation of its own — it erases to `any`. The SSR embed encodes it as a JSON array, but `Codec.auto`'s client decode has no `Set` arm and fails (\"cannot decode kind interface\"), so the first paint falls back to `init` (empty) while Sky.Live renders the Set. Model the field as a `List a` (dedup in `update`), which round-trips.".to_string()
+        }
+    };
+    if let Some(t) = &f.ty {
+        if let Some(kind) = scan(t) {
+            return Some((f.ty_name.clone(), why(kind)));
+        }
+    }
+    // Resolved type unavailable — fall back to the surface rendering. Tokenise
+    // it (a rendered application is `Set String`, `Maybe Secret`, `{ k : Secret }`)
+    // and match any token's nominal tail, so a nested occurrence is still caught.
+    if f.ty.is_none() {
+        for tok in f
+            .ty_name
+            .split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_')
+        {
+            match tail(tok) {
+                "Secret" => return Some((f.ty_name.clone(), why("Secret"))),
+                "Set" => return Some((f.ty_name.clone(), why("Set"))),
+                _ => {}
+            }
+        }
     }
     None
 }
@@ -2286,10 +2334,10 @@ fn gen_backend(
         // in build_wire; this covers the SSR-embed path, which build_wire never
         // sees because it runs `Codec.auto` over the whole value at runtime.)
         for f in model_fields {
-            if let Some(ty_label) = codec_auto_unencodable(f) {
+            if let Some((ty_label, why)) = codec_auto_unencodable(f) {
                 warnings.push(format!(
-                    "model field `{}` has type `{}`, which `Codec.auto` cannot round-trip through the Sky.Spa SSR model embed. `Secret` redacts itself in every JSON path (rt.Secret.MarshalJSON), so the first paint would embed a redacted/empty value and the client would decode it back wrong — a silent SSR-embed vs client-decode divergence — and a secret must never be embedded in client-readable HTML. Keep the secret server-side (out of the client model), or model a non-secret handle the client can safely carry.",
-                    f.name, ty_label
+                    "model field `{}` has type `{}`, which `Codec.auto` cannot round-trip through the Sky.Spa SSR model embed. {}",
+                    f.name, ty_label, why
                 ));
             }
         }
@@ -3222,27 +3270,45 @@ mod fix7_tests {
     }
 
     // Fix 7 — the SSR model embed round-trips the whole model through
-    // `Codec.auto`. A `Secret` field cannot survive it (rt.Secret redacts itself
-    // in every JSON path), so the split must flag it at build time. Types the
-    // runtime codec DOES round-trip (Int / String / List / Money / Decimal /
-    // Dict / Set, per codec_auto_test.go) must NOT be flagged — that would be a
-    // false positive on a working app.
+    // `Codec.auto`. Two shapes provably cannot survive it and MUST be flagged at
+    // build time, ANYWHERE in a field's type (top level or nested):
+    //   * `Secret` — rt.Secret redacts itself in every JSON path.
+    //   * `Set a` — no goty arm, so it erases to `any`; the decode side has no
+    //     `Set` arm and errors ("cannot decode kind interface").
+    // Types the runtime codec DOES round-trip (Int / String / List / Maybe /
+    // Money / Decimal / Dict, per codec_auto_test.go) must NOT be flagged — that
+    // would be a false positive on a working app.
     //
-    // RED before the fix: codec_auto_unencodable did not exist and the divergence
-    // surfaced only as a runtime console.error + a silent fall-back to init.
+    // RED before the fix: the detector matched only a TOP-LEVEL `Secret` tail, so
+    // a `Set` field and a nested `Secret` (`Maybe Secret`, a record field) both
+    // slipped through and degraded silently at runtime.
     #[test]
-    fn secret_field_is_flagged_others_are_not() {
-        // Resolved type present (the folded nominal name).
-        let secret = field("token", "Secret", Some(ty::Ty::app("Sky.Core.Secret.Secret", vec![])));
-        assert_eq!(codec_auto_unencodable(&secret).as_deref(), Some("Secret"));
+    fn secret_and_set_are_flagged_others_are_not() {
+        let flagged = |f: &ModelFieldTy| codec_auto_unencodable(f).is_some();
+        let reason = |f: &ModelFieldTy| codec_auto_unencodable(f).map(|(_, why)| why).unwrap_or_default();
 
-        // A bare folded name also resolves.
-        let secret_bare = field("token", "Secret", Some(ty::Ty::app("Secret", vec![])));
-        assert_eq!(codec_auto_unencodable(&secret_bare).as_deref(), Some("Secret"));
+        // Secret — resolved folded name, bare name, and surface fallback.
+        assert!(flagged(&field("token", "Secret", Some(ty::Ty::app("Sky.Core.Secret.Secret", vec![])))));
+        assert!(flagged(&field("token", "Secret", Some(ty::Ty::app("Secret", vec![])))));
+        assert!(flagged(&field("token", "Secret", None)));
 
-        // Surface-name fallback when the resolved type is unavailable.
-        let secret_surface = field("token", "Secret", None);
-        assert_eq!(codec_auto_unencodable(&secret_surface).as_deref(), Some("Secret"));
+        // Set — top-level and via the surface fallback. Judge finding 2.
+        let set = field("tags", "Set String", Some(ty::Ty::app("Set", vec![ty::Ty::app("String", vec![])])));
+        assert!(flagged(&set));
+        assert!(reason(&set).contains("Set"), "Set reason must name Set: {}", reason(&set));
+        assert!(flagged(&field("tags", "Set String", None)));
+
+        // Nested Secret — inside Maybe, inside List, inside a record field.
+        assert!(flagged(&field("t", "Maybe Secret", Some(ty::Ty::app("Maybe", vec![ty::Ty::app("Secret", vec![])])))));
+        assert!(flagged(&field("t", "List Secret", Some(ty::Ty::app("List", vec![ty::Ty::app("Secret", vec![])])))));
+        assert!(flagged(&field(
+            "cfg",
+            "{ key : Secret }",
+            Some(ty::Ty::Record(vec![(base::Name::new("key"), ty::Ty::app("Secret", vec![]))], None)),
+        )));
+
+        // Nested Set — inside Maybe.
+        assert!(flagged(&field("m", "Maybe (Set Int)", Some(ty::Ty::app("Maybe", vec![ty::Ty::app("Set", vec![ty::Ty::app("Int", vec![])])])))));
 
         // Types the runtime codec round-trips must NOT be flagged.
         for (ty_name, t) in [
@@ -3251,10 +3317,12 @@ mod fix7_tests {
             ("Money", ty::Ty::app("Std.Money.Money", vec![])),
             ("Decimal", ty::Ty::app("Std.Decimal.Decimal", vec![])),
             ("List Todo", ty::Ty::app("List", vec![ty::Ty::app("Todo", vec![])])),
+            ("Maybe Int", ty::Ty::app("Maybe", vec![ty::Ty::app("Int", vec![])])),
+            ("Dict String Int", ty::Ty::app("Dict", vec![ty::Ty::app("String", vec![]), ty::Ty::app("Int", vec![])])),
         ] {
             let f = field("f", ty_name, Some(t));
             assert!(
-                codec_auto_unencodable(&f).is_none(),
+                !flagged(&f),
                 "{ty_name} round-trips via Codec.auto and must not be flagged"
             );
         }
