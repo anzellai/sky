@@ -702,6 +702,24 @@ func performTask(task, toMsg any, dispatch func(any)) {
 		spaShowRetryOverlay(func() { performTask(t, tm, dispatch) })
 	} else if result.Tag == 0 {
 		spaHideRetryOverlay()
+	} else if spaReportableTransportErr(result) {
+		// A completed round-trip that FAILED with a non-network error (a 5xx the
+		// backend answered, a response the shared codec could not decode). The
+		// generated `Applied<Msg> (Err _)` arm keeps the model — correct, since
+		// the write-set never applied — but the failure was otherwise INVISIBLE:
+		// the auto-split client has no app-level result Msg to route the Err to
+		// (effects are synchronous inline Task.run in the source). Surface it
+		// loudly here, at the single perform choke point, so no transport error
+		// is ever silent (covers the synthesised RPC arms AND hand-written
+		// Spa.getJson / Spa.postJson callers). Mirrors the [sky.spa]-prefixed
+		// reporting the perform / timer / topic recovers already emit. The result
+		// is still dispatched below, so the app's own handling (if any) is
+		// unaffected; the model is kept.
+		if c := js.Global().Get("console"); c.Truthy() {
+			c.Call("error",
+				"[sky.spa] RPC failed; kept last good model (no app-level handler for this transport error):",
+				spaTransportErrText(result))
+		}
 	}
 
 	if tm, ok := toMsg.(func(SkyResult[SkyADT, any]) any); ok {

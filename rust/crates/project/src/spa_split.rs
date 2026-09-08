@@ -2970,8 +2970,16 @@ fn gen_frontend_update(
                 .join(", ");
             format!("            ( {{ {model_param} | {sets} }}, Cmd.none )")
         };
+        // The Err arm keeps the model (the write-set never applied), but the
+        // transport failure is NOT swallowed silently: the client's perform
+        // choke point surfaces every non-network RPC Err loudly (runtime-go
+        // spa_neterror.go / live_wasm.go performTask), and a network Err arms the
+        // retry overlay. There is no app-level result Msg to route the Err to —
+        // auto-split effects are synchronous inline `Task.run`, so the source
+        // carries no `Cmd.perform task ToMsg` and therefore no error case — so
+        // keeping the model here is the correct floor, not a discard.
         arms_out.push_str(&format!(
-            "        Applied{m} (Ok resp) ->\n{apply}\n\n        Applied{m} (Err _) ->\n            ( {model_param}, Cmd.none )\n\n"
+            "        Applied{m} (Ok resp) ->\n{apply}\n\n        Applied{m} (Err _) ->\n            -- transport error surfaced loudly by the client perform site\n            -- (runtime-go performTask); model kept (write-set did not apply).\n            ( {model_param}, Cmd.none )\n\n"
         ));
     }
 
