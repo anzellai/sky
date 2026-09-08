@@ -664,7 +664,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1852,
+    "stdlib_entries": 1853,
     "stdlib_modules": 93,
     "surfaces_covered": 139,
     "surfaces_covered_pct": 88.0,
@@ -12229,7 +12229,7 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 7,
+          "count": 8,
           "symbols": [
             "Cookie",
             "Route",
@@ -12237,7 +12237,8 @@
             "body",
             "delete",
             "put",
-            "static"
+            "static",
+            "staticNotFound"
           ]
         },
         "Sky.Http.Server.WebSocket": {
@@ -12283,7 +12284,7 @@
           ]
         },
         "Std.App": {
-          "count": 19,
+          "count": 17,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -12301,9 +12302,7 @@
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
-            "withBase",
-            "withOnNavigate",
-            "withRequest"
+            "withBase"
           ]
         },
         "Std.Bundle": {
@@ -12943,8 +12942,8 @@
           ]
         }
       },
-      "count": 622,
-      "pct_of_denominator": 33.6
+      "count": 621,
+      "pct_of_denominator": 33.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13215,14 +13214,14 @@
           "symbols": [
             "Cookie",
             "Handler",
-            "Request",
             "Response",
             "Route",
             "Server",
             "body",
             "delete",
             "put",
-            "static"
+            "static",
+            "staticNotFound"
           ]
         },
         "Sky.Http.Server.WebSocket": {
@@ -13269,7 +13268,7 @@
           ]
         },
         "Std.App": {
-          "count": 20,
+          "count": 18,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -13288,9 +13287,7 @@
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
-            "withBase",
-            "withOnNavigate",
-            "withRequest"
+            "withBase"
           ]
         },
         "Std.Bundle": {
@@ -14000,8 +13997,8 @@
           ]
         }
       },
-      "count": 706,
-      "pct_of_denominator": 38.1
+      "count": 704,
+      "pct_of_denominator": 38.0
     }
   },
   "units": [
@@ -14023,10 +14020,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 21,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 86,
-      "refs_qualified": 79,
+      "refs_generous": 91,
+      "refs_qualified": 85,
       "role": "Layer2",
-      "sky_files": 44,
+      "sky_files": 47,
       "sky_toml_sections": []
     },
     {
