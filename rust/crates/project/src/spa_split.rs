@@ -3361,4 +3361,63 @@ mod fix7_tests {
             );
         }
     }
+
+    // Item 4 — the fast per-commit leg for the failed-RPC routing (the full
+    // `sky build --target web:app` flow tests in crates/sky/tests/spa_target_flow.rs
+    // are #[ignore]d for the T1 budget). With a `spaRpcError_` binding present,
+    // the generated frontend `Applied<Msg> (Err e)` arm routes into `update`;
+    // without it, it keeps the loud-log floor `( model, Cmd.none )`.
+    //
+    // RED before item 4: the Err arm was ALWAYS `( model, Cmd.none )`.
+    fn gen_update_for(with_rpc_error: bool) -> String {
+        let rpc = if with_rpc_error { "\n\nspaRpcError_ =\n    (\\e -> RpcFailed e)\n" } else { "\n" };
+        let src = format!(
+            "module Main exposing (main)\n\nupdate msg model =\n    case msg of\n        Increment ->\n            ( {{ model | count = model.count + 1 }}, Cmd.none )\n\n        Save ->\n            ( saved model, Cmd.none )\n{rpc}"
+        );
+        let leaked: &'static str = Box::leak(src.into_boxed_str());
+        let file = syntax::parse(leaked, base::FileId(0)).tree();
+        let server = vec![(
+            "Save".to_string(),
+            BranchIo {
+                reads_whole_model: false,
+                read_fields: vec![],
+                msg_args: vec![],
+                writes_whole_model: false,
+                write_fields: vec![],
+            },
+        )];
+        gen_frontend_update(
+            &file,
+            leaked,
+            &server,
+            &["Save"],
+            "msg",
+            "model",
+            "update : Msg -> Model -> ( Model, Cmd Msg )",
+        )
+        .expect("gen_frontend_update")
+    }
+
+    #[test]
+    fn rpc_error_arm_routes_into_update() {
+        let with = gen_update_for(true);
+        assert!(
+            with.contains("update (spaRpcError_ e) model"),
+            "item 4: with withRpcError the Err arm must route into update:\n{with}"
+        );
+        assert!(
+            !with.contains("AppliedSave (Err _) ->"),
+            "item 4: with the handler the swallow floor must be gone:\n{with}"
+        );
+
+        let without = gen_update_for(false);
+        assert!(
+            without.contains("AppliedSave (Err _) ->") && without.contains("( model, Cmd.none )"),
+            "item 4: without withRpcError the Err arm keeps the loud-log floor:\n{without}"
+        );
+        assert!(
+            !without.contains("spaRpcError_"),
+            "item 4: no handler means no spaRpcError_ reference:\n{without}"
+        );
+    }
 }

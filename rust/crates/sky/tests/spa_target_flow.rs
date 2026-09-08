@@ -405,6 +405,12 @@ main =
 /// app's view can show the error — parity with Sky.Live. Without the builder the
 /// arm keeps the loud-log floor (`( model, Cmd.none )`). RED before item 4: the
 /// Err arm was ALWAYS `( model, Cmd.none )`, with no way to reach `update`.
+///
+/// Heavy full `sky build --target web:app` (wasm + Go cross-compile) — #[ignore]d
+/// to stay OFF the T1 tier budget (docs/ci-test-architecture-v2.md §8.2); runs
+/// nightly via `--ignored`. Per-commit codegen coverage is the fast unit test
+/// `rpc_error_arm_routes_into_update` in crates/project/src/spa_split.rs.
+#[ignore = "heavy web:app build; nightly via --ignored; per-commit leg: project spa_split rpc_error_arm_routes_into_update"]
 #[test]
 fn web_app_with_rpc_error_routes_a_failed_rpc_into_update() {
     if !required(Need::Go, have_go()) {
@@ -446,6 +452,11 @@ fn web_app_with_rpc_error_routes_a_failed_rpc_into_update() {
 /// Item 4 control — WITHOUT `App.withRpcError`, the same app keeps the loud-log
 /// floor: the Err arm is `( model, Cmd.none )` (the transport failure is still
 /// surfaced at the runtime perform site, not swallowed).
+///
+/// Heavy full web:app build — #[ignore]d for the T1 budget; nightly via
+/// `--ignored`. Per-commit codegen coverage: the same
+/// `rpc_error_arm_routes_into_update` unit test asserts the floor arm too.
+#[ignore = "heavy web:app build; nightly via --ignored; per-commit leg: project spa_split rpc_error_arm_routes_into_update"]
 #[test]
 fn web_app_without_rpc_error_keeps_the_floor() {
     if !required(Need::Go, have_go()) {
@@ -494,6 +505,11 @@ fn web_app_without_rpc_error_keeps_the_floor() {
 /// while Sky.Live renders the Set. It must be caught at BUILD time, not left to
 /// degrade at runtime. RED before the fix: the detector matched only a
 /// top-level `Secret` tail, so a Set field slipped through silently.
+///
+/// Heavy full web:app build — #[ignore]d for the T1 budget; nightly via
+/// `--ignored`. Per-commit coverage of the detector is the fast unit test
+/// `secret_and_set_are_flagged_others_are_not` in crates/project/src/spa_split.rs.
+#[ignore = "heavy web:app build; nightly via --ignored; per-commit leg: project spa_split secret_and_set_are_flagged_others_are_not"]
 #[test]
 fn web_app_warns_on_a_set_model_field_the_ssr_embed_cannot_round_trip() {
     if !required(Need::Go, have_go()) {
