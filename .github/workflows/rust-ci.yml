@@ -1094,12 +1094,14 @@ jobs:
           workspaces: rust
           shared-key: sky-macos
       - run: cargo build --workspace --locked
-      - name: Gate — repro (byte-stable Go, 2nd platform, shard 0/2)
-        # Half the corpus; `macos-determinism-2` runs `--shard=1/2`. The union
-        # of the two shards is the whole corpus and they are disjoint (proven in
+      - name: Gate — repro (byte-stable Go, 2nd platform, shard 0/3)
+        # A third of the corpus; `macos-determinism-2` runs `--shard=1/3` and
+        # `macos-determinism-3` runs `--shard=2/3`. The union of the three shards
+        # is the whole corpus and they are disjoint (proven in
         # `repro_gate::tests::shards_are_disjoint_and_total`), so every example
-        # is still gated exactly once across the pair.
-        run: cargo run -q -p xtask -- repro --shard=0/2
+        # is still gated exactly once across the trio. Split 3-way (was 2) after
+        # the B1 example additions pushed `-2` to 1034s past the 990s tier ceiling.
+        run: cargo run -q -p xtask -- repro --shard=0/3
       # Declared partial for the same reason as `codegen-build` above, and more
       # sharply: this runner bills at 10x, so `sky install` over the five FFI
       # examples is the last thing that belongs here. The full 61-of-61 census
@@ -1161,8 +1163,8 @@ jobs:
           shared-key: sky-macos
           save-if: 'false'
       - run: cargo build --workspace --locked
-      - name: Gate — repro (byte-stable Go, 2nd platform, shard 1/2)
-        run: cargo run -q -p xtask -- repro --shard=1/2
+      - name: Gate — repro (byte-stable Go, 2nd platform, shard 1/3)
+        run: cargo run -q -p xtask -- repro --shard=1/3
       # Platform parity for the emit + go-build regression class. The #164/#166
       # alias-collision / record-update-field-drop bugs and the int64 divergence
       # were the class a macOS-only codegen/runtime bug could ship green in; the
@@ -1172,6 +1174,51 @@ jobs:
       # above warms the Go cache this reuses.
       - name: Gate — golden (runtime-correctness CLI subset, 2nd platform)
         run: cargo run -q -p xtask -- build-run --shape cli --run --golden
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # ── macOS determinism, third repro shard ───────────────────────────────────
+  #
+  # The final third of the `repro` corpus (`--shard=2/3`). Added when the B1
+  # example additions pushed `macos-determinism-2` to 1034s past the 990s tier
+  # ceiling: a 2-way split no longer fit, so `repro` now shards 3 ways across
+  # `macos-determinism` (0/3), `-2` (1/3) and this job (2/3). Pure shard sibling
+  # — it carries NO extra determinism gate (coerce-floor stays on
+  # `macos-determinism`, golden on `-2`); its only job is a third of the
+  # per-example `go build` cost, the same additive-split lever as
+  # `build-corpus-2`. One writer per Go/rust cache key (`macos-determinism`), so
+  # this job takes `save-if: false` and restores from `restore-keys`.
+  macos-determinism-3:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-macos-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-macos
+          save-if: 'false'
+      - run: cargo build --workspace --locked
+      - name: Gate — repro (byte-stable Go, 2nd platform, shard 2/3)
+        run: cargo run -q -p xtask -- repro --shard=2/3
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1273,6 +1320,7 @@ jobs:
       - integration-postgres
       - macos-determinism
       - macos-determinism-2
+      - macos-determinism-3
       - macos-behaviour
     # `always()` so a FAILED dependency still reaches the assertion below and is
     # reported as a failure here. Without it this job would be SKIPPED when an
@@ -1324,7 +1372,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-behaviour build-corpus build-corpus-2 erasure-fuzz test-sky licence-gate-linux licence-gate-macos'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour build-corpus build-corpus-2 erasure-fuzz test-sky licence-gate-linux licence-gate-macos'
         run: |
           set -euo pipefail
           gh api \
