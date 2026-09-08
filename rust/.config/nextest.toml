@@ -1,0 +1,27 @@
+# nextest configuration.
+#
+# WHY THIS EXISTS. `cargo test` runs each test BINARY sequentially and threads
+# the tests WITHIN a binary; `cargo nextest` runs every test across all binaries
+# concurrently in one global pool, each in its own PROCESS. Several sky-crate
+# integration tests spawn a real HTTP server on a FIXED, REUSED port (e.g.
+# spa_split_flow uses :8974 for two different tests) and relied on either
+# cargo-test's per-binary sequencing or an in-process `BUILD_LOCK` mutex to keep
+# one server alive at a time. Under nextest neither holds — the process-local
+# mutex does not serialise across processes, and different binaries run
+# concurrently — so two servers bind the same port and a test curls the wrong
+# one (spa_deep_link_ssr_references_root_absolute_assets failed exactly this way
+# under the sharded `test-sky`).
+#
+# The robust fix without rewriting every test's port logic: put the
+# server-spawning binaries in a test-group capped at one thread, so at most one
+# of them runs at a time within a nextest invocation — the "one server at a
+# time" invariant the tests were written against. They are split across the two
+# `test-sky` shards (separate CI runners, no shared ports), so overall wall time
+# still roughly halves. Everything else runs fully parallel.
+
+[test-groups]
+serial-servers = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(spa_split_flow) + binary(spa_target_flow) + binary(std_app_flow) + binary(cross_replica_session_flow) + binary(auth_sliding_flow) + binary(auth_revocation_flow) + binary(db_cluster_flow)'
+test-group = 'serial-servers'
