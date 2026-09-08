@@ -2448,7 +2448,7 @@ fn gen_backend(
         };
 
         // The model the branch runs against.
-        let run_setup = if io.reads_whole_model {
+        let mut run_setup = if io.reads_whole_model {
             // Req IS the whole model.
             "                m =\n                    p\n".to_string()
         } else if io.read_fields.is_empty() {
@@ -2466,6 +2466,22 @@ fn gen_backend(
             format!(
                 "                ( base, _ ) =\n                    init ()\n\n                m =\n                    {{ base | {sets} }}\n"
             )
+        };
+        // Fix 5 (Judge finding 5): re-apply the `App.withRequest` hook
+        // (`spaOnRequest_`) to the model server-side BEFORE the guard and update
+        // run. `m` above is built from the wire payload `p`, which the wasm
+        // client can FORGE — so a guard or an update that reads an identity /
+        // session field off `m` would trust client-supplied data. `spaOnRequest_
+        // req m` overwrites those fields from the REAL request (cookies /
+        // headers / the server session), exactly as Sky.Live derives them from
+        // server session state. Only when the app declared `withRequest`; the
+        // model the guard + update see is `guard_model`.
+        let guard_model = if has_synth_on_request {
+            run_setup
+                .push_str("\n                ( mReq, _ ) =\n                    spaOnRequest_ req m\n");
+            "mReq"
+        } else {
+            "m"
         };
         // The Msg constructor to run (args come from the wire payload).
         let ctor_app = if io.msg_args.is_empty() {
@@ -2520,13 +2536,13 @@ fn gen_backend(
         // the guard body is threaded verbatim from `App.withGuard`.
         let run_and_answer = if has_synth_guard {
             format!(
-                "\x20           case spaGuard_ {ctor_app} m of\n\
+                "\x20           case spaGuard_ {ctor_app} {guard_model} of\n\
                  \x20               Err ge ->\n\
                  \x20                   Task.succeed (forbidden (Error.toString ge))\n\n\
                  \x20               Ok _ ->\n\
                  \x20                   let\n\
                  \x20                       ( m2, {cmd_binder} ) =\n\
-                 \x20                           update {ctor_app} m\n\
+                 \x20                           update {ctor_app} {guard_model}\n\
                  \x20                   in\n\
                  \x20                   {answer}\n"
             )
@@ -2534,7 +2550,7 @@ fn gen_backend(
             format!(
                 "\x20           let\n\
                  \x20               ( m2, {cmd_binder} ) =\n\
-                 \x20                   update {ctor_app} m\n\
+                 \x20                   update {ctor_app} {guard_model}\n\
                  \x20           in\n\
                  \x20           {answer}\n"
             )

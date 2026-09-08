@@ -1577,23 +1577,32 @@ fn spa_guard_is_enforced_server_side_on_rpc() {
     // ahead of `update`, and has a `forbidden` (403) responder.
     let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
         .expect("generated backend entry must exist");
+    // The fixture declares `withRequest`, so the guard + update run against the
+    // REQUEST-SEEDED model `mReq` (`spaOnRequest_ req m`), NOT the raw client
+    // payload model `m`. This closes Judge finding 5: the wasm client can forge
+    // any field of `m`, so a guard reading an identity / session field off the
+    // payload would trust forged data; re-applying withRequest overwrites those
+    // fields from the real request before the guard runs.
     assert!(
-        backend.contains("case spaGuard_ (Save p.content) m of"),
-        "fix 5: the backend must call the guard on the Save RPC handler:\n{backend}"
+        backend.contains("case spaGuard_ (Save p.content) mReq of"),
+        "fix 5: the guard must run against the request-seeded model mReq, not the forgeable payload m:\n{backend}"
     );
     assert!(
         backend.contains("Task.succeed (forbidden"),
         "fix 5: a denied guard must answer 403 (forbidden):\n{backend}"
     );
+    let reseed_at = backend
+        .find("spaOnRequest_ req m")
+        .expect("fix 5: the /_rpc handler must re-apply withRequest server-side");
     let guard_at = backend
-        .find("case spaGuard_ (Save p.content) m of")
+        .find("case spaGuard_ (Save p.content) mReq of")
         .expect("guard check present");
     let update_at = backend
-        .find("update (Save p.content) m")
+        .find("update (Save p.content) mReq")
         .expect("update present");
     assert!(
-        guard_at < update_at,
-        "fix 5: the guard check must PRECEDE the update in the handler:\n{backend}"
+        reseed_at < guard_at && guard_at < update_at,
+        "fix 5: the request re-seed must precede the guard, and the guard must precede the update:\n{backend}"
     );
 
     // ── Go-gated e2e: a denied Save returns 403 and never runs the write. ──
