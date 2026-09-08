@@ -315,6 +315,179 @@ main =
     App.run app
 "#;
 
+const RPC_ERROR_APP: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Model =
+    { count : Int
+    , lastError : String
+    }
+
+
+type Msg
+    = Increment
+    | Persist
+    | RpcFailed Error
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, lastError = "" }, Cmd.none )
+
+
+persist : Int -> Task Error ()
+persist k =
+    File.writeFile "count.txt" (String.fromInt k)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Persist ->
+            let
+                _ =
+                    Task.run (persist model.count)
+            in
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        RpcFailed e ->
+            ( { model | lastError = Error.toString e }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column []
+        [ Ui.text ("count: " ++ String.fromInt model.count)
+        , Ui.text ("err: " ++ model.lastError)
+        , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
+        , Ui.el [ Ui.onClick Persist ] (Ui.text "save")
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withRpcError (\e -> RpcFailed e)
+
+
+main : Task Error ()
+main =
+    App.run app
+"#;
+
+/// Item 4 — a failed RPC must be routable INTO the app's own `update`, not just
+/// logged. `App.withRpcError (\e -> RpcFailed e)` is carried through the App→Spa
+/// synthesis into a `spaRpcError_` binding, and the generated frontend
+/// `Applied<Msg> (Err e)` arm dispatches `update (spaRpcError_ e) model` so the
+/// app's view can show the error — parity with Sky.Live. Without the builder the
+/// arm keeps the loud-log floor (`( model, Cmd.none )`). RED before item 4: the
+/// Err arm was ALWAYS `( model, Cmd.none )`, with no way to reach `update`.
+#[test]
+fn web_app_with_rpc_error_routes_a_failed_rpc_into_update() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("rpcerror");
+    std::fs::write(dir.join("src").join("Main.sky"), RPC_ERROR_APP).unwrap();
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "withRpcError web:app build must succeed end-to-end:\n{log}");
+
+    // The synthesis carried the handler into a named binding, and the frontend
+    // routes the Err arm through it into `update`.
+    let front = std::fs::read_to_string(dir.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        front.contains("spaRpcError_ ="),
+        "item 4: the frontend must carry the spaRpcError_ binding:\n{front}"
+    );
+    assert!(
+        front.contains("update (spaRpcError_ e) model"),
+        "item 4: the frontend Err arm must route the failed RPC into update:\n{front}"
+    );
+    assert!(
+        !front.contains("AppliedPersist (Err _) ->"),
+        "item 4: with the handler present the Err arm must NOT keep the swallow floor:\n{front}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Item 4 control — WITHOUT `App.withRpcError`, the same app keeps the loud-log
+/// floor: the Err arm is `( model, Cmd.none )` (the transport failure is still
+/// surfaced at the runtime perform site, not swallowed).
+#[test]
+fn web_app_without_rpc_error_keeps_the_floor() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("rpcerrorfloor");
+    // Drop the withRpcError builder line + the now-unused RpcFailed machinery.
+    let app = RPC_ERROR_APP
+        .replace("        |> App.withRpcError (\\e -> RpcFailed e)\n", "")
+        .replace("    | RpcFailed Error\n", "")
+        .replace(
+            "        RpcFailed e ->\n            ( { model | lastError = Error.toString e }, Cmd.none )\n\n",
+            "",
+        )
+        .replace(", lastError : String", "")
+        .replace(", lastError = \"\"", "")
+        .replace("        , Ui.text (\"err: \" ++ model.lastError)\n", "");
+    std::fs::write(dir.join("src").join("Main.sky"), &app).unwrap();
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "control web:app build must succeed:\n{log}\n---\n{app}");
+    let front = std::fs::read_to_string(dir.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        !front.contains("spaRpcError_"),
+        "item 4 control: no withRpcError means no spaRpcError_ binding:\n{front}"
+    );
+    assert!(
+        front.contains("AppliedPersist (Err _) ->"),
+        "item 4 control: without the handler the Err arm keeps the floor:\n{front}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Fix 7 completeness (Judge finding 2) — a `Set` model field ALSO cannot
 /// round-trip the SSR embed: it erases to Go `any`, so the client decode fails
 /// ("cannot decode kind interface") and the first paint falls back to `init`

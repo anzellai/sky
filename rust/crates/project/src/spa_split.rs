@@ -3035,6 +3035,15 @@ fn gen_frontend_update(
         .ok_or_else(|| "`update` has no `case … of` to rewrite".to_string())?;
     let case = syntax::ast::CaseExpr::cast(case_node).unwrap();
 
+    // Item 4: when the app declared `App.withRpcError` (carried by the App→Spa
+    // synthesis into a `spaRpcError_ : Error -> Msg` binding), route a failed RPC
+    // INTO `update` via that constructor, so the app's own view can show the
+    // error — parity with Sky.Live's `Cmd.perform task ToMsg` error arm. Absent
+    // the hook, keep the loud-log floor (model kept, perform site reports).
+    let has_rpc_error = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaRpcError_"));
+
     let mut arms_out = String::new();
     for arm in case.arms() {
         let pat = arm.pattern().map(|p| p.syntax().clone());
@@ -3093,16 +3102,25 @@ fn gen_frontend_update(
                 .join(", ");
             format!("            ( {{ {model_param} | {sets} }}, Cmd.none )")
         };
-        // The Err arm keeps the model (the write-set never applied), but the
-        // transport failure is NOT swallowed silently: the client's perform
-        // choke point surfaces every non-network RPC Err loudly (runtime-go
-        // spa_neterror.go / live_wasm.go performTask), and a network Err arms the
-        // retry overlay. There is no app-level result Msg to route the Err to —
-        // auto-split effects are synchronous inline `Task.run`, so the source
-        // carries no `Cmd.perform task ToMsg` and therefore no error case — so
-        // keeping the model here is the correct floor, not a discard.
+        // The Err arm. When the app declared `App.withRpcError`, route the error
+        // INTO `update` via `spaRpcError_ e` so the app's own view can show it
+        // (item 4 — parity with Sky.Live's `Cmd.perform task ToMsg` error arm).
+        // Otherwise keep the model (the write-set never applied): the failure is
+        // still NOT swallowed silently — the client's perform choke point surfaces
+        // every non-network RPC Err loudly (runtime-go spa_neterror.go /
+        // live_wasm.go performTask) and a network Err arms the retry overlay — so
+        // keeping the model is the correct floor, not a discard.
+        let err_arm = if has_rpc_error {
+            format!(
+                "        Applied{m} (Err e) ->\n            -- item 4: route the failed RPC into the app's own update.\n            update (spaRpcError_ e) {model_param}\n\n"
+            )
+        } else {
+            format!(
+                "        Applied{m} (Err _) ->\n            -- transport error surfaced loudly by the client perform site\n            -- (runtime-go performTask); model kept (write-set did not apply).\n            ( {model_param}, Cmd.none )\n\n"
+            )
+        };
         arms_out.push_str(&format!(
-            "        Applied{m} (Ok resp) ->\n{apply}\n\n        Applied{m} (Err _) ->\n            -- transport error surfaced loudly by the client perform site\n            -- (runtime-go performTask); model kept (write-set did not apply).\n            ( {model_param}, Cmd.none )\n\n"
+            "        Applied{m} (Ok resp) ->\n{apply}\n\n{err_arm}"
         ));
     }
 

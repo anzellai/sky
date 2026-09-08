@@ -1183,12 +1183,18 @@ struct AppFields {
     /// on SSR route resolution BEFORE any effect runs (fix 5 — the TRUSTED
     /// enforcement is server-side, the client is untrusted). May span lines.
     guard: Option<String>,
+    /// `App.withRpcError <fn>` — the failed-RPC handler (`Error -> msg`). Carried
+    /// into a NAMED top-level binding `spaRpcError_` that the generated frontend
+    /// `Applied<Msg> (Err e)` arm dispatches into `update` (item 4 — the client's
+    /// only chance to route a failed RPC into the app's own error handling; the
+    /// default, when absent, keeps the model and logs loudly). May span lines.
+    rpc_error: Option<String>,
     /// `App.with…` builder steps present in the source that the synthesis does
     /// NOT carry into the derived `Spa.app` entry (everything except the carried
     /// `withRoutes` / `withNotFound` / `withHead` / `withOnNavigate` /
-    /// `withRequest` / `withGuard`). Reported as a warning so the drop is never
-    /// silent — a genuinely uncarried builder (`withConfig`, `withOnKey`) must not
-    /// vanish invisibly from the client build.
+    /// `withRequest` / `withGuard` / `withRpcError`). Reported as a warning so the
+    /// drop is never silent — a genuinely uncarried builder (`withConfig`,
+    /// `withOnKey`) must not vanish invisibly from the client build.
     dropped_builders: Vec<String>,
 }
 
@@ -1257,6 +1263,7 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
     let (mut init, mut update, mut view, mut subscriptions) = (None, None, None, None);
     let (mut routes, mut not_found, mut head) = (None, None, None);
     let (mut on_navigate, mut on_request, mut guard) = (None, None, None);
+    let mut rpc_error = None;
     let mut dropped_builders: Vec<String> = Vec::new();
     let lines: Vec<&str> = src.lines().collect();
     let mut i = 0;
@@ -1324,6 +1331,16 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
             guard = Some(arg);
             i += consumed;
             continue;
+        } else if let Some(rest) = strip_app_builder(t, "withRpcError") {
+            // CARRY `withRpcError` (item 4): the failed-RPC handler
+            // (`Error -> msg`). The generated frontend `Applied<Msg> (Err e)` arm
+            // dispatches it into `update` so the app's own view can show the
+            // error, instead of silently keeping the model. Argument may span
+            // lines. Captured here → NOT dropped.
+            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
+            rpc_error = Some(arg);
+            i += consumed;
+            continue;
         } else if let Some(rest) = t.strip_prefix("|> App.with") {
             // Any OTHER `|> App.withX …` builder step: the synthesis does not
             // carry it into the derived Spa entry. Record the step name so the
@@ -1350,6 +1367,7 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
         on_navigate,
         on_request,
         guard,
+        rpc_error,
         dropped_builders,
     })
 }
@@ -1750,7 +1768,8 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
             "sky build --target <spa>: warning: {n} `App.with…` builder step(s) were NOT carried \
              into the synthesised client entry: {list}.\n  \
              `withRoutes` + `withNotFound` + `withHead` + `withOnNavigate` + `withRequest` + \
-             `withGuard` cross the App→Spa synthesis (the last two enforced server-side). Other \
+             `withGuard` + `withRpcError` cross the App→Spa synthesis (guard/request enforced \
+             server-side). Other \
              steps (`withConfig`, `withOnKey`) do not apply to the wasm client; any other \
              client-relevant step must be re-expressed in a `Std.Spa` entry.",
             n = fields.dropped_builders.len(),
@@ -1857,6 +1876,15 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
         Some(g) => format!("spaGuard_ =\n    ({g})\n\n\n"),
         None => String::new(),
     };
+    // Carry `App.withRpcError` (item 4). A NAMED top-level `spaRpcError_` binding
+    // (`Error -> Msg`) the generated frontend's `Applied<Msg> (Err e)` arm
+    // dispatches into `update`, so a failed RPC reaches the app's own error
+    // handling instead of being silently kept. Emitted only when the app
+    // declares it; the default keeps the loud-log floor.
+    let rpc_error_binding = match &fields.rpc_error {
+        Some(f) => format!("spaRpcError_ =\n    ({f})\n\n\n"),
+        None => String::new(),
+    };
     // `App.web`'s `view` already returns laid-out `Html` (Std.Html), while
     // `App.app`'s returns a Std.Ui `Element`. The synthesised `Spa.config.view`
     // needs `model -> Html`, so lay out the Element view but PASS THROUGH the
@@ -1876,6 +1904,7 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
          {on_navigate_binding}\
          {on_request_binding}\
          {guard_binding}\
+         {rpc_error_binding}\
          spaView_ model_ =\n    \
          {spa_view_body}\n\n\n\
          main : Task Error ()\n\
