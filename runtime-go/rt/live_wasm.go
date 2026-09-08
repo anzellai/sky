@@ -269,14 +269,29 @@ func spaNavigate(path string) {
 		spaFireOnNavigate()
 		return
 	}
-	renderCurrent()
-	// A click-interceptor / popstate render: the URL is ALREADY correct (the
-	// click handler pushed it, popstate is browser-driven), so reconcile any
-	// [data-sky-path] marker with replaceState only (push=false) — never a second
-	// entry. Scroll to top on a genuine path change (matches live.go __skyPatch).
-	spaSyncURLFromDOM(false)
-	spaScrollOnNavigate()
-	reconcileSubs()
+	// Panic net for the DEFAULT sky-nav / popstate render. This path runs no
+	// `update` — it re-renders the current model after a pure URL change — so it
+	// does NOT go through step()/spaTransition, and before this a view panic here
+	// (a classified DivisionByZero, an rt.Coerce panic) killed the Go/wasm
+	// instance and white-screened the app, the exact failure item 3 removes for
+	// the click/keystroke path. The guard core lives in spa_step.go
+	// (host-tested); this supplies the js render wiring.
+	spaRenderGuard(
+		spaModel,
+		func() {
+			renderCurrent()
+			// A click-interceptor / popstate render: the URL is ALREADY correct
+			// (the click handler pushed it, popstate is browser-driven), so
+			// reconcile any [data-sky-path] marker with replaceState only
+			// (push=false) — never a second entry. Scroll to top on a genuine
+			// path change (matches live.go __skyPatch).
+			spaSyncURLFromDOM(false)
+			spaScrollOnNavigate()
+			reconcileSubs()
+		},
+		func(prev any) { spaModel = prev },
+		spaReportPanic,
+	)
 }
 
 // spaInstallRouter wires the History-API client router: a document-level click

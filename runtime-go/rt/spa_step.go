@@ -59,3 +59,27 @@ func spaTransition(
 	post(cmd)
 	return kept
 }
+
+// spaRenderGuard is the render-only counterpart of spaTransition, for the
+// DEFAULT sky-nav / popstate path (spaNavigate with no onNavigate hook). That
+// path runs no `update` — it re-renders the current model after a pure URL
+// change — so it does NOT go through spaTransition, and a view panic there used
+// to kill the Go/wasm instance and white-screen the app (Judge finding 4).
+//
+// On a panic it rolls the driver's model back to `prev` (the paint did not
+// commit, so the on-screen tree still shows the previous view), reports through
+// onPanic, and returns so the next event still dispatches. Factored here, apart
+// from the js render wiring, so it is unit-tested on the host.
+func spaRenderGuard(prev any, render func(), restore func(prev any), onPanic func(stage string, r any)) {
+	defer func() {
+		if r := recover(); r != nil {
+			if restore != nil {
+				restore(prev)
+			}
+			if onPanic != nil {
+				onPanic("navigate-render", r)
+			}
+		}
+	}()
+	render()
+}

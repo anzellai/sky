@@ -93,3 +93,41 @@ func TestSpaTransitionPostPanicKeepsCommittedModel(t *testing.T) {
 		t.Fatalf("post panic not reported as stage=cmd: %v", panics)
 	}
 }
+
+// Fix 3 completeness (Judge finding 4). The DEFAULT sky-nav / popstate render
+// (spaNavigate with no onNavigate hook) runs no update, so it does not go
+// through spaTransition — a view panic there used to kill the wasm instance.
+// spaRenderGuard is its portable net: on a render panic it restores the last
+// good model, reports, and returns so the next event still dispatches.
+//
+// RED before the fix: spaNavigate called renderCurrent() directly, so the panic
+// escaped and crashed the test process.
+func TestSpaRenderGuardNavPanicRestoresModelAndSurvives(t *testing.T) {
+	const good = "GOOD-MODEL"
+	model := good
+	panics := []string{}
+	onPanic := func(stage string, r any) { panics = append(panics, stage) }
+	restore := func(prev any) { model = prev.(string) }
+
+	// The nav render mutated the model (URL/page applied) then panicked in view.
+	model = "MID-NAV"
+	spaRenderGuard(good, func() { panic("rt.Coerce: cannot narrow on the new page") }, restore, onPanic)
+	if model != good {
+		t.Fatalf("nav-render panic did not restore the last good model: got %v, want %q", model, good)
+	}
+	if len(panics) != 1 || panics[0] != "navigate-render" {
+		t.Fatalf("nav-render panic not reported as stage=navigate-render: %v", panics)
+	}
+
+	// A non-panicking nav render leaves the model as the render set it and does
+	// not report.
+	model = good
+	rendered := 0
+	spaRenderGuard(good, func() { rendered++; model = "NEXT-PAGE" }, restore, onPanic)
+	if rendered != 1 || model != "NEXT-PAGE" {
+		t.Fatalf("a clean nav render did not run: rendered=%d model=%v", rendered, model)
+	}
+	if len(panics) != 1 {
+		t.Fatalf("a clean nav render must not report a panic: %v", panics)
+	}
+}
