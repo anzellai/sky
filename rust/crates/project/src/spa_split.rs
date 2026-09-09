@@ -648,6 +648,22 @@ pub fn generate(
         );
     }
 
+    // G5: `init`'s returned MODEL embeds a server read the wasm client cannot
+    // reproduce. Emitting a frontend would either reference the backend-only read
+    // (a leak / a build failure) or silently drop the data — so REFUSE with the
+    // actionable fix (defer the read to `init`'s command + a `Got<Field>` arm).
+    // A server read in `init`'s COMMAND is the supported deferred pattern and is
+    // NOT flagged here (the analysis isolates the model, never the command).
+    if !report.init_model_server_reads.is_empty() {
+        return Err(format!(
+            "cannot auto-split: `init`'s returned model embeds server read(s) the wasm client cannot reproduce: {}. \
+Move the read out of the initial model — return the empty/default model from `init` and put the read in its COMMAND \
+(`Cmd.perform <task> Got<Field>`), then fold the loaded value into the model via a `Got<Field>` update arm. \
+The command runs server-side during SSR and the client hydrates from it; a read baked into the model has no client value.",
+            report.init_model_server_reads.join("; ")
+        ));
+    }
+
     let mut notes: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 

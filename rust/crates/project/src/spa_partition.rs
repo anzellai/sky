@@ -726,6 +726,12 @@ pub struct SpaPartitionReport {
     pub publishes: bool,
     /// Non-fatal notes (why a branch was conservatively marked server, etc.).
     pub notes: Vec<String>,
+    /// G5 refusal input: the server reads embedded in `init`'s returned MODEL
+    /// (the first `( model, cmd )` element — NOT the command), each named
+    /// `Module.name (origin)`. The wasm client cannot reproduce these values, so
+    /// the `spa-split` generator REFUSES to emit when this is non-empty. Empty
+    /// for the supported pattern (a server read deferred to `init`'s COMMAND).
+    pub init_model_server_reads: Vec<String>,
 }
 
 impl SpaPartitionReport {
@@ -1006,6 +1012,16 @@ pub fn analyze_loaded(
     let subscribes_topics = app_reaches_kernel(db, &graph, &["Sub_subscribeTopic"]);
     let publishes = app_reaches_kernel(db, &graph, &["Cmd_publish", "Cmd_publishNoEcho"]);
 
+    // G5: `init`'s returned MODEL embedding a server read (Db/File/…) is
+    // unreproducible in the wasm client — the generator refuses on it.
+    let init_model_server_reads = init_model_server_reads(db, &graph, &check_ids, entry);
+    if !init_model_server_reads.is_empty() {
+        notes.push(format!(
+            "`init`'s returned model embeds server read(s) [{}] the wasm client cannot reproduce; the auto-split refuses. Defer the read to `init`'s command and fold it in via a `Got<Field>` update arm.",
+            init_model_server_reads.join(", ")
+        ));
+    }
+
     Ok(SpaPartitionReport {
         project,
         entry_module: entry_module_name,
@@ -1018,7 +1034,161 @@ pub fn analyze_loaded(
         subscribes_topics,
         publishes,
         notes,
+        init_model_server_reads,
     })
+}
+
+/// G5 refusal input: the server reads embedded in `init`'s returned MODEL — the
+/// FIRST element of the `( model, cmd )` tuple, NOT the command. Returns each
+/// offending read named `Module.name (origin)` (server kernels reached directly
+/// plus server-tainted callees the model expression reaches), sorted + deduped.
+///
+/// Empty when `init` is not a resolvable named def, when its model expression is
+/// not isolable, or when the model is pure. The COMMAND is deliberately never
+/// walked: a server read placed in `init`'s command is the SUPPORTED pattern (it
+/// runs server-side and the client hydrates from the SSR result), so it must
+/// never trip this refusal — the isolation to the tuple's first element is what
+/// keeps the deferred pattern free of false positives.
+fn init_model_server_reads(
+    db: &skydb::SkyDatabase,
+    graph: &Graph,
+    check_ids: &[ModuleId],
+    entry: ModuleId,
+) -> Vec<String> {
+    let Some(init_def) = find_config_field_def(db, check_ids, entry, "init") else {
+        return Vec::new();
+    };
+    let Some(loc) = db.def_loc(init_def) else {
+        return Vec::new();
+    };
+    let resolved = db.resolve(loc.module);
+    let Some(body) = resolved.bodies.get(&init_def) else {
+        return Vec::new();
+    };
+    let Some(root) = body.root else {
+        return Vec::new();
+    };
+    // Isolate the returned MODEL (first tuple element), never the command.
+    let mut model_exprs: Vec<ExprId> = Vec::new();
+    collect_init_model_exprs(body, root, &mut model_exprs);
+    if model_exprs.is_empty() {
+        // Could not isolate the model — do not risk a false positive.
+        return Vec::new();
+    }
+    let mut acc = Refs::default();
+    for m in model_exprs {
+        collect(body, m, &mut acc, &CollectCtx::default());
+    }
+
+    // The refusal fires only on a GENUINE server EFFECT the client cannot
+    // reproduce — a read whose origin is an [`EFFECT_KERNELS`] kernel (`Db` /
+    // `File` / `System` / `Http` / `Auth` / …) or a Go FFI reference. A callee is
+    // server-tainted for MANY reasons under the fail-closed model: a
+    // pure-but-unclassified kernel (`Secret.unsafeFromString "x"` bottoms out at
+    // the fail-closed `Secret_fromString`, a PURE construction the wasm client can
+    // reproduce) is marked server for SECURITY, not because it is a read. Keying
+    // the refusal on the ultimate EFFECT kernel — not on the coarse `graph.server`
+    // taint — is what excludes those pure constructions and keeps the deferred
+    // pattern free of false positives.
+    let name_of = |c: &DefId| -> String {
+        let name = db
+            .def_loc(*c)
+            .map(|l| format!("{}.{}", db.module_name(l.module), l.name.as_str()))
+            .unwrap_or_else(|| "a server-tainted binding".into());
+        let origin = graph
+            .root_reason
+            .get(c)
+            .cloned()
+            .unwrap_or_else(|| "server".into());
+        format!("{name} ({origin})")
+    };
+    let mut offenders: BTreeSet<String> = BTreeSet::new();
+    // A genuine effect kernel named directly in the model expression.
+    for (m, f, _class) in &acc.server_kernels {
+        if EFFECT_KERNELS.contains(&m.as_str()) {
+            offenders.insert(format!("{m}.{f}"));
+        }
+    }
+    // A callee whose value requires running a genuine server effect (`loadAll` ->
+    // `Db.query`, a `db` connection CAF -> `Db.open`, an env-reading CAF).
+    let mut visited: HashSet<DefId> = HashSet::new();
+    for c in &acc.callees {
+        if def_reaches_genuine_effect(db, *c, &mut visited) {
+            offenders.insert(name_of(c));
+        }
+    }
+    if acc.foreign {
+        offenders.insert("a Go FFI reference (opaque -> server)".into());
+    }
+    offenders.into_iter().collect()
+}
+
+/// Whether evaluating `d`'s body requires running a GENUINE server effect — a
+/// kernel in [`EFFECT_KERNELS`] (`Db` / `File` / `System` / `Http` / `Auth` / …)
+/// or a Go FFI reference — reached transitively through its callees. This is the
+/// discriminator between a real server READ (unreproducible in the wasm client)
+/// and a callee that is merely fail-closed to `server` under the taint model
+/// because it touches a pure-but-unclassified kernel (e.g. `Secret`). `Std.Spa`'s
+/// own client-boundary helpers are pure client leaves (mirrors `build_graph`).
+fn def_reaches_genuine_effect(
+    db: &skydb::SkyDatabase,
+    d: DefId,
+    visited: &mut HashSet<DefId>,
+) -> bool {
+    if !visited.insert(d) {
+        return false;
+    }
+    let Some(loc) = db.def_loc(d) else {
+        return false;
+    };
+    if db.module_name(loc.module) == "Std.Spa" {
+        return false;
+    }
+    let resolved = db.resolve(loc.module);
+    let Some(body) = resolved.bodies.get(&d) else {
+        return false;
+    };
+    let Some(root) = body.root else {
+        return false;
+    };
+    let mut acc = Refs::default();
+    collect(body, root, &mut acc, &CollectCtx::default());
+    if acc
+        .server_kernels
+        .iter()
+        .any(|(m, _, _)| EFFECT_KERNELS.contains(&m.as_str()))
+    {
+        return true;
+    }
+    if acc.foreign {
+        return true;
+    }
+    acc.callees
+        .iter()
+        .any(|c| def_reaches_genuine_effect(db, *c, visited))
+}
+
+/// The candidate MODEL expressions of an `init` body — the FIRST element of every
+/// `( model, cmd )` tuple the body can evaluate to (walking the `let`/`if`/`case`
+/// spine). The command element is never collected. Empty when the tail is not a
+/// recognisable pair.
+fn collect_init_model_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
+    match &body.exprs[e] {
+        Expr::Tuple(xs) if xs.len() == 2 => out.push(xs[0]),
+        Expr::Let { body: b, .. } => collect_init_model_exprs(body, *b, out),
+        Expr::If { arms, els } => {
+            for (_, t) in arms {
+                collect_init_model_exprs(body, *t, out);
+            }
+            collect_init_model_exprs(body, *els, out);
+        }
+        Expr::Case { branches, .. } => {
+            for br in branches {
+                collect_init_model_exprs(body, br.body, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// What the `config` record's `update` field pointed at.
@@ -1485,7 +1655,7 @@ fn classify_case_arms(
                 msg: f.label.clone(),
                 server: true,
                 reason: r.clone(),
-                io: Some(compute_branch_io(body, arms[i].body, arms[i].pat, model_local, src)),
+                io: Some(compute_branch_io(db, body, arms[i].body, arms[i].pat, model_local, src)),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
             });
         } else if server[i] {
@@ -1493,7 +1663,7 @@ fn classify_case_arms(
                 msg: f.label.clone(),
                 server: true,
                 reason: compose_reason(&f.refs.scoped_updates, &by_name, &server, &direct),
-                io: Some(compute_branch_io(body, arms[i].body, arms[i].pat, model_local, src)),
+                io: Some(compute_branch_io(db, body, arms[i].body, arms[i].pat, model_local, src)),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
             });
         } else {
@@ -1516,18 +1686,32 @@ fn classify_case_arms(
 // B1 — per-server-branch read-set / write-set (the RPC I/O).
 // ---------------------------------------------------------------------------
 
+/// The recursion ceiling for cross-def I/O inference (field-preserving-helper
+/// resolution, whole-arm delegation, let-alias chasing). A chain deeper than this
+/// falls back to the sound over-approximation (whole model) rather than looping
+/// on a mutually recursive helper.
+const IO_DELEGATE_DEPTH: usize = 8;
+
 /// Compute the RPC read-set / write-set for ONE `update` arm (§13-§14). Walks
 /// the arm body over the SAME HIR the verdict used:
 ///   * read-set  = every `field` in `Access(Var(model), field)`, PLUS the Msg
-///     args the arm pattern binds.
-///   * write-set = every `field` key of a tail `Update { base = Var(model), … }`.
+///     args the arm pattern binds, PLUS the read-set a pure `Model -> X` helper
+///     the arm passes the bare model to reads (inherited, e.g. an accessor).
+///   * write-set = every `field` key of a tail `Update { base = <field-preserving>,
+///     … }`. A tail model built by a chain of field-preserving `Model -> Model`
+///     helpers (`noteLog (stamp { model | … })`) narrows to the UNION of the
+///     fields each link rewrites; a whole-arm delegate `handle model` inherits the
+///     helper's tail write-set; a let-bound `(model', cmd)` returned by name is
+///     resolved to its binding.
 ///   * OVER-APPROXIMATE to the whole Model (sound) when `model` is used opaquely
-///     — any `Var(model)` that is NOT the base of an `Access`/`Update` nor a bare
-///     model returned in the final `(model, cmd)` tuple ⇒ `reads_whole_model`;
-///     a returned model that is a fresh `Record` or flows through a helper ⇒
-///     `writes_whole_model`. Under-approximating is a correctness bug — unknown
-///     ⇒ send more (§14 B1).
+///     — any `Var(model)` that is NOT the base of an `Access`/`Update`, not a
+///     provable field-preserving transform, nor a bare model returned in the final
+///     `(model, cmd)` tuple ⇒ `reads_whole_model`; a returned model that is a
+///     FRESH `Record` or flows through a helper that is NOT provably
+///     field-preserving ⇒ `writes_whole_model`. Under-approximating (dropping a
+///     real write) is a correctness bug — on any doubt we send MORE (§14 B1).
 fn compute_branch_io(
+    db: &dyn SkyDb,
     body: &Body,
     arm_body: ExprId,
     pat: PatId,
@@ -1539,24 +1723,31 @@ fn compute_branch_io(
     let mut write_fields: BTreeSet<String> = BTreeSet::new();
     let mut writes_whole = false;
     let mut allowed_bare: HashSet<ExprId> = HashSet::new();
+    let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
     collect_writes_tail(
+        db,
         body,
         arm_body,
         model_local,
+        &let_locals,
         &mut write_fields,
         &mut writes_whole,
         &mut allowed_bare,
+        0,
     );
 
     let mut read_fields: BTreeSet<String> = BTreeSet::new();
     let mut reads_whole = false;
     collect_reads(
+        db,
         body,
         arm_body,
         model_local,
         &allowed_bare,
+        &let_locals,
         &mut read_fields,
         &mut reads_whole,
+        0,
     );
 
     // If we could not identify the `model` parameter at all, we cannot bound the
@@ -1584,17 +1775,24 @@ fn is_model_var(body: &Body, e: ExprId, model_local: Option<LocalId>) -> bool {
 /// base of an `Update` and the bare-model tail returns (`allowed_bare`) are the
 /// only permitted `model` occurrences — any OTHER `Var(model)` is an opaque use
 /// and forces `reads_whole` (sound over-approximation).
+#[allow(clippy::too_many_arguments)]
 fn collect_reads(
+    db: &dyn SkyDb,
     body: &Body,
     e: ExprId,
     model_local: Option<LocalId>,
     allowed_bare: &HashSet<ExprId>,
+    let_locals: &HashMap<LocalId, ExprId>,
     read_fields: &mut BTreeSet<String>,
     reads_whole: &mut bool,
+    depth: usize,
 ) {
     macro_rules! go {
         ($x:expr) => {
-            collect_reads(body, $x, model_local, allowed_bare, read_fields, reads_whole)
+            collect_reads(
+                db, body, $x, model_local, allowed_bare, let_locals, read_fields, reads_whole,
+                depth,
+            )
         };
     }
     match &body.exprs[e] {
@@ -1646,6 +1844,38 @@ fn collect_reads(
         Expr::Negate(x) => go!(*x),
         Expr::Lambda { body: b, .. } => go!(*b),
         Expr::Call(callee, args) => {
+            // Read-delegation: an arm that passes the BARE model to a resolvable
+            // `Model -> X` def (a pure accessor `pluck model`, a whole-arm handler
+            // `handle model`) reads only what that def reads of its param — inherit
+            // its read-set instead of over-approximating to the whole model. Sound:
+            // a smaller request. A def we cannot resolve, or one that uses its param
+            // opaquely, yields the whole model (`None` → reads_whole).
+            let model_positions: Vec<usize> = args
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| is_model_var(body, **a, model_local))
+                .map(|(i, _)| i)
+                .collect();
+            if !model_positions.is_empty() {
+                if let Expr::Var(Res::Def(f)) = &body.exprs[*callee] {
+                    for i in &model_positions {
+                        match helper_readset(db, *f, *i, depth + 1) {
+                            Some(fields) => read_fields.extend(fields),
+                            None => *reads_whole = true,
+                        }
+                    }
+                    // Non-model args are walked normally; the callee (a def) is not
+                    // a read of `model`, and each bare-model arg is delegated above.
+                    for (i, a) in args.iter().enumerate() {
+                        if !model_positions.contains(&i) {
+                            go!(*a);
+                        }
+                    }
+                    return;
+                }
+                // A non-def callee applied to the bare model — fall through so the
+                // opaque `Var(model)` use forces `reads_whole` (sound).
+            }
             go!(*callee);
             for a in args {
                 go!(*a);
@@ -1679,56 +1909,319 @@ fn collect_reads(
 
 /// Walk the arm body's TAIL positions for the WRITE-SET. The tail of an
 /// `update` arm is the `(model', cmd)` tuple (possibly under `let`/`if`/`case`).
-/// A tail `{ model | … }` records its field keys; a bare `model` is a no-write
-/// return (recorded in `allowed_bare` so the read walk does not count it as
-/// opaque); a fresh `Record` or any other shape (a helper call producing the
-/// model) ⇒ `writes_whole`.
+/// The first tuple element is analysed by [`model_write_shape`]: a bare `model`
+/// is a no-write return (recorded in `allowed_bare` so the read walk does not
+/// count it as opaque); a `{ model | … }` (directly, or through a chain of
+/// provably field-preserving `Model -> Model` helpers) records the UNION of the
+/// rewritten fields; anything not provably narrow (a fresh `Record`, an opaque
+/// producer) ⇒ `writes_whole`. Two whole-arm shapes are also resolved: a delegate
+/// `handle model` inherits the helper's own tail write-set, and a let-bound
+/// `(model', cmd)` returned by name is chased to its binding.
+#[allow(clippy::too_many_arguments)]
 fn collect_writes_tail(
+    db: &dyn SkyDb,
     body: &Body,
     e: ExprId,
     model_local: Option<LocalId>,
+    let_locals: &HashMap<LocalId, ExprId>,
     write_fields: &mut BTreeSet<String>,
     writes_whole: &mut bool,
     allowed_bare: &mut HashSet<ExprId>,
+    depth: usize,
 ) {
+    if depth > IO_DELEGATE_DEPTH {
+        *writes_whole = true;
+        return;
+    }
+    macro_rules! recur {
+        ($x:expr, $ls:expr) => {
+            collect_writes_tail(
+                db, body, $x, model_local, $ls, write_fields, writes_whole, allowed_bare,
+                depth + 1,
+            )
+        };
+    }
     match &body.exprs[e] {
         Expr::Tuple(xs) if xs.len() == 2 => {
             let m = xs[0];
-            match &body.exprs[m] {
-                Expr::Update { base, fields } if is_model_var(body, *base, model_local) => {
-                    for (n, _) in fields {
-                        write_fields.insert(n.as_str().to_string());
+            // Bare `( model, cmd )` — returns model unchanged, writes nothing. Mark
+            // so the read walk does not over-approximate.
+            if is_model_var(body, m, model_local) {
+                allowed_bare.insert(m);
+                return;
+            }
+            match model_write_shape(db, body, m, model_local, let_locals, depth) {
+                Some(fields) => {
+                    for f in fields {
+                        write_fields.insert(f);
                     }
                 }
-                Expr::Var(Res::Local(l)) if Some(*l) == model_local => {
-                    // Bare `( model, cmd )` — returns model unchanged, writes
-                    // nothing. Mark so the read walk does not over-approximate.
-                    allowed_bare.insert(m);
-                }
-                // A fresh record, or `helper model` / any other producer — the
-                // written shape is not a visible `{ model | … }`, so be sound.
-                _ => *writes_whole = true,
+                // Not provably a field-preserving transform of `model` (a fresh
+                // record, an opaque producer) — the whole model rides out (sound).
+                None => *writes_whole = true,
             }
         }
-        Expr::Let { body: b, .. } => {
-            collect_writes_tail(body, *b, model_local, write_fields, writes_whole, allowed_bare)
+        Expr::Let { defs, body: b } => {
+            let mut ls = let_locals.clone();
+            add_let_locals(defs, &mut ls);
+            recur!(*b, &ls);
         }
         Expr::If { arms, els } => {
             for (_, t) in arms {
-                collect_writes_tail(body, *t, model_local, write_fields, writes_whole, allowed_bare);
+                recur!(*t, let_locals);
             }
-            collect_writes_tail(body, *els, model_local, write_fields, writes_whole, allowed_bare);
+            recur!(*els, let_locals);
         }
         Expr::Case { branches, .. } => {
             for br in branches {
-                collect_writes_tail(
-                    body, br.body, model_local, write_fields, writes_whole, allowed_bare,
-                );
+                recur!(br.body, let_locals);
             }
         }
-        // The arm did not evaluate to a recognizable `(model', cmd)` tuple (e.g.
-        // it delegates to a helper returning the whole pair) — be conservative.
+        // A let-bound `(model', cmd)` tuple returned BY NAME (`badCreds` / the
+        // `stamped` shape) — resolve the binding and analyse it as the tail.
+        Expr::Var(Res::Local(l)) => match let_locals.get(l) {
+            Some(bound) => recur!(*bound, let_locals),
+            None => *writes_whole = true,
+        },
+        // A whole-arm delegate `handle model` (a `Model -> (Model, Cmd)` helper
+        // applied to the bare model) — inherit the helper's own tail write-set.
+        Expr::Call(callee, args)
+            if args.len() == 1 && is_model_var(body, args[0], model_local) =>
+        {
+            if let Expr::Var(Res::Def(f)) = &body.exprs[*callee] {
+                inherit_delegate_writes(db, *f, write_fields, writes_whole, depth + 1);
+            } else {
+                *writes_whole = true;
+            }
+        }
+        // The arm did not evaluate to a recognizable `(model', cmd)` tuple — be
+        // conservative (send the whole model).
         _ => *writes_whole = true,
+    }
+}
+
+/// Record the plain single-binder value `let`s (`x = expr`, no params, no
+/// destructure) of `defs` into `ls` (LocalId → its bound expression), so a later
+/// by-name return of a `(model', cmd)` tuple or a model alias can be resolved.
+/// Effect-forcing binders (`let _ = …`) and destructures carry no name and are
+/// skipped.
+fn add_let_locals(defs: &[LocalDef], ls: &mut HashMap<LocalId, ExprId>) {
+    for d in defs {
+        if d.params.is_empty() && d.pat.is_none() && d.binders.len() == 1 {
+            ls.insert(d.binders[0].1, d.body);
+        }
+    }
+}
+
+/// The single value-parameter local of a def (`f m = …` → `m`'s `LocalId`), when
+/// the parameter is a plain `Var`/`Alias` binder. `None` for a nullary def, a
+/// multi-parameter def, or a destructured parameter — the caller then cannot
+/// prove a narrow shape and over-approximates.
+fn single_param_local(body: &Body) -> Option<LocalId> {
+    if body.params.len() != 1 {
+        return None;
+    }
+    match &body.pats[body.params[0]] {
+        Pattern::Var(l) => Some(*l),
+        Pattern::Alias(_, l) => Some(*l),
+        _ => None,
+    }
+}
+
+/// The value-parameter local at position `i` of a def, when it is a plain
+/// `Var`/`Alias` binder. Used to map a bare-model argument to the helper
+/// parameter it flows into. `None` when the position is absent or destructured.
+fn param_local_at(body: &Body, i: usize) -> Option<LocalId> {
+    let pat = *body.params.get(i)?;
+    match &body.pats[pat] {
+        Pattern::Var(l) => Some(*l),
+        Pattern::Alias(_, l) => Some(*l),
+        _ => None,
+    }
+}
+
+/// The write-set of a `Model -> Model` helper `f`, when it is PROVABLY
+/// field-preserving — its body (in tail position) returns `{ param | … }`,
+/// directly or through a chain of field-preserving helpers. `Some(fields)` names
+/// the fields it rewrites; `None` when `f` is not provably field-preserving (it
+/// returns a fresh record, uses its parameter opaquely, or could not be
+/// resolved) — the caller then over-approximates to the whole model.
+fn helper_writeset(db: &dyn SkyDb, f: DefId, depth: usize) -> Option<BTreeSet<String>> {
+    if depth > IO_DELEGATE_DEPTH {
+        return None;
+    }
+    let loc = db.def_loc(f)?;
+    let resolved = db.resolve(loc.module);
+    let body = resolved.bodies.get(&f)?;
+    let root = body.root?;
+    let mlocal = single_param_local(body)?;
+    let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
+    model_write_shape(db, body, root, Some(mlocal), &let_locals, depth + 1)
+}
+
+/// Inherit a whole-arm delegate's tail write-set: `f : Model -> (Model, Cmd)`
+/// applied to the bare model contributes exactly the fields `f`'s own tail
+/// rewrites. An unresolvable `f`, or one whose tail is not a recognisable narrow
+/// return, sets `writes_whole` (sound).
+fn inherit_delegate_writes(
+    db: &dyn SkyDb,
+    f: DefId,
+    write_fields: &mut BTreeSet<String>,
+    writes_whole: &mut bool,
+    depth: usize,
+) {
+    if depth > IO_DELEGATE_DEPTH {
+        *writes_whole = true;
+        return;
+    }
+    let Some(loc) = db.def_loc(f) else {
+        *writes_whole = true;
+        return;
+    };
+    let resolved = db.resolve(loc.module);
+    let Some(body) = resolved.bodies.get(&f) else {
+        *writes_whole = true;
+        return;
+    };
+    let (Some(root), Some(mlocal)) = (body.root, single_param_local(body)) else {
+        *writes_whole = true;
+        return;
+    };
+    let mut allowed: HashSet<ExprId> = HashSet::new();
+    let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
+    collect_writes_tail(
+        db,
+        body,
+        root,
+        Some(mlocal),
+        &let_locals,
+        write_fields,
+        writes_whole,
+        &mut allowed,
+        depth + 1,
+    );
+}
+
+/// The read-set a `Model -> X` helper `f` reads of its parameter at position `i`
+/// — inherited when an arm passes it the bare model. `Some(fields)` when `f`
+/// reads its parameter only via precise `param.field` accesses (or via further
+/// pure accessors); `None` when `f` uses the parameter opaquely or could not be
+/// resolved (the caller then reads the whole model). Reuses the arm-level walks
+/// (writes first to populate the bare-return set, then reads) so a helper is
+/// analysed exactly as an arm body would be.
+fn helper_readset(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> Option<BTreeSet<String>> {
+    if depth > IO_DELEGATE_DEPTH {
+        return None;
+    }
+    let loc = db.def_loc(f)?;
+    let resolved = db.resolve(loc.module);
+    let body = resolved.bodies.get(&f)?;
+    let root = body.root?;
+    let mlocal = param_local_at(body, i)?;
+    let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
+    let mut wf: BTreeSet<String> = BTreeSet::new();
+    let mut ww = false;
+    let mut allowed: HashSet<ExprId> = HashSet::new();
+    collect_writes_tail(
+        db,
+        body,
+        root,
+        Some(mlocal),
+        &let_locals,
+        &mut wf,
+        &mut ww,
+        &mut allowed,
+        depth + 1,
+    );
+    let mut rf: BTreeSet<String> = BTreeSet::new();
+    let mut whole = false;
+    collect_reads(
+        db,
+        body,
+        root,
+        Some(mlocal),
+        &allowed,
+        &let_locals,
+        &mut rf,
+        &mut whole,
+        depth + 1,
+    );
+    if whole {
+        None
+    } else {
+        Some(rf)
+    }
+}
+
+/// Analyse an expression `e` that must evaluate to a `Model` value, in a context
+/// whose model parameter is `model_local`. Returns `Some(fields)` when `e` is a
+/// PROVABLY field-preserving transform of that model — a bare model, a
+/// `{ model | … }` update, a `let`/model alias of such, or a chain of
+/// field-preserving `Model -> Model` helpers applied to such — writing exactly
+/// `fields`. Returns `None` when the value is not provably narrow (a fresh
+/// `Record`, an opaque producer, a helper that is not field-preserving), so the
+/// caller over-approximates to the whole model (sound — never drops a write).
+fn model_write_shape(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    model_local: Option<LocalId>,
+    let_locals: &HashMap<LocalId, ExprId>,
+    depth: usize,
+) -> Option<BTreeSet<String>> {
+    if depth > IO_DELEGATE_DEPTH {
+        return None;
+    }
+    match &body.exprs[e] {
+        // The bare model parameter: a field-preserving identity, writes nothing.
+        Expr::Var(Res::Local(l)) if Some(*l) == model_local => Some(BTreeSet::new()),
+        // A `let`-bound local aliasing a model-valued expression: resolve it.
+        Expr::Var(Res::Local(l)) => {
+            let bound = *let_locals.get(l)?;
+            model_write_shape(db, body, bound, model_local, let_locals, depth + 1)
+        }
+        // `{ base | f = … }` — `base` must itself be field-preserving.
+        Expr::Update { base, fields } => {
+            let mut s = model_write_shape(db, body, *base, model_local, let_locals, depth + 1)?;
+            for (n, _) in fields {
+                s.insert(n.as_str().to_string());
+            }
+            Some(s)
+        }
+        // `f arg` — a field-preserving `Model -> Model` helper applied to a
+        // field-preserving argument. The written set is the union.
+        Expr::Call(callee, args) if args.len() == 1 => {
+            if let Expr::Var(Res::Def(f)) = &body.exprs[*callee] {
+                let arg = model_write_shape(db, body, args[0], model_local, let_locals, depth + 1)?;
+                let mut s = helper_writeset(db, *f, depth + 1)?;
+                s.extend(arg);
+                Some(s)
+            } else {
+                None
+            }
+        }
+        Expr::Let { defs, body: b } => {
+            let mut ls = let_locals.clone();
+            add_let_locals(defs, &mut ls);
+            model_write_shape(db, body, *b, model_local, &ls, depth + 1)
+        }
+        Expr::If { arms, els } => {
+            let mut s = BTreeSet::new();
+            for (_, t) in arms {
+                s.extend(model_write_shape(db, body, *t, model_local, let_locals, depth + 1)?);
+            }
+            s.extend(model_write_shape(db, body, *els, model_local, let_locals, depth + 1)?);
+            Some(s)
+        }
+        Expr::Case { branches, .. } => {
+            let mut s = BTreeSet::new();
+            for br in branches {
+                s.extend(model_write_shape(db, body, br.body, model_local, let_locals, depth + 1)?);
+            }
+            Some(s)
+        }
+        // A fresh `Record`, an opaque producer, … — not provably narrow.
+        _ => None,
     }
 }
 

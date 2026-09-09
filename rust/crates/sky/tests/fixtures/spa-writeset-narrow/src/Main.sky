@@ -1,0 +1,194 @@
+module Main exposing (main)
+
+-- GAP #6 soundness proof, BOTH directions, in one app:
+--   * `SaveNarrow` is a SERVER branch (File) whose returned model is a PURE
+--     field-preserving chain `noteLog (stamp { model | n = … })`. Its write-set
+--     MUST narrow to exactly {n, tag, log} — `extra` MUST NOT ride the RPC.
+--   * `SaveWhole` is a SERVER branch whose returned model comes from `rebuild`,
+--     which builds a FRESH record (not `{ m | … }`). Its write-set is NOT
+--     provably narrow, so it MUST stay the WHOLE model — `extra` INCLUDED.
+-- A wrongly-narrowed write-set (dropping a real write) is a silent correctness
+-- bug; the `SaveWhole` half is the guard that the narrow only fires when proven.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { n : Int
+    , log : String
+    , tag : String
+    , extra : Int
+    }
+
+
+type Msg
+    = Bump
+    | SaveNarrow
+    | SaveServerNarrow
+    | ReadNarrow
+    | DelegateArm
+    | LetBound
+    | SaveWhole
+    | OpaqueWhole
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, log = "", tag = "", extra = 0 }, Cmd.none )
+
+
+saveN : Int -> Task Error String
+saveN n =
+    File.writeFile "count.txt" (String.fromInt n)
+        |> Task.map (\_ -> "ok")
+
+
+-- PURE, field-preserving `Model -> Model`: sets `tag` only.
+stamp : Model -> Model
+stamp m =
+    { m | tag = "stamped" }
+
+
+-- PURE, field-preserving `Model -> Model` (composes over `stamp`): sets `log`.
+noteLog : Model -> Model
+noteLog m =
+    { m | log = "noted" }
+
+
+-- SERVER (reads a File effect) but STRUCTURALLY field-preserving `Model -> Model`:
+-- updates only `tag`. Its effect changes the VALUE, never the set of updated
+-- FIELDS — so its write-set is statically {tag}. This is darraghstudio's
+-- `recomputeTotals` shape (reads env rates, updates only {shippingMinor,
+-- vatMinor}). It runs server-side in the RPC, so narrowing it is sound.
+bumpServer : Model -> Model
+bumpServer m =
+    { m | tag = Result.withDefault "" (Task.run (File.readFile "tag.txt")) }
+
+
+-- Pure single-parameter `Model -> X` ACCESSOR: reads only `m.tag` (GAP #6b).
+-- An arm that passes the bare model ONLY to this accessor has read-set {tag}.
+pluck : Model -> String
+pluck m =
+    m.tag
+
+
+saveTag : String -> Task Error String
+saveTag t =
+    File.writeFile "tag.txt" t
+        |> Task.map (\_ -> "ok")
+
+
+-- Single-parameter `Model -> ( Model, Cmd Msg )` whole-arm delegate (GAP #6c):
+-- SERVER (File) + field-preserving write {log}, reads {n}. A thin arm that just
+-- calls `handle model` inherits its narrow read {n} / write {log}.
+handle : Model -> ( Model, Cmd Msg )
+handle m =
+    let
+        _ = Task.run (saveN m.n)
+    in
+        ( { m | log = "handled" }, Cmd.none )
+
+
+-- NON-field-preserving: a FRESH record, so the write-set is NOT narrowable.
+rebuild : Model -> Model
+rebuild m =
+    { n = m.n, log = "", tag = "", extra = m.extra + 1 }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        SaveNarrow ->
+            let
+                _ = Task.run (saveN model.n)
+            in
+                ( noteLog (stamp { model | n = model.n + 1 }), Cmd.none )
+
+        SaveServerNarrow ->
+            -- SERVER via `bumpServer` (File) + field-preserving: write-set {n, tag}.
+            ( bumpServer { model | n = model.n + 1 }, Cmd.none )
+
+        ReadNarrow ->
+            -- SERVER (File) + reads model ONLY via the accessor `pluck` (reads
+            -- .tag): request narrows to {tag} — GAP #6b. Writes {log}.
+            let
+                _ = Task.run (saveTag (pluck model))
+            in
+                ( { model | log = "read" }, Cmd.none )
+
+        DelegateArm ->
+            -- Whole-arm delegation to `handle` (GAP #6c): I/O inherited from
+            -- `handle` — read {n}, write {log}, NOT whole-model.
+            handle model
+
+        LetBound ->
+            -- SERVER (File) + returns a let-bound `(model, cmd)` tuple BY NAME in
+            -- a case branch (GAP #6d, the `badCreds` shape). Write-set narrows to
+            -- {tag} — the whole model does NOT ride the response.
+            let
+                _ = Task.run (saveN model.n)
+
+                stamped =
+                    ( { model | tag = "lb" }, Cmd.none )
+            in
+                case model.n of
+                    0 ->
+                        stamped
+
+                    _ ->
+                        stamped
+
+        SaveWhole ->
+            let
+                _ = Task.run (saveN model.n)
+            in
+                ( rebuild model, Cmd.none )
+
+        OpaqueWhole ->
+            -- SERVER (File) + GENUINELY OPAQUE both ways: `model` is threaded
+            -- WHOLE into `Result.withDefault` (which returns it opaquely, so no
+            -- field is provably READ) and the returned model is that call's
+            -- result, not a visible `{ model | … }` (so no field is provably
+            -- WRITTEN). Neither set narrows → the WHOLE model rides in and out.
+            -- This is the over-approximation guard for the opaque-thread class.
+            let
+                _ = Task.run (saveN model.n)
+            in
+                ( Result.withDefault model (Ok model), Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text (String.fromInt model.n ++ model.log ++ model.tag) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

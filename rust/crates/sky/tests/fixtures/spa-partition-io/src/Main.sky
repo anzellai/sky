@@ -12,10 +12,13 @@ module Main exposing (main)
 --   * `SaveTagged tag` — SERVER, with a Msg ARG. It reads no model field (the new
 --                    note is `readEnv ++ tag`, `tag` being the Msg arg) and writes
 --                    `note` → read-set {}, write-set {note}, Msg args {tag}.
---   * `Bulk`       — SERVER, WHOLE-MODEL. It threads `model` into the server
---                    helper `persistAll`, so the branch uses `model` opaquely →
---                    read-set = whole model, write-set = whole model (the returned
---                    model is a helper call, not a visible `{ model | … }`).
+--   * `Bulk`       — SERVER. It returns `persistAll model`, where `persistAll m =
+--                    { m | note = readEnv ++ m.note }` is a PROVABLY
+--                    field-preserving `Model -> Model` helper. The read/write-set
+--                    inference resolves the helper and NARROWS: read-set {note}
+--                    (persistAll reads only `m.note`), write-set {note} (it
+--                    rewrites only `note`). `readEnv` is a server value evaluated
+--                    in the RPC, not a model field.
 --
 -- `readEnv` (a pure-typed env read) and `persistAll` (which reaches it) are both
 -- server-tainted top-level bindings.

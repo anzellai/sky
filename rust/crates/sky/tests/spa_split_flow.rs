@@ -3454,3 +3454,106 @@ fn mixed_module_emits_pure_subset_to_frontend_effects_stay_backend() {
     build_both_legs(&out);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+// ---------------------------------------------------------------------------
+// G5: `init`'s returned MODEL embeds a server read the wasm client cannot
+// reproduce — the split must REFUSE with actionable guidance, not emit a
+// frontend that references the backend-only read or silently drop the data.
+// ---------------------------------------------------------------------------
+
+fn repo_root() -> PathBuf {
+    // CARGO_MANIFEST_DIR = <repo>/rust/crates/sky
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..")
+        .canonicalize()
+        .expect("repo root")
+}
+
+fn init_model_read_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-init-model-read")
+}
+
+/// G5 refusal: `init` bakes a server read (`loadAll` -> `Db`) into its returned
+/// MODEL. The split must return `Err` naming the read + the deferral fix, and
+/// must NOT have written a frontend that references `loadAll` / `Db.` / `db`.
+#[test]
+fn init_model_embedding_a_server_read_is_refused_with_guidance() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let res = project::spa_split::generate(
+        &repo_root(),
+        &init_model_read_fixture_dir(),
+        Some("Main"),
+        &out,
+        None,
+    );
+
+    let err = match res {
+        Err(e) => e,
+        Ok(_) => panic!(
+            "a server read baked into `init`'s returned model must REFUSE the split (the wasm client cannot reproduce it)"
+        ),
+    };
+    // Names the offending read and points at the deferral fix.
+    assert!(
+        err.contains("init") && err.contains("model"),
+        "the refusal must be about `init`'s returned model, got:\n{err}"
+    );
+    assert!(
+        err.contains("loadAll") || err.contains("Db"),
+        "the refusal must NAME the offending server read (`loadAll` / `Db`), got:\n{err}"
+    );
+    assert!(
+        err.contains("command") && err.contains("Got"),
+        "the refusal must give the fix (defer to `init`'s command + a `Got<Field>` arm), got:\n{err}"
+    );
+
+    // Because it refused, NO frontend that references the backend-only read may
+    // have been written — no silent leak, no dropped data.
+    let front_dir = out.join("frontend");
+    if front_dir.exists() {
+        let front_tree = concat_sky_tree(&front_dir);
+        for needle in ["loadAll", "Db.", "db "] {
+            assert!(
+                !front_tree.contains(needle),
+                "REFUSED split must not have written a frontend referencing `{needle}`:\n{front_tree}"
+            );
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// No false positive: the SUPPORTED deferred pattern — a server read placed in
+/// `init`'s COMMAND (`Cmd.perform (Db.query …) GotItems`) with a PURE returned
+/// model (`{ page = Home, items = [] }`) — must NOT trip the G5 refusal. Uses the
+/// existing `spa-ssr-db` fixture, whose model is pure and read is in the command.
+#[test]
+fn server_read_deferred_to_init_command_is_not_refused() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let res = project::spa_split::generate(
+        &repo_root(),
+        &ssr_db_fixture_dir(),
+        Some("Main"),
+        &out,
+        None,
+    );
+
+    // It may succeed, or fail for an UNRELATED reason, but it must NEVER fail
+    // with the init-model refusal — the read is deferred to the command.
+    if let Err(e) = &res {
+        assert!(
+            !e.contains("returned model embeds server read"),
+            "the deferred-command pattern must NOT trip the init-model refusal (false positive):\n{e}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&out);
+}

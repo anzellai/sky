@@ -150,7 +150,8 @@ fn compose_fixture_partitions_with_msg_constant_precision() {
 /// derived sets on the crafted `spa-partition-io` fixture:
 ///   * `Save`        → reads {seed}, writes {note}, no Msg args (field-precise).
 ///   * `SaveTagged`  → reads {}, writes {note}, Msg args {tag} (arg becomes input).
-///   * `Bulk`        → whole-model reads AND writes (threads `model` into a helper).
+///   * `Bulk`        → reads {note}, writes {note} — `persistAll` is a provably
+///                     field-preserving helper, so the sets narrow (not whole).
 ///   * `Inc`         → CLIENT, so no I/O at all.
 #[test]
 fn io_fixture_derives_exact_read_and_write_sets() {
@@ -199,12 +200,26 @@ fn io_fixture_derives_exact_read_and_write_sets() {
     assert!(!io.writes_whole_model, "SaveTagged writes a specific field");
     assert_eq!(io.write_fields, vec!["note".to_string()], "write-set = {{note}}");
 
-    // Bulk — WHOLE-MODEL both ways: `persistAll model` uses `model` opaquely
-    // (read) and returns a helper call, not a visible `{ model | … }` (write).
+    // Bulk — `persistAll model` where `persistAll m = { m | note = readEnv ++
+    // m.note }` is a PROVABLY field-preserving `Model -> Model` helper (reads only
+    // `m.note`, writes only `note`; `readEnv` is a server value, not a model
+    // field). The read/write-set inference resolves the helper and NARROWS to its
+    // exact sets — a smaller, sound RPC, not the whole model. (The whole-model
+    // over-approximation path is exercised by `spa-writeset-narrow`'s `SaveWhole`
+    // (fresh record) + `OpaqueWhole` (opaque thread), where narrowing is NOT
+    // provable.)
     let bulk = find("Bulk");
     assert!(bulk.server, "Bulk must be SERVER");
     let io = bulk.io.as_ref().expect("SERVER branch has I/O sets");
-    assert!(io.reads_whole_model, "Bulk threads `model` into a helper → whole-model read");
-    assert!(io.writes_whole_model, "Bulk returns a helper call → whole-model write");
+    assert!(
+        !io.reads_whole_model,
+        "`persistAll` reads only `m.note` → read-set narrows to {{note}}, not the whole model"
+    );
+    assert_eq!(io.read_fields, vec!["note".to_string()], "read-set = {{note}}");
+    assert!(
+        !io.writes_whole_model,
+        "`persistAll` is field-preserving (writes only `note`) → write-set narrows to {{note}}"
+    );
+    assert_eq!(io.write_fields, vec!["note".to_string()], "write-set = {{note}}");
     assert!(io.msg_args.is_empty(), "Bulk binds no Msg args");
 }
