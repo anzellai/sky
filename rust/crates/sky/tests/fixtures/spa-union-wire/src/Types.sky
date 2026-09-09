@@ -1,0 +1,77 @@
+module Types exposing (..)
+
+-- The darraghstudio shape: ONE module declares the `Msg` union AND a NOMINAL
+-- `union Page` that a `Model` field (`page : Page`) rides on. The server branch
+-- writes `page`, so `Page` crosses the RPC wire (a user `pageCodec` encodes it,
+-- exactly as darraghstudio's `Data.pageCodec` does). A `union` is NOMINAL — two
+-- same-named unions in different modules never unify — so the split cannot keep
+-- a copy here AND a copy in `Shared` (as it does for a structural record). It
+-- must give `Shared` the SINGLE definition of `Page` and strip it from here,
+-- injecting `import Shared exposing (Page(..))` so the constructors still
+-- resolve for this module and its `exposing (..)` consumers.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+
+type Page
+    = HomePage
+    | AccountPage
+    | ProductPage String
+    | NotFoundPage
+
+
+-- A hand-written union codec (like darraghstudio's `pageCodec`). The wire needs
+-- it, so `Shared` copies it; it references the `Page` constructors, which now
+-- resolve to `Shared`'s single definition.
+pageCodec : Codec Page
+pageCodec =
+    Codec.taggedUnion
+        (\p ->
+            case p of
+                HomePage ->
+                    ( "HomePage", [] )
+
+                AccountPage ->
+                    ( "AccountPage", [] )
+
+                ProductPage s ->
+                    ( "ProductPage", [ Codec.toValue Codec.string s ] )
+
+                NotFoundPage ->
+                    ( "NotFoundPage", [] )
+        )
+        [ Codec.var0 "HomePage" HomePage
+        , Codec.var0 "AccountPage" AccountPage
+        , Codec.var1 "ProductPage" ProductPage Codec.string
+        , Codec.var0 "NotFoundPage" NotFoundPage
+        ]
+
+
+type alias Model =
+    { page : Page
+    , user : String
+    }
+
+
+type Msg
+    = GoHome
+    | DoSignIn String
+
+
+-- A pure helper that PATTERN-MATCHES on `Page`, living beside the `Msg` union.
+-- After `Page` moves into `Shared`, this must read `Page(..)` from `Shared`.
+pathOf : Page -> String
+pathOf page =
+    case page of
+        HomePage ->
+            "/"
+
+        AccountPage ->
+            "/account"
+
+        ProductPage s ->
+            "/p/" ++ s
+
+        NotFoundPage ->
+            "/404"

@@ -1287,6 +1287,27 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // by `shared_expose_clause` to keep a copied structural type single-sourced per
     // consumer (never imported from BOTH `Shared` and its origin — an ambiguity).
     let mut copied_name_source: BTreeMap<String, String> = BTreeMap::new();
+    // The moved NOMINAL unions: type name → the words that name it in source (the
+    // type name plus every constructor). A `union` is a NOMINAL type — two
+    // same-named unions in different modules are distinct `DefId`s that never
+    // unify — so it cannot be duplicated copy-and-leave the way a structural
+    // record `type alias` can. `Shared` therefore OWNS each moved union as its
+    // SINGLE definition: every other module copy strips its declaration and
+    // imports the name (with `(..)` for the constructors) from `Shared`. The
+    // `Msg` union itself is NEVER moved (it is the `Applied<Msg>` inject target,
+    // stays in its module, and is not a wire field), so it is excluded below.
+    let msg_union_name: Option<String> = msg_module.and_then(|m| {
+        let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
+        db.module_parse(m)
+            .tree()
+            .decls()
+            .find(|d| {
+                matches!(decl_kind(d), DeclKind::Union)
+                    && union_variant_names(d).iter().any(|v| want.contains(v.as_str()))
+            })
+            .and_then(|d| decl_name(&d))
+    });
+    let mut moved_unions: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for m in copy_mods.iter().copied() {
         let mparse = db.module_parse(m);
         let mfile = mparse.tree();
@@ -1300,21 +1321,22 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         // like the type — keep those in the TYPE-copy set, never the value set.
         values.retain(|n| !mtypes.contains_key(n));
         let types = compute_type_copy(&mfile, &mtypes, &seed_ty, &values);
-        // A moved NOMINAL type (a `union`) cannot be duplicated soundly: the Msg
-        // module keeps its copy (its `exposing (..)` consumers rely on it) while
-        // `Shared` owns a distinct one, and the two nominal defs never unify — the
-        // RPC fold would be a type mismatch. This is the genuinely-unavoidable
-        // residual cycle; refuse with a precise message rather than emit a tree
-        // that miscompiles. (Structural record `type alias`es are fine — they
-        // unify across modules, which is why the common shape succeeds.)
-        if Some(m) == msg_module && msg_is_pure_sibling {
-            if let Some(u) = types.iter().find(|n| {
-                mtypes.get(*n).map(|d| decl_kind(d) == DeclKind::Union).unwrap_or(false)
-            }) {
-                let mname = db.module_name(m).to_string();
-                return Err(format!(
-                    "cannot auto-split: the wire needs the union type `{u}`, which is declared in the `Msg` module `{mname}`. `{mname}` must import `Shared` (for the injected `Applied<Msg>` variants), so `Shared` cannot import `{mname}` back — it must OWN `{u}`. But a `union` is a NOMINAL type: a copy in `Shared` and the copy `{mname}` keeps for its `exposing (..)` consumers are DISTINCT types that never unify, so the RPC fold would be a type mismatch. Move `{u}` (and any type that references it) into a separate module that declares no `Msg` union, or reduce the wire field to a record / primitive / `List` / `Maybe`."
-                ));
+        // A moved NOMINAL type (a `union`) in this module's type-copy set cannot be
+        // duplicated: two same-named unions in different modules never unify. So
+        // record it as a MOVED UNION — `Shared` owns the single definition (it is
+        // in `copied_names`, rendered by `render_copied_decls`), every other copy
+        // strips its declaration and imports `Name(..)` from `Shared`. The `Msg`
+        // union is never in this set (it is not a wire field), and is excluded by
+        // name defensively. Structural record `type alias`es keep copy-and-leave.
+        for n in &types {
+            let is_union =
+                mtypes.get(n).map(|d| decl_kind(d) == DeclKind::Union).unwrap_or(false);
+            if is_union && Some(n) != msg_union_name.as_ref() {
+                let mut words = vec![n.clone()];
+                if let Some(d) = mtypes.get(n) {
+                    words.extend(union_variant_names(d));
+                }
+                moved_unions.insert(n.clone(), words);
             }
         }
         let mut names: HashSet<String> = HashSet::new();
@@ -1365,6 +1387,31 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         let mtypes = project_type_decls(&mfile);
         if seed_ty.iter().any(|n| mtypes.contains_key(n)) {
             needed_siblings.insert(mname);
+        }
+    }
+    // Residual (the one genuinely-unclosable shape). A pure sibling that `Shared`
+    // IMPORTS (a `needed_sibling` — it provides a wire type/codec that is not
+    // copied) yet which ALSO references a moved union would need to import
+    // `Shared` back for that union's single definition — a two-way import cycle
+    // (E1010). Refuse precisely rather than emit a cyclic tree. (The common
+    // shape — a `Msg` module in `copy_mods`, never a `needed_sibling` — does not
+    // hit this; only a module that is BOTH a wire-type provider AND a moved-union
+    // consumer does.)
+    if !moved_unions.is_empty() {
+        for m in &pure_sibling_mods {
+            let mname = db.module_name(*m).to_string();
+            if !needed_siblings.contains(&mname) {
+                continue;
+            }
+            let msrc = db.module_parse(*m).syntax().text().to_string();
+            if let Some((u, _)) = moved_unions
+                .iter()
+                .find(|(_, words)| words.iter().any(|w| module_mentions_word(&msrc, w)))
+            {
+                return Err(format!(
+                    "cannot auto-split: module `{mname}` provides a wire type/codec that `Shared` imports, and it ALSO references the union `{u}` that `Shared` must OWN — so `{mname}` would have to import `Shared` back, forming an import cycle (E1010). Move `{u}` (and any type that references it) into a module `Shared` does not import, or move the wire type/codec out of `{mname}`."
+                ));
+            }
         }
     }
     // EVERY non-entry project module — Shared drops the entry's import of any of
@@ -1550,7 +1597,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let generated = generated_wire_names(&server);
     let entry_name = db.module_name(entry).to_string();
     let entry_shared_expose =
-        shared_expose_clause(&src, &entry_name, &copied_name_source, &generated, true);
+        shared_expose_clause(&src, &entry_name, &copied_name_source, &generated, &moved_unions, true);
     let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
@@ -1630,15 +1677,33 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         let rel = module_relpath(&db.module_name(*m).to_string());
         let mparse = db.module_parse(*m);
         let text = mparse.syntax().text().to_string();
-        write(&format!("backend/src/{rel}"), &text, &mut files)?;
+        // The BACKEND copy is verbatim EXCEPT for `Shared`'s ownership of a moved
+        // union: strip the union's declaration (the Msg module declares it; only
+        // `Shared` keeps a copy) and import `Name(..)` from `Shared` wherever the
+        // module references it (the native server reads the same single type).
+        let backend_text = own_moved_nominals_verbatim(&mparse.tree(), &text, &moved_unions);
+        write(&format!("backend/src/{rel}"), &backend_text, &mut files)?;
         let frontend_text = if Some(*m) == msg_module {
-            // The pure Msg module KEEPS its copied wire decls (its `exposing (..)`
-            // consumers read them from here), so `strips_self = false`: it imports
-            // `Shared` only for the generated `Applied<Msg>` payload types.
+            // The pure Msg module KEEPS its copied STRUCTURAL wire decls (its
+            // `exposing (..)` consumers read them from here), so `strips_self =
+            // false`; but a moved UNION is stripped by the inject helper and
+            // imported `Name(..)` from `Shared` (its single definition).
             let ms_name = db.module_name(*m).to_string();
-            let ms_expose =
-                shared_expose_clause(&text, &ms_name, &copied_name_source, &generated, false);
-            inject_applied_variants_into_module(&mparse.tree(), &text, &server, &ms_expose)
+            let ms_expose = shared_expose_clause(
+                &text,
+                &ms_name,
+                &copied_name_source,
+                &generated,
+                &moved_unions,
+                false,
+            );
+            inject_applied_variants_into_module(
+                &mparse.tree(),
+                &text,
+                &server,
+                &ms_expose,
+                &moved_unions,
+            )
         } else if strip_init_cmd && !init_in_entry && *m == init_mod {
             // GAP-2: the sibling that declares `init` reads through a
             // backend-only `db` CAF. Copied verbatim it would leave
@@ -1646,11 +1711,18 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             // wasm frontend. Strip its command to `Cmd.none` (the server
             // settles the read + embeds `#sky-model`) and drop the now-dangling
             // server-only / backend-only imports — the same treatment an ENTRY
-            // `init` already gets in `gen_frontend`.
-            frontend_sibling_with_stripped_init(&text, &mparse.tree(), &no_frontend_names)
-                .unwrap_or_else(|| text.clone())
+            // `init` already gets in `gen_frontend`. (This module never declares
+            // the moved union — the Msg module does — so the moved-union pass
+            // below only needs to inject its `Shared` import.)
+            let stripped_init = frontend_sibling_with_stripped_init(
+                &text,
+                &mparse.tree(),
+                &no_frontend_names,
+            )
+            .unwrap_or_else(|| text.clone());
+            own_moved_nominals_verbatim(&mparse.tree(), &stripped_init, &moved_unions)
         } else {
-            text.clone()
+            own_moved_nominals_verbatim(&mparse.tree(), &text, &moved_unions)
         };
         write(&format!("frontend/src/{rel}"), &frontend_text, &mut files)?;
     }
@@ -1659,7 +1731,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         let mparse = db.module_parse(*m);
         let text = mparse.syntax().text().to_string();
         // The backend always carries the FULL tainted module (it runs the effect).
-        write(&format!("backend/src/{rel}"), &text, &mut files)?;
+        // A moved union it declares is stripped (owned by `Shared`) and any moved
+        // union it references is imported `Name(..)` from `Shared` — the native
+        // server sees the same single definition the RPC fold does.
+        let backend_text = own_moved_nominals_verbatim(&mparse.tree(), &text, &moved_unions);
+        write(&format!("backend/src/{rel}"), &backend_text, &mut files)?;
         // The frontend gets a client subset only when this module was routed for
         // per-binding emission (GAP-1 / GAP-2); otherwise it stays backend-only.
         if subset_set.contains(m) {
@@ -1671,8 +1747,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             // A tainted subset STRIPS its own copied decls, so it re-reads them
             // from `Shared` (`strips_self = true`); a copied name it still gets
             // from another module's surviving `exposing (..)` is excluded.
-            let sub_expose =
-                shared_expose_clause(&text, &mname, &copied_name_source, &generated, true);
+            let sub_expose = shared_expose_clause(
+                &text,
+                &mname,
+                &copied_name_source,
+                &generated,
+                &moved_unions,
+                true,
+            );
             let subset = render_module_client_subset(
                 &mparse.tree(),
                 &text,
@@ -1683,6 +1765,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 regen_here,
                 inject_here,
                 &sub_expose,
+                &moved_unions,
                 &msg_param,
                 &model_param,
                 &update_anno,
@@ -2527,6 +2610,12 @@ fn imports_module_exposing_all(src: &str, module_name: &str) -> bool {
 ///     that origin via `exposing (..)` (an explicit import of the name was
 ///     stripped, so it is gone; a surviving `exposing (..)` still provides it).
 ///
+/// A MOVED UNION (`moved_unions`) is handled separately from the structural
+/// rule: `Shared` owns its single definition, so its origin no longer declares
+/// it and `exposing (..)` cannot surface it. Any module that references the type
+/// name OR one of its constructors therefore imports `Name(..)` from `Shared`
+/// (the `(..)` brings the constructors so a `case`/construct still resolves).
+///
 /// Falls back to `exposing (..)` only when the resulting list is empty (a
 /// server-less app whose `Shared` exports nothing), which is a valid header.
 fn shared_expose_clause(
@@ -2534,10 +2623,16 @@ fn shared_expose_clause(
     self_name: &str,
     copied_name_source: &BTreeMap<String, String>,
     generated: &[String],
+    moved_unions: &BTreeMap<String, Vec<String>>,
     strips_self: bool,
 ) -> String {
     let mut names: Vec<String> = generated.to_vec();
     for (n, origin) in copied_name_source {
+        // A moved union is imported via the `(..)` form below, never as a plain
+        // structural name — skip it here so it is not added twice / bare.
+        if moved_unions.contains_key(n) {
+            continue;
+        }
         let needed = if origin == self_name {
             strips_self
         } else {
@@ -2547,6 +2642,11 @@ fn shared_expose_clause(
             names.push(n.clone());
         }
     }
+    for (u, words) in moved_unions {
+        if words.iter().any(|w| module_mentions_word(module_src, w)) {
+            names.push(format!("{u}(..)"));
+        }
+    }
     let mut seen: HashSet<String> = HashSet::new();
     names.retain(|n| seen.insert(n.clone()));
     if names.is_empty() {
@@ -2554,6 +2654,116 @@ fn shared_expose_clause(
     } else {
         format!("import Shared exposing ({})", names.join(", "))
     }
+}
+
+/// True when module source `src` mentions the identifier `word` at a token
+/// boundary, ignoring `--` line comments. Used to decide whether a module copy
+/// references a moved union (by its type name or a constructor) and so must
+/// import it from `Shared`. A qualified reference (`Foo.word`) is NOT a match —
+/// a moved union is imported UNQUALIFIED, so a dotted occurrence is a different
+/// name (and a lowercase field like `.page` never collides with a `Page` type).
+fn module_mentions_word(src: &str, word: &str) -> bool {
+    if word.is_empty() {
+        return false;
+    }
+    for line in src.lines() {
+        // Drop a `--` line comment (a crude but safe over-approximation: a `--`
+        // inside a string literal only causes us to MISS a mention, which at
+        // worst omits an import the compiler would then flag — never a false
+        // resolve). Keeps a comment-only mention from forcing a spurious import.
+        let code = match line.find("--") {
+            Some(i) => &line[..i],
+            None => line,
+        };
+        let bytes = code.as_bytes();
+        let mut start = 0usize;
+        while let Some(rel) = code[start..].find(word) {
+            let at = start + rel;
+            let before = code[..at].chars().last();
+            let after_idx = at + word.len();
+            let after = code[after_idx..].chars().next();
+            let ok_before = before
+                .map(|c| !c.is_alphanumeric() && c != '_' && c != '.')
+                .unwrap_or(true);
+            let ok_after = after.map(|c| !c.is_alphanumeric() && c != '_').unwrap_or(true);
+            if ok_before && ok_after {
+                return true;
+            }
+            // Advance past this occurrence (bytes are ASCII for identifiers).
+            start = at + word.len().max(1);
+            if start >= bytes.len() {
+                break;
+            }
+        }
+    }
+    false
+}
+
+/// Reassemble a module's source with the declarations named in `names` REMOVED
+/// (both a `type`/`union`/`alias` decl and any same-named value/annotation).
+/// Used to give up OWNERSHIP of a moved union: `Shared` declares it once, so
+/// every other copy must not re-declare it. `file` MUST be the parse of `src`
+/// (the caller applies this to a VERBATIM copy, where tree and text agree).
+fn strip_decls_by_name(file: &SourceFile, src: &str, names: &BTreeSet<String>) -> String {
+    if names.is_empty() {
+        return src.to_string();
+    }
+    let first_decl_start = file
+        .decls()
+        .next()
+        .map(|d| usize::from(d.syntax().text_range().start()))
+        .unwrap_or(src.len());
+    let prefix = src[..first_decl_start].trim_end();
+    let mut out = String::with_capacity(src.len());
+    out.push_str(prefix);
+    out.push_str("\n\n\n");
+    for d in file.decls() {
+        if let Some(n) = decl_name(&d) {
+            if names.contains(&n) {
+                continue;
+            }
+        }
+        out.push_str(slice(src, d.syntax()).trim_end());
+        out.push_str("\n\n\n");
+    }
+    out
+}
+
+/// Apply `Shared`'s ownership of the moved unions to a VERBATIM module copy (a
+/// pure sibling, or a tainted module's full backend copy). `file` MUST be the
+/// parse of `text`. Two steps:
+///   1. strip any moved-union declaration this module makes (`Shared` owns it),
+///   2. when the copy references a moved union (type or constructor), ensure
+///      `import Shared exposing (Name(..), …)` so the reference resolves to
+///      `Shared`'s single definition.
+/// A module that neither declares nor references a moved union is returned
+/// unchanged — no `Shared` import is added (which would be needless, and could
+/// re-open a cycle for a module `Shared` itself imports).
+fn own_moved_nominals_verbatim(
+    file: &SourceFile,
+    text: &str,
+    moved_unions: &BTreeMap<String, Vec<String>>,
+) -> String {
+    if moved_unions.is_empty() {
+        return text.to_string();
+    }
+    let declared: BTreeSet<String> = file
+        .decls()
+        .filter_map(|d| decl_name(&d))
+        .filter(|n| moved_unions.contains_key(n))
+        .collect();
+    let stripped = strip_decls_by_name(file, text, &declared);
+    let mut exposes: Vec<String> = Vec::new();
+    for (u, words) in moved_unions {
+        if words.iter().any(|w| module_mentions_word(&stripped, w)) {
+            exposes.push(format!("{u}(..)"));
+        }
+    }
+    if exposes.is_empty() {
+        return stripped;
+    }
+    let clause = format!("import Shared exposing ({})", exposes.join(", "));
+    ensure_import_present(&stripped, "Shared", &clause)
 }
 
 // ---------------------------------------------------------------------------
@@ -4043,8 +4253,13 @@ fn render_module_client_subset(
     inject_msg: bool,
     // The `import Shared exposing (…)` clause this subset needs (generated wire
     // names + any copied name it stripped from its own decls, minus names it
-    // still reads from a surviving `exposing (..)` origin).
+    // still reads from a surviving `exposing (..)` origin; plus `Name(..)` for a
+    // referenced moved union `Shared` owns).
     shared_expose: &str,
+    // The moved unions `Shared` owns (type name → words: type + constructors).
+    // A subset that references one must import it from `Shared`, even when it
+    // neither regenerates `update` nor strips a copied decl.
+    moved_unions: &BTreeMap<String, Vec<String>>,
     msg_param: &str,
     model_param: &str,
     update_anno: &str,
@@ -4130,8 +4345,12 @@ fn render_module_client_subset(
     // The subset needs `import Shared` when it references the wire codecs (a
     // regenerated `update` / injected `Applied<Msg>` variants) OR when a copied
     // type/codec was stripped from it (its surviving defs now read that name from
-    // `Shared`).
-    let out = if regen_update || inject_msg || stripped_copied {
+    // `Shared`) OR when it references a moved union `Shared` owns (its origin no
+    // longer declares it).
+    let references_moved = moved_unions
+        .values()
+        .any(|words| words.iter().any(|w| module_mentions_word(&out, w)));
+    let out = if regen_update || inject_msg || stripped_copied || references_moved {
         ensure_import_present(&out, "Shared", shared_expose)
     } else {
         out
@@ -4200,18 +4419,27 @@ fn union_variant_names(d: &syntax::ast::Decl) -> Vec<String> {
 
 /// Splice the generated `Applied<Msg>` RPC-response variants into the `Msg` union
 /// of a sibling module's source (GAP-A), returning the module source with the
-/// variants appended to the union and the `Shared` (wire types) + `Error` imports
+/// variants appended to the union, any MOVED UNION declaration stripped (`Shared`
+/// owns its single definition), and the `Shared` (wire types) + `Error` imports
 /// ensured. Returns the source unchanged when there are no server branches or the
 /// named union is absent (fail-safe — never a corrupting edit).
+///
+/// The module is rebuilt from its decls (a moved union is dropped, the `Msg`
+/// union gains the `Applied<Msg>` variants, every other decl is kept verbatim) —
+/// a reassembly, not an in-place splice, so a dropped decl anywhere in the module
+/// is removed cleanly regardless of its position relative to `Msg`.
 fn inject_applied_variants_into_module(
     mfile: &SourceFile,
     msrc: &str,
     server: &[(String, BranchIo)],
     // The `import Shared exposing (…)` clause this module needs — the generated
-    // `Applied<Msg>` payload types. The module KEEPS its own wire decls, so the
-    // copied names are NOT re-imported (that would shadow / clash with the local
-    // declarations that its `exposing (..)` consumers rely on).
+    // `Applied<Msg>` payload types PLUS `Name(..)` for any moved union it
+    // references. The module KEEPS its own STRUCTURAL wire decls (its `exposing
+    // (..)` consumers read them here), so those copied names are not re-imported.
     shared_expose: &str,
+    // The moved unions `Shared` owns (type name → words). A declaration of one is
+    // stripped from this copy; a reference to one is served by `shared_expose`.
+    moved_unions: &BTreeMap<String, Vec<String>>,
 ) -> String {
     if server.is_empty() {
         return msrc.to_string();
@@ -4219,26 +4447,45 @@ fn inject_applied_variants_into_module(
     // The `Msg` union is the one whose variants include the server branch ctors
     // (matched the same way the module was selected) — robust to the type's name.
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
-    let union = mfile.decls().find(|d| {
-        matches!(decl_kind(d), DeclKind::Union)
-            && union_variant_names(d).iter().any(|v| want.contains(v.as_str()))
+    let has_msg_union = mfile.decls().any(|d| {
+        matches!(decl_kind(&d), DeclKind::Union)
+            && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
     });
-    let union = match union {
-        Some(u) => u,
-        None => return msrc.to_string(),
-    };
-    let end = usize::from(union.syntax().text_range().end());
-    if end > msrc.len() {
+    if !has_msg_union {
         return msrc.to_string();
     }
-    let mut variants = String::new();
-    for (m, _) in server {
-        variants.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
+    let first_decl_start = mfile
+        .decls()
+        .next()
+        .map(|d| usize::from(d.syntax().text_range().start()))
+        .unwrap_or(msrc.len());
+    let prefix = msrc[..first_decl_start].trim_end();
+    let mut body = String::new();
+    for d in mfile.decls() {
+        // Strip a moved union — `Shared` owns the single definition; keeping a
+        // second copy here would be a distinct nominal type that never unifies.
+        if let Some(n) = decl_name(&d) {
+            if moved_unions.contains_key(&n) {
+                continue;
+            }
+        }
+        if matches!(decl_kind(&d), DeclKind::Union)
+            && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
+        {
+            body.push_str(slice(msrc, d.syntax()).trim_end());
+            for (m, _) in server {
+                body.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
+            }
+            body.push_str("\n\n\n");
+        } else {
+            body.push_str(slice(msrc, d.syntax()).trim_end());
+            body.push_str("\n\n\n");
+        }
     }
-    let mut out = String::with_capacity(msrc.len() + variants.len());
-    out.push_str(&msrc[..end]);
-    out.push_str(&variants);
-    out.push_str(&msrc[end..]);
+    let mut out = String::with_capacity(prefix.len() + body.len() + 8);
+    out.push_str(prefix);
+    out.push_str("\n\n\n");
+    out.push_str(&body);
     let out = ensure_import_present(&out, "Shared", shared_expose);
     ensure_import_present(&out, "Sky.Core.Error", "import Sky.Core.Error exposing (Error)")
 }

@@ -73,6 +73,11 @@ fn msg_with_wire_types_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-msg-with-wire-types/src/Main.sky")
 }
 
+fn union_wire_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-union-wire/src/Main.sky")
+}
+
 fn auto_record_codec_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/spa-auto-record-codec/src/Main.sky")
@@ -888,6 +893,151 @@ fn splits_a_module_that_co_locates_msg_with_its_wire_types() {
     assert!(
         frontend_build.success(),
         "frontend must build to wasm (proves the client-side fold unifies too)"
+    );
+    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+// A NOMINAL `union` (`Page`) is declared in the `Msg` module (`Types`) and rides
+// the RPC wire as a `Model` field (`page : Page`); a server branch writes it, and
+// a view sibling reads `Types exposing (..)` and references it. A union cannot be
+// duplicated copy-and-leave (two same-named unions never unify), so `Shared` must
+// OWN the single definition: it declares `Page` ONCE, `Types` strips its `Page`
+// declaration, and every consumer (the entry, the Msg module, the view sibling)
+// imports `Page(..)` from `Shared`. Regression for the deleted "cannot auto-split:
+// the wire needs the union type `Page`" refusal — the case must now SUCCEED and
+// both trees build (the single-definition identity proof).
+#[test]
+fn splits_a_module_whose_wire_rides_a_nominal_union_by_owning_it_in_shared() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            union_wire_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split MUST succeed when a wire-riding NOMINAL union lives in the Msg module (the union refusal is deleted; Shared OWNS the union)"
+    );
+
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let front_types = std::fs::read_to_string(out.join("frontend/src/Types.sky")).unwrap();
+    let back_types = std::fs::read_to_string(out.join("backend/src/Types.sky")).unwrap();
+    let front_view = std::fs::read_to_string(out.join("frontend/src/View.sky")).unwrap();
+    let back_view = std::fs::read_to_string(out.join("backend/src/View.sky")).unwrap();
+    let front_main = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let back_main = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+
+    // --- Shared declares `Page` ONCE (the single definition) and never imports
+    //     the Msg module `Types`. ---
+    assert!(
+        shared.contains("type Page") && shared.contains("HomePage") && shared.contains("AccountPage"),
+        "Shared must declare the `Page` union (its single definition):\n{shared}"
+    );
+    assert!(
+        !shared.contains("import Types"),
+        "NO CYCLE: Shared must NOT import the Msg module `Types`:\n{shared}"
+    );
+
+    // --- NO module declares `Page` twice: the Msg module strips its declaration,
+    //     and every reference resolves to Shared's copy. ---
+    for (label, src) in [
+        ("frontend Types", &front_types),
+        ("backend Types", &back_types),
+        ("frontend View", &front_view),
+        ("backend View", &back_view),
+        ("frontend Main", &front_main),
+        ("backend Main", &back_main),
+    ] {
+        assert!(
+            !src.contains("type Page"),
+            "{label} must NOT re-declare `Page` (Shared owns the single definition):\n{src}"
+        );
+    }
+
+    // --- The Msg module imports `Page(..)` from Shared (its `Model` field + the
+    //     `pathOf` helper reference it), and keeps its `Msg` union + `Model`. ---
+    for (label, src) in [("frontend Types", &front_types), ("backend Types", &back_types)] {
+        assert!(
+            src.contains("import Shared exposing (") && src.contains("Page(..)"),
+            "{label} must import `Page(..)` from Shared:\n{src}"
+        );
+        assert!(
+            src.contains("type alias Model ="),
+            "{label} must keep `Model` (a structural record):\n{src}"
+        );
+    }
+    assert!(
+        front_types.contains("AppliedDoSignIn"),
+        "frontend Types must carry the injected Applied<Msg> variant:\n{front_types}"
+    );
+
+    // --- The view sibling imports `Page(..)` from Shared in BOTH trees, because
+    //     `Types exposing (..)` no longer surfaces the moved union. ---
+    for (label, src) in [("frontend View", &front_view), ("backend View", &back_view)] {
+        assert!(
+            src.contains("import Shared exposing (") && src.contains("Page(..)"),
+            "{label} must import `Page(..)` from Shared (its `case`/annotation reference it):\n{src}"
+        );
+    }
+
+    // --- The entry imports `Page(..)` from Shared (it writes `Page` ctors), with
+    //     an explicit exposing list (not `..`). ---
+    for (label, src) in [("frontend Main", &front_main), ("backend Main", &back_main)] {
+        assert!(
+            !src.contains("import Shared exposing (..)"),
+            "{label} must import Shared with an explicit list, not `..`:\n{src}"
+        );
+        assert!(
+            src.contains("Page(..)"),
+            "{label} must import `Page(..)` from Shared:\n{src}"
+        );
+    }
+
+    // --- SECURITY: the File effect never reaches the frontend. ---
+    for needle in ["File.", "writeFile"] {
+        assert!(
+            !front_main.contains(needle),
+            "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`:\n{front_main}"
+        );
+    }
+
+    // --- Both build (Go-gated). This is the single-definition identity proof: the
+    //     model field `page : Page` (now Shared.Page) and the RPC response field
+    //     `page : Page` (Shared.Page) resolve to the SAME type, or `go build`
+    //     fails. ---
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.success(),
+        "backend must build natively (proves every `Page` reference resolves to Shared's single definition)"
+    );
+    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend_build.success(),
+        "frontend must build to wasm (proves the client-side fold resolves to Shared.Page too)"
     );
     assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
 

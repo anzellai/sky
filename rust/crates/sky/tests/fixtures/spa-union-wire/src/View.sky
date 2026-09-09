@@ -1,0 +1,38 @@
+module View exposing (render)
+
+-- A view sibling that reads `Types` through `exposing (..)` and references the
+-- `Page` union — both the TYPE (in `label`'s annotation) and the CONSTRUCTORS
+-- (in the `case`). Once `Shared` owns `Page`, `Types exposing (..)` no longer
+-- surfaces it, so this copy MUST import `Page(..)` from `Shared` in BOTH trees.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Types exposing (..)
+
+
+render : Model -> Html Msg
+render model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text (label model.page)
+            , Ui.text ("path: " ++ pathOf model.page)
+            ])
+
+
+label : Page -> String
+label page =
+    case page of
+        HomePage ->
+            "home"
+
+        AccountPage ->
+            "account"
+
+        ProductPage s ->
+            "product " ++ s
+
+        NotFoundPage ->
+            "not found"

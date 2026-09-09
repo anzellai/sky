@@ -1,0 +1,61 @@
+module Main exposing (main)
+
+-- Auto-split INPUT: `Page` is a NOMINAL union declared in the `Msg` module
+-- `Types`, and a server branch (`DoSignIn`) writes `page = AccountPage`. The RPC
+-- response rides the whole model, so `page : Page` crosses the wire and `Shared`
+-- must OWN the `Page` union. The entry writes `Page` constructors in its update
+-- arms, so it imports `Page(..)` from `Shared`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Html exposing (Html)
+import Types exposing (..)
+import View exposing (render)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = HomePage, user = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        GoHome ->
+            -- PURE -> client. Writes `page` on the client.
+            ( { model | page = HomePage }, Cmd.none )
+
+        DoSignIn name ->
+            -- SERVER: an effectful arm (a File effect) writes `page` on the
+            -- server. The response rides the whole model, so `page : Page`
+            -- crosses the wire and `Shared` must OWN the `Page` union.
+            let
+                _ = Task.run (File.writeFile "audit.txt" name)
+            in
+                ( { model | page = AccountPage, user = name }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    render model
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })
