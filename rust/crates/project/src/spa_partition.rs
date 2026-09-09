@@ -1933,11 +1933,17 @@ fn collect_writes_tail(
         *writes_whole = true;
         return;
     }
+    // Structural recursion within THIS body (`if`/`case`/`let` scaffolding of the
+    // arm tail) walks a finite HIR tree, so it preserves `depth` — the budget is
+    // for CROSS-DEF delegation and for chasing let-bound names (which can cycle),
+    // not for control-flow nesting. This mirrors [`collect_reads`], whose `go!`
+    // likewise preserves depth. Incrementing on every structural step made a
+    // deeply nested but perfectly narrow arm (e.g. `doSignIn`: let>if>case>if>
+    // case>if>let) trip the ceiling and fall back to the whole model.
     macro_rules! recur {
         ($x:expr, $ls:expr) => {
             collect_writes_tail(
-                db, body, $x, model_local, $ls, write_fields, writes_whole, allowed_bare,
-                depth + 1,
+                db, body, $x, model_local, $ls, write_fields, writes_whole, allowed_bare, depth,
             )
         };
     }
@@ -1979,17 +1985,50 @@ fn collect_writes_tail(
         }
         // A let-bound `(model', cmd)` tuple returned BY NAME (`badCreds` / the
         // `stamped` shape) — resolve the binding and analyse it as the tail.
+        // Chasing a name CAN cycle (`let x = … x …`), so this step DOES spend
+        // depth — the ceiling then bounds a runaway alias chain (falling back to
+        // the whole model, sound).
         Expr::Var(Res::Local(l)) => match let_locals.get(l) {
-            Some(bound) => recur!(*bound, let_locals),
+            Some(bound) => collect_writes_tail(
+                db,
+                body,
+                *bound,
+                model_local,
+                let_locals,
+                write_fields,
+                writes_whole,
+                allowed_bare,
+                depth + 1,
+            ),
             None => *writes_whole = true,
         },
-        // A whole-arm delegate `handle model` (a `Model -> (Model, Cmd)` helper
-        // applied to the bare model) — inherit the helper's own tail write-set.
-        Expr::Call(callee, args)
-            if args.len() == 1 && is_model_var(body, args[0], model_local) =>
-        {
-            if let Expr::Var(Res::Def(f)) = &body.exprs[*callee] {
-                inherit_delegate_writes(db, *f, write_fields, writes_whole, depth + 1);
+        // A whole-arm delegate `f a0 … an` where EXACTLY ONE argument is the bare
+        // model (`handle model`, or `viaHelper label model` with the model a later
+        // arg) — inherit the helper's own tail write-set, computed with respect to
+        // the helper parameter that the model flows into. If the bare model appears
+        // in zero or in more than one argument, the target return is ambiguous, so
+        // over-approximate to the whole model (sound). The other arguments carry Msg
+        // payloads or pure values; they never widen the MODEL write-set.
+        Expr::Call(callee, args) => {
+            let model_positions: Vec<usize> = args
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| is_model_var(body, **a, model_local))
+                .map(|(i, _)| i)
+                .collect();
+            if model_positions.len() == 1 {
+                if let Expr::Var(Res::Def(f)) = &body.exprs[*callee] {
+                    inherit_delegate_writes(
+                        db,
+                        *f,
+                        model_positions[0],
+                        write_fields,
+                        writes_whole,
+                        depth + 1,
+                    );
+                } else {
+                    *writes_whole = true;
+                }
             } else {
                 *writes_whole = true;
             }
@@ -2059,13 +2098,17 @@ fn helper_writeset(db: &dyn SkyDb, f: DefId, depth: usize) -> Option<BTreeSet<St
     model_write_shape(db, body, root, Some(mlocal), &let_locals, depth + 1)
 }
 
-/// Inherit a whole-arm delegate's tail write-set: `f : Model -> (Model, Cmd)`
-/// applied to the bare model contributes exactly the fields `f`'s own tail
-/// rewrites. An unresolvable `f`, or one whose tail is not a recognisable narrow
-/// return, sets `writes_whole` (sound).
+/// Inherit a whole-arm delegate's tail write-set: `f : … -> Model -> … ->
+/// (Model, Cmd)` applied with the bare model at argument index `i` contributes
+/// exactly the fields `f`'s own tail rewrites of its parameter at index `i`. An
+/// unresolvable `f`, a parameter at `i` that is absent or destructured, or a tail
+/// that is not a recognisable narrow return, sets `writes_whole` (sound). The
+/// tail is analysed by the SAME `collect_writes_tail` machinery, which already
+/// fails closed to the whole model for a fresh record or an opaque producer.
 fn inherit_delegate_writes(
     db: &dyn SkyDb,
     f: DefId,
+    i: usize,
     write_fields: &mut BTreeSet<String>,
     writes_whole: &mut bool,
     depth: usize,
@@ -2083,7 +2126,7 @@ fn inherit_delegate_writes(
         *writes_whole = true;
         return;
     };
-    let (Some(root), Some(mlocal)) = (body.root, single_param_local(body)) else {
+    let (Some(root), Some(mlocal)) = (body.root, param_local_at(body, i)) else {
         *writes_whole = true;
         return;
     };
@@ -2176,23 +2219,28 @@ fn model_write_shape(
         // The bare model parameter: a field-preserving identity, writes nothing.
         Expr::Var(Res::Local(l)) if Some(*l) == model_local => Some(BTreeSet::new()),
         // A `let`-bound local aliasing a model-valued expression: resolve it.
+        // Chasing a name CAN cycle, so this DOES spend depth (the ceiling bounds
+        // a runaway alias chain — `None`, i.e. the whole model, sound).
         Expr::Var(Res::Local(l)) => {
             let bound = *let_locals.get(l)?;
             model_write_shape(db, body, bound, model_local, let_locals, depth + 1)
         }
-        // `{ base | f = … }` — `base` must itself be field-preserving.
+        // `{ base | f = … }` — `base` must itself be field-preserving. Structural
+        // (a sub-expression of a finite tree): preserve depth.
         Expr::Update { base, fields } => {
-            let mut s = model_write_shape(db, body, *base, model_local, let_locals, depth + 1)?;
+            let mut s = model_write_shape(db, body, *base, model_local, let_locals, depth)?;
             for (n, _) in fields {
                 s.insert(n.as_str().to_string());
             }
             Some(s)
         }
         // `f arg` — a field-preserving `Model -> Model` helper applied to a
-        // field-preserving argument. The written set is the union.
+        // field-preserving argument. The written set is the union. The helper
+        // call crosses a def boundary, so it spends depth; the argument is a
+        // structural sub-expression and does not.
         Expr::Call(callee, args) if args.len() == 1 => {
             if let Expr::Var(Res::Def(f)) = &body.exprs[*callee] {
-                let arg = model_write_shape(db, body, args[0], model_local, let_locals, depth + 1)?;
+                let arg = model_write_shape(db, body, args[0], model_local, let_locals, depth)?;
                 let mut s = helper_writeset(db, *f, depth + 1)?;
                 s.extend(arg);
                 Some(s)
@@ -2200,23 +2248,25 @@ fn model_write_shape(
                 None
             }
         }
+        // `let`/`if`/`case` scaffolding is structural — a finite HIR sub-tree, so
+        // it preserves depth (matches the tail walk in `collect_writes_tail`).
         Expr::Let { defs, body: b } => {
             let mut ls = let_locals.clone();
             add_let_locals(defs, &mut ls);
-            model_write_shape(db, body, *b, model_local, &ls, depth + 1)
+            model_write_shape(db, body, *b, model_local, &ls, depth)
         }
         Expr::If { arms, els } => {
             let mut s = BTreeSet::new();
             for (_, t) in arms {
-                s.extend(model_write_shape(db, body, *t, model_local, let_locals, depth + 1)?);
+                s.extend(model_write_shape(db, body, *t, model_local, let_locals, depth)?);
             }
-            s.extend(model_write_shape(db, body, *els, model_local, let_locals, depth + 1)?);
+            s.extend(model_write_shape(db, body, *els, model_local, let_locals, depth)?);
             Some(s)
         }
         Expr::Case { branches, .. } => {
             let mut s = BTreeSet::new();
             for br in branches {
-                s.extend(model_write_shape(db, body, br.body, model_local, let_locals, depth + 1)?);
+                s.extend(model_write_shape(db, body, br.body, model_local, let_locals, depth)?);
             }
             Some(s)
         }

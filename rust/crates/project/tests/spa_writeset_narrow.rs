@@ -124,6 +124,52 @@ fn whole_arm_delegate_inherits_helper_io_not_whole_model() {
 }
 
 #[test]
+fn delegate_with_model_as_later_arg_inherits_helper_io_not_whole_model() {
+    let bs = analyze();
+    let io = io(&bs, "SaveVia _");
+    assert!(
+        !io.writes_whole_model,
+        "SaveVia delegates to `viaHelper label model` (model is the LATER arg; writes {{tag}}) — it inherits that narrow write-set, not the whole model"
+    );
+    assert_eq!(io.write_fields, vec!["tag".to_string()]);
+    assert!(
+        !io.write_fields.contains(&"extra".to_string()),
+        "`extra` is untouched by `viaHelper` — it MUST NOT ride the RPC response"
+    );
+    assert!(!io.reads_whole_model, "inherits viaHelper's read-set {{n}}");
+    assert_eq!(io.read_fields, vec!["n".to_string()]);
+}
+
+#[test]
+fn deeply_nested_field_preserving_delegate_narrows_not_whole() {
+    let bs = analyze();
+    let io = io(&bs, "DeepArm _");
+    assert!(
+        !io.writes_whole_model,
+        "DeepArm delegates to `deepNarrow` (deeply nested let>if>case>if>case>if>let, every tail `{{ m | … }}` writing {{log, tag}}) — the control-flow nesting MUST NOT trip the delegation ceiling; the write-set narrows"
+    );
+    assert_eq!(
+        io.write_fields,
+        vec!["log".to_string(), "tag".to_string()],
+        "write-set = union of the nested-branch updates {{log, tag}}"
+    );
+    assert!(
+        !io.write_fields.contains(&"extra".to_string()),
+        "`extra` is untouched by `deepNarrow` — it MUST NOT ride the RPC response"
+    );
+}
+
+#[test]
+fn delegate_with_model_in_two_args_stays_whole_model_the_negative_guard() {
+    let bs = analyze();
+    let io = io(&bs, "TwoModel");
+    assert!(
+        io.writes_whole_model,
+        "TwoModel calls `twoModel model model` — the bare model in TWO positions is ambiguous, so the whole model MUST ride out (the exactly-one-model-arg guard)"
+    );
+}
+
+#[test]
 fn let_bound_tuple_returned_by_name_narrows() {
     let bs = analyze();
     let io = io(&bs, "LetBound");

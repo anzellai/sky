@@ -36,6 +36,9 @@ type Msg
     | SaveServerNarrow
     | ReadNarrow
     | DelegateArm
+    | SaveVia String
+    | DeepArm String
+    | TwoModel
     | LetBound
     | SaveWhole
     | OpaqueWhole
@@ -98,6 +101,68 @@ handle m =
         ( { m | log = "handled" }, Cmd.none )
 
 
+-- DEEPLY NESTED but field-preserving `String -> Model -> ( Model, Cmd Msg )`
+-- delegate (darraghstudio's `doSignIn` shape: let > if > case > if > case >
+-- if > let). Every tail returns `{ m | … }`, writing only {log, tag}. The
+-- nesting MUST NOT trip the delegation ceiling — structural recursion inside a
+-- body preserves the budget, so this narrows to {log, tag}, NOT the whole model.
+deepNarrow : String -> Model -> ( Model, Cmd Msg )
+deepNarrow label m =
+    let
+        _ = Task.run (saveN m.n)
+    in
+        if m.n < 0 then
+            ( { m | log = "neg" }, Cmd.none )
+
+        else
+            case m.n of
+                0 ->
+                    if String.isEmpty label then
+                        ( { m | log = "empty" }, Cmd.none )
+
+                    else
+                        case label of
+                            "x" ->
+                                ( { m | log = "x" }, Cmd.none )
+
+                            _ ->
+                                if m.n == 0 then
+                                    let
+                                        _ = Task.run (saveTag label)
+                                    in
+                                        ( { m | tag = label }, Cmd.none )
+
+                                else
+                                    ( { m | tag = "d" }, Cmd.none )
+
+                _ ->
+                    ( { m | log = "other" }, Cmd.none )
+
+
+-- Multi-parameter `SomeArg -> Model -> ( Model, Cmd Msg )` whole-arm delegate
+-- (GAP #6c generalised): the bare model is a LATER argument, not the sole one.
+-- SERVER (File) + field-preserving write {tag}, reads {n}. An arm that calls
+-- `viaHelper label model` MUST inherit its narrow read {n} / write {tag}. This
+-- is darraghstudio's `doSignIn creds model` shape.
+viaHelper : String -> Model -> ( Model, Cmd Msg )
+viaHelper label m =
+    let
+        _ = Task.run (saveN m.n)
+    in
+        ( { m | tag = label }, Cmd.none )
+
+
+-- Model appears in TWO argument positions — which return the analysis would
+-- narrow against is ambiguous, so the write-set MUST stay the WHOLE model.
+-- The negative guard for the exactly-one-model-arg rule.
+twoModel : Model -> Model -> ( Model, Cmd Msg )
+twoModel a b =
+    let
+        _ = Task.run (saveN a.n)
+    in
+        ( { a | tag = b.tag }, Cmd.none )
+
+
 -- NON-field-preserving: a FRESH record, so the write-set is NOT narrowable.
 rebuild : Model -> Model
 rebuild m =
@@ -132,6 +197,23 @@ update msg model =
             -- Whole-arm delegation to `handle` (GAP #6c): I/O inherited from
             -- `handle` — read {n}, write {log}, NOT whole-model.
             handle model
+
+        SaveVia label ->
+            -- Whole-arm delegation where the bare model is a LATER argument
+            -- (GAP #6c generalised): inherit `viaHelper`'s narrow read {n} /
+            -- write {tag}, NOT the whole model. `extra` MUST NOT ride the RPC.
+            viaHelper label model
+
+        DeepArm label ->
+            -- Deeply nested field-preserving delegate: write-set MUST narrow to
+            -- {log, tag} despite the control-flow nesting (the depth-accounting
+            -- guard: structural recursion does not spend the delegation budget).
+            deepNarrow label model
+
+        TwoModel ->
+            -- The bare model appears in TWO argument positions — ambiguous, so
+            -- the write-set MUST stay the WHOLE model (the negative guard).
+            twoModel model model
 
         LetBound ->
             -- SERVER (File) + returns a let-bound `(model, cmd)` tuple BY NAME in
