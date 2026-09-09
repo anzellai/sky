@@ -1421,16 +1421,49 @@ fn bracket_delta(s: &str) -> i32 {
     depth
 }
 
+/// Return `s` truncated at its first top-level `--` line comment (a `--` that is
+/// NOT inside a `"…"` string literal), with trailing space removed. Same
+/// string-literal-aware scan as [`bracket_delta`]. Used when flattening a
+/// multi-line builder argument: a `--` comment on a continuation line must be
+/// dropped, not folded onto the joined line, where it would comment out the code
+/// that follows it on that line (the `spaOnNavigate_`/`spaHead_` corruption).
+fn strip_line_comment(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut in_str = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+        } else if c == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            return s[..i].trim_end();
+        } else if c == b'"' {
+            in_str = true;
+        }
+        i += 1;
+    }
+    s
+}
+
 /// Gather a possibly-multi-line builder argument that starts at line `i`.
 /// `first_rest` is the argument text already on line `i` after the builder name
 /// (may be empty). Continuation lines are consumed while the running bracket
 /// depth is unbalanced (or no argument text has been seen yet), stopping at the
-/// next top-level (column-0) declaration. Returns the flattened single-line
-/// argument and the number of source lines it spanned (≥ 1, including line `i`).
+/// next top-level (column-0) declaration. Each line's trailing `--` comment is
+/// stripped BEFORE the lines are joined, so a comment cannot eat the code folded
+/// after it. Returns the flattened single-line argument and the number of source
+/// lines it spanned (≥ 1, including line `i`).
 fn gather_builder_arg(lines: &[&str], i: usize, first_rest: &str) -> (String, usize) {
     let mut parts: Vec<String> = Vec::new();
     let mut depth = 0i32;
-    let f = first_rest.trim();
+    let f = strip_line_comment(first_rest.trim()).trim();
     if !f.is_empty() {
         parts.push(f.to_string());
         depth += bracket_delta(f);
@@ -1443,7 +1476,9 @@ fn gather_builder_arg(lines: &[&str], i: usize, first_rest: &str) -> (String, us
         if !raw.is_empty() && !raw.starts_with(char::is_whitespace) {
             break;
         }
-        let tl = raw.trim();
+        // Strip the line comment BEFORE pushing — else `join(" ")` folds it onto
+        // the flattened line and it comments out everything after it.
+        let tl = strip_line_comment(raw.trim()).trim();
         if !tl.is_empty() {
             parts.push(tl.to_string());
             depth += bracket_delta(tl);
@@ -8801,6 +8836,37 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Gap #5: a multi-line builder-arg lambda with a `--` line comment must NOT
+    // fold the comment onto the joined line, where it comments out the code
+    // after it. Before the fix, `gather_builder_arg` pushed each line verbatim
+    // and joined with a space, so the comment ate `PageLink` + the closing paren
+    // (the `spaOnNavigate_` corruption). RED before the fix.
+    #[test]
+    fn gather_builder_arg_strips_line_comments_before_folding() {
+        // strip_line_comment: truncates at a top-level `--`, keeps a `--` in a string.
+        assert_eq!(strip_line_comment("PageLink -- pick target"), "PageLink");
+        assert_eq!(strip_line_comment("x = \"a--b\" -- note"), "x = \"a--b\"");
+        assert_eq!(strip_line_comment("no comment here"), "no comment here");
+
+        // A withOnNavigate lambda spanning lines, each carrying a `--` comment.
+        let lines = vec![
+            "        |> App.withOnNavigate",
+            "               (\\_ ->",
+            "                   -- clear the toast banner on every navigation",
+            "                   -- (mount, sky-nav, popstate)",
+            "                   PageLink)",
+            "        |> App.withHead View.head",
+        ];
+        // first_rest is empty (the builder name is line-final on line 0).
+        let (arg, consumed) = gather_builder_arg(&lines, 0, "");
+        // The folded arg must contain the real body and NO `--` that precedes
+        // live code, so `PageLink` and the closing paren survive.
+        assert!(arg.contains("PageLink)"), "body must survive the fold: {arg}");
+        assert!(!arg.contains("--"), "no comment may reach the folded arg: {arg}");
+        assert_eq!(arg, "(\\_ -> PageLink)");
+        assert_eq!(consumed, 5, "spans line 0 through the `PageLink)` line");
+    }
 
     #[test]
     fn app_run_rewrite_covers_every_call_spelling_and_spares_concrete_runners() {
