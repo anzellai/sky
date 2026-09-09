@@ -58,6 +58,11 @@ fn multimodule_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-split-multimodule/src/Main.sky")
 }
 
+fn mixed_codec_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-mixed-codec/src/Main.sky")
+}
+
 fn ssr_multimodule_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-multimodule")
 }
@@ -749,6 +754,113 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
         .status()
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "multi-module frontend must build to wasm");
+    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A `Codec <T>` binding that lives in a MIXED module (one that ALSO owns a
+/// server effect) is itself PURE, and the wire needs it. The generator must
+/// COPY that codec + its type into `Shared` — NEVER import the tainted module
+/// into `Shared` (that would drag the File effect into the wasm frontend, which
+/// `Shared` compiles into). Before this fix the codec registry scanned only the
+/// entry + PURE sibling modules, so a `List Item` field whose `itemCodec` lived
+/// beside a `File` effect fell through to `no codec for a field of type any`.
+#[test]
+fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            mixed_codec_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed by COPYING the mixed-module codec into Shared (was: `no codec for a field of type any`)"
+    );
+
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let front_shared = std::fs::read_to_string(out.join("frontend/src/Shared.sky")).unwrap();
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+
+    // --- Shared COPIES the mixed-module codec + its type (never imports Data). ---
+    assert!(
+        shared.contains("itemCodec") && shared.contains("type alias Item ="),
+        "Shared must COPY the pure `itemCodec` + `Item` type from the mixed module:\n{shared}"
+    );
+    assert!(
+        !shared.contains("import Data"),
+        "SECURITY LEAK: Shared must NOT import the server-tainted `Data` module:\n{shared}"
+    );
+    assert!(
+        shared.contains("Codec.field \"items\" .items (Codec.list itemCodec)"),
+        "the items field must wire to `Codec.list itemCodec`:\n{shared}"
+    );
+
+    // --- The server File effect must be routed backend-only; Data stays backend. ---
+    assert!(
+        out.join("backend/src/Data.sky").is_file(),
+        "the mixed Data module must be present in the backend (it runs the File effect)"
+    );
+
+    // --- SECURITY: no server effect / tainted helper leaks into the client. ---
+    for needle in ["File.", "loadItems", "saveItems", "Db.", "System."] {
+        assert!(
+            !front.contains(needle),
+            "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`:\n{front}"
+        );
+        assert!(
+            !front_shared.contains(needle),
+            "SECURITY LEAK: frontend/src/Shared.sky contains `{needle}`:\n{front_shared}"
+        );
+    }
+    assert!(
+        !front.contains("import Data"),
+        "SECURITY LEAK: frontend/src/Main.sky imports the backend-only `Data` module:\n{front}"
+    );
+    assert!(
+        !out.join("frontend/src/Data.sky").exists(),
+        "SECURITY LEAK: the server-tainted `Data` module must NOT be in the frontend"
+    );
+
+    // --- The backend keeps the effect + carries the codec via Shared (no clash). ---
+    assert!(
+        std::fs::read_to_string(out.join("backend/src/Data.sky")).unwrap().contains("File."),
+        "backend Data must keep the File effect (it runs it server-side)"
+    );
+    assert!(
+        back.contains("import Shared exposing (..)"),
+        "backend Main imports Shared for the copied codec/type:\n{back}"
+    );
+
+    // --- Both build (Go-gated). Backend native, frontend wasm. ---
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(backend_build.success(), "mixed-codec backend must build natively");
+    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(frontend_build.success(), "mixed-codec frontend must build to wasm");
     assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
 
     let _ = std::fs::remove_dir_all(&out);

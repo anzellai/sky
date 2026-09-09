@@ -55,7 +55,7 @@ use crate::spa_partition::{self, BranchIo, ModelFieldTy, SpaPartitionReport};
 use base::{DefId, ModuleId};
 use hir::SkyDb;
 use skydb::SkyDatabase;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use syntax::ast::{AstNode, SourceFile};
 use syntax::SyntaxKind;
@@ -593,6 +593,69 @@ fn has_module(imports: &[ImportInfo], path: &str) -> bool {
     imports.iter().any(|i| i.module_path == path)
 }
 
+/// Remove `names` from an import line's `exposing (...)` list. Those names are
+/// provided by the generated `import Shared exposing (..)` (the copied types +
+/// codecs), so keeping them on the original import — whose source module is
+/// still copied verbatim into the backend — would be an ambiguous double-import
+/// (E-level). Handles the single- and multi-line parenthesised list; leaves an
+/// `exposing (..)` import and an import with no `exposing` clause unchanged
+/// (nothing to strip per name). If every exposed name is stripped, the whole
+/// `exposing (...)` clause is dropped, leaving a bare (possibly aliased) import.
+fn strip_names_from_import_exposing(text: &str, names: &HashSet<String>) -> String {
+    if names.is_empty() {
+        return text.to_string();
+    }
+    let Some(exp_at) = text.find("exposing") else {
+        return text.to_string();
+    };
+    let after = &text[exp_at + "exposing".len()..];
+    let Some(open_rel) = after.find('(') else {
+        return text.to_string();
+    };
+    let open = exp_at + "exposing".len() + open_rel;
+    let bytes = text.as_bytes();
+    let mut depth = 0i32;
+    let mut close = None;
+    for i in open..text.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return text.to_string();
+    };
+    let inner = &text[open + 1..close];
+    if inner.trim() == ".." {
+        return text.to_string();
+    }
+    let kept: Vec<String> = inner
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .filter(|item| {
+            // A union member is exposed as `Foo(..)`; its bare name is `Foo`.
+            let bare = item.split('(').next().unwrap_or(item).trim();
+            !names.contains(bare)
+        })
+        .map(|s| s.to_string())
+        .collect();
+    let head = text[..exp_at].trim_end();
+    let tail = &text[close + 1..];
+    if kept.is_empty() {
+        format!("{head}{tail}")
+    } else {
+        format!("{head} exposing ({}){tail}", kept.join(", "))
+    }
+}
+
 /// A module name → its `src/`-relative file path (`Domain` → `Domain.sky`,
 /// `Data.Todo` → `Data/Todo.sky`), matching the compiler's dotted-module layout.
 fn module_relpath(name: &str) -> String {
@@ -855,16 +918,20 @@ The command runs server-side during SSR and the client hydrates from it; a read 
 
     // Tainted binding names → excluded from the frontend.
     let tainted_names: Vec<String> = report.tainted.iter().map(|t| t.name.clone()).collect();
-    let tainted_set: HashSet<String> = tainted_names.iter().cloned().collect();
 
     // ---- resolve the wire codecs (§14 #2) ----
     // Registry of the project's own `Codec <T>` bindings, scanned across the
-    // entry module AND every pure sibling module (a codec may live in `Domain`);
-    // the resolver records which ones a wire field references, and each binding
-    // remembers its module so Shared can COPY an entry codec but IMPORT a
-    // sibling one.
+    // entry module, every PURE sibling module (a codec may live in `Domain`) AND
+    // every MIXED/tainted module. A `Codec <T>` binding is a zero-arg PURE value
+    // even when it lives beside a server effect (the common `basketItemCodec`
+    // next to `Db.query` shape), so it is eligible regardless of its module's
+    // taint. Each binding remembers its module so the copy-vs-import decision
+    // below can COPY an entry- or mixed-module codec into `Shared` but IMPORT a
+    // pure-sibling one.
+    let pure_sibling_set: HashSet<ModuleId> = pure_sibling_mods.iter().copied().collect();
     let mut codec_scan_mods: Vec<ModuleId> = vec![entry];
     codec_scan_mods.extend(pure_sibling_mods.iter().copied());
+    codec_scan_mods.extend(tainted_mods.iter().copied());
     let registry = build_codec_registry(&db, &codec_scan_mods);
     let mut resolver = CodecResolver::new(&registry);
     let mut wires: Vec<Wire> = Vec::new();
@@ -873,15 +940,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         wires.push(build_wire(name, io, &args, &report.model_fields, &mut resolver)?);
     }
 
-    // ---- the copy closure Shared needs (§14 #2) ----
-    // Value defs: the referenced user codecs + their transitive project-local,
-    // non-tainted helper closure. Type decls: everything the wire field types /
-    // copied codec bodies mention that is a project type declaration.
-    let project_types = project_type_decls(&file);
-    let mut copied_values = compute_value_copy(&db, entry, &registry, &resolver.needed, &tainted_set);
-    // A record-alias constructor (`Codec.object Todo`) resolves to a def named
-    // like the type — keep those in the TYPE-copy set, never the value set.
-    copied_values.retain(|n| !project_types.contains_key(n));
+    // The nominal type names the wire field types drag in (the type-copy seed).
     let mut seed_ty: BTreeSet<String> = BTreeSet::new();
     for w in &wires {
         for f in w.req_fields.iter().chain(w.resp_fields.iter()) {
@@ -890,30 +949,88 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             }
         }
     }
-    let copied_types = compute_type_copy(&file, &project_types, &seed_ty, &copied_values);
+
+    // ---- copy-vs-import: which modules feed `Shared` by COPY (§14 #2) ----
+    // A codec binding a wire references is COPIED into `Shared` when it lives in
+    // the ENTRY or in a MIXED (server-tainted) module — the latter because
+    // importing a tainted module into `Shared` would drag its server effect into
+    // BOTH trees (`Shared` compiles into the wasm frontend too). A codec in a
+    // PURE sibling module is IMPORTED instead (that module is copied whole to
+    // both trees). Wire-field TYPES declared in a mixed module are copied for the
+    // same reason; those in a pure sibling are imported.
+    let mut copy_mods: BTreeSet<ModuleId> = BTreeSet::new();
+    copy_mods.insert(entry);
+    for b in &registry {
+        if resolver.needed.contains(&b.name)
+            && b.module != entry
+            && !pure_sibling_set.contains(&b.module)
+        {
+            copy_mods.insert(b.module);
+        }
+    }
+    // A wire-field type declared in a MIXED module must be copied from there too
+    // (it cannot be imported without leaking the module's effects).
+    for m in tainted_mods.iter().copied() {
+        let mparse = db.module_parse(m);
+        let mtypes = project_type_decls(&mparse.tree());
+        if seed_ty.iter().any(|n| mtypes.contains_key(n)) {
+            copy_mods.insert(m);
+        }
+    }
+
+    // The pure transitive value closure of every referenced codec, grouped by the
+    // module that DECLARES it (only defs living in `copy_mods` are copied). Fails
+    // closed if a referenced codec's closure reaches a server-tainted def — that
+    // codec would drag an effect into `Shared`, so it is not eligible.
+    let copied_values_by_mod =
+        compute_value_copy(&db, &copy_mods, &registry, &resolver.needed, &tainted_by_module)?;
+
+    // Assemble the copied declarations + `exposing` list per source module, then
+    // concatenate. Each module contributes its own value + type closure, rendered
+    // verbatim from its own source (a mixed module's `Item` / `itemCodec` are
+    // copied out of `Data.sky`, not the entry).
     let mut copied_names: HashSet<String> = HashSet::new();
-    copied_names.extend(copied_values.iter().cloned());
-    copied_names.extend(copied_types.iter().cloned());
-    let copied_decls = render_copied_decls(&file, &src, &copied_names);
-    let copied_exposing = copied_exposing_list(&project_types, &copied_types, &copied_values);
+    let mut copied_decls = String::new();
+    let mut copied_exposing: Vec<String> = Vec::new();
+    for m in copy_mods.iter().copied() {
+        let mparse = db.module_parse(m);
+        let mfile = mparse.tree();
+        let msrc = mparse.syntax().text().to_string();
+        let mtypes = project_type_decls(&mfile);
+        let mut values: BTreeSet<String> = copied_values_by_mod
+            .get(&m)
+            .cloned()
+            .unwrap_or_default();
+        // A record-alias constructor (`Codec.object Item`) resolves to a def named
+        // like the type — keep those in the TYPE-copy set, never the value set.
+        values.retain(|n| !mtypes.contains_key(n));
+        let types = compute_type_copy(&mfile, &mtypes, &seed_ty, &values);
+        let mut names: HashSet<String> = HashSet::new();
+        names.extend(values.iter().cloned());
+        names.extend(types.iter().cloned());
+        if names.is_empty() {
+            continue;
+        }
+        copied_decls.push_str(&render_copied_decls(&mfile, &msrc, &names));
+        for e in copied_exposing_list(&mtypes, &types, &values) {
+            copied_exposing.push(e);
+        }
+        copied_names.extend(names);
+    }
+    // De-dup the exposing list (a name never appears twice across modules).
+    let mut seen_exp: HashSet<String> = HashSet::new();
+    copied_exposing.retain(|e| seen_exp.insert(e.clone()));
 
     // ---- pure sibling modules the wire references (Shared imports them) ----
-    // A referenced codec or a wire-field type that is DECLARED in a pure sibling
-    // module is NOT copied into Shared (the module is copied whole to both
-    // trees); Shared imports the module instead. A referenced codec that lives in
-    // a backend-only module is a real error (the wire would need a value from a
-    // server-tainted module) — fail closed.
+    // A referenced codec or a wire-field type DECLARED in a PURE sibling module
+    // is NOT copied into Shared (the module is copied whole to both trees);
+    // Shared imports the module instead. A codec in a MIXED/tainted module is
+    // COPIED above, never imported (importing it would leak its server effects
+    // into the wasm frontend).
     let mut needed_siblings: BTreeSet<String> = BTreeSet::new();
     for b in &registry {
-        if resolver.needed.contains(&b.name) && b.module != entry {
-            let bmod = db.module_name(b.module).to_string();
-            if no_frontend_names.contains(&bmod) {
-                return Err(format!(
-                    "cannot auto-split: the wire references codec `{}` in module `{bmod}`, which is server-tainted and routed backend-only. Move the codec into a PURE module shared by both trees. (Refusing rather than leaking a server-tainted module into the wasm frontend / Shared.)",
-                    b.name
-                ));
-            }
-            needed_siblings.insert(bmod);
+        if resolver.needed.contains(&b.name) && pure_sibling_set.contains(&b.module) {
+            needed_siblings.insert(db.module_name(b.module).to_string());
         }
     }
     // Wire-field types declared in a pure sibling module (e.g. `Todo` in `Domain`).
@@ -1215,6 +1332,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &mparse.tree(),
                 &text,
                 tainted_here,
+                &copied_names,
                 &server,
                 &server_ctors,
                 regen_here,
@@ -1605,16 +1723,27 @@ fn paren_balanced_single_group(inner: &str) -> bool {
     depth == 0
 }
 
-/// The transitive, project-local, non-tainted value-def closure of the codec
-/// bindings the wire references — the value declarations to copy into Shared.
+/// The transitive, project-local, PURE value-def closure of the codec bindings
+/// the wire references, GROUPED by the module that declares each def. Only defs
+/// living in `copy_mods` are copied (a def in a pure sibling is reached via an
+/// `import`, not a copy, and is skipped here — the historical entry-only
+/// behaviour, now generalised to the entry PLUS the mixed modules that own a
+/// referenced codec).
+///
+/// Fails closed: if a referenced codec's transitive closure reaches a
+/// SERVER-TAINTED def (in a `copy_mods` module), that codec cannot be copied
+/// without dragging an effect into `Shared` — so the whole split is refused with
+/// the same actionable "no codec" wording, rather than emit a `Shared` that
+/// would not compile or that would leak. `tainted_by_module` maps a module name
+/// to its server-tainted top-level binding names.
 fn compute_value_copy(
     db: &SkyDatabase,
-    entry: ModuleId,
+    copy_mods: &BTreeSet<ModuleId>,
     registry: &[CodecBinding],
     needed: &BTreeSet<String>,
-    tainted: &HashSet<String>,
-) -> BTreeSet<String> {
-    let mut result: BTreeSet<String> = BTreeSet::new();
+    tainted_by_module: &HashMap<String, HashSet<String>>,
+) -> Result<BTreeMap<ModuleId, BTreeSet<String>>, String> {
+    let mut result: BTreeMap<ModuleId, BTreeSet<String>> = BTreeMap::new();
     let mut work: Vec<DefId> = registry
         .iter()
         .filter(|b| needed.contains(&b.name))
@@ -1628,23 +1757,32 @@ fn compute_value_copy(
         let Some(loc) = db.def_loc(d) else {
             continue;
         };
-        // Only the entry module is copied (multi-module is refused up front).
-        if loc.module != entry {
+        // A def in a module we do not copy from (a pure sibling, or an unrelated
+        // module) is reached via an import, not a copy — skip it.
+        if !copy_mods.contains(&loc.module) {
             continue;
         }
         let name = loc.name.as_str().to_string();
-        // Never drag a server-tainted (effectful) def into Shared.
-        if tainted.contains(&name) {
-            continue;
+        let mname = db.module_name(loc.module).to_string();
+        // A copied codec's closure that reaches a server-tainted def is NOT
+        // eligible — copying it would drag the effect into `Shared`. Fail closed.
+        if tainted_by_module
+            .get(&mname)
+            .map(|s| s.contains(&name))
+            .unwrap_or(false)
+        {
+            return Err(format!(
+                "no codec: a referenced `Codec` binding reaches the server-tainted def `{name}` in module `{mname}`, so it cannot be copied into `Shared` without leaking a server effect into the wasm frontend. Move the codec (and its pure helpers) into a module that runs no effect, or reduce the wire field to a primitive / `List` / `Maybe`."
+            ));
         }
-        result.insert(name);
-        for c in spa_partition::body_def_callees(db, entry, d) {
+        result.entry(loc.module).or_default().insert(name);
+        for c in spa_partition::body_def_callees(db, loc.module, d) {
             if !seen.contains(&c) {
                 work.push(c);
             }
         }
     }
-    result
+    Ok(result)
 }
 
 /// The project type declarations (aliases + unions) by name.
@@ -2327,7 +2465,10 @@ fn gen_backend(
     let mut import_lines: Vec<String> = imports
         .iter()
         .filter(|i| i.module_path.rsplit('.').next() != Some("Spa"))
-        .map(|i| i.text.clone())
+        // A type/codec copied into `Shared` arrives via `import Shared exposing
+        // (..)`; drop it from any original import (e.g. a verbatim `import Data
+        // exposing (Item, itemCodec, …)`) so the backend does not double-import it.
+        .map(|i| strip_names_from_import_exposing(&i.text, copied_names))
         .collect();
     let add = |imports: &[ImportInfo], lines: &mut Vec<String>, path: &str, text: &str| {
         if !has_module(imports, path) {
@@ -2978,7 +3119,9 @@ fn gen_frontend(
     let mut import_lines: Vec<String> = imports
         .iter()
         .filter(|i| !is_server_only_module(&i.module_path) && !backend_only.contains(&i.module_path))
-        .map(|i| i.text.clone())
+        // Same as the backend: a copied type/codec comes from `import Shared`, so
+        // drop it from any kept import to avoid an ambiguous double-import.
+        .map(|i| strip_names_from_import_exposing(&i.text, copied_names))
         .collect();
     if !has_module(imports, "Sky.Core.Error") {
         import_lines.push("import Sky.Core.Error as Error exposing (Error)".to_string());
@@ -3271,6 +3414,10 @@ fn render_module_client_subset(
     msrc: &str,
     // The server-tainted binding names in THIS module (dropped from the subset).
     tainted_here: &HashSet<String>,
+    // Types/codecs COPIED into `Shared` (dropped from the subset — they arrive
+    // via `import Shared exposing (..)`; re-declaring them would be a duplicate /
+    // an ambiguous double-import with `Shared`).
+    copied_names: &HashSet<String>,
     server: &[(String, BranchIo)],
     server_ctors: &[&str],
     // This module declares `update` (regenerate its partitioned copy here).
@@ -3289,12 +3436,19 @@ fn render_module_client_subset(
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
     let mut body = String::new();
+    let mut stripped_copied = false;
     for d in mfile.decls() {
         let name = decl_name(&d);
         let n = name.as_deref();
         // Drop server-tainted VALUE decls (both annotation + value) — the spine.
         if let Some(n) = n {
             if tainted_here.contains(n) {
+                continue;
+            }
+            // Drop types/codecs copied into `Shared` — they arrive via `import
+            // Shared exposing (..)`; keeping them here would be a duplicate.
+            if copied_names.contains(n) {
+                stripped_copied = true;
                 continue;
             }
         }
@@ -3352,7 +3506,11 @@ fn render_module_client_subset(
     } else {
         out
     };
-    let out = if regen_update || inject_msg {
+    // The subset needs `import Shared` when it references the wire codecs (a
+    // regenerated `update` / injected `Applied<Msg>` variants) OR when a copied
+    // type/codec was stripped from it (its surviving defs now read that name from
+    // `Shared`).
+    let out = if regen_update || inject_msg || stripped_copied {
         ensure_import_present(&out, "Shared", "import Shared exposing (..)")
     } else {
         out

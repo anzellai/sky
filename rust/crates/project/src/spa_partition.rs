@@ -142,7 +142,7 @@ const EFFECT_KERNELS: &[&str] = &[
 const KNOWN_PURE_KERNELS: &[&str] = &[
     "Basics", "String", "List", "Dict", "Set", "Maybe", "Result", "Task", "Math", "Regex",
     "Crypto", "Encoding", "Char", "Path", "Cmd", "Sub", "JsonEnc", "JsonDec", "JsonDecP", "Fmt",
-    "Ffi",
+    "Ffi", "Codec",
 ];
 
 /// **CLIENT-EFFECT** kernel families — effects that must run in the wasm CLIENT,

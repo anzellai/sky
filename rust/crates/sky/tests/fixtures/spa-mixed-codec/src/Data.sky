@@ -1,0 +1,50 @@
+module Data exposing (..)
+
+-- MIXED module: it holds a PURE type + codec (`Item` / `itemCodec`) NEXT TO a
+-- server File effect (`loadItems` / `saveItems`). This is the common real-world
+-- shape — a data-access module that both defines its record + codec AND does the
+-- persistence. The auto-split routes the effects to the backend, but the codec
+-- is pure and the wire needs it: it must be COPIED into `Shared` (never imported,
+-- which would drag the File effect into the wasm frontend).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Std.Codec as Codec exposing (Codec)
+
+
+type alias Item =
+    { id : Int
+    , title : String
+    , done : Bool
+    }
+
+
+-- PURE codec, living beside the effects below.
+itemCodec : Codec Item
+itemCodec =
+    Codec.object Item |> Codec.field "id" .id Codec.int
+        |> Codec.field "title" .title Codec.string
+        |> Codec.field "done" .done Codec.bool
+        |> Codec.buildObject
+
+
+storePath : String
+storePath =
+    "items.json"
+
+
+-- server effect (File): load the persisted list (missing file -> empty).
+loadItems : () -> Task Error (List Item)
+loadItems _ =
+    File.readFile storePath
+        |> Task.map
+               (\s -> Result.withDefault [] (Codec.fromJson (Codec.list itemCodec) s))
+        |> Task.onError (\_ -> Task.succeed [])
+
+
+-- server effect (File): persist the list.
+saveItems : List Item -> Task Error ()
+saveItems items =
+    File.writeFile storePath (Codec.toJson (Codec.list itemCodec) items)

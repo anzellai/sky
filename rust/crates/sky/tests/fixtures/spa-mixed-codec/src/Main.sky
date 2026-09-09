@@ -1,0 +1,84 @@
+module Main exposing (main)
+
+-- Auto-split INPUT: a MULTI-MODULE app whose data record `Item` + its codec
+-- `itemCodec` live in a MIXED module (`Data`) that ALSO owns the File effects.
+-- The Model carries `items : List Item`; the `Save` server branch writes it, so
+-- the RPC response needs `Codec.list itemCodec`. The generator must COPY the
+-- pure `itemCodec` + `Item` into `Shared` (the codec's module is server-tainted,
+-- so it cannot be IMPORTED into `Shared` without leaking File into the frontend).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Data exposing (Item, itemCodec, loadItems, saveItems)
+
+type alias Model =
+    { items : List Item
+    , draft : String
+    }
+
+type Msg
+    = DraftChanged String
+    | Save
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { items = [], draft = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        DraftChanged s ->
+            -- PURE -> client
+            ( { model | draft = s }, Cmd.none )
+
+        Save ->
+            -- SERVER: reaches Data.loadItems / Data.saveItems (File effects),
+            -- write-set {items}.
+            let
+                current = Result.withDefault [] (Task.run (loadItems ()))
+                next =
+                    current
+                        ++ [ { id = List.length current + 1
+                             , title = model.draft
+                             , done = False
+                             }
+                           ]
+                _ = Task.run (saveItems next)
+            in
+                ( { model | items = next, draft = "" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("items: " ++ String.fromInt (List.length model.items)) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })
