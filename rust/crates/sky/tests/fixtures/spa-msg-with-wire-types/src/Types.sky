@@ -1,0 +1,37 @@
+module Types exposing (..)
+
+-- The co-located shape the auto-split must NOT dictate away: ONE module declares
+-- the `Msg` union AND the wire record type (`Item`) the server branch's write-set
+-- rides on AND the `Model`. Injecting the `Applied<Msg>` RPC variants into this
+-- module needs `import Shared`; `Shared` in turn needs `Item`. The split must
+-- break that would-be cycle by OWNING `Item` in `Shared`, never by forcing the
+-- author to split `Msg` away from its types.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+
+type alias Item =
+    { name : String
+    , qty : Int
+    }
+
+
+-- A user codec for the wire record, living beside the `Msg` union.
+itemCodec : Codec Item
+itemCodec =
+    Codec.object Item
+        |> Codec.field "name" .name Codec.string
+        |> Codec.field "qty" .qty Codec.int
+        |> Codec.buildObject
+
+
+type alias Model =
+    { items : List Item
+    , draft : String
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Save

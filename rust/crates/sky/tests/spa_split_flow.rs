@@ -68,6 +68,11 @@ fn error_wire_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-error-wire/src/Main.sky")
 }
 
+fn msg_with_wire_types_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-msg-with-wire-types/src/Main.sky")
+}
+
 fn auto_record_codec_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/spa-auto-record-codec/src/Main.sky")
@@ -774,6 +779,121 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+// The `Msg` union, the wire record `Item` and the `Model` all live in ONE module
+// (`Types`), and sibling modules read `Types` via `exposing (..)`. Injecting the
+// `Applied<Msg>` RPC variants into `Types` makes it import `Shared`, so `Shared`
+// must NOT import `Types` back. The split resolves the would-be cycle (E1010) by
+// giving `Shared` its OWN copy of `Item` + `itemCodec`; because a record
+// `type alias` is structural, the model field (`Types.Item`) and the RPC response
+// field (`Shared.Item`) unify, so the round-trip is sound. Regression for the
+// deleted "Move `Msg` into its own module" refusal.
+#[test]
+fn splits_a_module_that_co_locates_msg_with_its_wire_types() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            msg_with_wire_types_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split MUST succeed when `Msg` co-locates with its wire types (the E1010 refusal is deleted)"
+    );
+
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let front_types = std::fs::read_to_string(out.join("frontend/src/Types.sky")).unwrap();
+    let back_types = std::fs::read_to_string(out.join("backend/src/Types.sky")).unwrap();
+    let front_main = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let back_main = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+
+    // --- Shared OWNS the wire type + codec, and never imports the Msg module. ---
+    assert!(
+        shared.contains("type alias Item =") && shared.contains("itemCodec"),
+        "Shared must OWN a copy of the co-located `Item` + `itemCodec`:\n{shared}"
+    );
+    assert!(
+        !shared.contains("import Types"),
+        "NO CYCLE: Shared must NOT import the Msg module `Types` (Types imports Shared):\n{shared}"
+    );
+
+    // --- The Msg module imports Shared for the injected `Applied<Msg>` variants,
+    //     and still resolves `Item` for its `exposing (..)` consumers. ---
+    assert!(
+        front_types.contains("import Shared") && front_types.contains("AppliedSave"),
+        "frontend Types must import Shared and carry the injected Applied<Msg> variant:\n{front_types}"
+    );
+    assert!(
+        front_types.contains("type alias Item ="),
+        "frontend Types must keep `Item` so its `exposing (..)` consumers still resolve it:\n{front_types}"
+    );
+    // Neither tree may pull the wire type from BOTH Types and Shared unqualified
+    // (that would be an ambiguous double-import). The entry imports Shared with an
+    // explicit exposing list that excludes the copied names it already reads from
+    // `Types exposing (..)`.
+    assert!(
+        !front_main.contains("import Shared exposing (..)"),
+        "frontend Main must import Shared with an explicit list (not `..`) to avoid an ambiguous `Item`:\n{front_main}"
+    );
+    assert!(
+        !back_main.contains("import Shared exposing (..)"),
+        "backend Main must import Shared with an explicit list (not `..`) to avoid an ambiguous `Item`:\n{back_main}"
+    );
+
+    // --- SECURITY: the File effect never reaches the frontend. ---
+    for needle in ["File.", "loadItems", "saveItems"] {
+        assert!(
+            !front_main.contains(needle),
+            "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`:\n{front_main}"
+        );
+    }
+
+    // backend Types stays a normal module (the wire type lives there for the
+    // native server too).
+    assert!(
+        back_types.contains("type alias Item ="),
+        "backend Types keeps `Item`:\n{back_types}"
+    );
+
+    // --- Both build (Go-gated). This is the type-identity proof: the model field
+    //     `items : List Item` (Types.Item) and the RPC response field
+    //     `items : List Item` (Shared.Item) must reconcile, or `go build` fails. ---
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.success(),
+        "backend must build natively (proves Types.Item unifies with Shared.Item on the RPC fold)"
+    );
+    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend_build.success(),
+        "frontend must build to wasm (proves the client-side fold unifies too)"
+    );
+    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A `Codec <T>` binding that lives in a MIXED module (one that ALSO owns a
 /// server effect) is itself PURE, and the wire needs it. The generator must
 /// COPY that codec + its type into `Shared` — NEVER import the tainted module
@@ -852,8 +972,8 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
         "backend Data must keep the File effect (it runs it server-side)"
     );
     assert!(
-        back.contains("import Shared exposing (..)"),
-        "backend Main imports Shared for the copied codec/type:\n{back}"
+        back.contains("import Shared exposing (") && back.contains("Item") && back.contains("itemCodec"),
+        "backend Main imports Shared for the copied codec/type (explicit exposing list):\n{back}"
     );
 
     // --- Both build (Go-gated). Backend native, frontend wasm. ---

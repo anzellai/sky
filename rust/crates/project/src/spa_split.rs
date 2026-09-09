@@ -1134,7 +1134,6 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 })
             })
     };
-    let msg_module_name: Option<String> = msg_module.map(|m| db.module_name(m).to_string());
 
     // ---- finalise the per-binding routing (GAP-1 / GAP-2 / §17) ----
     // A tainted module emits a frontend SUBSET when the frontend reaches one of
@@ -1247,6 +1246,26 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         }
     }
 
+    // GAP-A cycle break — the co-located `Msg` + wire-types shape. When the `Msg`
+    // union lives in a PURE sibling module that ALSO declares a wire type/codec
+    // `Shared` references, injecting the `Applied<Msg>` RPC variants makes that
+    // module `import Shared`. If `Shared` then IMPORTED the module back (it would
+    // land in `needed_siblings`) the two-way import is a cycle (E1010 — the
+    // refusal this fix deletes). Resolve it by MOVING ownership of those wire
+    // declarations INTO `Shared` (add the module to `copy_mods`): `Shared`
+    // declares its own copy and never imports the Msg module. A wire record is a
+    // structural `type alias`, so `Shared`'s copy and the copy left in the Msg
+    // module unify — the model field and the RPC response field reconcile without
+    // a nominal single-definition. (A NOMINAL wire type — a `union` — cannot be
+    // duplicated soundly; that case is caught below and refused, since it is the
+    // genuinely-unavoidable residual cycle.)
+    let msg_is_pure_sibling = msg_module
+        .map(|m| pure_sibling_set.contains(&m))
+        .unwrap_or(false);
+    if let (Some(mm), true) = (msg_module, msg_is_pure_sibling) {
+        copy_mods.insert(mm);
+    }
+
     // The pure transitive value closure of every referenced codec, grouped by the
     // module that DECLARES it (only defs living in `copy_mods` are copied). Fails
     // closed if a referenced codec's closure reaches a server-tainted def — that
@@ -1261,6 +1280,13 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let mut copied_names: HashSet<String> = HashSet::new();
     let mut copied_decls = String::new();
     let mut copied_exposing: Vec<String> = Vec::new();
+    // Every copied name → the source module NAME that declared it. A consumer that
+    // still reaches the name through a surviving `import <src> exposing (..)` reads
+    // it from there; only a consumer that lost it (declared-and-stripped, or an
+    // explicit import that was stripped) needs it re-imported from `Shared`. Used
+    // by `shared_expose_clause` to keep a copied structural type single-sourced per
+    // consumer (never imported from BOTH `Shared` and its origin — an ambiguity).
+    let mut copied_name_source: BTreeMap<String, String> = BTreeMap::new();
     for m in copy_mods.iter().copied() {
         let mparse = db.module_parse(m);
         let mfile = mparse.tree();
@@ -1274,6 +1300,23 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         // like the type — keep those in the TYPE-copy set, never the value set.
         values.retain(|n| !mtypes.contains_key(n));
         let types = compute_type_copy(&mfile, &mtypes, &seed_ty, &values);
+        // A moved NOMINAL type (a `union`) cannot be duplicated soundly: the Msg
+        // module keeps its copy (its `exposing (..)` consumers rely on it) while
+        // `Shared` owns a distinct one, and the two nominal defs never unify — the
+        // RPC fold would be a type mismatch. This is the genuinely-unavoidable
+        // residual cycle; refuse with a precise message rather than emit a tree
+        // that miscompiles. (Structural record `type alias`es are fine — they
+        // unify across modules, which is why the common shape succeeds.)
+        if Some(m) == msg_module && msg_is_pure_sibling {
+            if let Some(u) = types.iter().find(|n| {
+                mtypes.get(*n).map(|d| decl_kind(d) == DeclKind::Union).unwrap_or(false)
+            }) {
+                let mname = db.module_name(m).to_string();
+                return Err(format!(
+                    "cannot auto-split: the wire needs the union type `{u}`, which is declared in the `Msg` module `{mname}`. `{mname}` must import `Shared` (for the injected `Applied<Msg>` variants), so `Shared` cannot import `{mname}` back — it must OWN `{u}`. But a `union` is a NOMINAL type: a copy in `Shared` and the copy `{mname}` keeps for its `exposing (..)` consumers are DISTINCT types that never unify, so the RPC fold would be a type mismatch. Move `{u}` (and any type that references it) into a separate module that declares no `Msg` union, or reduce the wire field to a record / primitive / `List` / `Maybe`."
+                ));
+            }
+        }
         let mut names: HashSet<String> = HashSet::new();
         names.extend(values.iter().cloned());
         names.extend(types.iter().cloned());
@@ -1283,6 +1326,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         copied_decls.push_str(&render_copied_decls(&mfile, &msrc, &names));
         for e in copied_exposing_list(&mtypes, &types, &values) {
             copied_exposing.push(e);
+        }
+        let mname = db.module_name(m).to_string();
+        for n in &names {
+            copied_name_source.insert(n.clone(), mname.clone());
         }
         copied_names.extend(names);
     }
@@ -1298,12 +1345,20 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // into the wasm frontend).
     let mut needed_siblings: BTreeSet<String> = BTreeSet::new();
     for b in &registry {
-        if resolver.needed.contains(&b.name) && pure_sibling_set.contains(&b.module) {
+        // A module already in `copy_mods` (the co-located Msg module) is COPIED
+        // into `Shared`, never imported — importing it would re-open the cycle.
+        if resolver.needed.contains(&b.name)
+            && pure_sibling_set.contains(&b.module)
+            && !copy_mods.contains(&b.module)
+        {
             needed_siblings.insert(db.module_name(b.module).to_string());
         }
     }
     // Wire-field types declared in a pure sibling module (e.g. `Todo` in `Domain`).
     for m in &pure_sibling_mods {
+        if copy_mods.contains(m) {
+            continue; // owned by `Shared` (copied), not imported
+        }
         let mname = db.module_name(*m).to_string();
         let mparse = db.module_parse(*m);
         let mfile = mparse.tree();
@@ -1485,7 +1540,18 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             "note: --broker <url> was given but the app has no Cmd.publish / Sub.subscribeTopic, so no push broker is generated; the flag is ignored.".into(),
         );
     }
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, push_mode, broker_url, &ssr_route_patterns, &init_src, &mut warnings)?;
+    // The generated wire names + a per-consumer `import Shared exposing (…)`
+    // clause. The clause keeps a copied structural type single-sourced in each
+    // consumer: the entry / a subset re-read their own stripped copies from
+    // `Shared`, but never re-import a name they still get from a surviving
+    // `exposing (..)` origin (which would be an ambiguous double-import — the
+    // failure mode of the co-located Msg shape). The ENTRY strips its own copied
+    // decls, so `strips_self = true`.
+    let generated = generated_wire_names(&server);
+    let entry_name = db.module_name(entry).to_string();
+    let entry_shared_expose =
+        shared_expose_clause(&src, &entry_name, &copied_name_source, &generated, true);
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -1494,6 +1560,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &client_names,
         &tainted_names,
         &copied_names,
+        &entry_shared_expose,
         &msg_param,
         &model_param,
         &update_anno,
@@ -1540,21 +1607,13 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &mut files,
     )?;
 
-    // Cycle guard (E1010) for GAP-A. The `Applied<Msg>` variants injected into the
-    // Msg module reference `<Msg>Resp` declared in `Shared`, so the Msg module's
-    // frontend copy imports `Shared`. `Shared` is prevented from importing the Msg
-    // module (shared_import_lines drops it), which breaks the usual cycle. But if a
-    // WIRE FIELD TYPE is declared in the Msg module (`needed_siblings`), `Shared`
-    // genuinely needs it and re-imports it with `exposing (..)` — an unavoidable
-    // cycle. Refuse with a precise message rather than emit a tree that won't
-    // compile.
-    if let (Some(mm_name), true) = (msg_module_name.as_deref(), msg_module.is_some()) {
-        if needed_siblings.contains(mm_name) {
-            return Err(format!(
-                "cannot auto-split: the `Msg` union is declared in module `{mm_name}`, which ALSO declares a type/codec the generated wire (`Shared`) imports — injecting the `Applied<Msg>` RPC variants there needs `import Shared`, forming an import cycle (E1010). Move `Msg` into its own module that declares no wire-referenced type (split `{mm_name}` into `Msg` + the wire types), or keep `Msg` in the entry module. (Refusing rather than emitting a cyclic frontend.)"
-            ));
-        }
-    }
+    // (The GAP-A cycle guard that used to refuse here — "Move `Msg` into its own
+    // module" — is DELETED. The co-located `Msg` + wire-types shape now resolves
+    // by MOVING the wire declarations into `Shared` (copy_mods, above) so `Shared`
+    // never imports the Msg module: there is no cycle left to guard. The one
+    // genuinely-unavoidable residual — a NOMINAL union the Msg module must keep
+    // for its `exposing (..)` consumers yet `Shared` must own — is refused at the
+    // copy site, where the union is identified precisely.)
 
     // ---- copy the sibling project modules (§17) ----
     // PURE modules go into BOTH trees verbatim (with the `Applied<Msg>` inject /
@@ -1573,7 +1632,13 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         let text = mparse.syntax().text().to_string();
         write(&format!("backend/src/{rel}"), &text, &mut files)?;
         let frontend_text = if Some(*m) == msg_module {
-            inject_applied_variants_into_module(&mparse.tree(), &text, &server)
+            // The pure Msg module KEEPS its copied wire decls (its `exposing (..)`
+            // consumers read them from here), so `strips_self = false`: it imports
+            // `Shared` only for the generated `Applied<Msg>` payload types.
+            let ms_name = db.module_name(*m).to_string();
+            let ms_expose =
+                shared_expose_clause(&text, &ms_name, &copied_name_source, &generated, false);
+            inject_applied_variants_into_module(&mparse.tree(), &text, &server, &ms_expose)
         } else if strip_init_cmd && !init_in_entry && *m == init_mod {
             // GAP-2: the sibling that declares `init` reads through a
             // backend-only `db` CAF. Copied verbatim it would leave
@@ -1603,6 +1668,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             let tainted_here = tainted_by_module.get(&mname).unwrap_or(&empty);
             let regen_here = *m == update_module && !update_in_entry;
             let inject_here = Some(*m) == msg_module;
+            // A tainted subset STRIPS its own copied decls, so it re-reads them
+            // from `Shared` (`strips_self = true`); a copied name it still gets
+            // from another module's surviving `exposing (..)` is excluded.
+            let sub_expose =
+                shared_expose_clause(&text, &mname, &copied_name_source, &generated, true);
             let subset = render_module_client_subset(
                 &mparse.tree(),
                 &text,
@@ -1612,6 +1682,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &server_ctors,
                 regen_here,
                 inject_here,
+                &sub_expose,
                 &msg_param,
                 &model_param,
                 &update_anno,
@@ -2393,6 +2464,98 @@ fn shared_import_lines(
     out
 }
 
+/// The GENERATED wire names `Shared` publishes for each server branch: the
+/// per-branch `<Msg>Req` / `<Msg>Resp` records and their codecs. Every module
+/// that consumes the wire (the entry's regenerated `update`, a sibling `update`,
+/// the injected `Applied<Msg>` variants) references a subset of these, so they
+/// are ALWAYS in a consumer's `import Shared exposing (…)` list — unlike the
+/// COPIED user types, which a consumer may already read from their origin module.
+fn generated_wire_names(server: &[(String, BranchIo)]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (name, _) in server {
+        out.push(format!("{name}Req"));
+        out.push(format!("{}ReqCodec", lower_first(name)));
+        out.push(format!("{name}Resp"));
+        out.push(format!("{}RespCodec", lower_first(name)));
+    }
+    out
+}
+
+/// True when `src` imports module `module_name` with an `exposing (..)` clause —
+/// i.e. every name that module exports is in unqualified scope here. Used to
+/// decide whether a copied name is still reachable from its origin in a consumer
+/// (so it must NOT also be imported from `Shared`, which would be an ambiguous
+/// double-import). An explicit `exposing (Foo)` import does NOT count: the split
+/// strips copied names out of explicit lists, so the name is no longer reachable
+/// through it.
+fn imports_module_exposing_all(src: &str, module_name: &str) -> bool {
+    for line in src.lines() {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix("import ") else {
+            continue;
+        };
+        if rest.split_whitespace().next() != Some(module_name) {
+            continue;
+        }
+        if let Some(open) = rest.find("exposing") {
+            let after = &rest[open + "exposing".len()..];
+            if let Some(lp) = after.find('(') {
+                let inner = &after[lp + 1..];
+                if let Some(rp) = inner.find(')') {
+                    if inner[..rp].trim() == ".." {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// The `import Shared exposing (…)` clause a consumer module needs.
+///
+/// `Shared` publishes BOTH the generated wire names (always needed by a consumer
+/// that touches the wire) AND copies of user types the wire references. A copied
+/// name must be imported from `Shared` ONLY when the consumer has otherwise LOST
+/// it, never when it still reads it from the type's origin module — importing the
+/// same structural type from two places is an ambiguous double-import.
+///
+///   * A name whose origin is THIS module: needed iff `strips_self` (the entry /
+///     a tainted subset strips its own copied decls, so it re-reads them from
+///     `Shared`; the pure Msg module KEEPS its decls, so it does not).
+///   * A name from another origin: needed iff this module does NOT still import
+///     that origin via `exposing (..)` (an explicit import of the name was
+///     stripped, so it is gone; a surviving `exposing (..)` still provides it).
+///
+/// Falls back to `exposing (..)` only when the resulting list is empty (a
+/// server-less app whose `Shared` exports nothing), which is a valid header.
+fn shared_expose_clause(
+    module_src: &str,
+    self_name: &str,
+    copied_name_source: &BTreeMap<String, String>,
+    generated: &[String],
+    strips_self: bool,
+) -> String {
+    let mut names: Vec<String> = generated.to_vec();
+    for (n, origin) in copied_name_source {
+        let needed = if origin == self_name {
+            strips_self
+        } else {
+            !imports_module_exposing_all(module_src, origin)
+        };
+        if needed {
+            names.push(n.clone());
+        }
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    names.retain(|n| seen.insert(n.clone()));
+    if names.is_empty() {
+        "import Shared exposing (..)".to_string()
+    } else {
+        format!("import Shared exposing ({})", names.join(", "))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Backend generation — copy the app verbatim, swap `main`, append handlers.
 // ---------------------------------------------------------------------------
@@ -2903,6 +3066,9 @@ fn gen_backend(
     server: &[(String, BranchIo)],
     model_fields: &[ModelFieldTy],
     copied_names: &HashSet<String>,
+    // The `import Shared exposing (…)` clause for the entry (an explicit list that
+    // excludes copied names still reachable via a surviving `exposing (..)`).
+    shared_expose: &str,
     push_mode: bool,
     broker_url: Option<&str>,
     ssr_route_patterns: &[String],
@@ -3049,7 +3215,7 @@ fn gen_backend(
         add(imports, &mut import_lines, "Sky.Core.Maybe", "import Sky.Core.Maybe as Maybe");
         add(imports, &mut import_lines, "Sky.Http.Server.Stream", "import Sky.Http.Server.Stream as Stream exposing (StreamWriter)");
     }
-    import_lines.push("import Shared exposing (..)".to_string());
+    import_lines.push(shared_expose.to_string());
 
     // All decls except `main` (both its annotation and value), verbatim —
     // MINUS the types/codecs copied into Shared (they arrive via `import Shared
@@ -3539,6 +3705,8 @@ fn gen_frontend(
     _client_names: &[String],
     tainted: &[String],
     copied_names: &HashSet<String>,
+    // The `import Shared exposing (…)` clause for the entry (see gen_backend).
+    shared_expose: &str,
     msg_param: &str,
     model_param: &str,
     update_anno: &str,
@@ -3575,7 +3743,7 @@ fn gen_frontend(
     if !has_module(imports, "Sky.Core.Error") {
         import_lines.push("import Sky.Core.Error as Error exposing (Error)".to_string());
     }
-    import_lines.push("import Shared exposing (..)".to_string());
+    import_lines.push(shared_expose.to_string());
 
     let server_ctors: Vec<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
@@ -3873,6 +4041,10 @@ fn render_module_client_subset(
     regen_update: bool,
     // This module declares the `Msg` union (inject the Applied<Msg> variants).
     inject_msg: bool,
+    // The `import Shared exposing (…)` clause this subset needs (generated wire
+    // names + any copied name it stripped from its own decls, minus names it
+    // still reads from a surviving `exposing (..)` origin).
+    shared_expose: &str,
     msg_param: &str,
     model_param: &str,
     update_anno: &str,
@@ -3960,7 +4132,7 @@ fn render_module_client_subset(
     // type/codec was stripped from it (its surviving defs now read that name from
     // `Shared`).
     let out = if regen_update || inject_msg || stripped_copied {
-        ensure_import_present(&out, "Shared", "import Shared exposing (..)")
+        ensure_import_present(&out, "Shared", shared_expose)
     } else {
         out
     };
@@ -4035,6 +4207,11 @@ fn inject_applied_variants_into_module(
     mfile: &SourceFile,
     msrc: &str,
     server: &[(String, BranchIo)],
+    // The `import Shared exposing (…)` clause this module needs — the generated
+    // `Applied<Msg>` payload types. The module KEEPS its own wire decls, so the
+    // copied names are NOT re-imported (that would shadow / clash with the local
+    // declarations that its `exposing (..)` consumers rely on).
+    shared_expose: &str,
 ) -> String {
     if server.is_empty() {
         return msrc.to_string();
@@ -4062,7 +4239,7 @@ fn inject_applied_variants_into_module(
     out.push_str(&msrc[..end]);
     out.push_str(&variants);
     out.push_str(&msrc[end..]);
-    let out = ensure_import_present(&out, "Shared", "import Shared exposing (..)");
+    let out = ensure_import_present(&out, "Shared", shared_expose);
     ensure_import_present(&out, "Sky.Core.Error", "import Sky.Core.Error exposing (Error)")
 }
 
