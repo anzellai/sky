@@ -1,0 +1,99 @@
+module Main exposing (main)
+
+-- Auto-split INPUT reproducing the darraghstudio `OrderFinalized (Result Error
+-- CheckoutResult)` failure: a server-result Msg carries a PLAIN RECORD with
+-- MIXED fields (String, Int, Maybe, List, and a nested record). The app declares
+-- NO `Codec` for `Receipt` / `Address`, so the split must AUTO-DERIVE one:
+-- `blankReceipt_ : Receipt` + `autoReceiptCodec_ = Codec.auto blankReceipt_`,
+-- copying `Receipt` (and the nested `Address`) into `Shared`. Before the fix the
+-- record field solved to a structural row and failed as `no codec ... of type any`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+type alias Address =
+    { line1 : String
+    , city : String
+    }
+
+type alias Receipt =
+    { orderId : String
+    , amountMinor : Int
+    , note : Maybe String
+    , tags : List String
+    , address : Address
+    }
+
+type alias Model =
+    { status : String
+    , draft : String
+    }
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "", draft = "" }, Cmd.none )
+
+type Msg
+    = Draft String
+    | Finalized (Result Error Receipt)
+
+
+render : Result Error Receipt -> String
+render outcome =
+    case outcome of
+
+        Ok r ->
+            "ok: " ++ r.orderId ++ " " ++ r.address.city
+
+        Err _ ->
+            "failed"
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Draft s ->
+            -- PURE -> client.
+            ( { model | draft = s }, Cmd.none )
+
+        Finalized result ->
+            -- SERVER: persists the outcome via a File effect, so this branch is
+            -- server-tainted; `result : Result Error Receipt` is its RPC field,
+            -- which the generator must wire with `Codec.result Codec.error
+            -- autoReceiptCodec_` — the record codec AUTO-DERIVED for `Receipt`.
+            let
+                _ = Task.run (File.writeFile "audit.txt" (render result))
+            in
+                ( { model | status = render result }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column [ Ui.spacing 8 ] [ Ui.text ("status: " ++ model.status) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

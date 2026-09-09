@@ -91,6 +91,50 @@ struct ResolvedCodec {
     surface: String,
 }
 
+/// The default-value CLASS of one declared record field, precomputed from the
+/// project's CST (§14 #2, option B). It drives the synthesised nominal blank
+/// (`blank<N>_ : <N>`) that seeds an auto-derived `Codec.auto` codec: every kind
+/// here has a sound zero-value; anything else is [`FieldKind::Unsupported`] and
+/// forces the fallback error (option A — "declare a top-level `Codec <T>`").
+enum FieldKind {
+    Str,
+    Int,
+    Float,
+    Bool,
+    /// `List _` → `[]` (element type is coerced by the top-level annotation).
+    ListLike,
+    /// `Maybe _` → `Nothing`.
+    MaybeLike,
+    /// A nested project RECORD → recurse an inline `{ … }` blank.
+    Record(String),
+    /// A project data union / enum → its FIRST nullary constructor (or the
+    /// fallback error when the union has no nullary constructor).
+    Union(String),
+    /// Any shape with no synthesisable default (a function, a tuple, `Result`,
+    /// `Dict`, `Secret`, `Set`, `Decimal`, an anonymous inline record, …). Carries
+    /// the surface rendering for the actionable error.
+    Unsupported(String),
+}
+
+/// Structural facts about the project's own type declarations, read once from the
+/// CST, that let the codec resolver AUTO-DERIVE a record codec (§14 #2, option B):
+///   * recover a nominal record NAME from a structural `ty::Ty::Record` (the
+///     solver expands a record alias to an un-named row) by matching its field
+///     SET, and
+///   * synthesise a sound nominal blank for `Codec.auto` from the record's
+///     declared fields, recursing into nested records and defaulting a union
+///     field to its first nullary constructor.
+struct ProjectShapes {
+    /// Nominal record name → its declared fields (source order) + default class.
+    records: HashMap<String, Vec<(String, FieldKind)>>,
+    /// Field-NAME set → the unique nominal record with exactly those fields. A
+    /// set shared by two records is AMBIGUOUS and omitted (recovery then fails
+    /// closed to the actionable error rather than guess).
+    record_by_fields: HashMap<BTreeSet<String>, String>,
+    /// Union name → its constructors `(name, is_nullary)` in declared order.
+    unions: HashMap<String, Vec<(String, bool)>>,
+}
+
 /// Resolves the `Std.Codec` expression for a field type, accumulating which user
 /// codec bindings must be copied into `Shared`. Priority (§14 #2):
 ///   (a) a project `Codec <T>` binding whose T matches   → reference + copy it
@@ -100,15 +144,28 @@ struct ResolvedCodec {
 ///       placeholder codec that will not compile).
 struct CodecResolver<'a> {
     registry: &'a [CodecBinding],
+    /// The project's record + union shapes — the raw material for auto-derive.
+    shapes: &'a ProjectShapes,
     /// Names of user codec bindings referenced (→ copied into `Shared`).
     needed: BTreeSet<String>,
+    /// Record names the resolver AUTO-DERIVED a `Codec.auto` codec for → the
+    /// synthesised nominal blank RECORD literal body. Rendered into `Shared` as
+    /// `blank<N>_ : <N>` + `auto<N>Codec_ = Codec.auto blank<N>_`; the names are
+    /// also fed into the type-copy seed so `<N>` reaches `Shared`.
+    auto_records: BTreeMap<String, String>,
+    /// The records currently being blank-synthesised — the recursion guard for a
+    /// self-referential record (`{ next : Node }`), which has no finite blank.
+    synth_stack: Vec<String>,
 }
 
 impl<'a> CodecResolver<'a> {
-    fn new(registry: &'a [CodecBinding]) -> Self {
+    fn new(registry: &'a [CodecBinding], shapes: &'a ProjectShapes) -> Self {
         CodecResolver {
             registry,
+            shapes,
             needed: BTreeSet::new(),
+            auto_records: BTreeMap::new(),
+            synth_stack: Vec::new(),
         }
     }
 
@@ -183,13 +240,157 @@ impl<'a> CodecResolver<'a> {
                     });
                 }
             }
+            // (b''') A NOMINAL that resolves to a project RECORD declaration
+            // (`ty::Ty::App(name, [])` the solver left un-expanded) — auto-derive
+            // a `Codec.auto` codec for it (§14 #2, option B).
+            if args.is_empty() && self.shapes.records.contains_key(tail) {
+                return self.auto_derive_record(tail.to_string());
+            }
+            // A bare data-carrying / enum UNION cannot cross the wire under
+            // `Codec.auto`: `codecAutoDecodeVal` has NO rebuild path for a
+            // top-level union (only the struct-FIELD path decodes an ADT), so
+            // fail closed with the actionable "declare a Codec" instruction
+            // (option A). A union nested INSIDE a record is fine — that path is
+            // reached via the record blank, not here.
+            if self.shapes.unions.contains_key(tail) {
+                return Err(bare_union_no_codec_msg(tail, &render_ty(t)));
+            }
+        }
+        // (b'''') A STRUCTURAL record — the common case, because the solver
+        // expands a record alias to an un-named `ty::Ty::Record` row. Recover the
+        // nominal name by matching the field SET, then auto-derive `Codec.auto`.
+        if let ty::Ty::Record(fields, _) = t {
+            let set: BTreeSet<String> =
+                fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+            if let Some(name) = self.shapes.record_by_fields.get(&set).cloned() {
+                return self.auto_derive_record(name);
+            }
+            // A record whose nominal name we cannot recover (an anonymous inline
+            // record, or a field-set shared by two named records) — fail closed
+            // with the actionable instruction rather than guess.
+            let shown: Vec<String> = set.into_iter().collect();
+            return Err(format!(
+                "no codec for an anonymous record `{{ {} }}` — `Codec.auto` needs a named type. Give it a top-level `type alias` and a `Codec <T>` binding in the project (spa-split copies it into Shared).",
+                shown.join(", ")
+            ));
         }
         // (d) No codec — fail closed with an actionable message.
         Err(format!(
-            "no codec for a field of type `{0}` — define a top-level `Codec {0}` binding in the project (spa-split copies it into Shared) or reduce the field to `List`/`Maybe`/`Int`/`String`/`Bool`/`Float`",
+            "no codec for a field of type `{0}` — define a top-level `Codec {0}` binding in the project (spa-split copies it into Shared) or reduce the field to a record / `List` / `Maybe` / `Int` / `String` / `Bool` / `Float`",
             render_ty(t)
         ))
     }
+
+    /// Record that record `name` needs an auto-derived `Codec.auto` codec, and
+    /// return the reference to emit (`auto<N>Codec_`) + the nominal surface. The
+    /// synthesised nominal blank (`blank<N>_ : <N>`) is built once and cached in
+    /// [`CodecResolver::auto_records`]; a self-referential record is refused
+    /// (fail closed) rather than looped.
+    fn auto_derive_record(&mut self, name: String) -> Result<ResolvedCodec, String> {
+        if !self.auto_records.contains_key(&name) {
+            let body = self.synth_blank_literal(&name)?;
+            self.auto_records.insert(name.clone(), body);
+        }
+        Ok(ResolvedCodec {
+            codec: format!("auto{name}Codec_"),
+            surface: name,
+        })
+    }
+
+    /// Synthesise the sound blank RECORD literal for a named project record —
+    /// `{ f1 = <default>, … }`. Recurses into nested records (an inline blank,
+    /// its element types coerced by the enclosing top-level annotation) and
+    /// defaults a union field to its first nullary constructor. Fails closed if
+    /// any field has no synthesisable default, or on a self-referential record.
+    fn synth_blank_literal(&mut self, name: &str) -> Result<String, String> {
+        if self.synth_stack.iter().any(|n| n == name) || self.synth_stack.len() > 32 {
+            return Err(format!(
+                "no auto-derivable codec for the self-referential record `{name}` — `Codec.auto` needs a finite blank. Define a top-level `Codec {name}` binding in the project (spa-split copies it into Shared)."
+            ));
+        }
+        // `self.shapes` is a `&'a ProjectShapes` that outlives this `&mut self`
+        // call, so copying the reference out lets the recursive
+        // `default_for_kind(&mut self, …)` run while we read the field list.
+        let shapes: &'a ProjectShapes = self.shapes;
+        let fields = shapes.records.get(name).ok_or_else(|| {
+            format!("no codec for `{name}` — it is not a project record type; define a top-level `Codec {name}` binding in the project.")
+        })?;
+        if fields.is_empty() {
+            return Ok("{}".to_string());
+        }
+        self.synth_stack.push(name.to_string());
+        let mut parts: Vec<String> = Vec::with_capacity(fields.len());
+        for (fname, kind) in fields {
+            let default = self.default_for_kind(kind, name, fname)?;
+            parts.push(format!("{fname} = {default}"));
+        }
+        self.synth_stack.pop();
+        Ok(render_record_literal(&parts))
+    }
+
+    /// The default expression for one field kind (`String` → `""`, a nested
+    /// record → an inline blank, a union → its first nullary constructor).
+    fn default_for_kind(
+        &mut self,
+        kind: &FieldKind,
+        owner: &str,
+        field: &str,
+    ) -> Result<String, String> {
+        Ok(match kind {
+            FieldKind::Str => "\"\"".to_string(),
+            FieldKind::Int => "0".to_string(),
+            FieldKind::Float => "0.0".to_string(),
+            FieldKind::Bool => "False".to_string(),
+            FieldKind::ListLike => "[]".to_string(),
+            FieldKind::MaybeLike => "Nothing".to_string(),
+            FieldKind::Record(inner) => self.synth_blank_literal(inner)?,
+            FieldKind::Union(u) => {
+                let ctor = self
+                    .shapes
+                    .unions
+                    .get(u)
+                    .and_then(|cs| cs.iter().find(|(_, nullary)| *nullary))
+                    .map(|(n, _)| n.clone());
+                match ctor {
+                    Some(c) => c,
+                    None => {
+                        return Err(format!(
+                            "no auto-derivable blank for field `{field}` of `{owner}`: its type `{u}` is a union with no nullary constructor, so there is no default value. Define a top-level `Codec {owner}` binding in the project (spa-split copies it into Shared)."
+                        ))
+                    }
+                }
+            }
+            FieldKind::Unsupported(surface) => {
+                return Err(format!(
+                    "no auto-derivable blank for field `{field}` of `{owner}`: its type `{surface}` has no synthesisable default. Define a top-level `Codec {owner}` binding in the project (spa-split copies it into Shared)."
+                ))
+            }
+        })
+    }
+}
+
+/// The actionable error for a bare top-level union that `Codec.auto` cannot
+/// decode across the wire.
+fn bare_union_no_codec_msg(name: &str, surface: &str) -> String {
+    format!(
+        "no codec for a field of type `{surface}` — `Codec.auto` cannot DECODE a bare data-carrying union across the Sky.Spa wire (only a record's FIELDS decode an ADT). Define a top-level `Codec {name}` binding in the project (spa-split copies it into Shared), or carry the value inside a record."
+    )
+}
+
+/// Render a record literal from `field = value` parts, one field per line, in the
+/// `{ … , … }` layout `sky fmt` produces.
+fn render_record_literal(parts: &[String]) -> String {
+    if parts.is_empty() {
+        return "{}".to_string();
+    }
+    let mut out = String::new();
+    for (i, p) in parts.iter().enumerate() {
+        let lead = if i == 0 { "{ " } else { ", " };
+        out.push_str(&format!("{lead}{p}\n            "));
+    }
+    // Trim the trailing indentation before the closing brace.
+    let out = out.trim_end();
+    format!("{out}\n            }}")
 }
 
 /// Parenthesise a type argument if it is an application (`List Todo` → wrap;
@@ -534,10 +735,35 @@ fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> St
 /// `<Msg>Req` / `<Msg>Resp` records + codecs. `copied_decls` is the verbatim
 /// source of the copied declarations (in source order), `copied_exposing` the
 /// names to re-export for them.
+/// Render the synthesised auto-derived record codecs (§14 #2, option B): for each
+/// record `N` the resolver auto-derived, a nominally-annotated blank
+/// (`blank<N>_ : <N>`) plus `auto<N>Codec_ = Codec.auto blank<N>_`. The
+/// annotation to the NOMINAL `<N>` is REQUIRED — an inline unannotated literal
+/// types structurally with erased element types, so `Codec.auto` would reflect
+/// `kind interface` and drop nested collections on decode (the `spaModelBlank_`
+/// lesson). `<N>` itself is copied / imported into `Shared` via the type-copy
+/// seed.
+fn render_auto_codec_defs(auto_records: &BTreeMap<String, String>) -> String {
+    let mut out = String::new();
+    for (name, blank) in auto_records {
+        out.push_str(&format!(
+            "-- Auto-derived codec for the plain record `{name}` (no user `Codec {name}`).\n\
+             blank{name}_ : {name}\n\
+             blank{name}_ =\n    \
+             {blank}\n\n\n\
+             auto{name}Codec_ : Codec {name}\n\
+             auto{name}Codec_ =\n    \
+             Codec.auto blank{name}_\n\n\n"
+        ));
+    }
+    out
+}
+
 fn gen_shared(
     wires: &[Wire],
     imports: &[String],
     copied_decls: &str,
+    auto_codec_defs: &str,
     copied_exposing: &[String],
 ) -> String {
     let mut exposing: Vec<String> = copied_exposing.to_vec();
@@ -588,13 +814,18 @@ fn gen_shared(
             copied_decls.trim_end()
         )
     };
+    let auto_block = if auto_codec_defs.trim().is_empty() {
+        String::new()
+    } else {
+        format!("{}\n\n\n", auto_codec_defs.trim_end())
+    };
     format!(
         "-- | Shared — the ONE RPC wire contract compiled into BOTH the Sky.Spa wasm\n\
          -- client and the native Sky.Http.Server backend. Generated by `sky spa-split`.\n\
          -- One type, one codec, one wire shape: change a field and BOTH stop compiling.\n\
          {module_header}\n\n\
          {import_block}\n\n\n\
-         {copied_block}{bodies}"
+         {copied_block}{auto_block}{bodies}"
     )
     .trim_end()
     .to_string()
@@ -959,12 +1190,16 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     codec_scan_mods.extend(pure_sibling_mods.iter().copied());
     codec_scan_mods.extend(tainted_mods.iter().copied());
     let registry = build_codec_registry(&db, &codec_scan_mods);
-    let mut resolver = CodecResolver::new(&registry);
+    let shapes = build_project_shapes(&db, &codec_scan_mods);
+    let mut resolver = CodecResolver::new(&registry, &shapes);
     let mut wires: Vec<Wire> = Vec::new();
     for (name, io) in &server {
         let args = server_args.get(name).cloned().unwrap_or_default();
         wires.push(build_wire(name, io, &args, &report.model_fields, &mut resolver)?);
     }
+    // The synthesised blank + `Codec.auto` bodies for every auto-derived record,
+    // rendered once here and emitted into `Shared` after the copied types.
+    let auto_codec_defs = render_auto_codec_defs(&resolver.auto_records);
 
     // The nominal type names the wire field types drag in (the type-copy seed).
     let mut seed_ty: BTreeSet<String> = BTreeSet::new();
@@ -974,6 +1209,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 collect_ty_names(t, &mut seed_ty);
             }
         }
+    }
+    // An auto-derived record is often a STRUCTURAL row in the wire field's solved
+    // type (a record alias the solver expanded), so its nominal name never
+    // appears in `collect_ty_names`. Seed each explicitly so `<N>` — and, via the
+    // transitive type-copy closure, every nested type it mentions — reaches
+    // `Shared`.
+    for n in resolver.auto_records.keys() {
+        seed_ty.insert(n.clone());
     }
 
     // ---- copy-vs-import: which modules feed `Shared` by COPY (§14 #2) ----
@@ -1219,7 +1462,13 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     };
 
     // ---- write the three trees ----
-    let shared_src = gen_shared(&wires, &shared_imports, &copied_decls, &copied_exposing);
+    let shared_src = gen_shared(
+        &wires,
+        &shared_imports,
+        &copied_decls,
+        &auto_codec_defs,
+        &copied_exposing,
+    );
     let push_mode = report.subscribes_topics || report.publishes;
     let broker_url = broker_url.map(str::trim).filter(|s| !s.is_empty());
     if push_mode {
@@ -1659,6 +1908,180 @@ fn propagate_deps(project_dir: &Path, gen_dir: &Path) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 // Codec registry + copy-closure helpers (§14 #2).
 // ---------------------------------------------------------------------------
+
+/// Read the project's record + union declarations from `mods` into a
+/// [`ProjectShapes`] — the raw material the codec resolver uses to AUTO-DERIVE a
+/// record codec (§14 #2, option B). Reads the CST only (no lowering), so a record
+/// alias's field kinds and a union's constructors are recovered without touching
+/// the type solver.
+fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId]) -> ProjectShapes {
+    use syntax::ast::Decl;
+    // Pass 1: collect the raw field lists (name + head-con + surface) and the
+    // union constructor tables, plus the record/union NAME sets.
+    let mut raw_records: Vec<(String, Vec<(String, Option<String>, String)>)> = Vec::new();
+    let mut record_names: HashSet<String> = HashSet::new();
+    let mut union_names: HashSet<String> = HashSet::new();
+    let mut unions: HashMap<String, Vec<(String, bool)>> = HashMap::new();
+    for &mid in mods {
+        let parse = db.module_parse(mid);
+        let file = parse.tree();
+        let src = parse.syntax().text().to_string();
+        for d in file.decls() {
+            match d {
+                Decl::Alias(a) => {
+                    let Some(name) = a.name().map(|n| n.text().to_string()) else {
+                        continue;
+                    };
+                    let Some(fields) = record_alias_fields(&a, &src) else {
+                        continue; // not a record alias (e.g. `type alias Id = Int`)
+                    };
+                    record_names.insert(name.clone());
+                    raw_records.push((name, fields));
+                }
+                Decl::Union(u) => {
+                    let Some(name) = u.name().map(|n| n.text().to_string()) else {
+                        continue;
+                    };
+                    let ctors: Vec<(String, bool)> = u
+                        .variants()
+                        .iter()
+                        .filter_map(|v| {
+                            let cn = v.name()?.text().to_string();
+                            let nullary = v
+                                .syntax()
+                                .children()
+                                .filter_map(syntax::ast::Type::cast)
+                                .next()
+                                .is_none();
+                            Some((cn, nullary))
+                        })
+                        .collect();
+                    union_names.insert(name.clone());
+                    unions.insert(name, ctors);
+                }
+                _ => {}
+            }
+        }
+    }
+    // Pass 2: classify each record field now that every record/union name is
+    // known, and build the field-SET → unique-name index (dropping any set
+    // shared by two records — an ambiguous match must fail closed, not guess).
+    let mut records: HashMap<String, Vec<(String, FieldKind)>> = HashMap::new();
+    let mut by_fields_multi: HashMap<BTreeSet<String>, Vec<String>> = HashMap::new();
+    for (name, raw) in raw_records {
+        let set: BTreeSet<String> = raw.iter().map(|(f, _, _)| f.clone()).collect();
+        by_fields_multi.entry(set).or_default().push(name.clone());
+        let classified: Vec<(String, FieldKind)> = raw
+            .into_iter()
+            .map(|(f, head, surface)| {
+                (f, classify_field_kind(head.as_deref(), &surface, &record_names, &union_names))
+            })
+            .collect();
+        records.insert(name, classified);
+    }
+    let record_by_fields: HashMap<BTreeSet<String>, String> = by_fields_multi
+        .into_iter()
+        .filter_map(|(set, names)| {
+            if names.len() == 1 {
+                Some((set, names.into_iter().next().unwrap()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    ProjectShapes {
+        records,
+        record_by_fields,
+        unions,
+    }
+}
+
+/// The declared fields of a record-alias `type alias N = { … }` — each as
+/// `(field-name, head-constructor, surface-text)`. `None` when the alias body is
+/// not a record (a `List`/function/primitive alias).
+fn record_alias_fields(
+    a: &syntax::ast::AliasDecl,
+    src: &str,
+) -> Option<Vec<(String, Option<String>, String)>> {
+    let mut ty = a.ty()?;
+    while let syntax::ast::Type::Paren(p) = &ty {
+        ty = p.syntax().children().find_map(syntax::ast::Type::cast)?;
+    }
+    let rec = match ty {
+        syntax::ast::Type::Record(r) => r,
+        _ => return None,
+    };
+    let mut out: Vec<(String, Option<String>, String)> = Vec::new();
+    for f in rec
+        .syntax()
+        .children()
+        .filter(|c| c.kind() == SyntaxKind::TypeRecordField)
+    {
+        let Some(fname) = f
+            .children_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|t| t.kind() == SyntaxKind::LowerIdent)
+            .map(|t| t.text().to_string())
+        else {
+            continue;
+        };
+        let fty = f.children().find_map(syntax::ast::Type::cast);
+        let head = fty.as_ref().and_then(type_head_name);
+        let surface = fty
+            .as_ref()
+            .map(|t| slice(src, t.syntax()).trim().to_string())
+            .unwrap_or_else(|| "?".to_string());
+        out.push((fname, head, surface));
+    }
+    Some(out)
+}
+
+/// The head (outermost) constructor NAME of a CST type, tail-normalised
+/// (`List Todo` → `List`, `Maybe (List X)` → `Maybe`, `Types.Foo` → `Foo`).
+/// `None` for a function / tuple / var / unit / inline-record head.
+fn type_head_name(t: &syntax::ast::Type) -> Option<String> {
+    use syntax::ast::Type;
+    match t {
+        Type::App(a) => a
+            .syntax()
+            .children()
+            .find_map(Type::cast)
+            .and_then(|inner| type_head_name(&inner)),
+        Type::Paren(p) => p
+            .syntax()
+            .children()
+            .find_map(Type::cast)
+            .and_then(|inner| type_head_name(&inner)),
+        Type::Con(_) | Type::Qual(_) => t
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|tok| tok.kind() == SyntaxKind::UpperIdent)
+            .last()
+            .map(|tok| tok.text().to_string()),
+        _ => None,
+    }
+}
+
+/// Classify one record field's declared type into its blank default class.
+fn classify_field_kind(
+    head: Option<&str>,
+    surface: &str,
+    records: &HashSet<String>,
+    unions: &HashSet<String>,
+) -> FieldKind {
+    match head {
+        Some("String") => FieldKind::Str,
+        Some("Int") => FieldKind::Int,
+        Some("Float") => FieldKind::Float,
+        Some("Bool") => FieldKind::Bool,
+        Some("List") => FieldKind::ListLike,
+        Some("Maybe") => FieldKind::MaybeLike,
+        Some(h) if records.contains(h) => FieldKind::Record(h.to_string()),
+        Some(h) if unions.contains(h) => FieldKind::Union(h.to_string()),
+        _ => FieldKind::Unsupported(surface.to_string()),
+    }
+}
 
 /// Scan `mods` (the entry module + every PURE sibling project module) for the
 /// project's own zero-arg `Codec <T>` bindings. Each binding records the module

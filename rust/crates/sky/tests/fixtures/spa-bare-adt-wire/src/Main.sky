@@ -1,0 +1,85 @@
+module Main exposing (main)
+
+-- NEGATIVE auto-split INPUT: a server branch whose payload is a BARE top-level
+-- data-carrying union (`Outcome`). `Codec.auto` cannot DECODE a bare ADT (only a
+-- record's fields decode an ADT), so the split must FAIL CLOSED with the
+-- actionable "declare a top-level `Codec Outcome`" error — never emit a broken
+-- codec. (A union nested inside a RECORD would be fine; a bare one is not.)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+type Outcome
+    = Approved String
+    | Declined Int
+
+type alias Model =
+    { status : String
+    , draft : String
+    }
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "", draft = "" }, Cmd.none )
+
+type Msg
+    = Draft String
+    | Settle Outcome
+
+
+render : Outcome -> String
+render o =
+    case o of
+
+        Approved code ->
+            "approved: " ++ code
+
+        Declined n ->
+            "declined: " ++ String.fromInt n
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Draft s ->
+            ( { model | draft = s }, Cmd.none )
+
+        Settle outcome ->
+            -- SERVER: persists via a File effect, so `outcome : Outcome` becomes a
+            -- bare-ADT RPC field the generator cannot auto-derive.
+            let
+                _ = Task.run (File.writeFile "audit.txt" (render outcome))
+            in
+                ( { model | status = render outcome }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column [ Ui.spacing 8 ] [ Ui.text ("status: " ++ model.status) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

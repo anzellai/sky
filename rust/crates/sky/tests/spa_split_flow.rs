@@ -68,6 +68,16 @@ fn error_wire_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-error-wire/src/Main.sky")
 }
 
+fn auto_record_codec_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-auto-record-codec/src/Main.sky")
+}
+
+fn bare_adt_wire_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-bare-adt-wire/src/Main.sky")
+}
+
 fn ssr_multimodule_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-multimodule")
 }
@@ -952,6 +962,144 @@ fn wires_a_result_error_payload_through_the_stdlib_error_codec() {
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "error-wire frontend must build to wasm");
     assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A plain RECORD payload crosses the Sky.Spa wire with NO hand-written codec:
+/// the split AUTO-DERIVES one (§14 #2, option B). The fixture reproduces
+/// darraghstudio's `OrderFinalized (Result Error CheckoutResult)` — a
+/// server-result Msg carries a `Result Error Receipt` where `Receipt` is a plain
+/// record with MIXED fields (String, Int, `Maybe`, `List`, and a NESTED record
+/// `Address`). Before the fix the record solved to a structural row and the split
+/// failed with `no codec for a field of type any`. The fix synthesises a
+/// nominally-annotated blank + `Codec.auto` and copies `Receipt` + `Address` into
+/// `Shared`; the `Codec.auto` codec ROUND-TRIPS (the SSR model embed relies on
+/// the same property), which the build legs prove end-to-end.
+#[test]
+fn auto_derives_a_record_codec_for_a_plain_record_wire_field() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let output = Command::new(SKY)
+        .args([
+            "spa-split",
+            auto_record_codec_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        output.status.success(),
+        "sky spa-split must SUCCEED by AUTO-DERIVING a `Codec.auto` codec for the plain record `Receipt` (was: `no codec for a field of type any`), got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+
+    // --- The nominally-annotated blank + auto codec are synthesised. ---
+    assert!(
+        shared.contains("blankReceipt_ : Receipt"),
+        "Shared must synthesise a NOMINALLY-annotated blank `blankReceipt_ : Receipt` (an inline unannotated literal erases element types):\n{shared}"
+    );
+    assert!(
+        shared.contains("autoReceiptCodec_ =")
+            && shared.contains("Codec.auto blankReceipt_"),
+        "Shared must derive `autoReceiptCodec_ = Codec.auto blankReceipt_`:\n{shared}"
+    );
+    // --- The record (and its NESTED record) are copied into Shared. ---
+    assert!(
+        shared.contains("type alias Receipt =") && shared.contains("type alias Address ="),
+        "Shared must COPY `Receipt` AND the nested `Address` it references:\n{shared}"
+    );
+    // --- The wire field wires through the derived codec (wrapped by Result). ---
+    assert!(
+        shared.contains("(Codec.result Codec.error autoReceiptCodec_)"),
+        "the `Result Error Receipt` field must wire `Codec.result Codec.error autoReceiptCodec_`:\n{shared}"
+    );
+    // --- The mixed field defaults are sound (String/Int/Maybe/List/nested). ---
+    for needle in ["orderId = \"\"", "amountMinor = 0", "note = Nothing", "tags = []"] {
+        assert!(
+            shared.contains(needle),
+            "blankReceipt_ must default `{needle}`:\n{shared}"
+        );
+    }
+    // --- The Secret/Set fail-closed refusal is NOT falsely tripped here. ---
+    assert!(
+        !shared.contains("Secret") && !shared.contains("Set "),
+        "this fixture carries no Secret/Set — none should appear:\n{shared}"
+    );
+
+    // --- Both trees BUILD (Go-gated). The build IS the round-trip proof: the ---
+    // --- backend embeds the SSR model and the frontend decodes it symmetrically. ---
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.success(),
+        "auto-record-codec backend must build natively (the derived codec must type-check)"
+    );
+    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(frontend_build.success(), "auto-record-codec frontend must build to wasm");
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// The auto-derive fails CLOSED, with an actionable message, when the wire field
+/// is a BARE top-level data-carrying union. `Codec.auto` has no decode/rebuild
+/// path for a bare ADT (only a record's FIELDS decode an ADT), so the split must
+/// refuse — telling the user to declare a top-level `Codec <T>` — rather than
+/// emit a codec that will not round-trip. (A union NESTED in a record is fine.)
+#[test]
+fn refuses_a_bare_data_carrying_union_wire_field_with_an_actionable_error() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let output = Command::new(SKY)
+        .args([
+            "spa-split",
+            bare_adt_wire_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        !output.status.success(),
+        "sky spa-split must FAIL CLOSED on a bare data-carrying union wire field"
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("cannot DECODE a bare data-carrying union"),
+        "the error must explain WHY a bare ADT cannot cross the wire:\n{combined}"
+    );
+    assert!(
+        combined.contains("Define a top-level `Codec Outcome` binding"),
+        "the error must be ACTIONABLE — naming the type + the fix:\n{combined}"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }
