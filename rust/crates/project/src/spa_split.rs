@@ -141,6 +141,32 @@ impl<'a> CodecResolver<'a> {
                     surface: format!("Maybe {}", wrap_arg(&inner.surface)),
                 });
             }
+            // (b') `Result e a` from the error + value codecs. `Std.Codec.result`
+            // is a stdlib combinator (imported into Shared like `Codec.int`), so a
+            // `Result Error String` message payload (the `Cmd.perform … Sent`
+            // shape) crosses the wire with no hand-written app codec.
+            if tail == "Result" && args.len() == 2 {
+                let err = self.resolve(&args[0])?;
+                let val = self.resolve(&args[1])?;
+                return Ok(ResolvedCodec {
+                    codec: format!("(Codec.result {} {})", err.codec, val.codec),
+                    surface: format!(
+                        "Result {} {}",
+                        wrap_arg(&err.surface),
+                        wrap_arg(&val.surface)
+                    ),
+                });
+            }
+            // (b'') The stdlib `Error` type — the canonical `Std.Codec.error`
+            // codec. `Error` is a globally auto-imported kernel type, so the
+            // generated field type needs no import; `Codec.error` rides the same
+            // `import Std.Codec as Codec` the primitive codecs assume.
+            if tail == "Error" && args.is_empty() {
+                return Ok(ResolvedCodec {
+                    codec: "Codec.error".to_string(),
+                    surface: "Error".to_string(),
+                });
+            }
             // (c) JSON primitives.
             if args.is_empty() {
                 let codec = match tail {

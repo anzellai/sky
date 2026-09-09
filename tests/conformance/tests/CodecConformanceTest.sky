@@ -33,6 +33,7 @@ import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.String as String
 import Std.Codec as Codec exposing (Codec)
 import Std.Money as Money exposing (Money, Currency(..))
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..), ErrorDetails(..))
 import Sky.Test as Test exposing (Test)
 
 
@@ -206,6 +207,12 @@ roundTripStr s =
 metaString : String
 metaString =
     "he said \"hi\"\nline2\ttab \\back\\slash {a:[1,2],b:3} end,"
+
+
+-- Build an `Error` value from a kind, a message, and optional details.
+mkErr : ErrorKind -> String -> Maybe ErrorDetails -> Error
+mkErr kind msg details =
+    Error.Error kind { message = msg, details = details }
 
 
 tests : List Test
@@ -429,6 +436,39 @@ tests =
         (\_ -> Test.err (Codec.fromJsonSafe 5 Codec.string "\"this string is definitely longer than five chars\""))
     , Test.test "fromJsonSafe: under limit decodes Ok"
         (\_ -> Test.ok (Codec.fromJsonSafe 100 Codec.string "\"ok\""))
+
+    -- ── Codec.error: every ErrorKind tag round-trips (no details) ─────────
+    , Test.test "error: Io round-trips" (\_ -> roundTrip Codec.error (mkErr Io "io" Nothing))
+    , Test.test "error: Network round-trips" (\_ -> roundTrip Codec.error (mkErr Network "n" Nothing))
+    , Test.test "error: Ffi round-trips" (\_ -> roundTrip Codec.error (mkErr Ffi "f" Nothing))
+    , Test.test "error: Decode round-trips" (\_ -> roundTrip Codec.error (mkErr Decode "d" Nothing))
+    , Test.test "error: Timeout round-trips" (\_ -> roundTrip Codec.error (mkErr Timeout "t" Nothing))
+    , Test.test "error: NotFound round-trips" (\_ -> roundTrip Codec.error (mkErr NotFound "nf" Nothing))
+    , Test.test "error: PermissionDenied round-trips" (\_ -> roundTrip Codec.error (mkErr PermissionDenied "pd" Nothing))
+    , Test.test "error: InvalidInput round-trips" (\_ -> roundTrip Codec.error (mkErr InvalidInput "ii" Nothing))
+    , Test.test "error: Conflict round-trips" (\_ -> roundTrip Codec.error (mkErr Conflict "c" Nothing))
+    , Test.test "error: Unavailable round-trips" (\_ -> roundTrip Codec.error (mkErr Unavailable "u" Nothing))
+    , Test.test "error: Unexpected round-trips" (\_ -> roundTrip Codec.error (mkErr Unexpected "ux" Nothing))
+
+    -- ── Codec.error: every ErrorDetails variant round-trips ───────────────
+    , Test.test "error: FfiPanic details round-trip"
+        (\_ -> roundTrip Codec.error (mkErr Ffi "boom" (Just (FfiPanic { message = "panic", stack = [ "a", "b" ] }))))
+    , Test.test "error: TypeMismatch details round-trip"
+        (\_ -> roundTrip Codec.error (mkErr Decode "tm" (Just (TypeMismatch { expected = "Int", actual = "String" }))))
+    , Test.test "error: HttpStatus details round-trip"
+        (\_ -> roundTrip Codec.error (mkErr Network "http" (Just (HttpStatus 503))))
+    , Test.test "error: JsonDecode details round-trip"
+        (\_ -> roundTrip Codec.error (mkErr Decode "json" (Just (JsonDecode "bad path"))))
+    , Test.test "error: Custom details round-trip"
+        (\_ -> roundTrip Codec.error (mkErr Unexpected "custom" (Just (Custom "extra"))))
+
+    -- ── Codec.result: Ok / Err over Codec.error round-trip ────────────────
+    , Test.test "result: Ok String round-trips"
+        (\_ -> roundTrip (Codec.result Codec.error Codec.string) (Ok "delivered"))
+    , Test.test "result: Err Error round-trips (the Sky.Spa EmailSent wire case)"
+        (\_ -> roundTrip (Codec.result Codec.error Codec.string) (Err (mkErr Network "send failed" (Just (HttpStatus 500)))))
+    , Test.test "result: nested detail through the wire round-trips"
+        (\_ -> roundTrip (Codec.result Codec.error Codec.int) (Err (mkErr Ffi "x" (Just (FfiPanic { message = "p", stack = [] })))))
     ]
 
 

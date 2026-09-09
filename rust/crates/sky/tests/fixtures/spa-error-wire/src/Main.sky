@@ -1,0 +1,83 @@
+module Main exposing (main)
+
+-- Auto-split INPUT reproducing the darraghstudio `EmailSent (Result Error String)`
+-- failure: a Msg carries `Result Error String` and its arm runs a SERVER effect,
+-- so the payload becomes an RPC wire field of type `Result Error String`. The
+-- resolver must wire it through the stdlib `Codec.result` + `Codec.error` (an
+-- `Error` MAY cross the RPC wire by default) with NO hand-written app codec.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+type alias Model =
+    { status : String
+    , draft : String
+    }
+
+type Msg
+    = Draft String
+    | Record (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "", draft = "" }, Cmd.none )
+
+
+render : Result Error String -> String
+render outcome =
+    case outcome of
+
+        Ok receipt ->
+            "ok: " ++ receipt
+
+        Err _ ->
+            "failed"
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Draft s ->
+            -- PURE -> client.
+            ( { model | draft = s }, Cmd.none )
+
+        Record outcome ->
+            -- SERVER: persists the outcome via a File effect, so this branch is
+            -- server-tainted; `outcome : Result Error String` is its RPC request
+            -- field, which the generator must wire with `Codec.result`/`Codec.error`.
+            let
+                _ = Task.run (File.writeFile "audit.txt" (render outcome))
+            in
+                ( { model | status = render outcome }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column [ Ui.spacing 8 ] [ Ui.text ("status: " ++ model.status) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

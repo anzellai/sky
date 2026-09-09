@@ -41,6 +41,8 @@ module Std.Codec exposing
     , bool
     , maybe
     , list
+    , result
+    , error
     , map
     , object
     , field
@@ -188,6 +190,127 @@ maybe (Codec c) =
 list : Codec a -> Codec (List a)
 list (Codec c) =
     Codec { enc = E.list c.enc, dec = D.list c.dec, shp = SBlob }
+
+
+-- | Codec for a `Result e a` given codecs for the error and the value. Encodes
+-- as a tagged JSON array — `Ok x` -> `["Ok", <x>]`, `Err e` -> `["Err", <e>]` —
+-- symmetric with `taggedUnion`; stored as a JSON TEXT blob on the DB side. This
+-- lets a `Result Error String` (a common `Cmd.perform … Sent` message payload)
+-- cross a wire with no hand-written codec.
+result : Codec e -> Codec a -> Codec (Result e a)
+result (Codec ce) (Codec ca) =
+    Codec
+        { enc =
+            \r ->
+                case r of
+
+                    Ok a ->
+                        E.list identity [ E.string "Ok", ca.enc a ]
+
+                    Err e ->
+                        E.list identity [ E.string "Err", ce.enc e ]
+        , dec =
+            D.andThen
+                (\tag ->
+                    if tag == "Ok" then
+                        D.map Ok (D.index 1 ca.dec)
+
+                    else
+                        D.map Err (D.index 1 ce.dec))
+                (D.index 0 D.string)
+        , shp = SBlob
+        }
+
+
+-- | The canonical codec for the stdlib `Error` type — the ONE wire contract for
+-- an `Error` value, so a `Result Error a` (or any `Error`-carrying message) can
+-- serialise across the Sky.Spa RPC boundary out of the box. It is written by
+-- hand (not `auto`): `Error` is a data-carrying ADT, and the reflection decoder
+-- cannot rebuild a top-level data-carrying ADT, so `auto` would encode but not
+-- decode it. The hand-written arms cover every `ErrorKind` tag and every
+-- `ErrorDetails` variant, and round-trip losslessly.
+--
+-- Logging stays a server effect (`Std.Log`), so crossing the wire does not leak
+-- handling; an app controls client-side handling via `App.withRpcError`.
+error : Codec Error
+error =
+    taggedUnion
+        (\e ->
+            case e of
+
+                Error.Error kind info ->
+                    ( "Error"
+                    , [ toValue errorKindCodec kind
+                      , toValue errorInfoCodec info
+                      ]
+                    ))
+        [ var2 "Error" Error.Error errorKindCodec errorInfoCodec ]
+
+
+errorKindCodec : Codec Error.ErrorKind
+errorKindCodec =
+    enum
+        [ ( Error.Io, "Io" )
+        , ( Error.Network, "Network" )
+        , ( Error.Ffi, "Ffi" )
+        , ( Error.Decode, "Decode" )
+        , ( Error.Timeout, "Timeout" )
+        , ( Error.NotFound, "NotFound" )
+        , ( Error.PermissionDenied, "PermissionDenied" )
+        , ( Error.InvalidInput, "InvalidInput" )
+        , ( Error.Conflict, "Conflict" )
+        , ( Error.Unavailable, "Unavailable" )
+        , ( Error.Unexpected, "Unexpected" )
+        ]
+
+
+errorInfoCodec : Codec Error.ErrorInfo
+errorInfoCodec =
+    object Error.ErrorInfo |> field "message" .message string
+        |> field "details" .details (maybe errorDetailsCodec)
+        |> buildObject
+
+
+panicInfoCodec : Codec Error.PanicInfo
+panicInfoCodec =
+    object Error.PanicInfo |> field "message" .message string
+        |> field "stack" .stack (list string)
+        |> buildObject
+
+
+typeInfoCodec : Codec Error.TypeInfo
+typeInfoCodec =
+    object Error.TypeInfo |> field "expected" .expected string
+        |> field "actual" .actual string
+        |> buildObject
+
+
+errorDetailsCodec : Codec Error.ErrorDetails
+errorDetailsCodec =
+    taggedUnion
+        (\d ->
+            case d of
+
+                Error.FfiPanic p ->
+                    ( "FfiPanic", [ toValue panicInfoCodec p ] )
+
+                Error.TypeMismatch t ->
+                    ( "TypeMismatch", [ toValue typeInfoCodec t ] )
+
+                Error.HttpStatus n ->
+                    ( "HttpStatus", [ toValue int n ] )
+
+                Error.JsonDecode s ->
+                    ( "JsonDecode", [ toValue string s ] )
+
+                Error.Custom s ->
+                    ( "Custom", [ toValue string s ] ))
+        [ var1 "FfiPanic" Error.FfiPanic panicInfoCodec
+        , var1 "TypeMismatch" Error.TypeMismatch typeInfoCodec
+        , var1 "HttpStatus" Error.HttpStatus int
+        , var1 "JsonDecode" Error.JsonDecode string
+        , var1 "Custom" Error.Custom string
+        ]
 
 
 -- | Adapt a codec to another type via a bijection (`to` on decode, `from` on

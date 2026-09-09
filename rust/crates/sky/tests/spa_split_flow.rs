@@ -63,6 +63,11 @@ fn mixed_codec_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-mixed-codec/src/Main.sky")
 }
 
+fn error_wire_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-error-wire/src/Main.sky")
+}
+
 fn ssr_multimodule_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-multimodule")
 }
@@ -861,6 +866,91 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
         .status()
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "mixed-codec frontend must build to wasm");
+    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// An `Error` value MAY cross the Sky.Spa RPC wire by DEFAULT — it must
+/// serialise, not be refused. A server branch whose payload is
+/// `Result Error String` (the `Cmd.perform … Sent` shape, e.g. darraghstudio's
+/// `EmailSent (Result Error String)`) must wire through the stdlib
+/// `Codec.result` + `Codec.error` with NO hand-written app codec. Before this fix
+/// the resolver had no `Result`/`Error` arm and refused with `no codec for a
+/// field of type Result Error String`. The two-level-error concern is satisfied
+/// off-wire: logging stays a server effect (`Std.Log`) and an app controls
+/// handling via `App.withRpcError` — so the wire itself must round-trip.
+#[test]
+fn wires_a_result_error_payload_through_the_stdlib_error_codec() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            error_wire_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split must SUCCEED wiring a `Result Error String` payload (was: `no codec for a field of type Result Error String`)"
+    );
+
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let front_shared = std::fs::read_to_string(out.join("frontend/src/Shared.sky")).unwrap();
+
+    // --- Shared wires the field via the stdlib Result + Error codecs. ---
+    assert!(
+        shared.contains("outcome : Result Error String"),
+        "the RPC field keeps its `Result Error String` surface type:\n{shared}"
+    );
+    assert!(
+        shared.contains("(Codec.result Codec.error Codec.string)"),
+        "the `Result Error String` field must wire to `Codec.result Codec.error Codec.string`:\n{shared}"
+    );
+    // --- No hand-written codec was needed / copied (the stdlib provides it). ---
+    assert!(
+        !shared.contains("errorCodec") && !shared.contains("resultCodec"),
+        "no app-level Error/Result codec should be copied — Shared references the stdlib `Codec.error`/`Codec.result`:\n{shared}"
+    );
+    // --- The Secret/Set fail-closed refusal is untouched (no false refusal here). ---
+    assert!(
+        !shared.contains("Secret") && !shared.contains("Set "),
+        "the error-wire fixture carries no Secret/Set — none should appear:\n{shared}"
+    );
+
+    // --- SECURITY: no server effect leaks into the client Shared. ---
+    for needle in ["File.", "audit.txt", "Db.", "System."] {
+        assert!(
+            !front_shared.contains(needle),
+            "SECURITY LEAK: frontend/src/Shared.sky contains `{needle}`:\n{front_shared}"
+        );
+    }
+
+    // --- Both build (Go-gated). Backend native, frontend wasm. ---
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(backend_build.success(), "error-wire backend must build natively");
+    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(frontend_build.success(), "error-wire frontend must build to wasm");
     assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
 
     let _ = std::fs::remove_dir_all(&out);
