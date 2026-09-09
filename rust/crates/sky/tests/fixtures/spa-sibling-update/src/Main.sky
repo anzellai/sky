@@ -1,0 +1,50 @@
+module Main exposing (main)
+
+-- Auto-split INPUT for GAP-1: a multi-module app whose TEA `update` lives in the
+-- SIBLING module `Update`, whose `Msg` lives in a THIRD module `Msgs`, and whose
+-- domain type/codecs live in `Domain`. The entry holds only `init`/`view`/
+-- `subscriptions` and passes the imported `update` to `Spa.config`. The split
+-- must regenerate `update` in its own module (`Update`), not the entry.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Domain exposing (..)
+import State exposing (..)
+import Msgs exposing (..)
+import Update exposing (update)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { items = [], draft = "" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("items: " ++ String.fromInt (List.length model.items)) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

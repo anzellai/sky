@@ -1,0 +1,49 @@
+module Update exposing (update)
+
+-- GAP-1: the TEA `update` is factored into a SIBLING module (not the entry). It
+-- holds a PURE arm (`DraftChanged`, using the pure client helper `cleanDraft`)
+-- next to a SERVER arm (`Save`, reaching `persist` -> `Db` in the backend-only
+-- `Conn`). The auto-split must regenerate the frontend `update` IN THIS module:
+-- the pure arm runs client-local, the server arm becomes a `Spa.postJson` RPC,
+-- and the module's frontend copy carries no `Db.*`, no `persist`, no `db`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Std.Cmd as Cmd
+import Std.Db as Db
+import Domain exposing (..)
+import State exposing (..)
+import Msgs exposing (..)
+import Conn exposing (db)
+
+
+-- PURE client helper. Must survive into the frontend `Update` copy.
+cleanDraft : String -> String
+cleanDraft s =
+    String.trim s
+
+
+-- SERVER helper: a real `Db` effect, so `Save` (which reaches it) is a server
+-- branch. Backend-only; never emitted into the wasm frontend.
+persist : String -> Task Error (List Item)
+persist name =
+    Db.query db "SELECT id, name FROM items ORDER BY id" []
+        |> Task.map (\_ -> [ { id = 1, name = name } ])
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        DraftChanged s ->
+            -- PURE -> client (uses the pure helper `cleanDraft`)
+            ( { model | draft = cleanDraft s }, Cmd.none )
+
+        Save ->
+            -- SERVER: reaches `persist` -> `Db` (backend-only)
+            let
+                saved = Result.withDefault [] (Task.run (persist model.draft))
+            in
+                ( { model | items = saved, draft = "" }, Cmd.none )

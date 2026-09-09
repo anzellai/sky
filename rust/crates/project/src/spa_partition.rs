@@ -700,6 +700,13 @@ pub struct SpaPartitionReport {
     pub project: String,
     pub entry_module: String,
     pub update_name: Option<String>,
+    /// The name of the module that DECLARES `update` (`"Update"`, `"Main"`, …),
+    /// resolved cross-module via the `Spa.config` graph — the raw material the
+    /// `spa-split` generator needs to regenerate the partitioned `update` in its
+    /// OWN module copy when `update` is factored into a sibling (GAP-1), rather
+    /// than assuming it lives in the entry. `None` when `update` was not resolved
+    /// to a named def (a lambda / partial-application shape).
+    pub update_module_name: Option<String>,
     /// Present when per-branch analysis was possible.
     pub branches: Vec<BranchVerdict>,
     /// Set when the `update` body is not a resolvable `case msg of` (a lambda /
@@ -929,6 +936,7 @@ pub fn analyze_loaded(
     let mut branches: Vec<BranchVerdict> = Vec::new();
     let mut whole_update: Option<BranchVerdict> = None;
     let mut update_name: Option<String> = None;
+    let mut update_module_name: Option<String> = None;
     let mut model_fields: Vec<ModelFieldTy> = Vec::new();
 
     match update_field {
@@ -938,6 +946,7 @@ pub fn analyze_loaded(
                 .map(|l| (l.module, l.name.as_str().to_string()))
                 .unwrap_or((entry, "update".to_string()));
             update_name = Some(format!("{}.{}", db.module_name(umod), uname));
+            update_module_name = Some(db.module_name(umod).to_string());
             let resolved = db.resolve(umod);
             if let Some(body) = resolved.bodies.get(&update_def) {
                 // Recover the Model field list + types from `update`'s result
@@ -954,6 +963,7 @@ pub fn analyze_loaded(
         }
         UpdateField::Lambda(umod, body, root) => {
             update_name = Some(format!("{}.<lambda update>", db.module_name(umod)));
+            update_module_name = Some(db.module_name(umod).to_string());
             // A lambda update: analyse its body as one unit (no stable Msg
             // pattern names unless it is itself a `case`).
             classify_lambda_update(db, &graph, umod, &body, root, &mut branches, &mut whole_update);
@@ -1000,6 +1010,7 @@ pub fn analyze_loaded(
         project,
         entry_module: entry_module_name,
         update_name,
+        update_module_name,
         branches,
         whole_update,
         tainted,

@@ -666,37 +666,52 @@ pub fn generate(
             .or_default()
             .insert(t.name.clone());
     }
-    let module_is_backend_only = |mid: ModuleId, db: &SkyDatabase| -> bool {
+    // A module is TAINTED when it has ANY server-tainted top-level binding.
+    let module_has_tainted = |mid: ModuleId, db: &SkyDatabase| -> bool {
         let mname = db.module_name(mid).to_string();
         tainted_by_module
             .get(&mname)
             .map(|s| !s.is_empty())
             .unwrap_or(false)
     };
-    let mut backend_only_mods: Vec<ModuleId> = Vec::new();
+    // A module with NO tainted binding is a PURE sibling (copied to both trees
+    // verbatim). A module WITH a tainted binding is routed PER-BINDING (§17,
+    // GAP-2): its FULL body stays backend, and — when the frontend actually needs
+    // one of its pure defs, or it declares `update` / the `Msg` union — a client
+    // SUBSET of just its non-tainted defs is emitted into the frontend. A tainted
+    // module whose pure defs the frontend never reaches keeps its whole body
+    // backend-only (no frontend copy), exactly as before.
+    let mut tainted_mods: Vec<ModuleId> = Vec::new();
     let mut pure_sibling_mods: Vec<ModuleId> = Vec::new();
     for m in check_ids.iter().copied().filter(|m| *m != entry) {
-        if module_is_backend_only(m, &db) {
-            backend_only_mods.push(m);
+        if module_has_tainted(m, &db) {
+            tainted_mods.push(m);
         } else {
             pure_sibling_mods.push(m);
         }
     }
-    let backend_only_names: HashSet<String> = backend_only_mods
-        .iter()
-        .map(|m| db.module_name(*m).to_string())
-        .collect();
 
-    // Leak check (fail-closed): a PURE def that happens to live in a backend-only
-    // (mixed) module cannot be reached by the frontend, because the whole module
-    // is backend-only. If a frontend-retained def references such a pure def, the
-    // frontend would need a value from a server-tainted module — a real error, so
-    // we refuse with a clear message rather than emit a frontend that will not
-    // compile (or, worse, silently drag the module in). Server-tainted defs are
-    // never in this set, so a normal server helper referenced from a rewritten
-    // server branch does NOT trip it.
-    let mut backend_only_pure_defs: HashSet<DefId> = HashSet::new();
-    for m in &backend_only_mods {
+    // GAP-1: the module that DECLARES `update` — the entry, OR a sibling module
+    // (factored out — the sky-lang.org shape). Resolved cross-module by the
+    // report; its partitioned `update` is regenerated in ITS OWN frontend copy,
+    // never assumed to live in the entry.
+    let update_module: ModuleId = report
+        .update_module_name
+        .as_deref()
+        .and_then(|n| db.module_by_name(n))
+        .filter(|m| check_ids.contains(m))
+        .unwrap_or(entry);
+    let update_in_entry = update_module == entry;
+
+    // GAP-2: which tainted modules' PURE defs does the frontend actually reach? A
+    // frontend-retained root (an entry non-tainted def, or any pure-sibling def)
+    // that references a non-tainted def living in a tainted module means that
+    // module must emit a client subset. This is the exact condition the build
+    // used to REFUSE on; it now drives per-binding emission instead. `update` is
+    // never in the tainted set, so the entry's `main` referencing a SIBLING
+    // `update` flags that sibling here too.
+    let mut tainted_pure_defs: HashMap<DefId, ModuleId> = HashMap::new();
+    for m in &tainted_mods {
         let mname = db.module_name(*m).to_string();
         let tainted_here = tainted_by_module.get(&mname);
         for td in &db.resolve(*m).top_defs {
@@ -704,55 +719,34 @@ pub fn generate(
                 .map(|s| s.contains(td.name.as_str()))
                 .unwrap_or(false);
             if !is_tainted {
-                backend_only_pure_defs.insert(td.def);
+                tainted_pure_defs.insert(td.def, *m);
             }
         }
     }
-    if !backend_only_pure_defs.is_empty() {
-        // Frontend keeps: entry's non-tainted defs (update is rewritten, so its
-        // server branches no longer reference the backend module) + every pure
-        // sibling module's defs (copied verbatim).
+    let mut referenced_subset_mods: HashSet<ModuleId> = HashSet::new();
+    if !tainted_pure_defs.is_empty() {
         let entry_tainted = tainted_by_module.get(&entry_name);
-        let mut roots: Vec<(ModuleId, DefId, String)> = Vec::new();
+        let mut roots: Vec<(ModuleId, DefId)> = Vec::new();
         for td in &db.resolve(entry).top_defs {
             let is_tainted = entry_tainted
                 .map(|s| s.contains(td.name.as_str()))
                 .unwrap_or(false);
             if !is_tainted {
-                roots.push((entry, td.def, td.name.as_str().to_string()));
+                roots.push((entry, td.def));
             }
         }
         for m in &pure_sibling_mods {
             for td in &db.resolve(*m).top_defs {
-                roots.push((*m, td.def, td.name.as_str().to_string()));
+                roots.push((*m, td.def));
             }
         }
-        for (mid, def, name) in &roots {
+        for (mid, def) in &roots {
             for c in spa_partition::body_def_callees(&db, *mid, *def) {
-                if backend_only_pure_defs.contains(&c) {
-                    let (cmod, cname) = db
-                        .def_loc(c)
-                        .map(|l| (db.module_name(l.module).to_string(), l.name.as_str().to_string()))
-                        .unwrap_or_default();
-                    return Err(format!(
-                        "cannot auto-split: the frontend-retained def `{name}` references `{cname}` in module `{cmod}`, which is server-tainted and routed backend-only. A pure client value cannot depend on a server-tainted module — move `{cname}` into a PURE module (e.g. a `Domain` module) shared by both trees. (Refusing rather than leaking a server-tainted module into the wasm frontend.)"
-                    ));
+                if let Some(owner) = tainted_pure_defs.get(&c) {
+                    referenced_subset_mods.insert(*owner);
                 }
             }
         }
-    }
-    if !backend_only_mods.is_empty() || !pure_sibling_mods.is_empty() {
-        let pure: Vec<String> = pure_sibling_mods
-            .iter()
-            .map(|m| db.module_name(*m).to_string())
-            .collect();
-        let back: Vec<String> = backend_only_mods
-            .iter()
-            .map(|m| db.module_name(*m).to_string())
-            .collect();
-        notes.push(format!(
-            "multi-module split: pure module(s) {pure:?} copied to BOTH trees; server-tainted module(s) {back:?} routed backend-only (never emitted into the wasm frontend)."
-        ));
     }
 
     // SERVER branches, keyed by ctor name, with their RPC I/O + typed Msg args.
@@ -781,22 +775,61 @@ pub fn generate(
     // declared. When `Msg` lives in a pure sibling (the sky-lang.org shape —
     // `Msg` in `State.sky`) the variants are spliced into that module's FRONTEND
     // copy (the entry-source injection in `gen_frontend` only fires for a `Msg`
-    // in the entry). Identify the module by the union whose variants include the
-    // SERVER branch constructors — robust to the type's name and to a same-named
-    // `Msg` in an unrelated module (an embedded example). Only relevant when
-    // there are server branches (else no `Applied<Msg>` variants are generated).
+    // in the entry); when it lives in a MIXED module (the compose case — `Msg`
+    // next to `update` in a sibling), the injection is composed into that
+    // module's client subset (render_module_client_subset). Identify the module
+    // by the union whose variants include the SERVER branch constructors — robust
+    // to the type's name and to a same-named `Msg` in an unrelated module (an
+    // embedded example). Searched across EVERY non-entry module (pure siblings
+    // AND tainted/mixed modules) so a `Msg` beside `update` in a mixed module is
+    // found. Only relevant when there are server branches.
     let msg_module: Option<ModuleId> = if server.is_empty() {
         None
     } else {
         let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
-        pure_sibling_mods.iter().copied().find(|m| {
-            db.module_parse(*m).tree().decls().any(|d| {
-                matches!(decl_kind(&d), DeclKind::Union)
-                    && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
+        check_ids
+            .iter()
+            .copied()
+            .filter(|m| *m != entry)
+            .find(|m| {
+                db.module_parse(*m).tree().decls().any(|d| {
+                    matches!(decl_kind(&d), DeclKind::Union)
+                        && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
+                })
             })
-        })
     };
     let msg_module_name: Option<String> = msg_module.map(|m| db.module_name(m).to_string());
+
+    // ---- finalise the per-binding routing (GAP-1 / GAP-2 / §17) ----
+    // A tainted module emits a frontend SUBSET when the frontend reaches one of
+    // its pure defs, OR it declares `update` (regenerated there — GAP-1), OR it
+    // declares the `Msg` union (Applied variants injected there — GAP-A).
+    // Otherwise its whole body is backend-only (no frontend copy). The backend
+    // copy of EVERY tainted module stays the FULL module.
+    let mut subset_mods: Vec<ModuleId> = Vec::new();
+    let mut no_frontend_mods: Vec<ModuleId> = Vec::new();
+    for m in tainted_mods.iter().copied() {
+        let is_update = m == update_module;
+        let is_msg = Some(m) == msg_module;
+        if referenced_subset_mods.contains(&m) || is_update || is_msg {
+            subset_mods.push(m);
+        } else {
+            no_frontend_mods.push(m);
+        }
+    }
+    // Modules with NO frontend copy — the security spine drops any import of one.
+    let no_frontend_names: HashSet<String> = no_frontend_mods
+        .iter()
+        .map(|m| db.module_name(*m).to_string())
+        .collect();
+    if !tainted_mods.is_empty() || !pure_sibling_mods.is_empty() {
+        let pure: Vec<String> = pure_sibling_mods.iter().map(|m| db.module_name(*m).to_string()).collect();
+        let subset: Vec<String> = subset_mods.iter().map(|m| db.module_name(*m).to_string()).collect();
+        let back: Vec<String> = no_frontend_mods.iter().map(|m| db.module_name(*m).to_string()).collect();
+        notes.push(format!(
+            "multi-module split (per-binding): pure module(s) {pure:?} copied to BOTH trees; server-only module(s) {back:?} routed backend-only; mixed module(s) {subset:?} split per-binding (client-safe bindings copied to the frontend; server bindings kept backend-only)."
+        ));
+    }
 
     let parse = db.module_parse(entry);
     let src = parse.syntax().text().to_string();
@@ -858,7 +891,7 @@ pub fn generate(
     for b in &registry {
         if resolver.needed.contains(&b.name) && b.module != entry {
             let bmod = db.module_name(b.module).to_string();
-            if backend_only_names.contains(&bmod) {
+            if no_frontend_names.contains(&bmod) {
                 return Err(format!(
                     "cannot auto-split: the wire references codec `{}` in module `{bmod}`, which is server-tainted and routed backend-only. Move the codec into a PURE module shared by both trees. (Refusing rather than leaking a server-tainted module into the wasm frontend / Shared.)",
                     b.name
@@ -877,17 +910,37 @@ pub fn generate(
             needed_siblings.insert(mname);
         }
     }
-    let pure_sibling_names: HashSet<String> = pure_sibling_mods
+    // EVERY non-entry project module — Shared drops the entry's import of any of
+    // them (a needed wire-type sibling is re-added with a canonical `exposing
+    // (..)`). This MUST include the tainted/subset modules, not only the pure
+    // siblings: a subset module (e.g. a sibling `update`) now imports `Shared`
+    // for the wire codecs, so if `Shared` also carried the entry's `import
+    // <that module>` it would form a `Shared` ↔ module cycle (E1010).
+    let all_project_sibling_names: HashSet<String> = check_ids
         .iter()
-        .map(|m| db.module_name(*m).to_string())
+        .copied()
+        .filter(|m| *m != entry)
+        .map(|m| db.module_name(m).to_string())
         .collect();
-    let shared_imports =
-        shared_import_lines(&imports, &needed_siblings, &backend_only_names, &pure_sibling_names);
+    let shared_imports = shared_import_lines(
+        &imports,
+        &needed_siblings,
+        &no_frontend_names,
+        &all_project_sibling_names,
+    );
 
-    // update param names + the update annotation + the model type name.
-    let update_decl = file
+    // ---- `update`'s DECLARING module (GAP-1) ----
+    // `update` may live in the entry OR a sibling. Read its param names +
+    // annotation from the module that DECLARES it (the entry's `update_decl` is
+    // absent when it is factored into a sibling, which would otherwise default the
+    // params to `msg`/`model` and lose the real annotation). The model type name
+    // still comes from the entry's `view`/`update` annotation.
+    let upd_parse = db.module_parse(update_module);
+    let upd_src = upd_parse.syntax().text().to_string();
+    let upd_file = upd_parse.tree();
+    let update_decl = upd_file
         .decls()
-        .find(|d| decl_name(d) .as_deref()== Some("update") && is_value_decl(d));
+        .find(|d| decl_name(d).as_deref() == Some("update") && is_value_decl(d));
     let (msg_param, model_param) = update_decl
         .as_ref()
         .map(|d| value_params(d))
@@ -898,9 +951,17 @@ pub fn generate(
             )
         })
         .unwrap_or_else(|| ("msg".into(), "model".into()));
-    let update_anno = decl_text_by(&file, &src, "update", DeclKind::TypeAnno)
+    let update_anno = decl_text_by(&upd_file, &upd_src, "update", DeclKind::TypeAnno)
         .unwrap_or_else(|| "update : Msg -> Model -> ( Model, Cmd Msg )".to_string());
     let model_ty = model_type_name(&file, &src).unwrap_or_else(|| "Model".to_string());
+
+    // `App.withRpcError` presence — the synthesised `spaRpcError_` binding lives
+    // in the ENTRY, so resolve the flag here (once) and thread it into both the
+    // entry `update` regeneration and any sibling one (the lookup stays against
+    // the entry even when `update` is regenerated in a sibling module).
+    let has_rpc_error = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaRpcError_"));
 
     // ---- literal SSR route patterns, across EVERY project module (§4.1) ----
     // The per-route SSR registration needs each route's literal URL pattern so
@@ -1029,10 +1090,12 @@ pub fn generate(
         &model_param,
         &update_anno,
         &model_ty,
-        &backend_only_names,
+        &no_frontend_names,
         strip_init_cmd,
         init_in_entry,
         init_pure_model.as_deref(),
+        update_in_entry,
+        has_rpc_error,
     )?;
 
     let mut files: Vec<String> = Vec::new();
@@ -1086,11 +1149,16 @@ pub fn generate(
     }
 
     // ---- copy the sibling project modules (§17) ----
-    // Pure modules go into BOTH trees verbatim; server-tainted (backend-only)
-    // modules go into the backend ONLY (never the wasm frontend). The module that
-    // declares `Msg` gets the `Applied<Msg>` variants spliced into its FRONTEND
-    // copy (GAP-A); the backend copy stays verbatim (the backend reuses `update`
-    // as-is and never references the client-only `Applied<Msg>` arms).
+    // PURE modules go into BOTH trees verbatim (with the `Applied<Msg>` inject /
+    // init-strip for the entry-adjacent shapes). A TAINTED module always copies
+    // its FULL body to the backend; whether it also emits a frontend copy is the
+    // per-binding decision above:
+    //   * subset_mods — a client SUBSET of its non-tainted defs (GAP-2), with the
+    //     partitioned `update` regenerated (GAP-1) / the `Applied<Msg>` variants
+    //     injected (GAP-A) when it declares them.
+    //   * no_frontend_mods — backend only, never emitted into the wasm frontend.
+    let subset_set: HashSet<ModuleId> = subset_mods.iter().copied().collect();
+    let server_ctors: Vec<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
     for m in &pure_sibling_mods {
         let rel = module_relpath(&db.module_name(*m).to_string());
         let mparse = db.module_parse(*m);
@@ -1106,17 +1174,43 @@ pub fn generate(
             // settles the read + embeds `#sky-model`) and drop the now-dangling
             // server-only / backend-only imports — the same treatment an ENTRY
             // `init` already gets in `gen_frontend`.
-            frontend_sibling_with_stripped_init(&text, &mparse.tree(), &backend_only_names)
+            frontend_sibling_with_stripped_init(&text, &mparse.tree(), &no_frontend_names)
                 .unwrap_or_else(|| text.clone())
         } else {
             text.clone()
         };
         write(&format!("frontend/src/{rel}"), &frontend_text, &mut files)?;
     }
-    for m in &backend_only_mods {
+    for m in &tainted_mods {
         let rel = module_relpath(&db.module_name(*m).to_string());
-        let text = db.module_parse(*m).syntax().text().to_string();
+        let mparse = db.module_parse(*m);
+        let text = mparse.syntax().text().to_string();
+        // The backend always carries the FULL tainted module (it runs the effect).
         write(&format!("backend/src/{rel}"), &text, &mut files)?;
+        // The frontend gets a client subset only when this module was routed for
+        // per-binding emission (GAP-1 / GAP-2); otherwise it stays backend-only.
+        if subset_set.contains(m) {
+            let mname = db.module_name(*m).to_string();
+            let empty = HashSet::new();
+            let tainted_here = tainted_by_module.get(&mname).unwrap_or(&empty);
+            let regen_here = *m == update_module && !update_in_entry;
+            let inject_here = Some(*m) == msg_module;
+            let subset = render_module_client_subset(
+                &mparse.tree(),
+                &text,
+                tainted_here,
+                &server,
+                &server_ctors,
+                regen_here,
+                inject_here,
+                &msg_param,
+                &model_param,
+                &update_anno,
+                &no_frontend_names,
+                has_rpc_error,
+            )?;
+            write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
+        }
     }
 
     // ---- propagate shipped assets (Bundle.withAsset / withAssetDir) ----
@@ -2853,6 +2947,14 @@ fn gen_frontend(
     init_strip: bool,
     init_in_entry: bool,
     init_pure_model: Option<&str>,
+    // GAP-1: `update` is regenerated HERE (into the entry's frontend copy) only
+    // when `update` is DECLARED in the entry. When it is factored into a sibling
+    // module, its partitioned copy is regenerated in that module's own frontend
+    // subset (render_module_client_subset) and the entry keeps its `import …
+    // exposing (update)`, so gen_frontend must NOT append a second `update`.
+    regen_update: bool,
+    // Whether the app declared `App.withRpcError` (resolved from the entry).
+    has_rpc_error: bool,
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -3002,10 +3104,16 @@ fn gen_frontend(
         ));
     }
 
-    // The regenerated update.
-    let update_src = gen_frontend_update(file, src, server, &server_ctors, msg_param, model_param, update_anno)?;
-    body.push_str(&update_src);
-    body.push_str("\n");
+    // The regenerated update — ONLY when `update` is declared in the entry. A
+    // sibling `update` is regenerated in its own module's frontend subset; the
+    // entry keeps `import <Sibling> exposing (update)` and appends nothing.
+    if regen_update {
+        let update_src = gen_frontend_update(
+            file, src, server, &server_ctors, msg_param, model_param, update_anno, has_rpc_error,
+        )?;
+        body.push_str(&update_src);
+        body.push_str("\n");
+    }
 
     Ok(format!(
         "module Main exposing (main)\n\n-- Sky.Spa wasm CLIENT generated by `sky spa-split`. Pure branches run\n-- client-local (zero round-trip); each server branch goes through the explicit\n-- typed RPC boundary (Spa.postJson) using the SHARED codecs. Effectful\n-- (server-tainted) values/functions are NOT present in this source.\n\n{}\n\n\n{}",
@@ -3015,6 +3123,8 @@ fn gen_frontend(
 }
 
 fn gen_frontend_update(
+    // The module that DECLARES `update` — the ENTRY, or a SIBLING module (GAP-1).
+    // `update` is read + rewritten from THIS file/src.
     file: &SourceFile,
     src: &str,
     server: &[(String, BranchIo)],
@@ -3022,6 +3132,10 @@ fn gen_frontend_update(
     msg_param: &str,
     model_param: &str,
     update_anno: &str,
+    // Whether the app declared `App.withRpcError` — resolved by the caller from
+    // the ENTRY (the synthesised `spaRpcError_` binding lives in the entry, so
+    // the lookup stays against it even when `update` lives in a sibling module).
+    has_rpc_error: bool,
 ) -> Result<String, String> {
     // Find update's ValueDecl → its `case msg of`.
     let update_val = file
@@ -3039,11 +3153,8 @@ fn gen_frontend_update(
     // synthesis into a `spaRpcError_ : Error -> Msg` binding), route a failed RPC
     // INTO `update` via that constructor, so the app's own view can show the
     // error — parity with Sky.Live's `Cmd.perform task ToMsg` error arm. Absent
-    // the hook, keep the loud-log floor (model kept, perform site reports).
-    let has_rpc_error = file
-        .decls()
-        .any(|d| decl_name(&d).as_deref() == Some("spaRpcError_"));
-
+    // the hook, keep the loud-log floor (model kept, perform site reports). The
+    // presence flag is resolved by the caller against the ENTRY (see the param).
     let mut arms_out = String::new();
     for arm in case.arms() {
         let pat = arm.pattern().map(|p| p.syntax().clone());
@@ -3128,6 +3239,114 @@ fn gen_frontend_update(
         "{update_anno}\nupdate {msg_param} {model_param} =\n    case {msg_param} of\n{}",
         arms_out.trim_end()
     ))
+}
+
+/// GAP-1 + GAP-2: render a tainted (MIXED) module's FRONTEND subset — every
+/// NON-tainted (client-safe) decl kept, every server-tainted decl DROPPED, and,
+/// when this is the module that declares `update` / the `Msg` union, the
+/// partitioned `update` regenerated + the `Applied<Msg>` RPC variants injected.
+/// The backend keeps the FULL module; this renders the wasm-client half. Sound
+/// by construction: taint propagates upward (a non-tainted def only ever
+/// references other non-tainted defs), so the dropped set is closed under the
+/// call graph and the emitted subset can never reach a server effect.
+#[allow(clippy::too_many_arguments)]
+fn render_module_client_subset(
+    mfile: &SourceFile,
+    msrc: &str,
+    // The server-tainted binding names in THIS module (dropped from the subset).
+    tainted_here: &HashSet<String>,
+    server: &[(String, BranchIo)],
+    server_ctors: &[&str],
+    // This module declares `update` (regenerate its partitioned copy here).
+    regen_update: bool,
+    // This module declares the `Msg` union (inject the Applied<Msg> variants).
+    inject_msg: bool,
+    msg_param: &str,
+    model_param: &str,
+    update_anno: &str,
+    // Project modules with NO frontend copy — an import of one is dropped (it
+    // would be `E1001` in the frontend tree).
+    no_frontend: &HashSet<String>,
+    // Whether the app declared `App.withRpcError` (resolved from the entry).
+    has_rpc_error: bool,
+) -> Result<String, String> {
+    let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
+
+    let mut body = String::new();
+    for d in mfile.decls() {
+        let name = decl_name(&d);
+        let n = name.as_deref();
+        // Drop server-tainted VALUE decls (both annotation + value) — the spine.
+        if let Some(n) = n {
+            if tainted_here.contains(n) {
+                continue;
+            }
+        }
+        match (n, decl_kind(&d)) {
+            (Some("update"), _) if regen_update => {
+                // Regenerated below (both its annotation + value are dropped here).
+            }
+            (_, DeclKind::Union)
+                if inject_msg
+                    && union_variant_names(&d).iter().any(|v| want.contains(v.as_str())) =>
+            {
+                // GAP-A: splice the Applied<Msg> RPC-response variants into the
+                // Msg union whose variants ARE the app's server branches.
+                body.push_str(slice(msrc, d.syntax()).trim_end());
+                for (m, _) in server {
+                    body.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
+                }
+                body.push_str("\n\n\n");
+            }
+            _ => {
+                body.push_str(slice(msrc, d.syntax()).trim_end());
+                body.push_str("\n\n\n");
+            }
+        }
+    }
+    if regen_update {
+        let update_src = gen_frontend_update(
+            mfile, msrc, server, server_ctors, msg_param, model_param, update_anno, has_rpc_error,
+        )?;
+        body.push_str(&update_src);
+        body.push_str("\n");
+    }
+
+    // Reassemble: the module header + top comments + original imports (kept from
+    // the prefix, everything before the first decl), then the client-safe body.
+    // `drop_dangling_sibling_imports` then removes the imports the drop left
+    // dangling — a project module with no frontend copy (E1001), and any
+    // server-only module no longer referenced after the tainted decls went — and
+    // the `Std.Spa` / `Shared` / `Error` imports the regenerated `update` +
+    // injected variants reference are ensured.
+    let first_decl_start = mfile
+        .decls()
+        .next()
+        .map(|d| usize::from(d.syntax().text_range().start()))
+        .unwrap_or(msrc.len());
+    let prefix = msrc[..first_decl_start].trim_end();
+    let mut out = String::with_capacity(prefix.len() + body.len() + 8);
+    out.push_str(prefix);
+    out.push_str("\n\n\n");
+    out.push_str(&body);
+
+    let out = drop_dangling_sibling_imports(&out, no_frontend);
+    let out = if regen_update {
+        ensure_import_present(&out, "Std.Spa", "import Std.Spa as Spa")
+    } else {
+        out
+    };
+    let out = if regen_update || inject_msg {
+        ensure_import_present(&out, "Shared", "import Shared exposing (..)")
+    } else {
+        out
+    };
+    let out = if inject_msg {
+        ensure_import_present(&out, "Sky.Core.Error", "import Sky.Core.Error exposing (Error)")
+    } else {
+        out
+    };
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -3394,6 +3613,7 @@ mod fix7_tests {
             "msg",
             "model",
             "update : Msg -> Model -> ( Model, Cmd Msg )",
+            with_rpc_error,
         )
         .expect("gen_frontend_update")
     }

@@ -1,0 +1,48 @@
+module Update exposing (..)
+
+-- GAP-1 (compose case): the sibling module declares BOTH the `Msg` union AND the
+-- `update` function. The auto-split must compose two per-module transforms on
+-- this ONE module's frontend copy, in order: inject the `Applied<Msg>` RPC
+-- variants into the `Msg` union (GAP-A), THEN regenerate `update` (GAP-1) so its
+-- server arm becomes a `Spa.postJson` RPC. The server helper (`persist` -> `Db`)
+-- and the `db` CAF import stay backend-only.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Std.Cmd as Cmd
+import Std.Db as Db
+import Domain exposing (..)
+import State exposing (..)
+import Conn exposing (db)
+
+
+type Msg
+    = DraftChanged String
+    | Save
+
+
+cleanDraft : String -> String
+cleanDraft s =
+    String.trim s
+
+
+persist : String -> Task Error (List Item)
+persist name =
+    Db.query db "SELECT id, name FROM items ORDER BY id" []
+        |> Task.map (\_ -> [ { id = 1, name = name } ])
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        DraftChanged s ->
+            ( { model | draft = cleanDraft s }, Cmd.none )
+
+        Save ->
+            let
+                saved = Result.withDefault [] (Task.run (persist model.draft))
+            in
+                ( { model | items = saved, draft = "" }, Cmd.none )

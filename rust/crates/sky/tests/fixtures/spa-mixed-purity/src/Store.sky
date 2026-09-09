@@ -1,0 +1,71 @@
+module Store exposing (..)
+
+-- MIXED-PURITY module (the #2 regression case). It holds a genuinely PURE
+-- helper (`formatTotal`) that a CLIENT update arm calls, ALONGSIDE server
+-- effects (File), a 3-hop pure-looking chain that bottoms out at a server
+-- effect, an env read, and a higher-order pass of a server function. Before the
+-- per-binding fix the split routed the WHOLE module backend-only and REFUSED
+-- ("references `formatTotal` ... routed backend-only"). After it, `formatTotal`
+-- is emitted to the frontend and every server binding stays backend — proven by
+-- the analytical trace verdict AND the empty leak-grep on the frontend.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.List as List
+import Std.Codec as Codec
+import Domain exposing (..)
+
+
+-- PURE. Referenced by the CLIENT `Format` arm. MUST reach the wasm frontend.
+formatTotal : Int -> String
+formatTotal cents =
+    "£" ++ String.fromInt (cents // 100)
+
+
+-- SERVER (File effect): the mixed module's tainted sibling.
+loadTodos : () -> Task Error (List Todo)
+loadTodos _ =
+    File.readFile "todos.json"
+        |> Task.map (\s -> Result.withDefault [] (Codec.fromJson todoListCodec s))
+        |> Task.onError (\_ -> Task.succeed [])
+
+
+saveTodos : List Todo -> Task Error ()
+saveTodos todos =
+    File.writeFile "todos.json" (Codec.toJson todoListCodec todos)
+
+
+-- SERVER via a 3-HOP pure-looking chain: deepLoad -> midLoad -> leafLoad ->
+-- loadTodos -> File. A pure-looking wrapper of a deep server call MUST classify
+-- server, never slip to the client. Proves the trace is transitive.
+deepLoad : () -> Task Error (List Todo)
+deepLoad _ =
+    midLoad ()
+
+
+midLoad : () -> Task Error (List Todo)
+midLoad _ =
+    leafLoad ()
+
+
+leafLoad : () -> Task Error (List Todo)
+leafLoad _ =
+    loadTodos ()
+
+
+-- SERVER via ENV: the wasm client has no env, so a `System.getenvOr` read is
+-- server-only.
+dataDir : String
+dataDir =
+    System.getenvOr "DATA_DIR" "data"
+
+
+-- SERVER via HIGHER-ORDER: passes the server function `loadTodos` as an
+-- argument. Passing a server function must taint the caller.
+loadEach : List () -> List (Task Error (List Todo))
+loadEach units =
+    List.map loadTodos units

@@ -1,0 +1,25 @@
+module Domain exposing (..)
+
+-- PURE wire type + codec (Item). No effects, so the auto-split copies this into
+-- BOTH trees; `Shared` imports it for the RPC field type + codec.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+
+type alias Item =
+    { id : Int
+    , name : String
+    }
+
+
+itemCodec : Codec Item
+itemCodec =
+    Codec.object Item |> Codec.field "id" .id Codec.int
+        |> Codec.field "name" .name Codec.string
+        |> Codec.buildObject
+
+
+itemListCodec : Codec (List Item)
+itemListCodec =
+    Codec.list itemCodec

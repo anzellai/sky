@@ -1,0 +1,91 @@
+module Main exposing (main)
+
+-- Auto-split INPUT exercising per-binding purity: a CLIENT arm (`Format`) calls
+-- a PURE helper (`Store.formatTotal`) that lives in the MIXED `Store` module
+-- next to File effects, an env read, a 3-hop server chain, and a higher-order
+-- server pass. The client arm must stay client and `formatTotal` must reach the
+-- frontend; every server binding in `Store` must stay backend.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Domain exposing (..)
+import Store exposing (..)
+
+
+type alias Model =
+    { todos : List Todo
+    , draft : String
+    , label : String
+    }
+
+
+type Msg
+    = DraftChanged String
+    | Format
+    | Add
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { todos = [], draft = "", label = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        DraftChanged s ->
+            -- PURE -> client
+            ( { model | draft = s }, Cmd.none )
+
+        Format ->
+            -- CLIENT (pure): calls `Store.formatTotal`, a pure helper sharing the
+            -- MIXED `Store` module with File effects. Before per-binding routing
+            -- the split REFUSED here; after it, `formatTotal` is a frontend copy.
+            ( { model | label = formatTotal (List.length model.todos * 250) }, Cmd.none )
+
+        Add ->
+            -- SERVER: reaches Store.loadTodos / saveTodos (File effects).
+            let
+                current = Result.withDefault [] (Task.run (loadTodos ()))
+                next =
+                    current
+                        ++ [ { id = List.length current + 1
+                             , title = model.draft
+                             , done = False
+                             }
+                           ]
+                _ = Task.run (saveTodos next)
+            in
+                ( { model | todos = next, draft = "" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column [ Ui.spacing 8 ] [ Ui.text model.label ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

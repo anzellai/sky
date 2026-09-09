@@ -1,0 +1,12 @@
+module State exposing (..)
+
+-- The Model, factored into a pure SHARED module (copied to both trees).
+
+import Sky.Core.Prelude exposing (..)
+import Domain exposing (..)
+
+
+type alias Model =
+    { items : List Item
+    , draft : String
+    }

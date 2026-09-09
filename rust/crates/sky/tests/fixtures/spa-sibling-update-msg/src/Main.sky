@@ -1,0 +1,47 @@
+module Main exposing (main)
+
+-- GAP-1 (compose case) INPUT: `update` AND `Msg` both live in the SIBLING module
+-- `Update`. The entry holds only `init`/`view`/`subscriptions` and imports both
+-- `update` and `Msg` from `Update`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Domain exposing (..)
+import State exposing (..)
+import Update exposing (..)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { items = [], draft = "" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("items: " ++ String.fromInt (List.length model.items)) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

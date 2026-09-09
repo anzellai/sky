@@ -1,0 +1,13 @@
+module Msgs exposing (..)
+
+-- The Msg union in its OWN (third) module — separate from both the entry and the
+-- sibling `update`. The auto-split injects the `Applied<Msg>` RPC variants into
+-- this module's frontend copy (GAP-A) while the sibling `Update` module carries
+-- the rewritten `update` (GAP-1). Pure, so it is copied into both trees.
+
+import Sky.Core.Prelude exposing (..)
+
+
+type Msg
+    = DraftChanged String
+    | Save

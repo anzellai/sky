@@ -3163,3 +3163,294 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
         "GAP-C: GET / must render Home's own view, not the Items view:\n{home_app}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// GAP-1 + GAP-2: `update` in a sibling module, and per-binding subset of a
+// MIXED module (pure helper next to server effects). Both are GENERATOR-side.
+// ---------------------------------------------------------------------------
+
+fn sibling_update_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-sibling-update/src/Main.sky")
+}
+
+fn sibling_update_msg_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-sibling-update-msg/src/Main.sky")
+}
+
+fn mixed_purity_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-mixed-purity/src/Main.sky")
+}
+
+/// Strip Sky comments (`--` line, `{- -}` block) from `src` so the leak-grep
+/// tests CODE, never a docstring. A fixture's own doc-comment legitimately names
+/// the server helper it drops (`persist`, `Db`), and a comment can neither run an
+/// effect nor import a module — so a name that survives ONLY in a comment is not
+/// a leak. Best-effort (does not special-case string literals), sufficient for
+/// the generated split sources, which carry no `--` inside string literals.
+fn strip_sky_comments(src: &str) -> String {
+    // Block comments first (nestable), then line comments.
+    let mut no_block = String::with_capacity(src.len());
+    let bytes: Vec<char> = src.chars().collect();
+    let mut i = 0usize;
+    let mut depth = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i];
+        let c2 = bytes.get(i + 1).copied();
+        if c == '{' && c2 == Some('-') {
+            depth += 1;
+            i += 2;
+            continue;
+        }
+        if depth > 0 && c == '-' && c2 == Some('}') {
+            depth -= 1;
+            i += 2;
+            continue;
+        }
+        if depth == 0 {
+            no_block.push(c);
+        } else if c == '\n' {
+            no_block.push('\n');
+        }
+        i += 1;
+    }
+    no_block
+        .lines()
+        .map(|l| l.split("--").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Concatenate every `*.sky` file under `dir` (recursively) into one string —
+/// the whole-tree leak-grep surface, COMMENTS STRIPPED. A server kernel /
+/// tainted-helper name found ANYWHERE under `frontend/` is a security leak, so
+/// the check must see the whole subtree, not just `Main.sky`.
+fn concat_sky_tree(dir: &std::path::Path) -> String {
+    let mut out = String::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let rd = match std::fs::read_dir(&d) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for e in rd.filter_map(|e| e.ok()) {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("sky") {
+                out.push_str(&format!("\n----- {} -----\n", p.display()));
+                out.push_str(&strip_sky_comments(&std::fs::read_to_string(&p).unwrap_or_default()));
+            }
+        }
+    }
+    out
+}
+
+/// Build the generated backend (native) + frontend (wasm) of a split, Go-gated.
+fn build_both_legs(out: &std::path::Path) {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(backend_build.success(), "backend must build natively");
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend build must produce sky-out/app"
+    );
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(frontend_build.success(), "frontend must build to wasm");
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend build must stage a content-hashed main.<hash>.wasm"
+    );
+}
+
+/// GAP-1: the TEA `update` lives in a SIBLING module (`Update`), its `Msg` in a
+/// THIRD module (`Msgs`). The split must regenerate the partitioned `update` IN
+/// its own frontend module copy — the pure arm client-local, the server arm an
+/// RPC — and NEVER leak the server helper (`persist` -> `Db`) or the backend-only
+/// `Conn` connection into the wasm frontend. Was refused before this fix.
+#[test]
+fn sibling_module_update_regenerates_in_its_own_frontend_copy() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            sibling_update_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split must succeed when `update` lives in a sibling module (GAP-1)"
+    );
+
+    // The sibling `update` is regenerated IN its own frontend module copy.
+    let front_update = std::fs::read_to_string(out.join("frontend/src/Update.sky"))
+        .expect("the frontend Update module must exist");
+    assert!(
+        front_update.contains("cleanDraft"),
+        "the pure client helper `cleanDraft` must reach the frontend Update copy:\n{front_update}"
+    );
+    assert!(
+        front_update.contains("Spa.postJson") && front_update.contains("/_rpc/Save"),
+        "the server arm `Save` must become an RPC in the frontend Update copy:\n{front_update}"
+    );
+
+    // SECURITY — no server kernel / tainted helper / backend-only module anywhere
+    // in the frontend tree.
+    let front_tree = concat_sky_tree(&out.join("frontend"));
+    for needle in ["Db.", "persist", "loadTodos", "saveTodos", "import Conn", "Conn.", "System.getenv", "File."] {
+        assert!(
+            !front_tree.contains(needle),
+            "SECURITY LEAK: frontend tree contains `{needle}`:\n{front_tree}"
+        );
+    }
+    assert!(
+        !out.join("frontend/src/Conn.sky").exists(),
+        "SECURITY LEAK: the backend-only Conn module must NOT be in the frontend"
+    );
+
+    // The backend keeps the effect + exposes the RPC endpoint.
+    let back_update = std::fs::read_to_string(out.join("backend/src/Update.sky")).unwrap();
+    assert!(
+        back_update.contains("persist") && back_update.contains("Db.query"),
+        "backend Update must keep the server helper `persist` -> `Db` (it runs it):\n{back_update}"
+    );
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    assert!(
+        back.contains("Server.api \"POST /_rpc/Save\""),
+        "backend must expose the generated RPC endpoint for `Save`:\n{back}"
+    );
+
+    build_both_legs(&out);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// GAP-1 compose case: `update` AND `Msg` both live in the SIBLING module. The
+/// module's frontend copy composes TWO per-module transforms — inject the
+/// `Applied<Msg>` RPC variants into the `Msg` union, THEN regenerate `update` —
+/// and still leaks no server binding.
+#[test]
+fn sibling_module_update_and_msg_compose_in_one_frontend_copy() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            sibling_update_msg_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split must succeed when `update` + `Msg` share a sibling module (GAP-1 compose)"
+    );
+
+    let front_update = std::fs::read_to_string(out.join("frontend/src/Update.sky"))
+        .expect("the frontend Update module must exist");
+    // GAP-A: the Applied<Msg> variant is injected into the Msg union here.
+    assert!(
+        front_update.contains("AppliedSave"),
+        "the `AppliedSave` RPC variant must be injected into the sibling `Msg` union:\n{front_update}"
+    );
+    // GAP-1: update regenerated with the RPC arm + the pure helper.
+    assert!(
+        front_update.contains("cleanDraft")
+            && front_update.contains("Spa.postJson")
+            && front_update.contains("/_rpc/Save"),
+        "the sibling `update` must be regenerated (pure arm + RPC arm):\n{front_update}"
+    );
+
+    let front_tree = concat_sky_tree(&out.join("frontend"));
+    for needle in ["Db.", "persist", "import Conn", "Conn.", "System.getenv", "File."] {
+        assert!(
+            !front_tree.contains(needle),
+            "SECURITY LEAK: frontend tree contains `{needle}`:\n{front_tree}"
+        );
+    }
+
+    build_both_legs(&out);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// GAP-2: a MIXED module (`Store`) holds a PURE helper (`formatTotal`, called by
+/// a CLIENT `update` arm) ALONGSIDE server effects (File / env / a 3-hop server
+/// chain / a higher-order server pass). The split must emit a FRONTEND copy of
+/// `Store` containing ONLY `formatTotal` — dropping every server binding — while
+/// the backend copy stays the FULL module. Was refused before this fix.
+#[test]
+fn mixed_module_emits_pure_subset_to_frontend_effects_stay_backend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            mixed_purity_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split must succeed on a mixed-purity module (GAP-2)"
+    );
+
+    // The frontend Store subset exists and carries ONLY the pure helper.
+    let front_store = std::fs::read_to_string(out.join("frontend/src/Store.sky"))
+        .expect("the frontend Store subset must exist");
+    assert!(
+        front_store.contains("formatTotal"),
+        "the pure helper `formatTotal` must reach the frontend Store subset:\n{front_store}"
+    );
+
+    // SECURITY — no server binding anywhere in the frontend tree.
+    let front_tree = concat_sky_tree(&out.join("frontend"));
+    for needle in [
+        "File.", "System.getenv", "loadTodos", "saveTodos", "deepLoad", "midLoad",
+        "leafLoad", "dataDir", "loadEach", "Db.",
+    ] {
+        assert!(
+            !front_tree.contains(needle),
+            "SECURITY LEAK: frontend tree contains `{needle}`:\n{front_tree}"
+        );
+    }
+
+    // The frontend `update` keeps the client arm (via `formatTotal`) and RPCs the
+    // server arm; the backend keeps the File effect.
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    assert!(
+        front.contains("formatTotal") && front.contains("/_rpc/Add"),
+        "frontend Main must call `formatTotal` (client) and RPC `Add` (server):\n{front}"
+    );
+    let back_store = std::fs::read_to_string(out.join("backend/src/Store.sky")).unwrap();
+    assert!(
+        back_store.contains("File.") && back_store.contains("loadTodos"),
+        "backend Store must keep the FULL module (File effects):\n{back_store}"
+    );
+
+    build_both_legs(&out);
+    let _ = std::fs::remove_dir_all(&out);
+}
