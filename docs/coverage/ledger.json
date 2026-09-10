@@ -12043,13 +12043,12 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 12,
+          "count": 11,
           "symbols": [
             "append",
             "copy",
             "exists",
             "isDir",
-            "mkdirAll",
             "readDir",
             "readFileBytes",
             "readFileLimit",
@@ -12947,8 +12946,8 @@
           ]
         }
       },
-      "count": 621,
-      "pct_of_denominator": 33.5
+      "count": 620,
+      "pct_of_denominator": 33.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13014,13 +13013,12 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 12,
+          "count": 11,
           "symbols": [
             "append",
             "copy",
             "exists",
             "isDir",
-            "mkdirAll",
             "readDir",
             "readFileBytes",
             "readFileLimit",
@@ -14001,8 +13999,8 @@
           ]
         }
       },
-      "count": 703,
-      "pct_of_denominator": 37.9
+      "count": 702,
+      "pct_of_denominator": 37.8
     }
   },
   "units": [
@@ -14024,10 +14022,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 22,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 101,
-      "refs_qualified": 96,
+      "refs_generous": 102,
+      "refs_qualified": 97,
       "role": "Layer2",
-      "sky_files": 91,
+      "sky_files": 92,
       "sky_toml_sections": []
     },
     {
