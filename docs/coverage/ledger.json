@@ -287,7 +287,7 @@
     },
     "corpus": {
       "expected_assertions": 337,
-      "falsifier_mutation": "corpus.wrong-expected-value",
+      "falsifier_mutation": "corpus.wrong-stdlib-digest",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
       "surfaces": [
