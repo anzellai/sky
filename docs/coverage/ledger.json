@@ -664,7 +664,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1854,
+    "stdlib_entries": 1856,
     "stdlib_modules": 93,
     "surfaces_covered": 139,
     "surfaces_covered_pct": 88.0,
@@ -9379,6 +9379,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -12343,7 +12348,7 @@
           ]
         },
         "Std.Codec": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "ColType",
             "ObjectCodec",
@@ -12351,7 +12356,6 @@
             "Variant",
             "maybe",
             "shape",
-            "var1",
             "var3"
           ]
         },
@@ -12943,7 +12947,7 @@
           ]
         }
       },
-      "count": 622,
+      "count": 621,
       "pct_of_denominator": 33.5
     },
     "symbols_unreferenced_strict": {
@@ -13000,9 +13004,8 @@
           ]
         },
         "Sky.Core.Error": {
-          "count": 6,
+          "count": 5,
           "symbols": [
-            "Error",
             "ErrorDetails",
             "ErrorInfo",
             "ErrorKind",
@@ -13330,7 +13333,7 @@
           ]
         },
         "Std.Codec": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "ColType",
             "ObjectCodec",
@@ -13338,7 +13341,6 @@
             "Variant",
             "maybe",
             "shape",
-            "var1",
             "var3"
           ]
         },
@@ -13999,8 +14001,8 @@
           ]
         }
       },
-      "count": 705,
-      "pct_of_denominator": 38.0
+      "count": 703,
+      "pct_of_denominator": 37.9
     }
   },
   "units": [
@@ -14020,12 +14022,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 21,
+      "modules_imported": 22,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 91,
-      "refs_qualified": 85,
+      "refs_generous": 101,
+      "refs_qualified": 96,
       "role": "Layer2",
-      "sky_files": 47,
+      "sky_files": 91,
       "sky_toml_sections": []
     },
     {
@@ -15145,8 +15147,8 @@
       "id": "tests/conformance",
       "modules_imported": 38,
       "path": "tests/conformance",
-      "refs_generous": 524,
-      "refs_qualified": 514,
+      "refs_generous": 526,
+      "refs_qualified": 517,
       "role": "Conformance",
       "sky_files": 31,
       "sky_toml_sections": []
