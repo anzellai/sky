@@ -1405,11 +1405,21 @@ fn ledger_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome {
         }
         match cmd.output() {
             Err(e) => fail.push(format!("{label}: spawn failed: {e}")),
-            Ok(o) if !o.status.success() => fail.push(format!(
-                "{label} failed (exit {:?}):\n{}",
-                o.status.code(),
-                layer2::tail(&String::from_utf8_lossy(&o.stdout), 8)
-            )),
+            Ok(o) if !o.status.success() => {
+                // The go build error `sky db <verb>` reports lands on STDERR, so
+                // capture BOTH streams (a gate that hides why it failed is the
+                // vacuity class) and keep enough lines to carry the compiler error.
+                let combined = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+                fail.push(format!(
+                    "{label} failed (exit {:?}):\n{}",
+                    o.status.code(),
+                    layer2::tail(&combined, 40)
+                ));
+            }
             Ok(_) => {}
         }
     }
@@ -1904,7 +1914,7 @@ fn dispatch_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome 
         Err(e) => fail.push(e),
         Ok((code, log)) if code != 0 => fail.push(format!(
             "`sky db drop --yes` (the pre-run reset) failed (exit {code}):\n{}",
-            layer2::tail(&log, 10)
+            layer2::tail(&log, 40)
         )),
         Ok(_) => {}
     }
@@ -1928,7 +1938,7 @@ fn dispatch_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome 
         Err(e) => fail.push(e),
         Ok((code, log)) if code != 0 => fail.push(format!(
             "`sky db migrate` failed (exit {code}):\n{}",
-            layer2::tail(&log, 10)
+            layer2::tail(&log, 40)
         )),
         Ok(_) => {}
     }
@@ -1940,7 +1950,7 @@ fn dispatch_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome 
         Ok((code, log)) if code != 0 => fail.push(format!(
             "`sky db status` must exit 0 once every migration is applied; got exit \
              {code}:\n{}",
-            layer2::tail(&log, 10)
+            layer2::tail(&log, 40)
         )),
         Ok(_) => {}
     }
@@ -1953,7 +1963,7 @@ fn dispatch_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome 
         Err(e) => fail.push(e),
         Ok((code, log)) if code != 0 => fail.push(format!(
             "`sky db seed` failed (exit {code}):\n{}",
-            layer2::tail(&log, 10)
+            layer2::tail(&log, 40)
         )),
         Ok(_) => {}
     }
@@ -2333,7 +2343,7 @@ pub fn apps_dispatch_destructive(ctx: &GateCtx) -> GateOutcome {
                 a,
                 format!(
                     "baseline `sky db migrate` failed (exit {code}):\n{}",
-                    layer2::tail(&log, 10)
+                    layer2::tail(&log, 40)
                 ),
             )
         }
