@@ -11,12 +11,14 @@ import Std.Ui as Ui exposing (Element)
 import Types exposing (..)
 import Config
 
+
 view : Model -> any
 view model =
-    Ui.layout []
-        (Ui.column []
+    Ui.layout
+        []
+        (Ui.column
+            []
             [ Ui.text ("count: " ++ String.fromInt model.count)
             , Ui.text ("site: " ++ Config.siteUrl ())
             , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
-            ]
-        )
+            ])

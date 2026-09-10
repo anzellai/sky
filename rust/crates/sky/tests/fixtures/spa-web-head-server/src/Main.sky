@@ -41,9 +41,7 @@ app =
         , subscriptions = subscriptions
         }
         |> App.withRoutes
-            [ App.route "/" HomePage
-            , App.route "/about" AboutPage
-            ]
+               [ App.route "/" HomePage, App.route "/about" AboutPage ]
         |> App.withNotFound NotFoundPage
         |> App.withHead View.head
         |> App.withOnNavigate (\_ -> PageLink)

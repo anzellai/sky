@@ -6,6 +6,7 @@ module Config exposing (siteUrl)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.System as System
 
+
 siteUrl : () -> String
 siteUrl _ =
     System.getenvOr "SITE_URL" "http://localhost:8000"
