@@ -1,0 +1,147 @@
+module Main exposing (main)
+
+-- Transitive (multi-hop) server-internal effect chaining for the Sky.Spa
+-- auto-split (the darraghstudio checkout-finalize shape).
+--
+--   * `Kick x` is a client-dispatched SERVER branch (a wire entry). It performs
+--     `fetchThing x` -> `Fetched`.
+--   * `Fetched (Ok v)` DELEGATES to the helper `record`, which reads a File
+--     effect inline and returns `Cmd.batch [ Cmd.perform (saveA v) SavedA,
+--     Cmd.perform (logB v) LoggedB ]`. So `Fetched`'s continuations live behind
+--     a helper that returns `( model, cmd )` — the 3rd hop.
+--   * `SavedA` and `LoggedB` each reach a server effect (`Log`) and terminate.
+--
+--   Every task is a server effect (File/Log). No client (`Std.Native`) leaf
+--   anywhere. The WHOLE chain must settle server-side: `Kick` is a chaining
+--   ROOT; `Fetched`, `SavedA`, `LoggedB` are ALL server-internal (no
+--   `/_rpc/<Msg>` route, no `Applied<Msg>`). `Kick`'s response write-set is the
+--   UNION over every hop -- `busy` (Kick), `c` (record/Fetched), `a` (SavedA),
+--   `b` (LoggedB) -- and must NOT include the untouched `untouched` field.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Log as Log
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { busy : Bool
+    , c : String
+    , a : String
+    , b : String
+    , untouched : Int
+    }
+
+
+type Msg
+    = Kick String
+    | Fetched (Result Error String)
+    | SavedA (Result Error String)
+    | LoggedB (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { busy = False, c = "", a = "", b = "", untouched = 0 }, Cmd.none )
+
+
+fetchThing : String -> Task Error String
+fetchThing _ =
+    File.readFile "thing.txt"
+
+
+saveA : String -> Task Error String
+saveA v =
+    File.writeFile "a.txt" v
+        |> Task.map (\_ -> v)
+
+
+logB : String -> Task Error String
+logB v =
+    File.writeFile "b.txt" v
+        |> Task.map (\_ -> v)
+
+
+-- The continuation delegates to THIS helper, which returns `( model, cmd )` with
+-- a `Cmd.batch` of two FURTHER performs. The chaining analysis must resolve INTO
+-- the helper to discover `SavedA`/`LoggedB` (the transitive step this test
+-- exercises).
+record : String -> Model -> ( Model, Cmd Msg )
+record v model =
+    let
+        _ =
+            File.readFile "audit.txt"
+    in
+    ( { model | c = v }
+    , Cmd.batch
+        [ Cmd.perform (saveA v) SavedA
+        , Cmd.perform (logB v) LoggedB
+        ]
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Kick x ->
+            ( { model | busy = True }
+            , Cmd.perform (fetchThing x) Fetched
+            )
+
+        Fetched (Ok v) ->
+            record v model
+
+        Fetched (Err _) ->
+            ( { model | busy = False }, Cmd.none )
+
+        SavedA _ ->
+            let
+                _ =
+                    Log.println "[a] saved"
+            in
+            ( { model | a = "saved" }, Cmd.none )
+
+        LoggedB _ ->
+            let
+                _ =
+                    Log.println "[b] logged"
+            in
+            ( { model | b = "logged" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("c=" ++ model.c)
+            , Ui.text ("a=" ++ model.a)
+            , Ui.text ("b=" ++ model.b)
+            , Ui.text ("untouched=" ++ String.fromInt model.untouched)
+            , Ui.text ("busy=" ++ (if model.busy then "yes" else "no"))
+            , Ui.el [ Ui.onClick (Kick "payload") ] (Ui.text "Kick")
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

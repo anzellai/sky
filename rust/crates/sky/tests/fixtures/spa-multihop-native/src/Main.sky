@@ -1,0 +1,134 @@
+module Main exposing (main)
+
+-- NEGATIVE: a multi-hop chain whose LAST hop reaches a `Std.Native` CLIENT
+-- effect. A client effect cannot run server-side, so the WHOLE root must fail
+-- closed -- never a PARTIAL settle that would drop the deep hop's effect.
+--
+--   * `Kick x` (client-dispatched SERVER wire entry) -> `Cmd.perform
+--     (fetchThing x) Fetched`.
+--   * `Fetched (Ok v)` delegates to `record` -> `Cmd.perform (saveA v) SavedA`
+--     (server, hop 2).
+--   * `SavedA (Ok v)` delegates to `deepStep` -> `Cmd.perform
+--     (Native.clipboardWrite v) Copied` -- the LAST hop has a client `Native`
+--     leaf (hop 3).
+--
+--   Because the deepest hop is a client effect, `Kick` must NOT be a chaining
+--   root, `Fetched`/`SavedA` must NOT be server-internal, and a fail-closed
+--   warning naming `Kick` is emitted.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Native as Native
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { busy : Bool
+    , c : String
+    , a : String
+    , untouched : Int
+    }
+
+
+type Msg
+    = Kick String
+    | Fetched (Result Error String)
+    | SavedA (Result Error String)
+    | Copied (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { busy = False, c = "", a = "", untouched = 0 }, Cmd.none )
+
+
+fetchThing : String -> Task Error String
+fetchThing _ =
+    File.readFile "thing.txt"
+
+
+saveA : String -> Task Error String
+saveA v =
+    File.writeFile "a.txt" v
+        |> Task.map (\_ -> v)
+
+
+record : String -> Model -> ( Model, Cmd Msg )
+record v model =
+    let
+        _ =
+            File.readFile "audit.txt"
+    in
+    ( { model | c = v }
+    , Cmd.perform (saveA v) SavedA
+    )
+
+
+-- The LAST hop: a helper returning a `Cmd.perform` whose task is a `Std.Native`
+-- CLIENT effect. Reachable ONLY transitively (Kick -> Fetched -> SavedA).
+deepStep : String -> Model -> ( Model, Cmd Msg )
+deepStep v model =
+    ( { model | a = v }
+    , Cmd.perform (Native.clipboardWrite v) Copied
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Kick x ->
+            ( { model | busy = True }
+            , Cmd.perform (fetchThing x) Fetched
+            )
+
+        Fetched (Ok v) ->
+            record v model
+
+        Fetched (Err _) ->
+            ( { model | busy = False }, Cmd.none )
+
+        SavedA (Ok v) ->
+            deepStep v model
+
+        SavedA (Err _) ->
+            ( { model | a = "" }, Cmd.none )
+
+        Copied _ ->
+            ( model, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("c=" ++ model.c)
+            , Ui.text ("a=" ++ model.a)
+            , Ui.text ("untouched=" ++ String.fromInt model.untouched)
+            , Ui.text ("busy=" ++ (if model.busy then "yes" else "no"))
+            , Ui.el [ Ui.onClick (Kick "payload") ] (Ui.text "Kick")
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

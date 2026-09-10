@@ -1792,54 +1792,7 @@ fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
     }
 }
 
-/// Collect the returned COMMAND expressions in tail position from an arm body,
-/// each TAGGED with whether it was reached THROUGH a higher-order guard wrapper
-/// (`GUARD model (\_ -> ( model, cmd ))`, the darraghstudio `requireAdmin`
-/// shape). A DIRECT `( model, cmd )` tail is tagged `false`; a pair returned from
-/// the LAST-argument lambda of a call is tagged `true`. This lets the chaining
-/// analysis apply today's exact rule to a DIRECT perform and a stricter
-/// server-head gate to a GUARDED perform, so a guard-wrapped ALL-SERVER chain
-/// settles while a guard-wrapped CLIENT-result perform is left for pattern-2.
-/// Empty when the tail is not a recognisable pair (a helper delegation) — the
-/// caller then treats the branch as unresolvable (fail-closed). FAIL-CLOSED on
-/// the guard shape: only a `Call` whose FINAL argument is a `\… -> …` lambda is
-/// walked as a wrapper (its body walked, tagged guarded); any other call shape
-/// contributes nothing.
-fn collect_tail_cmd_exprs_tagged(
-    body: &Body,
-    e: ExprId,
-    guarded: bool,
-    out: &mut Vec<(ExprId, bool)>,
-) {
-    match &body.exprs[e] {
-        Expr::Tuple(xs) if xs.len() == 2 => out.push((xs[1], guarded)),
-        Expr::Let { body: b, .. } => collect_tail_cmd_exprs_tagged(body, *b, guarded, out),
-        Expr::If { arms, els } => {
-            for (_, t) in arms {
-                collect_tail_cmd_exprs_tagged(body, *t, guarded, out);
-            }
-            collect_tail_cmd_exprs_tagged(body, *els, guarded, out);
-        }
-        Expr::Case { branches, .. } => {
-            for br in branches {
-                collect_tail_cmd_exprs_tagged(body, br.body, guarded, out);
-            }
-        }
-        // A guard/HOF wrapper: `guard model (\_ -> ( model, cmd ))`. The returned
-        // pair lives in the LAST argument's thunk body — walk it, TAGGED guarded.
-        Expr::Call(_, args) => {
-            if let Some(last) = args.last() {
-                if let Expr::Lambda { body: lb, .. } = &body.exprs[*last] {
-                    collect_tail_cmd_exprs_tagged(body, *lb, true, out);
-                }
-            }
-        }
-        Expr::Lambda { body: b, .. } => collect_tail_cmd_exprs_tagged(body, *b, guarded, out),
-        _ => {}
-    }
-}
-
-/// Like [`collect_tail_cmd_exprs_tagged`] (untagged), but ALSO looks THROUGH a guard/HOF wrapper —
+/// Looks THROUGH a guard/HOF wrapper —
 /// the `requireAdmin model (\_ -> ( model, cmd ))` shape (darraghstudio), where
 /// the `( model, cmd )` pair is returned from the LAST-argument thunk rather than
 /// the arm's own tail. This walk is used ONLY by the pattern-2 (client-result)
@@ -1998,6 +1951,116 @@ fn resolve_helper_cmd(
     // Path-scoped cycle guard: a sibling call to the SAME helper (a `Cmd.batch`
     // with two `shippedCmd` calls) must still resolve — only a self-referential
     // cycle is blocked.
+    visited.remove(&d);
+}
+
+/// Collect the tail-position command LEAVES of an arm/helper body, each TAGGED
+/// with whether it was reached THROUGH a higher-order guard wrapper. This is the
+/// TRANSITIVE twin of [`collect_tail_cmd_exprs_tagged`] + [`resolve_cmd_leaves`]:
+/// it follows the SAME tail scaffolding (tuple / let / if / case / guard-wrapper
+/// lambda) AND, additionally, a WHOLE-ARM helper delegate `f a0 … an` that returns
+/// `( model, cmd )` — crossing INTO `f`'s body to find its OWN tail command. That
+/// last case is what lets a continuation whose arm delegates to a helper (the
+/// darraghstudio `handleFinalize` / `createOrder` shape, the `record v model`
+/// fixture) contribute its FURTHER perform continuations, so a 3+-hop all-server
+/// chain settles transitively. Depth- and cycle-bounded (a helper already on the
+/// path, or a delegation chain deeper than `CMD_RESOLVE_DEPTH`, yields
+/// [`CmdLeaf::Unresolvable`] — fail-closed). FAIL-CLOSED on every unrecognised
+/// shape: it contributes NOTHING, so the caller sees no leaf and treats the arm
+/// as dirty, exactly as before this change. The guard-wrapper branch is checked
+/// BEFORE the whole-arm-delegate branch, so a `guard model (\_ -> …)` keeps its
+/// stricter (guarded) treatment and a plain delegate `record v model` is crossed.
+fn collect_tail_cmd_leaves_tagged(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    guarded: bool,
+    out: &mut Vec<(CmdLeaf, bool)>,
+    depth: usize,
+    visited: &mut HashSet<DefId>,
+) {
+    if depth > CMD_RESOLVE_DEPTH {
+        out.push((CmdLeaf::Unresolvable, guarded));
+        return;
+    }
+    match &body.exprs[e] {
+        // A DIRECT `( model, cmd )` tail — resolve the command's leaves (which
+        // already follows `Cmd`-returning helpers + literal-list batches), each
+        // tagged with the current guarded state.
+        Expr::Tuple(xs) if xs.len() == 2 => {
+            let mut leaves: Vec<CmdLeaf> = Vec::new();
+            resolve_cmd_leaves(db, body, xs[1], &mut leaves);
+            for l in leaves {
+                out.push((l, guarded));
+            }
+        }
+        Expr::Let { body: b, .. } => {
+            collect_tail_cmd_leaves_tagged(db, body, *b, guarded, out, depth, visited)
+        }
+        Expr::If { arms, els } => {
+            for (_, t) in arms {
+                collect_tail_cmd_leaves_tagged(db, body, *t, guarded, out, depth, visited);
+            }
+            collect_tail_cmd_leaves_tagged(db, body, *els, guarded, out, depth, visited);
+        }
+        Expr::Case { branches, .. } => {
+            for br in branches {
+                collect_tail_cmd_leaves_tagged(db, body, br.body, guarded, out, depth, visited);
+            }
+        }
+        Expr::Lambda { body: b, .. } => {
+            collect_tail_cmd_leaves_tagged(db, body, *b, guarded, out, depth, visited)
+        }
+        Expr::Call(callee, args) => {
+            // A guard/HOF wrapper: `guard model (\_ -> ( model, cmd ))` — the pair
+            // lives in the LAST argument's thunk body; walk it, TAGGED guarded.
+            if let Some(last) = args.last() {
+                if let Expr::Lambda { body: lb, .. } = &body.exprs[*last] {
+                    collect_tail_cmd_leaves_tagged(db, body, *lb, true, out, depth, visited);
+                    return;
+                }
+            }
+            // A WHOLE-ARM delegate `f a0 … an` returning `( model, cmd )` — cross
+            // INTO `f`'s body and resolve ITS tail command. Preserves `guarded`:
+            // a delegate reached from inside a guard thunk stays guarded.
+            if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
+                collect_delegate_tail_cmd_leaves(db, *d, guarded, out, depth + 1, visited);
+                return;
+            }
+            // Any other call shape contributes nothing (fail-closed).
+        }
+        _ => {}
+    }
+}
+
+/// Cross into a WHOLE-ARM delegate helper `d` (which returns `( model, cmd )`) and
+/// resolve its OWN tail command leaves. Path-scoped cycle guard + depth ceiling
+/// mirror [`resolve_helper_cmd`]; a body we cannot read yields
+/// [`CmdLeaf::Unresolvable`] (fail-closed).
+fn collect_delegate_tail_cmd_leaves(
+    db: &dyn SkyDb,
+    d: DefId,
+    guarded: bool,
+    out: &mut Vec<(CmdLeaf, bool)>,
+    depth: usize,
+    visited: &mut HashSet<DefId>,
+) {
+    if !visited.insert(d) || depth > CMD_RESOLVE_DEPTH {
+        out.push((CmdLeaf::Unresolvable, guarded));
+        return;
+    }
+    let resolved = db.def_loc(d).map(|loc| db.resolve(loc.module));
+    match resolved
+        .as_ref()
+        .and_then(|r| r.bodies.get(&d))
+        .and_then(|b| b.root.map(|root| (b, root)))
+    {
+        Some((hbody, root)) => {
+            collect_tail_cmd_leaves_tagged(db, hbody, root, guarded, out, depth, visited)
+        }
+        None => out.push((CmdLeaf::Unresolvable, guarded)),
+    }
+    // Path-scoped: a sibling delegate to the SAME helper still resolves.
     visited.remove(&d);
 }
 
@@ -2242,9 +2305,25 @@ fn compute_server_chaining(
                 // its continuation is a SERVER head, so an all-server guard-wrapped
                 // chain settles while a guard-wrapped CLIENT-result perform is
                 // left untouched for pattern-2.
-                let mut cmd_exprs: Vec<(ExprId, bool)> = Vec::new();
-                collect_tail_cmd_exprs_tagged(body, arms[ai].body, false, &mut cmd_exprs);
-                if cmd_exprs.is_empty() {
+                // TRANSITIVE tail-cmd resolution: follows the SAME tail
+                // scaffolding as the direct walk PLUS a whole-arm helper delegate
+                // `record v model` returning `( model, cmd )` — crossing into the
+                // helper so a continuation whose own arm spawns further performs
+                // (a 3+-hop chain) contributes its leaves rather than reading as
+                // an empty (dirty) pair. Fail-closed: an unresolvable delegate
+                // yields `Unresolvable`, still dirty.
+                let mut cmd_leaves: Vec<(CmdLeaf, bool)> = Vec::new();
+                let mut cmd_visited: HashSet<DefId> = HashSet::new();
+                collect_tail_cmd_leaves_tagged(
+                    db,
+                    body,
+                    arms[ai].body,
+                    false,
+                    &mut cmd_leaves,
+                    0,
+                    &mut cmd_visited,
+                );
+                if cmd_leaves.is_empty() {
                     dirty = true; // no isolable `( model, cmd )` pair
                     continue;
                 }
@@ -2255,10 +2334,8 @@ fn compute_server_chaining(
                 // direct walk saw no pair before this change, so it was dirty.
                 let mut arm_contributed = false;
                 let mut arm_guarded_skip = false;
-                for (ce, guarded) in cmd_exprs {
-                    let mut leaves: Vec<CmdLeaf> = Vec::new();
-                    resolve_cmd_leaves(db, body, ce, &mut leaves);
-                    for leaf in leaves {
+                {
+                    for (leaf, guarded) in cmd_leaves {
                         match leaf {
                             CmdLeaf::NoneCmd => arm_contributed = true,
                             CmdLeaf::Publish | CmdLeaf::Unresolvable => {

@@ -127,6 +127,11 @@ fn guarded_chain_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-guarded-chain/src/Main.sky")
 }
 
+fn multihop_chain_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-multihop-chain/src/Main.sky")
+}
+
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
 /// rather than a fixed `main.wasm`.
 fn dist_has_wasm(dist: &std::path::Path) -> bool {
@@ -5025,6 +5030,129 @@ fn spa_guarded_chain_both_trees_build() {
     assert!(
         frontend_build.status.success(),
         "guarded-chain frontend must build to wasm:\n{}",
+        String::from_utf8_lossy(&frontend_build.stderr)
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend build must stage a content-hashed main.<hash>.wasm"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// TRANSITIVE (multi-hop) server-internal chaining, end-to-end through the
+/// generator. `Kick` -> `Fetched` (via the helper `record`) -> `SavedA` +
+/// `LoggedB`: an all-server 3+-hop chain where the deep continuations live BEHIND
+/// a `( model, cmd )`-returning helper. Every continuation must be pruned from the
+/// wire (no `/_rpc/<Msg>` route, no `Applied<Msg>`, not constructed in the
+/// frontend), and `Kick` keeps its own RPC route.
+#[test]
+fn spa_multihop_chain_prunes_every_transitive_continuation() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            multihop_chain_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed on the multi-hop app");
+
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+
+    let strip_comments = |s: &str| -> String {
+        s.lines()
+            .map(|l| l.split("--").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let front_code = strip_comments(&front);
+    let shared_code = strip_comments(&shared);
+
+    // GATE 1: no server effect reaches the client.
+    for needle in ["fetchThing", "saveA", "logB", "File.", "Log."] {
+        assert!(
+            !front_code.contains(needle),
+            "SECURITY: frontend CODE must not contain the server effect `{needle}`:\n{front_code}"
+        );
+    }
+
+    // GATE 2: every transitive continuation is SERVER-INTERNAL — no wire route,
+    // no wire type, no Applied variant, not constructed in the frontend.
+    for m in ["Fetched", "SavedA", "LoggedB"] {
+        assert!(
+            !front_code.contains(&format!("/_rpc/{m}")),
+            "server-internal `{m}` must have NO RPC route:\n{front_code}"
+        );
+        assert!(
+            !shared_code.contains(&format!("{m}Req")) && !shared_code.contains(&format!("{m}Resp")),
+            "server-internal `{m}` must have NO `{m}Req`/`{m}Resp` wire type:\n{shared_code}"
+        );
+        assert!(
+            !front_code.contains(&format!("Applied{m}")),
+            "server-internal `{m}` must have NO `Applied{m}` variant:\n{front_code}"
+        );
+        assert!(
+            !front_code.contains(&format!("{m} ")),
+            "server-internal `{m}` must not be constructed/handled in the frontend:\n{front_code}"
+        );
+    }
+
+    // GATE 3: `Kick` keeps its own RPC route (the client still triggers it).
+    assert!(
+        front.contains("/_rpc/Kick"),
+        "`Kick` must keep its own RPC route in the frontend:\n{front}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Build gate — both trees compile with the transitive chain settled server-side
+/// and every continuation pruned from the wasm frontend. Go-gated.
+#[test]
+fn spa_multihop_chain_both_trees_build() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            multihop_chain_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .output()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.status.success(),
+        "multi-hop backend must build natively:\n{}",
+        String::from_utf8_lossy(&backend_build.stderr)
+    );
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .output()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend_build.status.success(),
+        "multi-hop frontend must build to wasm:\n{}",
         String::from_utf8_lossy(&frontend_build.stderr)
     );
     assert!(
