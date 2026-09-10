@@ -1,0 +1,54 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Types exposing (..)
+import View
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = HomePage, count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Decrement ->
+            ( { model | count = model.count - 1 }, Cmd.none )
+
+        PageLink ->
+            ( model, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.web
+        { init = init
+        , update = update
+        , view = View.view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+            [ App.route "/" HomePage
+            , App.route "/about" AboutPage
+            ]
+        |> App.withNotFound NotFoundPage
+        |> App.withHead View.head
+        |> App.withOnNavigate (\_ -> PageLink)
+
+
+main : Task Error ()
+main =
+    App.run app

@@ -1,0 +1,12 @@
+module Config exposing (siteUrl)
+
+-- `siteUrl` reads the environment (`System.getenvOr`), so it is server-tainted:
+-- the wasm client has no environment. Any `head`/`view` that reaches it becomes
+-- server-only, exactly like the real app's `Config.siteUrl` canonical-URL read.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+
+siteUrl : () -> String
+siteUrl _ =
+    System.getenvOr "SITE_URL" "http://localhost:8000"

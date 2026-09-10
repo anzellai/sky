@@ -1,0 +1,11 @@
+module Config exposing (siteUrl)
+
+-- `siteUrl` reads the environment, so it is server-tainted. A `view` that reaches
+-- it cannot run in the wasm client.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+
+siteUrl : () -> String
+siteUrl _ =
+    System.getenvOr "SITE_URL" "http://localhost:8000"

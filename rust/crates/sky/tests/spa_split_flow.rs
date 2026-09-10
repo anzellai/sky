@@ -1896,6 +1896,199 @@ main =
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+fn web_withhead_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-web-withhead")
+}
+
+fn web_head_server_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-web-head-server")
+}
+
+fn web_view_server_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-web-view-server")
+}
+
+/// The client-builder invariant, CARRY leg. A real-app shape — `App.web { view =
+/// View.view } |> App.withHead View.head` with `view`/`head` factored into a
+/// sibling `View` module, both PURE — synthesises `spaView_`/`spaHead_` wrappers.
+/// Because neither reaches a server effect, BOTH must be carried into the frontend
+/// entry (defined AND referenced), and the wasm client must build. Regression for
+/// the darraghstudio dangle: the split kept `view = spaView_` / `|> Spa.withHead
+/// spaHead_` in the client `main` but dropped their definitions -> `E1001
+/// Undefined name: spaView_` / `spaHead_`. This fixture proves the carry works for
+/// a pure sibling-module view/head (the guard that the drop leg below is precise).
+#[test]
+fn web_app_carries_sibling_module_view_and_head_into_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&web_withhead_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+
+    // Every `spa*_` the client chain references must be DEFINED — no dangling ref.
+    assert!(
+        front.contains("spaView_ model_ ="),
+        "CARRY: the pure `spaView_` must be DEFINED in the frontend entry:\n{front}"
+    );
+    assert!(
+        front.contains("spaHead_ model_ ="),
+        "CARRY: the pure `spaHead_` must be DEFINED in the frontend entry:\n{front}"
+    );
+    assert!(
+        front.contains("view = spaView_"),
+        "CARRY: the client `Spa.config` must still reference `spaView_`:\n{front}"
+    );
+    assert!(
+        front.contains("|> Spa.withHead spaHead_"),
+        "CARRY: a PURE head must keep its `Spa.withHead spaHead_` step (not be dropped):\n{front}"
+    );
+    assert!(
+        !log.contains("Undefined name: spaView_") && !log.contains("Undefined name: spaHead_"),
+        "CARRY: no dangling `spaView_`/`spaHead_` reference in the client build:\n{log}"
+    );
+
+    // Go-gated: the FRONTEND (wasm) must build — not just the backend.
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "CARRY: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        dist_has_wasm(&proj.join(".skyapp/web-app/.split/frontend/dist")),
+        "CARRY: the frontend wasm must be staged:\n{log}"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// The client-builder invariant, DROP leg. `view` is pure but `head` reaches
+/// `Config.siteUrl` — an environment read (`System.getenvOr`) — so `head` is
+/// server-only: it cannot run in the wasm client, but the SSR backend still
+/// renders it. The split must DROP the optional `|> Spa.withHead spaHead_` step
+/// from the client chain (never leave a dangling `spaHead_`), while still carrying
+/// the pure `spaView_`. Pre-fix this failed with `E1001 Undefined name:
+/// spaHead_`. Reproduces the darraghstudio `spaHead_` half exactly.
+#[test]
+fn web_app_drops_server_tainted_head_from_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&web_head_server_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+
+    // The pure view is carried; the server-tainted head is dropped WHOLE — both
+    // its definition AND its builder-chain reference — so no dangling name.
+    assert!(
+        front.contains("spaView_ model_ =") && front.contains("view = spaView_"),
+        "DROP: the pure `spaView_` must still be carried:\n{front}"
+    );
+    assert!(
+        !front.contains("spaHead_"),
+        "DROP: the server-tainted `spaHead_` must be absent from the client entry (def AND reference):\n{front}"
+    );
+    assert!(
+        !front.contains("Spa.withHead"),
+        "DROP: the `|> Spa.withHead spaHead_` step must be stripped from the client chain:\n{front}"
+    );
+    assert!(
+        !log.contains("Undefined name: spaHead_"),
+        "DROP: the pre-fix dangling `spaHead_` E1001 must be gone:\n{log}"
+    );
+    // The BACKEND keeps the head (it renders it server-side at SSR).
+    assert!(
+        back.contains("spaHead_"),
+        "DROP: the backend must keep `spaHead_` for SSR head rendering:\n{back}"
+    );
+
+    // Go-gated: the FRONTEND (wasm) must now build.
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "DROP: --target web:app must build after the server-tainted head is dropped:\n{log}"
+    );
+    assert!(
+        dist_has_wasm(&proj.join(".skyapp/web-app/.split/frontend/dist")),
+        "DROP: the frontend wasm must be staged:\n{log}"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// The client-builder invariant, MANDATORY-VIEW leg. `view` itself reaches
+/// `Config.siteUrl` — an environment read — so the mandatory `view = spaView_`
+/// field cannot be dropped. The split must FAIL with a clear, actionable
+/// diagnostic (the client view must be pure), NEVER a bare `E1001 Undefined name:
+/// spaView_`. Reproduces the darraghstudio `spaView_` half, which is why the real
+/// app's frontend cannot build until its view stops reading env. Synthesis-level —
+/// no Go toolchain needed (the failure is before any `go build`).
+#[test]
+fn web_app_rejects_server_tainted_view_with_a_clear_diagnostic() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&web_view_server_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(!output.status.success(), "a server-tainted view must fail the build:\n{log}");
+    // The confusing pre-fix symptom must be gone.
+    assert!(
+        !log.contains("Undefined name: spaView_"),
+        "DIAGNOSTIC: the bare `E1001 Undefined name: spaView_` must be replaced by a clear message:\n{log}"
+    );
+    // The new message must name the taint AND tell the user what to do.
+    assert!(
+        log.contains("client SPA `view` is server-tainted"),
+        "DIAGNOSTIC: the failure must name the server-tainted client view:\n{log}"
+    );
+    assert!(
+        log.contains("must be PURE") && log.contains("embed the value in the Model"),
+        "DIAGNOSTIC: the failure must be actionable (make the view pure; pass config through the Model):\n{log}"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 fn ssr_app_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-app")
 }

@@ -1714,6 +1714,19 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &client_result_map,
     )?;
 
+    // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
+    // client `Spa.config` / builder chain references MUST be defined in the
+    // frontend. A server-tainted OPTIONAL step (`|> Spa.withHead spaHead_`) is
+    // dropped from the client chain; a server-tainted MANDATORY `view = spaView_`
+    // fails with a clear diagnostic instead of a dangling `E1001`.
+    let entry_taint_reason: HashMap<String, String> = report
+        .tainted
+        .iter()
+        .filter(|t| t.module == entry_name)
+        .map(|t| (t.name.clone(), t.reason.clone()))
+        .collect();
+    let frontend_src = enforce_client_builder_invariant(&frontend_src, &entry_taint_reason, &mut notes)?;
+
     let mut files: Vec<String> = Vec::new();
     let write = |rel: &str, content: &str, files: &mut Vec<String>| -> Result<(), String> {
         let full = out_dir.join(rel);
@@ -4319,6 +4332,104 @@ fn gen_frontend(
         import_lines.join("\n"),
         body
     ))
+}
+
+/// Is `n` a synthesised App->Spa builder wrapper (`spaView_` / `spaHead_` /
+/// `spaOnNavigate_` / …)? These are the names the `synthesize_spa_source` pass
+/// (`sky/src/main.rs`) emits for the structural client entries when it derives a
+/// `Spa.app` entry from an `App.app` / `App.web` value.
+fn is_spa_builder_wrapper(n: &str) -> bool {
+    n.len() > 4 && n.starts_with("spa") && n.ends_with('_')
+}
+
+/// Enforce the client-builder invariant on the generated frontend entry: EVERY
+/// synthesised `spa*_` wrapper referenced in the client `Spa.config` / builder
+/// chain MUST be defined in the frontend. A server-tainted wrapper is dropped by
+/// `gen_frontend` (the security spine keeps effect-reaching code off the client),
+/// which used to leave a DANGLING reference in the copied `main` -> the wasm build
+/// failed with a bare `E1001 Undefined name: spaView_` pointing at generated code
+/// the user never wrote. Resolve it by KIND:
+///
+///   * an OPTIONAL builder step (`|> Spa.with<Step> spaX_`) whose wrapper is
+///     server-tainted is REMOVED from the client chain (the client loses that
+///     step — e.g. a per-route `<head>` that reads `System.getenvOr` for a
+///     canonical URL; the SSR backend still renders it), and
+///   * the MANDATORY `view = spaView_` field cannot be dropped: a `--target
+///     web:app` client view runs in the wasm client, which has no server
+///     environment, so it must be PURE. A server-tainted view FAILS with an
+///     actionable diagnostic naming the taint, never a dangling `spaView_`.
+///
+/// `taint_reason` maps a dropped wrapper to the report's taint reason (for the
+/// view diagnostic). Stripped optional steps are appended to `notes`.
+fn enforce_client_builder_invariant(
+    frontend_src: &str,
+    taint_reason: &HashMap<String, String>,
+    notes: &mut Vec<String>,
+) -> Result<String, String> {
+    // Top-level `spa*_` wrappers that ARE defined in the frontend entry (a decl
+    // head starts at column 0; the wrapper name is its first token).
+    let mut defined: HashSet<String> = HashSet::new();
+    for line in frontend_src.lines() {
+        if line.starts_with(|c: char| c.is_whitespace()) || line.is_empty() {
+            continue;
+        }
+        let tok = line
+            .split(|c: char| c.is_whitespace() || c == '=')
+            .next()
+            .unwrap_or("");
+        if is_spa_builder_wrapper(tok) {
+            defined.insert(tok.to_string());
+        }
+    }
+
+    let mut out = String::with_capacity(frontend_src.len());
+    let mut stripped: Vec<String> = Vec::new();
+    for line in frontend_src.lines() {
+        let t = line.trim_start();
+        // An optional builder step: `|> Spa.with<Step> <arg>`.
+        if let Some(rest) = t.strip_prefix("|> Spa.") {
+            let mut it = rest.split_whitespace();
+            let step = it.next().unwrap_or("");
+            let arg = it.next().unwrap_or("");
+            if is_spa_builder_wrapper(arg) && !defined.contains(arg) {
+                // Drop the step: its wrapper is server-tainted and was not carried
+                // into the frontend. Never leave the dangling reference.
+                stripped.push(format!("Spa.{step} (server-tainted `{arg}`)"));
+                continue;
+            }
+        }
+        // The mandatory `view` field: `, view = <arg>` (or `view = <arg>`).
+        let view_ref = t
+            .strip_prefix(", view =")
+            .or_else(|| t.strip_prefix("view ="));
+        if let Some(rest) = view_ref {
+            let arg = rest.trim();
+            if is_spa_builder_wrapper(arg) && !defined.contains(arg) {
+                let reason = taint_reason
+                    .get(arg)
+                    .map(|r| format!(" ({r})"))
+                    .unwrap_or_default();
+                return Err(format!(
+                    "the client SPA `view` is server-tainted: `{arg}`{reason}. \
+A `--target web:app` client view runs in the wasm client, which has no server \
+environment, so it must be PURE (no `System.getenvOr`, `Db`, `File`, `Http`, `Auth`, \
+or other server effect). Move the environment/effect read out of the view into \
+`init`/`update` (server-side), embed the value in the Model, and read it from the \
+model in `view`."
+                ));
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    if !stripped.is_empty() {
+        notes.push(format!(
+            "client SPA: dropped server-tainted optional builder step(s) [{}] from the wasm client entry — the SSR backend still renders them, but they cannot run client-side (a client SPA head/step must be pure).",
+            stripped.join(", ")
+        ));
+    }
+    Ok(out)
 }
 
 fn gen_frontend_update(

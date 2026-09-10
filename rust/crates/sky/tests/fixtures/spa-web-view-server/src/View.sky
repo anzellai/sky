@@ -1,0 +1,22 @@
+module View exposing (view)
+
+-- The `view` itself reaches `Config.siteUrl` — an environment read — so it is
+-- server-tainted. The `view` field of `Spa.config` is MANDATORY and cannot be
+-- dropped, so the client SPA cannot be produced: the split must FAIL with a clear
+-- diagnostic (the client view must be pure), never emit a dangling `spaView_`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Ui as Ui exposing (Element)
+import Types exposing (..)
+import Config
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column []
+            [ Ui.text ("count: " ++ String.fromInt model.count)
+            , Ui.text ("site: " ++ Config.siteUrl ())
+            , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
+            ]
+        )

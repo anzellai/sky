@@ -1,0 +1,47 @@
+module View exposing (view, head)
+
+-- The `view` is PURE (client-safe), but `head` reaches `Config.siteUrl` — an
+-- environment read — for the canonical URL. So `head` is server-tainted: it
+-- cannot run in the wasm client, but the SSR backend still renders it. The
+-- App->Spa split must DROP the optional `|> Spa.withHead spaHead_` step from the
+-- client (never leave a dangling `spaHead_` reference), while still carrying the
+-- pure `spaView_`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Ui as Ui exposing (Element)
+import Std.Html as H
+import Std.Live.Head as Head
+import Types exposing (..)
+import Config
+
+view : Model -> any
+view model =
+    Ui.layout []
+        (Ui.column []
+            [ Ui.text ("count: " ++ String.fromInt model.count)
+            , Ui.el [ Ui.onClick Increment ] (Ui.text "+")
+            , Ui.el [ Ui.onClick Decrement ] (Ui.text "-")
+            ]
+        )
+
+
+head : Model -> List (H.Html Msg)
+head model =
+    [ Head.title (titleFor model.page)
+    , Head.canonical (Config.siteUrl () ++ "/")
+    ]
+
+
+titleFor : Page -> String
+titleFor page =
+    case page of
+
+        HomePage ->
+            "Home"
+
+        AboutPage ->
+            "About"
+
+        NotFoundPage ->
+            "Not found"
