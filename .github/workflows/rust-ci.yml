@@ -297,20 +297,25 @@ jobs:
   # NOT repeated (test-rest's `--all-targets` clippy and `--workspace --doc`
   # already cover sky). Setup-dependent (needs: setup) — NOT in
   # SETUP_INDEPENDENT_JOBS.
-  # test-sky is SHARDED across two sibling jobs (`test-sky` + `test-sky-2`),
-  # `cargo nextest --partition hash:1/2` and `2/2`. nextest partitions at TEST
-  # granularity by a stable name hash, so it is disjoint-and-total by
+  # test-sky is SHARDED across three sibling jobs (`test-sky` + `test-sky-2` +
+  # `test-sky-3`), `cargo nextest --partition count:1/3`, `2/3` and `3/3`.
+  # nextest partitions at TEST granularity, so it is disjoint-and-total by
   # construction (every non-ignored test runs in exactly one shard, no manifest
-  # to maintain) AND it spreads the many `sky build --target web:app` flow tests
-  # (spa_split_flow alone drives ~55 full builds) evenly — one unsharded job had
-  # grown to ~1045s against the 990s ceiling as SPA coverage accumulated. Two
-  # explicitly-named jobs, NOT a `matrix` (a matrix leg reports to the REST API
-  # as `name (leg)`, and the budget assertion matches whole space-separated job
-  # names — a name with a space could never match SETUP_INDEPENDENT_JOBS).
+  # to maintain). `count` (round-robin over the sorted test list) — not `hash`
+  # — is deliberate: the many `sky build --target web:app` flow tests
+  # (spa_split_flow alone drives ~55 full builds) are a CONTIGUOUS block of
+  # similarly-named tests in one file, and a name hash scatters them randomly —
+  # v0.24.0's SPA additions hashed disproportionately into shard 1 (766s -> 1074s
+  # against the 990s ceiling while shard 2 stayed ~606s). count round-robins that
+  # contiguous block evenly by construction. Three shards keep each well under
+  # the ~846s setup-dependent-chain floor with headroom for future SPA coverage.
+  # Three explicitly-named jobs, NOT a `matrix` (a matrix leg reports to the REST
+  # API as `name (leg)`, and the budget assertion matches whole space-separated
+  # job names — a name with a space could never match SETUP_INDEPENDENT_JOBS).
   # `#[ignore]`d heavy e2e legs still run nightly via `--ignored`.
   # nextest does NOT run doctests; shard 1 runs `cargo test --doc` so they are
   # covered exactly once. Deliberately NO `needs: setup` (same reasoning as
-  # `build-corpus`); both shards are in SETUP_INDEPENDENT_JOBS.
+  # `build-corpus`); all three shards are in SETUP_INDEPENDENT_JOBS.
   test-sky:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -354,11 +359,11 @@ jobs:
       # test -p sky` never ran any, and nextest (unit + integration) covers
       # exactly what the old `cargo test -p sky` did. No `--doc` step (it would
       # error "no library targets found").
-      - name: Tests — sky crate shard 1/2 (nextest partition; postgres-live + integration)
+      - name: Tests — sky crate shard 1/3 (nextest partition; postgres-live + integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition hash:1/2
+        run: cargo nextest run -p sky --locked --partition count:1/3
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -403,11 +408,60 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - name: Tests — sky crate shard 2/2 (nextest partition; postgres-live + integration)
+      - name: Tests — sky crate shard 2/3 (nextest partition; postgres-live + integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition hash:2/2
+        run: cargo nextest run -p sky --locked --partition count:2/3
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  test-sky-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-test-sky-
+      - name: PostgreSQL + sqlite3 for the live tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Tests — sky crate shard 3/3 (nextest partition; postgres-live + integration)
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition count:3/3
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1366,6 +1420,7 @@ jobs:
       - test-rest
       - test-sky
       - test-sky-2
+      - test-sky-3
       - parity-accept
       - parity-reject
       - repro
@@ -1440,7 +1495,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-corpus build-corpus-2 erasure-fuzz test-sky test-sky-2 licence-gate-linux'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-corpus build-corpus-2 erasure-fuzz test-sky test-sky-2 test-sky-3 licence-gate-linux'
           MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour licence-gate-macos'
         run: |
           set -euo pipefail
