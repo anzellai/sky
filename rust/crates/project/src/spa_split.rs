@@ -1636,6 +1636,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             report.server_internal.join(", "),
         ));
     }
+    let model_field_names: Vec<String> = report.model_fields.iter().map(|f| f.name.clone()).collect();
     let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
@@ -1657,6 +1658,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         update_in_entry,
         has_rpc_error,
         &server_internal,
+        &model_field_names,
     )?;
 
     let mut files: Vec<String> = Vec::new();
@@ -1812,6 +1814,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &no_frontend_names,
                 has_rpc_error,
                 &server_internal,
+                &model_field_names,
             )?;
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
         }
@@ -3593,9 +3596,23 @@ fn gen_backend(
         };
 
         // The model the branch runs against.
-        let mut run_setup = if io.reads_whole_model {
+        let mut run_setup = if io.reads_whole_model && io.msg_args.is_empty() {
             // Req IS the whole model.
             "                m =\n                    p\n".to_string()
+        } else if io.reads_whole_model {
+            // Whole model PLUS Msg-arg fields — `p` carries the Msg args too
+            // (build_wire appends them), so `p` is WIDER than `Model`. Select the
+            // model fields back out into a `Model` record; the Msg args are read
+            // separately via `p.<arg>` in the ctor application below.
+            let sets = model_fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    let sep = if i == 0 { "" } else { ", " };
+                    format!("{sep}{} = p.{}", f.name, f.name)
+                })
+                .collect::<String>();
+            format!("                m =\n                    {{ {sets} }}\n")
         } else if io.read_fields.is_empty() {
             "                ( base, _ ) =\n                    init ()\n\n                m =\n                    base\n".to_string()
         } else {
@@ -4041,6 +4058,8 @@ fn gen_frontend(
     has_rpc_error: bool,
     // SERVER-INTERNAL Msgs — dropped from the `Msg` union + the client `update`.
     server_internal: &HashSet<String>,
+    // Every Model field name (for the whole-model+Msg-arg request record).
+    model_field_names: &[String],
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -4199,7 +4218,7 @@ fn gen_frontend(
     if regen_update {
         let update_src = gen_frontend_update(
             file, src, server, &server_ctors, msg_param, model_param, update_anno, has_rpc_error,
-            server_internal,
+            server_internal, model_field_names,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -4229,6 +4248,11 @@ fn gen_frontend_update(
     // SERVER-INTERNAL Msgs — their client `update` arms are DROPPED (the whole
     // chain settles server-side in the triggering branch's RPC).
     server_internal: &HashSet<String>,
+    // Every Model field NAME, in declaration order. Needed to build an explicit
+    // whole-model request record for a `reads_whole_model` branch that ALSO binds
+    // Msg args: bare `model` misses those args (the backend `Req` carries them),
+    // so such a branch must send `{ f1 = model.f1, …, arg = arg }` instead.
+    model_field_names: &[String],
 ) -> Result<String, String> {
     // Find update's ValueDecl → its `case msg of`.
     let update_val = file
@@ -4271,9 +4295,30 @@ fn gen_frontend_update(
             let pat_text = pat.map(|p| slice(src, &p).to_string()).unwrap_or_else(|| m.clone());
             let req_codec = format!("{}ReqCodec", lower_first(&m));
             let resp_codec = format!("{}RespCodec", lower_first(&m));
-            // Request payload.
-            let payload = if io.reads_whole_model {
+            // Request payload. A `reads_whole_model` branch with NO Msg args sends
+            // bare `model` (the backend `Req` IS the whole model). But a whole-model
+            // branch that ALSO binds Msg args must NOT send bare `model` — the
+            // backend `Req` carries the Msg-arg fields too (build_wire appends them),
+            // and the handler reads `p.<arg>`; bare `model` has no such field, so the
+            // decode fails with "record is missing field(s): <arg>". Build the
+            // explicit record covering every model field PLUS each Msg arg.
+            let payload = if io.reads_whole_model && io.msg_args.is_empty() {
                 model_param.to_string()
+            } else if io.reads_whole_model {
+                let mut parts: Vec<String> = model_field_names
+                    .iter()
+                    .map(|f| format!("{f} = {model_param}.{f}"))
+                    .collect();
+                for a in &io.msg_args {
+                    if !model_field_names.iter().any(|f| f == a) {
+                        parts.push(format!("{a} = {a}"));
+                    }
+                }
+                if parts.is_empty() {
+                    "{}".to_string()
+                } else {
+                    format!("{{ {} }}", parts.join(", "))
+                }
             } else {
                 let mut parts: Vec<String> = io
                     .read_fields
@@ -4386,6 +4431,8 @@ fn render_module_client_subset(
     has_rpc_error: bool,
     // SERVER-INTERNAL Msgs — dropped from the `Msg` union + the client `update`.
     server_internal: &HashSet<String>,
+    // Every Model field name (for the whole-model+Msg-arg request record).
+    model_field_names: &[String],
 ) -> Result<String, String> {
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
@@ -4432,7 +4479,7 @@ fn render_module_client_subset(
     if regen_update {
         let update_src = gen_frontend_update(
             mfile, msrc, server, server_ctors, msg_param, model_param, update_anno, has_rpc_error,
-            server_internal,
+            server_internal, model_field_names,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -4820,6 +4867,7 @@ mod fix7_tests {
             "update : Msg -> Model -> ( Model, Cmd Msg )",
             with_rpc_error,
             &HashSet::new(),
+            &[],
         )
         .expect("gen_frontend_update")
     }

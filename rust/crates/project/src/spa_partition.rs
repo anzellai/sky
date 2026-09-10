@@ -2398,6 +2398,7 @@ fn compute_branch_io(
         &mut writes_whole,
         &mut allowed_bare,
         0,
+        None,
     );
 
     let mut read_fields: BTreeSet<String> = BTreeSet::new();
@@ -2581,6 +2582,12 @@ fn collect_reads(
 /// producer) ⇒ `writes_whole`. Two whole-arm shapes are also resolved: a delegate
 /// `handle model` inherits the helper's own tail write-set, and a let-bound
 /// `(model', cmd)` returned by name is chased to its binding.
+///
+/// `cont_local` is the guard-continuation parameter, set ONLY while analysing a
+/// guard helper's own body (see [`collect_guard_wrapper_writes`]). A tail that IS
+/// a call to that continuation (`cont ()`) is the authorised passthrough — its
+/// writes are covered separately by the inline-lambda analysis — so it
+/// contributes nothing here. It is `None` in every arm-level walk.
 #[allow(clippy::too_many_arguments)]
 fn collect_writes_tail(
     db: &dyn SkyDb,
@@ -2592,6 +2599,7 @@ fn collect_writes_tail(
     writes_whole: &mut bool,
     allowed_bare: &mut HashSet<ExprId>,
     depth: usize,
+    cont_local: Option<LocalId>,
 ) {
     if depth > IO_DELEGATE_DEPTH {
         *writes_whole = true;
@@ -2608,6 +2616,7 @@ fn collect_writes_tail(
         ($x:expr, $ls:expr) => {
             collect_writes_tail(
                 db, body, $x, model_local, $ls, write_fields, writes_whole, allowed_bare, depth,
+                cont_local,
             )
         };
     }
@@ -2663,6 +2672,7 @@ fn collect_writes_tail(
                 writes_whole,
                 allowed_bare,
                 depth + 1,
+                cont_local,
             ),
             None => *writes_whole = true,
         },
@@ -2674,6 +2684,29 @@ fn collect_writes_tail(
         // over-approximate to the whole model (sound). The other arguments carry Msg
         // payloads or pure values; they never widen the MODEL write-set.
         Expr::Call(callee, args) => {
+            // A call to the guard's continuation parameter (`cont ()`) — the
+            // authorised passthrough. Its writes are the inline lambda's, analysed
+            // separately by `collect_guard_wrapper_writes`. Contribute nothing here.
+            if let Expr::Var(Res::Local(l)) = &body.exprs[*callee] {
+                if cont_local == Some(*l) {
+                    return;
+                }
+            }
+            // Guard-wrapper tail: `GUARD model (\_ -> CONT)` — a higher-order auth
+            // guard applied to the bare model plus an INLINE lambda continuation.
+            // The arm's write-set is the UNION of (i) the lambda body's own writes
+            // (the authorised path) and (ii) the guard helper's OWN writes on its
+            // model parameter (its deny/unauth path). Both are analysed narrowly;
+            // on any doubt either widens to the whole model (sound). See the fn.
+            if let Some(gw) = detect_guard_wrapper(db, body, *callee, args, model_local) {
+                // (i) the inline lambda body — the authorised continuation. The
+                // lambda captures the arm's `model_local`; walk it in place.
+                recur!(gw.lambda_body, let_locals);
+                // (ii) the guard helper's own writes on its model parameter, with
+                // its continuation call skipped.
+                collect_guard_wrapper_writes(db, gw.guard, gw.model_arg_idx, gw.cont_arg_idx, write_fields, writes_whole, depth + 1);
+                return;
+            }
             let model_positions: Vec<usize> = args
                 .iter()
                 .enumerate()
@@ -2806,6 +2839,131 @@ fn inherit_delegate_writes(
         writes_whole,
         &mut allowed,
         depth + 1,
+        None,
+    );
+}
+
+/// A recognised guard-wrapper tail `GUARD model (\_ -> CONT)` (see
+/// [`detect_guard_wrapper`]).
+struct GuardWrapper {
+    /// The guard helper def (`requireAdmin`).
+    guard: DefId,
+    /// The call-argument index the bare model occupies (the guard's model param).
+    model_arg_idx: usize,
+    /// The call-argument index the inline lambda occupies (the guard's
+    /// continuation param).
+    cont_arg_idx: usize,
+    /// The inline lambda's body — the authorised continuation.
+    lambda_body: ExprId,
+}
+
+/// Recognise a higher-order guard-wrapper tail `GUARD model (\_ -> CONT)`: a
+/// resolvable `Def` callee applied to EXACTLY two value arguments, one the bare
+/// model and the other an INLINE lambda continuation. Returns the guard def, the
+/// argument index the bare model occupies, the argument index the lambda occupies
+/// (its complement), and the lambda body. `None` — the caller then keeps today's
+/// whole-model delegate behaviour (sound) — when the callee is not a resolvable
+/// def, the arity is not two, the model is not passed bare, the other argument is
+/// not an inline lambda, or the guard's own body does not bind plain parameters at
+/// both positions (so its own I/O is not analysable). This is the fail-closed
+/// gate: a shape that does not MATCH the guard-wrapper is never narrowed.
+fn detect_guard_wrapper(
+    db: &dyn SkyDb,
+    body: &Body,
+    callee: ExprId,
+    args: &[ExprId],
+    model_local: Option<LocalId>,
+) -> Option<GuardWrapper> {
+    let Expr::Var(Res::Def(guard)) = &body.exprs[callee] else {
+        return None;
+    };
+    if args.len() != 2 {
+        return None;
+    }
+    // Exactly one argument is the bare model.
+    let model_positions: Vec<usize> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| is_model_var(body, **a, model_local))
+        .map(|(i, _)| i)
+        .collect();
+    if model_positions.len() != 1 {
+        return None;
+    }
+    let model_arg_idx = model_positions[0];
+    // With two arguments the continuation is the complement index.
+    let cont_arg_idx = 1 - model_arg_idx;
+    // The OTHER argument must be an INLINE lambda continuation — a passed-by-name
+    // helper (`GUARD model handler`) is opaque and stays whole-model (fail closed).
+    let Expr::Lambda { body: lambda_body, .. } = &body.exprs[args[cont_arg_idx]] else {
+        return None;
+    };
+    // The guard's own body must resolve and bind plain parameters at BOTH the
+    // model and continuation positions, so its model I/O + its continuation are
+    // both identifiable. Otherwise fail closed to the whole model.
+    let loc = db.def_loc(*guard)?;
+    let resolved = db.resolve(loc.module);
+    let gbody = resolved.bodies.get(guard)?;
+    gbody.root?;
+    param_local_at(gbody, model_arg_idx)?;
+    param_local_at(gbody, cont_arg_idx)?;
+    Some(GuardWrapper {
+        guard: *guard,
+        model_arg_idx,
+        cont_arg_idx,
+        lambda_body: *lambda_body,
+    })
+}
+
+/// The guard helper's OWN write-set on its model parameter — its deny / unauth
+/// path (e.g. `( { model | error = … }, cmd )`, or a bare `( model, cmd )` that
+/// writes nothing). The guard's continuation call (`cont ()`, whose parameter is
+/// at `cont_arg_idx`) is SKIPPED: that path's writes are the inline lambda's,
+/// unioned by the caller. Fail-closed: an unresolvable guard, a missing plain
+/// parameter, or a tail the walk cannot bound sets `writes_whole` (sound).
+fn collect_guard_wrapper_writes(
+    db: &dyn SkyDb,
+    guard: DefId,
+    model_arg_idx: usize,
+    cont_arg_idx: usize,
+    write_fields: &mut BTreeSet<String>,
+    writes_whole: &mut bool,
+    depth: usize,
+) {
+    if depth > IO_DELEGATE_DEPTH {
+        *writes_whole = true;
+        return;
+    }
+    let Some(loc) = db.def_loc(guard) else {
+        *writes_whole = true;
+        return;
+    };
+    let resolved = db.resolve(loc.module);
+    let Some(body) = resolved.bodies.get(&guard) else {
+        *writes_whole = true;
+        return;
+    };
+    let (Some(root), Some(mlocal), Some(clocal)) = (
+        body.root,
+        param_local_at(body, model_arg_idx),
+        param_local_at(body, cont_arg_idx),
+    ) else {
+        *writes_whole = true;
+        return;
+    };
+    let mut allowed: HashSet<ExprId> = HashSet::new();
+    let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
+    collect_writes_tail(
+        db,
+        body,
+        root,
+        Some(mlocal),
+        &let_locals,
+        write_fields,
+        writes_whole,
+        &mut allowed,
+        depth + 1,
+        Some(clocal),
     );
 }
 
@@ -2839,6 +2997,7 @@ fn helper_readset(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> Option<BT
         &mut ww,
         &mut allowed,
         depth + 1,
+        None,
     );
     let mut rf: BTreeSet<String> = BTreeSet::new();
     let mut whole = false;

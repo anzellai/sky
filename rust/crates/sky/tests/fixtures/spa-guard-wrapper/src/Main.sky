@@ -1,0 +1,140 @@
+module Main exposing (main)
+
+-- Higher-order guard-wrapper soundness proof for the Sky.Spa auto-split.
+--
+--   * `Edit id` is a SERVER branch (its inline continuation reaches a File
+--     effect) whose tail is a GUARD WRAPPER `guard model (\_ -> CONT)`. The
+--     guard `requireSession` reads `model.session` and, when authorised, runs
+--     the continuation; the continuation writes only {label, picked}. The arm's
+--     read-set MUST narrow to the UNION of the guard's own reads {session} and
+--     the continuation's reads; its write-set MUST narrow to the continuation's
+--     writes {label, picked}. `secret` and `basket` are touched by NEITHER, so
+--     they MUST NOT ride the RPC. Before the fix the bare `model` passed to
+--     `requireSession` made the arm reads_whole / writes_whole — the RPC then
+--     carried the whole model (incl. the `basket` list, whose element type erased
+--     in the constrained frontend module) and the frontend sent bare `model`,
+--     which has no `id` field the backend `Req` expects.
+--
+--   * `SaveAll tagStr` is a GENUINELY whole-model server branch (the returned
+--     model threads through `Result.withDefault` opaquely) that ALSO binds a Msg
+--     arg. Its frontend request MUST be an explicit record of every model field
+--     PLUS `tagStr` — NEVER bare `model`, which drops the Msg arg the backend
+--     `Req` carries. The residual-soundness guard for the whole-model+Msg-arg
+--     send.
+--
+--   * `Bump` is pure/client — no RPC.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { picked : Maybe Int
+    , label : String
+    , session : String
+    , secret : String
+    , basket : List Int
+    }
+
+
+type Msg
+    = Bump
+    | Edit Int
+    | SaveAll String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { picked = Nothing, label = "", session = "", secret = "", basket = [] }, Cmd.none )
+
+
+-- The higher-order auth guard: `Model -> (() -> ( Model, Cmd Msg )) -> ( Model,
+-- Cmd Msg )`. It reads `model.session` (so its OWN read-set is {session}); when
+-- authorised it runs the continuation `cont`, otherwise it denies by returning
+-- the model unchanged (its OWN write-set is empty). The bare `model` flows into
+-- this guard opaquely — the shape that used to force the whole-model fallback.
+requireSession : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
+requireSession model cont =
+    if String.isEmpty model.session then
+        ( model, Cmd.none )
+
+    else
+        cont ()
+
+
+-- PURE `Int -> String` — the continuation uses it to derive `label`.
+labelFor : Int -> String
+labelFor id =
+    "item-" ++ String.fromInt id
+
+
+-- SERVER effect (File) the continuation forces, making `Edit` a server branch.
+saveN : Int -> Task Error String
+saveN n =
+    File.writeFile "count.txt" (String.fromInt n)
+        |> Task.map (\_ -> "ok")
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            -- Pure client branch — no effect, no RPC.
+            ( { model | picked = Nothing }, Cmd.none )
+
+        Edit id ->
+            -- Guard-wrapper tail: `requireSession model (\_ -> CONT)`. The arm's
+            -- I/O is the UNION of the guard's own I/O on `model` (reads {session})
+            -- and the inline continuation's I/O (writes {label, picked}, reaches
+            -- the File effect). MUST narrow — `secret` / `basket` do NOT ride.
+            requireSession model
+                (\_ ->
+                    let
+                        _ =
+                            Task.run (saveN id)
+                    in
+                    ( { model | picked = Just id, label = labelFor id }, Cmd.none )
+                )
+
+        SaveAll tagStr ->
+            -- GENUINELY whole-model (opaque thread through `Result.withDefault`)
+            -- server branch that ALSO binds a Msg arg. Its frontend request MUST
+            -- carry every model field PLUS `tagStr` — never bare `model`.
+            let
+                _ =
+                    Task.run (saveN (String.length tagStr))
+            in
+            ( Result.withDefault model (Ok model), Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text (model.label ++ model.session) ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

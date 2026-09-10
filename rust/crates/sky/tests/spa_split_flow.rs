@@ -112,6 +112,11 @@ fn server_chain_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-server-chain/src/Main.sky")
 }
 
+fn guard_wrapper_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-guard-wrapper/src/Main.sky")
+}
+
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
 /// rather than a fixed `main.wasm`.
 fn dist_has_wasm(dist: &std::path::Path) -> bool {
@@ -4298,4 +4303,116 @@ fn curl_post(port: u16, path: &str, data: &str) -> Option<String> {
         .output()
         .ok()?;
     Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Higher-order guard-wrapper narrowing + the whole-model+Msg-arg request-record
+/// fix, end-to-end through the real `sky spa-split` generator.
+///
+/// `Edit id -> requireSession model (\_ -> ( { model | picked = …, label = … },
+/// Cmd.none ))` is a guard-wrapped server branch. Before the fix the bare `model`
+/// passed to `requireSession` made the whole arm reads_whole / writes_whole: the
+/// RPC `Req` carried the WHOLE model and the frontend sent bare `model`, which has
+/// no `id` field the backend `Req` expects (`record is missing field(s): id`).
+/// After the fix the arm narrows to the continuation's write-set {label, picked}
+/// and the guard's read-set {session}, and the frontend sends `{ session = …, id =
+/// id }` — the Msg arg included, `secret` / `basket` excluded.
+///
+/// `SaveAll tagStr` is a GENUINELY whole-model server branch (opaque thread
+/// through `Result.withDefault`) that ALSO binds a Msg arg. Its frontend request
+/// MUST be an explicit record of every model field PLUS `tagStr`, NEVER bare
+/// `model` — the residual-soundness guard for the whole-model+Msg-arg send.
+#[test]
+fn guard_wrapper_narrows_and_whole_model_msg_arg_send_is_explicit() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            guard_wrapper_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed on the guard-wrapper app");
+
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+
+    // SECURITY: the guard's effect never leaks into the client.
+    for needle in ["File.", "saveN"] {
+        assert!(
+            !front.contains(needle),
+            "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`:\n{front}"
+        );
+    }
+
+    // Edit — the guard-wrapper arm. The frontend request narrows to the guard's
+    // read {session} PLUS the Msg arg `id`; it is NOT bare `model` and it CARRIES
+    // `id` (the missing-field bug the fix closes).
+    assert!(
+        front.contains("\"/_rpc/Edit\""),
+        "frontend must call the RPC boundary for the Edit server branch:\n{front}"
+    );
+    assert!(
+        front.contains("id = id"),
+        "Edit's frontend request MUST carry the Msg arg `id` (was dropped by the bare-model send):\n{front}"
+    );
+    assert!(
+        !front.contains("\"/_rpc/Edit\" model "),
+        "Edit's frontend request MUST NOT be bare `model` (misses `id`, and carries untouched fields):\n{front}"
+    );
+    assert!(
+        front.contains("session = model.session"),
+        "Edit's narrowed request reads only the guard's field `session`:\n{front}"
+    );
+
+    // SaveAll — the genuine whole-model + Msg-arg branch. Its request is an
+    // EXPLICIT record covering every model field PLUS `tagStr`, never bare model.
+    assert!(
+        front.contains("\"/_rpc/SaveAll\""),
+        "frontend must call the RPC boundary for the SaveAll server branch:\n{front}"
+    );
+    assert!(
+        front.contains("tagStr = tagStr"),
+        "SaveAll's whole-model request MUST carry the Msg arg `tagStr` (bare `model` drops it, so the backend Req decode fails with `missing field(s): tagStr`):\n{front}"
+    );
+    assert!(
+        !front.contains("\"/_rpc/SaveAll\" model "),
+        "SaveAll's request MUST NOT be bare `model` — the backend Req carries `tagStr` too:\n{front}"
+    );
+
+    // No unresolved `List any` in the generated wire types (the whole-model Req
+    // symptom the Edit narrowing removes): the shared wire carries real element
+    // types (`basket : List Int` on SaveAll's whole model, `id : Int` on Edit).
+    assert!(
+        !shared.contains(": List any") && !shared.contains(": Maybe any"),
+        "generated Shared wire types must carry resolved element types, never `List any` / `Maybe any`:\n{shared}"
+    );
+
+    // Both projects build (Go-gated). Backend native, frontend wasm.
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(backend_build.success(), "guard-wrapper backend must build natively");
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(frontend_build.success(), "guard-wrapper frontend must build to wasm");
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend build must stage a content-hashed main.<hash>.wasm"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
 }
