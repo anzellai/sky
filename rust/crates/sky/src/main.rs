@@ -1786,6 +1786,137 @@ fn app_binding_name(src: &str) -> Option<String> {
     None
 }
 
+/// Number of leading space characters on `line`.
+fn indent_width(line: &str) -> usize {
+    line.chars().take_while(|c| *c == ' ').count()
+}
+
+/// True iff `word` occurs in `hay` as a WHOLE word (not a substring of a longer
+/// identifier). Used to classify whether a boot-setup `let` binding is
+/// referenced by the app config — a false positive would needlessly disable the
+/// boot-setup carry, a false negative would move a config-needed binding
+/// backend-only. Boundaries are the non-identifier chars either side.
+fn references_word(hay: &str, word: &str) -> bool {
+    if word.is_empty() {
+        return false;
+    }
+    let bytes = hay.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(word) {
+        let at = from + rel;
+        let after = at + word.len();
+        let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        let prev_ok = at == 0 || !ident(bytes[at - 1]);
+        let next_ok = after >= bytes.len() || !ident(bytes[after]);
+        if prev_ok && next_ok {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
+/// Capture the boot-setup `let`-prefix of the app's `main`. A real app runs
+/// boot-time server setup before it starts the app:
+///
+/// ```text
+/// main =
+///     let
+///         _ = Task.run (System.loadEnv ())
+///         _ = Data.ensureSchema
+///     in
+///     App.run app
+/// ```
+///
+/// The App→Spa synthesis drops `main` and generates a new one, so without
+/// capturing this prefix the boot setup (schema creation, migrations, seeding)
+/// is silently lost and the deployed backend serves empty data. This returns the
+/// VERBATIM binding lines between `main`'s `let` and its matching `in`
+/// (surrounding blank lines trimmed), or `None` when `main` is a plain
+/// `main = App.run app` / `main = App.web { … } |> …` with no `let`-prefix (the
+/// common no-op case — today's behaviour is correct there).
+///
+/// The matching `in` is the one at the SAME indentation as the `let`, so a
+/// nested `let … in` inside a binding's RHS does not end the block early.
+fn capture_main_boot_setup(src: &str) -> Option<String> {
+    let lines: Vec<&str> = src.lines().collect();
+    // Find the VALUE binding of `main` (a column-0 `main =` line — NOT the
+    // `main : …` annotation, and NOT an inline `main = <expr>` whose body is on
+    // the same line as the `=`, which cannot carry a fmt'd `let`-prefix).
+    let mi = lines.iter().position(|l| *l == "main =")?;
+    // The first non-blank body line must be exactly `let`.
+    let mut j = mi + 1;
+    while j < lines.len() && lines[j].trim().is_empty() {
+        j += 1;
+    }
+    if j >= lines.len() || lines[j].trim() != "let" {
+        return None;
+    }
+    let let_indent = indent_width(lines[j]);
+    // The matching `in` is at the SAME indentation as `let`. Stop at the next
+    // column-0 declaration as a hard safety bound.
+    let mut k = j + 1;
+    let mut in_idx = None;
+    while k < lines.len() {
+        let l = lines[k];
+        if !l.is_empty() && !l.starts_with(char::is_whitespace) {
+            break;
+        }
+        if l.trim() == "in" && indent_width(l) == let_indent {
+            in_idx = Some(k);
+            break;
+        }
+        k += 1;
+    }
+    let in_idx = in_idx?;
+    // Bindings: the lines strictly between `let` and `in`, verbatim.
+    let mut block: Vec<&str> = lines[j + 1..in_idx].to_vec();
+    while block.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        block.remove(0);
+    }
+    while block.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        block.pop();
+    }
+    if block.is_empty() {
+        return None;
+    }
+    Some(block.join("\n"))
+}
+
+/// The NAMED bindings introduced by a boot-setup `let`-block — the first token of
+/// each binding-start line (a line at the block's minimum indentation), skipping
+/// `_` side-effect forcings. Used to decide whether the block is safe to route
+/// backend-only: a name the app config references must NOT be moved server-side.
+fn let_block_bound_names(block: &str) -> Vec<String> {
+    let bind_indent = block
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(indent_width)
+        .min()
+        .unwrap_or(0);
+    let mut names = Vec::new();
+    for l in block.lines() {
+        if l.trim().is_empty() || indent_width(l) != bind_indent {
+            continue; // continuation line of a multi-line binding
+        }
+        let t = l.trim_start();
+        // A binding start looks like `name … =`; take the leading token.
+        let tok: String = t
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if tok.is_empty() || tok == "_" {
+            continue;
+        }
+        // Guard: only treat it as a binding when an `=` follows on the line or a
+        // continuation (a bare identifier line is not a binding start).
+        if t.contains('=') || tok != t.trim_end() {
+            names.push(tok);
+        }
+    }
+    names
+}
+
 /// Synthesise a `Spa.app` entry source from a Std.App source: keep the user's
 /// module (types + `init`/`update`/`view`/`subscriptions`), drop the `app` +
 /// `main` bindings, and add a `Spa.app` `main` that references those functions
@@ -1820,6 +1951,74 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
     if !out.contains("import Sky.Core.List") {
         out = ensure_import(&out, "import Sky.Core.List as List");
     }
+    // Capture the app `main`'s boot-setup `let`-prefix (schema creation,
+    // migrations, seeding, env load) and carry it into a NAMED top-level
+    // `spaBootSetup_ : Task Error ()` binding. The synthesis drops `main`, so
+    // without this the boot setup is silently lost — the deployed backend then
+    // serves empty data (no schema, no seed). The binding wraps the VERBATIM
+    // let-block, ending in `Task.succeed ()`, so its `_ = <effect>` forcings fire
+    // in the same order as in the original `main` (identical shape to
+    // `main = let _ = task … in <task>`). It reaches server effects
+    // (`Db`/`File`/`System`), so the split's taint analysis routes it to the
+    // BACKEND ONLY — it never reaches the wasm client — and the generated backend
+    // `main` forces it BEFORE `Server.listen` (spa_split.rs gen_backend).
+    //
+    // A NAMED let binding that the app config references (e.g. `let x = … in
+    // App.web { init = f x, … }`) must NOT be moved server-side — doing so would
+    // leave the client entry referencing an undefined name. In that case the
+    // boot setup is NOT carried (today's behaviour) and a warning is printed, so
+    // the drop is never silent.
+    let boot_setup_binding = match capture_main_boot_setup(src) {
+        Some(block) => {
+            let names = let_block_bound_names(&block);
+            let config_refs = [
+                fields.init.as_str(),
+                fields.update.as_str(),
+                fields.view.as_str(),
+                fields.subscriptions.as_str(),
+                fields.routes.as_deref().unwrap_or(""),
+                fields.not_found.as_deref().unwrap_or(""),
+                fields.head.as_deref().unwrap_or(""),
+                fields.on_navigate.as_deref().unwrap_or(""),
+                fields.on_request.as_deref().unwrap_or(""),
+                fields.guard.as_deref().unwrap_or(""),
+                fields.rpc_error.as_deref().unwrap_or(""),
+            ]
+            .join(" ");
+            let unsafe_names: Vec<&String> = names
+                .iter()
+                .filter(|n| references_word(&config_refs, n))
+                .collect();
+            if unsafe_names.is_empty() {
+                // Ensure `Task.succeed` resolves (the terminal of the wrapped
+                // block). A second `as Task` alias is harmless if the app already
+                // aliases the module differently.
+                if !out.contains("import Sky.Core.Task as Task") {
+                    out = ensure_import(&out, "import Sky.Core.Task as Task");
+                }
+                format!(
+                    "spaBootSetup_ : Task Error ()\n\
+                     spaBootSetup_ =\n    \
+                     let\n{block}\n    in\n    Task.succeed ()\n\n\n"
+                )
+            } else {
+                eprintln!(
+                    "sky build --target <spa>: warning: the app `main`'s boot-setup \
+                     `let`-prefix was NOT carried into the backend because it binds \
+                     name(s) the app config references ({names}). Move that setup into a \
+                     top-level `Task` the config does not depend on, or express the entry \
+                     as a `Std.Spa` app.",
+                    names = unsafe_names
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                String::new()
+            }
+        }
+        None => String::new(),
+    };
     // Carry `App.withRoutes` / `App.withNotFound` into NAMED top-level bindings
     // (`spaRoutes_` / `spaNotFound_`), mirroring `spaHead_`/`spaView_`. The named
     // binding — not an inline arg buried in `main` — is load-bearing for SSR: the
@@ -1933,6 +2132,7 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
     out.push_str(&format!(
         "\n\n-- GENERATED by `sky build --target <spa>`: a Sky.Spa entry synthesised\n\
          -- from the Std.App value, fed to the existing auto-split.\n\
+         {boot_setup_binding}\
          {routes_binding}\
          {not_found_binding}\
          {head_binding}\
@@ -1952,6 +2152,7 @@ fn synthesize_spa_source(src: &str) -> Option<String> {
          , subscriptions = {subscriptions}\n            \
          }}{routes_line}{not_found_line}{head_line}{on_navigate_line}\n        \
          )\n",
+        boot_setup_binding = boot_setup_binding,
         routes_binding = routes_binding,
         not_found_binding = not_found_binding,
         head_binding = head_binding,

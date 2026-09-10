@@ -5162,3 +5162,120 @@ fn spa_multihop_chain_both_trees_build() {
 
     let _ = std::fs::remove_dir_all(&out);
 }
+
+fn boot_setup_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-boot-setup")
+}
+
+/// BOOT-SETUP. A real app runs boot-time server setup in `main` BEFORE it starts
+/// the app — `main = let dir = "data"; _ = Task.run (File.mkdirAll dir); _ =
+/// Task.run (setupThing ()) in App.run app` — where the setup reaches `File`/`Db`
+/// (server effects). The App→Spa synthesis used to DROP the whole `let`-prefix,
+/// so the generated backend `main` was a bare `Server.listen …` that never
+/// created the schema; every request then read a missing table.
+///
+/// The fix captures the boot-setup bindings into a server-tainted
+/// `spaBootSetup_` binding, RUNS it in the BACKEND `main` before `Server.listen`,
+/// and keeps it OUT of the wasm frontend. This proves:
+///   1. the synthesised entry carries `spaBootSetup_` (with `setupThing` +
+///      the named `dir` binding preserved, in order);
+///   2. the BACKEND `main` forces `spaBootSetup_` BEFORE `Server.listen`;
+///   3. the FRONTEND does NOT reference `setupThing` / the server effect;
+///   4. (Go-gated) both legs build.
+#[test]
+fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&boot_setup_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // 1. The synthesised entry carries the boot setup verbatim: the named `dir`
+    // binding, the `File.mkdirAll dir` effect, and the `setupThing ()` call all
+    // survive inside a `spaBootSetup_` binding.
+    let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
+        .expect("synthesised web-app entry must exist");
+    assert!(
+        synth.contains("spaBootSetup_"),
+        "boot setup must be captured into a `spaBootSetup_` binding:\n{synth}"
+    );
+    assert!(
+        synth.contains("dir = \"data\"")
+            && synth.contains("File.mkdirAll dir")
+            && synth.contains("setupThing ()"),
+        "the boot-setup bindings (named `dir`, `File.mkdirAll dir`, `setupThing ()`) must be preserved in order:\n{synth}"
+    );
+
+    // Synthesis + the split's type-check passed (this line prints only after
+    // `generate` type-checks clean).
+    assert!(
+        log.contains("client/server split"),
+        "the split must run (synthesis + type-check passed):\n{log}"
+    );
+
+    // 2. The BACKEND `main` runs the boot setup BEFORE `Server.listen`. Before
+    // the fix the backend `main` was a bare `Server.listen …` with no setup.
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    // `setupThing` (the schema effect) is carried into the backend.
+    assert!(
+        back.contains("setupThing"),
+        "backend must carry the boot-setup effect `setupThing`:\n{back}"
+    );
+    // The backend `main` forces `spaBootSetup_`, and it appears BEFORE the
+    // `Server.listen` call (so setup runs first).
+    let boot_at = back.find("_ =\n            spaBootSetup_");
+    let listen_at = back.find("Server.listen");
+    assert!(
+        boot_at.is_some(),
+        "backend `main` must force `spaBootSetup_` in a `let … in Server.listen`:\n{back}"
+    );
+    match (boot_at, listen_at) {
+        (Some(b), Some(l)) => assert!(
+            b < l,
+            "backend must run the boot setup BEFORE `Server.listen`:\n{back}"
+        ),
+        _ => panic!("backend `main` must both force `spaBootSetup_` and call `Server.listen`:\n{back}"),
+    }
+
+    // 3. The FRONTEND must NOT reference the server effect. `setupThing`,
+    // `spaBootSetup_`, and the `Db.`/`File.`/`System.` kernels are server-tainted.
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    for needle in ["setupThing", "spaBootSetup_", "File.mkdirAll", "Db.", "System."] {
+        assert!(
+            !front.contains(needle),
+            "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`:\n{front}"
+        );
+    }
+
+    // 4. Both legs build (Go-gated).
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "BOOT-SETUP: --target web:app must build end-to-end:\n{log}"
+    );
+    assert!(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/app").is_file(),
+        "backend binary must be built:\n{log}"
+    );
+    assert!(
+        dist_has_wasm(&proj.join(".skyapp/web-app/.split/frontend/dist")),
+        "frontend wasm must be staged:\n{log}"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
