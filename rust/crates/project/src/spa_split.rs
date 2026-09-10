@@ -4899,21 +4899,98 @@ fn decl_text_by(file: &SourceFile, src: &str, name: &str, kind: DeclKind) -> Opt
 /// The model type name = the parameter type of `view`'s annotation
 /// (`view : Model -> …` → `Model`). Falls back to the `update` annotation.
 fn model_type_name(file: &SourceFile, src: &str) -> Option<String> {
-    let anno = decl_text_by(file, src, "view", DeclKind::TypeAnno)
-        .or_else(|| decl_text_by(file, src, "update", DeclKind::TypeAnno))?;
-    let after_colon = anno.split_once(':')?.1;
-    let before_arrow = after_colon.split("->").next()?;
-    let name = before_arrow.trim();
-    if name.is_empty() {
+    // `view : <Model> -> …` — the model is the FIRST parameter.
+    if let Some(anno) = decl_text_by(file, src, "view", DeclKind::TypeAnno) {
+        if let Some(m) = nth_arrow_segment(&anno, 0) {
+            return Some(m);
+        }
+    }
+    // `update : Msg -> <Model> -> ( Model, Cmd Msg )` — the model is the SECOND
+    // parameter (the first is the `Msg`). Taking the first segment here — as the
+    // old code did for both annotations — wrongly yielded `Msg` when the app had
+    // no `view` type annotation, so `spaModelBlank_`/`spaModelDecoder_` were
+    // annotated `Msg` and the frontend leg failed to type-check.
+    if let Some(anno) = decl_text_by(file, src, "update", DeclKind::TypeAnno) {
+        if let Some(m) = nth_arrow_segment(&anno, 1) {
+            return Some(m);
+        }
+    }
+    None
+}
+
+/// The `n`th top-level (paren-aware) `->` segment of a type annotation, trimmed.
+/// `nth_arrow_segment("view : Model -> Html Msg", 0)` = `Some("Model")`;
+/// `nth_arrow_segment("update : Msg -> Model -> ( Model, Cmd Msg )", 1)` =
+/// `Some("Model")`. Splits only at arrows OUTSIDE brackets, so a function-typed
+/// parameter (`(a -> b) -> …`) does not mis-segment. Returns `None` for an empty
+/// or absent segment.
+fn nth_arrow_segment(anno: &str, n: usize) -> Option<String> {
+    let rhs = anno.split_once(':')?.1;
+    let mut segments: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut depth: i32 = 0;
+    let bytes = rhs.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        match c {
+            '(' | '[' | '{' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' | ']' | '}' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            '-' if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b'>' => {
+                segments.push(cur.trim().to_string());
+                cur.clear();
+                i += 2;
+                continue;
+            }
+            _ => cur.push(c),
+        }
+        i += 1;
+    }
+    segments.push(cur.trim().to_string());
+    let seg = segments.get(n)?.trim().to_string();
+    if seg.is_empty() {
         None
     } else {
-        Some(name.to_string())
+        Some(seg)
     }
 }
 
 #[cfg(test)]
 mod fix7_tests {
     use super::*;
+
+    // `model_type_name` derives the Model type for `spaModelBlank_ : <Model>` from
+    // the `view`/`update` annotation. It used to take the FIRST `->` segment of
+    // whichever it found, which is the Model for `view : Model -> …` but the `Msg`
+    // for `update : Msg -> Model -> …`. An app with no `view` type annotation fell
+    // to `update` and got `Msg` — `spaModelBlank_ : Msg` failed to type-check.
+    #[test]
+    fn nth_arrow_segment_picks_the_right_parameter() {
+        // view: model is the first param.
+        assert_eq!(nth_arrow_segment("view : Model -> Html Msg", 0).as_deref(), Some("Model"));
+        // update: model is the SECOND param (the first is Msg).
+        assert_eq!(
+            nth_arrow_segment("update : Msg -> Model -> ( Model, Cmd Msg )", 1).as_deref(),
+            Some("Model")
+        );
+        // A function-typed first parameter must not mis-segment the arrows.
+        assert_eq!(
+            nth_arrow_segment("update : Msg -> AppModel -> ( AppModel, Cmd Msg )", 1).as_deref(),
+            Some("AppModel")
+        );
+        assert_eq!(
+            nth_arrow_segment("fold : (a -> b -> a) -> a -> List b -> a", 1).as_deref(),
+            Some("a")
+        );
+        // Out-of-range / empty segment yields None.
+        assert_eq!(nth_arrow_segment("x : Int", 1), None);
+    }
 
     fn field(name: &str, ty_name: &str, ty: Option<ty::Ty>) -> ModelFieldTy {
         ModelFieldTy {
