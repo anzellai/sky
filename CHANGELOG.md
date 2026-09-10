@@ -13,6 +13,56 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.24.0 — Sky.Spa migration maturity (2026-09-10)
+
+A minor release that hardens the **Sky.Spa** auto-split (`--target web:app`) so a
+NORMAL modular Sky.Live app migrates to a client SPA without restructuring. The
+proof is a real multi-module e-commerce site (Std.Db, Std.Auth, Stripe): it now
+builds both legs and runs end-to-end — hydrate, browse, add-to-basket with a
+server-computed total, sign-in — with no secret reaching the client. No breaking
+changes; `sky upgrade` is safe from any v0.23.x.
+
+### A real modular app splits without hand-surgery
+
+- **`update` in any module, `Msg` co-located with its wire types.** The split
+  locates `update` wherever it is declared (a sibling module, not only the entry)
+  and regenerates it there. A module that declares both the `Msg` union and the
+  RPC wire types splits cleanly: structural records are shared, a nominal union is
+  owned by the generated `Shared` module and its uses re-pointed, so no author
+  restructuring is forced.
+- **Per-binding module partition.** A module that mixes a pure helper with server
+  effects emits only its pure subset to the wasm client; the effectful bindings
+  stay server-side. Taint is per-binding, cross-module and transitive.
+- **Codecs are derived, errors cross the wire.** A plain record wire field gets a
+  `Codec.auto` codec synthesised for it (no hand-written codec); a codec that
+  lives beside DB code is copied into `Shared`; `Error` and `Result Error a`
+  serialise across the RPC by default (the log stays server-side; `App.withRpcError`
+  controls handling). A shape that genuinely cannot round-trip errors with an
+  actionable message naming the type.
+- **Server effects chain server-side.** `Cmd.perform serverTask ToMsg` settles
+  entirely on the server within the triggering RPC and returns the final model
+  diff — for an all-server chain, a client-handled result, a guard-wrapped
+  branch, and a deep multi-hop chain (e.g. a checkout finalize that fans out to
+  email plus analytics). A result Msg reachable only from server code is never
+  given a client `/_rpc` route.
+- **The write-set that rides an RPC is narrowed soundly.** Only the fields a
+  branch provably writes cross the wire — through field-preserving `Model -> Model`
+  chains, delegates (including the model as a later argument), and higher-order
+  guard wrappers (`requireAdmin model (\_ -> …)`) — never dropping a real write (a
+  fresh record stays whole-model).
+- **The synthesised entry carries what the client needs.** The `view`/`head`
+  bindings and the app `main`'s boot-time setup (schema, migrations, seed) are
+  preserved — the setup runs in the backend `main` before it listens; a
+  server-tainted `view` gets a precise diagnostic.
+
+### The one genuine SPA requirement
+
+A Sky.Spa **client view must be pure** — a wasm client has no database, no
+environment, no server clock, so a view reads from the Model, never queries `Db`
+or reads env. The compiler now names each impure read and points at the fix (load
+it server-side, put it in the Model). This is inherent to client rendering (Elm
+requires it too), not the compiler dictating layout.
+
 ## v0.23.4 — Sky.Spa versus Sky.Live parity (2026-09-08)
 
 A patch release closing seven behaviour gaps between the **Sky.Spa** client

@@ -39,7 +39,7 @@ silent corruption* — the property a service actually needs.
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
 Haskell compiler lives under `legacy-haskell-compiler/` and serves as a
 **differential oracle** (`sky-out/sky`) the Rust output is checked against
-byte-for-byte. Current line: **v0.23.x**.
+byte-for-byte. Current line: **v0.24.x**.
 
 ## Language essentials
 
