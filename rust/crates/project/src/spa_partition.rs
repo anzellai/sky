@@ -744,6 +744,13 @@ pub struct SpaPartitionReport {
     /// `Spa_settleServerChain`), rather than discarding it. Their write/read
     /// sets already carry the UNION over every server-internal continuation arm.
     pub chaining_branches: Vec<String>,
+    /// PATTERN-2 client-result performs (docs/skyspa/auto-split.md). Each
+    /// `(root, result_msg)`: a SERVER branch `root` whose command (through a
+    /// guard/HOF wrapper) is a single `Cmd.perform serverTask result_msg` with a
+    /// server task and a CLIENT-pure `result_msg`. The `root` RPC runs the task
+    /// and returns its RESULT; the frontend `Applied<root>` dispatches
+    /// `result_msg result` client-side. `result_msg` stays a client arm.
+    pub client_result: Vec<(String, String)>,
     /// G5 fail-closed warnings — a server branch returns a `Cmd.perform` the
     /// analysis refused to chain (a client `Std.Native` effect, an ambiguous
     /// continuation, or an opaque command). The follow-up runs nowhere; surfaced
@@ -963,6 +970,7 @@ pub fn analyze_loaded(
     let mut model_fields: Vec<ModelFieldTy> = Vec::new();
     let mut server_internal: Vec<String> = Vec::new();
     let mut chaining_branches: Vec<String> = Vec::new();
+    let mut client_result: Vec<(String, String)> = Vec::new();
     let mut server_chain_warnings: Vec<String> = Vec::new();
 
     match update_field {
@@ -993,6 +1001,7 @@ pub fn analyze_loaded(
                     compute_server_chaining(db, umod, body, view_def, subs_def, &mut branches);
                 server_internal = chaining.server_internal;
                 chaining_branches = chaining.chaining_branches;
+                client_result = chaining.client_result;
                 server_chain_warnings = chaining.warnings;
             } else {
                 return Err("update def has no body".into());
@@ -1068,6 +1077,7 @@ pub fn analyze_loaded(
         init_model_server_reads,
         server_internal,
         chaining_branches,
+        client_result,
         server_chain_warnings,
     })
 }
@@ -1730,6 +1740,9 @@ pub struct ServerChaining {
     pub server_internal: Vec<String>,
     /// Server branch ctor names whose handler settles a chain server-side.
     pub chaining_branches: Vec<String>,
+    /// PATTERN-2 client-result performs: `(root, result_msg)` pairs. See
+    /// [`SpaPartitionReport::client_result`].
+    pub client_result: Vec<(String, String)>,
     /// G5 fail-closed warnings — a branch with a `Cmd.perform` the analysis
     /// refused to chain (client effect, ambiguous ownership, opaque command).
     pub warnings: Vec<String>,
@@ -1799,6 +1812,44 @@ fn collect_tail_cmd_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
                 collect_tail_cmd_exprs(body, br.body, out);
             }
         }
+        _ => {}
+    }
+}
+
+/// Like [`collect_tail_cmd_exprs`], but ALSO looks THROUGH a guard/HOF wrapper —
+/// the `requireAdmin model (\_ -> ( model, cmd ))` shape (darraghstudio), where
+/// the `( model, cmd )` pair is returned from the LAST-argument thunk rather than
+/// the arm's own tail. This walk is used ONLY by the pattern-2 (client-result)
+/// detection, so the direct-tuple chaining analysis (pattern-1) is untouched: a
+/// branch pattern-1 already settles keeps its exact classification. FAIL-CLOSED:
+/// only a `Call` whose FINAL argument is a `\… -> …` lambda is treated as a
+/// wrapper (its body walked); any other call shape contributes nothing (the
+/// branch stays a plain wire branch).
+fn collect_guarded_tail_cmd_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
+    match &body.exprs[e] {
+        Expr::Tuple(xs) if xs.len() == 2 => out.push(xs[1]),
+        Expr::Let { body: b, .. } => collect_guarded_tail_cmd_exprs(body, *b, out),
+        Expr::If { arms, els } => {
+            for (_, t) in arms {
+                collect_guarded_tail_cmd_exprs(body, *t, out);
+            }
+            collect_guarded_tail_cmd_exprs(body, *els, out);
+        }
+        Expr::Case { branches, .. } => {
+            for br in branches {
+                collect_guarded_tail_cmd_exprs(body, br.body, out);
+            }
+        }
+        // A guard/HOF wrapper: `guard model (\_ -> ( model, cmd ))`. The returned
+        // pair lives in the LAST argument's thunk body — walk it.
+        Expr::Call(_, args) => {
+            if let Some(last) = args.last() {
+                if let Expr::Lambda { body: lb, .. } = &body.exprs[*last] {
+                    collect_guarded_tail_cmd_exprs(body, *lb, out);
+                }
+            }
+        }
+        Expr::Lambda { body: b, .. } => collect_guarded_tail_cmd_exprs(body, *b, out),
         _ => {}
     }
 }
@@ -2333,6 +2384,92 @@ fn compute_server_chaining(
             }
         }
     }
+
+    // PATTERN-2 (client-result perform). A server branch pattern-1 did NOT settle
+    // (its `Cmd.perform` is returned THROUGH a guard/HOF wrapper, so the direct
+    // tail walk missed it and it fell to a plain wire branch, with the perform
+    // effect dropped) whose single command is `Cmd.perform serverTask ResultMsg`
+    // with a SERVER task and a CLIENT-pure `ResultMsg`. The `ResultMsg` result
+    // must cross to the client and be dispatched there — the effect runs
+    // server-side inside the root's RPC, its RESULT is returned, and the frontend
+    // `Applied<root>` dispatches `ResultMsg result`. This is DISTINCT from
+    // pattern-1 (a direct-tuple chain settling server-side, untouched above) and
+    // from a plain wire branch. FAIL-CLOSED: any shape that is not a single clean
+    // server perform to a client-pure result Msg is left exactly as today.
+    let already_owned: HashSet<String> = out
+        .chaining_branches
+        .iter()
+        .cloned()
+        .chain(server_internal.iter().cloned())
+        .collect();
+    for bn in server_head_set.iter() {
+        if already_owned.contains(bn) {
+            continue; // pattern-1 (chaining root or mid-chain continuation) owns it.
+        }
+        // The command, seen through a guard/HOF wrapper. Empty (or a non-wrapper
+        // shape) → nothing to reclassify.
+        let idxs = match arms_by_ctor.get(bn) {
+            Some(v) => v,
+            None => continue,
+        };
+        let mut cmd_exprs: Vec<ExprId> = Vec::new();
+        for &ai in idxs {
+            collect_guarded_tail_cmd_exprs(body, arms[ai].body, &mut cmd_exprs);
+        }
+        if cmd_exprs.is_empty() {
+            continue;
+        }
+        let mut leaves: Vec<CmdLeaf> = Vec::new();
+        for ce in &cmd_exprs {
+            resolve_cmd_leaves(db, body, *ce, &mut leaves);
+        }
+        // Require EXACTLY ONE perform, every other leaf a no-op. A publish, an
+        // unresolvable shape, a second perform, or a client-`Std.Native` task →
+        // fail closed (not a clean single server perform).
+        let mut result_msg: Option<String> = None;
+        let mut clean = true;
+        let mut perform_count = 0usize;
+        for leaf in &leaves {
+            match leaf {
+                CmdLeaf::NoneCmd => {}
+                CmdLeaf::Perform { to_msg, task_client_effect } => {
+                    perform_count += 1;
+                    if *task_client_effect {
+                        clean = false; // a client Std.Native task cannot run server-side.
+                    }
+                    match to_msg {
+                        Some(m) => result_msg = Some(m.clone()),
+                        None => clean = false,
+                    }
+                }
+                CmdLeaf::Publish | CmdLeaf::Unresolvable => clean = false,
+            }
+        }
+        if !clean || perform_count != 1 {
+            continue;
+        }
+        let rm = match result_msg {
+            Some(m) => m,
+            None => continue,
+        };
+        // The result Msg must be a real arm.
+        if !arms_by_ctor.contains_key(&rm) {
+            continue;
+        }
+        // FAIL-CLOSED: a result Msg whose OWN arm reaches a server effect is a
+        // DEEPER chain (out of pattern-2's scope). Handing its RESULT to the
+        // client would run that server effect in the wasm client — forbidden. Keep
+        // today's behaviour and warn.
+        if server_head_set.contains(&rm) {
+            out.warnings.push(format!(
+                "server branch `{bn}` performs a server task whose result Msg `{rm}` is ALSO a server arm (it reaches a Db/File/… effect) — a deeper chain the auto-split does not settle. Its follow-up effect runs NOWHERE. Split `{rm}`'s server work into its own explicit RPC, or keep `{bn}` to a single server round."
+            ));
+            continue;
+        }
+        out.client_result.push((bn.clone(), rm));
+    }
+    out.client_result.sort();
+    out.client_result.dedup();
 
     out.server_internal = server_internal.into_iter().collect();
     out.chaining_branches.sort();

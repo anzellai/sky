@@ -117,6 +117,11 @@ fn guard_wrapper_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-guard-wrapper/src/Main.sky")
 }
 
+fn client_result_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-client-result/src/Main.sky")
+}
+
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
 /// rather than a fixed `main.wasm`.
 fn dist_has_wasm(dist: &std::path::Path) -> bool {
@@ -4412,6 +4417,273 @@ fn guard_wrapper_narrows_and_whole_model_msg_arg_send_is_explicit() {
     assert!(
         dist_has_wasm(&out.join("frontend/dist")),
         "frontend build must stage a content-hashed main.<hash>.wasm"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATTERN-2 — client-result perform (a server task whose result Msg is CLIENT-
+// handled). `Upload` returns `Cmd.perform (saveBlob data) Saved` THROUGH a
+// guard/HOF wrapper (`guard model (\_ -> …)`) — the shape the direct-tuple chain
+// walk misses, so pattern-1 cannot settle it and, before this feature, the
+// perform effect was DROPPED (bound `( m2, _ )`, saveBlob ran nowhere) and
+// `Saved` never dispatched. Pattern-2: the `Upload` RPC RUNS `saveBlob` and
+// answers with the task RESULT; the frontend's `AppliedUpload` dispatches
+// `Saved result` client-side, so `Saved` stays a client arm.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generation gate (no toolchain needed). Asserts the four pattern-2 contracts:
+///   1. no server effect (`saveBlob` / `persist` / `File.`) leaks into the client;
+///   2. the result Msg `Saved` is NOT a wire branch (no `/_rpc/Saved`, no
+///      `SavedReq`, no `AppliedSaved`) — it stays a CLIENT arm;
+///   3. the whole `Result` value is carried (frontend dispatches
+///      `update (Saved resp.result) model`; the response codec is
+///      `Codec.result …`), never a Req that decomposes it into `url`/`e`
+///      binders (the `missing field(s): url` bug);
+///   4. FAIL-CLOSED — `Stored`, whose own arm reaches a server effect
+///      (`persist`), is NOT a client-result dispatch (no `update (Stored …)`
+///      from an `AppliedStore` raw result) and `persist` never leaks.
+#[test]
+fn client_result_perform_wires_task_result_to_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            client_result_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed on the client-result app");
+
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let backend = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+
+    // The CODE only — the module doc-comment is copied verbatim and legitimately
+    // names the effects, RPC routes, and Msgs, so the "must NOT contain" checks
+    // run against the comment-stripped source.
+    let strip_comments = |s: &str| -> String {
+        s.lines()
+            .map(|l| l.split("--").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let front_code = strip_comments(&front);
+    let shared_code = strip_comments(&shared);
+
+    // GATE 1: no server effect handed to the client.
+    for needle in ["saveBlob", "persist", "File."] {
+        assert!(
+            !front_code.contains(needle),
+            "SECURITY: frontend CODE must not contain the server effect `{needle}`:\n{front_code}"
+        );
+    }
+
+    // GATE 2: `Saved` is NOT a wire branch — it stays a client arm.
+    assert!(
+        !front_code.contains("/_rpc/Saved"),
+        "the client result Msg `Saved` must have NO RPC route:\n{front_code}"
+    );
+    assert!(
+        !shared_code.contains("SavedReq") && !shared_code.contains("SavedResp"),
+        "the client result Msg `Saved` must have NO `SavedReq`/`SavedResp` wire type:\n{shared_code}"
+    );
+    assert!(
+        !front_code.contains("AppliedSaved"),
+        "the client result Msg `Saved` must have NO `AppliedSaved` variant — it is not a wire branch:\n{front_code}"
+    );
+    // `Saved`'s own client arm survives verbatim (it runs in the wasm client).
+    assert!(
+        front.contains("Saved (Ok url) ->") && front.contains("Saved (Err e) ->"),
+        "`Saved`'s client arms must be kept verbatim in the frontend `update`:\n{front}"
+    );
+
+    // GATE 3: the WHOLE `Result` value crosses and is dispatched — never
+    // decomposed into `url`/`e` binders.
+    assert!(
+        front.contains("update (Saved resp.result) model"),
+        "the frontend `AppliedUpload` must dispatch `Saved` with the WHOLE result value:\n{front}"
+    );
+    assert!(
+        shared.contains("result : Result Error String")
+            && shared.contains("Codec.result Codec.error Codec.string"),
+        "the `Upload` response wire must carry the task RESULT as `result : Result Error String` via `Codec.result`:\n{shared}"
+    );
+    // The backend RUNS the task and returns its result (never drops the perform).
+    assert!(
+        backend.contains("spaRunPerform_ cmd")
+            && backend.contains("Ffi.kernel \"Spa_runServerPerform\""),
+        "the `Upload` backend handler must RUN the server task via `spaRunPerform_` and return its result:\n{backend}"
+    );
+    assert!(
+        backend.contains("{ result = result }"),
+        "the `Upload` backend handler must answer with the task result:\n{backend}"
+    );
+
+    // GATE 4: FAIL-CLOSED — `Stored` (its arm reaches `persist`) is NOT wired as a
+    // client-result dispatch, and `persist` never leaks to the client. It is
+    // handled by pattern-1 (server-internal, settled server-side) instead.
+    assert!(
+        !front_code.contains("update (Stored"),
+        "FAIL-CLOSED: `Stored`, whose arm reaches a server effect, must NOT be a client-result dispatch:\n{front_code}"
+    );
+    assert!(
+        !shared_code.contains("StoreResp =\n    { result"),
+        "FAIL-CLOSED: `Store` must NOT get a client-result `result` response (its continuation reaches a server effect):\n{shared_code}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Build gate — both trees compile (backend natively with the
+/// `Spa_runServerPerform` kernel, frontend to wasm). Go-gated.
+#[test]
+fn client_result_both_trees_build() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            client_result_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .output()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.status.success(),
+        "client-result backend must build natively:\n{}",
+        String::from_utf8_lossy(&backend_build.stderr)
+    );
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .output()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend_build.status.success(),
+        "client-result frontend must build to wasm:\n{}",
+        String::from_utf8_lossy(&frontend_build.stderr)
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend build must stage a content-hashed main.<hash>.wasm"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// End-to-end behaviour gate. `POST /_rpc/Upload` must RUN `saveBlob` server-side
+/// and answer with the task RESULT (`Ok "blob.txt"`), for the client to dispatch
+/// `Saved`. Before this feature the perform was dropped, so the RPC answered with
+/// an empty write-set and the upload silently did nothing. Builds + RUNS the
+/// backend, then POSTs — Go-gated (needs the toolchain + curl).
+#[test]
+fn client_result_e2e_post_upload_returns_task_result() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            client_result_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+
+    let backend_dir = out.join("backend");
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&backend_dir)
+        .output()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.status.success(),
+        "backend must build:\n{}",
+        String::from_utf8_lossy(&backend_build.stderr)
+    );
+
+    let port = 8974u16;
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend build must produce sky-out/app");
+    let log_path = backend_dir.join("server.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .env("ENV", "production")
+        .env("SKY_CONSOLE_AUTH", "off")
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .expect("spawn the compiled backend");
+
+    let ready = wait_for_listening_substr(&log_path, port, 120);
+    if !ready {
+        let _ = child.kill();
+        let mut buf = String::new();
+        use std::io::Read as _;
+        let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut buf));
+        let _ = std::fs::remove_dir_all(&out);
+        panic!("backend never reported listening on :{port}\nlog:\n{buf}");
+    }
+
+    // POST /_rpc/Upload. An `Authorization` header exempts the call from the CSRF
+    // guard (the documented API-client path); the response must carry the task
+    // RESULT `Ok "blob.txt"`.
+    let url = format!("http://127.0.0.1:{port}/_rpc/Upload");
+    let body = Command::new("curl")
+        .args([
+            "-s", "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-H", "Authorization: Bearer test",
+            "-d", "{\"data\":\"hello-blob\"}",
+            &url,
+        ])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
+
+    let blob = std::fs::read_to_string(backend_dir.join("blob.txt")).ok();
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let body = body.expect("POST /_rpc/Upload should return a body");
+    assert!(
+        body.contains("\"result\"") && body.contains("blob.txt"),
+        "POST /_rpc/Upload must return the task RESULT (`result` = Ok \"blob.txt\"), was:\n{body}"
+    );
+    // The server task ran SERVER-side (never handed to the client).
+    assert_eq!(
+        blob.as_deref(),
+        Some("hello-blob"),
+        "saveBlob must have run server-side inside the RPC (blob.txt should carry the posted data)"
     );
 
     let _ = std::fs::remove_dir_all(&out);

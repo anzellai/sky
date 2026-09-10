@@ -655,12 +655,29 @@ fn lookup_field(model_fields: &[ModelFieldTy], name: &str) -> ModelFieldTy {
 /// `Shared`). Fails closed: a field whose codec cannot be resolved returns an
 /// Err naming the field + type, so the generator refuses rather than emit a
 /// `Shared` that will not compile.
+/// PATTERN-2 (client-result perform) descriptor for one server root branch. The
+/// root's RPC answers with the task RESULT (`result_ty`, a `Result Error T`); the
+/// frontend dispatches `result_msg result` client-side.
+#[derive(Clone)]
+struct ClientResultInfo {
+    /// The CLIENT result Msg the frontend dispatches with the whole result value.
+    result_msg: String,
+    /// The task's result type (`Result Error T`) — the RPC response payload,
+    /// carried in the root's `<Root>Resp` record as a single `result` field.
+    result_ty: ty::Ty,
+}
+
 fn build_wire(
     name: &str,
     io: &BranchIo,
     msg_arg_tys: &[ModelFieldTy],
     model_fields: &[ModelFieldTy],
     resolver: &mut CodecResolver,
+    // PATTERN-2: when this branch is a client-result root, its RESPONSE is NOT the
+    // write-set but a single `result : Result Error T` field (the task result the
+    // frontend dispatches into `update`). The request is unchanged (read-set + Msg
+    // args — the task's own inputs).
+    client_result: Option<&ClientResultInfo>,
 ) -> Result<Wire, String> {
     // Request = read-set (or whole model) + Msg args. Dedup by name (a Msg arg
     // shadowing a model field would otherwise emit a duplicate record field).
@@ -677,7 +694,17 @@ fn build_wire(
             req.push(a.clone());
         }
     }
-    let mut resp: Vec<ModelFieldTy> = if io.writes_whole_model {
+    let mut resp: Vec<ModelFieldTy> = if let Some(cr) = client_result {
+        // PATTERN-2: the response is the task RESULT, carried as a single
+        // `result : Result Error T` field. The write-set is NOT the response —
+        // the result Msg's client arm applies the model update in the wasm client.
+        vec![ModelFieldTy {
+            name: "result".to_string(),
+            ty_name: String::new(),
+            codec: None,
+            ty: Some(cr.result_ty.clone()),
+        }]
+    } else if io.writes_whole_model {
         model_fields.to_vec()
     } else {
         io.write_fields
@@ -1211,11 +1238,24 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     codec_scan_mods.extend(tainted_mods.iter().copied());
     let registry = build_codec_registry(&db, &codec_scan_mods);
     let shapes = build_project_shapes(&db, &codec_scan_mods);
+    // PATTERN-2 (client-result perform): map each server root to its result Msg +
+    // the task's result type (read from the result Msg's union-variant argument).
+    // The map is the single source of truth consulted by build_wire / gen_backend
+    // / gen_frontend; a result type we cannot recover leaves the root a plain wire
+    // branch (fail closed, today's behaviour).
+    let client_result_map = build_client_result_map(&db, &check_ids, &report.client_result);
     let mut resolver = CodecResolver::new(&registry, &shapes);
     let mut wires: Vec<Wire> = Vec::new();
     for (name, io) in &server {
         let args = server_args.get(name).cloned().unwrap_or_default();
-        wires.push(build_wire(name, io, &args, &report.model_fields, &mut resolver)?);
+        wires.push(build_wire(
+            name,
+            io,
+            &args,
+            &report.model_fields,
+            &mut resolver,
+            client_result_map.get(name),
+        )?);
     }
     // The synthesised blank + `Codec.auto` bodies for every auto-derived record,
     // rendered once here and emitted into `Shared` after the copied types.
@@ -1636,8 +1676,20 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             report.server_internal.join(", "),
         ));
     }
+    if !client_result_map.is_empty() {
+        let pairs: Vec<String> = report
+            .client_result
+            .iter()
+            .filter(|(root, _)| client_result_map.contains_key(root))
+            .map(|(root, rm)| format!("{root} -> {rm}"))
+            .collect();
+        notes.push(format!(
+            "client-result perform (pattern-2): branch(es) [{}] run a server task in their RPC and return its RESULT; the frontend dispatches the result Msg client-side (the result Msg stays a client arm, no /_rpc route, no Req).",
+            pairs.join(", "),
+        ));
+    }
     let model_field_names: Vec<String> = report.model_fields.iter().map(|f| f.name.clone()).collect();
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &mut warnings)?;
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &client_result_map, &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -1659,6 +1711,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         has_rpc_error,
         &server_internal,
         &model_field_names,
+        &client_result_map,
     )?;
 
     let mut files: Vec<String> = Vec::new();
@@ -1815,6 +1868,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 has_rpc_error,
                 &server_internal,
                 &model_field_names,
+                &client_result_map,
             )?;
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
         }
@@ -3330,6 +3384,10 @@ fn gen_backend(
     // Server branch ctor names whose RPC handler settles a `Cmd.perform` chain
     // server-side (server-internal effect chaining).
     chaining: &HashSet<String>,
+    // PATTERN-2 (client-result perform): a server root whose RPC RUNS its server
+    // task and answers with the task RESULT (`spaRunPerform_ cmd`), for the
+    // frontend to dispatch client-side.
+    client_result: &HashMap<String, ClientResultInfo>,
     warnings: &mut Vec<String>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
@@ -3354,7 +3412,10 @@ fn gen_backend(
     // Server-internal effect chaining: a chaining branch's handler calls the
     // `Spa_settleServerChain` kernel alias, which needs `Sky.Ffi`.
     let any_chaining = !push_mode && server.iter().any(|(n, _)| chaining.contains(n));
-    if any_chaining {
+    // PATTERN-2: a client-result root's handler runs `spaRunPerform_`, a
+    // `Sky.Ffi` kernel alias, so it needs `Sky.Ffi` too.
+    let any_client_result = !push_mode && server.iter().any(|(n, _)| client_result.contains_key(n));
+    if any_chaining || any_client_result {
         add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
     }
     // SSR (design §4.1): a backend that carries `view`/`init` (≥1 server branch,
@@ -3551,6 +3612,21 @@ fn gen_backend(
              \x20   Ffi.kernel \"Spa_settleServerChain\"\n\n\n",
         );
     }
+    // PATTERN-2 (client-result perform): run the single server task inside a
+    // branch's returned command and RETURN its RESULT, for the client to dispatch
+    // through `update` (runtime-go/rt/spa_perform_notjs.go). The result type
+    // `result` is a plain type variable — the concrete `Result Error T` binds it
+    // at the call site (`result = spaRunPerform_ cmd`).
+    if any_client_result {
+        handlers.push_str(
+            "-- Client-result perform: run the server task in the branch's command\n\
+             -- and return its RESULT for the client to dispatch (pattern-2,\n\
+             -- runtime-go/rt/spa_perform_notjs.go).\n\
+             spaRunPerform_ : any -> result\n\
+             spaRunPerform_ =\n\
+             \x20   Ffi.kernel \"Spa_runServerPerform\"\n\n\n",
+        );
+    }
 
     // Server→client PUSH: one process-shared broker, a Cmd-publish interpreter,
     // and the SSE stream handler body — all thin kernel aliases (spa_push.go).
@@ -3664,11 +3740,19 @@ fn gen_backend(
         // arm (spa_partition::compute_server_chaining). Without this the returned
         // `Cmd.perform` would run nowhere and its write silently dropped.
         let is_chaining = !push_mode && chaining.contains(name);
+        // PATTERN-2 (client-result perform): this branch RUNS its server task and
+        // answers with the task RESULT (`result = spaRunPerform_ cmd`); the client
+        // dispatches `ResultMsg result`. The response is the single `result` field
+        // (the write-set is applied by the result Msg's own client arm), so the
+        // write-set model-read below is skipped.
+        let is_client_result = !push_mode && client_result.contains_key(name);
         // The model the response reads from: the chain's final model when
         // chaining, else the branch's own updated model.
         let result_model = if is_chaining { "mFinal" } else { "m2" };
         // The response value.
-        let resp_val = if io.writes_whole_model {
+        let resp_val = if is_client_result {
+            "{ result = result }".to_string()
+        } else if io.writes_whole_model {
             result_model.to_string()
         } else if resp_field_names.is_empty() {
             "{}".to_string()
@@ -3684,8 +3768,9 @@ fn gen_backend(
             format!("{{ {sets} }}")
         };
         // In push mode the returned Cmd is fed to the broker (a Cmd.publish fans
-        // out to SSE subscribers) BEFORE the RPC answers; a chaining branch binds
-        // `cmd` and settles it server-side; otherwise it is discarded (`_`).
+        // out to SSE subscribers) BEFORE the RPC answers; a chaining branch OR a
+        // client-result branch binds `cmd` (settle server-side / run the task);
+        // otherwise it is discarded (`_`).
         let (cmd_binder, answer) = if push_mode {
             (
                 "cmd",
@@ -3694,7 +3779,7 @@ fn gen_backend(
                      \x20                       |> Task.andThen (\\_ -> Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val})))"
                 ),
             )
-        } else if is_chaining {
+        } else if is_chaining || is_client_result {
             (
                 "cmd",
                 format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
@@ -3705,19 +3790,21 @@ fn gen_backend(
                 format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
             )
         };
-        // The extra `( mFinal, _ ) = spaChainSettle_ m2 cmd update` binding a
-        // chaining branch threads between the `update` call and the answer, at
-        // the guard / no-guard variant's own indentation.
-        let chain_bind_noguard = if is_chaining {
-            "\n                ( mFinal, _ ) =\n                    spaChainSettle_ m2 cmd update\n"
-        } else {
-            ""
+        // The extra binding threaded between the `update` call and the answer, at
+        // the guard / no-guard variant's own indentation: `( mFinal, _ ) =
+        // spaChainSettle_ …` for a chaining branch, or `result = spaRunPerform_
+        // cmd` for a client-result branch.
+        let extra_bind = |indent: &str| -> String {
+            if is_chaining {
+                format!("\n{indent}( mFinal, _ ) =\n{indent}    spaChainSettle_ m2 cmd update\n")
+            } else if is_client_result {
+                format!("\n{indent}result =\n{indent}    spaRunPerform_ cmd\n")
+            } else {
+                String::new()
+            }
         };
-        let chain_bind_guard = if is_chaining {
-            "\n                        ( mFinal, _ ) =\n                            spaChainSettle_ m2 cmd update\n"
-        } else {
-            ""
-        };
+        let chain_bind_noguard = extra_bind("                ");
+        let chain_bind_guard = extra_bind("                        ");
         // Fix 5: enforce the server-side guard BEFORE `update` runs. `spaGuard_
         // <msg> m` returns `Err` to reject the message — the handler answers 403
         // and NEVER runs the effect. This is the trusted authorisation point: the
@@ -4060,6 +4147,9 @@ fn gen_frontend(
     server_internal: &HashSet<String>,
     // Every Model field name (for the whole-model+Msg-arg request record).
     model_field_names: &[String],
+    // PATTERN-2 (client-result perform): `root → info`. The root's `Applied<root>`
+    // apply arm dispatches `info.result_msg resp.result` into `update`.
+    client_result: &HashMap<String, ClientResultInfo>,
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -4218,7 +4308,7 @@ fn gen_frontend(
     if regen_update {
         let update_src = gen_frontend_update(
             file, src, server, &server_ctors, msg_param, model_param, update_anno, has_rpc_error,
-            server_internal, model_field_names,
+            server_internal, model_field_names, client_result,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -4253,6 +4343,10 @@ fn gen_frontend_update(
     // Msg args: bare `model` misses those args (the backend `Req` carries them),
     // so such a branch must send `{ f1 = model.f1, …, arg = arg }` instead.
     model_field_names: &[String],
+    // PATTERN-2 (client-result perform): `root → info`. The root's `Applied<root>`
+    // apply arm dispatches `info.result_msg resp.result` into `update` instead of
+    // applying a write-set.
+    client_result: &HashMap<String, ClientResultInfo>,
 ) -> Result<String, String> {
     // Find update's ValueDecl → its `case msg of`.
     let update_val = file
@@ -4347,7 +4441,13 @@ fn gen_frontend_update(
     }
     // Generated Applied<Msg> apply arms.
     for (m, io) in server {
-        let apply = if io.writes_whole_model {
+        // PATTERN-2 (client-result perform): the RPC answered with the task
+        // RESULT (`resp.result : Result Error T`). DISPATCH the client result Msg
+        // with the WHOLE result value into `update`, so its client arm runs in the
+        // wasm client — never decompose the `Result` into Ok/Err binders.
+        let apply = if let Some(cr) = client_result.get(m) {
+            format!("            update ({} resp.result) {model_param}", cr.result_msg)
+        } else if io.writes_whole_model {
             format!("            ( resp, Cmd.none )")
         } else if io.write_fields.is_empty() {
             format!("            ( {model_param}, Cmd.none )")
@@ -4433,6 +4533,9 @@ fn render_module_client_subset(
     server_internal: &HashSet<String>,
     // Every Model field name (for the whole-model+Msg-arg request record).
     model_field_names: &[String],
+    // PATTERN-2 (client-result perform): `root → info` (threaded to the sibling
+    // module's regenerated `update`).
+    client_result: &HashMap<String, ClientResultInfo>,
 ) -> Result<String, String> {
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
@@ -4479,7 +4582,7 @@ fn render_module_client_subset(
     if regen_update {
         let update_src = gen_frontend_update(
             mfile, msrc, server, server_ctors, msg_param, model_param, update_anno, has_rpc_error,
-            server_internal, model_field_names,
+            server_internal, model_field_names, client_result,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -4582,6 +4685,53 @@ fn union_variant_names(d: &syntax::ast::Decl) -> Vec<String> {
     } else {
         Vec::new()
     }
+}
+
+/// The declared argument types of a named union variant (`Saved (Result Error
+/// String)` → `[Result Error String]`), or `None` when `d` is not a union or has
+/// no variant named `name`.
+fn union_variant_arg_types(d: &syntax::ast::Decl, name: &str) -> Option<Vec<ty::Ty>> {
+    if let syntax::ast::Decl::Union(u) = d {
+        for v in u.variants() {
+            if v.name().map(|t| t.text() == name).unwrap_or(false) {
+                return Some(ty::variant_arg_types(v.syntax()));
+            }
+        }
+    }
+    None
+}
+
+/// PATTERN-2: build the `root → ClientResultInfo` map from the partition report's
+/// `(root, result_msg)` pairs. The result type is the result Msg's single
+/// union-variant argument (`Result Error T`), read from whichever project module
+/// declares the `Msg` union. A pair whose type cannot be recovered is DROPPED
+/// (fail closed): the root then stays a plain wire branch everywhere, because
+/// every split-side consumer reads THIS map.
+fn build_client_result_map(
+    db: &SkyDatabase,
+    check_ids: &[ModuleId],
+    pairs: &[(String, String)],
+) -> HashMap<String, ClientResultInfo> {
+    let mut out: HashMap<String, ClientResultInfo> = HashMap::new();
+    for (root, result_msg) in pairs {
+        let mut result_ty: Option<ty::Ty> = None;
+        'mods: for m in check_ids {
+            let parse = db.module_parse(*m);
+            for d in parse.tree().decls() {
+                if let Some(args) = union_variant_arg_types(&d, result_msg) {
+                    result_ty = args.into_iter().next();
+                    break 'mods;
+                }
+            }
+        }
+        if let Some(result_ty) = result_ty {
+            out.insert(
+                root.clone(),
+                ClientResultInfo { result_msg: result_msg.clone(), result_ty },
+            );
+        }
+    }
+    out
 }
 
 /// Render a union declaration's source with the named `drop` variants REMOVED,
@@ -4868,6 +5018,7 @@ mod fix7_tests {
             with_rpc_error,
             &HashSet::new(),
             &[],
+            &HashMap::new(),
         )
         .expect("gen_frontend_update")
     }

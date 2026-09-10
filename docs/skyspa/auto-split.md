@@ -786,3 +786,79 @@ and the fail-closed `SyncCopy` that batches a Native client effect); the
 runtime fold + cycle termination in `runtime-go/rt/spa_chain_notjs_test.go`;
 and the end-to-end `POST /_rpc/Reload` → `note` in `spa_split_flow.rs`
 (`server_internal_chain_e2e_post_reload_returns_file_note`).
+
+
+## 19. Client-result perform — pattern-2 (2026-09-10)
+
+The complement of §18. Where server-internal chaining settles the **whole**
+chain server-side (the result Msg is server-only), a **client-result perform**
+runs the server task server-side but hands its **result** to the client, because
+the result Msg is a **client** arm.
+
+**The shape.** A server branch returns `Cmd.perform serverTask ResultMsg` —
+often **through a guard/HOF wrapper** (`requireAdmin model (\_ -> …)`), the shape
+the direct-tuple chain walk of §18 misses — where `serverTask` reaches a real
+server effect and `ResultMsg`'s own arm is **client-pure** (a model update over
+the task result):
+
+```elm
+Upload data ->
+    guard model (\_ ->
+        ( { model | busy = True }
+        , Cmd.perform (saveBlob data) Saved
+        ))
+
+Saved (Ok url) ->
+    ( { model | items = url :: model.items, busy = False }, Cmd.none )
+```
+
+**The bug it fixes.** Because the perform hides inside the guard thunk, §18's
+tail walk sees no command, so `Upload` fell to a plain wire branch whose handler
+bound `( m2, _ )` and **discarded** the command — `saveBlob` ran nowhere and
+`Saved` was never dispatched. The upload silently did nothing.
+
+**Behaviour.** The `Upload` RPC runs `saveBlob` server-side and answers with the
+task **result** (`Result Error String`), carried in the branch's `UploadResp`
+record as a single `result` field (`Codec.result Codec.error <valCodec>`). The
+frontend's `AppliedUpload (Ok resp) -> update (Saved resp.result) model` then
+dispatches the result Msg with the **whole** `Result` value into the client
+`update`, so `Saved`'s arm runs in the wasm client. `Saved` stays a client arm —
+**no** `/_rpc/Saved` route, **no** `SavedReq`, **no** decomposition of the
+`Result` into `Ok`/`Err` binders (the `record is missing field(s): url` bug a
+`Result`-typed wire branch produces). The server task never crosses to the
+client; only its typed result does.
+
+**Why not the residual-Cmd channel.** The alternative — return the
+`Cmd.perform serverTask` to the client to run — would hand a **server** effect
+to the wasm client, whose `!js` server-effect stub returns `Err`. Unsound. Only
+option (a), the typed result crossing the wire, is used.
+
+**Classification** (`spa_partition::compute_server_chaining`, after the §18
+pass). A branch pattern-1 did **not** already own (not a chaining root, not a
+server-internal continuation) is a **pattern-2 root** when its command — read
+through the guard-aware walk `collect_guarded_tail_cmd_exprs` — is a **single**
+`Cmd.perform serverTask ResultMsg` with a server task and a `ResultMsg` that is
+**not** server-classified (client-pure). Recorded as
+`ServerChaining::client_result` (`(root, result_msg)` pairs).
+
+**Fail-closed.** The branch keeps the discard floor (with a warning) when:
+`ResultMsg`'s arm **reaches a server effect** (a deeper chain — split it into its
+own explicit RPC); the task is a `Std.Native` **client** effect; or the command
+is not a single clean server perform. A pattern-2 root's pattern-1 twin (the
+direct-tuple `Reload`/`Reloaded` of §18) is untouched — it stays server-internal.
+
+**Runtime.** `runtime-go/rt/spa_perform_notjs.go`'s `Spa_runServerPerform`
+(`Ffi.kernel "Spa_runServerPerform"`, the `spaRunPerform_` alias) walks the
+branch's command, runs the single server `perform` leaf's task, and returns its
+`Result` **raw** — without folding it back through `update` (§18's job). A
+command with no runnable perform returns a classified `Err`.
+
+**Verified.** Generation contracts (no server-effect leak; `Saved` is not a wire
+branch; the whole `Result` is carried; fail-closed `Stored` whose arm reaches a
+server effect), both-trees build, and the end-to-end `POST /_rpc/Upload` →
+`Ok "blob.txt"` in `spa_split_flow.rs`
+(`client_result_perform_wires_task_result_to_client`,
+`client_result_both_trees_build`,
+`client_result_e2e_post_upload_returns_task_result`, against
+`tests/fixtures/spa-client-result`); the runtime run-and-return + no-fold + Err
+fallback in `runtime-go/rt/spa_perform_notjs_test.go`.

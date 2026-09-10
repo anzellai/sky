@@ -1,0 +1,133 @@
+module Main exposing (main)
+
+-- Pattern-2 of the Sky.Spa auto-split: a server task whose RESULT Msg is
+-- CLIENT-handled (docs/skyspa/auto-split.md — client-result perform).
+--
+--   * `Upload` is a SERVER branch. Its `Cmd.perform` runs `saveBlob` (a File
+--     effect) and is returned THROUGH a guard/HOF wrapper (`guard model (\_ ->
+--     …)`) — the shape the direct-tuple chain walk misses, so pattern-1 cannot
+--     settle it server-side. Its result Msg `Saved` is a CLIENT arm (a pure model
+--     update over the task result). Pattern-2: the `Upload` RPC RUNS `saveBlob`
+--     server-side and answers with the task RESULT (`Result Error String`); the
+--     frontend `AppliedUpload` continuation dispatches `Saved result` through the
+--     client `update`, so `Saved`'s arm runs in the wasm client. `Saved` gets NO
+--     `/_rpc/Saved` route and NO `SavedReq` — it stays a client arm, and the
+--     WHOLE `Result` value crosses (never decomposed into Ok/Err binders, the
+--     `missing field(s): url` bug).
+--
+--   * `Store` is a SERVER branch whose result Msg `Stored` ITSELF reaches a
+--     server effect (`persist`). That is a deeper chain — out of pattern-2's
+--     scope — so the split FAILS CLOSED: `Stored` is server-internal (settled
+--     server-side), NOT a client-result dispatch, and `persist` never leaks into
+--     the frontend.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Error as Error
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { items : List String
+    , busy : Bool
+    , error : String
+    }
+
+
+type Msg
+    = Upload String
+    | Saved (Result Error String)
+    | Store String
+    | Stored (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { items = [], busy = False, error = "" }, Cmd.none )
+
+
+saveBlob : String -> Task Error String
+saveBlob data =
+    File.writeFile "blob.txt" data
+        |> Task.map (\_ -> "blob.txt")
+
+
+persist : String -> Task Error ()
+persist url =
+    File.writeFile "log.txt" url
+
+
+-- A higher-order guard wrapper (the darraghstudio `requireAdmin` shape): the
+-- `( model, cmd )` pair — and therefore the `Cmd.perform` — is returned from the
+-- thunk, NOT in the arm's own tail position.
+guard : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
+guard model thunk =
+    thunk ()
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Upload data ->
+            guard
+                model
+                (\_ ->
+                    ( { model | busy = True }
+                    , Cmd.perform (saveBlob data) Saved
+                    ))
+
+        Saved (Ok url) ->
+            ( { model | items = url :: model.items, busy = False }, Cmd.none )
+
+        Saved (Err e) ->
+            ( { model | busy = False, error = Error.toString e }, Cmd.none )
+
+        Store data ->
+            ( { model | busy = True }
+            , Cmd.perform (saveBlob data) Stored
+            )
+
+        Stored (Ok url) ->
+            let
+                _ = persist url
+            in
+            ( { model | items = url :: model.items, busy = False }, Cmd.none )
+
+        Stored (Err _) ->
+            ( { model | busy = False }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("busy=" ++ (if model.busy then "yes" else "no"))
+            , Ui.text ("count=" ++ String.fromInt (List.length model.items))
+            , Ui.el [ Ui.onClick (Upload "data:xyz") ] (Ui.text "Upload")
+            , Ui.el [ Ui.onClick (Store "data:abc") ] (Ui.text "Store")
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )
