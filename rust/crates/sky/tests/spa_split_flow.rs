@@ -122,6 +122,11 @@ fn client_result_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-client-result/src/Main.sky")
 }
 
+fn guarded_chain_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-guarded-chain/src/Main.sky")
+}
+
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
 /// rather than a fixed `main.wasm`.
 fn dist_has_wasm(dist: &std::path::Path) -> bool {
@@ -4684,6 +4689,154 @@ fn client_result_e2e_post_upload_returns_task_result() {
         blob.as_deref(),
         Some("hello-blob"),
         "saveBlob must have run server-side inside the RPC (blob.txt should carry the posted data)"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Guard-wrapped server-internal chaining (the darraghstudio `requireAdmin`
+/// shape), end-to-end through the real `sky spa-split` generator.
+///
+/// `Trigger x -> guard model (\_ -> ( { model | busy = True }, Cmd.perform
+/// (saveThing x) Saved ))` is a guard-wrapped SERVER branch whose all-server
+/// continuation `Saved (Ok ref) -> guard model (\_ -> … File read …, Cmd.none )`
+/// is also guard-wrapped. Before this change the chaining-ROOT detection walked
+/// only the DIRECT tail tuple, so the guarded `Cmd.perform` was invisible: `Saved`
+/// stayed a BROKEN wire branch (`missing field(s)` / `Result Error String vs
+/// Error`). After: `Trigger` settles the chain server-side and `Saved` is pruned
+/// from the wire, its narrow write-set (`note` + `log`) unioned into `Trigger`'s
+/// response.
+#[test]
+fn spa_guarded_chain_settles_server_side_and_prunes_the_wire() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            guarded_chain_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed on the guarded-chain app");
+
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let backend = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+
+    // Strip line comments — the copied module doc-comment legitimately names the
+    // effects, RPC routes, and Msgs.
+    let strip_comments = |s: &str| -> String {
+        s.lines()
+            .map(|l| l.split("--").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let front_code = strip_comments(&front);
+    let shared_code = strip_comments(&shared);
+
+    // GATE 1: no server effect reaches the client.
+    for needle in ["saveThing", "File."] {
+        assert!(
+            !front_code.contains(needle),
+            "SECURITY: frontend CODE must not contain the server effect `{needle}`:\n{front_code}"
+        );
+    }
+
+    // GATE 2: `Saved` is SERVER-INTERNAL — no wire route, no wire type, no Applied
+    // variant, and it is not constructed anywhere in the frontend.
+    assert!(
+        !front_code.contains("/_rpc/Saved"),
+        "server-internal `Saved` must have NO RPC route:\n{front_code}"
+    );
+    assert!(
+        !shared_code.contains("SavedReq") && !shared_code.contains("SavedResp"),
+        "server-internal `Saved` must have NO `SavedReq`/`SavedResp` wire type:\n{shared_code}"
+    );
+    assert!(
+        !front_code.contains("AppliedSaved"),
+        "server-internal `Saved` must have NO `AppliedSaved` variant:\n{front_code}"
+    );
+    assert!(
+        !front_code.contains("Saved "),
+        "server-internal `Saved` must not be constructed/handled in the frontend:\n{front_code}"
+    );
+
+    // GATE 3: the backend SETTLES the chain (never drops the perform) and answers
+    // from the FINAL settled model, carrying the continuation's `note`/`log`.
+    assert!(
+        backend.contains("spaChainSettle_"),
+        "the `Trigger` backend handler must settle the guarded Cmd.perform chain server-side:\n{backend}"
+    );
+    for field in ["mFinal.note", "mFinal.log", "mFinal.busy"] {
+        assert!(
+            backend.contains(field),
+            "`Trigger`'s response must carry `{field}` from the settled chain's final model:\n{backend}"
+        );
+    }
+    // The untouched field is never sent — the union stayed NARROW.
+    assert!(
+        !backend.contains("mFinal.count"),
+        "`count` is written by NO arm in the chain — it must NOT be in `Trigger`'s response:\n{backend}"
+    );
+
+    // GATE 4: `Trigger` keeps its own wire branch (the client still triggers it).
+    assert!(
+        front.contains("/_rpc/Trigger"),
+        "`Trigger` must keep its own RPC route in the frontend:\n{front}"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Build gate — both trees compile (backend natively with the chain-settle
+/// kernel, frontend to wasm with `Saved` pruned). Go-gated.
+#[test]
+fn spa_guarded_chain_both_trees_build() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            guarded_chain_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .output()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.status.success(),
+        "guarded-chain backend must build natively:\n{}",
+        String::from_utf8_lossy(&backend_build.stderr)
+    );
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .output()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend_build.status.success(),
+        "guarded-chain frontend must build to wasm:\n{}",
+        String::from_utf8_lossy(&frontend_build.stderr)
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend build must stage a content-hashed main.<hash>.wasm"
     );
 
     let _ = std::fs::remove_dir_all(&out);

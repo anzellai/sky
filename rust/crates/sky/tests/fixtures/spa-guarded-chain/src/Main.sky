@@ -1,0 +1,128 @@
+module Main exposing (main)
+
+-- Guard-wrapped server-internal effect chaining (the darraghstudio
+-- `requireAdmin` shape) for the Sky.Spa auto-split.
+--
+--   * `Trigger x` is a SERVER branch. Its `Cmd.perform (saveThing x) Saved` is
+--     returned THROUGH a higher-order GUARD WRAPPER `guard model (\_ -> …)`, so
+--     the DIRECT-tuple chain walk misses it. `saveThing` is a File effect
+--     (server). `Saved`'s OWN arm is ALSO guard-wrapped and reaches a server
+--     effect (a `File` read, inline), so the WHOLE chain is ALL-SERVER.
+--
+--     The guard-aware pattern-1 chaining must therefore settle it: `Trigger`
+--     is a chaining ROOT and `Saved` is SERVER-INTERNAL — no `/_rpc/Saved`
+--     route, no `SavedReq`, no `AppliedSaved`, and `Saved` is not constructed
+--     in the frontend. `Trigger`'s response write-set must gain `Saved`'s NARROW
+--     writes (`note` + `log`), NOT the untouched `count` field — a whole-model
+--     union here would be the dropped-write / over-send bug this feature avoids.
+--
+--   * A guard-wrapped perform whose result Msg is CLIENT-pure stays PATTERN-2,
+--     and a `Std.Native` client leaf stays a wire branch — both unchanged. This
+--     fixture proves ONLY the all-server guard-wrapped settle; the pattern-2 and
+--     fail-closed shapes are covered by `spa-client-result` / `spa-server-chain`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Error as Error
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { note : String
+    , log : String
+    , count : Int
+    , busy : Bool
+    }
+
+
+type Msg
+    = Trigger String
+    | Saved (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { note = "", log = "", count = 0, busy = False }, Cmd.none )
+
+
+saveThing : String -> Task Error String
+saveThing x =
+    File.writeFile "thing.txt" x
+        |> Task.map (\_ -> "thing.txt")
+
+
+-- The higher-order guard wrapper (darraghstudio `requireAdmin`): the
+-- `( model, cmd )` pair — and therefore the `Cmd.perform` — is returned from the
+-- thunk, NOT in the arm's own tail position.
+guard : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
+guard model thunk =
+    thunk ()
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Trigger x ->
+            guard
+                model
+                (\_ ->
+                    ( { model | busy = True }
+                    , Cmd.perform (saveThing x) Saved
+                    ))
+
+        Saved (Ok ref) ->
+            guard
+                model
+                (\_ ->
+                    let
+                        _ =
+                            File.readFile "audit.txt"
+                    in
+                    ( { model | note = ref, log = "reloaded", busy = False }
+                    , Cmd.none
+                    ))
+
+        Saved (Err e) ->
+            guard
+                model
+                (\_ ->
+                    ( { model | busy = False, log = Error.toString e }
+                    , Cmd.none
+                    ))
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("note=" ++ model.note)
+            , Ui.text ("log=" ++ model.log)
+            , Ui.text ("count=" ++ String.fromInt model.count)
+            , Ui.text ("busy=" ++ (if model.busy then "yes" else "no"))
+            , Ui.el [ Ui.onClick (Trigger "payload") ] (Ui.text "Trigger")
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

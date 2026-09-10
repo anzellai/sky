@@ -1792,31 +1792,54 @@ fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
     }
 }
 
-/// Collect the returned COMMAND expression (the SECOND element of every
-/// `( model, cmd )` tuple in tail position) from an arm body — the mirror of
-/// [`collect_init_model_exprs`], which isolates the first element. Empty when
-/// the tail is not a recognisable pair (a helper delegation) — the caller then
-/// treats the branch as unresolvable (fail-closed).
-fn collect_tail_cmd_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
+/// Collect the returned COMMAND expressions in tail position from an arm body,
+/// each TAGGED with whether it was reached THROUGH a higher-order guard wrapper
+/// (`GUARD model (\_ -> ( model, cmd ))`, the darraghstudio `requireAdmin`
+/// shape). A DIRECT `( model, cmd )` tail is tagged `false`; a pair returned from
+/// the LAST-argument lambda of a call is tagged `true`. This lets the chaining
+/// analysis apply today's exact rule to a DIRECT perform and a stricter
+/// server-head gate to a GUARDED perform, so a guard-wrapped ALL-SERVER chain
+/// settles while a guard-wrapped CLIENT-result perform is left for pattern-2.
+/// Empty when the tail is not a recognisable pair (a helper delegation) — the
+/// caller then treats the branch as unresolvable (fail-closed). FAIL-CLOSED on
+/// the guard shape: only a `Call` whose FINAL argument is a `\… -> …` lambda is
+/// walked as a wrapper (its body walked, tagged guarded); any other call shape
+/// contributes nothing.
+fn collect_tail_cmd_exprs_tagged(
+    body: &Body,
+    e: ExprId,
+    guarded: bool,
+    out: &mut Vec<(ExprId, bool)>,
+) {
     match &body.exprs[e] {
-        Expr::Tuple(xs) if xs.len() == 2 => out.push(xs[1]),
-        Expr::Let { body: b, .. } => collect_tail_cmd_exprs(body, *b, out),
+        Expr::Tuple(xs) if xs.len() == 2 => out.push((xs[1], guarded)),
+        Expr::Let { body: b, .. } => collect_tail_cmd_exprs_tagged(body, *b, guarded, out),
         Expr::If { arms, els } => {
             for (_, t) in arms {
-                collect_tail_cmd_exprs(body, *t, out);
+                collect_tail_cmd_exprs_tagged(body, *t, guarded, out);
             }
-            collect_tail_cmd_exprs(body, *els, out);
+            collect_tail_cmd_exprs_tagged(body, *els, guarded, out);
         }
         Expr::Case { branches, .. } => {
             for br in branches {
-                collect_tail_cmd_exprs(body, br.body, out);
+                collect_tail_cmd_exprs_tagged(body, br.body, guarded, out);
             }
         }
+        // A guard/HOF wrapper: `guard model (\_ -> ( model, cmd ))`. The returned
+        // pair lives in the LAST argument's thunk body — walk it, TAGGED guarded.
+        Expr::Call(_, args) => {
+            if let Some(last) = args.last() {
+                if let Expr::Lambda { body: lb, .. } = &body.exprs[*last] {
+                    collect_tail_cmd_exprs_tagged(body, *lb, true, out);
+                }
+            }
+        }
+        Expr::Lambda { body: b, .. } => collect_tail_cmd_exprs_tagged(body, *b, guarded, out),
         _ => {}
     }
 }
 
-/// Like [`collect_tail_cmd_exprs`], but ALSO looks THROUGH a guard/HOF wrapper —
+/// Like [`collect_tail_cmd_exprs_tagged`] (untagged), but ALSO looks THROUGH a guard/HOF wrapper —
 /// the `requireAdmin model (\_ -> ( model, cmd ))` shape (darraghstudio), where
 /// the `( model, cmd )` pair is returned from the LAST-argument thunk rather than
 /// the arm's own tail. This walk is used ONLY by the pattern-2 (client-result)
@@ -2212,38 +2235,87 @@ fn compute_server_chaining(
         let mut has_perform = false;
         if let Some(idxs) = arms_by_ctor.get(head) {
             for &ai in idxs {
-                let mut cmd_exprs: Vec<ExprId> = Vec::new();
-                collect_tail_cmd_exprs(body, arms[ai].body, &mut cmd_exprs);
+                // Tagged tail-cmd walk: a DIRECT `( model, cmd )` pair is tagged
+                // `false`; a pair returned THROUGH a guard/HOF wrapper (`GUARD
+                // model (\_ -> …)`) is tagged `true`. A direct perform keeps
+                // today's exact rule; a guarded perform feeds the chain ONLY when
+                // its continuation is a SERVER head, so an all-server guard-wrapped
+                // chain settles while a guard-wrapped CLIENT-result perform is
+                // left untouched for pattern-2.
+                let mut cmd_exprs: Vec<(ExprId, bool)> = Vec::new();
+                collect_tail_cmd_exprs_tagged(body, arms[ai].body, false, &mut cmd_exprs);
                 if cmd_exprs.is_empty() {
                     dirty = true; // no isolable `( model, cmd )` pair
                     continue;
                 }
-                let mut leaves: Vec<CmdLeaf> = Vec::new();
-                for ce in cmd_exprs {
+                // `arm_contributed` — the arm fed at least one leaf into the
+                // pattern-1 analysis. `arm_guarded_skip` — the arm had a guarded
+                // perform we deliberately left for pattern-2. A guarded-only arm
+                // that contributes nothing keeps the pre-change `dirty`: the
+                // direct walk saw no pair before this change, so it was dirty.
+                let mut arm_contributed = false;
+                let mut arm_guarded_skip = false;
+                for (ce, guarded) in cmd_exprs {
+                    let mut leaves: Vec<CmdLeaf> = Vec::new();
                     resolve_cmd_leaves(db, body, ce, &mut leaves);
-                }
-                for leaf in leaves {
-                    match leaf {
-                        CmdLeaf::NoneCmd => {}
-                        CmdLeaf::Publish | CmdLeaf::Unresolvable => dirty = true,
-                        CmdLeaf::Perform { to_msg, task_client_effect } => {
-                            has_perform = true;
-                            match to_msg {
-                                _ if task_client_effect => dirty = true,
-                                None => dirty = true,
-                                Some(m) => {
-                                    // A perform to a client-dispatched Msg is
-                                    // ambiguous ownership — the chain escapes to
-                                    // the client, so it cannot settle server-side.
-                                    if client_dispatched.contains(&m) {
-                                        dirty = true;
-                                    } else {
+                    for leaf in leaves {
+                        match leaf {
+                            CmdLeaf::NoneCmd => arm_contributed = true,
+                            CmdLeaf::Publish | CmdLeaf::Unresolvable => {
+                                dirty = true;
+                                arm_contributed = true;
+                            }
+                            CmdLeaf::Perform { to_msg, task_client_effect } if !guarded => {
+                                // DIRECT perform — today's rule, unchanged.
+                                has_perform = true;
+                                arm_contributed = true;
+                                match to_msg {
+                                    _ if task_client_effect => dirty = true,
+                                    None => dirty = true,
+                                    Some(m) => {
+                                        // A perform to a client-dispatched Msg is
+                                        // ambiguous ownership — the chain escapes to
+                                        // the client, so it cannot settle server-side.
+                                        if client_dispatched.contains(&m) {
+                                            dirty = true;
+                                        } else {
+                                            clean_conts.push(m);
+                                        }
+                                    }
+                                }
+                            }
+                            CmdLeaf::Perform { to_msg, task_client_effect } => {
+                                // GUARDED perform. It joins the server-side chain
+                                // ONLY when the continuation is a resolvable,
+                                // unambiguous SERVER head (reaches a server effect).
+                                // Any other guarded shape — a client-pure result
+                                // Msg, a client `Std.Native` task, a client-
+                                // dispatched (ambiguous) Msg, or an opaque `toMsg`
+                                // — is left EXACTLY as before this change: invisible
+                                // to pattern-1, so a client-result guarded perform
+                                // still reaches pattern-2 and a fail-closed shape
+                                // stays a wire branch.
+                                match to_msg {
+                                    Some(m)
+                                        if !task_client_effect
+                                            && !client_dispatched.contains(&m)
+                                            && server_head_set.contains(&m) =>
+                                    {
+                                        has_perform = true;
+                                        arm_contributed = true;
                                         clean_conts.push(m);
                                     }
+                                    _ => arm_guarded_skip = true,
                                 }
                             }
                         }
                     }
+                }
+                // Preserve the pre-change classification for a guarded-only arm
+                // whose perform we deliberately skipped: the direct walk saw no
+                // pair, so it was `dirty`.
+                if !arm_contributed && arm_guarded_skip {
+                    dirty = true;
                 }
             }
         }
