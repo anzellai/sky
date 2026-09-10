@@ -107,6 +107,11 @@ fn explicit_rpc_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-split-explicit-rpc/src/Main.sky")
 }
 
+fn server_chain_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-server-chain/src/Main.sky")
+}
+
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
 /// rather than a fixed `main.wasm`.
 fn dist_has_wasm(dist: &std::path::Path) -> bool {
@@ -4176,4 +4181,121 @@ fn server_read_deferred_to_init_command_is_not_refused() {
     }
 
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Server-internal effect chaining — the end-to-end behaviour gate. `Reload`
+/// returns `Cmd.perform (File.readFile "data/note.txt") Reloaded`, and
+/// `Reloaded (Ok raw)` writes `raw` into `note`. Before this feature the
+/// generated handler DISCARDED the command, so `POST /_rpc/Reload` answered with
+/// an empty `note`. Now the whole chain settles server-side inside the RPC, so
+/// the response carries the file's contents. Builds + RUNS the backend, then
+/// POSTs — Go-gated (needs the toolchain + curl).
+#[test]
+fn server_internal_chain_e2e_post_reload_returns_file_note() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    // 1. Generate the split.
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            server_chain_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+
+    // 2. Build the backend natively.
+    let backend_dir = out.join("backend");
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&backend_dir)
+        .output()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.status.success(),
+        "backend must build:\n{}",
+        String::from_utf8_lossy(&backend_build.stderr)
+    );
+
+    // 3. The file the chain reads. `File.readFile "data/note.txt"` resolves
+    // relative to the process CWD, so plant it under the backend dir.
+    let note_body = "hello-from-the-server-chain";
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    std::fs::write(backend_dir.join("data/note.txt"), note_body).unwrap();
+
+    // 4. Run the backend, wait for it to listen.
+    let port = 8953u16;
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend build must produce sky-out/app");
+    let log_path = backend_dir.join("server.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .env("ENV", "production")
+        .env("SKY_CONSOLE_AUTH", "off")
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .expect("spawn the compiled backend");
+
+    let ready = wait_for_listening_substr(&log_path, port, 120);
+    if !ready {
+        let _ = child.kill();
+        let mut buf = String::new();
+        use std::io::Read as _;
+        let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut buf));
+        let _ = std::fs::remove_dir_all(&out);
+        panic!("backend never reported listening on :{port}\nlog:\n{buf}");
+    }
+
+    // 5. POST /_rpc/Reload with an empty read-set body; the response must carry
+    // the file's contents in `note`.
+    let body = curl_post(port, "/_rpc/Reload", "{}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let body = body.expect("POST /_rpc/Reload should return a body");
+    assert!(
+        body.contains(note_body),
+        "POST /_rpc/Reload must settle the File read chain server-side and return \
+         `note` = the file contents (`{note_body}`), but the response was:\n{body}"
+    );
+}
+
+// Wait until the server's log carries a line containing "listening" and `:port`.
+fn wait_for_listening_substr(log_path: &std::path::Path, port: u16, tries: u32) -> bool {
+    use std::io::Read as _;
+    let needle = format!(":{port}");
+    for _ in 0..tries {
+        if let Ok(mut f) = std::fs::File::open(log_path) {
+            let mut buf = String::new();
+            if f.read_to_string(&mut buf).is_ok() {
+                if buf.lines().any(|l| l.to_lowercase().contains("listening") && l.contains(&needle)) {
+                    return true;
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    false
+}
+
+// POST `data` as JSON to `http://127.0.0.1:<port><path>`, returning the body.
+fn curl_post(port: u16, path: &str, data: &str) -> Option<String> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let out = Command::new("curl")
+        .args(["-s", "-X", "POST", "-H", "Content-Type: application/json", "-d", data, &url])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
 }

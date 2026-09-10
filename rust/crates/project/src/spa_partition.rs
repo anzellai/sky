@@ -732,6 +732,23 @@ pub struct SpaPartitionReport {
     /// the `spa-split` generator REFUSES to emit when this is non-empty. Empty
     /// for the supported pattern (a server read deferred to `init`'s COMMAND).
     pub init_model_server_reads: Vec<String>,
+    /// SERVER-INTERNAL Msgs (server-internal effect chaining). A Msg dispatched
+    /// ONLY from a server arm's `Cmd.perform`/`Cmd.batch` toMsg — never a view
+    /// event, a client arm, a subscription, nor its own wire branch. It has no
+    /// `/_rpc/<Msg>` route, no `Applied<Msg>` variant, and its client `update`
+    /// arm is DROPPED (the whole chain settles server-side in the triggering
+    /// branch's RPC). Sorted + deduped.
+    pub server_internal: Vec<String>,
+    /// The SERVER branch ctor names whose RPC handler settles a `Cmd.perform`
+    /// chain server-side (binds the returned command + runs
+    /// `Spa_settleServerChain`), rather than discarding it. Their write/read
+    /// sets already carry the UNION over every server-internal continuation arm.
+    pub chaining_branches: Vec<String>,
+    /// G5 fail-closed warnings — a server branch returns a `Cmd.perform` the
+    /// analysis refused to chain (a client `Std.Native` effect, an ambiguous
+    /// continuation, or an opaque command). The follow-up runs nowhere; surfaced
+    /// prominently by the `spa-split` CLI.
+    pub server_chain_warnings: Vec<String>,
 }
 
 impl SpaPartitionReport {
@@ -944,6 +961,9 @@ pub fn analyze_loaded(
     let mut update_name: Option<String> = None;
     let mut update_module_name: Option<String> = None;
     let mut model_fields: Vec<ModelFieldTy> = Vec::new();
+    let mut server_internal: Vec<String> = Vec::new();
+    let mut chaining_branches: Vec<String> = Vec::new();
+    let mut server_chain_warnings: Vec<String> = Vec::new();
 
     match update_field {
         UpdateField::Def(update_def) => {
@@ -963,6 +983,17 @@ pub fn analyze_loaded(
                     db, &graph, umod, update_def, body, &mut branches, &mut whole_update,
                     &mut notes,
                 );
+                // Server-internal effect chaining (Phase 1 + Phase 2). Resolve
+                // `view`/`subscriptions` for the client-construction scan, then
+                // classify the server-internal Msgs + widen the chaining
+                // branches' RPC I/O to the union over their continuation arms.
+                let view_def = find_config_field_def(db, &check_ids, entry, "view");
+                let subs_def = find_config_field_def(db, &check_ids, entry, "subscriptions");
+                let chaining =
+                    compute_server_chaining(db, umod, body, view_def, subs_def, &mut branches);
+                server_internal = chaining.server_internal;
+                chaining_branches = chaining.chaining_branches;
+                server_chain_warnings = chaining.warnings;
             } else {
                 return Err("update def has no body".into());
             }
@@ -1035,6 +1066,9 @@ pub fn analyze_loaded(
         publishes,
         notes,
         init_model_server_reads,
+        server_internal,
+        chaining_branches,
+        server_chain_warnings,
     })
 }
 
@@ -1680,6 +1714,636 @@ fn classify_case_arms(
             });
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Server-internal effect chaining (Phase 1 classification + Phase 2 I/O union).
+// ---------------------------------------------------------------------------
+
+/// The result of the server-chaining analysis over `update`. Consumed by the
+/// `spa-split` generator to (a) chain the triggering branches' RPC handlers,
+/// (b) prune the server-internal Msgs from the frontend.
+#[derive(Default)]
+pub struct ServerChaining {
+    /// Msgs to DROP from the frontend (client arm + union variant). See
+    /// [`SpaPartitionReport::server_internal`].
+    pub server_internal: Vec<String>,
+    /// Server branch ctor names whose handler settles a chain server-side.
+    pub chaining_branches: Vec<String>,
+    /// G5 fail-closed warnings — a branch with a `Cmd.perform` the analysis
+    /// refused to chain (client effect, ambiguous ownership, opaque command).
+    pub warnings: Vec<String>,
+}
+
+/// One leaf of a statically-resolved `Cmd` tree returned by an `update` arm.
+#[derive(Clone, Debug)]
+enum CmdLeaf {
+    /// `Cmd.none` — no effect.
+    NoneCmd,
+    /// `Cmd.perform task toMsg`. `to_msg` is the toMsg's ctor NAME (`None` when
+    /// it is not a resolvable single ctor); `task_client_effect` is true when the
+    /// task reaches a `Std.Native` client effect (must run in the wasm client, so
+    /// the branch cannot be chained server-side — fail closed).
+    Perform {
+        to_msg: Option<String>,
+        task_client_effect: bool,
+    },
+    /// `Cmd.publish` / `Cmd.publishNoEcho` — a server→client push leaf (not a
+    /// server-runnable read; a chain containing one is not chained).
+    Publish,
+    /// A shape the static resolver could not read (an opaque let-bound Cmd, a
+    /// helper returning a Cmd, a non-list batch). Forces fail-closed.
+    Unresolvable,
+}
+
+/// The `Cmd` constructor a def is a kernel alias to.
+enum CmdDefKind {
+    Perform,
+    Batch,
+    NoneCmd,
+    Publish,
+    Other,
+}
+
+fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
+    if def_is_kernel_alias_to(db, d, &["Cmd_perform"]) {
+        CmdDefKind::Perform
+    } else if def_is_kernel_alias_to(db, d, &["Cmd_batch"]) {
+        CmdDefKind::Batch
+    } else if def_is_kernel_alias_to(db, d, &["Cmd_none"]) {
+        CmdDefKind::NoneCmd
+    } else if def_is_kernel_alias_to(db, d, &["Cmd_publish", "Cmd_publishNoEcho"]) {
+        CmdDefKind::Publish
+    } else {
+        CmdDefKind::Other
+    }
+}
+
+/// Collect the returned COMMAND expression (the SECOND element of every
+/// `( model, cmd )` tuple in tail position) from an arm body — the mirror of
+/// [`collect_init_model_exprs`], which isolates the first element. Empty when
+/// the tail is not a recognisable pair (a helper delegation) — the caller then
+/// treats the branch as unresolvable (fail-closed).
+fn collect_tail_cmd_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
+    match &body.exprs[e] {
+        Expr::Tuple(xs) if xs.len() == 2 => out.push(xs[1]),
+        Expr::Let { body: b, .. } => collect_tail_cmd_exprs(body, *b, out),
+        Expr::If { arms, els } => {
+            for (_, t) in arms {
+                collect_tail_cmd_exprs(body, *t, out);
+            }
+            collect_tail_cmd_exprs(body, *els, out);
+        }
+        Expr::Case { branches, .. } => {
+            for br in branches {
+                collect_tail_cmd_exprs(body, br.body, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Statically resolve a command expression into its leaves. FAIL-CLOSED: any
+/// shape the resolver cannot read becomes [`CmdLeaf::Unresolvable`], which stops
+/// the triggering branch from being chained (never a silently-dropped write).
+fn resolve_cmd_leaves(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut Vec<CmdLeaf>) {
+    let mut visited: HashSet<DefId> = HashSet::new();
+    resolve_cmd_leaves_rec(db, body, e, out, 0, &mut visited);
+}
+
+/// The recursion ceiling for command resolution through helper defs (a chain of
+/// `Cmd`-returning helpers). Deeper than this falls back to `Unresolvable`.
+const CMD_RESOLVE_DEPTH: usize = 12;
+
+fn resolve_cmd_leaves_rec(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    out: &mut Vec<CmdLeaf>,
+    depth: usize,
+    visited: &mut HashSet<DefId>,
+) {
+    if depth > CMD_RESOLVE_DEPTH {
+        out.push(CmdLeaf::Unresolvable);
+        return;
+    }
+    match &body.exprs[e] {
+        Expr::Call(callee, args) => {
+            if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
+                match cmd_def_kind(db, *d) {
+                    CmdDefKind::Perform => {
+                        if args.len() == 2 {
+                            let to_msg = literal_ctor_name(body, db, args[1]);
+                            let mut tref = Refs::default();
+                            collect(body, args[0], &mut tref, &CollectCtx::default());
+                            let client = task_refs_client_effect(db, &tref);
+                            out.push(CmdLeaf::Perform {
+                                to_msg,
+                                task_client_effect: client,
+                            });
+                        } else {
+                            out.push(CmdLeaf::Unresolvable);
+                        }
+                    }
+                    CmdDefKind::Batch => {
+                        if args.len() == 1 {
+                            if let Expr::List(xs) = &body.exprs[args[0]] {
+                                for x in xs {
+                                    resolve_cmd_leaves_rec(db, body, *x, out, depth, visited);
+                                }
+                                return;
+                            }
+                        }
+                        // A batch over anything but a literal list is opaque.
+                        out.push(CmdLeaf::Unresolvable);
+                    }
+                    CmdDefKind::NoneCmd => out.push(CmdLeaf::NoneCmd),
+                    CmdDefKind::Publish => out.push(CmdLeaf::Publish),
+                    // A HELPER returning a `Cmd` (e.g. `shippedCmd o = Cmd.perform
+                    // (Mailer.sendShipped o) EmailSent`) — resolve INTO its body so
+                    // the perform edge is seen, not treated as opaque.
+                    CmdDefKind::Other => resolve_helper_cmd(db, *d, out, depth + 1, visited),
+                }
+                return;
+            }
+            out.push(CmdLeaf::Unresolvable);
+        }
+        // A bare reference: `Cmd.none`, or a nullary `Cmd`-returning helper.
+        Expr::Var(Res::Def(d)) => match cmd_def_kind(db, *d) {
+            CmdDefKind::NoneCmd => out.push(CmdLeaf::NoneCmd),
+            CmdDefKind::Other => resolve_helper_cmd(db, *d, out, depth + 1, visited),
+            _ => out.push(CmdLeaf::Unresolvable),
+        },
+        // Control flow that a `Cmd`-returning helper body threads through: resolve
+        // every tail branch as a command.
+        Expr::Case { branches, .. } => {
+            for br in branches {
+                resolve_cmd_leaves_rec(db, body, br.body, out, depth, visited);
+            }
+        }
+        Expr::If { arms, els } => {
+            for (_, t) in arms {
+                resolve_cmd_leaves_rec(db, body, *t, out, depth, visited);
+            }
+            resolve_cmd_leaves_rec(db, body, *els, out, depth, visited);
+        }
+        Expr::Let { body: b, .. } => resolve_cmd_leaves_rec(db, body, *b, out, depth, visited),
+        _ => out.push(CmdLeaf::Unresolvable),
+    }
+}
+
+/// Resolve a helper def `d` (whose result is a `Cmd msg`) into its command
+/// leaves, by walking its own body. Cycle- and depth-bounded (fail-closed to
+/// `Unresolvable`). `Std.Cmd` / `Std.Spa` helpers are not walked here — those are
+/// caught by `cmd_def_kind` (the kernel aliases) before reaching this.
+fn resolve_helper_cmd(
+    db: &dyn SkyDb,
+    d: DefId,
+    out: &mut Vec<CmdLeaf>,
+    depth: usize,
+    visited: &mut HashSet<DefId>,
+) {
+    if !visited.insert(d) || depth > CMD_RESOLVE_DEPTH {
+        out.push(CmdLeaf::Unresolvable);
+        return;
+    }
+    let Some(loc) = db.def_loc(d) else {
+        out.push(CmdLeaf::Unresolvable);
+        return;
+    };
+    let resolved = db.resolve(loc.module);
+    let Some(hbody) = resolved.bodies.get(&d) else {
+        out.push(CmdLeaf::Unresolvable);
+        return;
+    };
+    let Some(root) = hbody.root else {
+        out.push(CmdLeaf::Unresolvable);
+        return;
+    };
+    resolve_cmd_leaves_rec(db, hbody, root, out, depth, visited);
+    // Path-scoped cycle guard: a sibling call to the SAME helper (a `Cmd.batch`
+    // with two `shippedCmd` calls) must still resolve — only a self-referential
+    // cycle is blocked.
+    visited.remove(&d);
+}
+
+/// Whether a task's collected refs reach a `Std.Native` CLIENT effect — directly
+/// (`client_kernels`) or transitively through a callee. A client effect cannot
+/// run server-side (its `!js` stub returns `Err`), so a chain containing one is
+/// NOT chained (G5 fail-closed).
+fn task_refs_client_effect(db: &dyn SkyDb, tref: &Refs) -> bool {
+    if !tref.client_kernels.is_empty() {
+        return true;
+    }
+    let mut visited: HashSet<DefId> = HashSet::new();
+    tref.callees
+        .iter()
+        .any(|c| def_reaches_client_effect(db, *c, &mut visited))
+}
+
+/// Whether evaluating `d`'s body reaches a `Std.Native` CLIENT effect through its
+/// callees — the client-effect twin of [`def_reaches_genuine_effect`].
+fn def_reaches_client_effect(db: &dyn SkyDb, d: DefId, visited: &mut HashSet<DefId>) -> bool {
+    if !visited.insert(d) {
+        return false;
+    }
+    let Some(loc) = db.def_loc(d) else {
+        return false;
+    };
+    // `Std.Spa`'s client-boundary helpers are pure client leaves (mirrors
+    // build_graph) — never a Native effect.
+    if db.module_name(loc.module) == "Std.Spa" {
+        return false;
+    }
+    let resolved = db.resolve(loc.module);
+    let Some(body) = resolved.bodies.get(&d) else {
+        return false;
+    };
+    let Some(root) = body.root else {
+        return false;
+    };
+    let mut acc = Refs::default();
+    collect(body, root, &mut acc, &CollectCtx::default());
+    if !acc.client_kernels.is_empty() {
+        return true;
+    }
+    acc.callees
+        .iter()
+        .any(|c| def_reaches_client_effect(db, *c, visited))
+}
+
+/// Record every constructor NAME (`Res::Ctor`) built directly in `e`'s subtree.
+fn walk_ctor_names(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>) {
+    match &body.exprs[e] {
+        Expr::Var(Res::Ctor(c)) => {
+            if let Some(l) = db.def_loc(c.def) {
+                out.insert(l.name.as_str().to_string());
+            }
+        }
+        Expr::List(xs) | Expr::Tuple(xs) => {
+            for x in xs {
+                walk_ctor_names(db, body, *x, out);
+            }
+        }
+        Expr::Record(fields) => {
+            for (_, x) in fields {
+                walk_ctor_names(db, body, *x, out);
+            }
+        }
+        Expr::Update { base, fields } => {
+            walk_ctor_names(db, body, *base, out);
+            for (_, x) in fields {
+                walk_ctor_names(db, body, *x, out);
+            }
+        }
+        Expr::Negate(x) | Expr::Access(x, _) => walk_ctor_names(db, body, *x, out),
+        Expr::Lambda { body: b, .. } => walk_ctor_names(db, body, *b, out),
+        Expr::Call(callee, args) => {
+            walk_ctor_names(db, body, *callee, out);
+            for a in args {
+                walk_ctor_names(db, body, *a, out);
+            }
+        }
+        Expr::Binop { lhs, rhs, .. } => {
+            walk_ctor_names(db, body, *lhs, out);
+            walk_ctor_names(db, body, *rhs, out);
+        }
+        Expr::If { arms, els } => {
+            for (c, t) in arms {
+                walk_ctor_names(db, body, *c, out);
+                walk_ctor_names(db, body, *t, out);
+            }
+            walk_ctor_names(db, body, *els, out);
+        }
+        Expr::Let { defs, body: b } => {
+            for d in defs {
+                walk_ctor_names(db, body, d.body, out);
+            }
+            walk_ctor_names(db, body, *b, out);
+        }
+        Expr::Case { subject, branches } => {
+            walk_ctor_names(db, body, *subject, out);
+            for br in branches {
+                walk_ctor_names(db, body, br.body, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Every constructor a top-level def BUILDS, transitively through its callees.
+/// Over-approximates (follows every reachable def) — the set is used to KEEP a
+/// Msg client-side, so including more only keeps more (never drops a live arm).
+fn collect_constructed_ctors(
+    db: &dyn SkyDb,
+    def: DefId,
+    out: &mut BTreeSet<String>,
+    visited: &mut HashSet<DefId>,
+) {
+    if !visited.insert(def) {
+        return;
+    }
+    let Some(loc) = db.def_loc(def) else {
+        return;
+    };
+    let resolved = db.resolve(loc.module);
+    let Some(body) = resolved.bodies.get(&def) else {
+        return;
+    };
+    let Some(root) = body.root else {
+        return;
+    };
+    walk_ctor_names(db, body, root, out);
+    let mut acc = Refs::default();
+    collect(body, root, &mut acc, &CollectCtx::default());
+    for c in acc.callees {
+        collect_constructed_ctors(db, c, out, visited);
+    }
+}
+
+/// Every constructor built by an EXPRESSION (a client arm body), transitively.
+fn expr_constructed_ctors(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>) {
+    walk_ctor_names(db, body, e, out);
+    let mut acc = Refs::default();
+    collect(body, e, &mut acc, &CollectCtx::default());
+    let mut visited: HashSet<DefId> = HashSet::new();
+    for c in acc.callees {
+        collect_constructed_ctors(db, c, out, &mut visited);
+    }
+}
+
+/// Phase 1 + Phase 2: classify the server-internal Msgs and widen the chaining
+/// branches' RPC I/O to the UNION over their server-internal continuation arms.
+///
+/// A Msg is SERVER-INTERNAL iff it is the `toMsg` of a server arm's
+/// `Cmd.perform`/`Cmd.batch` AND it is constructed NOWHERE on the client (not
+/// in `view`, `subscriptions`, nor any client arm) AND it is not itself a wire
+/// (server RPC) branch. A server branch CHAINS iff its whole transitive command
+/// chain is statically resolvable, contains ≥1 perform, and contains no publish
+/// leaf, no client-effect perform, and no ambiguous continuation (a toMsg that
+/// is a wire branch or is also client-constructed). FAIL-CLOSED throughout: any
+/// shape the analysis cannot fully resolve leaves the branch UNCHAINED (today's
+/// behaviour) with a loud warning, and keeps every Msg it could not prove
+/// server-internal OUT of the drop set.
+#[allow(clippy::too_many_arguments)]
+fn compute_server_chaining(
+    db: &skydb::SkyDatabase,
+    umod: ModuleId,
+    body: &Body,
+    view_def: Option<DefId>,
+    subs_def: Option<DefId>,
+    branches: &mut [BranchVerdict],
+) -> ServerChaining {
+    let mut out = ServerChaining::default();
+    let Some(root) = body.root else {
+        return out;
+    };
+    // Locate the update's `case msg of` (same spine walk classify uses).
+    let mut throwaway = Refs::default();
+    let Some(case_expr) = find_top_case(body, root, &mut throwaway, &CollectCtx::default()) else {
+        return out;
+    };
+    let Expr::Case { branches: arms, .. } = &body.exprs[case_expr] else {
+        return out;
+    };
+    let model_local = model_param_local(body);
+    let src = db.module_parse(umod).syntax().text().to_string();
+
+    // Head ctor → arm indices (a Msg like `Reloaded` owns its Ok/Err arms).
+    let mut arms_by_ctor: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, arm) in arms.iter().enumerate() {
+        if let Some(k) = arm_ctor_key(body, arm.pat) {
+            arms_by_ctor.entry(k).or_default().push(i);
+        }
+    }
+
+    // Every Msg head that has ≥1 `update` arm.
+    let all_heads: Vec<String> = arms_by_ctor.keys().cloned().collect();
+
+    // `client_dispatched` — every Msg the CLIENT can construct: built by `view`,
+    // `subscriptions`, or a CLIENT-classified arm body (all transitive). This is
+    // the authority on "the client dispatches this Msg". Over-approximated, so a
+    // Msg wrongly kept out of the drop set is safe; a Msg wrongly pruned would
+    // break client dispatch, so we include MORE here, never fewer.
+    let server_head_set: HashSet<String> = branches
+        .iter()
+        .filter(|b| b.server)
+        .map(|b| pattern_head_ctor(&b.msg))
+        .collect();
+    let mut client_dispatched: BTreeSet<String> = BTreeSet::new();
+    let mut vis: HashSet<DefId> = HashSet::new();
+    if let Some(v) = view_def {
+        collect_constructed_ctors(db, v, &mut client_dispatched, &mut vis);
+    }
+    if let Some(s) = subs_def {
+        collect_constructed_ctors(db, s, &mut client_dispatched, &mut vis);
+    }
+    for arm in arms.iter() {
+        let head = arm_ctor_key(body, arm.pat);
+        let is_server = head.as_ref().map(|h| server_head_set.contains(h)).unwrap_or(false);
+        if !is_server {
+            // A CLIENT arm (or a non-ctor arm) — the Msgs it constructs are
+            // client-dispatched (a client re-dispatch).
+            expr_constructed_ctors(db, body, arm.body, &mut client_dispatched);
+        }
+    }
+
+    // Per-head command shape: the clean perform continuations, and whether the
+    // head is "dirty" (a shape that cannot fully settle server-side).
+    struct HeadInfo {
+        clean_conts: Vec<String>,
+        dirty: bool,
+        has_perform: bool,
+    }
+    let head_info = |head: &str| -> HeadInfo {
+        let mut clean_conts: Vec<String> = Vec::new();
+        let mut dirty = false;
+        let mut has_perform = false;
+        if let Some(idxs) = arms_by_ctor.get(head) {
+            for &ai in idxs {
+                let mut cmd_exprs: Vec<ExprId> = Vec::new();
+                collect_tail_cmd_exprs(body, arms[ai].body, &mut cmd_exprs);
+                if cmd_exprs.is_empty() {
+                    dirty = true; // no isolable `( model, cmd )` pair
+                    continue;
+                }
+                let mut leaves: Vec<CmdLeaf> = Vec::new();
+                for ce in cmd_exprs {
+                    resolve_cmd_leaves(db, body, ce, &mut leaves);
+                }
+                for leaf in leaves {
+                    match leaf {
+                        CmdLeaf::NoneCmd => {}
+                        CmdLeaf::Publish | CmdLeaf::Unresolvable => dirty = true,
+                        CmdLeaf::Perform { to_msg, task_client_effect } => {
+                            has_perform = true;
+                            match to_msg {
+                                _ if task_client_effect => dirty = true,
+                                None => dirty = true,
+                                Some(m) => {
+                                    // A perform to a client-dispatched Msg is
+                                    // ambiguous ownership — the chain escapes to
+                                    // the client, so it cannot settle server-side.
+                                    if client_dispatched.contains(&m) {
+                                        dirty = true;
+                                    } else {
+                                        clean_conts.push(m);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        HeadInfo { clean_conts, dirty, has_perform }
+    };
+    let mut info: HashMap<String, HeadInfo> = HashMap::new();
+    for h in &all_heads {
+        info.insert(h.clone(), head_info(h));
+    }
+
+    // `is_continuation` — a Msg dispatched by SOME head's clean perform. Reload is
+    // NOT a continuation (nothing performs to it), so it stays a wire entry;
+    // EmailSent IS (Cmd.perform … EmailSent), so it can become server-internal.
+    let mut is_continuation: HashSet<String> = HashSet::new();
+    for hi in info.values() {
+        for c in &hi.clean_conts {
+            is_continuation.insert(c.clone());
+        }
+    }
+
+    // `settleable` (S) — the greatest set of Msgs that fully settle server-side: a
+    // continuation, not client-dispatched, not dirty, and whose own clean
+    // continuations are all settleable. Iterative removal to the fixpoint.
+    let mut settleable: HashSet<String> = all_heads
+        .iter()
+        .filter(|h| {
+            is_continuation.contains(*h)
+                && !client_dispatched.contains(*h)
+                && info.get(*h).map(|i| !i.dirty).unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    loop {
+        let mut changed = false;
+        let current: Vec<String> = settleable.iter().cloned().collect();
+        for h in current {
+            let escapes = info
+                .get(&h)
+                .map(|i| i.clean_conts.iter().any(|c| !settleable.contains(c)))
+                .unwrap_or(true);
+            if escapes {
+                settleable.remove(&h);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // Chain ROOTS = wire entries (a server head that is client-dispatched OR is
+    // not a clean continuation of any head) whose whole chain settles. From each
+    // root, every reachable continuation is server-internal.
+    let mut server_internal: BTreeSet<String> = BTreeSet::new();
+    let mut io_updates: HashMap<String, BranchIo> = HashMap::new();
+    for bn in server_head_set.iter() {
+        let is_wire_entry = client_dispatched.contains(bn) || !is_continuation.contains(bn);
+        if !is_wire_entry {
+            // A mid-chain server head (server-internal, reached via a root's BFS).
+            continue;
+        }
+        let hi = match info.get(bn) {
+            Some(i) => i,
+            None => continue,
+        };
+        if !hi.has_perform {
+            continue; // a plain server RPC — nothing to chain.
+        }
+        let clean = !hi.dirty && hi.clean_conts.iter().all(|c| settleable.contains(c));
+        if !clean {
+            out.warnings.push(format!(
+                "server branch `{bn}` returns a `Cmd.perform` the auto-split could NOT chain server-side (a client `Std.Native` effect, an ambiguous continuation also dispatched on the client, or an opaque command shape). Its follow-up effect runs NOWHERE — keep the branch to a single server round, or split the follow-up into its own explicit RPC."
+            ));
+            continue;
+        }
+        // Chainable root: BFS its clean continuations (all in `settleable`),
+        // collecting the server-internal set + the reachable arms for the I/O union.
+        out.chaining_branches.push(bn.clone());
+        let mut reachable_arms: BTreeSet<usize> =
+            arms_by_ctor.get(bn).map(|v| v.iter().copied().collect()).unwrap_or_default();
+        let mut visited: HashSet<String> = HashSet::new();
+        visited.insert(bn.clone());
+        let mut queue: Vec<String> = hi.clean_conts.clone();
+        while let Some(m) = queue.pop() {
+            if !visited.insert(m.clone()) {
+                continue;
+            }
+            server_internal.insert(m.clone());
+            if let Some(idxs) = arms_by_ctor.get(&m) {
+                for &j in idxs {
+                    reachable_arms.insert(j);
+                }
+            }
+            if let Some(mi) = info.get(&m) {
+                for c in &mi.clean_conts {
+                    queue.push(c.clone());
+                }
+            }
+        }
+        // Union the I/O over every reachable arm (the root PLUS every reachable
+        // server-internal continuation arm). Widen to whole model on any opaque
+        // use — never narrow (soundness): a dropped write is a correctness bug.
+        let mut io = BranchIo::default();
+        for &j in &reachable_arms {
+            let arm_io = compute_branch_io(db, body, arms[j].body, arms[j].pat, model_local, &src);
+            io.reads_whole_model |= arm_io.reads_whole_model;
+            io.writes_whole_model |= arm_io.writes_whole_model;
+            for f in arm_io.read_fields {
+                if !io.read_fields.contains(&f) {
+                    io.read_fields.push(f);
+                }
+            }
+            for f in arm_io.write_fields {
+                if !io.write_fields.contains(&f) {
+                    io.write_fields.push(f);
+                }
+            }
+        }
+        io.read_fields.sort();
+        io.write_fields.sort();
+        io_updates.insert(bn.clone(), io);
+    }
+
+    // Apply the widened I/O to the chaining server branches (preserving their own
+    // msg_args — the request inputs; a continuation's args come from the task
+    // result, not the client).
+    for b in branches.iter_mut() {
+        if !b.server {
+            continue;
+        }
+        let head = pattern_head_ctor(&b.msg);
+        if let Some(io) = io_updates.get(&head) {
+            if let Some(existing) = &mut b.io {
+                existing.reads_whole_model = io.reads_whole_model;
+                existing.writes_whole_model = io.writes_whole_model;
+                existing.read_fields = io.read_fields.clone();
+                existing.write_fields = io.write_fields.clone();
+            }
+        }
+    }
+
+    out.server_internal = server_internal.into_iter().collect();
+    out.chaining_branches.sort();
+    out.chaining_branches.dedup();
+    out
+}
+
+/// The head constructor name of a branch label (`"Reloaded (Ok raw)"` →
+/// `"Reloaded"`), the first whitespace-delimited token.
+fn pattern_head_ctor(label: &str) -> String {
+    label.split_whitespace().next().unwrap_or(label).to_string()
 }
 
 // ---------------------------------------------------------------------------

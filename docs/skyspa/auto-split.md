@@ -724,3 +724,65 @@ wasm); and a live round-trip (`POST /_rpc/Add`, `POST /_rpc/Toggle`) persists to
 `todos.json` and returns the write-set. The generator wiring + build + routing
 are asserted in `spa_split_flow.rs`
 (`splits_a_multi_module_app_routing_pure_and_effectful_modules`).
+
+
+## 18. Server-internal effect chaining (2026-09-10)
+
+A server RPC branch that returns `Cmd.perform serverTask ToMsg` — where the
+result `ToMsg` feeds back through `update` and is dispatched **only**
+server-side — now runs the **whole** chain inside the triggering branch's RPC
+and answers with the final settled model diff. This mirrors Sky.Live, where the
+entire TEA loop is server-side.
+
+**The bug it fixes.** The generated RPC handler used to bind `( m2, _ )` and
+**discard** the returned command (`gen_backend`), so a returned `Cmd.perform`
+ran nowhere and any field its result-`Msg` wrote was silently dropped. The
+canonical shape:
+
+```elm
+Reload ->
+    ( model, Cmd.perform (File.readFile "data/note.txt") Reloaded )
+
+Reloaded (Ok raw) ->
+    ( { model | note = raw }, Cmd.none )
+```
+
+`POST /_rpc/Reload` used to answer with an empty `note`; now it settles the read
+server-side and returns `note` = the file contents.
+
+**Server-internal Msgs.** A `Msg` is **server-internal** when it is the `toMsg`
+of a server arm's `Cmd.perform`/`Cmd.batch`, is constructed **nowhere** on the
+client (not in `view`, `subscriptions`, nor a client arm — an over-approximated,
+transitive scan), and is not itself a wire (`/_rpc`) branch. A server-internal
+Msg gets **no** `/_rpc/<Msg>` route, **no** `Applied<Msg>` variant, and its
+client `update` arm plus its `Msg`-union constructor are **pruned** from the
+frontend (`spa_partition::compute_server_chaining` →
+`spa_split::union_text_without_variants` + the frontend arm drop).
+
+**Write/read-set union (soundness).** A chaining branch's RPC response write-set
+is the **union** over the triggering arm PLUS every server-internal continuation
+arm reachable through the perform edges. `Reload`'s write-set gains `note`
+(written by `Reloaded`). Under-approximating (dropping a real write) is a
+correctness bug, so any shape the resolver cannot fully read widens to the whole
+model — never narrows.
+
+**Fail-closed (G5).** A branch is **not** chained — it keeps the discard-and-warn
+floor — when its transitive command chain contains a `Std.Native` **client**
+effect (which cannot run server-side), an **ambiguous** continuation (a `toMsg`
+that is also client- or wire-dispatched), or an **opaque** command shape the
+static resolver cannot read. The un-chained branch's continuations stay client
+arms.
+
+**Runtime.** `runtime-go/rt/spa_chain_notjs.go`'s `Spa_settleServerChain`
+(`Ffi.kernel "Spa_settleServerChain"`, the `spaChainSettle_` alias) folds every
+server-runnable perform leaf back through `update` to a **fixpoint**, bounded by
+a hard round cap (`spaChainMaxRounds = 64`) so a self-referential Msg cycle
+terminates rather than hangs. It returns `( settledModel, residualCmd )`.
+
+**Verified.** Classification + write-set union in
+`crates/project/tests/spa_server_chain.rs` (against
+`tests/fixtures/spa-server-chain`, which exercises both the chained `Reload`
+and the fail-closed `SyncCopy` that batches a Native client effect); the
+runtime fold + cycle termination in `runtime-go/rt/spa_chain_notjs_test.go`;
+and the end-to-end `POST /_rpc/Reload` → `note` in `spa_split_flow.rs`
+(`server_internal_chain_e2e_post_reload_returns_file_note`).

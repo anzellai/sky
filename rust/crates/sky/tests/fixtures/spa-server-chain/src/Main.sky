@@ -1,0 +1,134 @@
+module Main exposing (main)
+
+-- Server-internal effect chaining, both directions, in one Sky.Spa app:
+--
+--   * `Reload` is a SERVER branch (its `Cmd.perform` task reads a File). Its
+--     `toMsg` `Reloaded` is dispatched ONLY here — never from `view`,
+--     `subscriptions`, nor a client arm — so `Reloaded` is SERVER-INTERNAL: the
+--     whole read -> `Reloaded (Ok raw)` -> `{ model | note = raw }` chain must
+--     settle server-side inside `Reload`'s RPC, and `Reload`'s response write-set
+--     must gain `note` (the field the continuation writes). Dropping that write
+--     is the bug this feature fixes.
+--
+--   * `SyncCopy` is a SERVER branch (File) whose command BATCHES a server read
+--     with a `Std.Native` CLIENT effect (`clipboardWrite`). A client effect
+--     cannot run server-side, so the auto-split MUST fail closed: `SyncCopy` is
+--     NOT chained (a warning is emitted) and `Synced`/`Copied` stay client arms.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Log as Log
+import Std.Native as Native
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { note : String
+    , count : Int
+    }
+
+
+type Msg
+    = Bump
+    | Reload
+    | Reloaded (Result Error String)
+    | SyncCopy
+    | Synced (Result Error String)
+    | Copied (Result Error ())
+    | Ship
+    | Shipped (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { note = "", count = 0 }, Cmd.none )
+
+
+-- The command is returned through a HELPER (the darraghstudio `shippedCmd`
+-- shape), so the analysis must resolve INTO the helper to see the perform edge.
+-- `Shipped`'s own arm reaches a SERVER effect (`Log`), so it is server-CLASSIFIED
+-- — yet dispatched only here, so it must still be SERVER-INTERNAL (no wire route).
+shipCmd : Cmd Msg
+shipCmd =
+    Cmd.perform (File.readFile "data/note.txt") Shipped
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Reload ->
+            ( model, Cmd.perform (File.readFile "data/note.txt") Reloaded )
+
+        Reloaded (Ok raw) ->
+            ( { model | note = raw }, Cmd.none )
+
+        Reloaded (Err _) ->
+            ( { model | note = "" }, Cmd.none )
+
+        SyncCopy ->
+            ( model
+            , Cmd.batch
+                [ Cmd.perform (File.readFile "data/note.txt") Synced
+                , Cmd.perform (Native.clipboardWrite model.note) Copied
+                ]
+            )
+
+        Synced (Ok raw) ->
+            ( { model | note = raw }, Cmd.none )
+
+        Synced (Err _) ->
+            ( model, Cmd.none )
+
+        Copied _ ->
+            ( model, Cmd.none )
+
+        Ship ->
+            ( model, shipCmd )
+
+        Shipped (Ok raw) ->
+            let
+                _ =
+                    Log.println ("[ship] " ++ raw)
+            in
+            ( { model | note = raw }, Cmd.none )
+
+        Shipped (Err _) ->
+            ( { model | note = "ship failed" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("note=" ++ model.note)
+            , Ui.text ("count=" ++ String.fromInt model.count)
+            , Ui.el [ Ui.onClick Ship ] (Ui.text "Ship it")
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

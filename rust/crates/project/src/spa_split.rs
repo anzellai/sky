@@ -1085,12 +1085,25 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         }
     }
 
+    // SERVER-INTERNAL Msgs (server-internal effect chaining) are dispatched ONLY
+    // from a server `Cmd.perform` and settle inside the triggering branch's RPC —
+    // they get NO /_rpc route, so they are excluded from the wire `server` set
+    // even when they are server-CLASSIFIED (their own arm reaches an effect, e.g.
+    // `EmailSent` logging its result). Their client arm + Msg-union constructor
+    // are pruned from the frontend below.
+    let server_internal_names: HashSet<String> = report.server_internal.iter().cloned().collect();
+
     // SERVER branches, keyed by ctor name, with their RPC I/O + typed Msg args.
     let mut server: Vec<(String, BranchIo)> = Vec::new();
     let mut server_args: HashMap<String, Vec<ModelFieldTy>> = HashMap::new();
     let mut client_names: Vec<String> = Vec::new();
     for b in &report.branches {
         let name = ctor_name(&b.msg).to_string();
+        if server_internal_names.contains(&name) {
+            // Server-internal — settled server-side in its trigger's RPC; no wire
+            // route, no client arm. Deduped across its (Ok/Err) arms.
+            continue;
+        }
         if b.server {
             let io = b.io.clone().ok_or_else(|| {
                 format!("server branch `{name}` has no derived RPC I/O")
@@ -1100,6 +1113,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         } else {
             client_names.push(name);
         }
+    }
+    // A Msg may have several arms (Ok/Err); keep ONE wire entry per ctor (a Msg
+    // is one RPC route). Robust to non-consecutive arms.
+    {
+        let mut seen: HashSet<String> = HashSet::new();
+        server.retain(|(n, _)| seen.insert(n.clone()));
+        let mut seen_c: HashSet<String> = HashSet::new();
+        client_names.retain(|n| seen_c.insert(n.clone()));
     }
     if server.is_empty() {
         notes.push("no SERVER branches — the frontend is fully client-local and the backend only serves static assets.".into());
@@ -1598,7 +1619,24 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let entry_name = db.module_name(entry).to_string();
     let entry_shared_expose =
         shared_expose_clause(&src, &entry_name, &copied_name_source, &generated, &moved_unions, true);
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &mut warnings)?;
+    // Server-internal effect chaining: the Msgs to DROP from the frontend and the
+    // server branches whose RPC handler settles a `Cmd.perform` chain server-side.
+    let server_internal: HashSet<String> = report.server_internal.iter().cloned().collect();
+    let chaining_set: HashSet<String> = report.chaining_branches.iter().cloned().collect();
+    // A server-internal Msg's arm is DROPPED from the client, so it is no longer
+    // a client-local branch — drop it from the reported client set.
+    client_names.retain(|n| !server_internal.contains(n));
+    for w in &report.server_chain_warnings {
+        warnings.push(w.clone());
+    }
+    if !report.chaining_branches.is_empty() {
+        notes.push(format!(
+            "server-internal effect chaining: branch(es) [{}] settle a Cmd.perform chain server-side; Msg(s) [{}] are server-internal (no /_rpc route, no Applied variant, no client arm).",
+            report.chaining_branches.join(", "),
+            report.server_internal.join(", "),
+        ));
+    }
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -1618,6 +1656,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         init_pure_model.as_deref(),
         update_in_entry,
         has_rpc_error,
+        &server_internal,
     )?;
 
     let mut files: Vec<String> = Vec::new();
@@ -1703,6 +1742,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &server,
                 &ms_expose,
                 &moved_unions,
+                &server_internal,
             )
         } else if strip_init_cmd && !init_in_entry && *m == init_mod {
             // GAP-2: the sibling that declares `init` reads through a
@@ -1771,6 +1811,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &update_anno,
                 &no_frontend_names,
                 has_rpc_error,
+                &server_internal,
             )?;
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
         }
@@ -3283,6 +3324,9 @@ fn gen_backend(
     broker_url: Option<&str>,
     ssr_route_patterns: &[String],
     init_src: &str,
+    // Server branch ctor names whose RPC handler settles a `Cmd.perform` chain
+    // server-side (server-internal effect chaining).
+    chaining: &HashSet<String>,
     warnings: &mut Vec<String>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
@@ -3304,6 +3348,12 @@ fn gen_backend(
     add(imports, &mut import_lines, "Std.Codec", "import Std.Codec as Codec");
     add(imports, &mut import_lines, "Sky.Core.System", "import Sky.Core.System as System");
     add(imports, &mut import_lines, "Sky.Core.Error", "import Sky.Core.Error as Error exposing (Error)");
+    // Server-internal effect chaining: a chaining branch's handler calls the
+    // `Spa_settleServerChain` kernel alias, which needs `Sky.Ffi`.
+    let any_chaining = !push_mode && server.iter().any(|(n, _)| chaining.contains(n));
+    if any_chaining {
+        add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
+    }
     // SSR (design §4.1): a backend that carries `view`/`init` (≥1 server branch,
     // or push) gets an SSR `GET /{$}` route that renders the first paint. It
     // needs `Sky.Ffi` (the `Spa_ssr*` render-kernel aliases) and `Sky.Core.Task`
@@ -3480,6 +3530,25 @@ fn gen_backend(
         handlers.push_str("forbidden : String -> Response\nforbidden msg =\n    Server.withStatus 403 (Server.text msg)\n\n\n");
     }
 
+    // Server-internal effect chaining (docs/skyspa/auto-split.md). A server
+    // branch that returns `Cmd.perform serverTask ToMsg` (where `ToMsg` is
+    // dispatched ONLY server-side) must run the WHOLE chain inside its RPC and
+    // answer with the final settled model — mirroring Sky.Live, where the loop
+    // is server-side. `spaChainSettle_ model cmd update` folds every
+    // server-runnable perform leaf back through `update` to a fixpoint and
+    // returns the settled model (runtime-go/rt/spa_chain_notjs.go). `model` is a
+    // plain type variable (the concrete Model binds it at the call site).
+    if any_chaining {
+        handlers.push_str(
+            "-- Server-internal effect chaining: settle a `Cmd.perform` chain\n\
+             -- server-side to its fixpoint and answer with the final model diff\n\
+             -- (runtime-go/rt/spa_chain_notjs.go).\n\
+             spaChainSettle_ : model -> any -> any -> ( model, any )\n\
+             spaChainSettle_ =\n\
+             \x20   Ffi.kernel \"Spa_settleServerChain\"\n\n\n",
+        );
+    }
+
     // Server→client PUSH: one process-shared broker, a Cmd-publish interpreter,
     // and the SSE stream handler body — all thin kernel aliases (spa_push.go).
     if push_mode {
@@ -3570,9 +3639,20 @@ fn gen_backend(
                 .collect::<String>();
             format!("({name}{args})")
         };
+        // Server-internal effect chaining: this branch returns a `Cmd.perform`
+        // chain that the analysis proved is settle-able server-side. Bind the
+        // returned command (not `_`), settle it to a fixpoint via
+        // `spaChainSettle_`, and encode the write-set from the FINAL model —
+        // which already carries the UNION over every server-internal continuation
+        // arm (spa_partition::compute_server_chaining). Without this the returned
+        // `Cmd.perform` would run nowhere and its write silently dropped.
+        let is_chaining = !push_mode && chaining.contains(name);
+        // The model the response reads from: the chain's final model when
+        // chaining, else the branch's own updated model.
+        let result_model = if is_chaining { "mFinal" } else { "m2" };
         // The response value.
         let resp_val = if io.writes_whole_model {
-            "m2".to_string()
+            result_model.to_string()
         } else if resp_field_names.is_empty() {
             "{}".to_string()
         } else {
@@ -3581,14 +3661,14 @@ fn gen_backend(
                 .enumerate()
                 .map(|(i, f)| {
                     let sep = if i == 0 { "" } else { ", " };
-                    format!("{sep}{f} = m2.{f}")
+                    format!("{sep}{f} = {result_model}.{f}")
                 })
                 .collect::<String>();
             format!("{{ {sets} }}")
         };
         // In push mode the returned Cmd is fed to the broker (a Cmd.publish fans
-        // out to SSE subscribers) BEFORE the RPC answers; otherwise it is
-        // discarded (`_`) exactly as before.
+        // out to SSE subscribers) BEFORE the RPC answers; a chaining branch binds
+        // `cmd` and settles it server-side; otherwise it is discarded (`_`).
         let (cmd_binder, answer) = if push_mode {
             (
                 "cmd",
@@ -3597,11 +3677,29 @@ fn gen_backend(
                      \x20                       |> Task.andThen (\\_ -> Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val})))"
                 ),
             )
+        } else if is_chaining {
+            (
+                "cmd",
+                format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
+            )
         } else {
             (
                 "_",
                 format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
             )
+        };
+        // The extra `( mFinal, _ ) = spaChainSettle_ m2 cmd update` binding a
+        // chaining branch threads between the `update` call and the answer, at
+        // the guard / no-guard variant's own indentation.
+        let chain_bind_noguard = if is_chaining {
+            "\n                ( mFinal, _ ) =\n                    spaChainSettle_ m2 cmd update\n"
+        } else {
+            ""
+        };
+        let chain_bind_guard = if is_chaining {
+            "\n                        ( mFinal, _ ) =\n                            spaChainSettle_ m2 cmd update\n"
+        } else {
+            ""
         };
         // Fix 5: enforce the server-side guard BEFORE `update` runs. `spaGuard_
         // <msg> m` returns `Err` to reject the message — the handler answers 403
@@ -3619,6 +3717,7 @@ fn gen_backend(
                  \x20                   let\n\
                  \x20                       ( m2, {cmd_binder} ) =\n\
                  \x20                           update {ctor_app} {guard_model}\n\
+                 {chain_bind_guard}\
                  \x20                   in\n\
                  \x20                   {answer}\n"
             )
@@ -3627,6 +3726,7 @@ fn gen_backend(
                 "\x20           let\n\
                  \x20               ( m2, {cmd_binder} ) =\n\
                  \x20                   update {ctor_app} {guard_model}\n\
+                 {chain_bind_noguard}\
                  \x20           in\n\
                  \x20           {answer}\n"
             )
@@ -3939,6 +4039,8 @@ fn gen_frontend(
     regen_update: bool,
     // Whether the app declared `App.withRpcError` (resolved from the entry).
     has_rpc_error: bool,
+    // SERVER-INTERNAL Msgs — dropped from the `Msg` union + the client `update`.
+    server_internal: &HashSet<String>,
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -4043,8 +4145,9 @@ fn gen_frontend(
                 }
             }
             (Some("Msg"), DeclKind::Union) => {
-                // Msg union + generated Applied<Msg> variants.
-                body.push_str(slice(src, d.syntax()).trim_end());
+                // Msg union: drop the SERVER-INTERNAL variants (their client arms
+                // go too), then append the generated Applied<Msg> variants.
+                body.push_str(&union_text_without_variants(src, &d, server_internal));
                 for (m, _) in server {
                     body.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
                 }
@@ -4096,6 +4199,7 @@ fn gen_frontend(
     if regen_update {
         let update_src = gen_frontend_update(
             file, src, server, &server_ctors, msg_param, model_param, update_anno, has_rpc_error,
+            server_internal,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -4122,6 +4226,9 @@ fn gen_frontend_update(
     // the ENTRY (the synthesised `spaRpcError_` binding lives in the entry, so
     // the lookup stays against it even when `update` lives in a sibling module).
     has_rpc_error: bool,
+    // SERVER-INTERNAL Msgs — their client `update` arms are DROPPED (the whole
+    // chain settles server-side in the triggering branch's RPC).
+    server_internal: &HashSet<String>,
 ) -> Result<String, String> {
     // Find update's ValueDecl → its `case msg of`.
     let update_val = file
@@ -4145,6 +4252,15 @@ fn gen_frontend_update(
     for arm in case.arms() {
         let pat = arm.pattern().map(|p| p.syntax().clone());
         let head = pat.as_ref().and_then(first_upper);
+        // SERVER-INTERNAL arm: dispatched only server-side (its ctor was pruned
+        // from the frontend Msg union), so drop its client arm entirely.
+        if head
+            .as_ref()
+            .map(|h| server_internal.contains(h))
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let is_server = head
             .as_ref()
             .map(|h| server_ctors.contains(&h.as_str()))
@@ -4268,6 +4384,8 @@ fn render_module_client_subset(
     no_frontend: &HashSet<String>,
     // Whether the app declared `App.withRpcError` (resolved from the entry).
     has_rpc_error: bool,
+    // SERVER-INTERNAL Msgs — dropped from the `Msg` union + the client `update`.
+    server_internal: &HashSet<String>,
 ) -> Result<String, String> {
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
@@ -4297,8 +4415,9 @@ fn render_module_client_subset(
                     && union_variant_names(&d).iter().any(|v| want.contains(v.as_str())) =>
             {
                 // GAP-A: splice the Applied<Msg> RPC-response variants into the
-                // Msg union whose variants ARE the app's server branches.
-                body.push_str(slice(msrc, d.syntax()).trim_end());
+                // Msg union whose variants ARE the app's server branches. Drop
+                // the SERVER-INTERNAL variants first (their client arms go too).
+                body.push_str(&union_text_without_variants(msrc, &d, server_internal));
                 for (m, _) in server {
                     body.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
                 }
@@ -4313,6 +4432,7 @@ fn render_module_client_subset(
     if regen_update {
         let update_src = gen_frontend_update(
             mfile, msrc, server, server_ctors, msg_param, model_param, update_anno, has_rpc_error,
+            server_internal,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -4417,6 +4537,42 @@ fn union_variant_names(d: &syntax::ast::Decl) -> Vec<String> {
     }
 }
 
+/// Render a union declaration's source with the named `drop` variants REMOVED,
+/// rebuilding the `= v1 | v2 | …` list so the result is still a well-formed
+/// union (the first kept variant takes the `=`). Used to prune the
+/// SERVER-INTERNAL Msgs from the frontend's `Msg` union (their client arms are
+/// dropped too, so keeping the variant would leave the `case` non-exhaustive).
+/// Returns the union verbatim when nothing is dropped or every variant would be
+/// removed (fail-safe — never emits an empty union).
+fn union_text_without_variants(src: &str, d: &syntax::ast::Decl, drop: &HashSet<String>) -> String {
+    let syntax::ast::Decl::Union(u) = d else {
+        return slice(src, d.syntax()).trim_end().to_string();
+    };
+    let verbatim = || slice(src, d.syntax()).trim_end().to_string();
+    let variants = u.variants();
+    if variants.is_empty() {
+        return verbatim();
+    }
+    let kept: Vec<String> = variants
+        .iter()
+        .filter(|v| v.name().map(|t| !drop.contains(t.text())).unwrap_or(true))
+        .map(|v| slice(src, v.syntax()).trim().to_string())
+        .collect();
+    if kept.is_empty() || kept.len() == variants.len() {
+        // Nothing to drop, or dropping all — keep verbatim (fail-safe).
+        return verbatim();
+    }
+    // Header = the source from the decl start up to the first variant, minus the
+    // trailing `=` and whitespace (`type Msg`, `type Foo a b`).
+    let decl_start = usize::from(d.syntax().text_range().start());
+    let first_var_start = usize::from(variants[0].syntax().text_range().start());
+    let header = src[decl_start..first_var_start]
+        .trim_end()
+        .trim_end_matches('=')
+        .trim_end();
+    format!("{header}\n    = {}", kept.join("\n    | "))
+}
+
 /// Splice the generated `Applied<Msg>` RPC-response variants into the `Msg` union
 /// of a sibling module's source (GAP-A), returning the module source with the
 /// variants appended to the union, any MOVED UNION declaration stripped (`Shared`
@@ -4440,6 +4596,8 @@ fn inject_applied_variants_into_module(
     // The moved unions `Shared` owns (type name → words). A declaration of one is
     // stripped from this copy; a reference to one is served by `shared_expose`.
     moved_unions: &BTreeMap<String, Vec<String>>,
+    // SERVER-INTERNAL Msgs — pruned from the `Msg` union (their client arms go too).
+    server_internal: &HashSet<String>,
 ) -> String {
     if server.is_empty() {
         return msrc.to_string();
@@ -4472,7 +4630,7 @@ fn inject_applied_variants_into_module(
         if matches!(decl_kind(&d), DeclKind::Union)
             && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
         {
-            body.push_str(slice(msrc, d.syntax()).trim_end());
+            body.push_str(&union_text_without_variants(msrc, &d, server_internal));
             for (m, _) in server {
                 body.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
             }
@@ -4661,6 +4819,7 @@ mod fix7_tests {
             "model",
             "update : Msg -> Model -> ( Model, Cmd Msg )",
             with_rpc_error,
+            &HashSet::new(),
         )
         .expect("gen_frontend_update")
     }
