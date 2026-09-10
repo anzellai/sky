@@ -352,6 +352,17 @@ jobs:
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs
 
+      # Reclaim disk before T2 (build+run every fixture) for the same reason as
+      # the pre-T3 reclaim below: keep the runner disk bounded between the heavy
+      # build tiers so a later tier cannot fail on ENOSPC.
+      - name: Reclaim disk before the T2 corpus tier
+        run: |
+          df -h / | tail -1
+          go clean -cache 2>/dev/null || true
+          find examples apps -type d \( -name 'sky-out*' -o -name '.skycache' -o -name '.skydeps' \) -prune -exec rm -rf {} + 2>/dev/null || true
+          rm -rf /tmp/sky-* /tmp/go-build* 2>/dev/null || true
+          df -h / | tail -1
+
       # T2 — the behavioural corpus. This is the tier that caught the v0.21.0
       # `record_update` codegen regression the MORNING AFTER the release, because
       # it ran ONLY in the nightly (nightly-sweep.yml's `behaviour-corpus` job).
@@ -362,6 +373,23 @@ jobs:
       - name: Gate harness (T2 — behaviour-corpus, build+run every fixture) with proof requirement
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t2 --require-proofs
+
+      # Reclaim disk BEFORE T3. T1 (483 corpus builds) + T2 (build+run every
+      # fixture) grow the Go build cache with no reclaim between tiers, and each
+      # Sky binary is ~200 MB. That exhausted the runner disk by T3, so
+      # `sky db seed` / `sky db drop` (which `go build` a temp entry) failed with
+      # a build error in BOTH CGO modes — an ENOSPC the harness could not tell
+      # apart from a compile error. T3 passes in isolation (nightly-sweep's
+      # `harness-t3` job) exactly because it does not follow T1+T2. Same reclaim
+      # the falsifier + sweep already do below; T3's builds go cold, which is fine
+      # on a release run (no T1 time budget here).
+      - name: Reclaim disk before the T3 app tier
+        run: |
+          df -h / | tail -1
+          go clean -cache 2>/dev/null || true
+          find examples apps -type d \( -name 'sky-out*' -o -name '.skycache' -o -name '.skydeps' \) -prune -exec rm -rf {} + 2>/dev/null || true
+          rm -rf /tmp/sky-* /tmp/go-build* 2>/dev/null || true
+          df -h / | tail -1
 
       # T3 — the Layer-2 app tier. `apps-ledger-postgres` / `apps-dispatch-postgres`
       # read the DSN below (the service container declared at job level); the
