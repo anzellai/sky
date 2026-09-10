@@ -123,8 +123,29 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
     };
     println!("erasure-fuzz: using compiler {}", sky.display());
 
-    let cases = generate_cases();
-    println!("erasure-fuzz: {} generated cases\n", cases.len());
+    // `--shard=I/N`: keep only slice I of N, interleaved by index (stride N), so
+    // the two CI shards union to the whole generated set with no case run twice
+    // or dropped (proved by `shards_are_disjoint_and_total`). The gate fails only
+    // on a MustPass regression, so a bug in ANY shard reddens that shard; the
+    // partition preserves the soundness property. Off by default (whole set).
+    let shard = parse_shard(args);
+    let cases: Vec<Case> = {
+        let all = generate_cases();
+        match shard {
+            Some((i, n)) => all
+                .into_iter()
+                .enumerate()
+                .filter(|(idx, _)| idx % n == i)
+                .map(|(_, c)| c)
+                .collect(),
+            None => all,
+        }
+    };
+    println!(
+        "erasure-fuzz: {} generated cases{}\n",
+        cases.len(),
+        shard.map(|(i, n)| format!(" (shard {i}/{n})")).unwrap_or_default()
+    );
 
     let scratch = repo_root.join("target/erasure-fuzz");
     let _ = std::fs::remove_dir_all(&scratch);
@@ -261,6 +282,27 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         return 1;
     }
     0
+}
+
+/// Parse `--shard=I/N`: run only slice `I` of `N`, interleaved by index. Mirrors
+/// `build_run_gate::parse_shard`. Panics (rather than silently running the whole
+/// set, or nothing) on a malformed or out-of-range spec — a shard that quietly
+/// ran the wrong slice would break the disjoint-and-total union across CI jobs.
+fn parse_shard(args: &[String]) -> Option<(usize, usize)> {
+    let spec = args.iter().find_map(|a| a.strip_prefix("--shard="))?;
+    let (i, n) = spec
+        .split_once('/')
+        .unwrap_or_else(|| panic!("erasure-fuzz: --shard expects I/N (e.g. 0/2), got {spec:?}"));
+    let i: usize = i
+        .parse()
+        .unwrap_or_else(|_| panic!("erasure-fuzz: --shard index not a number: {i:?}"));
+    let n: usize = n
+        .parse()
+        .unwrap_or_else(|_| panic!("erasure-fuzz: --shard count not a number: {n:?}"));
+    if n == 0 || i >= n {
+        panic!("erasure-fuzz: --shard=I/N requires 0 <= I < N (got {i}/{n})");
+    }
+    Some((i, n))
 }
 
 /// Evaluate a case, re-running ONCE on any bug/timeout verdict before trusting
@@ -474,3 +516,54 @@ fn indent(s: &str, n: usize) -> String {
 // ── the templates (generation is in erasure_fuzz/templates.rs) ───────────────
 mod templates;
 use templates::generate_cases;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// The two CI shards (`--shard=0/2` + `--shard=1/2`) must union to the whole
+    /// generated set with no case run twice or dropped. Proven over the real
+    /// generator, at the exact N the workflow uses, the same guarantee
+    /// `build_run_gate::shards_are_disjoint_and_total` gives the corpus job.
+    #[test]
+    fn shards_are_disjoint_and_total() {
+        for n in [2usize, 3] {
+            let all: Vec<String> = generate_cases().into_iter().map(|c| c.id).collect();
+            let whole: BTreeSet<&String> = all.iter().collect();
+            let mut union: BTreeSet<String> = BTreeSet::new();
+            let mut total = 0usize;
+            for i in 0..n {
+                let slice: Vec<String> = generate_cases()
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(idx, _)| idx % n == i)
+                    .map(|(_, c)| c.id)
+                    .collect();
+                total += slice.len();
+                for id in slice {
+                    assert!(union.insert(id.clone()), "case {id} appears in two shards");
+                }
+            }
+            assert_eq!(total, all.len(), "shard sizes do not sum to the whole set (n={n})");
+            assert_eq!(
+                union.len(),
+                whole.len(),
+                "the shard union does not equal the whole generated set (n={n})"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_shard_accepts_valid_and_rejects_out_of_range() {
+        assert_eq!(parse_shard(&["--shard=0/2".to_string()]), Some((0, 2)));
+        assert_eq!(parse_shard(&["--shard=1/2".to_string()]), Some((1, 2)));
+        assert_eq!(parse_shard(&[]), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "0 <= I < N")]
+    fn parse_shard_rejects_index_at_count() {
+        let _ = parse_shard(&["--shard=2/2".to_string()]);
+    }
+}
