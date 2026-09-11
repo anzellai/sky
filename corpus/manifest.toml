@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 483
+n_min = 485
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 482
+class_v = 484
 class_d = 1
-family_S = 132
+family_S = 134
 family_L = 206
 family_E = 10
 family_R = 135
@@ -4046,6 +4046,32 @@ axes       = { edge = "empty", surface = "secret" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "0"
+
+[[case]]
+id         = "stdlib_edge/nominal-image"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "image" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "6x4|3x2|2x1"
+
+[[case]]
+id         = "stdlib_edge/boundary-image"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "image" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "6x4|E"
 
 [[case]]
 id         = "stdlib_import/plain-none"

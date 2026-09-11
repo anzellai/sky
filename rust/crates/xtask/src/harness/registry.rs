@@ -384,9 +384,10 @@ pub static GATES: &[Gate] = &[
                 // longer occurs — which is how the family-R `dict_composite_key`
                 // defect (+9 cases, 432 → 441) surfaced here, and the Family-S
                 // shape close (+40 cases, 441 → 481) after it, and the
-                // Sky.Core.Secret Family-S surface (+2 cases, 481 → 483).
-                from: "n_min = 483",
-                to: "n_min = 484",
+                // Sky.Core.Secret Family-S surface (+2 cases, 481 → 483), and
+                // the Std.Image Family-S surface (+2 cases, 483 → 485).
+                from: "n_min = 485",
+                to: "n_min = 486",
             },
         }]),
         body: bodies::corpus_manifest,

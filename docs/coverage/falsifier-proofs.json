@@ -142,7 +142,7 @@
       "mutation": "corpus-manifest.drift",
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1787931767
+      "proven_at_unix": 1789153731
     },
     "corpus-reject": {
       "mutation": "corpus-reject.break-the-twin",
