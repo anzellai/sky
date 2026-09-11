@@ -359,6 +359,7 @@ fn client_only_app_generates_a_buildable_static_only_backend() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+
 /// A `Std.Native.*` effect is a CLIENT effect: it must stay in the wasm frontend,
 /// never become a server RPC. Native capabilities (`clipboardWrite`, `share`, …)
 /// reach a browser/webview-only platform API whose `//go:build !js` counterpart is
@@ -3373,6 +3374,46 @@ fn declared_static_dir_is_propagated_into_the_frontend_dist() {
         "FINDING C: nested + top-level assets under the static dir must be copied"
     );
 
+    // TRANSPARENT RUNTIME-UPLOAD CARRY. The Live runtime serves its static dir
+    // from disk at request time, so a file WRITTEN at runtime under that dir
+    // (`File.writeFile "brand/…"`) is served immediately. The build-time dist
+    // copy above cannot hold a runtime write. So the generated backend must ALSO
+    // emit a LIVE `Server.static "/brand" "brand"` mount (the dir relative to the
+    // backend cwd, where its runtime writes land), registered BEFORE the `/`
+    // catch-all, and the committed seed assets must be staged into `backend/brand`
+    // so seed + runtime uploads serve from one place. Written by the generator,
+    // so this holds without a Go toolchain.
+    let back = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/backend/src/Main.sky"),
+    )
+    .expect("the generated backend source must exist");
+    // Anchor inside the route block: the module doc comment copied to the top of
+    // the backend mentions `Server.static "/" "../frontend/dist"`, so a naive
+    // whole-file find would match the comment, not the route.
+    let listen = back.find("Server.listen").expect("backend must have Server.listen");
+    let routes = &back[listen..];
+    let live = routes
+        .find("Server.static \"/brand\" \"brand\"")
+        .unwrap_or_else(|| panic!(
+            "the backend must emit a LIVE static mount for runtime uploads \
+             (Server.static \"/brand\" \"brand\") — split log:\n{log}"
+        ));
+    let catch_all = routes
+        .find("\"../frontend/dist\"")
+        .expect("the backend must still serve the dist catch-all");
+    assert!(
+        live < catch_all,
+        "the live static mount must be registered BEFORE the dist catch-all \
+         (Go 1.22 mux longest-prefix), else asset GETs would not reach it"
+    );
+    // Committed seed assets are staged into backend/<dir> — the live dir the mount
+    // serves and the cwd-relative dir the app's runtime writes land in.
+    assert!(
+        proj.join(".skyapp/web-app/.split/backend/brand/screenshots/spa-web.png").is_file(),
+        "FINDING C: committed seed assets must be staged into backend/<dir> so \
+         the live mount serves them alongside runtime uploads"
+    );
+
     // ── Go-gated e2e: the whole `--target web:app` build succeeds and the wasm
     // frontend is staged ALONGSIDE the propagated static dir (stage_web_bundle
     // must not clobber it). ──
@@ -4328,6 +4369,7 @@ fn init_model_embedding_a_server_read_is_refused_with_guidance() {
         Some("Main"),
         &out,
         None,
+        None,
     );
 
     let err = match res {
@@ -4381,6 +4423,7 @@ fn server_read_deferred_to_init_command_is_not_refused() {
         &ssr_db_fixture_dir(),
         Some("Main"),
         &out,
+        None,
         None,
     );
 

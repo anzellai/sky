@@ -965,6 +965,12 @@ pub fn generate(
     entry_module: Option<&str>,
     out_dir: &Path,
     broker_url: Option<&str>,
+    // The app's declared static mount `(dir, url-prefix)`, supplied by the caller
+    // when the entry `generate` sees has DROPPED the declaration — the `--target
+    // web:app` synth entry, whose `App.withConfig (WebConfig { static })` is gone.
+    // `None` → `generate` reads it from its own entry + `sky.toml` (the direct
+    // `sky spa-split` path, whose entry still carries the declaration).
+    static_mount_override: Option<(String, String)>,
 ) -> Result<SpaSplitReport, String> {
     // Fail-closed gate: the generator writes the wasm frontend, so an
     // unclassified effect kernel silently defaulting to client would be a real
@@ -1689,7 +1695,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         ));
     }
     let model_field_names: Vec<String> = report.model_fields.iter().map(|f| f.name.clone()).collect();
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &client_result_map, &mut warnings)?;
+    // The static mount: the caller's override (the synth entry dropped the
+    // declaration), else read from this entry + its `sky.toml`.
+    let static_mount =
+        static_mount_override.or_else(|| app_static_mount(&src, project_dir));
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &client_result_map, static_mount.as_ref(), &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -2130,6 +2140,43 @@ pub fn stage_declared_static_into_dist(
     out_dir: &Path,
 ) -> Result<(), String> {
     copy_static_dir(entry_src, source_root, &out_dir.join("frontend").join("dist"))
+}
+
+/// The app's declared static mount `(dir, url-prefix)`, read from the ORIGINAL
+/// entry + its `sky.toml` — the value the `--target web:app` caller passes into
+/// [`generate`] as the `static_mount_override`, because the synthesised Spa entry
+/// the split sees has dropped the `App.withConfig (WebConfig { static = … })`
+/// declaration. `None` when the app declares no static dir.
+pub fn declared_static_mount(entry_src: &str, source_root: &Path) -> Option<(String, String)> {
+    app_static_mount(entry_src, source_root)
+}
+
+/// Copy the app's declared static dir into `out_dir/backend/<dir>` — the LIVE
+/// dir the generated backend serves at request time (see the `static_mount` route
+/// in [`gen_backend`]) and the SAME cwd-relative dir the app's runtime writes
+/// (`File.writeFile "public/…"`) land in, since the backend runs with its own dir
+/// as cwd. This seeds the committed assets alongside the runtime uploads so both
+/// serve from one place. Read from the ORIGINAL entry (`entry_src` + `source_root`)
+/// for the same reason as [`stage_declared_static_into_dist`]: the synthesised Spa
+/// entry has dropped the declaration. No-op when the app declares no static dir,
+/// the declared dir is absent, or the mount prefix is empty (the app mounts static
+/// at `/`, so no live mount is emitted and the dist copy is the only route).
+pub fn stage_declared_static_into_backend(
+    entry_src: &str,
+    source_root: &Path,
+    out_dir: &Path,
+) -> Result<(), String> {
+    let Some((dir, prefix)) = app_static_mount(entry_src, source_root) else {
+        return Ok(());
+    };
+    if prefix.is_empty() {
+        return Ok(());
+    }
+    let from = source_root.join(&dir);
+    if !from.is_dir() {
+        return Ok(());
+    }
+    copy_tree(&from, &out_dir.join("backend").join(&dir))
 }
 
 /// Reconstruct the `[dependencies]` (Sky packages) and `["go.dependencies"]` (Go
@@ -3401,6 +3448,14 @@ fn gen_backend(
     // task and answers with the task RESULT (`spaRunPerform_ cmd`), for the
     // frontend to dispatch client-side.
     client_result: &HashMap<String, ClientResultInfo>,
+    // The app's declared static-file mount `(dir, url-prefix)` (see
+    // [`app_static_mount`]). `Some` → the backend gets a LIVE `Server.static`
+    // mount reading that dir from disk at request time, so files WRITTEN at
+    // runtime (an admin image upload to `public/products/<uuid>`) serve — exactly
+    // as Sky.Live serves its static dir live. The build-time `dist` copy only
+    // covers assets present at build. `None` (or an empty prefix) → no live
+    // mount, the `dist` catch-all is the only static route.
+    static_mount: Option<&(String, String)>,
     warnings: &mut Vec<String>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
@@ -4078,6 +4133,28 @@ fn gen_backend(
     // shell — exactly as Sky.Live does — instead of a bare file-server 404. A
     // request that maps to a REAL asset still serves the file, so wasm_exec.js /
     // main.<hash>.wasm are never shadowed.
+    // The app's LIVE static dir (transparent carry of `App.web { static }`). A
+    // Sky.Live app serves its static dir from disk at request time, so an image
+    // an admin uploads at runtime (`File.writeFile "public/products/<uuid>"`) is
+    // served immediately at `/static/products/<uuid>`. The SPA backend otherwise
+    // serves only the build-time `../frontend/dist` snapshot, which cannot hold a
+    // runtime write, so the upload 404s. Mount the app's own dir (relative to the
+    // backend's cwd, where its runtime writes land — the same cwd `File.writeFile`
+    // resolves against) at its own prefix, BEFORE the `/` catch-all. The Go 1.22
+    // mux matches the more-specific `/<prefix>/` ahead of `/`, so dist assets
+    // (main.wasm, wasm_exec.js) are never shadowed. The declared static dir's
+    // committed seed assets are staged into `backend/<dir>` at build
+    // (`stage_declared_static_into_backend`), so seed + runtime uploads serve from
+    // one place. Guarded: an empty prefix (the app mounts static at `/`) would
+    // register a SECOND `/` handler and panic the mux, so it is skipped — the
+    // dist catch-all already serves the root there.
+    if let Some((dir, prefix)) = static_mount {
+        if !prefix.is_empty() {
+            routes.push(format!(
+                "        , Server.static \"/{prefix}\" \"{dir}\""
+            ));
+        }
+    }
     if emit_ssr && has_synth_routes {
         routes.push(
             "        , Server.staticNotFound \"/\" \"../frontend/dist\" ssrHandler".to_string(),

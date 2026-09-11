@@ -2252,6 +2252,13 @@ fn build_std_app(
         }
         let split_out = out_root.join(".split");
         let fe_target = tgt.frontend_shell().unwrap_or("web");
+        // The synth Spa entry the split sees has dropped `App.withConfig
+        // (WebConfig { static })`, so read the mount from the ORIGINAL entry and
+        // pass it in — the backend then emits a LIVE static mount for runtime
+        // uploads (an admin image write to `public/products/<uuid>`), which the
+        // build-time `dist` snapshot cannot hold.
+        let static_mount =
+            project::spa_split::declared_static_mount(&entry_src, project_dir);
         return match spa_split_and_build(
             repo_root,
             &out_root,
@@ -2261,6 +2268,7 @@ fn build_std_app(
             fe_target,
             embed,
             true,
+            static_mount,
         ) {
             Ok(od) => {
                 // FINDING C: copy the app's DECLARED static-file dir into the
@@ -2272,6 +2280,18 @@ fn build_std_app(
                 // generated backend then serves the same assets the Live build
                 // did. No-op when the app declares no static dir.
                 if let Err(e) = project::spa_split::stage_declared_static_into_dist(
+                    &entry_src,
+                    project_dir,
+                    &od,
+                ) {
+                    eprintln!("sky build --target {}: {e}", tgt.canonical());
+                    return ExitCode::FAILURE;
+                }
+                // Also seed the committed static assets into `backend/<dir>`, the
+                // LIVE dir the backend now serves and the cwd-relative dir the
+                // app's runtime writes land in — so seed assets and runtime
+                // uploads serve from one place. No-op when no static dir / prefix.
+                if let Err(e) = project::spa_split::stage_declared_static_into_backend(
                     &entry_src,
                     project_dir,
                     &od,
@@ -2464,9 +2484,13 @@ fn spa_split_and_build(
     target: &str,
     embed: bool,
     do_build: bool,
+    // The app's declared static mount `(dir, url-prefix)`, supplied when the entry
+    // the split sees has dropped the declaration (the `--target web:app` synth
+    // entry). `None` → `generate` reads it from its own entry + `sky.toml`.
+    static_mount: Option<(String, String)>,
 ) -> Result<PathBuf, ExitCode> {
     let report =
-        match project::spa_split::generate(repo_root, project_dir, entry_module, out_dir, broker) {
+        match project::spa_split::generate(repo_root, project_dir, entry_module, out_dir, broker, static_mount) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("sky spa-split: {e}");
@@ -2639,6 +2663,9 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
         target,
         embed,
         do_build,
+        // Direct `sky spa-split`: the entry still carries its static declaration,
+        // so `generate` reads the mount itself.
+        None,
     ) {
         Ok(od) => od,
         Err(code) => return code,
@@ -2823,6 +2850,8 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             fe_target,
             embed,
             true,
+            // Direct Spa entry: `generate` reads the static mount from the entry.
+            None,
         ) {
             Ok(od) => {
                 let entry = positional
@@ -4832,6 +4861,8 @@ fn cmd_run(args: &[String]) -> ExitCode {
             fe_target,
             embed,
             true,
+            // Direct Spa entry: `generate` reads the static mount from the entry.
+            None,
         ) {
             Ok(od) => od,
             Err(code) => return code,

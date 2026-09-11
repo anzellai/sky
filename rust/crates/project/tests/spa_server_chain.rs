@@ -127,7 +127,7 @@ fn generate(tag: &str) -> (PathBuf, spa_split::SpaSplitReport) {
     // process, so a shared `pid`-only path would clobber a sibling mid-read.
     let out = std::env::temp_dir().join(format!("sky-spa-chain-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
-    let report = spa_split::generate(&repo_root(), &fixture_dir(), None, &out, None)
+    let report = spa_split::generate(&repo_root(), &fixture_dir(), None, &out, None, None)
         .unwrap_or_else(|e| panic!("generate failed: {e}"));
     (out, report)
 }
