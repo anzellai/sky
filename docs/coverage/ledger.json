@@ -286,7 +286,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 337,
+      "expected_assertions": 339,
       "falsifier_mutation": "corpus.wrong-stdlib-digest",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -346,7 +346,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 483,
+      "expected_assertions": 485,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
