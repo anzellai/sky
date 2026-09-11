@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 158 |
-| covered by the new corpus (>= Asserted) | 139 |
-| verdict `stronger` | 134 |
+| surfaces | 159 |
+| covered by the new corpus (>= Asserted) | 140 |
+| verdict `stronger` | 135 |
 | verdict `equal` | 24 |
 | verdict `weaker` | 0 |
 | corpus units | 81 |
-| stdlib modules (denominator) | 93 |
-| stdlib entries (denominator) | 1856 |
+| stdlib modules (denominator) | 94 |
+| stdlib entries (denominator) | 1861 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 9.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 702 | 37.8% |
-| symbols unreferenced under the generous rule | 620 | 33.4% |
+| stdlib modules imported by nothing | 10 | 10.6% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 707 | 38.0% |
+| symbols unreferenced under the generous rule | 625 | 33.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -218,6 +218,7 @@ None.
 | `stdlib.Std.Html` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Image` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Live` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.Live.Console` | stdlib | None | None | equal |
@@ -275,7 +276,7 @@ None.
 | `config-surface` | T1 | PROVEN | `meta.config-surface` |
 | `conformance` | T1 | PROVEN | `db.sqlite` · `db.codec-store` · `auth.password-session` |
 | `console-analytics-queries-are-bounded` | T1 | PROVEN | `observability.analytics-store` · `observability.console` |
-| `corpus` | T2 | PROVEN | `lang.constructs` · `compiler.infer` · `compiler.lower-emit-shape` · `stdlib.Sky.Core.String` · `stdlib.Sky.Core.List` · `stdlib.Sky.Core.Dict` · `stdlib.Sky.Core.Set` · `stdlib.Sky.Core.Maybe` · `stdlib.Sky.Core.Result` · `stdlib.Sky.Core.Char` · `stdlib.Sky.Core.Encoding` · `stdlib.Sky.Core.Crypto` · `stdlib.Sky.Core.Math` · `stdlib.Sky.Core.Basics` · `stdlib.Sky.Core.ToString` · `stdlib.Sky.Core.Path` · `stdlib.Sky.Core.Error` · `stdlib.Sky.Core.Regex` · `stdlib.Sky.Core.Json.Encode` · `stdlib.Sky.Core.Json.Decode` · `stdlib.Std.Decimal` · `stdlib.Std.Money` · `stdlib.Std.Csv` · `stdlib.Sky.Core.Bytes` · `stdlib.Sky.Core.Jwt` · `stdlib.Std.Codec` · `stdlib.Std.Markdown` · `stdlib.Std.Compression` |
+| `corpus` | T2 | PROVEN | `lang.constructs` · `compiler.infer` · `compiler.lower-emit-shape` · `stdlib.Sky.Core.String` · `stdlib.Sky.Core.List` · `stdlib.Sky.Core.Dict` · `stdlib.Sky.Core.Set` · `stdlib.Sky.Core.Maybe` · `stdlib.Sky.Core.Result` · `stdlib.Sky.Core.Char` · `stdlib.Sky.Core.Encoding` · `stdlib.Sky.Core.Crypto` · `stdlib.Sky.Core.Math` · `stdlib.Sky.Core.Basics` · `stdlib.Sky.Core.ToString` · `stdlib.Sky.Core.Path` · `stdlib.Sky.Core.Error` · `stdlib.Sky.Core.Regex` · `stdlib.Sky.Core.Json.Encode` · `stdlib.Sky.Core.Json.Decode` · `stdlib.Std.Decimal` · `stdlib.Std.Money` · `stdlib.Std.Csv` · `stdlib.Sky.Core.Bytes` · `stdlib.Sky.Core.Jwt` · `stdlib.Std.Codec` · `stdlib.Std.Markdown` · `stdlib.Std.Compression` · `stdlib.Std.Image` |
 | `corpus-emit-shape` | T1 | PROVEN | `compiler.lower-emit-shape` · `compiler.codegen-determinism` |
 | `corpus-isolation` | T2 | PROVEN | `compiler.shared-world` · `lang.constructs` |
 | `corpus-manifest` | T1 | PROVEN | `lang.constructs` |

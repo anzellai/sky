@@ -302,6 +302,11 @@ pub const SURFACES: &[Surface] = &[
         "Std.Compression",
         &["Sky.Core.Task as Task", "Sky.Core.Bytes as Bytes"],
     ),
+    sf2(
+        "image",
+        "Std.Image",
+        &["Sky.Core.Task as Task", "Sky.Core.Encoding as Encoding"],
+    ),
 ];
 
 pub fn surface(slug: &str) -> &'static Surface {
@@ -1120,6 +1125,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "codec" => codec_battery(edge),
         "markdown" => markdown_battery(edge),
         "compression" => compression_battery(edge),
+        "image" => image_battery(edge),
         other => panic!("no battery for surface {other:?}"),
     }
 }
@@ -1709,6 +1715,43 @@ fn compression_battery(edge: &str) -> Vec<Check> {
             s(
                 &["Compression.gunzip"],
                 "runOf (Task.andThen (\\b -> Compression.gunzip (Bytes.slice 0 6 b)) (Compression.gzip \"hello\"))",
+                "E",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Image -------------------------------------------------------------
+//
+// Resize is asserted by the exact output DIMENSIONS (via Image.dimensions), so a
+// broken scale shows up as a wrong size, not just a non-empty blob. The source is
+// a real 6x4 PNG (`src6x4_`, decoded in the prologue). 6x4 has ratio 3:2, so a
+// fit within 3x3 is width-bound to 3x2 and within 2x2 to 2x1 — the arithmetic the
+// aspect-preserving, never-upscaling `fitWithin` must produce.
+fn image_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(&["Image.dimensions"], "dimsRes src6x4_", "6x4"),
+            s(
+                &["Image.resizeToFit"],
+                "dimsOf (Image.resizeToFit 3 3 src6x4_)",
+                "3x2",
+            ),
+            s(&["Image.thumbnail"], "dimsOf (Image.thumbnail 2 src6x4_)", "2x1"),
+        ],
+        "boundary" => vec![
+            // A box larger than the image must NOT upscale — the source size is
+            // returned unchanged.
+            s(
+                &["Image.resizeToFit"],
+                "dimsOf (Image.resizeToFit 1000 1000 src6x4_)",
+                "6x4",
+            ),
+            // A non-image input is a classified error, not a crash.
+            s(
+                &["Image.dimensions"],
+                "dimsRes \"not a real image\"",
                 "E",
             ),
         ],
@@ -3429,6 +3472,19 @@ fn fixtures(slug: &str) -> &'static str {
              headOf : Task Error String -> String\nheadOf tk =\n    case Task.run tk of\n\
              \x20       Ok v ->\n            Bytes.toHex (Bytes.slice 0 3 v)\n\n\
              \x20       Err _ ->\n            \"E\"\n"
+        }
+        // A real 6x4 PNG (base64), decoded into `src6x4_`. `dimsRes` renders an
+        // image's dimensions as "WxH"; `dimsOf` runs a resize Task and renders
+        // the result's dimensions — so a resize/thumbnail is asserted by the
+        // exact output size, deterministically.
+        "image" => {
+            "src6x4_ : String\nsrc6x4_ =\n    case Encoding.base64Decode \"iVBORw0KGgoAAAANSUhEUgAAAAYAAAAECAIAAAAiZtkUAAAAHUlEQVR4nGJhYEjRYGBARiwMNgxogDghQAAAAP//bKgB8VO8ExcAAAAASUVORK5CYII=\" of\n\
+             \x20       Ok b ->\n            b\n\n        Err _ ->\n            \"\"\n\n\n\
+             dimsRes : String -> String\ndimsRes b =\n    case Task.run (Image.dimensions b) of\n\
+             \x20       Ok d ->\n            String.fromInt d.width ++ \"x\" ++ String.fromInt d.height\n\n\
+             \x20       Err _ ->\n            \"E\"\n\n\n\
+             dimsOf : Task Error String -> String\ndimsOf tk =\n    case Task.run tk of\n\
+             \x20       Ok v ->\n            dimsRes v\n\n        Err _ ->\n            \"E\"\n"
         }
         _ => "",
     }

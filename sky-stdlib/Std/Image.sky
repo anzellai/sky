@@ -1,4 +1,4 @@
-module Std.Image exposing (resizeToFit, thumbnail)
+module Std.Image exposing (resizeToFit, thumbnail, dimensions)
 
 {-| Backend image resize + thumbnail generation.
 
@@ -48,3 +48,11 @@ thumbnail. Preserves the aspect ratio and never enlarges. -}
 thumbnail : Int -> String -> Task Error String
 thumbnail =
     Ffi.kernel "Image_thumbnail"
+
+
+{-| The pixel dimensions of an image, read from its header (cheap, no full
+decode). Like the resize entries it is a `Task` — the whole module is a backend
+capability, so every function is an effect. A non-image input is an `Err`. -}
+dimensions : String -> Task Error { width : Int, height : Int }
+dimensions =
+    Ffi.kernel "Image_dimensions"

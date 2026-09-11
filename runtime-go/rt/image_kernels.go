@@ -61,6 +61,26 @@ func Image_thumbnail(maxDimArg, inputArg any) any {
 	}
 }
 
+// Image_dimensions implements:
+//
+//	Std.Image.dimensions : Bytes -> Task Error { width : Int, height : Int }
+//
+// Read only the image header (cheap, no full decode). Returns a record as a
+// map[string]any, narrowed to the caller's `{ width, height }` record at the Sky
+// boundary (the same map->record path Csv/Cache kernels use). A Task (thunk) like
+// the other Std.Image entries: the whole module is a backend capability (the
+// codec is server-only), so every function is an effect — uniform to compose and
+// honest about running server-side in the Sky.Spa split.
+func Image_dimensions(inputArg any) any {
+	return func() any {
+		cfg, _, err := image.DecodeConfig(bytes.NewReader([]byte(asBytesString(inputArg))))
+		if err != nil {
+			return Err[any, any](ErrInvalidInput("image.dimensions: not a decodable image: " + err.Error()))
+		}
+		return Ok[any, any](map[string]any{"width": cfg.Width, "height": cfg.Height})
+	}
+}
+
 // resizeBytes decodes, scales-to-fit (no upscale), and re-encodes in the source
 // format. Shared by both kernels so their behaviour cannot drift.
 func resizeBytes(in string, maxW, maxH int) any {

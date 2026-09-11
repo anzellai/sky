@@ -318,7 +318,8 @@
         "stdlib.Sky.Core.Jwt",
         "stdlib.Std.Codec",
         "stdlib.Std.Markdown",
-        "stdlib.Std.Compression"
+        "stdlib.Std.Compression",
+        "stdlib.Std.Image"
       ],
       "tier": "T2"
     },
@@ -664,13 +665,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1856,
-    "stdlib_modules": 93,
-    "surfaces_covered": 139,
-    "surfaces_covered_pct": 88.0,
+    "stdlib_entries": 1861,
+    "stdlib_modules": 94,
+    "surfaces_covered": 140,
+    "surfaces_covered_pct": 88.1,
     "surfaces_equal": 24,
-    "surfaces_stronger": 134,
-    "surfaces_total": 158,
+    "surfaces_stronger": 135,
+    "surfaces_total": 159,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -9235,6 +9236,28 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "gate `corpus`",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Image public API",
+      "id": "stdlib.Std.Image",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -11942,7 +11965,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 9,
+      "count": 10,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -11950,11 +11973,12 @@
         "Std.Cli",
         "Std.Db.Migrate",
         "Std.Db.Table",
+        "Std.Image",
         "Std.Live.Console",
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 9.7
+      "pct_of_denominator": 10.6
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12625,6 +12649,14 @@
             "onSelect"
           ]
         },
+        "Std.Image": {
+          "count": 3,
+          "symbols": [
+            "dimensions",
+            "resizeToFit",
+            "thumbnail"
+          ]
+        },
         "Std.Jobs": {
           "count": 1,
           "symbols": [
@@ -12712,7 +12744,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 9,
+          "count": 11,
           "symbols": [
             "AppConfig",
             "Route",
@@ -12720,8 +12752,10 @@
             "routeInt",
             "withHead",
             "withModelDecoder",
+            "withModelEncoder",
             "withNotFound",
             "withOnNavigate",
+            "withPersistProtectedFields",
             "withRoutes"
           ]
         },
@@ -12946,8 +12980,8 @@
           ]
         }
       },
-      "count": 620,
-      "pct_of_denominator": 33.4
+      "count": 625,
+      "pct_of_denominator": 33.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13673,6 +13707,14 @@
             "onSelect"
           ]
         },
+        "Std.Image": {
+          "count": 3,
+          "symbols": [
+            "dimensions",
+            "resizeToFit",
+            "thumbnail"
+          ]
+        },
         "Std.Jobs": {
           "count": 1,
           "symbols": [
@@ -13764,7 +13806,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 9,
+          "count": 11,
           "symbols": [
             "AppConfig",
             "Route",
@@ -13772,8 +13814,10 @@
             "routeInt",
             "withHead",
             "withModelDecoder",
+            "withModelEncoder",
             "withNotFound",
             "withOnNavigate",
+            "withPersistProtectedFields",
             "withRoutes"
           ]
         },
@@ -13999,8 +14043,8 @@
           ]
         }
       },
-      "count": 702,
-      "pct_of_denominator": 37.8
+      "count": 707,
+      "pct_of_denominator": 38.0
     }
   },
   "units": [
@@ -14025,7 +14069,7 @@
       "refs_generous": 102,
       "refs_qualified": 97,
       "role": "Layer2",
-      "sky_files": 92,
+      "sky_files": 93,
       "sky_toml_sections": []
     },
     {

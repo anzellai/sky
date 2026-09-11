@@ -639,6 +639,11 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
             "stdlib.Std.Codec",
             "stdlib.Std.Markdown",
             "stdlib.Std.Compression",
+            // `Std.Image` is entirely `Task`-valued (a backend capability) and
+            // reached through `Task.run`, like `Std.Compression`; the Family S
+            // `image` battery asserts resize/thumbnail by the exact output
+            // dimensions on a real embedded PNG.
+            "stdlib.Std.Image",
         ],
     ),
     ("corpus-isolation", &["compiler.shared-world", "lang.constructs"]),

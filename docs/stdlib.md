@@ -978,6 +978,23 @@ Compression.zstdDecompress encoded  -- Task Error String
 
 `compress/gzip` (stdlib) + `klauspost/compress/zstd`.
 
+### `Std.Image` — backend resize + thumbnail
+
+```elm
+import Std.Image as Image
+
+Image.resizeToFit 1600 1600 bytes   -- Task Error Bytes (cap the full image)
+Image.thumbnail 400 bytes           -- Task Error Bytes (a small listing image)
+Image.dimensions bytes              -- Task Error { width : Int, height : Int }
+```
+
+Operates on raw image bytes (`Sky.Core.Bytes`). Preserves the source format
+(JPEG stays JPEG at quality 85, PNG stays PNG) and never upscales. Every function
+is a `Task` — the module is a backend capability (Go `image/jpeg` + `image/png` +
+`golang.org/x/image/draw`), so under `--target web:app` the resize runs on the
+server, never in the wasm client. Decode a data-URL upload with
+`Encoding.base64Decode` first, then resize and `File.writeFile`.
+
 ### `Std.Csv` — RFC 4180 encode/decode + streaming reader
 
 ```elm

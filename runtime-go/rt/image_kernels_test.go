@@ -124,6 +124,26 @@ func TestImageResizeRejectsNonImage(t *testing.T) {
 	}
 }
 
+// dimensions is a Task thunk (like the resize entries) returning a record.
+func TestImageDimensions(t *testing.T) {
+	src := genPNG(t, 640, 480)
+	res := forceImageTask(t, Image_dimensions(src))
+	m, ok := res.(SkyResult[any, any])
+	if !ok || m.Tag != 0 {
+		t.Fatalf("expected Ok, got %v", res)
+	}
+	d, ok := m.OkValue.(map[string]any)
+	if !ok {
+		t.Fatalf("dimensions value is %T, want map[string]any", m.OkValue)
+	}
+	if d["width"] != 640 || d["height"] != 480 {
+		t.Fatalf("dimensions = %v, want width=640 height=480", d)
+	}
+	if bad, ok := forceImageTask(t, Image_dimensions("nope")).(SkyResult[any, any]); !ok || bad.Tag != 1 {
+		t.Fatalf("expected Err for a non-image input")
+	}
+}
+
 // A non-positive bound is rejected rather than producing a zero-size image.
 func TestImageResizeRejectsNonPositiveBound(t *testing.T) {
 	src := genJPEG(t, 100, 100)

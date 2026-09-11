@@ -607,6 +607,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Compression", "zstdDecompress", "rt.Compression_zstdDecompress"),
     ("Image", "resizeToFit", "rt.Image_resizeToFit"),
     ("Image", "thumbnail", "rt.Image_thumbnail"),
+    ("Image", "dimensions", "rt.Image_dimensions"),
     ("Csv", "parse", "rt.Csv_parse"),
     ("Csv", "parseWithDelimiter", "rt.Csv_parseWithDelimiter"),
     ("Csv", "encode", "rt.Csv_encode"),
