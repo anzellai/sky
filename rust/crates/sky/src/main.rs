@@ -3119,6 +3119,17 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
 /// client the web build serves, talking to the SAME stateless backend — only the
 /// window is native. Built by shelling out to THIS `sky` binary so it reuses the
 /// full cgo/WebKit build path (`Webview.url` → cgo).
+///
+// TODO(P2 persistence): the desktop/iOS/Android webview shells (this function and
+// the SwiftUI WKWebView + Android WebView shells above) MUST enable persistent
+// DOM web storage (localStorage) with a durable per-app data store, or the P2
+// client scratch-state restore (spa_persist_wasm.go, keyed on `sky:spa:model`)
+// silently no-ops on relaunch — the merge/decode degrade gracefully so nothing
+// breaks, but the cart / banner / form inputs are not restored. WKWebView needs
+// a persistent WKWebsiteDataStore; Android WebView needs
+// `settings.domStorageEnabled = true`. The SESSION itself is unaffected — it
+// rides the signed `sky_sid` cookie + SSR seed (P3), which already survives on
+// every shell. Shell changes are a SEPARATE task; this note marks the sites.
 fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let app = &id.display_name;

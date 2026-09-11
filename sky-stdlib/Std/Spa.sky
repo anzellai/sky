@@ -83,6 +83,8 @@ module Std.Spa exposing
     , withOnNavigate
     , withHead
     , withModelDecoder
+    , withModelEncoder
+    , withPersistProtectedFields
     , getJson
     , postJson
     )
@@ -223,6 +225,33 @@ withHead =
 withModelDecoder : (String -> Result Error model) -> AppConfig model msg -> AppConfig model msg
 withModelDecoder =
     Ffi.kernel "Spa_withModelDecoder"
+
+
+-- | Set the model ENCODER — `encode model` turns the WHOLE typed model into the
+-- JSON string the client writes to browser localStorage after each `update`, so
+-- a reload (web) or an app relaunch (desktop/mobile webview) restores the client
+-- scratch state (cart, banner flags, form inputs). Symmetric with
+-- `withModelDecoder`: both use the SAME `Codec.auto blank`, so the bytes the
+-- encoder writes are exactly what the decoder reads. The auto-split synthesises
+-- this alongside the decoder. SECURITY: the session field(s) are NEVER trusted
+-- from localStorage — on boot the runtime overrides them with the server-verified
+-- SSR seed (see `withPersistProtectedFields`); a stale stored session cannot
+-- override the signed cookie.
+withModelEncoder : (model -> String) -> AppConfig model msg -> AppConfig model msg
+withModelEncoder =
+    Ffi.kernel "Spa_withModelEncoder"
+
+
+-- | Set the PROTECTED field names — the model fields whose value MUST come from
+-- the server-verified SSR seed, never from localStorage. On boot the runtime
+-- starts from the stored model but overrides each of these fields with the
+-- seed's value, so a stale persisted session can never override the signed
+-- `sky_sid` cookie's identity. The auto-split fills this with the session
+-- projection field names; an empty list means "no session to protect" and the
+-- whole stored model is restored as-is.
+withPersistProtectedFields : List String -> AppConfig model msg -> AppConfig model msg
+withPersistProtectedFields =
+    Ffi.kernel "Spa_withPersistProtectedFields"
 
 
 -- | `getJson codec url toMsg` — GET `url` from the stateless backend and decode

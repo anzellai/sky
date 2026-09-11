@@ -162,6 +162,24 @@ func Spa_withHead(fn, cfg any) any { return spaCfgSet(cfg, "Head", fn) }
 // map so it survives the withX builder chain.
 func Spa_withModelDecoder(fn, cfg any) any { return spaCfgSet(cfg, "ModelDecoder", fn) }
 
+// Spa_withModelEncoder stores the `model -> String` encoder under "ModelEncoder".
+// The wasm client applies it to the WHOLE model after each update to write the
+// JSON to browser localStorage (client scratch-state persistence, P2), and once
+// at boot to compare prev/next for the sign-out check. It is byte-symmetric with
+// ModelDecoder (both use the same `Codec.auto blank`). The server IGNORES it —
+// persistence is a client concern, exactly like ModelDecoder. Stored on the
+// config map so it survives the withX builder chain.
+func Spa_withModelEncoder(fn, cfg any) any { return spaCfgSet(cfg, "ModelEncoder", fn) }
+
+// Spa_withPersistProtectedFields stores the protected-field name list (a Sky
+// `List String`) under "PersistProtectedFields". On boot the wasm client keeps
+// these fields from the server-verified SSR seed and NEVER from localStorage, so
+// a stale stored session cannot override the signed `sky_sid` cookie. An empty
+// list means the whole stored model is restored as-is. The server IGNORES it.
+func Spa_withPersistProtectedFields(fields, cfg any) any {
+	return spaCfgSet(cfg, "PersistProtectedFields", fields)
+}
+
 // ── Route matching (portable pure helpers) ──────────────────────────
 //
 // Reimplements Sky.Live's matchRoute / splitPath algorithm (live.go:1600-1624)

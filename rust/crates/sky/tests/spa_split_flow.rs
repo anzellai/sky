@@ -3508,6 +3508,17 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
             && frontend_code.contains("import Std.Codec"),
         "SSR client-leg: the frontend must emit + wire a model decoder:\n{frontend}"
     );
+    // P2 client persistence: the SYMMETRIC model ENCODER is emitted beside the
+    // decoder (same `Codec.auto spaModelBlank_`) and wired onto the config, plus
+    // the protected-session-fields builder so the runtime persists scratch state
+    // and keeps the session from the SSR seed on restore.
+    assert!(
+        frontend_code.contains("spaModelEncoder_ m_ =")
+            && frontend_code.contains("Codec.toJson (Codec.auto spaModelBlank_) m_")
+            && frontend_code.contains("|> Spa.withModelEncoder spaModelEncoder_")
+            && frontend_code.contains("|> Spa.withPersistProtectedFields "),
+        "P2: the frontend must emit + wire a model encoder + protected fields:\n{frontend}"
+    );
 
     // ── The BACKEND still resolves + settles the read + embeds the model. ──
     let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))

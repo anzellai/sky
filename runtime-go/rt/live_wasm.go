@@ -100,6 +100,12 @@ func spaRun(cfg any) any {
 	spaRoutes = asSpaRoutes(Field(cfg, "Routes"))
 	spaNotFound = Field(cfg, "NotFound")
 	spaOnNavigate = Field(cfg, "OnNavigate")
+	// Client scratch-state persistence (P2). The encoder (`model -> String`) and
+	// the protected (session) field-name list are wired by the auto-split beside
+	// the SSR model decoder; both nil/empty on an app with no encoder, in which
+	// case persistence is simply off. Read once here (spa_persist_wasm.go).
+	spaModelEncoder = Field(cfg, "ModelEncoder")
+	spaPersistProt = spaStringList(Field(cfg, "PersistProtectedFields"))
 
 	doc := js.Global().Get("document")
 	spaRoot = doc.Call("getElementById", "app")
@@ -140,6 +146,18 @@ func spaRun(cfg any) any {
 	if ssrModel, ok := spaBootFromSSRModel(doc, spaRoot, Field(cfg, "ModelDecoder")); ok {
 		spaModel = ssrModel
 		cmd0 = nil // server settled the first-paint read; do not re-fire it
+	}
+
+	// Client scratch-state restore (P2). AFTER the SSR seed decision so the
+	// server-verified session (in the seed) is the base the merge protects, and
+	// BEFORE the first render so the restored cart / banner / form inputs paint.
+	// spaRestoreFromStorage reads localStorage, merges the stored model OVER the
+	// SSR seed (session fields kept from the seed, never from localStorage —
+	// spaMergeStoredOverSeed), decodes it, and sets spaModel. Any failure (no
+	// storage, private mode, decode miss) keeps the seed/init model. On a restore
+	// the init command is not re-fired (it was already Cmd.none on this SSR path).
+	if spaRestoreFromStorage(cfg, doc) {
+		cmd0 = nil
 	}
 
 	// Deep-link: resolve the initial URL and set the model's Page BEFORE the
@@ -408,6 +426,7 @@ func step(msg any) {
 	// is kept, the panic is logged with a [sky.spa] prefix, and the next event
 	// still dispatches. The perform / timer / topic paths already recover; this
 	// closes the primary path.
+	prevModel := spaModel
 	spaModel = spaTransition(
 		msg, spaModel,
 		spaUpdate,
@@ -429,6 +448,13 @@ func step(msg any) {
 		},
 		spaReportPanic,
 	)
+	// Client scratch-state persistence (P2). AFTER the transition so the WHOLE
+	// new model is written to localStorage for the next reload/relaunch; and when
+	// a protected (session) field went set -> cleared this step, POST the P3
+	// sign-out endpoint to clear the httpOnly cookie the client JS cannot clear.
+	// Guarded (spa_persist_wasm.go): a codec panic or a storage throw never kills
+	// the instance. Runs outside spaTransition's guard, so it has its own.
+	spaPersistAfterStep(prevModel, spaModel)
 }
 
 // spaReportPanic is the js sink spaTransition (and dispatchEvent) report a

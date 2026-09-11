@@ -1849,6 +1849,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let static_mount =
         static_mount_override.or_else(|| app_static_mount(&src, project_dir));
     let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &backend_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &client_result_map, static_mount.as_ref(), &session_projection, &mut warnings)?;
+    // P2 client persistence: the SESSION projection field NAMES threaded into the
+    // frontend so the client keeps them from the server-verified SSR seed on
+    // restore (never from localStorage). Empty → the whole stored model restores.
+    let session_field_names: Vec<String> =
+        session_projection.iter().map(|p| p.name.clone()).collect();
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -1871,6 +1876,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &server_internal,
         &model_field_names,
         &client_result_map,
+        &session_field_names,
     )?;
 
     // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
@@ -3339,13 +3345,23 @@ fn import_referenceable_names(rest: &str) -> Vec<String> {
     names
 }
 
-/// Wire `|> Spa.withModelDecoder spaModelDecoder_` onto the config builder chain
-/// in `main` (the synthesised `main = Spa.app (Spa.config {…} |> Spa.with… )`).
-/// Inserts the builder as its own line, indented to match the chain, immediately
-/// before the line that closes the `Spa.app` argument. Idempotent; a `main` with
-/// no closing paren is returned unchanged (the decoder binding then stays unused,
-/// never a compile break).
-fn inject_model_decoder_into_main(main_text: &str) -> String {
+/// Wire the SSR-hydration + client-persistence builders onto the config chain in
+/// `main` (the synthesised `main = Spa.app (Spa.config {…} |> Spa.with… )`):
+///
+///   * `|> Spa.withModelDecoder spaModelDecoder_`   — boot from the SSR seed;
+///   * `|> Spa.withModelEncoder spaModelEncoder_`   — persist the whole model to
+///     localStorage after each update (P2);
+///   * `|> Spa.withPersistProtectedFields [ … ]`    — the session field names the
+///     runtime keeps from the SSR seed on restore, NEVER from localStorage, so a
+///     stale stored session cannot override the signed cookie (P3 precedence).
+///
+/// The three are inserted as their own lines, indented to match the chain,
+/// immediately before the line that closes the `Spa.app` argument. Idempotent; a
+/// `main` with no closing paren is returned unchanged (the bindings then stay
+/// unused, never a compile break). `session_fields` is the projection field-name
+/// list (empty for a client-only / no-auth app → `[]`, i.e. restore the whole
+/// stored model as-is).
+fn inject_model_decoder_into_main(main_text: &str, session_fields: &[String]) -> String {
     if main_text.contains("Spa.withModelDecoder") {
         return main_text.to_string();
     }
@@ -3361,8 +3377,19 @@ fn inject_model_decoder_into_main(main_text: &str) -> String {
     };
     // Start of the line that holds the closing paren.
     let line_start = main_text[..close].rfind('\n').map(|n| n + 1).unwrap_or(0);
+    let fields_lit = if session_fields.is_empty() {
+        "[]".to_string()
+    } else {
+        let quoted: Vec<String> = session_fields.iter().map(|f| format!("\"{f}\"")).collect();
+        format!("[ {} ]", quoted.join(", "))
+    };
+    let block = format!(
+        "            |> Spa.withModelDecoder spaModelDecoder_\n\
+         \x20           |> Spa.withModelEncoder spaModelEncoder_\n\
+         \x20           |> Spa.withPersistProtectedFields {fields_lit}\n"
+    );
     let mut out = main_text.to_string();
-    out.insert_str(line_start, "            |> Spa.withModelDecoder spaModelDecoder_\n");
+    out.insert_str(line_start, &block);
     out
 }
 
@@ -4604,6 +4631,11 @@ fn gen_frontend(
     // PATTERN-2 (client-result perform): `root → info`. The root's `Applied<root>`
     // apply arm dispatches `info.result_msg resp.result` into `update`.
     client_result: &HashMap<String, ClientResultInfo>,
+    // P2 client persistence: the SESSION projection field NAMES. On boot the
+    // runtime keeps these fields from the server-verified SSR seed, never from
+    // localStorage (the signed-cookie precedence rule). Empty for a client-only /
+    // no-auth app — the whole stored model is then restored as-is.
+    session_fields: &[String],
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -4680,7 +4712,7 @@ fn gen_frontend(
                 // driver can boot from `#sky-model` (design §4.5).
                 let main_text = slice(src, d.syntax());
                 let main_text = if decoder_blank.is_some() {
-                    inject_model_decoder_into_main(main_text)
+                    inject_model_decoder_into_main(main_text, session_fields)
                 } else {
                     main_text.to_string()
                 };
@@ -4753,6 +4785,16 @@ fn gen_frontend(
              spaModelDecoder_ : String -> Result Error {model_ty}\n\
              spaModelDecoder_ jsonStr_ =\n    \
              Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_\n\n\n"
+        ));
+        // P2: the SYMMETRIC encoder — byte-compatible with the decoder (the SAME
+        // `Codec.auto spaModelBlank_`). The wasm client applies it to the WHOLE
+        // model after each update to persist to localStorage, and once at boot to
+        // compare prev/next for the sign-out check. Emitted only when the decoder
+        // is (SSR-hydration path), so persistence rides the same GET-safe seed.
+        body.push_str(&format!(
+            "spaModelEncoder_ : {model_ty} -> String\n\
+             spaModelEncoder_ m_ =\n    \
+             Codec.toJson (Codec.auto spaModelBlank_) m_\n\n\n"
         ));
     }
 
