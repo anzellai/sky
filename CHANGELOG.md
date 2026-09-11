@@ -13,6 +13,53 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.24.1 — Sky.Spa transparent carry + Std.Image (2026-09-11)
+
+A patch release that closes the gaps a normal **Sky.Live** app hit when targeting
+a wasm client (`--target web:app`, and the same auto-split backing `desktop` /
+`mobile` / `tablet`). The goal: a Live-shaped app **just works** as a client SPA
+with **zero app refactor** — every gap is closed in the compiler auto-split and
+the Sky.Spa runtime, not by the author adding code. Proven on a real, unchanged
+e-commerce site. Also adds `Std.Image` (backend image resize). No breaking
+changes; `sky upgrade` is safe from any v0.24.0.
+
+### Sky.Spa: a Live app targets a wasm client unchanged
+
+- **Forms POST, never GET.** A submit-handled `<form>` renders `method="post"` at
+  SSR, and the wasm client now intercepts the submit — `preventDefault`, collects
+  the field values, and builds the Msg's record — so a password never leaks into a
+  URL and sign-in works. Previously the wasm client did neither: a native submit
+  went out as GET, and the form Msg received an empty string and panicked.
+- **Runtime uploads serve.** The generated backend serves the app's live static
+  dir at its declared prefix (before the `dist` catch-all), so a file written at
+  runtime (an admin image upload) is served immediately — not only the build-time
+  snapshot.
+- **Stateless signed session.** A server RPC branch that gates on `model.session`
+  / `isAdmin` no longer trusts the forgeable wire model: the backend signs the
+  identity into an httpOnly `sky_sid` cookie on the establishing branch and
+  verifies it on every RPC + SSR, taking the session from the cookie. No server
+  session store — the backend stays stateless and horizontally scalable. Closes a
+  privilege-escalation hole under `--target web:app`. Set one shared
+  `SKY_SPA_SESSION_SECRET` (≥ 32 bytes) per multi-replica deployment, or a lone
+  node auto-generates and persists one.
+- **Client state survives reload.** The wasm client persists the whole model to
+  `localStorage` and rehydrates it over the SSR seed on boot, taking the
+  server-verified session from the seed — so a dismissed cookie banner, a basket,
+  and the signed-in view survive a reload. The native shells (iOS / Android /
+  desktop) persist Web Storage so this holds across a relaunch too.
+- **Image upload is wired.** `Ui.onImage` / `onFile` reach the app under `--target
+  web:app` (the wasm client had no handler before, so an admin upload silently did
+  nothing).
+
+### `Std.Image` — backend image resize + thumbnails
+
+- New stdlib module: `resizeToFit`, `thumbnail`, `dimensions`, on raw
+  `Sky.Core.Bytes`, backed by Go `image/jpeg` + `image/png` +
+  `golang.org/x/image/draw`. A typed `Format` option (`Jpeg q` / `Png` /
+  `Preserve`) lets the caller choose the output format + quality. Preserves aspect
+  ratio, never upscales. Server-classified, so the codec never ships in the wasm
+  client.
+
 ## v0.24.0 — Sky.Spa migration maturity (2026-09-10)
 
 A minor release that hardens the **Sky.Spa** auto-split (`--target web:app`) so a
