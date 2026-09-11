@@ -3754,6 +3754,244 @@ fn curl_post_status_body(port: u16, path: &str, body: &str) -> Option<(u32, Stri
     Some((code, resp_body.to_string()))
 }
 
+// POST a JSON `body`, optionally sending a `Cookie:` header, and return
+// (status, response body, the `sky_sid=<value>` from a Set-Cookie response
+// header if present). Used by the stateless-signed-session e2e: it must capture
+// the login cookie and replay it on the admin call. `-D -` dumps the response
+// headers to stdout ahead of the body, separated by the first blank line.
+fn curl_post_full(
+    port: u16,
+    path: &str,
+    body: &str,
+    cookie: Option<&str>,
+) -> Option<(u32, String, Option<String>)> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "-D".into(),
+        "-".into(),
+        "-o".into(),
+        "-".into(),
+        "-X".into(),
+        "POST".into(),
+        "-H".into(),
+        "Content-Type: application/json".into(),
+        "-d".into(),
+        body.into(),
+    ];
+    if let Some(c) = cookie {
+        args.push("-H".into());
+        args.push(format!("Cookie: {c}"));
+    }
+    args.push(url);
+    let out = Command::new("curl").args(&args).output().ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    let mut status = 0u32;
+    let mut set_cookie: Option<String> = None;
+    let mut body_started = false;
+    let mut resp_body = String::new();
+    for line in s.lines() {
+        if body_started {
+            resp_body.push_str(line);
+            resp_body.push('\n');
+            continue;
+        }
+        if line.starts_with("HTTP/") {
+            if let Some(code) = line.split_whitespace().nth(1) {
+                if let Ok(c) = code.parse::<u32>() {
+                    status = c;
+                }
+            }
+        } else if line.to_ascii_lowercase().starts_with("set-cookie:") {
+            let v = line[line.find(':').unwrap() + 1..].trim();
+            if v.starts_with("sky_sid=") {
+                set_cookie = Some(v.split(';').next().unwrap_or(v).trim().to_string());
+            }
+        } else if line.trim().is_empty() {
+            body_started = true;
+        }
+    }
+    Some((status, resp_body.trim_end().to_string(), set_cookie))
+}
+
+fn signed_session_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-signed-session")
+}
+
+/// STATELESS SIGNED SESSION (security). Under `--target web:app` a Sky.Live
+/// app's `update` becomes `/_rpc/<Msg>` handlers built from the CLIENT-supplied
+/// wire model, so a branch that gates on `model.session` for a trust decision
+/// would trust a FORGEABLE wire value. The backend must instead sign the identity
+/// projection into an httpOnly `sky_sid` cookie on login and VERIFY that cookie
+/// on every RPC, taking the session from the cookie — never from the wire.
+///
+/// Two layers of proof:
+///   * emission (no Go): the backend imports Std.Auth; the admin branch's run
+///     model takes `session` from `verifiedSession_` (the cookie), not the wire
+///     `p.session`; the login branch signs a Set-Cookie; the session codec is
+///     reused from the resolver (Shared), never hand-rolled.
+///   * Go-gated e2e: a forged `session={role:admin}` with NO cookie must NOT run
+///     the admin effect; a login issues a signed cookie; the admin RPC WITH that
+///     cookie runs the effect.
+#[test]
+fn spa_stateless_signed_session_defeats_wire_forgery() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&signed_session_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-signed-session fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let backend = std::fs::read_to_string(proj.join(".split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+
+    // (a) the backend reuses Sky.Live's own Std.Auth token logic.
+    assert!(
+        backend.contains("import Std.Auth as Auth"),
+        "signed session must import Std.Auth:\n{backend}"
+    );
+    // (b) the admin branch runs against the COOKIE-verified model, never the wire
+    // payload. `mAuth` overrides `session` from `verifiedSession_ req base.session`
+    // (the init value seeds the no-cookie case), and `update` runs on `mAuth`.
+    assert!(
+        backend.contains("{ m | session = verifiedSession_ req base.session }"),
+        "the guard model must override session from the verified cookie:\n{backend}"
+    );
+    assert!(
+        backend.contains("update (SaveAdmin p.content) mAuth"),
+        "the admin branch must run against the cookie-verified model mAuth, not the wire model:\n{backend}"
+    );
+    assert!(
+        backend.contains("verifiedSession_ req initVal ="),
+        "the per-field verify helper must be emitted:\n{backend}"
+    );
+    // the verify helper reads the field codec from the signed claim, and falls
+    // back to the init value (never the wire value) when there is no valid cookie.
+    assert!(
+        backend.contains("case Codec.fromJson spaSessionCodecSession_ claims.p0 of")
+            && backend.contains("Nothing ->\n            initVal"),
+        "the verify helper must decode the signed claim and fall back to initVal:\n{backend}"
+    );
+    // (c) the login branch signs a Set-Cookie around its response.
+    assert!(
+        backend.contains("signedResponse_ m2 (Server.json"),
+        "the establishing (login) branch must sign a Set-Cookie:\n{backend}"
+    );
+    assert!(
+        backend.contains(r#"Server.withCookie "sky_sid" tok "Path=/; HttpOnly; SameSite=Lax""#),
+        "signedResponse_ must set an httpOnly sky_sid cookie:\n{backend}"
+    );
+    // a SaveAdmin (write-set {note}, no session) must NOT sign a cookie.
+    assert!(
+        backend.contains("Task.succeed (Server.json (Codec.toJson saveAdminRespCodec"),
+        "a branch that does not establish the session must answer plain (no Set-Cookie):\n{backend}"
+    );
+    // the framework sign-out endpoint exists.
+    assert!(
+        backend.contains(r#"Server.api "POST /_rpc/__spaSignOut" spaSignOutHandler"#),
+        "the sign-out endpoint must be registered:\n{backend}"
+    );
+    // the session codec is DERIVED (reused from the wire resolver), not hand-rolled.
+    let shared = std::fs::read_to_string(proj.join(".split/shared/Shared.sky"))
+        .expect("generated shared module must exist");
+    assert!(
+        shared.contains("spaSessionCodecSession_ : Codec (Maybe Session)"),
+        "the session field codec must be derived + exported from Shared:\n{shared}"
+    );
+
+    // ── Go-gated e2e ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "signed session: --target web:app must build end-to-end:\n{log}"
+    );
+    let backend_dir = proj.join(".split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+
+    let port = 8979u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        // Pin the signing secret so a lone process signs + verifies with one key.
+        .env(
+            "SKY_SPA_SESSION_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789",
+        )
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-signed-session backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-signed-session backend never reported listening on :{port}");
+    }
+
+    // (a) forged session, NO cookie → the admin effect must NOT run.
+    let forged = curl_post_full(
+        port,
+        "/_rpc/SaveAdmin",
+        r#"{"session":{"userId":"x","role":"admin"},"content":"pwned"}"#,
+        None,
+    );
+    let admin_after_forge =
+        std::fs::read_to_string(backend_dir.join("admin.txt")).unwrap_or_default();
+    // (b) login → a signed sky_sid Set-Cookie.
+    let login = curl_post_full(port, "/_rpc/LogIn", "{}", None);
+    let cookie = login.as_ref().and_then(|(_, _, c)| c.clone());
+    // (c) admin WITH the cookie → the admin effect runs.
+    let admin_ok = cookie.as_deref().and_then(|c| {
+        curl_post_full(
+            port,
+            "/_rpc/SaveAdmin",
+            r#"{"session":null,"content":"legit"}"#,
+            Some(c),
+        )
+    });
+    let admin_after_ok =
+        std::fs::read_to_string(backend_dir.join("admin.txt")).unwrap_or_default();
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let (fcode, _, _) = forged.expect("forged SaveAdmin should return");
+    assert_eq!(
+        fcode, 200,
+        "the handler answers 200 (the inline gate no-ops on a missing session), never a crash"
+    );
+    assert_eq!(
+        admin_after_forge, "",
+        "SECURITY: a forged wire session must NOT run the admin effect — admin.txt must be absent/empty, was {admin_after_forge:?}"
+    );
+    assert!(
+        cookie.is_some(),
+        "login must issue a signed sky_sid cookie"
+    );
+    let (acode, _, _) = admin_ok.expect("cookie'd SaveAdmin should return");
+    assert_eq!(acode, 200, "cookie'd SaveAdmin should answer 200");
+    assert_eq!(
+        admin_after_ok, "legit",
+        "with a valid signed cookie the admin effect MUST run — admin.txt must be \"legit\", was {admin_after_ok:?}"
+    );
+}
+
 // HTTP status code + Content-Type of `GET http://127.0.0.1:<port><path>`.
 fn curl_status_ctype(port: u16, path: &str) -> Option<(u32, String)> {
     let url = format!("http://127.0.0.1:{port}{path}");

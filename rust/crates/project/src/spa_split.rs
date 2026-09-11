@@ -91,6 +91,75 @@ struct ResolvedCodec {
     surface: String,
 }
 
+/// One model field the STATELESS SIGNED SESSION carries. It is an identity field
+/// whose resolved type is nominally `Session` / `Maybe Session` AND which some
+/// server branch writes (so a trusted server-side value exists to sign). Under
+/// `--target web:app` the backend signs its value into an httpOnly `sky_sid`
+/// cookie on the establishing branch and VERIFIES that cookie on every RPC + SSR,
+/// taking the value from the cookie — never from the forgeable wire model. No
+/// server session store, so the backend stays stateless and scales, whilst the
+/// end-user experience matches the Sky.Live target (which holds the session
+/// server-side per `sky_sid`).
+struct SessionProjField {
+    /// The model field name (`session`).
+    name: String,
+    /// The `Std.Codec` expression that round-trips the field value. It is
+    /// resolved through the SAME resolver the wire records use (an auto-derived
+    /// or user codec), never a hand-rolled rt.Coerce, so the value round-trips
+    /// soundly. Emitted into `Shared` as `spaSessionCodec<Field>_`.
+    codec: String,
+    /// The field's surface type (`Maybe Session`) for the codec's annotation.
+    surface: String,
+}
+
+/// Uppercase the first character of `s` (`session` → `Session`). Used to build
+/// the per-field binding names (`spaSessionCodecSession_`, `verifiedSession_`).
+fn cap_first(s: &str) -> String {
+    let mut cs = s.chars();
+    match cs.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + cs.as_str(),
+        None => String::new(),
+    }
+}
+
+/// The `Shared`-exported codec binding name for one identity field.
+fn session_codec_name(field: &str) -> String {
+    format!("spaSessionCodec{}_", cap_first(field))
+}
+
+/// The backend verify-helper name for one identity field.
+fn session_verify_name(field: &str) -> String {
+    format!("verified{}_", cap_first(field))
+}
+
+/// True when a model field's resolved type is nominally `Session` or
+/// `Maybe Session` — the identity projection the signed session carries. Mirrors
+/// [`field_ty_codec`]'s nominal-tail match; a structural record row (the solver
+/// expands a record alias to an un-named row) is recovered back to its nominal
+/// name via the project shapes, so `session : Maybe Session` matches whether the
+/// solver left `Session` nominal or expanded it.
+fn is_session_identity_ty(t: &ty::Ty, shapes: &ProjectShapes) -> bool {
+    let inner = match t {
+        ty::Ty::App(name, args) if tail_seg(name.as_str()) == "Maybe" && args.len() == 1 => {
+            &args[0]
+        }
+        _ => t,
+    };
+    match inner {
+        ty::Ty::App(name, args) if args.is_empty() => tail_seg(name.as_str()) == "Session",
+        ty::Ty::Record(fields, _) => {
+            let set: BTreeSet<String> =
+                fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+            shapes
+                .record_by_fields
+                .get(&set)
+                .map(|n| n == "Session")
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
 /// The default-value CLASS of one declared record field, precomputed from the
 /// project's CST (§14 #2, option B). It drives the synthesised nominal blank
 /// (`blank<N>_ : <N>`) that seeds an auto-derived `Codec.auto` codec: every kind
@@ -792,9 +861,30 @@ fn gen_shared(
     copied_decls: &str,
     auto_codec_defs: &str,
     copied_exposing: &[String],
+    session_proj: &[SessionProjField],
 ) -> String {
     let mut exposing: Vec<String> = copied_exposing.to_vec();
     let mut bodies = String::new();
+    // STATELESS SIGNED SESSION: a dedicated exported codec per identity field, so
+    // the backend can name `spaSessionCodec<Field>_` to sign the value into the
+    // `sky_sid` cookie and verify it back. It reuses the SAME resolved codec
+    // expression the wire records use (an auto-derived or user codec, resolved in
+    // `generate`), which lives in this module — never a hand-rolled rt.Coerce.
+    for p in session_proj {
+        let cname = session_codec_name(&p.name);
+        exposing.push(cname.clone());
+        bodies.push_str(&format!(
+            "-- Stateless signed-session codec for identity field `{0}` — the backend\n\
+             -- signs the value into `sky_sid` and verifies it back through this codec\n\
+             -- (never trusting the wire model).\n\
+             {1} : Codec {2}\n\
+             {1} =\n    {3}\n\n\n",
+            p.name,
+            cname,
+            wrap_arg(&p.surface),
+            p.codec
+        ));
+    }
     for w in wires {
         let req_ty = format!("{}Req", w.name);
         let resp_ty = format!("{}Resp", w.name);
@@ -1263,6 +1353,46 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             client_result_map.get(name),
         )?);
     }
+    // STATELESS SIGNED SESSION (security): the identity projection the backend
+    // signs into an httpOnly `sky_sid` cookie and verifies on every RPC + SSR. A
+    // model field whose type is nominally `Session` / `Maybe Session` AND which
+    // some server branch writes (writes_whole_model ⇒ every field eligible), so
+    // there is a trusted server-side value to sign. EMPTY → the app has no
+    // server-trusted session and NOTHING is emitted (behaviour unchanged). Every
+    // projection field is written by some server branch, so its type already rode
+    // a Resp wire above and `resolve` is idempotent here — computed before
+    // `auto_codec_defs` / `seed_ty` so any residual auto-record still reaches
+    // `Shared`.
+    let session_projection: Vec<SessionProjField> = {
+        let any_writes_whole = server.iter().any(|(_, io)| io.writes_whole_model);
+        let written: HashSet<String> = server
+            .iter()
+            .flat_map(|(_, io)| io.write_fields.iter().cloned())
+            .collect();
+        let mut out: Vec<SessionProjField> = Vec::new();
+        for f in &report.model_fields {
+            let Some(t) = &f.ty else { continue };
+            if !is_session_identity_ty(t, &shapes) {
+                continue;
+            }
+            if !(any_writes_whole || written.contains(&f.name)) {
+                continue;
+            }
+            let r = resolver.resolve(t).map_err(|e| {
+                format!(
+                    "stateless signed session: cannot resolve a codec for identity field `{}`: {e}",
+                    f.name
+                )
+            })?;
+            out.push(SessionProjField {
+                name: f.name.clone(),
+                codec: r.codec,
+                surface: r.surface,
+            });
+        }
+        out
+    };
+
     // The synthesised blank + `Codec.auto` bodies for every auto-derived record,
     // rendered once here and emitted into `Shared` after the copied types.
     let auto_codec_defs = render_auto_codec_defs(&resolver.auto_records);
@@ -1637,6 +1767,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &copied_decls,
         &auto_codec_defs,
         &copied_exposing,
+        &session_projection,
     );
     let push_mode = report.subscribes_topics || report.publishes;
     let broker_url = broker_url.map(str::trim).filter(|s| !s.is_empty());
@@ -1665,6 +1796,24 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let entry_name = db.module_name(entry).to_string();
     let entry_shared_expose =
         shared_expose_clause(&src, &entry_name, &copied_name_source, &generated, &moved_unions, true);
+    // STATELESS SIGNED SESSION: the BACKEND additionally imports the per-field
+    // `spaSessionCodec<Field>_` bindings `Shared` exports (the frontend never
+    // signs / verifies, so its clause is left unchanged — no unused import). When
+    // the entry clause is the `exposing (..)` catch-all the exported codecs are
+    // already in scope, so no injection is needed.
+    let backend_shared_expose = if session_projection.is_empty()
+        || entry_shared_expose.contains("exposing (..)")
+    {
+        entry_shared_expose.clone()
+    } else {
+        let extra: Vec<String> = session_projection
+            .iter()
+            .map(|p| session_codec_name(&p.name))
+            .collect();
+        let trimmed = entry_shared_expose.trim_end();
+        let base = trimmed.strip_suffix(')').unwrap_or(trimmed);
+        format!("{base}, {})", extra.join(", "))
+    };
     // Server-internal effect chaining: the Msgs to DROP from the frontend and the
     // server branches whose RPC handler settles a `Cmd.perform` chain server-side.
     let server_internal: HashSet<String> = report.server_internal.iter().cloned().collect();
@@ -1699,7 +1848,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // declaration), else read from this entry + its `sky.toml`.
     let static_mount =
         static_mount_override.or_else(|| app_static_mount(&src, project_dir));
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &entry_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &client_result_map, static_mount.as_ref(), &mut warnings)?;
+    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &backend_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &client_result_map, static_mount.as_ref(), &session_projection, &mut warnings)?;
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -3456,6 +3605,9 @@ fn gen_backend(
     // covers assets present at build. `None` (or an empty prefix) → no live
     // mount, the `dist` catch-all is the only static route.
     static_mount: Option<&(String, String)>,
+    // STATELESS SIGNED SESSION: the identity fields the backend signs into the
+    // `sky_sid` cookie and verifies on every RPC + SSR (empty → nothing emitted).
+    session_proj: &[SessionProjField],
     warnings: &mut Vec<String>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
@@ -3617,6 +3769,29 @@ fn gen_backend(
         add(imports, &mut import_lines, "Sky.Core.Maybe", "import Sky.Core.Maybe as Maybe");
         add(imports, &mut import_lines, "Sky.Http.Server.Stream", "import Sky.Http.Server.Stream as Stream exposing (StreamWriter)");
     }
+    // STATELESS SIGNED SESSION: the sign / verify path needs Std.Auth (the token
+    // logic Sky.Live reuses), the `Secret` type, `Sky.Ffi` (the secret-kernel
+    // façade), and `Sky.Core.Task` (the sign-out handler answers a Task). Both
+    // Auth and Secret are `Ffi.kernel` façades — they pull no Live runtime into
+    // the backend. The `add` helper only checks the ORIGINAL app imports, so a
+    // module another block already pushed (Ffi / Task under SSR or push) is
+    // filtered against `import_lines` here to avoid a duplicate import line.
+    if !session_proj.is_empty() {
+        for (path, text) in [
+            ("Std.Auth", "import Std.Auth as Auth"),
+            ("Sky.Core.Secret", "import Sky.Core.Secret exposing (Secret)"),
+            ("Sky.Ffi", "import Sky.Ffi as Ffi"),
+            ("Sky.Core.Task", "import Sky.Core.Task as Task"),
+        ] {
+            if !has_module(imports, path)
+                && !import_lines
+                    .iter()
+                    .any(|l| l.split_whitespace().nth(1) == Some(path))
+            {
+                import_lines.push(text.to_string());
+            }
+        }
+    }
     import_lines.push(shared_expose.to_string());
 
     // All decls except `main` (both its annotation and value), verbatim —
@@ -3737,6 +3912,90 @@ fn gen_backend(
              \x20       (spaStreamTopic spaBroker (Maybe.withDefault \"\" (Server.queryParam \"topic\" req)))\n\n\n"
         ));
     }
+    // STATELESS SIGNED SESSION machinery — emitted once, only when the projection
+    // is non-empty (an app with no server-trusted session is unchanged).
+    if !session_proj.is_empty() {
+        // The signing secret: the unary `Spa_sessionSecret` kernel
+        // (SKY_SPA_SESSION_SECRET >= 32 bytes, else auto-mint + persist under the
+        // data dir — runtime-go/rt/spa_session_secret.go) plus a memoised CAF
+        // applying it, matching the existing `spaWasmName` shape.
+        handlers.push_str(
+            "-- STATELESS SIGNED SESSION (security). The backend signs the identity\n\
+             -- projection into an httpOnly `sky_sid` cookie on the establishing branch\n\
+             -- and VERIFIES it on every RPC + SSR, taking the session from the cookie —\n\
+             -- never from the forgeable wire model. No server session store, so the\n\
+             -- backend stays stateless; it reuses Sky.Live's own Std.Auth token logic.\n\
+             spaSessionSecret_ : () -> Secret\n\
+             spaSessionSecret_ =\n\
+             \x20   Ffi.kernel \"Spa_sessionSecret\"\n\n\n\
+             sessionSecret_ : Secret\n\
+             sessionSecret_ =\n\
+             \x20   spaSessionSecret_ ()\n\n\n",
+        );
+        // One verify helper per identity field: return the TRUSTED value from the
+        // signed cookie, or the init value when there is no valid cookie — NEVER
+        // the wire value. `claims.p<N>` reads the JSON claim keyed by the field's
+        // INDEX off the (erased) verifyToken result; `Codec.fromJson <field codec>`
+        // round-trips it back to the field type. The claim key is index-based
+        // (`p0`, `p1`, …) rather than the field name so the polymorphic claims
+        // record cannot unify with the app's nominal `Model` (which carries the
+        // identity field under its own name), which would coerce the signed JSON
+        // string back into the field's own type.
+        for (idx, p) in session_proj.iter().enumerate() {
+            let vname = session_verify_name(&p.name);
+            let cname = session_codec_name(&p.name);
+            handlers.push_str(&format!(
+                "{vname} req initVal =\n\
+                 \x20   case Server.getCookie \"sky_sid\" req of\n\
+                 \x20       Just tok ->\n\
+                 \x20           case Auth.verifyToken sessionSecret_ tok of\n\
+                 \x20               Ok claims ->\n\
+                 \x20                   case Codec.fromJson {cname} claims.p{idx} of\n\
+                 \x20                       Ok v ->\n\
+                 \x20                           v\n\n\
+                 \x20                       Err _ ->\n\
+                 \x20                           initVal\n\n\
+                 \x20               Err _ ->\n\
+                 \x20                   initVal\n\n\
+                 \x20       Nothing ->\n\
+                 \x20           initVal\n\n\n",
+            ));
+        }
+        // signedResponse_ m resp: re-issue the `sky_sid` cookie from the model the
+        // establishing branch produced, signing every identity field through its
+        // codec (fixed 30-day expiry; the token `exp` bounds replay). A sign
+        // failure (server misconfig) leaves the response cookie-less rather than
+        // failing the request.
+        let claims = session_proj
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let sep = if i == 0 { "" } else { ", " };
+                format!(
+                    "{sep}p{i} = Codec.toJson {0} m.{1}",
+                    session_codec_name(&p.name),
+                    p.name
+                )
+            })
+            .collect::<String>();
+        handlers.push_str(&format!(
+            "signedResponse_ m resp =\n\
+             \x20   case Auth.signToken sessionSecret_ {{ {claims} }} 2592000 of\n\
+             \x20       Ok tok ->\n\
+             \x20           Server.withCookie \"sky_sid\" tok \"Path=/; HttpOnly; SameSite=Lax\" resp\n\n\
+             \x20       Err _ ->\n\
+             \x20           resp\n\n\n"
+        ));
+        // The framework sign-out endpoint: clear `sky_sid` (Max-Age=0). The wasm
+        // client calls it when the session field transitions Just -> Nothing
+        // (wired in a separate task); emitted only when the projection is present.
+        handlers.push_str(
+            "spaSignOutHandler : Handler\n\
+             spaSignOutHandler _ =\n\
+             \x20   Task.succeed\n\
+             \x20       (Server.withCookie \"sky_sid\" \"\" \"Path=/; HttpOnly; SameSite=Lax; Max-Age=0\" (Server.json \"{}\"))\n\n\n",
+        );
+    }
     for (name, io) in server {
         let handler = format!("{}Handler", lower_first(name));
         let req_codec = format!("{}ReqCodec", lower_first(name));
@@ -3792,13 +4051,43 @@ fn gen_backend(
         // headers / the server session), exactly as Sky.Live derives them from
         // server session state. Only when the app declared `withRequest`; the
         // model the guard + update see is `guard_model`.
-        let guard_model = if has_synth_on_request {
+        let mut guard_model = if has_synth_on_request {
             run_setup
                 .push_str("\n                ( mReq, _ ) =\n                    spaOnRequest_ req m\n");
-            "mReq"
+            "mReq".to_string()
         } else {
-            "m"
+            "m".to_string()
         };
+        // STATELESS SIGNED SESSION read path: override every identity field on the
+        // model the guard + update see with the VERIFIED-cookie value, seeded from
+        // `init ()` when there is no valid cookie. This runs UNCONDITIONALLY (not
+        // gated on withRequest), so a forged wire `session` is discarded on every
+        // handler. Under reads_whole_model (`m = p`) the record update overrides
+        // ONLY the identity field(s), leaving the client's app state (cart, page)
+        // intact. `base` (the init value) is bound by `run_setup` in the read-set
+        // shapes but NOT in the reads_whole_model shapes, so bind it here for those.
+        if !session_proj.is_empty() {
+            if io.reads_whole_model {
+                run_setup
+                    .push_str("\n                ( base, _ ) =\n                    init ()\n");
+            }
+            let sets = session_proj
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let sep = if i == 0 { "" } else { ", " };
+                    format!(
+                        "{sep}{0} = {1} req base.{0}",
+                        p.name,
+                        session_verify_name(&p.name)
+                    )
+                })
+                .collect::<String>();
+            run_setup.push_str(&format!(
+                "\n                mAuth =\n                    {{ {guard_model} | {sets} }}\n"
+            ));
+            guard_model = "mAuth".to_string();
+        }
         // The Msg constructor to run (args come from the wire payload).
         let ctor_app = if io.msg_args.is_empty() {
             name.clone()
@@ -3845,6 +4134,26 @@ fn gen_backend(
                 .collect::<String>();
             format!("{{ {sets} }}")
         };
+        // STATELESS SIGNED SESSION write path: when this branch ESTABLISHES an
+        // identity field (its write-set intersects the projection), wrap the JSON
+        // response in `signedResponse_ <model>`, which re-issues the signed
+        // `sky_sid` cookie from the model the branch produced. Only such a branch
+        // emits a Set-Cookie; a branch that touches no identity field answers
+        // plain. The wrap is applied at the single `Server.json` site so every
+        // answer variant (plain / push / chaining / client-result) carries it.
+        let establishes_session = !session_proj.is_empty()
+            && (io.writes_whole_model
+                || io
+                    .write_fields
+                    .iter()
+                    .any(|f| session_proj.iter().any(|p| &p.name == f)));
+        let json_resp = if establishes_session {
+            format!(
+                "signedResponse_ {result_model} (Server.json (Codec.toJson {resp_codec} {resp_val}))"
+            )
+        } else {
+            format!("Server.json (Codec.toJson {resp_codec} {resp_val})")
+        };
         // In push mode the returned Cmd is fed to the broker (a Cmd.publish fans
         // out to SSE subscribers) BEFORE the RPC answers; a chaining branch OR a
         // client-result branch binds `cmd` (settle server-side / run the task);
@@ -3854,19 +4163,13 @@ fn gen_backend(
                 "cmd",
                 format!(
                     "spaInterpretPublish spaBroker cmd\n\
-                     \x20                       |> Task.andThen (\\_ -> Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val})))"
+                     \x20                       |> Task.andThen (\\_ -> Task.succeed ({json_resp}))"
                 ),
             )
         } else if is_chaining || is_client_result {
-            (
-                "cmd",
-                format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
-            )
+            ("cmd", format!("Task.succeed ({json_resp})"))
         } else {
-            (
-                "_",
-                format!("Task.succeed (Server.json (Codec.toJson {resp_codec} {resp_val}))"),
-            )
+            ("_", format!("Task.succeed ({json_resp})"))
         };
         // The extra binding threaded between the `update` call and the answer, at
         // the guard / no-guard variant's own indentation: `( mFinal, _ ) =
@@ -3928,6 +4231,15 @@ fn gen_backend(
              \x20           Task.succeed (badRequest (Error.toString e))\n\n\n"
         ));
         routes.push(format!("        , Server.api \"POST /_rpc/{name}\" {handler}"));
+    }
+    // STATELESS SIGNED SESSION: the framework sign-out endpoint clears `sky_sid`.
+    // Registered only when the projection is non-empty (its handler is emitted
+    // under the same guard above), so an app with no server-trusted session gains
+    // no extra route.
+    if !session_proj.is_empty() {
+        routes.push(
+            "        , Server.api \"POST /_rpc/__spaSignOut\" spaSignOutHandler".to_string(),
+        );
     }
     if push_mode {
         // The SSE push endpoint (topic from the query string).
@@ -4000,9 +4312,13 @@ fn gen_backend(
                  \x20   Ffi.kernel \"Spa_ssrSettle\"\n\n\n",
             );
         }
-        // The request param is needed for route resolution (`req.path`) AND for
-        // the `withRequest` seed (`req`).
-        let req_param = if has_synth_routes || seed_req { "req" } else { "_" };
+        // The request param is needed for route resolution (`req.path`), the
+        // `withRequest` seed (`req`), AND the STATELESS SIGNED SESSION cookie read.
+        let req_param = if has_synth_routes || seed_req || !session_proj.is_empty() {
+            "req"
+        } else {
+            "_"
+        };
         // Build the let-binding block. Bindings sit at 8 spaces, `in` at 4, body
         // at 4. The settle chain NESTS `spaSsrSettle` calls (no intermediate
         // bindings + no `Cmd.batch`), so the no-seed/no-nav common case emits the
@@ -4012,17 +4328,41 @@ fn gen_backend(
         lets.push_str(&format!(
             "        ( model0, {cmd0_bind} ) =\n            init ()\n\n"
         ));
+        // STATELESS SIGNED SESSION SSR seed: apply the SAME verified-cookie
+        // override to the seed model BEFORE route resolution, so the first paint
+        // reflects the verified identity (not the empty `init` value). The rest of
+        // the SSR chain starts from `modelAuth0_` instead of `model0`.
+        let ssr_start = if session_proj.is_empty() {
+            "model0".to_string()
+        } else {
+            let sets = session_proj
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let sep = if i == 0 { "" } else { ", " };
+                    format!(
+                        "{sep}{0} = {1} req model0.{0}",
+                        p.name,
+                        session_verify_name(&p.name)
+                    )
+                })
+                .collect::<String>();
+            lets.push_str(&format!(
+                "        modelAuth0_ =\n            {{ model0 | {sets} }}\n\n"
+            ));
+            "modelAuth0_".to_string()
+        };
         // withRequest: refine init's model from the real request (path / query /
         // cookies / headers), exactly as Sky.Live seeds a session at start. Fixes
         // the seed to `()`, so `init` stays portable while the request arrives
         // through this web-only channel.
         let seed_base = if seed_req {
-            lets.push_str(
-                "        ( modelSeeded_, cmdSeed_ ) =\n            spaOnRequest_ req model0\n\n",
-            );
-            "modelSeeded_"
+            lets.push_str(&format!(
+                "        ( modelSeeded_, cmdSeed_ ) =\n            spaOnRequest_ req {ssr_start}\n\n"
+            ));
+            "modelSeeded_".to_string()
         } else {
-            "model0"
+            ssr_start.clone()
         };
         // Resolve the request path to the route's page (sets model.page).
         let route_base = if has_synth_routes {

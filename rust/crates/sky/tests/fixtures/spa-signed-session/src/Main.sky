@@ -1,0 +1,113 @@
+module Main exposing (main)
+
+-- STATELESS SIGNED SESSION soundness proof for the Sky.Spa auto-split.
+--
+--   * `Session` is the identity projection: `session : Maybe Session` is a model
+--     field whose type is nominally `Maybe Session` AND is WRITTEN by the `LogIn`
+--     server branch, so it is a signed-session field.
+--
+--   * `LogIn` is a SERVER branch (forces a File effect) that ESTABLISHES the
+--     session (`{ model | session = Just { … } }`). Its RPC response MUST carry a
+--     `Server.withCookie "sky_sid" (Auth.signToken …)` Set-Cookie.
+--
+--   * `SaveAdmin content` is a SERVER branch that GATES on `model.session.role`
+--     off the model (the classic `requireAdmin` shape). Its `run` model MUST take
+--     `session` from the VERIFIED cookie (`verifiedSession_ req base.session`),
+--     NEVER from the forgeable wire payload `p.session`. A forged
+--     `session = { role = "admin" }` in the RPC body must be discarded.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Session =
+    { userId : String
+    , role : String
+    }
+
+
+type alias Model =
+    { session : Maybe Session
+    , note : String
+    }
+
+
+type Msg
+    = LogIn
+    | SaveAdmin String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { session = Nothing, note = "" }, Cmd.none )
+
+
+-- A SERVER effect (File) — forcing it makes a branch a server branch.
+persist : String -> String -> Task Error String
+persist name s =
+    File.writeFile name s
+        |> Task.map (\_ -> "ok")
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        LogIn ->
+            -- SERVER branch that ESTABLISHES the session. The response must
+            -- Set-Cookie the signed session.
+            let
+                _ =
+                    Task.run (persist "login.txt" "in")
+            in
+            ( { model | session = Just { userId = "u1", role = "admin" } }, Cmd.none )
+
+        SaveAdmin content ->
+            -- ADMIN branch: gates on the session role read off the model. A forged
+            -- wire `session` must NOT reach this read — the backend overrides
+            -- `session` from the verified cookie BEFORE this runs.
+            case model.session of
+                Just s ->
+                    if s.role == "admin" then
+                        let
+                            _ =
+                                Task.run (persist "admin.txt" content)
+                        in
+                        ( { model | note = content }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text model.note ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })
