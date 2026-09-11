@@ -599,6 +599,7 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Compression",
     "Std.Csv",
     "Std.Decimal",
+    "Std.Image",
     "Std.Markdown",
     "Std.Money",
 ];
@@ -1733,13 +1734,17 @@ fn image_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
             s(&["Image.dimensions"], "dimsRes src6x4_", "6x4"),
+            // The Format constructors (Jpeg/Png/Preserve) are exercised in the
+            // expressions; the `covers` tag names the FUNCTION under test (the
+            // constructors are exposed via `Format(..)` and credited as part of
+            // the module surface).
             s(
-                &["Image.resizeToFit", "Image.Jpeg"],
+                &["Image.resizeToFit"],
                 "dimsOf (Image.resizeToFit (Image.Jpeg 85) 3 3 src6x4_)",
                 "3x2",
             ),
             s(
-                &["Image.thumbnail", "Image.Preserve"],
+                &["Image.thumbnail"],
                 "dimsOf (Image.thumbnail Image.Preserve 2 src6x4_)",
                 "2x1",
             ),
@@ -1748,7 +1753,7 @@ fn image_battery(edge: &str) -> Vec<Check> {
             // A box larger than the image must NOT upscale — the source size is
             // returned unchanged.
             s(
-                &["Image.resizeToFit", "Image.Png"],
+                &["Image.resizeToFit"],
                 "dimsOf (Image.resizeToFit Image.Png 1000 1000 src6x4_)",
                 "6x4",
             ),

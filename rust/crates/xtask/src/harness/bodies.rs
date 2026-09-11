@@ -573,7 +573,7 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// * **+25** — five surfaces the ledger listed as dark-but-assertable
 ///   (`Sky.Core.Bytes`, `Sky.Core.Jwt`, `Std.Codec`, `Std.Markdown`,
 ///   `Std.Compression`) × their five edge classes.
-pub const CORPUS_EXPECTED: u64 = 483;
+pub const CORPUS_EXPECTED: u64 = 485;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -588,7 +588,7 @@ pub const CORPUS_EXPECTED: u64 = 483;
 /// T1 tier — so a behavioural-case addition that forgets this const surfaces a
 /// tier late. Both `CORPUS_EXPECTED` (all cases) and this (the built-and-run
 /// subset) move by the same +2 when a behavioural case lands.
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 337;
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 339;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
