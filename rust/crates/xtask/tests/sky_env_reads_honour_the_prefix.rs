@@ -75,6 +75,11 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
     // SKY_CSRF is deliberately ABSENT: the CSRF kill switch moved to
     // `skyGetenv("CSRF")` (csrf_middleware.go), so it is prefix-aware and no
     // longer a raw read. The stale-entry check below is what noticed.
+    (
+        "SKY_DATA_DIR",
+        "durable data directory (where --embed puts its cluster and the Sky.Spa \
+         session-secret file); set by the deploy/CLI, host storage not per-app",
+    ),
     ("SKY_DEV_BANNER", "startup-banner toggle; set by the launcher"),
     ("SKY_EMAIL_DRY_RUN", "test-harness switch; set by the runner"),
     ("SKY_GC_QUIET", "startup-report verbosity; set by the launcher"),
@@ -111,6 +116,11 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
     ("SKY_PROFILE_TIMEOUT", "`sky run --profile` bound; set by the CLI"),
     ("SKY_RUNTIME_MODE", "serverless/VM hint; set by the platform"),
     ("SKY_SERVICE_NAME", "OTel resource attribute; peer of OTEL_SERVICE_NAME"),
+    (
+        "SKY_SPA_SESSION_SECRET",
+        "operator-set Sky.Spa session-signing secret; set by the deploy and \
+         shared across replicas, so a per-app prefix would break verification",
+    ),
     ("SKY_STREAM_DEBUG", "developer trace switch"),
     (
         "SKY_TELEMETRY_SYNCHRONOUS_COMMIT",

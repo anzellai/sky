@@ -161,6 +161,18 @@ func buildDOM(el VNode) js.Value {
 			n.Call("setAttribute", k, v)
 			reflectInputProp(n, k, v)
 		}
+		// A submit-handled <form> with no explicit method gets method="post", so a
+		// native submit in the JS-off / pre-hydration window is a POST, not a GET
+		// that leaks fields into the URL. Mirrors the SSR path (live_core.go
+		// renderVNodeInto); the client also preventDefaults the submit once
+		// hydrated (bindNodeEvents), so this is the belt to that braces.
+		if el.Tag == "form" {
+			if _, hasSubmit := el.Events["submit"]; hasSubmit {
+				if _, hasMethod := el.Attrs["method"]; !hasMethod {
+					n.Call("setAttribute", "method", "post")
+				}
+			}
+		}
 		bindNodeEvents(n, el)
 		spaSetChildren(n, el.Children)
 		return n
@@ -235,11 +247,91 @@ func bindNodeEvents(n js.Value, el VNode) {
 		h := handler // capture per listener
 		e := evt
 		f := js.FuncOf(func(this js.Value, args []js.Value) any {
+			// A form submit is the one event that carries structured data (the
+			// field values), and it MUST preventDefault or the browser does a
+			// native submit — which, on a form with no method, is a GET that
+			// leaks the fields (a password) into the URL. Sky.Live intercepts
+			// this in its client JS; the Sky.Spa wasm client must do the same.
+			// The handler is `\p -> SomeMsg p` (onSubmit takes the form record),
+			// so hand it the field map — update's rt.Coerce narrows it to the
+			// declared record type (Credentials, a ProductForm, …), exactly as
+			// the Live path narrows form data to the record.
+			if e == "submit" {
+				if len(args) > 0 && args[0].Truthy() {
+					args[0].Call("preventDefault")
+					dispatchSubmit(h, spaFormData(args[0].Get("target")))
+					return nil
+				}
+			}
 			dispatchEvent(h, eventPayload(e, args))
 			return nil
 		})
 		spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
 		n.Call("addEventListener", evt, f)
+	}
+}
+
+// spaFormData reads a submitted <form>'s named controls into a map[string]any
+// (control name -> its string value), the shape rt.Coerce narrows to a record
+// (e.g. Credentials { email, password }) in update. Unnamed controls and an
+// unchecked checkbox/radio are skipped, mirroring the browser's own FormData.
+func spaFormData(form js.Value) map[string]any {
+	out := map[string]any{}
+	if !form.Truthy() {
+		return out
+	}
+	els := form.Get("elements")
+	if !els.Truthy() {
+		return out
+	}
+	n := els.Get("length").Int()
+	for i := 0; i < n; i++ {
+		el := els.Index(i)
+		name := el.Get("name")
+		if name.Type() != js.TypeString || name.String() == "" {
+			continue
+		}
+		if t := el.Get("type"); t.Type() == js.TypeString {
+			if t.String() == "checkbox" || t.String() == "radio" {
+				if !el.Get("checked").Truthy() {
+					continue
+				}
+			}
+		}
+		if v := el.Get("value"); v.Type() == js.TypeString {
+			out[name.String()] = v.String()
+		}
+	}
+	return out
+}
+
+// dispatchSubmit turns a form-submit handler into a Msg and dispatches it. The
+// onSubmit value is a `func(any) any` wrapping the form record in a Msg
+// constructor (`Ui.onSubmit DoSignIn`, DoSignIn taking a record built from the
+// fields), so hand it the field map. A plain nullary Msg value (onSubmit with a
+// no-arg Msg) is dispatched as-is. A panic (an rt.Coerce mismatch) is recovered
+// so the instance stays alive, like dispatchEvent.
+func dispatchSubmit(handler any, data map[string]any) {
+	if spaDispatch == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			spaReportPanic("submit", r)
+		}
+	}()
+	switch h := handler.(type) {
+	case func(any) any:
+		spaDispatch(h(data))
+	case func(string) any:
+		// A String-typed onSubmit is unusual; keep the pre-fix empty payload.
+		spaDispatch(h(""))
+	default:
+		if isFunc(handler) {
+			spaDispatch(sky_call(handler, data))
+		} else {
+			spaDispatch(handler)
+		}
 	}
 }
 

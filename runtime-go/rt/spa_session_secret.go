@@ -57,7 +57,10 @@ func Spa_sessionSecret(_ any) any {
 }
 
 func resolveSpaSessionSecret() string {
-	if v := os.Getenv(spaSessionSecretEnv); v != "" {
+	// A literal read (not the const) so the env-prefix gate's scan classifies it:
+	// this is an operator/deploy-set secret, listed in FIXED_NAME_READS, not an
+	// app-prefixed namespace.
+	if v := os.Getenv("SKY_SPA_SESSION_SECRET"); v != "" {
 		if len(v) < spaSessionSecretMinBytes {
 			// A short shared secret is a real misconfiguration, not something
 			// to silently accept. Fail loud (classified as a startup error by
