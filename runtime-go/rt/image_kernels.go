@@ -33,31 +33,29 @@ import (
 	"golang.org/x/image/draw"
 )
 
-// jpegQuality is the fixed re-encode quality for a JPEG source — good visual
-// fidelity at a small size, matching the 0.85 the prior client-side path used.
-const jpegQuality = 85
+// defaultJpegQuality is the JPEG quality for the "preserve" format and the
+// fallback when a caller passes a non-positive quality.
+const defaultJpegQuality = 85
 
-// Image_resizeToFit implements:
+// Image_resize is the kernel behind Std.Image.resizeToFit / .thumbnail:
 //
-//	Std.Image.resizeToFit : Int -> Int -> Bytes -> Task Error Bytes
+//	Image_resize : String -> Int -> Int -> Int -> Bytes -> Task Error Bytes
+//	               (format  quality maxW  maxH  bytes)
 //
-// Scale the image to fit within maxW x maxH, preserving aspect ratio and NEVER
-// upscaling (an image already within the box is re-encoded unchanged in size).
-func Image_resizeToFit(maxWArg, maxHArg, inputArg any) any {
+// The Sky-level `Format` option (Jpeg q / Png / Preserve) is translated to the
+// `format` string + `quality` int by the Std.Image wrappers, so the FFI boundary
+// stays primitive. Scale to fit within maxW x maxH, preserving aspect ratio and
+// NEVER upscaling. `format`: "jpeg" (at `quality`, 1..100, else 85), "png"
+// (lossless; keeps transparency), or "preserve" (jpeg->jpeg q85, png/gif->png).
+func Image_resize(formatArg, qualityArg, maxWArg, maxHArg, inputArg any) any {
 	return func() any {
-		return resizeBytes(asBytesString(inputArg), AsInt(maxWArg), AsInt(maxHArg))
-	}
-}
-
-// Image_thumbnail implements:
-//
-//	Std.Image.thumbnail : Int -> Bytes -> Task Error Bytes
-//
-// A convenience for a square-ish bound: fit within maxDim x maxDim.
-func Image_thumbnail(maxDimArg, inputArg any) any {
-	return func() any {
-		d := AsInt(maxDimArg)
-		return resizeBytes(asBytesString(inputArg), d, d)
+		return resizeBytes(
+			asBytesString(inputArg),
+			AsString(formatArg),
+			AsInt(qualityArg),
+			AsInt(maxWArg),
+			AsInt(maxHArg),
+		)
 	}
 }
 
@@ -81,13 +79,13 @@ func Image_dimensions(inputArg any) any {
 	}
 }
 
-// resizeBytes decodes, scales-to-fit (no upscale), and re-encodes in the source
-// format. Shared by both kernels so their behaviour cannot drift.
-func resizeBytes(in string, maxW, maxH int) any {
+// resizeBytes decodes, scales-to-fit (no upscale), and re-encodes in the chosen
+// output format.
+func resizeBytes(in, outFormat string, quality, maxW, maxH int) any {
 	if maxW <= 0 || maxH <= 0 {
 		return Err[any, any](ErrInvalidInput("image.resize: max width and height must be positive"))
 	}
-	src, format, err := image.Decode(bytes.NewReader([]byte(in)))
+	src, srcFormat, err := image.Decode(bytes.NewReader([]byte(in)))
 	if err != nil {
 		return Err[any, any](ErrInvalidInput("image.resize: not a decodable image: " + err.Error()))
 	}
@@ -97,8 +95,6 @@ func resizeBytes(in string, maxW, maxH int) any {
 		return Err[any, any](ErrInvalidInput("image.resize: image has zero dimension"))
 	}
 	tw, th := fitWithin(sw, sh, maxW, maxH)
-	// Already within the box (or degenerate) — re-encode without scaling so the
-	// output is still a clean, format-normalised image at the fixed quality.
 	var dst image.Image
 	if tw == sw && th == sh {
 		dst = src
@@ -107,22 +103,32 @@ func resizeBytes(in string, maxW, maxH int) any {
 		draw.CatmullRom.Scale(rgba, rgba.Bounds(), src, b, draw.Over, nil)
 		dst = rgba
 	}
+	// Resolve the output encoder. "preserve" maps the source format to its own
+	// encoder (gif has no encoder here, so it becomes png).
+	enc := outFormat
+	if enc == "" || enc == "preserve" {
+		if srcFormat == "jpeg" {
+			enc = "jpeg"
+		} else {
+			enc = "png"
+		}
+	}
+	q := quality
+	if q <= 0 || q > 100 {
+		q = defaultJpegQuality
+	}
 	var out bytes.Buffer
-	switch format {
+	switch enc {
 	case "jpeg":
-		if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: jpegQuality}); err != nil {
+		if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: q}); err != nil {
 			return Err[any, any](ErrFfi("image.resize: jpeg encode: " + err.Error()))
 		}
-	case "png", "gif":
-		// GIF (and any non-jpeg raster we decoded) re-encodes as PNG — lossless,
-		// widely served. The caller keeps the source extension for the URL; the
-		// bytes are a valid PNG, which every browser renders regardless of the
-		// filename extension.
+	case "png":
 		if err := png.Encode(&out, dst); err != nil {
 			return Err[any, any](ErrFfi("image.resize: png encode: " + err.Error()))
 		}
 	default:
-		return Err[any, any](ErrInvalidInput("image.resize: unsupported image format " + format))
+		return Err[any, any](ErrInvalidInput("image.resize: unsupported output format " + enc))
 	}
 	return Ok[any, any](out.String())
 }

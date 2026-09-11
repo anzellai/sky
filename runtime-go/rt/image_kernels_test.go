@@ -72,16 +72,13 @@ func decodeDims(t *testing.T, b []byte) (int, int, string) {
 	return cfg.Width, cfg.Height, format
 }
 
-// resizeToFit downscales within the box, preserves aspect, preserves jpeg format.
-func TestImageResizeToFitDownscalesPreservingAspect(t *testing.T) {
+// resize downscales within the box, preserves aspect; "preserve" keeps jpeg.
+func TestImageResizeDownscalesPreservingAspect(t *testing.T) {
 	src := genJPEG(t, 2000, 1000) // 2:1
-	out := okBytes(t, forceImageTask(t, Image_resizeToFit(800, 800, src)))
+	out := okBytes(t, forceImageTask(t, Image_resize("preserve", 0, 800, 800, src)))
 	w, h, format := decodeDims(t, out)
 	if format != "jpeg" {
 		t.Fatalf("format = %q, want jpeg (preserve source format)", format)
-	}
-	if w > 800 || h > 800 {
-		t.Fatalf("result %dx%d exceeds the 800x800 box", w, h)
 	}
 	// 2:1 within 800x800 -> width is the binding side: 800x400.
 	if w != 800 || h != 400 {
@@ -89,23 +86,34 @@ func TestImageResizeToFitDownscalesPreservingAspect(t *testing.T) {
 	}
 }
 
-// thumbnail bounds by a single square dimension.
-func TestImageThumbnailBoundsBySquare(t *testing.T) {
+// An explicit Jpeg format re-encodes a PNG source AS jpeg (the darraghstudio
+// policy: photos -> jpeg regardless of upload format).
+func TestImageResizePngToJpeg(t *testing.T) {
 	src := genPNG(t, 1200, 600)
-	out := okBytes(t, forceImageTask(t, Image_thumbnail(400, src)))
+	out := okBytes(t, forceImageTask(t, Image_resize("jpeg", 85, 400, 400, src)))
 	w, h, format := decodeDims(t, out)
-	if format != "png" {
-		t.Fatalf("format = %q, want png (preserve source format)", format)
+	if format != "jpeg" {
+		t.Fatalf("format = %q, want jpeg (explicit format wins over the png source)", format)
 	}
 	if w != 400 || h != 200 {
-		t.Fatalf("thumbnail %dx%d, want 400x200", w, h)
+		t.Fatalf("result %dx%d, want 400x200", w, h)
+	}
+}
+
+// An explicit Png format keeps PNG (transparency-preserving path).
+func TestImageResizeToPng(t *testing.T) {
+	src := genJPEG(t, 800, 400)
+	out := okBytes(t, forceImageTask(t, Image_resize("png", 0, 400, 400, src)))
+	_, _, format := decodeDims(t, out)
+	if format != "png" {
+		t.Fatalf("format = %q, want png (explicit)", format)
 	}
 }
 
 // An image already within the box is NOT upscaled.
 func TestImageResizeNeverUpscales(t *testing.T) {
 	src := genJPEG(t, 300, 200)
-	out := okBytes(t, forceImageTask(t, Image_resizeToFit(4000, 4000, src)))
+	out := okBytes(t, forceImageTask(t, Image_resize("preserve", 0, 4000, 4000, src)))
 	w, h, _ := decodeDims(t, out)
 	if w != 300 || h != 200 {
 		t.Fatalf("result %dx%d, want the source 300x200 (no upscaling)", w, h)
@@ -114,7 +122,7 @@ func TestImageResizeNeverUpscales(t *testing.T) {
 
 // A non-image / corrupt input is a classified InvalidInput error, not a panic.
 func TestImageResizeRejectsNonImage(t *testing.T) {
-	res := forceImageTask(t, Image_resizeToFit(100, 100, "this is not an image"))
+	res := forceImageTask(t, Image_resize("jpeg", 85, 100, 100, "this is not an image"))
 	m, ok := res.(SkyResult[any, any])
 	if !ok {
 		t.Fatalf("expected SkyResult, got %T", res)
@@ -147,7 +155,7 @@ func TestImageDimensions(t *testing.T) {
 // A non-positive bound is rejected rather than producing a zero-size image.
 func TestImageResizeRejectsNonPositiveBound(t *testing.T) {
 	src := genJPEG(t, 100, 100)
-	res := forceImageTask(t, Image_resizeToFit(0, 100, src))
+	res := forceImageTask(t, Image_resize("jpeg", 85, 0, 100, src))
 	if m, ok := res.(SkyResult[any, any]); !ok || m.Tag != 1 {
 		t.Fatalf("expected Err for a zero max width, got %v", res)
 	}

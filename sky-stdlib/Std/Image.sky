@@ -1,4 +1,4 @@
-module Std.Image exposing (resizeToFit, thumbnail, dimensions)
+module Std.Image exposing (Format(..), resizeToFit, thumbnail, dimensions)
 
 {-| Backend image resize + thumbnail generation.
 
@@ -9,9 +9,12 @@ in its backend, never in the wasm client), so an admin can upload a full-size
 photo and the app serves a capped image plus a small thumbnail with no client-side
 image code.
 
-Both entries preserve the source format (a JPEG stays a JPEG at quality 85, a PNG
-stays a PNG) and NEVER upscale — an image already within the box is returned at its
-own size. A non-image or corrupt input fails with a classified `Error`.
+The output `Format` is the caller's choice: `Jpeg quality` (best for photos),
+`Png` (lossless; keeps transparency, for logos/stickers), or `Preserve` (keep the
+source format — a JPEG stays a JPEG at quality 85, a PNG/GIF becomes a PNG). When
+you choose an explicit format you also know the file extension to save it under.
+Resizing preserves the aspect ratio and NEVER upscales. A non-image or corrupt
+input fails with a classified `Error`.
 
     import Std.Image as Image
     import Sky.Core.Encoding as Encoding
@@ -21,9 +24,9 @@ own size. A non-image or corrupt input fails with a classified `Error`.
     saveUpload dataUrl =
         case Encoding.base64Decode dataUrl of
             Ok bytes ->
-                Image.resizeToFit 1600 1600 bytes
+                Image.resizeToFit (Image.Jpeg 85) 1600 1600 bytes
                     |> Task.andThen (\big -> File.writeFile "public/photo.jpg" big)
-                    |> Task.andThen (\_ -> Image.thumbnail 400 bytes)
+                    |> Task.andThen (\_ -> Image.thumbnail (Image.Jpeg 85) 400 bytes)
                     |> Task.andThen (\small -> File.writeFile "public/photo.thumb.jpg" small)
                     |> Task.map (\_ -> "/static/photo.jpg")
 
@@ -35,19 +38,34 @@ import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
 
+{-| The output image format for a resize.
+
+  - `Jpeg quality` — JPEG at `quality` (1..100; a value outside that range uses
+    85). Best for photographs; smallest bytes.
+  - `Png` — lossless PNG; preserves transparency (logos, stickers).
+  - `Preserve` — keep the source format (JPEG stays JPEG at quality 85; PNG and
+    GIF become PNG).
+-}
+type Format
+    = Jpeg Int
+    | Png
+    | Preserve
+
+
 {-| Scale an image to fit within `maxWidth` x `maxHeight`, preserving the aspect
-ratio and never enlarging. The bytes in and out are the raw image file contents
-(`Sky.Core.Bytes`). -}
-resizeToFit : Int -> Int -> String -> Task Error String
-resizeToFit =
-    Ffi.kernel "Image_resizeToFit"
+ratio and never enlarging, re-encoded in the chosen `Format`. The bytes in and out
+are the raw image file contents (`Sky.Core.Bytes`). -}
+resizeToFit : Format -> Int -> Int -> String -> Task Error String
+resizeToFit fmt maxWidth maxHeight bytes =
+    resize_ (formatName fmt) (formatQuality fmt) maxWidth maxHeight bytes
 
 
 {-| Scale an image to fit within `maxDim` x `maxDim` — a square bound for a
-thumbnail. Preserves the aspect ratio and never enlarges. -}
-thumbnail : Int -> String -> Task Error String
-thumbnail =
-    Ffi.kernel "Image_thumbnail"
+thumbnail — re-encoded in the chosen `Format`. Preserves the aspect ratio and
+never enlarges. -}
+thumbnail : Format -> Int -> String -> Task Error String
+thumbnail fmt maxDim bytes =
+    resize_ (formatName fmt) (formatQuality fmt) maxDim maxDim bytes
 
 
 {-| The pixel dimensions of an image, read from its header (cheap, no full
@@ -56,3 +74,37 @@ capability, so every function is an effect. A non-image input is an `Err`. -}
 dimensions : String -> Task Error { width : Int, height : Int }
 dimensions =
     Ffi.kernel "Image_dimensions"
+
+
+-- The primitive resize kernel (format string + quality int + bounds + bytes).
+-- The `Format` ADT is translated to these primitives above so the FFI boundary
+-- carries no Sky ADT.
+resize_ : String -> Int -> Int -> Int -> String -> Task Error String
+resize_ =
+    Ffi.kernel "Image_resize"
+
+
+formatName : Format -> String
+formatName fmt =
+    case fmt of
+        Jpeg _ ->
+            "jpeg"
+
+        Png ->
+            "png"
+
+        Preserve ->
+            "preserve"
+
+
+formatQuality : Format -> Int
+formatQuality fmt =
+    case fmt of
+        Jpeg q ->
+            q
+
+        Png ->
+            0
+
+        Preserve ->
+            0

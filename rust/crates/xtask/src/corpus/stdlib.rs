@@ -1734,18 +1734,22 @@ fn image_battery(edge: &str) -> Vec<Check> {
         "nominal" => vec![
             s(&["Image.dimensions"], "dimsRes src6x4_", "6x4"),
             s(
-                &["Image.resizeToFit"],
-                "dimsOf (Image.resizeToFit 3 3 src6x4_)",
+                &["Image.resizeToFit", "Image.Jpeg"],
+                "dimsOf (Image.resizeToFit (Image.Jpeg 85) 3 3 src6x4_)",
                 "3x2",
             ),
-            s(&["Image.thumbnail"], "dimsOf (Image.thumbnail 2 src6x4_)", "2x1"),
+            s(
+                &["Image.thumbnail", "Image.Preserve"],
+                "dimsOf (Image.thumbnail Image.Preserve 2 src6x4_)",
+                "2x1",
+            ),
         ],
         "boundary" => vec![
             // A box larger than the image must NOT upscale — the source size is
             // returned unchanged.
             s(
-                &["Image.resizeToFit"],
-                "dimsOf (Image.resizeToFit 1000 1000 src6x4_)",
+                &["Image.resizeToFit", "Image.Png"],
+                "dimsOf (Image.resizeToFit Image.Png 1000 1000 src6x4_)",
                 "6x4",
             ),
             // A non-image input is a classified error, not a crash.
