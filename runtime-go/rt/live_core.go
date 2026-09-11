@@ -567,6 +567,23 @@ func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 		sb.WriteString(id)
 		sb.WriteString(`"`)
 	}
+	// SECURITY (defense-in-depth): a <form> with a submit handler is
+	// intercepted by the client (live.go's `if (ev.type === "submit")
+	// ev.preventDefault()` and, in a Sky.Spa wasm client, the TEA loop). But
+	// if that interceptor has NOT run yet — the wasm client's hydration
+	// window, or JS disabled — a native submit of a method-less <form>
+	// defaults to GET and leaks its fields (e.g. a password) into the URL
+	// query string (browser history, access logs, Referer, CDN cache). Emit
+	// method="post" so the fallback submit is a POST body, never a URL query.
+	// Only for a form that actually has a submit handler; a user-set method
+	// (e.g. a GET search form) is left untouched.
+	if n.Tag == "form" {
+		if _, hasSubmit := n.Events["submit"]; hasSubmit {
+			if _, hasMethod := n.Attrs["method"]; !hasMethod {
+				sb.WriteString(` method="post"`)
+			}
+		}
+	}
 	if isVoidTag(n.Tag) {
 		sb.WriteString(" />")
 		return
