@@ -3013,7 +3013,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// (`meta.kernel-members` CROSS_CUTTING + its GATE_SURFACES + CI_SURFACES entry),
 /// adding three surfaces (`surfaces_total` 155 -> 158), so `surfaces.len() + 4`
 /// is now 162. The ratchet still holds (139 covered >= Asserted).
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 162;
+///
+/// 162 -> 163: the new `stdlib.Std.Image` surface (backend image resize, covered
+/// by the `image` corpus battery — credited None -> Falsified). The ratchet still
+/// holds (140 covered >= Asserted).
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 163;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

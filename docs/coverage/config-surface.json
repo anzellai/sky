@@ -55,7 +55,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1576 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:7798 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:7849 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:143 (toml_value)"
@@ -136,6 +136,7 @@
     "SKY_CONSOLE_TOKEN",
     "SKY_CONSOLE_TOKEN_SECRET",
     "SKY_CONSOLE_URL",
+    "SKY_DATA_DIR",
     "SKY_DEV_BANNER",
     "SKY_EMAIL_DRY_RUN",
     "SKY_GC_QUIET",
@@ -150,6 +151,7 @@
     "SKY_PROFILE_TIMEOUT",
     "SKY_RUNTIME_MODE",
     "SKY_SERVICE_NAME",
+    "SKY_SPA_SESSION_SECRET",
     "SKY_STREAM_DEBUG",
     "SKY_TELEMETRY_AGGREGATION_WINDOW",
     "SKY_TELEMETRY_DB_CAPACITY",
@@ -232,11 +234,11 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 103,
+    "documented_names": 104,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 14,
     "read_without_doc": 26,
-    "runtime_read_literal_sky_names": 38,
+    "runtime_read_literal_sky_names": 40,
     "runtime_read_suffixes": 45,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,
