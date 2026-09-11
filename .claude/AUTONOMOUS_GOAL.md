@@ -1,89 +1,68 @@
-# AUTONOMOUS MANDATE — Sky.Spa hardening + SSR + sky-lang.org SPA deploy (2026-09-06)
+# Autonomous goal (verbatim)
 
-## Verbatim goal (user, 2026-09-06, going on a flight — away for hours)
+Set 2026-09-11. Supersedes the 2026-09-06 sky-lang.org SSR mandate (shipped) and
+the partitioning-maturity mandate (achieved prerequisite: darraghstudio
+partitions + builds `--target web:app`, shipped as SPA at tag v1.1.1).
 
-> ok I'm going on a flight now so I will be away for hours.
+> we will need to understand user may start off from sky.live pattern, and if
+> they render/target wasm app, it shouldn't require them 'refactor' everything
+> to work, so all the gaps you identified should work behind the scene, without
+> user changes their code
 >
-> you MUst now take charge and ask no questions or permissions or continuity, in
-> 100% fully unattended+autonomous+PIV mode to deliver the fixes, updated all
-> contents accordingly and then manage e2e to deploy the SPA version of
-> sky-lang.org accordingly.
+> also remember all the issues we found for wasm web, will apply for desktop
+> mobile apps too
 >
-> after that you can reply the GitHub issue don't close, and then continue working
-> the v1 roadmaps.
->
-> nothing is paused until ALL the above goals are fully achieved
+> ok please proceed fully unattended + autonomous + PIV
 
-## Ordered goals (all must be FULLY achieved; nothing pauses until then)
+Later steers (2026-09-11): reuse Sky.Live's session logic so a developer can
+switch `--target` between Live and SPA and the end user gets the same session
+experience; but the SPA MUST stay the SCALABLE target (stateless, no server
+session store, no sticky sessions).
 
-1. **Deliver the fixes → v0.23.1 release.** SPA compiler fixes (#195 + BUG-1
-   App.webDefaults + BUG-2 silent-drop + BUG-3 diagnostic) are on main (f3f09279).
-   Full release gate running in CI (per-commit Rust CI + dispatched nightly-sweep
-   full tier). When GREEN → **TAG v0.23.1 + cut the GitHub release** (mandate =
-   the authorization; the usual "confirm the tag" rule is OVERRIDDEN by this
-   explicit "ask no permissions" directive). Stop at the gh release (no SkyDeploy
-   redeploy, per standing pref).
-2. **Update all contents accordingly.** sky-lang.org samples already migrated to
-   Std.App (c9fecc1). As the SPA/SSR migration lands, update site content + docs
-   so everything reflects the shipped reality (Std.App, Sky.Spa+SSR).
-3. **Build SSR/prerender for Sky.Spa + migrate + deploy the SPA version of
-   sky-lang.org e2e.** THE BIG ARC. Design delivered: docs/skyspa/ssr-design.md
-   (branch design/skyspa-ssr). Phases P0 withHead→P1 chrome SSR+hydration→P2
-   static-backend copy→P3 data-resolved SSR (the full SEO win content sites need)
-   →P4 DX/gates. Then re-architect sky-lang.org (purify init/view, auth-via-RPC),
-   build --target web:app WITH SSR, and DEPLOY it e2e to the sky-lang-org VM
-   (deploy/deploy.sh; the site MUST keep SEO = data-resolved SSR is required).
-   Verify live (crawlable HTML + hydration + all routes + auth/admin/DB via RPC).
-4. **Reply to GitHub issue #195 — DO NOT CLOSE.** After v0.23.1 ships, post a
-   reply telling the reporter the fix shipped in v0.23.1 (`sky upgrade`). Leave
-   the issue OPEN.
-5. **Continue the v1 roadmap.** Resume v1-readiness work (B1 coverage curation
-   [[b1_stdlib_api_curation_scope]] + residuals; see prior v1 mandate history).
+## The mandate
 
-## Operating mode (user, 2026-09-06 — INVIOLABLE for this mandate)
-100% FULLY UNATTENDED + AUTONOMOUS + PIV. Take charge; ask NO questions, NO
-permissions, NO continuity checks. Tag/release, deploy, reply-to-issue are ALL
-authorized by this mandate. On a genuine blocker I cannot self-serve (external
-auth wall I have no path around), document it + CONTINUE other goals; never stall
-the whole loop. Checkpoint (commit+push, gates green) at each phase boundary.
+A Sky.Live app that targets a wasm client (`--target web:app` AND `desktop:*` /
+`mobile:*` / `tablet:*`) must JUST WORK with ZERO app refactor. Every gap closes
+in the COMPILER auto-split + the Sky.Spa RUNTIME, never by the author adding
+code. darraghstudio, UNCHANGED, is the driving real-world proof.
 
-## PIV per phase (CLAUDE.md §0.3/§0.4)
-architecture-consult (docs/skyspa/ssr-design.md is the SSR arch reference;
-docs/rust-rewrite/ for lowering) → adversarial grill → implement → fresh-context
-Judge at close. Use ISOLATED WORKTREES for concurrent code agents (the shared-tree
-lesson from 2026-09-06 — two agents in one tree nearly collided). Narrow gates per
-change; full gate at milestones only.
+## The gaps + status (branch feat/spa-transparent-carry)
 
-## Constraints (durable)
-- No co-author trailer. Batch commits; push at phase boundaries. Root-cause fixes
-  only; regression-test-first. Secrets typed; Error not String.
-- sky-lang.org is on the sky-lang-org VM (settleby, us-central1-a, e2-small, static
-  IP 34.10.201.196; SSH works when VM healthy) — see [[skylang_org_infra_incident]].
-  Deploy via deploy/deploy.sh --project settleby. gcloud flags INLINE (zsh no-split).
-- SEO is non-negotiable for sky-lang.org → the SPA deploy REQUIRES data-resolved
-  SSR (P3). Do NOT deploy a no-SSR SPA that blanks the crawler.
+1. FORMS method=post — DONE (8940542a).
+2. STATIC runtime uploads — DONE (655fc969): live `Server.static` mount for the
+   app's dir before the dist catch-all + `backend/<dir>` seed. Verified in a real
+   darraghstudio web:app build.
+3. AUTH-TRUST (forge-role privilege escalation) — DONE (cfd3876a): STATELESS
+   signed session. The backend signs the identity projection into an httpOnly
+   `sky_sid` cookie on login (Auth.signToken, reuses Sky.Live's Std.Auth) and
+   VERIFIES it on every RPC + SSR, taking the session from the cookie, never the
+   wire. No server store → the SPA stays scalable. Secret = `Spa_sessionSecret`
+   kernel (env `SKY_SPA_SESSION_SECRET` >=32B for multi-replica, else
+   auto-mint+persist for a single VM). Sign-out endpoint `POST /_rpc/__spaSignOut`.
+   Gates green + full spa_split_flow suite 52/52.
+4. RELOAD PERSISTENCE (consent/cart/page) — DONE (2107468b): the wasm client
+   persists the whole model to localStorage after each step and, on boot, merges
+   it over the SSR seed but takes the session from the server-verified seed, not
+   localStorage. Sign-out forwarded. Cross-target note left for the mobile/desktop
+   shells to enable persistent storage (session already survives everywhere via
+   cookie+SSR). Pure merge/cap logic host-tested.
 
-## PROGRESS
-- GOAL 1 ✅ **v0.23.1 RELEASED** — tagged at fcc24767, GitHub release live
-  (https://github.com/anzellai/sky/releases/tag/v0.23.1). SPA fixes (#195 + BUG-1
-  App.webDefaults + BUG-2/3) + Task.parallelN + Std.Db by-id. Gate: all real gates
-  green (config-gates, test-sky/rest, example-sweep, behaviour-corpus, harness-t3,
-  web-runtime); the falsifier CI red was a stale-compiler false-red (conformance
-  proven 27/27 fresh); build-corpus-2 was a transient cancel (rerun green).
-- #195 ✅ REPLIED (comment 5560622272) + left OPEN, per mandate (fix shipped in
-  v0.23.1; done now since the fix is live, not deferred to after the SPA deploy).
-- SSR: ✅ design grilled+revised (590b2edd) → P0 (withHead) + P1 (chrome SSR +
-  hydration) IMPLEMENTED + MERGED to main (f5062b2c). Crawlable SSR PROVEN: a
-  server-branch fixture built via --target web:app serves real body content +
-  per-route <head> + data-sky-ssr (HTTP 200). Verifying on main + regenerating
-  censuses (Spa.withHead new symbol) now (bg b128k1mj1).
-- REMAINING: SSR P3 (per-route data-resolved SSR — the full SEO win for a routed
-  content site; sky-lang.org needs it); then GOAL 2/3 = update sky-lang.org content
-  + migrate init/view to the SSR-split shape + deploy --target web:app+SSR e2e +
-  verify live; then GOAL 5 v1 roadmap.
-- FOLLOW-UP (no-deferral, pre-existing, NOT v0.23.1 blockers): (a) kernel-members
-  drift `List.sortWith` missing from KERNEL_FUNCTIONS[List] (shipped v0.23.0 via
-  3d3a7776); (b) CI runs `kernel-members` WITHOUT `--check` (rust-ci.yml:849) so it
-  never gates drift — wire `--check` in. Fix both alongside the SSR work.
-- NEXT: land census regen + push main; implement SSR P3; then sky-lang.org SPA-SSR
-  migrate+deploy; then v1.
+## Remaining to close the mandate
+
+- PIV: build darraghstudio UNCHANGED under `--target web:app` and run a browser
+  e2e — forge-role rejected, real login persists across reload, uploaded images
+  serve, consent stays dismissed. Then an independent Judge (fresh context,
+  verbatim goal) confirms zero app edits + gaps closed root-cause.
+- Full release gate green (§0.2.1) before any merge/tag.
+- Verify a desktop/mobile target build carries the same behaviour (per the
+  "applies to desktop/mobile too" directive); wire persistent web storage into
+  the generated mobile/desktop shells so client scratch-state survives relaunch.
+- Prod stays on Sky.Live until the SPA is Judge-verified; no prod SPA redeploy
+  before then. Do NOT tag/release without explicit user ask (standing pref).
+
+## Discipline
+PIV per §0.3/§0.4: architecture-consult → adversarial grill → implement →
+fresh-context Judge. Regression-test-first. No `Result String`; secrets typed;
+root-cause only. Responses ASD-STE100 British-English, plain punctuation, no
+filler. Never run git commits concurrently with a delegated committing agent
+(2026-09-11 lesson: an executor's `git reset` orphaned a parallel commit).
