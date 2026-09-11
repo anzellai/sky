@@ -117,7 +117,7 @@ enum KernelClass {
 /// the effect lives in the symbol string, not the bare `Ffi` reference.
 const EFFECT_KERNELS: &[&str] = &[
     "Db", "Auth", "File", "Server", "Process", "Io", "System", "RateLimit", "Middleware", "Http",
-    "Time", "Random", "Uuid", "Log", "Live", "Jobs", "Cli", "Tui", "Webview", "Context",
+    "Time", "Random", "Uuid", "Log", "Live", "Jobs", "Cli", "Tui", "Webview", "Context", "Image",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing

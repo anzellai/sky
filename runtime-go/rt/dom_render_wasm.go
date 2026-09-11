@@ -3,6 +3,7 @@
 package rt
 
 import (
+	"strconv"
 	"strings"
 	"syscall/js"
 )
@@ -241,6 +242,25 @@ func boolAttr(v string) bool { return v != "" && v != "false" }
 // side-channel data attributes, not DOM events, and are skipped.
 func bindNodeEvents(n js.Value, el VNode) {
 	for evt, handler := range el.Events {
+		// File / image inputs. `Ui.onFile` / `Ui.onImage` lower to the meta
+		// events "sky-file" / "sky-image" (Std/Html/Events.sky). Sky.Live wires
+		// these in its client JS (and resizes an image via a canvas); the Sky.Spa
+		// wasm client had NO handler, so an admin upload never reached the app
+		// under --target web:app. Wire a change listener that reads the selected
+		// file as a data URL and dispatches the handler with it. The file is
+		// delivered RAW (no client-side resize) — the backend Std.Image resizes,
+		// so the wasm binary carries no image codec and the resize is server-side.
+		if evt == "sky-image" || evt == "sky-file" {
+			h := handler
+			node := n
+			f := js.FuncOf(func(this js.Value, args []js.Value) any {
+				spaReadFileAndDispatch(node, h)
+				return nil
+			})
+			spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
+			n.Call("addEventListener", "change", f)
+			continue
+		}
 		if strings.HasPrefix(evt, "sky-") {
 			continue
 		}
@@ -333,6 +353,53 @@ func dispatchSubmit(handler any, data map[string]any) {
 			spaDispatch(handler)
 		}
 	}
+}
+
+// spaReadFileAndDispatch reads the file chosen in a file input as a data URL and
+// dispatches the onFile/onImage handler with it (a `String -> Msg`). The file is
+// delivered raw — no client-side resize (the backend Std.Image resizes). An
+// optional data-sky-ev-sky-file-max-size (bytes) rejects an over-large file with
+// an alert, matching Sky.Live + Std.Ui.maxFileSize. The input is reset after so
+// the same file can be re-picked. FileReader js.Funcs are released one-shot.
+func spaReadFileAndDispatch(input js.Value, handler any) {
+	files := input.Get("files")
+	if !files.Truthy() || files.Get("length").Int() == 0 {
+		return
+	}
+	file := files.Index(0)
+	if maxAttr := input.Call("getAttribute", "data-sky-ev-sky-file-max-size"); maxAttr.Type() == js.TypeString && maxAttr.String() != "" {
+		if max, err := strconv.Atoi(maxAttr.String()); err == nil && max > 0 {
+			if sz := file.Get("size"); sz.Type() == js.TypeNumber && sz.Int() > max {
+				if alert := js.Global().Get("alert"); alert.Type() == js.TypeFunction {
+					alert.Invoke("That file is too large. Max " + strconv.Itoa(max/1000000) + "MB.")
+				}
+				input.Set("value", "")
+				return
+			}
+		}
+	}
+	reader := js.Global().Get("FileReader").New()
+	var onload, onerr js.Func
+	release := func() {
+		onload.Release()
+		onerr.Release()
+	}
+	onload = js.FuncOf(func(this js.Value, a []js.Value) any {
+		defer release()
+		if res := reader.Get("result"); res.Type() == js.TypeString {
+			dispatchEvent(handler, res.String())
+		}
+		input.Set("value", "")
+		return nil
+	})
+	onerr = js.FuncOf(func(this js.Value, a []js.Value) any {
+		defer release()
+		input.Set("value", "")
+		return nil
+	})
+	reader.Set("onload", onload)
+	reader.Set("onerror", onerr)
+	reader.Call("readAsDataURL", file)
 }
 
 // eventPayload extracts the string argument a handler expects. Input/change hand

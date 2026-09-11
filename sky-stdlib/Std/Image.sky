@@ -1,0 +1,50 @@
+module Std.Image exposing (resizeToFit, thumbnail)
+
+{-| Backend image resize + thumbnail generation.
+
+Operate on raw bytes (`Sky.Core.Bytes`, an alias of `String`) — decode the base64
+payload of an upload first (`Sky.Core.Encoding.base64Decode`), resize, then write
+with `Sky.Core.File.writeFile`. Scaling runs on the server (a Sky.Spa app resizes
+in its backend, never in the wasm client), so an admin can upload a full-size
+photo and the app serves a capped image plus a small thumbnail with no client-side
+image code.
+
+Both entries preserve the source format (a JPEG stays a JPEG at quality 85, a PNG
+stays a PNG) and NEVER upscale — an image already within the box is returned at its
+own size. A non-image or corrupt input fails with a classified `Error`.
+
+    import Std.Image as Image
+    import Sky.Core.Encoding as Encoding
+    import Sky.Core.File as File
+
+    saveUpload : String -> Task Error String
+    saveUpload dataUrl =
+        case Encoding.base64Decode dataUrl of
+            Ok bytes ->
+                Image.resizeToFit 1600 1600 bytes
+                    |> Task.andThen (\big -> File.writeFile "public/photo.jpg" big)
+                    |> Task.andThen (\_ -> Image.thumbnail 400 bytes)
+                    |> Task.andThen (\small -> File.writeFile "public/photo.thumb.jpg" small)
+                    |> Task.map (\_ -> "/static/photo.jpg")
+
+            Err e ->
+                Task.fail e
+-}
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+
+{-| Scale an image to fit within `maxWidth` x `maxHeight`, preserving the aspect
+ratio and never enlarging. The bytes in and out are the raw image file contents
+(`Sky.Core.Bytes`). -}
+resizeToFit : Int -> Int -> String -> Task Error String
+resizeToFit =
+    Ffi.kernel "Image_resizeToFit"
+
+
+{-| Scale an image to fit within `maxDim` x `maxDim` — a square bound for a
+thumbnail. Preserves the aspect ratio and never enlarges. -}
+thumbnail : Int -> String -> Task Error String
+thumbnail =
+    Ffi.kernel "Image_thumbnail"
