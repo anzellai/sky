@@ -297,6 +297,30 @@ which reads the same JSON catalogue and renders an interactive
 terminal view: ↑/↓ navigate, Enter expands the highlighted entry,
 `/` focuses the search box, Esc clears, Ctrl-C quits.
 
+#### `sky doc --diagram <kind> [--format mermaid|md]` (WIP)
+
+A read-only architecture diagram of the current project, emitted to
+stdout. The first (and, for now, only) kind is `components`:
+
+```bash
+sky doc --diagram components               # fenced ```mermaid flowchart
+sky doc --diagram components --format md   # mermaid + a module→capability table
+```
+
+`components` charts each `src/` module and the external capabilities
+it reaches — Database, External HTTP, Auth, File, Env/Config,
+Telemetry/Logs, Jobs, Realtime/SSE, and Time/Random/Uuid — as
+capability nodes with `Module --> Capability` edges. For a Sky.Spa
+app (a `web:app` / `mobile*` / `desktop:*` / `tablet:*` target, or an
+explicit `Std.Spa` use) it splits into a `Client` lane (the modules)
+and a `Server` lane (the capabilities), with the `/_rpc` boundary
+between them, matching the "any effect runs on the server" split. The
+analysis reuses the same effect-kernel classification as the Sky.Spa
+auto-split; it never type-checks, lowers, `go build`s, or writes.
+
+Other kinds — `wire`, `telemetry`, `journey`, `callpath` — are
+planned and exit non-zero with a "not yet implemented" note today.
+
 ### `sky doctor [--fix] [--verbose]`
 
 Project + environment health checks. v0.15.48 shipped **15 checks**

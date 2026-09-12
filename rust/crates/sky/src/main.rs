@@ -5707,6 +5707,12 @@ fn cmd_doc(args: &[String]) -> ExitCode {
     };
     let project_dir = project::project_dir_for(&cwd.join("_"));
 
+    // `sky doc --diagram <kind>` — read-only architecture diagrams over the
+    // current project. Only `components` ships now; other kinds are announced.
+    if let Some(kind) = flag_value(args, "--diagram") {
+        return cmd_doc_diagram(&repo_root, &project_dir, &kind, args);
+    }
+
     if list {
         println!("{}", project::list_modules(&repo_root, &project_dir));
         return ExitCode::SUCCESS;
@@ -5722,6 +5728,42 @@ fn cmd_doc(args: &[String]) -> ExitCode {
         }
         Err(msg) => {
             eprintln!("{msg}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `sky doc --diagram <kind>` — render a read-only architecture diagram of the
+/// current project to stdout. Only `components` is implemented; another kind
+/// prints the planned set and exits non-zero. `--format mermaid` (default)
+/// prints a fenced flowchart; `--format md` adds a Markdown legend + table.
+fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[String]) -> ExitCode {
+    const PLANNED: &[&str] = &["components", "wire", "telemetry", "journey", "callpath"];
+    if kind != "components" {
+        eprintln!(
+            "sky doc --diagram {kind}: not yet implemented.\n\
+             Planned diagram kinds: {}.\n\
+             Only `components` is available in this release.",
+            PLANNED.join(", ")
+        );
+        return ExitCode::from(2);
+    }
+    let format = match flag_value(args, "--format").as_deref() {
+        None | Some("mermaid") => project::diagram::Format::Mermaid,
+        Some("md") => project::diagram::Format::Md,
+        Some(other) => {
+            eprintln!("sky doc --format {other}: unknown format (use `mermaid` or `md`).");
+            return ExitCode::from(2);
+        }
+    };
+    let app_target = sky_toml_app_target(project_dir);
+    match project::diagram::analyze_components(repo_root, project_dir, None, app_target.as_deref()) {
+        Ok(graph) => {
+            print!("{}", project::diagram::render_components(&graph, format));
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky doc --diagram components: {e}");
             ExitCode::FAILURE
         }
     }

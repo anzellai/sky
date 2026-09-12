@@ -470,6 +470,46 @@ pub fn body_def_callees(db: &dyn SkyDb, module: ModuleId, def: DefId) -> Vec<Def
     out
 }
 
+/// Read-only companion to [`body_def_callees`]: the effect-kernel families a
+/// def's OWN body references directly — `Res::Kernel` effect families and
+/// `Ffi.kernel "<Prefix>_…"` symbol prefixes — classified through the SAME
+/// [`classify_kernel`] the auto-split uses, together with the top-level defs it
+/// calls. Pure families (`String`, `List`, `Codec`, …) are dropped; server-only
+/// and client-effect families are returned by their prefix name (`Db`, `Http`,
+/// `System`, `Time`, `Native`, …).
+///
+/// `sky doc --diagram components` (see [`crate::diagram`]) builds its transitive
+/// capability graph from these two channels, so it reuses this crate's
+/// classification and can NEVER drift from the split's — the
+/// `classification_is_exhaustive` completeness test keeps guarding the
+/// underlying kernel tables, and a new effect family flows into the diagram for
+/// free. Families + callees are each deduped + sorted for deterministic output.
+/// Never lowers, emits, or writes.
+pub fn body_effects_and_callees(
+    db: &dyn SkyDb,
+    module: ModuleId,
+    def: DefId,
+) -> (Vec<String>, Vec<DefId>) {
+    let resolved = db.resolve(module);
+    let Some(body) = resolved.bodies.get(&def) else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut acc = Refs::default();
+    if let Some(root) = body.root {
+        collect(body, root, &mut acc, &CollectCtx::default());
+    }
+    let mut fams: BTreeSet<String> = BTreeSet::new();
+    for (m, _f, _class) in &acc.server_kernels {
+        fams.insert(m.clone());
+    }
+    for (m, _f) in &acc.client_kernels {
+        fams.insert(m.clone());
+    }
+    let mut callees: Vec<DefId> = acc.callees.into_iter().collect();
+    callees.sort();
+    (fams.into_iter().collect(), callees)
+}
+
 /// True when `def`'s body is a direct kernel alias `Ffi.kernel "<sym>"` whose
 /// symbol is one of `targets`. The Sky-source stdlib defines `Sub.subscribeTopic`
 /// / `Cmd.publish` as exactly this shape (`Ffi.kernel "Sub_subscribeTopic"`,

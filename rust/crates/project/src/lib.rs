@@ -19,6 +19,10 @@ pub mod config_migration;
 /// `sky config migrate` — the automatic legacy-`sky.toml` → typed-`config`
 /// rewriter. Reuses the ONE `config_migration::MIGRATIONS` table, never a copy.
 pub mod config_migrate;
+/// `sky doc --diagram components` — a read-only architecture/component diagram
+/// of a Sky app (module nodes + capability buckets + edges, with the Sky.Spa
+/// client/server split). Reads the resolved HIR; never lowers, emits, or writes.
+pub mod diagram;
 mod doc;
 mod driver;
 mod ffi_ops;
