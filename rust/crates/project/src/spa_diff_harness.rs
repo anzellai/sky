@@ -86,15 +86,37 @@ pub fn select_checkable(report: &SpaPartitionReport) -> (Vec<CheckableBranch>, V
         .chain(report.client_result.iter().map(|(root, _)| root.clone()))
         .collect();
 
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for b in &report.branches {
         if !b.server {
             continue; // client branch: no round-trip, nothing to diff
         }
         let ctor = ctor_of(&b.msg).to_string();
+        // A ctor that appears in more than one arm (`GotTodos (Ok _)` /
+        // `GotTodos (Err _)`) would emit a duplicate `genMsg_<Ctor>` — diff it once.
+        if !seen.insert(ctor.clone()) {
+            continue;
+        }
         let Some(io) = &b.io else {
             notes.push(format!("skip `{ctor}`: server branch with no derived I/O"));
             continue;
         };
+        // The harness rebinds the arm as `case msg of <Ctor> <arg…>`, so the
+        // pattern must be a SIMPLE top-level ctor application (`SetRegion region`).
+        // A nested / literal pattern (`GotTodos (Ok _)`, `Key "Enter"`) binds args
+        // the emitters cannot reconstruct from the wire — defer to phase 3.
+        let simple = if io.msg_args.is_empty() {
+            b.msg == ctor
+        } else {
+            b.msg == format!("{ctor} {}", io.msg_args.join(" "))
+        };
+        if !simple {
+            notes.push(format!(
+                "skip `{}`: non-simple arm pattern (nested / literal binders the wire cannot reconstruct) — deferred to phase 3",
+                b.msg
+            ));
+            continue;
+        }
         if b.forces_effect {
             notes.push(format!(
                 "skip `{ctor}`: forces a run-position effect (DB / clock / fresh Uuid) — deferred to the phase-3 effect-mock harness"
@@ -417,6 +439,75 @@ mod tests {
         assert!(out.snippet.contains("( base, _ ) =\n                    init ()"), "narrow reconstruct seeds base from init:\n{}", out.snippet);
         assert!(out.snippet.contains("count = m2.count"), "resp write field:\n{}", out.snippet);
         well_formed(&out.snippet);
+    }
+
+    use crate::spa_partition::{BranchVerdict, SpaPartitionReport};
+
+    fn bv(msg: &str, server: bool, io: Option<BranchIo>, forces: bool) -> BranchVerdict {
+        BranchVerdict {
+            msg: msg.to_string(),
+            server,
+            reason: String::new(),
+            io,
+            msg_arg_tys: vec![],
+            forces_effect: forces,
+        }
+    }
+    fn report_with(branches: Vec<BranchVerdict>) -> SpaPartitionReport {
+        SpaPartitionReport {
+            project: "t".into(),
+            entry_module: "Main".into(),
+            update_name: Some("update".into()),
+            update_module_name: Some("Main".into()),
+            branches,
+            whole_update: None,
+            tainted: vec![],
+            model_fields: vec![],
+            subscribes_topics: false,
+            publishes: false,
+            notes: vec![],
+            init_model_server_reads: vec![],
+            server_internal: vec!["Internal".into()],
+            chaining_branches: vec!["Chained".into()],
+            client_result: vec![("ClientRoot".into(), "GotIt".into())],
+            server_chain_warnings: vec![],
+        }
+    }
+    fn io_args(args: &[&str]) -> BranchIo {
+        BranchIo {
+            reads_whole_model: false,
+            read_fields: vec!["a".into()],
+            msg_args: args.iter().map(|s| s.to_string()).collect(),
+            writes_whole_model: false,
+            write_fields: vec!["a".into()],
+        }
+    }
+
+    #[test]
+    fn fence_selects_effect_free_server_branches_and_skips_the_rest() {
+        let branches = vec![
+            bv("SetRegion region", true, Some(io_args(&["region"])), false), // checkable
+            bv("Pure", false, None, false),                          // client → skip
+            bv("Loads", true, Some(io_args(&[])), true),             // forces effect → skip
+            bv("Internal", true, Some(io_args(&[])), false),         // server-internal → skip
+            bv("Chained", true, Some(io_args(&[])), false),          // chaining → skip
+            bv("ClientRoot", true, Some(io_args(&[])), false),       // client-result root → skip
+            bv("GotTodos (Ok _)", true, Some(io_args(&[])), false),  // nested pattern → skip
+        ];
+        let (checkable, _notes) = select_checkable(&report_with(branches));
+        let ctors: Vec<&str> = checkable.iter().map(|c| c.ctor.as_str()).collect();
+        assert_eq!(ctors, vec!["SetRegion"], "only the effect-free simple server branch is checkable");
+    }
+
+    #[test]
+    fn fence_dedups_a_ctor_appearing_in_multiple_arms() {
+        // Same ctor in two arms → diffed once (no duplicate genMsg_<Ctor>).
+        let branches = vec![
+            bv("Toggle id", true, Some(io_args(&["id"])), false),
+            bv("Toggle id", true, Some(io_args(&["id"])), false),
+        ];
+        let (checkable, _) = select_checkable(&report_with(branches));
+        assert_eq!(checkable.len(), 1, "a repeated ctor is selected once");
     }
 
     #[test]
