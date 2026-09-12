@@ -1,0 +1,143 @@
+name: 'Release gate setup'
+description: >-
+  Shared setup for the parallel release-gate jobs (release.yml): Rust + Go
+  toolchains, a WARM Go build+module cache and cargo cache, an optional runner
+  disk reclaim, and the compiler install (scripts/build.sh -> sky-out/sky).
+  Factored out of the former single `gate` job so each of the fanned-out gate
+  jobs defines its setup once. The behaviour matches that job's setup steps.
+
+  NOTE ON CHECKOUT: a local composite action can only be referenced AFTER the
+  repository is on disk, so `actions/checkout` cannot live here — it stays as
+  the first step of each caller job, immediately before `uses:
+  ./.github/actions/gate-setup`.
+
+inputs:
+  cache-key:
+    description: >-
+      Namespaces this job family's Go cache (e.g. core / t2 / app / falsifiers
+      / sweep) so a heavy job's Go cache does not evict a light one's.
+    required: false
+    default: 'release'
+  install-compiler:
+    description: >-
+      Run scripts/build.sh to install the compiler at sky-out/sky. Every gate
+      job needs it (build-run, the harness gates, and the sweep all drive
+      sky-out/sky).
+    required: false
+    default: 'true'
+  postgres:
+    description: >-
+      apt-install postgresql-16 + sqlite3 for the live tests. The workspace
+      live tests, the T3 app tier, and the T1 falsifiers need a real
+      PostgreSQL; steps set SKY_POSTGRES_BIN themselves.
+    required: false
+    default: 'false'
+  neovim:
+    description: >-
+      Install Neovim for the `lsp` harness gate, a DECLARED dependency of a T1
+      gate. Without it that gate reports 0 assertions and the harness fails.
+    required: false
+    default: 'false'
+  free-disk:
+    description: >-
+      Reclaim the ~30 GB of preinstalled toolchains this gate never uses, up
+      front, so the accumulated Go build output has room. This is a one-time
+      reclaim of UNUSED tooling — NOT a `go clean -cache`, which would throw
+      away the warm cache this setup exists to keep.
+    required: false
+    default: 'true'
+  rust-cache-writer:
+    description: >-
+      Whether this job SAVES the shared cargo cache (`sky-release-linux`).
+      Exactly one job family should write it; the rest restore it. Concurrent
+      writes of the same key churn the 10 GB repo cache budget.
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    # UNUSED preinstalled toolchains, reclaimed up front. This is NOT the
+    # cache-throwing `go clean -cache` the old single gate ran mid-run — those
+    # reclaims are gone now that the work is split across jobs, each doing far
+    # less. This only removes tooling the gate never touches.
+    - name: Free up runner disk space
+      if: inputs.free-disk == 'true'
+      shell: bash
+      run: |
+        df -h / | tail -1
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+          /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+          /usr/local/share/powershell /usr/share/swift 2>/dev/null || true
+        sudo docker image prune --all --force 2>/dev/null || true
+        df -h / | tail -1
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    # Pin the Go toolchain (the same reason the build job does): the gates shell
+    # out to a real `go build`, and an unpinned toolchain silently tests
+    # whatever Go the runner image ships. cache:false — the Go cache is managed
+    # explicitly below so the BUILD cache (not just the module cache) is warm.
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.26'
+        cache: false
+
+    # Point GOCACHE / GOMODCACHE at workspace dirs and keep them warm across
+    # releases. Writing to $GITHUB_ENV propagates these to every later step in
+    # the CALLER job, so build.sh, the harness gates, and the sweep all use the
+    # cached dirs.
+    - name: Route the Go caches to workspace dirs
+      shell: bash
+      run: |
+        echo "GOCACHE=${{ github.workspace }}/.gocache"     >> "$GITHUB_ENV"
+        echo "GOMODCACHE=${{ github.workspace }}/.gomodcache" >> "$GITHUB_ENV"
+
+    - name: Cache Go build + module cache (keep it WARM across releases)
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ github.workspace }}/.gocache
+          ${{ github.workspace }}/.gomodcache
+        key: go-release-${{ inputs.cache-key }}-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+        restore-keys: go-release-${{ inputs.cache-key }}-
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+        shared-key: sky-release-linux
+        save-if: ${{ inputs.rust-cache-writer == 'true' }}
+
+    # Neovim is a DECLARED dependency of the `lsp` harness gate (T1). Without it
+    # that gate reports 0 assertions and the harness fails — a gate that cannot
+    # run has not passed.
+    - name: Neovim for the lsp harness gate
+      if: inputs.neovim == 'true'
+      uses: rhysd/action-setup-vim@v1
+      with:
+        neovim: true
+
+    # A real PostgreSQL for the live tests (workspace live tests, the T3 app
+    # tier, the T1 falsifiers). Without one they used to return and report `ok`
+    # — a release gate is the last place that should count tests that did not
+    # run.
+    - name: PostgreSQL + sqlite3 for the live tests
+      if: inputs.postgres == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq postgresql-16 sqlite3
+        for b in initdb pg_ctl postgres; do
+          [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+            echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+        done
+
+    # `scripts/build.sh` installs the compiler at `sky-out/sky` — the binary
+    # BOTH the codegen build+run sweep and the app-driving harness gates need,
+    # and it MUST run before either. It is here (before every gate step) rather
+    # than mid-job so the ordering the v0.23.0 publish got wrong cannot recur.
+    - name: Install the compiler the gates drive
+      if: inputs.install-compiler == 'true'
+      shell: bash
+      run: bash scripts/build.sh

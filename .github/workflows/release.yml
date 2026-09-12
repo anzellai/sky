@@ -170,119 +170,58 @@ jobs:
             dist/${{ matrix.artifact }}.zip
           if-no-files-found: error
 
-  # ────────────────────────────────────────────────────────────────
-  # THE RELEASE TEST GATE.
+  # ════════════════════════════════════════════════════════════════════════
+  # THE RELEASE TEST GATE — fanned out into independent jobs that run
+  # CONCURRENTLY.
   #
-  # Until this job existed, `release.yml` ran NO test of any kind. Pushing a
-  # `v*` tag built four binaries, checked that each reported the tag's version,
-  # and published — so a tag cut from a red commit shipped, green. The only
-  # thing standing between a broken compiler and a published release was
-  # `scripts/preflight-tag.sh`, which a human has to remember to run locally.
-  # "A human remembers" is not a gate.
+  # Until this gate existed, `release.yml` ran NO test of any kind: a tag cut
+  # from a red commit shipped, green. The gate is the `rust gate suite` arm of
+  # `scripts/preflight-tag.sh` — the set this repo already treats as the release
+  # bar — plus the gate harness, which is the only runner that can report NOT
+  # RUN / UNPROVEN instead of silently passing.
   #
-  # WHAT IT RUNS, and why exactly this set: it is the `rust gate suite` arm of
-  # `scripts/preflight-tag.sh:75` — the set this repo already treats as the
-  # release bar — plus the gate harness, which is the only runner that can
-  # report NOT RUN / UNPROVEN instead of silently passing. Keeping the two in
-  # step is deliberate: a release must not be gated on something weaker than
-  # what the maintainer runs by hand.
+  # IT WAS ONE SEQUENTIAL JOB (~2 h): every tier ran back to back on a single
+  # runner, with `go clean -cache` "reclaim" steps between them that threw away
+  # the Go build cache and forced cold rebuilds. It is now SPLIT across five
+  # jobs — gate-core / gate-t2 / gate-app / gate-falsifiers / gate-sweep — so the
+  # wall-clock collapses to the slowest job instead of the sum. NOTHING is
+  # dropped: every tier T1-T4, the corpus gates, the workspace tests, the
+  # falsifier verification, the census, and the FULL clean-slate example sweep
+  # each run in EXACTLY ONE of the jobs below, with their commands copied
+  # VERBATIM. `release: needs:` lists all five, so publication is still blocked
+  # until every one is green (CLAUDE.md §0.2.1, INVIOLABLE).
   #
-  # WHY IT DOES NOT `needs: build`: the matrix and the gate are independent, so
-  # they run concurrently and the gate does not lengthen the critical path. The
-  # dependency that matters is `release: needs: [build, gate]` — assets may be
-  # built, but nothing is PUBLISHED until the gate is green.
+  # Shared setup (Rust + Go toolchains, warm caches, disk reclaim, the
+  # scripts/build.sh compiler install) is defined ONCE in the local composite
+  # action .github/actions/gate-setup. The go clean -cache reclaims are GONE:
+  # with the work split, each runner does far less, and actions/cache in the
+  # composite keeps the Go build cache warm across releases instead.
   #
-  # T4 (pre-release) ceiling is 3 h (docs/ci-test-architecture-v2.md §8.1); the
-  # per-job timeout below is sized to this job's own estimate per §8.2, not to
-  # the tier.
-  # ────────────────────────────────────────────────────────────────
-  gate:
+  # `runs-on: ubuntu-latest` throughout. A larger GitHub-hosted runner
+  # (ubuntu-latest-8-core) or a self-hosted runner would cut the slowest jobs
+  # (gate-core / gate-t2 / gate-sweep shards) further, since their cost is
+  # `go build` / `cargo` compute; left on the free tier deliberately — flip
+  # only with a maintainer decision.
+  # ════════════════════════════════════════════════════════════════════════
+
+  # gate-core: workspace tests + corpus gates + compiler install + codegen
+  # build+run + the T1 harness (with proofs). The `lsp` T1 gate needs Neovim;
+  # the workspace live tests + T1 apps need a real PostgreSQL. Sole writer of
+  # the shared cargo cache.
+  gate-core:
     runs-on: ubuntu-latest
-    # 90 → 180. The light subset fit in 90; the FULL tier suite does not.
-    # §0.2.1 (INVIOLABLE) requires every tier at a release, and the heavy ones
-    # dominate: the T2 behaviour-corpus alone is ~25 min on a CI runner
-    # (nightly-sweep.yml:228 measured it >25 min on its first run), T3 adds the
-    # Postgres app builds, and the full clean-slate example-sweep — build AND
-    # run every example incl. the FFI/Std.Db ones — is ~60 min in the nightly
-    # (nightly-sweep.yml:44-48). Sized to hold all of them, not to a single tier.
-    timeout-minutes: 180
-    # T3 (harness --tier t3) drives the Layer-2 app gates, two of which
-    # (`apps-ledger-postgres`, `apps-dispatch-postgres`) need a REAL PostgreSQL.
-    # This service mirrors nightly-sweep.yml's `harness-t3` job VERBATIM (same
-    # image, credentials, health-check) so the DSN the gates read is the one that
-    # job already proves works. It is ADDITIONAL to the apt-installed
-    # postgresql-16 below: that one backs the shared-cluster live tests via
-    # SKY_POSTGRES_BIN (each spins up its own cluster in a temp dir); this
-    # container backs the T3 DSN on localhost:5432.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: sky
-          POSTGRES_PASSWORD: sky
-          POSTGRES_DB: sky
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # Cache-warm: ~5 min compiler install + ~10 min workspace tests + ~3 min
+    # corpus + ~10 min build-run + T1. Sized generous on the release path; a
+    # false red here blocks a tag.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
-      # The full-tier release gate builds AND runs every corpus fixture (T2),
-      # the Postgres app builds (T3), and clean-slate-builds every example incl.
-      # FFI/Std.Db (the full sweep) — all on ONE runner. A stock ubuntu runner
-      # ships ~14 GB free, which the accumulated Go build output exhausts partway
-      # through (v0.23.2's first attempt died at the falsifier step with
-      # `no space left on device`). Reclaim the ~30 GB of preinstalled toolchains
-      # this gate never uses, up front, so the build output has room.
-      - name: Free up runner disk space
-        run: |
-          df -h / | tail -1
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
-            /usr/local/share/powershell /usr/share/swift 2>/dev/null || true
-          sudo docker image prune --all --force 2>/dev/null || true
-          df -h / | tail -1
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      # `test-rest` shelled out to a real `go build` with no toolchain pin,
-      # which meant it silently tested whatever Go the runner image happened to
-      # ship. Pin it here for the same reason the build job does.
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/gate-setup
         with:
-          go-version: '1.26'
-          cache: true
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
-
-      # Neovim is a DECLARED dependency of the `lsp` harness gate, which joined
-      # the registry on 2026-08-12. Without it that gate reports 0 assertions
-      # and the harness fails — correctly, since a gate that cannot run has not
-      # passed. Installing it here is what makes the release gate able to run
-      # the editor-parity suite at all.
-      - uses: rhysd/action-setup-vim@v1
-        with:
-          neovim: true
-
-      # The live environment, for the same reason `test-rest` now provisions it:
-      # the shared-cluster security tests need a real PostgreSQL, and without
-      # one they used to return and report `ok`. A release gate is the last
-      # place that should be counting tests that did not run.
-      - name: PostgreSQL + sqlite3 for the live tests
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
-          for b in initdb pg_ctl postgres; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          cache-key: core
+          postgres: 'true'
+          neovim: 'true'
+          rust-cache-writer: 'true'
 
       - name: Workspace tests
         working-directory: rust
@@ -314,25 +253,11 @@ jobs:
           echo "── xtask coerce-floor (SKY_LIVE_TESTS=skip: FFI-gitignored rows) ──"
           SKY_LIVE_TESTS=skip cargo run --release --locked -q -p xtask -- coerce-floor
 
-      # `scripts/build.sh` installs the compiler at `sky-out/sky` — the binary
-      # that BOTH the codegen build+run sweep and the app-driving harness gates
-      # need, and it MUST run before either.
-      #
-      #   * `build-run --all` spawns `sky build` for every `live`-shape example.
-      #     On the v0.23.0 tag this step ran BEFORE build.sh, so every live
-      #     example failed with `sky build spawn: No such file or directory
-      #     (os error 2)` — four platform binaries already built, publication
-      #     blocked on an ORDERING bug, not a defect (the per-commit and nightly
-      #     gates, which build the compiler first, passed the same commit).
-      #   * The harness gates that drive real projects (`apps-*`, `sky-suites`)
-      #     invoke `sky-out/sky` directly. Without it they report VACUOUS — "a
-      #     gate that cannot run has not passed" — which is what blocked the
-      #     first v0.20.0 tag (eight gates VACUOUS). The gates were right; the
-      #     job order was wrong.
-      - name: Install the compiler the gates drive
-        working-directory: .
-        run: bash scripts/build.sh
-
+      # The compiler is installed by the gate-setup composite action (via
+      # scripts/build.sh) BEFORE this step, so build-run's live-shape examples
+      # can spawn `sky build`. The v0.23.0 publish failed because build-run ran
+      # before the install; the composite ordering makes that recurrence
+      # impossible.
       - name: Codegen build + run
         working-directory: rust
         run: |
@@ -340,62 +265,84 @@ jobs:
           cargo run --release --locked -q -p xtask -- build-run --all
           cargo run --release --locked -q -p xtask -- build-run --shape cli --run --golden
 
-      # `build-run --all` builds+runs every example, so bound the Go build cache
-      # afterward (as the per-commit and nightly jobs do) — belt-and-suspenders
-      # against the disk pressure that could otherwise evict artifacts mid-job.
-      - name: Bound the Go caches
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
-
       - name: Gate harness (T1) with proof requirement
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs
 
-      # NO disk reclaim before T2. T2's corpus runner builds 4 cases CONCURRENTLY
-      # (corpus/runner.rs `workers()`), so a cold Go cache makes the first 4
-      # workers cold-compile the runtime AT ONCE — a memory herd that failed
-      # exactly cases [1..4]/337 when this step used to `go clean -cache` here.
-      # T2 must run WARM off T1's cache (the runner cleans each case's binary, so
-      # disk grows only via the shared GOCACHE, which fits through T2). The disk
-      # is reclaimed AFTER T2, before T3.
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
 
-      # T2 — the behavioural corpus. This is the tier that caught the v0.21.0
-      # `record_update` codegen regression the MORNING AFTER the release, because
-      # it ran ONLY in the nightly (nightly-sweep.yml's `behaviour-corpus` job).
-      # §0.2.1 exists precisely because a gate we own found a defect one tier too
-      # late. It `go build`s AND RUNS every combinatorial fixture. Nightly runs it
-      # as bare `--tier t2`; `--require-proofs` is added here to match the rigor
-      # of the T1 line above (a release must not ship behind a lapsed proof).
+  # gate-t2 — the behavioural corpus. This is the tier that caught the v0.21.0
+  # `record_update` codegen regression the MORNING AFTER the release, because it
+  # ran ONLY in the nightly. §0.2.1 exists precisely because a gate we own found
+  # a defect one tier too late. It `go build`s AND RUNS every combinatorial
+  # fixture. `--require-proofs` matches the rigor of the T1 line (a release must
+  # not ship behind a lapsed proof).
+  gate-t2:
+    runs-on: ubuntu-latest
+    # The T2 behaviour-corpus alone is ~25 min on a CI runner
+    # (nightly-sweep.yml measured it >25 min on its first run) plus the compiler
+    # install. Its own job now, so it no longer serialises behind T1.
+    timeout-minutes: 60
+    env:
+      GO_CACHE_BUDGET_MB: '4096'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: t2
+
       - name: Gate harness (T2 — behaviour-corpus, build+run every fixture) with proof requirement
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t2 --require-proofs
 
-      # Reclaim disk BEFORE T3 — the fix for the original failure. T1 (483 corpus
-      # builds) + T2 (build+run every fixture) grow the Go build cache with no
-      # reclaim, and after T1 the disk was measured 93% full (12 GB free). By T3
-      # it was exhausted, so `sky db seed` / `sky db drop` (which `go build` a
-      # temp entry) failed with a build error in BOTH CGO modes — an ENOSPC the
-      # harness could not tell apart from a compile error. T3 passes in isolation
-      # (nightly-sweep's `harness-t3` job) precisely because it does not follow
-      # T1+T2. Clearing the cache here is safe for T3 specifically: the harness
-      # runs its gates SEQUENTIALLY (harness/mod.rs), so the first app cold-builds
-      # the runtime once and the rest reuse it — no cold-parallel memory herd like
-      # the one that broke T2's 4-worker corpus runner (why there is no pre-T2
-      # reclaim). Same `go clean -cache` the falsifier + sweep already do below.
-      - name: Reclaim disk before the T3 app tier
-        run: |
-          df -h / | tail -1
-          go clean -cache 2>/dev/null || true
-          find examples apps -type d \( -name 'sky-out*' -o -name '.skycache' -o -name '.skydeps' \) -prune -exec rm -rf {} + 2>/dev/null || true
-          rm -rf /tmp/sky-* /tmp/go-build* 2>/dev/null || true
-          df -h / | tail -1
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
 
-      # T3 — the Layer-2 app tier. `apps-ledger-postgres` / `apps-dispatch-postgres`
-      # read the DSN below (the service container declared at job level); the
-      # values mirror nightly-sweep.yml's `harness-t3` job VERBATIM. Set on the
-      # STEP, not the job, so the earlier workspace/live tests — which stand up
-      # their OWN cluster via SKY_POSTGRES_BIN — are not handed this DSN.
+  # gate-app — the Layer-2 app tier (T3) + the pre-release tier (T4).
+  # `apps-ledger-postgres` / `apps-dispatch-postgres` (T3) read the DSN below
+  # (the service container declared at job level); the values mirror
+  # nightly-sweep.yml's `harness-t3` job VERBATIM. T4 (`apps-ffi-scale`, the
+  # 76k-symbol FFI benchmark) is the pre-release tier whose whole purpose is to
+  # run exactly here.
+  gate-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # T3 needs a REAL PostgreSQL. This service mirrors nightly-sweep.yml's
+    # `harness-t3` job VERBATIM (same image, credentials, health-check) so the
+    # DSN the gates read is the one that job already proves works. It is
+    # ADDITIONAL to the apt-installed postgresql-16 (via the composite): that one
+    # backs the shared-cluster live tests via SKY_POSTGRES_BIN (each spins up its
+    # own cluster in a temp dir); this container backs the T3 DSN on
+    # localhost:5432.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sky
+          POSTGRES_PASSWORD: sky
+          POSTGRES_DB: sky
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: app
+          postgres: 'true'
+
+      # T3 — the Layer-2 app tier. Set the DSN on the STEP, not the job, so the
+      # earlier live tests — which stand up their OWN cluster via
+      # SKY_POSTGRES_BIN — are not handed this DSN.
       - name: Gate harness (T3 — Layer-2 app tier on Postgres) with proof requirement
         working-directory: rust
         env:
@@ -404,73 +351,45 @@ jobs:
         run: cargo run --release --locked -q -p xtask -- harness --tier t3 --require-proofs
 
       # T4 is the PRE-RELEASE tier — the one whose whole purpose is to run
-      # exactly here — and it was invoked by nothing at all. Gate selection is
-      # exact tier equality (`harness/mod.rs`, `g.tier == o.tier`), so the
-      # `--tier t1` line above cannot reach it, and no other harness call
-      # existed in the repo. `apps-ffi-scale` (the 76k-symbol FFI benchmark)
-      # was therefore registered, budgeted, and never executed.
-      #
-      # Found by the Judge reviewing the fix for the SAME defect at T2, which
-      # is the argument for running whole tiers rather than named gates: a gate
-      # added at T4 later is picked up here instead of silently joining the set
-      # nothing runs.
+      # exactly here. Gate selection is exact tier equality, so the `--tier t1`
+      # line in gate-core cannot reach it; this is the only place it runs.
       - name: Gate harness (T4 — pre-release tier)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t4
 
-      # T2/T3/T4 build+run every fixture, the Postgres app builds, and the
-      # pre-release tier — the Go build cache (GOCACHE), rust/target, the emitted
-      # Go per example, and leaked go-build $WORK temp dirs pile up. The falsifier
-      # (rebuilds the cargo workspace under ~30 mutations + every Go fixture) and
-      # the full sweep (rebuilds every example clean-slate) then need that space
-      # back: v0.23.2 exhausted even a disk-freed runner here with
-      # `no space left on device`. Reclaim before the two heaviest steps.
-      - name: Reclaim disk before the falsifier + full sweep
-        run: |
-          df -h / | tail -1
-          go clean -cache 2>/dev/null || true
-          find examples -type d \( -name 'sky-out*' -o -name '.skycache' -o -name '.skydeps' \) -prune -exec rm -rf {} + 2>/dev/null || true
-          rm -rf /tmp/sky-* /tmp/go-build* 2>/dev/null || true
-          df -h / | tail -1
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
 
-      # Falsifier verification — the deepest check in the repo. `--require-proofs`
-      # on the tier lines above DEMOTES a PASS whose proof lapsed, but only this
-      # run ESTABLISHES that a gate's declared mutation still reddens it. It ran
-      # ONLY in the nightly (nightly-sweep.yml's `falsifier-verification` job).
-      # Scoped to `--tier t1` exactly as nightly does: the merge-blocking tier
-      # whose proofs the per-push safety net leans on. It rewrites
+  # gate-falsifiers — the falsifier verification + the census/ratchet gates.
+  # `--require-proofs` on the tier lines DEMOTES a PASS whose proof lapsed, but
+  # only this run ESTABLISHES that a gate's declared mutation still reddens it.
+  # It ran ONLY in the nightly. Scoped to `--tier t1` exactly as nightly does.
+  # The falsifier reruns T1 gates under mutation, so it needs the same
+  # environment T1 does (Neovim for `lsp`, a real PostgreSQL for the app gates).
+  gate-falsifiers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: falsifiers
+          postgres: 'true'
+          neovim: 'true'
+
+      # Falsifier verification — the deepest check in the repo. It rewrites
       # falsifier-proofs.json in the workspace; this job does not commit it.
       - name: Falsifier verification (T1 mutations still bite)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --tier t1
 
-      # The FULL clean-slate example sweep — build AND run every example from a
-      # wiped slate, INCLUDING the FFI / Std.Db / real-SDK examples (skyshop's
-      # 76k-symbol cold `sky install`, Fyne, embedded Postgres). This is the
-      # other gate §0.2.1 names by hand: it ran ONLY in the nightly
-      # (nightly-sweep.yml's `example-sweep` job). No `--build-only` — the sweep
-      # must RUN each binary, not just compile it. The compiler at `sky-out/sky`
-      # was installed by the `bash scripts/build.sh` step above (the sweep
-      # resolves that path and refuses a stale one via require_fresh_compiler),
-      # and it does the per-example FFI `sky install` itself.
-      - name: Reclaim disk before the full example sweep
-        run: |
-          df -h / | tail -1
-          go clean -cache 2>/dev/null || true
-          find examples -type d \( -name 'sky-out*' -o -name '.skycache' -o -name '.skydeps' \) -prune -exec rm -rf {} + 2>/dev/null || true
-          rm -rf /tmp/sky-* /tmp/go-build* 2>/dev/null || true
-          df -h / | tail -1
-
-      - name: Full example sweep (clean-slate build AND run of every example, incl. FFI/Std.Db)
-        working-directory: .
-        run: scripts/example-sweep.sh
-
       # Denominator + ledger + config-migration ratchets. These do not test the
       # compiler; they assert that the coverage + config-migration claims shipped
-      # alongside it are still true and still current. A release is exactly when a
-      # stale ledger does the most damage. `config-migration --check` is the
-      # legacy→withX migration census (§0.2.1 step 2); it runs in no per-commit
-      # job, so a release is the only place it is gated.
+      # alongside it are still true and still current. `config-migration --check`
+      # is the legacy→withX migration census (§0.2.1 step 2); it runs in no
+      # per-commit job, so a release is the only place it is gated.
       - name: Coverage ratchets
         working-directory: rust
         run: |
@@ -479,11 +398,67 @@ jobs:
           cargo run --release --locked -q -p xtask -- coverage-ledger --check
           cargo run --release --locked -q -p xtask -- config-migration --check
 
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-sweep — the FULL clean-slate example sweep, build AND RUN every example
+  # from a wiped slate, INCLUDING the FFI / Std.Db / real-SDK examples
+  # (skyshop's 76k-symbol cold `sky install`, Fyne, embedded Postgres). This is
+  # the other gate §0.2.1 names by hand: it ran ONLY in the nightly. No
+  # `--build-only` — the sweep must RUN each binary, not just compile it.
+  #
+  # SHARDED across 5 runners via `strategy.matrix`. Each shard builds+runs a
+  # DISJOINT subset (examples whose stable index mod 5 == shard); the union of
+  # the five shards is every example, exactly once (verified by
+  # `example_sweep_shards_are_total.rs` + `scripts/example-sweep.sh --list`).
+  # The compiler at sky-out/sky is installed by the composite (the sweep resolves
+  # that path and refuses a stale one via require_fresh_compiler), and it does
+  # the per-example FFI `sky install` itself.
+  gate-sweep:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    # A shard is ~1/5 of the ~60 min full sweep + the compiler install. 45
+    # keeps the ~1.5x margin.
+    timeout-minutes: 45
+    env:
+      # The sweep builds the FFI examples, whose Go deps float on "latest", so
+      # its Go module cache grows fast. 6 GiB here (the nightly sweep's budget),
+      # bounded before save so it never evicts the other release caches.
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          # All shards share one Go cache family so the FFI cache is warmed
+          # once and reused; distinct from the light jobs' caches.
+          cache-key: sweep
+          postgres: 'true'
+
+      - name: Full example sweep (clean-slate build AND run, shard ${{ matrix.shard }}/5, incl. FFI/Std.Db)
+        working-directory: .
+        env:
+          SWEEP_SHARD_INDEX: ${{ matrix.shard }}
+          SWEEP_SHARD_TOTAL: '5'
+        run: scripts/example-sweep.sh
+
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
   # ────────────────────────────────────────────────────────────────
   # Assemble release assets, generate checksums, publish GitHub Release.
   # ────────────────────────────────────────────────────────────────
   release:
-    needs: [build, gate]
+    # Publication is blocked until EVERY gate job is green — the §0.2.1
+    # "full suite green before publish" invariant, preserved across the split.
+    # A red gate → this job never runs → no Release → the tag is safe.
+    needs: [build, gate-core, gate-t2, gate-app, gate-falsifiers, gate-sweep]
     runs-on: ubuntu-latest
     # No compilation: download 4 artifacts, checksum, extract CHANGELOG notes,
     # create the Release (asset upload dominates) ≈ 3 min. 1.5x ≈ 5.

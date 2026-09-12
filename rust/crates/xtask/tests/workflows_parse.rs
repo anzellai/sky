@@ -736,12 +736,18 @@ fn the_census_and_ratchet_gates_run_on_a_pull_request() {
 ///
 /// # What this asserts
 ///
-/// The `gate` job in `release.yml` — the job `release: needs: [build, gate]`
-/// blocks publication on — has `run:` bodies that invoke, at minimum: the T2
-/// tier, the T3 tier, the falsifier verification, and a full `example-sweep.sh`
-/// that is NOT `--build-only` (it must RUN each example, not just compile it).
-/// T1 and T4 already had explicit tests / were present; T2/T3/falsifiers/sweep
-/// are the tiers that were nightly-only and are the point of §0.2.1.
+/// The release gate is fanned out into several concurrent jobs (`gate-core`,
+/// `gate-t2`, `gate-app`, `gate-falsifiers`, `gate-sweep`) that `release:
+/// needs:` all list, so publication is blocked until every one is green. The
+/// UNION of their `run:` bodies must invoke, at minimum: the T2 tier, the T3
+/// tier, the falsifier verification, and a full `example-sweep.sh` that is NOT
+/// `--build-only` (it must RUN each example, not just compile it). T1 and T4
+/// already had explicit tests / were present; T2/T3/falsifiers/sweep are the
+/// tiers that were nightly-only and are the point of §0.2.1.
+///
+/// It scans every job whose name starts with `gate` (the release gate family),
+/// so splitting a tier into its own sibling job does not create a gap — the
+/// invocation only has to live in ONE of them.
 ///
 /// Parsed, never grepped as raw text — a comment mentioning `--tier t2` must not
 /// vouch for an invocation that is not there, which is exactly how the sibling
@@ -759,26 +765,39 @@ fn the_release_gate_runs_the_full_tier_suite() {
         .and_then(|j| j.as_mapping())
         .expect("`jobs` mapping");
 
-    let gate = jobs
-        .get(serde_yaml::Value::from("gate"))
-        .expect("release.yml has a `gate` job");
-    let steps = gate
-        .get("steps")
-        .and_then(|s| s.as_sequence())
-        .expect("`gate` job has steps");
+    // Every job in the release gate family (`gate-*`). The old single `gate`
+    // job was split into these; collecting all of them means an invocation
+    // moving between sibling jobs is still counted.
+    let gate_jobs: Vec<(&str, &serde_yaml::Value)> = jobs
+        .iter()
+        .filter_map(|(k, v)| k.as_str().map(|n| (n, v)))
+        .filter(|(n, _)| n.starts_with("gate"))
+        .collect();
+    assert!(
+        gate_jobs.len() >= 2,
+        "found {} release gate job(s) whose name starts with `gate` — the split \
+         collapsed or the parse is wrong",
+        gate_jobs.len()
+    );
 
-    // EXECUTABLE content only — `run:` bodies, never step names or comments.
+    // EXECUTABLE content only — `run:` bodies across every gate job, never step
+    // names or comments.
     let mut haystack = String::new();
-    for step in steps {
-        if let Some(run) = step.get("run").and_then(|r| r.as_str()) {
-            haystack.push_str(run);
-            haystack.push('\n');
+    for (_name, job) in &gate_jobs {
+        let Some(steps) = job.get("steps").and_then(|s| s.as_sequence()) else {
+            continue;
+        };
+        for step in steps {
+            if let Some(run) = step.get("run").and_then(|r| r.as_str()) {
+                haystack.push_str(run);
+                haystack.push('\n');
+            }
         }
     }
     assert!(
         haystack.contains("xtask"),
-        "no `xtask` invocation found in any `gate` step `run:` body — the parse \
-         is broken, not the repo"
+        "no `xtask` invocation found in any `gate*` job step `run:` body — the \
+         parse is broken, not the repo"
     );
 
     // Each required invocation, with why it is load-bearing at a release.
@@ -835,19 +854,20 @@ fn the_release_gate_runs_the_full_tier_suite() {
 
     assert!(
         problems.is_empty(),
-        "release.yml's `gate` job does NOT run the full tier suite. CLAUDE.md \
+        "release.yml's `gate*` jobs do NOT run the full tier suite. CLAUDE.md \
          §0.2.1 (INVIOLABLE) requires every tier at a release — nothing deferred \
          to the nightly, which is exactly the gap that let the v0.21.0 \
          `record_update` codegen regression ship. Missing:\n  {}\n\n\
-         Add each to a `run:` step of the `gate` job (T3 also needs the \
-         `services: postgres` container). Mirror nightly-sweep.yml's invocations.",
+         Add each to a `run:` step of one of the `gate-*` jobs (T3 also needs the \
+         `services: postgres` container on that job, and every `gate-*` job must \
+         be in `release: needs:`). Mirror nightly-sweep.yml's invocations.",
         problems.join("\n  ")
     );
 }
 
-/// In `release.yml`'s `gate` job, the step that installs the compiler
-/// (`scripts/build.sh` → `sky-out/sky`) MUST run BEFORE the codegen build+run
-/// step (`xtask build-run`, whose `live`-shape examples spawn `sky build`).
+/// In the release gate, the step that installs the compiler (`scripts/build.sh`
+/// → `sky-out/sky`) MUST run BEFORE the codegen build+run step (`xtask
+/// build-run`, whose `live`-shape examples spawn `sky build`).
 ///
 /// The v0.23.0 release publish failed at exactly this point: `build-run --all`
 /// ran first, so every live example died with `sky build spawn: No such file or
@@ -855,6 +875,13 @@ fn the_release_gate_runs_the_full_tier_suite() {
 /// publication blocked on step order, not a defect. The fix was a hand-edit to
 /// the order; this test locks it, because the other checks in this file are
 /// presence-only and both steps WERE present — just in the wrong order.
+///
+/// The gate is now split across `gate-*` jobs and the compiler install lives in
+/// the `.github/actions/gate-setup` COMPOSITE action (a `uses:` step), so this
+/// asserts, in whichever gate job runs `build-run`, that a compiler-installing
+/// step precedes it — either a `run:` invoking `scripts/build.sh` (belt) or the
+/// `gate-setup` composite that runs it (braces). It also asserts the composite
+/// actually installs the compiler, so the `uses:` reference is not vacuous.
 #[test]
 fn release_gate_installs_the_compiler_before_build_run() {
     let path = workflows()
@@ -863,32 +890,72 @@ fn release_gate_installs_the_compiler_before_build_run() {
         .expect("release.yml must exist");
     let text = std::fs::read_to_string(&path).expect("read release.yml");
     let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("release.yml is parseable YAML");
-    let gate = doc
+    let jobs = doc
         .get("jobs")
-        .and_then(|j| j.get("gate"))
-        .and_then(|g| g.get("steps"))
-        .and_then(|s| s.as_sequence())
-        .expect("release.yml has a `gate` job with steps");
+        .and_then(|j| j.as_mapping())
+        .expect("release.yml has jobs");
 
-    let mut build_sh_idx: Option<usize> = None;
-    let mut build_run_idx: Option<usize> = None;
-    for (i, step) in gate.iter().enumerate() {
-        let run = step.get("run").and_then(|r| r.as_str()).unwrap_or("");
-        if run.contains("build.sh") {
-            build_sh_idx.get_or_insert(i);
+    // Find the gate job that runs `build-run`, and the index of that step.
+    let mut found = false;
+    for (name, job) in jobs {
+        let Some(name) = name.as_str() else { continue };
+        if !name.starts_with("gate") {
+            continue;
         }
-        if run.contains("build-run") {
-            build_run_idx.get_or_insert(i);
+        let Some(steps) = job.get("steps").and_then(|s| s.as_sequence()) else {
+            continue;
+        };
+        let mut install_idx: Option<usize> = None;
+        let mut build_run_idx: Option<usize> = None;
+        for (i, step) in steps.iter().enumerate() {
+            let run = step.get("run").and_then(|r| r.as_str()).unwrap_or("");
+            let uses = step.get("uses").and_then(|u| u.as_str()).unwrap_or("");
+            // A step installs the compiler if it runs build.sh directly OR uses
+            // the gate-setup composite action (which runs build.sh).
+            if run.contains("build.sh") || uses.contains("gate-setup") {
+                install_idx.get_or_insert(i);
+            }
+            if run.contains("build-run") {
+                build_run_idx.get_or_insert(i);
+            }
         }
+        let Some(brun) = build_run_idx else { continue };
+        found = true;
+        let inst = install_idx.unwrap_or_else(|| {
+            panic!(
+                "release.yml `{name}` runs `build-run` but installs the compiler \
+                 nowhere before it (no scripts/build.sh `run:` and no `uses: \
+                 ./.github/actions/gate-setup`). build-run's live-shape examples \
+                 spawn `sky build`, which needs sky-out/sky to exist."
+            )
+        });
+        assert!(
+            inst < brun,
+            "release.yml `{name}` runs `build-run` (step {brun}) BEFORE it installs the \
+             compiler (step {inst}, scripts/build.sh or the gate-setup composite). \
+             build-run's live-shape examples spawn `sky build`, which needs sky-out/sky \
+             to exist — the v0.23.0 publish failed with `sky build spawn: No such file or \
+             directory` for exactly this reason. Move the compiler install ahead of it."
+        );
     }
-    let bsh = build_sh_idx
-        .expect("release.yml `gate` must install the compiler via scripts/build.sh before its gates run");
-    let brun = build_run_idx.expect("release.yml `gate` must run `xtask build-run`");
     assert!(
-        bsh < brun,
-        "release.yml `gate` runs `build-run` (step {brun}) BEFORE it installs the compiler via \
-         scripts/build.sh (step {bsh}). build-run's live-shape examples spawn `sky build`, which \
-         needs sky-out/sky to exist — the v0.23.0 publish failed with `sky build spawn: No such \
-         file or directory` for exactly this reason. Move the build.sh install step ahead of it."
+        found,
+        "no release gate job runs `xtask build-run` — the codegen build+run gate \
+         is missing from release.yml"
+    );
+
+    // The `uses: ./.github/actions/gate-setup` reference is only a compiler
+    // install if the composite actually runs build.sh. Assert that, so the
+    // braces branch above cannot be satisfied by an empty action.
+    let action = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/actions/gate-setup/action.yml"
+    ));
+    let atext = std::fs::read_to_string(&action)
+        .expect("release gate jobs use ./.github/actions/gate-setup — its action.yml must exist");
+    assert!(
+        atext.contains("build.sh"),
+        "the gate-setup composite action does not run scripts/build.sh, so a gate \
+         job that only `uses:` it would NOT have a compiler installed"
     );
 }

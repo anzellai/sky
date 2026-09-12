@@ -18,6 +18,14 @@
 #   --jobs N          override parallel worker count. Default: read from
 #                     scripts/lib/concurrency.sh (CPU/mem-aware). Set 1
 #                     to force sequential mode (debugging / CI fallback).
+#   --shard I/T       run only shard I of T (0-based): the examples whose
+#                     stable index mod T == I. Also settable via the env
+#                     SWEEP_SHARD_INDEX / SWEEP_SHARD_TOTAL (what CI passes).
+#                     Unset runs every example. The partition is total +
+#                     disjoint, so T shards cover the whole set exactly once.
+#   --list            print the (sharded) example names one per line and
+#                     exit, building nothing. Needs no compiler — used to
+#                     prove the shard partition is exhaustive.
 #
 # Exit 0 on full pass; non-zero and a failure list on any failure.
 #
@@ -47,10 +55,29 @@ BUILD_ONLY=0
 CLEAN=1
 WORKDIR=""
 JOBS_OVERRIDE=""
+LIST_ONLY=0
+# Sharding: a shard runs only the examples whose stable 0-based index in the
+# EXAMPLES table satisfies `index mod TOTAL == INDEX`. The partition is total
+# (every example lands in exactly one shard) and disjoint by construction, so N
+# shards cover the whole set with no overlap and none dropped. Unset (the
+# default) runs ALL examples, so a local `./scripts/example-sweep.sh` is
+# unchanged. Read from SWEEP_SHARD_INDEX / SWEEP_SHARD_TOTAL, overridable by
+# `--shard I/T`.
+SHARD_INDEX="${SWEEP_SHARD_INDEX:-}"
+SHARD_TOTAL="${SWEEP_SHARD_TOTAL:-}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --build-only) BUILD_ONLY=1; shift ;;
         --no-clean)   CLEAN=0; shift ;;
+        --list)       LIST_ONLY=1; shift ;;
+        --shard)
+            shift
+            [[ $# -gt 0 ]] || { echo "--shard requires an INDEX/TOTAL argument" >&2; exit 2; }
+            SHARD_INDEX="${1%%/*}"; SHARD_TOTAL="${1##*/}"
+            shift ;;
+        --shard=*)
+            _s="${1#--shard=}"; SHARD_INDEX="${_s%%/*}"; SHARD_TOTAL="${_s##*/}"
+            shift ;;
         --workdir)
             shift
             [[ $# -gt 0 ]] || { echo "--workdir requires a directory argument" >&2; exit 2; }
@@ -82,7 +109,12 @@ fi
 SKY="$ROOT/sky-out/sky"
 # Existence is not currency. This used to be `[[ -x "$SKY" ]] || exit 2`, which
 # passes for a compiler built before every change the sweep claims to verify.
-require_fresh_compiler "$SKY" "$ROOT"
+# `--list` only enumerates the (sharded) example set — it builds nothing — so it
+# must NOT require a compiler at all, or a shard-partition check could not run
+# before the compiler is installed.
+if [[ $LIST_ONLY -eq 0 ]]; then
+    require_fresh_compiler "$SKY" "$ROOT"
+fi
 
 export SKY_RUNTIME_DIR="$ROOT/runtime-go"
 
@@ -250,6 +282,43 @@ declare -a EXAMPLES=(
     # before the lower_lambda full-record-return fix.
     "53-record-update-map:cli"
 )
+
+# ─── shard selection ──────────────────────────────────────────────────────
+# A CI matrix leg passes SWEEP_SHARD_INDEX / SWEEP_SHARD_TOTAL (or `--shard
+# I/T`) so N runners split the sweep with no example built twice and none
+# dropped. The partition is `stable_index mod TOTAL == INDEX` over the EXAMPLES
+# table above, which is total and disjoint by construction: every 0-based index
+# 0..<len> maps to exactly one residue class, and the N classes union to the
+# whole range. With neither env set the full table runs, so a local invocation
+# is unchanged.
+if [[ -n "$SHARD_INDEX" || -n "$SHARD_TOTAL" ]]; then
+    # Both must be present and well-formed once either is given.
+    [[ "$SHARD_TOTAL" =~ ^[0-9]+$ && "$SHARD_TOTAL" -ge 1 ]] \
+        || { echo "SWEEP_SHARD_TOTAL must be a positive integer (got '$SHARD_TOTAL')" >&2; exit 2; }
+    [[ "$SHARD_INDEX" =~ ^[0-9]+$ && "$SHARD_INDEX" -lt "$SHARD_TOTAL" ]] \
+        || { echo "SWEEP_SHARD_INDEX must be in [0, $SHARD_TOTAL) (got '$SHARD_INDEX')" >&2; exit 2; }
+    declare -a _SHARDED=()
+    _i=0
+    for entry in "${EXAMPLES[@]}"; do
+        if (( _i % SHARD_TOTAL == SHARD_INDEX )); then
+            _SHARDED+=("$entry")
+        fi
+        _i=$((_i + 1))
+    done
+    EXAMPLES=("${_SHARDED[@]}")
+fi
+
+# ─── list mode ────────────────────────────────────────────────────────────
+# Enumerate the example NAMES this invocation would build (after any shard
+# filter) and exit, building nothing. Used to prove a shard partition is
+# exhaustive + non-overlapping without paying a build.
+if [[ $LIST_ONLY -eq 1 ]]; then
+    for entry in "${EXAMPLES[@]}"; do
+        IFS=':' read -r _name _rest <<<"$entry"
+        printf '%s\n' "$_name"
+    done
+    exit 0
+fi
 
 # Per-worker result files. Each call to run_example writes ONE LINE
 # to $RESULTS_DIR/$name.result of the form:
