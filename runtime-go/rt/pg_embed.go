@@ -304,6 +304,15 @@ var tempDirRoots = []string{"/tmp", "/var/tmp", "/private/tmp", "/private/var/tm
 // itself looks exactly like an app that lost every row, and by then the
 // evidence has been deleted too.
 func rejectTempDataDir(dir string, env envFunc) error {
+	// TEST MODE (auto-testing phase 3b): an EPHEMERAL test cluster is meant to
+	// live in a temporary directory — it is created, migrated, used and thrown
+	// away within one `sky test` run, and the runner removes the dir afterwards.
+	// So a temp data dir is correct here, not a hazard. Gated STRICTLY on
+	// SKY_TEST_MODE (which a production `--embed` app never sets), so the durable-
+	// storage guarantee below is untouched for real deployments.
+	if v := strings.ToLower(strings.TrimSpace(env.get("SKY_TEST_MODE"))); v != "" && v != "0" && v != "false" {
+		return nil
+	}
 	roots := append([]string(nil), tempDirRoots...)
 	if t := strings.TrimSpace(env.get("TMPDIR")); t != "" {
 		if abs, err := filepath.Abs(t); err == nil {
