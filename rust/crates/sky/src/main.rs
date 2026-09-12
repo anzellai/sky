@@ -1021,6 +1021,75 @@ fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf,
     Ok(src_to)
 }
 
+/// For `sky doc --diagram` over an `App.web` / `App.app` (`Std.App`) app that
+/// targets a Sky.Spa wasm client, stage the SAME synthesised `Std.Spa` project
+/// the `--target web:app` build derives — so the diagram analyses the RPC
+/// branches that actually ship. Those branches live ONLY in the synthesised
+/// `Std.Spa` entry (`spaView_` + a `Spa.app (Spa.config …)` `main`), never in
+/// the raw `Std.App` entry, so `spa_partition::analyze` over the raw project
+/// surfaces no SERVER `update` branches (the "inline-effect shape" note).
+///
+/// This reuses [`synthesize_spa_source`] (the build's own App→Spa synthesis) and
+/// [`stage_std_app_derived`] (the build's own staging), so the staged project is
+/// byte-for-byte what the build would split. It stages into
+/// `<project>/.skyapp/diagram/` — NOT the build's `.skyapp/web-app/` and NOT the
+/// user's `src/` — so it never disturbs a build or the user's sources. The
+/// staged `sky.toml` gets the `[spa] generated = true` marker so nothing ever
+/// re-splits it.
+///
+/// Returns `Some((staged_dir, entry_module))` when synthesis applied and staged
+/// cleanly. Returns `None` when it does not apply — the target is not a wasm
+/// client, the entry is already a raw `Std.Spa` app (which analyses correctly
+/// unchanged), the entry is not an `App.web`/`App.app` app, or staging failed —
+/// and the caller then analyses the raw project with the existing behaviour.
+/// Read-only w.r.t. the user's project sources.
+fn stage_diagram_spa(
+    project_dir: &Path,
+    app_target: Option<&str>,
+) -> Option<(PathBuf, Option<String>)> {
+    let target = app_target?;
+    if !project::diagram::target_is_spa_client(target) {
+        return None;
+    }
+    // Resolve the entry file exactly as the build does (sky.toml `entry`, default
+    // `src/Main.sky`).
+    let entry_rel = std::fs::read_to_string(project_dir.join("sky.toml"))
+        .ok()
+        .and_then(|s| parse_toml_entry(&s))
+        .unwrap_or_else(|| "src/Main.sky".to_string());
+    let entry_file = project_dir.join(entry_rel);
+    let entry_src = std::fs::read_to_string(&entry_file).ok()?;
+    // A raw `Std.Spa` entry already exposes its RPC branches in its own `main` —
+    // the raw-project analysis already works, so do not synthesise (which would
+    // fail anyway: there is no `Std.App` value to read).
+    if entry_src
+        .lines()
+        .any(|l| l.trim_start().starts_with("import Std.Spa"))
+    {
+        return None;
+    }
+    // Only an `App.web`/`App.app` (`Std.App`) entry is synthesizable into a Spa
+    // entry; anything else returns None here.
+    let synthesized = synthesize_spa_source(&entry_src)?;
+    let out_root = project_dir.join(".skyapp").join("diagram");
+    let src_to = stage_std_app_derived(project_dir, &out_root).ok()?;
+    let entry_name = entry_file.file_name()?;
+    let synth_entry = src_to.join(entry_name);
+    std::fs::write(&synth_entry, synthesized).ok()?;
+    // Mark the staged tree generated so it is never a re-split candidate.
+    let toml_path = out_root.join("sky.toml");
+    let mut toml = std::fs::read_to_string(&toml_path).unwrap_or_default();
+    if !(toml.contains("[spa]") && toml.contains("generated = true")) {
+        if !toml.ends_with('\n') {
+            toml.push('\n');
+        }
+        toml.push_str("\n[spa]\ngenerated = true\n");
+        let _ = std::fs::write(&toml_path, toml);
+    }
+    let entry_module = entry_module_name(&synth_entry);
+    Some((out_root, entry_module))
+}
+
 /// When a derived Std.App build/check fails because the app never supplied a
 /// fallback page — the `HasFallback` phantom that [`Std.App`]'s `runLive`
 /// requires — the raw error is a `HasFallback vs NoFallback` type mismatch in
@@ -5767,36 +5836,112 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
     // in sky.toml) can still be diagrammed as the Sky.Spa client it ships as.
     let app_target = flag_value(args, "--target").or_else(|| sky_toml_app_target(project_dir));
 
+    // An `App.web`/`App.app` (`Std.App`) app targeting a Sky.Spa wasm client has
+    // its RPC branches ONLY in the synthesised `Std.Spa` entry the build derives,
+    // not the raw entry — so analyse that synthesised project, staged exactly as
+    // the build stages it. For a raw `Std.Spa` app, or a non-wasm target, this is
+    // `None` and we analyse the raw project unchanged (the existing behaviour).
+    // The display label always names the user's project, never the staged dir.
+    let staged = stage_diagram_spa(project_dir, app_target.as_deref());
+    let (analysis_dir, analysis_entry): (&Path, Option<String>) = match &staged {
+        Some((dir, entry_mod)) => (dir.as_path(), entry_mod.clone()),
+        None => (project_dir, None),
+    };
+    let project_label = project_dir
+        .strip_prefix(repo_root)
+        .unwrap_or(project_dir)
+        .to_string_lossy()
+        .to_string();
+    // Best-effort clean of the staged scratch tree once the report is rendered.
+    // Remove `.skyapp/diagram/`, then the `.skyapp/` parent ONLY if it is now
+    // empty — `remove_dir` never deletes a non-empty dir, so a build's
+    // `.skyapp/web-app` / `.skyapp/check` is never disturbed.
+    let cleanup = |staged: &Option<(PathBuf, Option<String>)>| {
+        if let Some((dir, _)) = staged {
+            let _ = std::fs::remove_dir_all(dir);
+            if let Some(parent) = dir.parent() {
+                let _ = std::fs::remove_dir(parent);
+            }
+        }
+    };
+
     if kind == "wire" {
-        return match project::diagram::analyze_wire(
+        let out = match project::diagram::analyze_wire(
             repo_root,
-            project_dir,
-            None,
+            analysis_dir,
+            analysis_entry.as_deref(),
             app_target.as_deref(),
         ) {
             // A non-Spa app is not an error: `wire` describes the Sky.Spa RPC
             // boundary, and the report explains why there is nothing to chart.
-            Ok(report) => {
+            Ok(mut report) => {
+                report.project = project_label;
                 print!("{}", project::diagram::render_wire(&report, format));
                 ExitCode::SUCCESS
+            }
+            // If the synthesised project failed to load, fall back to the raw
+            // project so a diagram is still produced (with the existing note).
+            Err(_) if staged.is_some() => {
+                match project::diagram::analyze_wire(
+                    repo_root,
+                    project_dir,
+                    None,
+                    app_target.as_deref(),
+                ) {
+                    Ok(report) => {
+                        print!("{}", project::diagram::render_wire(&report, format));
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("sky doc --diagram wire: {e}");
+                        ExitCode::FAILURE
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("sky doc --diagram wire: {e}");
                 ExitCode::FAILURE
             }
         };
+        cleanup(&staged);
+        return out;
     }
 
-    match project::diagram::analyze_components(repo_root, project_dir, None, app_target.as_deref()) {
-        Ok(graph) => {
+    let out = match project::diagram::analyze_components(
+        repo_root,
+        analysis_dir,
+        analysis_entry.as_deref(),
+        app_target.as_deref(),
+    ) {
+        Ok(mut graph) => {
+            graph.project = project_label;
             print!("{}", project::diagram::render_components(&graph, format));
             ExitCode::SUCCESS
+        }
+        Err(_) if staged.is_some() => {
+            match project::diagram::analyze_components(
+                repo_root,
+                project_dir,
+                None,
+                app_target.as_deref(),
+            ) {
+                Ok(graph) => {
+                    print!("{}", project::diagram::render_components(&graph, format));
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("sky doc --diagram components: {e}");
+                    ExitCode::FAILURE
+                }
+            }
         }
         Err(e) => {
             eprintln!("sky doc --diagram components: {e}");
             ExitCode::FAILURE
         }
-    }
+    };
+    cleanup(&staged);
+    out
 }
 
 /// `sky doc --serve` renders a static doc-site from the project's stdlib and

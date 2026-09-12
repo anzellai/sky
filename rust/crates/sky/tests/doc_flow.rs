@@ -209,3 +209,79 @@ fn doc_serve_answers_http_200() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `sky doc --diagram wire --target web:app` on an `App.app` (`Std.App`) app
+/// must chart the RPC contract, even though those branches exist only in the
+/// SYNTHESISED `Std.Spa` entry the build derives (not the raw `App.app` entry).
+/// The diagram stages that synthesised project the same way the build stages it
+/// and analyses THAT. Before the fix this printed the "inline-effect shape" note
+/// and an empty table. The fixture's `Save` branch runs a server effect
+/// (`System.getenv`), so it becomes `POST /_rpc/Save`.
+#[test]
+fn doc_diagram_wire_on_std_app_web_charts_rpc() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/diagram-app-web");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "wire", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram wire");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "sky doc --diagram wire failed:\n{stdout}{stderr}"
+    );
+    // At least one `/_rpc/` row — the proof the synthesis path was analysed. The
+    // raw `App.app` entry has no `Std.Spa` `main`, so without staging the
+    // synthesised project this table would be empty.
+    assert!(
+        stdout.contains("POST /_rpc/Save"),
+        "wire table missing the synthesised /_rpc/Save endpoint:\n{stdout}"
+    );
+    // The "inline-effect shape" fallback note must NOT appear — the branches
+    // were recovered.
+    assert!(
+        !stdout.contains("inline-effect shape"),
+        "wire diagram fell back to the Std.App inline-effect note:\n{stdout}"
+    );
+    // The display label names the user's project, not the staged scratch dir.
+    assert!(
+        !stdout.contains(".skyapp"),
+        "wire diagram leaked the staged scratch dir into its output:\n{stdout}"
+    );
+    // The staging scratch tree is cleaned up (no `.skyapp` residue in the
+    // committed fixture).
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged `.skyapp` scratch dir was not cleaned up"
+    );
+}
+
+/// `--diagram components --target web:app` on the same `Std.App` app must still
+/// render the Client / Server lanes over the `/_rpc` boundary.
+#[test]
+fn doc_diagram_components_on_std_app_web_renders_lanes() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/diagram-app-web");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "components", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram components");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "sky doc --diagram components failed:\n{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("subgraph Client"), "no Client lane:\n{stdout}");
+    assert!(stdout.contains("subgraph Server"), "no Server lane:\n{stdout}");
+    assert!(stdout.contains("/_rpc"), "no /_rpc boundary:\n{stdout}");
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged `.skyapp` scratch dir was not cleaned up"
+    );
+}

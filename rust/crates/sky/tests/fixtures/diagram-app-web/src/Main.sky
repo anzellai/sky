@@ -1,0 +1,76 @@
+module Main exposing (main)
+
+-- Fixture for `sky doc --diagram wire --target web:app` over a `Std.App`
+-- (`App.app`) entry. Its RPC branches exist ONLY in the SYNTHESISED `Std.Spa`
+-- entry the `--target web:app` build derives, so the diagram must analyse that
+-- synthesised project (staged the same way the build stages it), not the raw
+-- `App.app` entry. `Save` runs a SERVER effect (`System.getenv`, caught by the
+-- split's taint walk), so it becomes a `POST /_rpc/Save` endpoint; `Inc` is
+-- pure, so it stays a CLIENT arm with no round-trip.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Std.App as App
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Events as Ev
+
+
+bootId : String
+bootId =
+    Result.withDefault "boot" (Task.run (System.getenv "BOOT_ID"))
+
+
+type alias Model =
+    { count : Int, note : String }
+
+
+type Msg
+    = Inc
+    | Save
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, note = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Inc ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Save ->
+            ( { model | note = bootId }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column [ Ui.spacing 8, Ui.padding 12 ]
+        [ Ui.el [ Ev.onClick Inc ] (Ui.text ("count " ++ String.fromInt model.count))
+        , Ui.el [ Ev.onClick Save ] (Ui.text "save")
+        , Ui.el [] (Ui.text model.note)
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Task Error ()
+main =
+    App.run app
