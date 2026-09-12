@@ -589,6 +589,18 @@ pub struct BranchVerdict {
     /// nullary branch or a CLIENT branch. Kept off [`BranchIo`] so that type
     /// stays `Eq` (the typed `ty::Ty` is not).
     pub msg_arg_tys: Vec<ModelFieldTy>,
+    /// TRANSITIVE forces-effect: this branch's `update` body — or any def it
+    /// reaches — FORCES a side effect in a run position (`Task.run …` or a
+    /// `let _ = <task>` auto-force). This is the phase-2 differential fuzzer's
+    /// fence: a branch that forces an effect during `update` is NOT deterministic
+    /// under identical stubs (it reaches a DB read / a fresh Uuid / the clock),
+    /// so it is deferred to the phase-3 effect-mock harness rather than diffed.
+    /// A pure-typed kernel like `System.getenvOr` (String -> String -> String,
+    /// never wrapped in `Task.run`) does not set this — it is deterministic and
+    /// stays checkable. Distinct from `server`: a branch can be server (reads a
+    /// server kernel) yet force NOTHING at update time (it returns a `Cmd` value
+    /// the runtime runs later) — that branch IS phase-2 checkable.
+    pub forces_effect: bool,
 }
 
 /// A server-tainted top-level binding (excluded from the client build).
@@ -1358,6 +1370,13 @@ struct DefNode {
     /// Direct server reason from this def's OWN body (kernel / FFI), if any.
     direct: Option<String>,
     callees: HashSet<DefId>,
+    /// This def's OWN body forces an effect in a run position (`Task.run …` /
+    /// `let _ = <task>`). Seeds the `forces_effect` fixpoint (parallel to
+    /// `server`). An opaque / body-less def is conservatively `true` — it MIGHT
+    /// force, and the phase-2 fence must exclude a branch that might, never
+    /// under-mark. A `Std.Spa` client leaf is `false` (a pure fetch, no run-time
+    /// force — the same decision the taint walk already makes for it).
+    forces: bool,
 }
 
 struct Graph {
@@ -1366,9 +1385,18 @@ struct Graph {
     server: HashSet<DefId>,
     /// Ultimate origin reason per server def (the kernel it bottoms out at).
     root_reason: HashMap<DefId, String>,
+    /// The forces-effect fixpoint: defs that force a run-position effect
+    /// transitively. The phase-2 differential fuzzer's fence (see
+    /// [`BranchVerdict::forces_effect`]).
+    forces_effect: HashSet<DefId>,
 }
 
 impl Graph {
+    /// Does `d` — or any def it reaches — force a run-position effect?
+    fn forces(&self, d: DefId) -> bool {
+        self.forces_effect.contains(&d)
+    }
+
     /// A human reason for why `d` is server-tainted.
     fn reason_for(&self, db: &dyn SkyDb, d: DefId) -> String {
         if let Some(node) = self.nodes.get(&d) {
@@ -1418,6 +1446,8 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
                 DefNode {
                     direct: Some("unresolvable definition (opaque -> conservative server)".into()),
                     callees: HashSet::new(),
+                    // Opaque: might force. Fail the fence closed (never checkable).
+                    forces: true,
                 },
             );
             continue;
@@ -1441,6 +1471,8 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
                 DefNode {
                     direct: None,
                     callees: HashSet::new(),
+                    // A pure client leaf — no run-time force (see the taint note).
+                    forces: false,
                 },
             );
             continue;
@@ -1453,6 +1485,8 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
                 DefNode {
                     direct: Some("no body found (opaque -> conservative server)".into()),
                     callees: HashSet::new(),
+                    // Body-less: might force. Fail the fence closed.
+                    forces: true,
                 },
             );
             continue;
@@ -1465,6 +1499,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
             collect(body, root, &mut acc, &CollectCtx::default());
         }
         let direct = acc.direct_server_reason();
+        let forces = acc.inline_force;
         for c in &acc.callees {
             if seen.insert(*c) {
                 work.push(*c);
@@ -1475,6 +1510,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
             DefNode {
                 direct,
                 callees: acc.callees,
+                forces,
             },
         );
     }
@@ -1526,10 +1562,32 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
         }
     }
 
+    // forces-effect fixpoint (parallel to `server`): a def forces iff its OWN
+    // body forces (`Task.run` / `let _ =`) OR any callee forces. Seeds on the
+    // per-node `forces` flag. Same monotone least-fixpoint as `server`.
+    let mut forces_effect: HashSet<DefId> =
+        nodes.iter().filter(|(_, n)| n.forces).map(|(d, _)| *d).collect();
+    loop {
+        let mut changed = false;
+        for (d, n) in &nodes {
+            if forces_effect.contains(d) {
+                continue;
+            }
+            if n.callees.iter().any(|c| forces_effect.contains(c)) {
+                forces_effect.insert(*d);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     Graph {
         nodes,
         server,
         root_reason,
+        forces_effect,
     }
 }
 
@@ -1690,6 +1748,36 @@ fn classify_case_arms(
         }
     }
 
+    // forces-effect per arm (the phase-2 fence). Seed: the arm's own body forces
+    // (`inline_force`) OR a reachable callee forces (graph fixpoint). Then
+    // propagate through scoped `update <LiteralMsg>` composition, exactly as the
+    // `server` fixpoint above — composing an arm that forces means this arm forces
+    // when it runs. An unresolved scoped name is conservatively a force (never
+    // under-mark, mirroring the `server` treatment).
+    let mut forces: Vec<bool> = facts
+        .iter()
+        .map(|f| f.refs.inline_force || f.refs.callees.iter().any(|c| graph.forces(*c)))
+        .collect();
+    loop {
+        let mut changed = false;
+        for i in 0..n {
+            if forces[i] {
+                continue;
+            }
+            let f = facts[i].refs.scoped_updates.iter().any(|s| match by_name.get(s) {
+                Some(&j) => forces[j],
+                None => true,
+            });
+            if f {
+                forces[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     // Emit verdicts with a helpful reason. SERVER branches also carry their
     // derived RPC read-set / write-set (B1); CLIENT branches need no I/O.
     for i in 0..n {
@@ -1701,6 +1789,7 @@ fn classify_case_arms(
                 reason: r.clone(),
                 io: Some(compute_branch_io(db, body, arms[i].body, arms[i].pat, model_local, src)),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
+                forces_effect: forces[i],
             });
         } else if server[i] {
             out.push(BranchVerdict {
@@ -1709,6 +1798,7 @@ fn classify_case_arms(
                 reason: compose_reason(&f.refs.scoped_updates, &by_name, &server, &direct),
                 io: Some(compute_branch_io(db, body, arms[i].body, arms[i].pat, model_local, src)),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
+                forces_effect: forces[i],
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -1721,6 +1811,7 @@ fn classify_case_arms(
                 reason,
                 io: None,
                 msg_arg_tys: Vec::new(),
+                forces_effect: forces[i],
             });
         }
     }
@@ -3722,6 +3813,8 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             reason,
             io: None,
             msg_arg_tys: Vec::new(),
+            // Whole-update path: io is None → never phase-2 checkable regardless.
+            forces_effect: acc.inline_force,
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -3744,6 +3837,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             reason: format!("references {cn} ({origin})"),
             io: None,
             msg_arg_tys: Vec::new(),
+            forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
         };
     }
     // Client — note a client effect if present.
@@ -3757,6 +3851,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         reason,
         io: None,
         msg_arg_tys: Vec::new(),
+        forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
     }
 }
 

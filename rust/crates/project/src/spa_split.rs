@@ -918,6 +918,32 @@ pub(crate) fn emit_apply_delta(io: &BranchIo, model_param: &str) -> String {
     }
 }
 
+/// SHARED WIRE EMIT — server leg: reconstruct the Msg constructor application to
+/// run, reading each arg from its (possibly renamed) wire field on the decoded
+/// request record `p`. The exact inverse of the Msg-arg half of
+/// [`emit_build_req`]: what the client SENT under `spaMsgArg_<arg>` (or the bare
+/// name) is what the handler reads back. A name collision that is NOT renamed
+/// reads `p.<arg>` = the OLD model field instead of the sent arg — the exact
+/// region-switch bug — so the differential fuzzer emits from THIS function too,
+/// making that bug present identically on both the real split and the harness.
+/// The request variable is fixed as `p` (matching the backend handler + the
+/// harness's reconstruct step).
+pub(crate) fn emit_ctor_app(name: &str, io: &BranchIo, model_fields: &[ModelFieldTy]) -> String {
+    if io.msg_args.is_empty() {
+        name.to_string()
+    } else {
+        let args = io
+            .msg_args
+            .iter()
+            .map(|a| {
+                let collides = model_fields.iter().any(|f| f.name == *a);
+                format!(" p.{}", msg_arg_wire_name(a, collides))
+            })
+            .collect::<String>();
+        format!("({name}{args})")
+    }
+}
+
 fn build_wire(
     name: &str,
     io: &BranchIo,
@@ -4272,23 +4298,9 @@ fn gen_backend(
             ));
             guard_model = "mAuth".to_string();
         }
-        // The Msg constructor to run (args come from the wire payload).
-        let ctor_app = if io.msg_args.is_empty() {
-            name.clone()
-        } else {
-            let args = io
-                .msg_args
-                .iter()
-                .map(|a| {
-                    // Read the arg from its (possibly renamed) wire field — must
-                    // match build_wire + the dispatch, or a name collision reads
-                    // the OLD model field instead of the arg (see msg_arg_wire_name).
-                    let collides = model_fields.iter().any(|f| f.name == *a);
-                    format!(" p.{}", msg_arg_wire_name(a, collides))
-                })
-                .collect::<String>();
-            format!("({name}{args})")
-        };
+        // The Msg constructor to run (args come from the wire payload). Shared
+        // server-leg msg reconstruct (also emitted by the phase-2 fuzzer).
+        let ctor_app = emit_ctor_app(name, io, model_fields);
         // Server-internal effect chaining: this branch returns a `Cmd.perform`
         // chain that the analysis proved is settle-able server-side. Bind the
         // returned command (not `_`), settle it to a fixpoint via

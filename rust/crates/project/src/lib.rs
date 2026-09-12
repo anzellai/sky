@@ -30,6 +30,11 @@ pub mod spa_split;
 /// differential split fuzzer (phase 1 of `docs/design/auto-testing.md`). Emits
 /// Sky generators from `ty::Ty`; runs nothing. See the module docstring.
 pub mod spa_diff_gen;
+/// `spa_diff_harness` — the EMITTER for the Sky.Spa differential split fuzzer
+/// (phase 2 of `docs/design/auto-testing.md`). Emits per-branch `checkOne` arms
+/// that run each checkable server branch two ways (direct vs the split plumbing)
+/// and assert they agree. See the module docstring.
+pub mod spa_diff_harness;
 pub use build::{
     build_example, build_project, configured_bin_name, configured_source_root, db_driver_conflict,
     driver_for_dsn, emit_example_source, emit_example_warnings, enumerate_skydep_files,
