@@ -48,6 +48,10 @@ func newSkyHttpClient() *http.Client {
 			}
 			return nil
 		},
+		// Mock-by-default in test mode: intercept every outbound request (fixture
+		// or fail-closed). A transparent passthrough outside test mode. See
+		// test_http.go.
+		Transport: &testHttpTransport{base: http.DefaultTransport},
 	}
 }
 
