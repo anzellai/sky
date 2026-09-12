@@ -300,11 +300,13 @@ terminal view: ↑/↓ navigate, Enter expands the highlighted entry,
 #### `sky doc --diagram <kind> [--format mermaid|md]` (WIP)
 
 A read-only architecture diagram of the current project, emitted to
-stdout. The first (and, for now, only) kind is `components`:
+stdout. Two kinds ship today — `components` and `wire`:
 
 ```bash
 sky doc --diagram components               # fenced ```mermaid flowchart
 sky doc --diagram components --format md   # mermaid + a module→capability table
+sky doc --diagram wire --target web:app    # the Sky.Spa /_rpc contract, as a table
+sky doc --diagram wire --format mermaid --target web:app   # as a sequence diagram
 ```
 
 `components` charts each `src/` module and the external capabilities
@@ -314,11 +316,26 @@ capability nodes with `Module --> Capability` edges. For a Sky.Spa
 app (a `web:app` / `mobile*` / `desktop:*` / `tablet:*` target, or an
 explicit `Std.Spa` use) it splits into a `Client` lane (the modules)
 and a `Server` lane (the capabilities), with the `/_rpc` boundary
-between them, matching the "any effect runs on the server" split. The
-analysis reuses the same effect-kernel classification as the Sky.Spa
-auto-split; it never type-checks, lowers, `go build`s, or writes.
+between them, matching the "any effect runs on the server" split.
+`--format` defaults to `mermaid`.
 
-Other kinds — `wire`, `telemetry`, `journey`, `callpath` — are
+`wire` charts the Sky.Spa auto-derived RPC contract — otherwise
+invisible to the author. For every SERVER `update` branch that becomes
+a `POST /_rpc/<Msg>` endpoint it shows the REQUEST (the Model fields
+the branch reads plus the Msg args, or "whole model") and the RESPONSE
+(the Model fields it writes, or "whole model"), so a missing read is
+visible at a glance. `--format` defaults to `md` (a table); `mermaid`
+emits a `sequenceDiagram` of the same endpoints. `--target` overrides
+the `sky.toml` `[app] target`. A non-Spa app (Sky.Live / Http / Cli, or
+a target that is not a wasm client) prints a short note explaining that
+`wire` describes the Sky.Spa RPC boundary — a Sky.Live app's "wire" is
+the SSE / session channel, not an RPC contract — and exits 0.
+
+Both kinds reuse the same analysis as the Sky.Spa auto-split, so the
+diagram cannot drift from what ships; neither type-checks beyond the
+shared source load, lowers, `go build`s, or writes.
+
+The remaining kinds — `telemetry`, `journey`, `callpath` — are
 planned and exit non-zero with a "not yet implemented" note today.
 
 ### `sky doctor [--fix] [--verbose]`

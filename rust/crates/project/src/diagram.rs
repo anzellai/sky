@@ -436,6 +436,271 @@ fn render_md(g: &ComponentGraph, mermaid: &str) -> String {
     o
 }
 
+// ===========================================================================
+// `sky doc --diagram wire` — the Sky.Spa auto-derived RPC contract.
+// ===========================================================================
+//
+// For a Sky.Spa app the compiler splits `update` into a wasm client and a
+// server, and every SERVER `update` branch becomes a `POST /_rpc/<Msg>`
+// endpoint. That contract is otherwise invisible to the author — a missing
+// read (the `SetRegion` request that forgot `basket`) is silent until it
+// misbehaves. This slice charts it: one row per endpoint, its REQUEST (the
+// Model fields the branch reads + the Msg args) and its RESPONSE (the Model
+// fields it writes), so a wrong request/response shape is visible at a glance.
+//
+// It re-uses [`crate::spa_partition::analyze`] verbatim — the SAME per-branch
+// read-set / write-set the auto-split derives, so the diagram cannot drift from
+// what actually ships. It never re-derives, type-checks beyond the shared load,
+// lowers, emits, or writes.
+
+/// One `/_rpc/<Msg>` endpoint the auto-split derives for a SERVER branch.
+pub struct WireEndpoint {
+    /// The Msg constructor name (the `<Msg>` in `/_rpc/<Msg>`).
+    pub msg: String,
+    /// The request payload: read-set fields + Msg args, or "whole model".
+    pub request: String,
+    /// The response payload: write-set fields, or "whole model".
+    pub response: String,
+    /// Effects the branch runs (Db / Http / …). `None` for v1 — the partition
+    /// report does not surface per-branch effect families cheaply, and this
+    /// slice does not invent a new analysis (see `--diagram components`).
+    pub effects: Option<String>,
+}
+
+/// The wire contract for a project — pure data the renderer consumes.
+pub struct WireReport {
+    /// The project path, relative to the repo root when possible.
+    pub project: String,
+    /// True when the resolved target is a Sky.Spa wasm client. When false the
+    /// app has no `/_rpc` contract to chart and only [`WireReport::notes`] is
+    /// rendered.
+    pub is_spa: bool,
+    /// The resolved `[app] target` (or the `--target` override), for the note.
+    pub target: Option<String>,
+    /// The RPC endpoints, sorted by Msg name for deterministic output.
+    pub endpoints: Vec<WireEndpoint>,
+    /// Set when the app IS a Spa client but no per-branch endpoints could be
+    /// recovered (a `Std.App` inline-effect shape, or an `update` that is not a
+    /// resolvable `case msg of`). The renderer prints what it has plus a note.
+    pub limited: bool,
+    /// Non-fatal reader notes.
+    pub notes: Vec<String>,
+}
+
+/// Render the request shape of a branch from its public [`crate::spa_partition::BranchIo`]
+/// fields — the read-set (or the whole model) plus the Msg args.
+fn wire_request(io: &crate::spa_partition::BranchIo) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if io.reads_whole_model {
+        parts.push("whole model".to_string());
+    } else if !io.read_fields.is_empty() {
+        parts.push(fmt_fields(&io.read_fields));
+    }
+    if !io.msg_args.is_empty() {
+        parts.push(fmt_fields(&io.msg_args));
+    }
+    if parts.is_empty() {
+        "{}".to_string()
+    } else {
+        parts.join(" + ")
+    }
+}
+
+/// Render the response shape — the write-set, or the whole model.
+fn wire_response(io: &crate::spa_partition::BranchIo) -> String {
+    if io.writes_whole_model {
+        "whole model".to_string()
+    } else {
+        fmt_fields(&io.write_fields)
+    }
+}
+
+fn fmt_fields(items: &[String]) -> String {
+    format!("{{{}}}", items.join(", "))
+}
+
+/// Build the wire contract for a project. Read-only.
+///
+/// `app_target` (the `[app] target`, or a `--target` override) decides whether
+/// the app renders as a Sky.Spa client: the RPC contract only exists for a wasm
+/// client target. A non-Spa app returns `is_spa = false` and only notes — the
+/// analysis is NOT run, since there is no `/_rpc` boundary to chart.
+pub fn analyze_wire(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    app_target: Option<&str>,
+) -> Result<WireReport, String> {
+    let project = project_dir
+        .strip_prefix(repo_root)
+        .unwrap_or(project_dir)
+        .to_string_lossy()
+        .to_string();
+    let is_spa = app_target.map(target_is_spa_client).unwrap_or(false);
+
+    if !is_spa {
+        let tgt = app_target.unwrap_or("<none>");
+        return Ok(WireReport {
+            project,
+            is_spa: false,
+            target: app_target.map(str::to_string),
+            endpoints: Vec::new(),
+            limited: false,
+            notes: vec![
+                format!(
+                    "`wire` charts the Sky.Spa RPC contract — the `/_rpc` boundary a wasm \
+                     client calls. This project's target (`{tgt}`) is not a Sky.Spa wasm \
+                     client, so it has no RPC contract to chart."
+                ),
+                "A Sky.Live app's \"wire\" is the SSE / session channel, not an RPC \
+                 contract; a Sky.Http / Cli app has no client boundary at all."
+                    .to_string(),
+                "Re-run with `--target web:app` (or a `mobile:` / `desktop:` / `tablet:` \
+                 client) to chart the Sky.Spa client contract."
+                    .to_string(),
+            ],
+        });
+    }
+
+    let report = crate::spa_partition::analyze(repo_root, project_dir, entry_module)?;
+
+    let mut endpoints: Vec<WireEndpoint> = Vec::new();
+    for b in &report.branches {
+        // Only SERVER branches carry an `/_rpc` endpoint; CLIENT arms run in the
+        // browser with no round-trip (`io == None`).
+        let Some(io) = &b.io else { continue };
+        if !b.server {
+            continue;
+        }
+        // `b.msg` is the arm pattern (`"SaveVia _"`); the endpoint is named by
+        // the constructor alone (`SaveVia`).
+        let ctor = b.msg.split_whitespace().next().unwrap_or(&b.msg).to_string();
+        endpoints.push(WireEndpoint {
+            msg: ctor,
+            request: wire_request(io),
+            response: wire_response(io),
+            effects: None,
+        });
+    }
+    endpoints.sort_by(|a, b| a.msg.cmp(&b.msg));
+
+    let mut notes: Vec<String> = Vec::new();
+    let mut limited = false;
+    if endpoints.is_empty() {
+        limited = true;
+        if report.whole_update.is_some() {
+            notes.push(
+                "`update` is not a resolvable `case msg of` (a lambda / delegating shape), \
+                 so per-branch wire extraction is unavailable for this app."
+                    .to_string(),
+            );
+        } else {
+            notes.push(
+                "No SERVER `update` branches were surfaced (a `Std.App` inline-effect shape); \
+                 per-branch wire extraction is limited for this app shape."
+                    .to_string(),
+            );
+        }
+    }
+    notes.push(
+        "Per-branch effects (Db / Http / …) are not surfaced by the partition report; \
+         see `sky doc --diagram components` for the app's capability buckets."
+            .to_string(),
+    );
+
+    Ok(WireReport {
+        project,
+        is_spa: true,
+        target: app_target.map(str::to_string),
+        endpoints,
+        limited,
+        notes,
+    })
+}
+
+/// Render a wire report to the requested format. Pure function of `r`.
+///
+/// `wire`'s useful form is a table, so the default (used when the CLI is given
+/// no `--format`) is [`Format::Md`]; [`Format::Mermaid`] emits a sequence
+/// diagram of the same endpoints.
+pub fn render_wire(r: &WireReport, format: Format) -> String {
+    match format {
+        Format::Mermaid => render_wire_mermaid(r),
+        Format::Md => render_wire_md(r),
+    }
+}
+
+fn render_wire_md(r: &WireReport) -> String {
+    let mut o = String::new();
+    o.push_str(&format!("# Wire (RPC contract) — {}\n\n", r.project));
+    // A non-Spa app, or a Spa app whose per-branch endpoints could not be
+    // recovered, has no table to draw — carry the notes alone.
+    if !r.is_spa || r.endpoints.is_empty() {
+        for n in &r.notes {
+            o.push_str(&format!("> {n}\n"));
+        }
+        return o;
+    }
+    o.push_str(
+        "The Sky.Spa auto-split turns every SERVER `update` branch into a \
+         `POST /_rpc/<Msg>` endpoint. The REQUEST is the Model fields the branch \
+         reads plus the Msg args; the RESPONSE is the Model fields it writes.\n\n",
+    );
+    o.push_str("| Endpoint | Request (reads + args) | Response (writes) | Effects |\n");
+    o.push_str("|---|---|---|---|\n");
+    for e in &r.endpoints {
+        o.push_str(&format!(
+            "| POST /_rpc/{} | {} | {} | {} |\n",
+            e.msg,
+            e.request,
+            e.response,
+            e.effects.as_deref().unwrap_or("—")
+        ));
+    }
+    if !r.notes.is_empty() {
+        o.push('\n');
+        for n in &r.notes {
+            o.push_str(&format!("> {n}\n"));
+        }
+    }
+    o
+}
+
+fn render_wire_mermaid(r: &WireReport) -> String {
+    let mut o = String::new();
+    o.push_str("```mermaid\n");
+    o.push_str("sequenceDiagram\n");
+    o.push_str(&format!("  %% sky doc --diagram wire — {}\n", r.project));
+    if !r.is_spa {
+        // A sequence diagram with no messages is empty; carry the note instead.
+        o.push_str("  note over Client,Server: not a Sky.Spa wasm client — no /_rpc contract\n");
+        o.push_str("```\n");
+        for n in &r.notes {
+            o.push_str(&format!("\n> {n}\n"));
+        }
+        return o;
+    }
+    o.push_str("  participant Client as Client · wasm\n");
+    o.push_str("  participant Server as Server · effects\n");
+    if r.endpoints.is_empty() {
+        o.push_str("  note over Client,Server: no per-branch /_rpc endpoints surfaced\n");
+    }
+    for e in &r.endpoints {
+        o.push_str(&format!(
+            "  Client->>Server: POST /_rpc/{} {}\n",
+            e.msg, e.request
+        ));
+        o.push_str(&format!("  Server-->>Client: {}\n", e.response));
+    }
+    o.push_str("```\n");
+    if !r.notes.is_empty() {
+        for n in &r.notes {
+            o.push_str(&format!("\n> {n}\n"));
+        }
+    }
+    o
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,5 +802,74 @@ mod tests {
         // outside the components buckets → dropped
         assert_eq!(Capability::from_family("Server"), None);
         assert_eq!(Capability::from_family("Native"), None);
+    }
+
+    fn wire_report() -> WireReport {
+        WireReport {
+            project: "examples/demo".into(),
+            is_spa: true,
+            target: Some("web:app".into()),
+            endpoints: vec![
+                WireEndpoint {
+                    // a narrowed request/response
+                    msg: "SetRegion".into(),
+                    request: "{basket, region} + {region}".into(),
+                    response: "{basket, region}".into(),
+                    effects: None,
+                },
+                WireEndpoint {
+                    // an over-approximated (whole-model) branch
+                    msg: "SaveAll".into(),
+                    request: "whole model".into(),
+                    response: "whole model".into(),
+                    effects: None,
+                },
+            ],
+            limited: false,
+            notes: vec!["a note".into()],
+        }
+    }
+
+    #[test]
+    fn wire_md_has_the_rpc_table_with_request_and_response() {
+        let out = render_wire(&wire_report(), Format::Md);
+        assert!(
+            out.contains("| Endpoint | Request (reads + args) | Response (writes) | Effects |"),
+            "{out}"
+        );
+        assert!(
+            out.contains("| POST /_rpc/SetRegion | {basket, region} + {region} | {basket, region} | — |"),
+            "{out}"
+        );
+        assert!(
+            out.contains("| POST /_rpc/SaveAll | whole model | whole model | — |"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn wire_mermaid_is_a_sequence_diagram_per_endpoint() {
+        let out = render_wire(&wire_report(), Format::Mermaid);
+        assert!(out.contains("sequenceDiagram"), "{out}");
+        assert!(
+            out.contains("Client->>Server: POST /_rpc/SetRegion {basket, region} + {region}"),
+            "{out}"
+        );
+        assert!(out.contains("Server-->>Client: {basket, region}"), "{out}");
+    }
+
+    #[test]
+    fn wire_non_spa_prints_a_note_not_a_table() {
+        let r = WireReport {
+            project: "examples/demo".into(),
+            is_spa: false,
+            target: Some("web".into()),
+            endpoints: vec![],
+            limited: false,
+            notes: vec!["not a Sky.Spa wasm client".into()],
+        };
+        let out = render_wire(&r, Format::Md);
+        assert!(!out.contains("| Endpoint |"), "{out}");
+        assert!(out.contains("not a Sky.Spa wasm client"), "{out}");
     }
 }
