@@ -93,6 +93,13 @@ pub const VERIFY_CLI_EXPECTED: u64 = 13;
 /// `examples/*` projects that own a `tests/` directory. Measured: 6.
 pub const SKY_VERIFY_EXPECTED: u64 = 6;
 
+/// Total checkable branches across the diff-fuzz fixtures. Measured:
+/// `spa-derived-read` has **4** (SetScale / SetScaleLet / SetScaleVia /
+/// SetScaleArg — all reach the pure-typed `System.getenvOr`, so effect-free and
+/// checkable; `Bump` is client, and there are no DB/chaining branches). Exact:
+/// a fence change that drops or adds a checkable branch flips this and fails.
+pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 4;
+
 // ---------------------------------------------------------------------------
 // In-process gates
 // ---------------------------------------------------------------------------
@@ -363,6 +370,114 @@ pub fn verify_cli(ctx: &GateCtx) -> GateOutcome {
         true,
         assertions,
         format!("{pass} entries verified, {skip} declared skip(s)"),
+    )
+}
+
+/// Sky.Spa **differential split fuzzer** (docs/design/auto-testing.md mode A).
+///
+/// For each in-repo auto-split fixture: GENERATE the harness IN-PROCESS (via the
+/// `project` crate, so a mutation to the wire emitters or the read/write-set
+/// analysis is reflected in the harness SOURCE — the falsifier reaches it without
+/// rebuilding the `sky` binary), BUILD it with the fresh compiler, and RUN it
+/// OFFLINE. The harness runs each checkable server branch two ways over the same
+/// random `(Model, Msg)` — direct `update` vs the split plumbing — and exits
+/// non-zero on a divergence (a read/write-set drop or a Msg-arg collision). The
+/// verdict is the harness's exit status; no stdout is parsed for pass/fail.
+pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
+    let sky = ctx.repo_root.join("sky-out/sky");
+    if !sky.is_file() {
+        return GateOutcome::new(
+            false,
+            0,
+            format!(
+                "no compiler at {} — build it first (scripts/build.sh). \
+                 A gate that cannot run has not passed.",
+                sky.display()
+            ),
+        );
+    }
+    // In-repo auto-split fixtures, fuzzed OFFLINE (no DB / no network). Each is a
+    // direct `Spa.app` entry, so no App.app synthesis is needed. `spa-derived-read`
+    // mirrors the two shipped bugs: a helper-threaded model read (SetScale/Via/Let)
+    // and a Msg-arg/Model-field collision (SetScaleArg).
+    const FIXTURES: &[&str] = &["rust/crates/sky/tests/fixtures/spa-derived-read"];
+    let mut assertions = 0u64;
+    for fx in FIXTURES {
+        let project_dir = ctx.repo_root.join(fx);
+        let name = Path::new(fx).file_name().and_then(|s| s.to_str()).unwrap_or("fixture");
+        // NOT under `scratch()` (`.skycache/…`): `sky build`'s module discovery
+        // skips any path with a dot-directory segment, so a generated project
+        // there fails with "no .sky under src/". Use a non-dot temp dir.
+        let out_dir = std::env::temp_dir().join("sky-spa-diff-fuzz").join(name);
+        let _ = std::fs::remove_dir_all(&out_dir);
+        // GENERATE in-process — reflects emitter / analysis mutations.
+        let report = match project::spa_split::generate_diff_fuzz(
+            &ctx.repo_root,
+            &project_dir,
+            None,
+            &out_dir,
+            200,
+            20260912,
+        ) {
+            Ok(r) => r,
+            Err(e) => return GateOutcome::new(false, assertions, format!("{name}: generate failed: {e}")),
+        };
+        assertions += report.checked.len() as u64;
+        // BUILD the generated harness with the fresh compiler.
+        match Command::new(&sky)
+            .args(["build", &report.entry_rel])
+            .current_dir(&out_dir)
+            .output()
+        {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                let tail: Vec<String> = String::from_utf8_lossy(&o.stderr)
+                    .lines()
+                    .rev()
+                    .take(4)
+                    .map(|s| s.to_string())
+                    .collect();
+                return GateOutcome::new(
+                    false,
+                    assertions,
+                    format!("{name}: harness build failed: {}", tail.into_iter().rev().collect::<Vec<_>>().join(" | ")),
+                );
+            }
+            Err(e) => return GateOutcome::new(false, assertions, format!("{name}: harness build spawn failed: {e}")),
+        }
+        // RUN offline — a divergence is a non-zero exit.
+        match Command::new(out_dir.join("sky-out/app"))
+            .current_dir(&out_dir)
+            .env_remove("DATABASE_URL")
+            .output()
+        {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                let msg = String::from_utf8_lossy(&o.stdout);
+                return GateOutcome::new(
+                    false,
+                    assertions,
+                    format!("{name}: DIVERGENCE — {}", msg.trim().lines().next().unwrap_or("split leg != direct")),
+                );
+            }
+            Err(e) => return GateOutcome::new(false, assertions, format!("{name}: harness run spawn failed: {e}")),
+        }
+    }
+    // EXACT — a fence change that adds/drops a checkable branch flips this.
+    if assertions != SPA_DIFF_FUZZ_EXPECTED {
+        return GateOutcome::new(
+            false,
+            assertions,
+            format!(
+                "checkable-branch count {assertions} != expected {SPA_DIFF_FUZZ_EXPECTED} \
+                 — the diff-fuzz fence changed; update SPA_DIFF_FUZZ_EXPECTED if intended"
+            ),
+        );
+    }
+    GateOutcome::new(
+        true,
+        assertions,
+        format!("{assertions} checkable branch(es) diffed; no split-vs-direct divergence"),
     )
 }
 

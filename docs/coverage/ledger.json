@@ -13,7 +13,8 @@
     "dispatched_but_undocumented": [
       "console-serve",
       "init",
-      "migrate"
+      "migrate",
+      "spa-diff-fuzz"
     ],
     "documented_but_not_dispatched": [],
     "verbs": [
@@ -34,6 +35,7 @@
       "migrate",
       "remove",
       "run",
+      "spa-diff-fuzz",
       "spa-partition",
       "spa-split",
       "test",
@@ -503,6 +505,16 @@
       ],
       "tier": "T1"
     },
+    "spa-diff-fuzz": {
+      "expected_assertions": 4,
+      "falsifier_mutation": "spa-diff-fuzz.drop-msgarg-rename",
+      "falsifier_proven": true,
+      "summary": "Sky.Spa differential split fuzzer: split leg == direct update over random (Model, Msg)",
+      "surfaces": [
+        "stdlib.Std.Spa"
+      ],
+      "tier": "T2"
+    },
     "verify-cli": {
       "expected_assertions": 13,
       "falsifier_mutation": "verify-cli.drop-expected-output",
@@ -668,10 +680,10 @@
     "stdlib_entries": 1862,
     "stdlib_modules": 94,
     "surfaces_covered": 140,
-    "surfaces_covered_pct": 88.1,
-    "surfaces_equal": 24,
+    "surfaces_covered_pct": 87.5,
+    "surfaces_equal": 25,
     "surfaces_stronger": 135,
-    "surfaces_total": 159,
+    "surfaces_total": 160,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -1121,6 +1133,22 @@
       "description": "`sky run`",
       "id": "cli.run",
       "verdict": "stronger"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky spa-diff-fuzz`",
+      "id": "cli.spa-diff-fuzz",
+      "verdict": "equal"
     },
     {
       "category": "cli",
@@ -10044,6 +10072,11 @@
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `spa-diff-fuzz`",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -11989,13 +12022,14 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 14,
+      "count": 15,
       "surfaces": [
         "cli.config",
         "cli.console",
         "cli.console-serve",
         "cli.fmt",
         "cli.lsp",
+        "cli.spa-diff-fuzz",
         "cli.spa-partition",
         "cli.upgrade-claude",
         "cli.verify",

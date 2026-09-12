@@ -228,6 +228,12 @@
       "outcome": "as-declared",
       "proven_at_unix": 1787931767
     },
+    "spa-diff-fuzz": {
+      "mutation": "spa-diff-fuzz.drop-msgarg-rename",
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1789236686
+    },
     "verify-cli": {
       "mutation": "verify-cli.drop-expected-output",
       "observed": "PROVEN",

@@ -482,6 +482,11 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     // and scores on the registered-gate scale. The `xtask:lsp` CI row is
     // retired in the same commit; leaving both would double-claim the surface.
     ("lsp", &["lsp"]),
+    // The Sky.Spa differential split fuzzer. It exercises the auto-split's
+    // read/write-set partition + wire plumbing (the `Std.Spa` surface) by running
+    // each checkable server branch two ways and asserting they agree — the first
+    // FALSIFIED-strength cover for the auto-split soundness property.
+    ("spa-diff-fuzz", &["stdlib.Std.Spa"]),
     // Layer-2 member H (`apps/dispatch`). These three gates are the ONLY cover
     // for five modules that, until 2026-08-10, were imported by nothing at all
     // — and with them the file-based migration verbs, which no project
