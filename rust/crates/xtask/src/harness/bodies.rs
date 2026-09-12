@@ -93,12 +93,13 @@ pub const VERIFY_CLI_EXPECTED: u64 = 13;
 /// `examples/*` projects that own a `tests/` directory. Measured: 6.
 pub const SKY_VERIFY_EXPECTED: u64 = 6;
 
-/// Total checkable branches across the diff-fuzz fixtures. Measured: **9** —
+/// Total checkable branches across the diff-fuzz fixtures. Measured: **10** —
 /// `spa-derived-read` 4 (whole-model reads + the Msg-arg collision),
 /// `spa-diff-narrow` 2 (narrow read/write sets), `spa-partition-io` 3
-/// (Save / SaveTagged / Bulk). Exact: a fence change that drops or adds a
-/// checkable branch flips this and fails.
-pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 9;
+/// (Save / SaveTagged / Bulk), `spa-guard` 1 (Save — an App.app app, analysed
+/// via app_config_defs). Exact: a fence change that drops or adds a checkable
+/// branch flips this and fails.
+pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 10;
 
 // ---------------------------------------------------------------------------
 // In-process gates
@@ -400,15 +401,16 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
     // direct `Spa.app` entry, so no App.app synthesis is needed. `spa-derived-read`
     // mirrors the two shipped bugs: a helper-threaded model read (SetScale/Via/Let)
     // and a Msg-arg/Model-field collision (SetScaleArg).
-    // Direct `Spa.app` fixtures — `generate_diff_fuzz` analyses them as-is. An
-    // `App.app`/`App.web` app (e.g. spa-guard, darraghstudio) needs the
-    // Std.App -> Spa synthesis the CLI does before analysis; wiring that into the
-    // in-process gate is a follow-up, so those are covered via `sky spa-diff-fuzz`
-    // for now, not this gate.
+    // Both direct `Spa.app` fixtures AND `App.app`/`App.web` ones: the analysis
+    // reads `update` from `Std.App.app/web` configs too (app_config_defs), so an
+    // App.app app is fuzzed in-process without the App -> Spa source synthesis.
+    // `spa-guard` is App.app; the harness omits the guard on both legs, so its
+    // Save branch still diffs the plumbing.
     const FIXTURES: &[&str] = &[
         "rust/crates/sky/tests/fixtures/spa-derived-read",
         "rust/crates/sky/tests/fixtures/spa-diff-narrow",
         "rust/crates/sky/tests/fixtures/spa-partition-io",
+        "rust/crates/sky/tests/fixtures/spa-guard",
     ];
     let mut assertions = 0u64;
     for fx in FIXTURES {

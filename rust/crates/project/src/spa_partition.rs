@@ -945,15 +945,19 @@ pub fn analyze_loaded(
         ));
     }
 
-    // Identify the `Std.Spa.config` def, then the `update` it was given.
-    let spa_mod = db
-        .module_by_name("Std.Spa")
-        .ok_or_else(|| "not a Sky.Spa project: Std.Spa is not imported".to_string())?;
-    let config_def = def_by_name(db, spa_mod, "config")
-        .ok_or_else(|| "Std.Spa.config not found (stdlib mismatch?)".to_string())?;
+    // Identify the app's config builder (Std.Spa.config OR Std.App.app/web), then
+    // the `update` it was given. Accepting the Std.App builders lets the analysis
+    // read an App.app/App.web app directly (the differential fuzzer path), not
+    // only a direct Sky.Spa entry.
+    let config_defs = app_config_defs(db);
+    if config_defs.is_empty() {
+        return Err(
+            "not a Sky.Spa / Std.App project: neither Std.Spa.config nor Std.App.app/web is available".to_string(),
+        );
+    }
 
     let mut notes: Vec<String> = Vec::new();
-    let update_field = find_config_update_field(db, &check_ids, entry, config_def);
+    let update_field = find_config_update_field(db, &check_ids, entry, &config_defs);
 
     // Build the reachability + taint graph over every def reachable from the
     // app modules (pulls in only the stdlib defs actually referenced).
@@ -1289,14 +1293,16 @@ pub fn find_config_field_def(
     entry: ModuleId,
     field: &str,
 ) -> Option<DefId> {
-    let spa_mod = db.module_by_name("Std.Spa")?;
-    let config_def = def_by_name(db, spa_mod, "config")?;
+    let config_defs = app_config_defs(db);
+    if config_defs.is_empty() {
+        return None;
+    }
     let mut order = vec![entry];
     order.extend(check_ids.iter().copied().filter(|m| *m != entry));
     for mid in order {
         let resolved = db.resolve(mid);
         for (_def, body) in &resolved.bodies {
-            if let Some(f) = find_config_field(body, config_def, field) {
+            if let Some(f) = find_config_field(body, &config_defs, field) {
                 if let Expr::Var(Res::Def(d)) = &body.exprs[f] {
                     return Some(*d);
                 }
@@ -1313,7 +1319,7 @@ fn find_config_update_field(
     db: &dyn SkyDb,
     check_ids: &[ModuleId],
     entry: ModuleId,
-    config_def: DefId,
+    config_defs: &[DefId],
 ) -> UpdateField {
     // Entry module first, then the rest.
     let mut order = vec![entry];
@@ -1321,7 +1327,7 @@ fn find_config_update_field(
     for mid in order {
         let resolved = db.resolve(mid);
         for (_def, body) in &resolved.bodies {
-            if let Some(field) = find_config_field(body, config_def, "update") {
+            if let Some(field) = find_config_field(body, config_defs, "update") {
                 return match &body.exprs[field] {
                     Expr::Var(Res::Def(d)) => UpdateField::Def(*d),
                     Expr::Lambda { body: b, .. } => UpdateField::Lambda(mid, body.clone(), *b),
@@ -1338,16 +1344,41 @@ fn find_config_update_field(
             }
         }
     }
-    UpdateField::Unavailable("no `Spa.config { … }` call found in the project".into())
+    UpdateField::Unavailable(
+        "no `Spa.config { … }` / `App.app { … }` / `App.web { … }` call found in the project".into(),
+    )
 }
 
-/// Within one body, find a `Call(Var(Res::Def(config_def)), [Record …])` and
-/// return the named field's ExprId.
-fn find_config_field(body: &Body, config_def: DefId, field: &str) -> Option<ExprId> {
+/// The record-config builder defs a Sky app entry may call: `Std.Spa.config`
+/// (the direct Sky.Spa entry) plus `Std.App.app` / `Std.App.web` (the Std.App
+/// builders, whose first arg is the SAME `{ init, update, view, subscriptions }`
+/// record). Recognising all three lets the auto-split analysis (and the
+/// differential fuzzer) read `update` straight from an `App.app`/`App.web` app
+/// without the `App -> Spa` source synthesis the build path performs.
+fn app_config_defs(db: &dyn SkyDb) -> Vec<DefId> {
+    let mut out = Vec::new();
+    if let Some(m) = db.module_by_name("Std.Spa") {
+        if let Some(d) = def_by_name(db, m, "config") {
+            out.push(d);
+        }
+    }
+    if let Some(m) = db.module_by_name("Std.App") {
+        for name in ["app", "web"] {
+            if let Some(d) = def_by_name(db, m, name) {
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
+/// Within one body, find a `Call(Var(Res::Def(config_def)), [Record …])` for ANY
+/// of the config builder defs and return the named field's ExprId.
+fn find_config_field(body: &Body, config_defs: &[DefId], field: &str) -> Option<ExprId> {
     for (id, expr) in body.exprs.iter() {
         if let Expr::Call(callee, args) = expr {
             if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
-                if *d == config_def {
+                if config_defs.contains(d) {
                     if let Some(first) = args.first() {
                         if let Expr::Record(fields) = &body.exprs[*first] {
                             for (n, v) in fields {
