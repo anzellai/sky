@@ -418,6 +418,18 @@ fn collect_localdef(body: &Body, d: &LocalDef, acc: &mut Refs, ctx: &CollectCtx)
 /// symbol's family (`Db_query` → Db, `Http_post` → Http, `System_getenvOr` →
 /// System). This is the actual effect origin under the Sky-source stdlib.
 fn record_ffi_symbol(sym: &str, acc: &mut Refs) {
+    // `Task_run` is the FORCE primitive — the Sky-source stdlib defines
+    // `Task.run = Ffi.kernel "Task_run"`, so a `Task.run <task>` call resolves to
+    // this def, NOT to `Res::Kernel{Task, run}` (the arm at the `Expr::Call` site
+    // never matches real code). Reaching this symbol means an effect is FORCED in
+    // a run position — the phase-2 differential fuzzer's fence keys on it (a
+    // branch that transitively forces an effect is not deterministic under
+    // identical stubs and is deferred to the phase-3 effect-mock harness). It is
+    // effect-NEUTRAL for the server/client taint (the forced task's OWN symbols
+    // decide the side), so we only flip `inline_force` here.
+    if sym == "Task_run" {
+        acc.inline_force = true;
+    }
     let prefix = sym.split('_').next().unwrap_or(sym);
     let rest = sym.strip_prefix(prefix).unwrap_or("").trim_start_matches('_');
     let rest = if rest.is_empty() { sym } else { rest };

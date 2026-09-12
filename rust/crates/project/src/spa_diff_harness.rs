@@ -54,6 +54,20 @@ impl TypeResolver for NoTypeResolver {
     }
 }
 
+/// A resolver backed by a precomputed nominal-name → [`TypeDef`] map, built from
+/// the project's own type declarations (unions + record aliases) via the `ty`
+/// crate's CST helpers (`variant_arg_types` / `record_alias_fields`). This is the
+/// resolver the real `sky spa-diff-fuzz` uses — it lets `genModel` / `genMsg`
+/// build values of the app's nominal record/union types (the DS `Page` route
+/// union, `BasketLine`, …). Keyed by bare declaration name; a tail lookup matches
+/// because `spa_diff_gen` resolves against the type's tail segment.
+pub struct MapTypeResolver(pub std::collections::HashMap<String, crate::spa_diff_gen::TypeDef>);
+impl TypeResolver for MapTypeResolver {
+    fn resolve(&self, name: &str) -> Option<crate::spa_diff_gen::TypeDef> {
+        self.0.get(name).cloned()
+    }
+}
+
 /// The tail ctor NAME of a branch label (`GotTodos (Ok _)` → `GotTodos`,
 /// `SetRegion` → `SetRegion`).
 fn ctor_of(label: &str) -> &str {
@@ -101,15 +115,14 @@ pub fn select_checkable(report: &SpaPartitionReport) -> (Vec<CheckableBranch>, V
             notes.push(format!("skip `{ctor}`: server branch with no derived I/O"));
             continue;
         };
-        // The harness rebinds the arm as `case msg of <Ctor> <arg…>`, so the
-        // pattern must be a SIMPLE top-level ctor application (`SetRegion region`).
-        // A nested / literal pattern (`GotTodos (Ok _)`, `Key "Enter"`) binds args
-        // the emitters cannot reconstruct from the wire — defer to phase 3.
-        let simple = if io.msg_args.is_empty() {
-            b.msg == ctor
-        } else {
-            b.msg == format!("{ctor} {}", io.msg_args.join(" "))
-        };
+        // The harness rebinds the arm as `case msg of <Ctor> <arg…>` using the
+        // arm's own binder names (`io.msg_args`), so the pattern must be a SIMPLE
+        // top-level ctor application whose args are plain binders. A nested or
+        // literal pattern (`GotTodos (Ok _)`, `SetMode "dark"`) binds args the
+        // emitters cannot reconstruct from the wire — defer to phase 3. The label
+        // renders binders as `_`, so detect nesting/literals structurally: any
+        // `(` or `"` in the label means a non-simple pattern.
+        let simple = !b.msg.contains('(') && !b.msg.contains('"');
         if !simple {
             notes.push(format!(
                 "skip `{}`: non-simple arm pattern (nested / literal binders the wire cannot reconstruct) — deferred to phase 3",

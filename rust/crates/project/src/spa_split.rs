@@ -2359,11 +2359,52 @@ pub fn generate_diff_fuzz(
     let model_ty = model_type_name(&efile, &esrc).unwrap_or_else(|| "Model".to_string());
     let msg_ty = nth_arrow_segment(&update_anno, 0).unwrap_or_else(|| "Msg".to_string());
 
-    // Fence + emit. Phase 2 uses the no-op resolver (scalars / List / Maybe /
-    // Result of scalars are generatable without it); a nominal record/union field
-    // withholds `genModel` loudly until the HIR-backed resolver lands.
+    // Build the type resolver from the project's own declarations, so the value
+    // generators can build the app's nominal record/union types (the DS `Page`
+    // route union, `BasketLine`, …). Walk every reachable module's `type` /
+    // `type alias` decls; `ty::variant_arg_types` gives a union ctor's arg types
+    // and `ty::record_alias_fields` a record alias's fields, both as `ty::Ty`.
+    let mut tymap: HashMap<String, crate::spa_diff_gen::TypeDef> = HashMap::new();
+    for m in &check_ids {
+        let tree = db.module_parse(*m).tree();
+        for decl in tree.decls() {
+            match decl {
+                syntax::ast::Decl::Union(u) => {
+                    if let Some(nm) = u.name() {
+                        let ctors: Vec<(String, Vec<ty::Ty>)> = u
+                            .variants()
+                            .into_iter()
+                            .filter_map(|v| {
+                                v.name().map(|cn| {
+                                    (cn.text().to_string(), ty::variant_arg_types(v.syntax()))
+                                })
+                            })
+                            .collect();
+                        tymap.insert(
+                            nm.text().to_string(),
+                            crate::spa_diff_gen::TypeDef::Union(ctors),
+                        );
+                    }
+                }
+                syntax::ast::Decl::Alias(a) => {
+                    if let Some(nm) = a.name() {
+                        let fields = ty::record_alias_fields(a.syntax());
+                        if !fields.is_empty() {
+                            tymap.insert(
+                                nm.text().to_string(),
+                                crate::spa_diff_gen::TypeDef::Record(fields),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Fence + emit.
     let (checkable, fence_notes) = crate::spa_diff_harness::select_checkable(&report);
-    let resolver = crate::spa_diff_harness::NoTypeResolver;
+    let resolver = crate::spa_diff_harness::MapTypeResolver(tymap);
     let out = crate::spa_diff_harness::emit_harness(
         &model_ty,
         &msg_ty,
