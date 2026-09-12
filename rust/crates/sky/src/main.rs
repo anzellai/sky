@@ -2620,10 +2620,40 @@ fn cmd_spa_diff_fuzz(args: &[String]) -> ExitCode {
         Some(o) => PathBuf::from(o),
         None => project_dir.join(".difffuzz"),
     };
+    // A `Std.App` app (`App.app`/`App.web` + `App.run`) is not itself a `Spa.app`,
+    // so the auto-split's per-branch analysis cannot resolve its `update` from the
+    // raw entry — `sky build --target web:app` first SYNTHESISES a `Spa.app` entry
+    // that references init/update/view/subscriptions directly. Do the SAME here so
+    // the fuzzer sees the exact source the split partitions: synthesise, stage a
+    // copy (+ symlinked deps), and point the fuzzer at the staged project. An
+    // entry that is already a `Spa.app` (synthesis returns None) is fuzzed as-is.
+    let entry_src = std::fs::read_to_string(file).unwrap_or_default();
+    let (fuzz_repo, fuzz_project, fuzz_entry): (PathBuf, PathBuf, Option<String>) =
+        match synthesize_spa_source(&entry_src) {
+            Some(synth) => {
+                let staging = project_dir.join(".skyapp").join("difffuzz-synth");
+                let src_to = match stage_std_app_derived(&project_dir, &staging) {
+                    Ok(p) => p,
+                    Err(code) => return code,
+                };
+                let entry_name = file.file_name().unwrap_or_default();
+                let synth_entry = src_to.join(entry_name);
+                if let Err(e) = std::fs::write(&synth_entry, synth) {
+                    eprintln!("sky spa-diff-fuzz: write synthesised Spa entry: {e}");
+                    return ExitCode::FAILURE;
+                }
+                (
+                    repo_root.clone(),
+                    staging,
+                    entry_module_name(&synth_entry),
+                )
+            }
+            None => (repo_root.clone(), project_dir.clone(), entry_module_name(file)),
+        };
     match project::spa_split::generate_diff_fuzz(
-        &repo_root,
-        &project_dir,
-        entry_module_name(file).as_deref(),
+        &fuzz_repo,
+        &fuzz_project,
+        fuzz_entry.as_deref(),
         &out_dir,
         iters,
         seed,
