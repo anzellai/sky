@@ -18,7 +18,7 @@
 //! non-Spa app (Sky.Live / Http / Cli) renders a single lane — still useful.
 
 use base::DefId;
-use hir::SkyDb;
+use hir::{Body, Expr, ExprId, LocalDef, Res, SkyDb};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
@@ -701,6 +701,414 @@ fn render_wire_mermaid(r: &WireReport) -> String {
     o
 }
 
+// ===========================================================================
+// `sky doc --diagram telemetry` — the privacy / observability inventory.
+// ===========================================================================
+//
+// What does this app track or log, from where, and to which sink? For a shop
+// with a consent banner that is the question a privacy review asks: what
+// behavioural / telemetry data do we capture, and where does it go. This slice
+// answers it as a flat inventory — one row per telemetry / analytics / logging
+// CALL SITE in the user's own modules: the module the call is in, the call
+// (`Log.info`, `Analytics.track`, …), the event/message (its first string
+// literal argument when it is a literal, else `<dynamic>`), and the sink.
+//
+// Detection is a read-only walk over each project module's resolved HIR (the
+// SAME source db the build loads). A call is telemetry when its callee resolves
+// to a def in `Std.Log` or `Std.Analytics` (both are ordinary Sky-source stdlib
+// modules whose functions are `Ffi.kernel "Log_…"` / `"Analytics_…"`, so a user
+// call resolves to a `Res::Def` there — reliably detectable, not best-effort).
+// A call routed through a user's own helper is captured at that helper (its own
+// call site), which is where the data flow actually originates in the app.
+//
+// These are effect kernels, so under a Sky.Spa split they all run on the SERVER,
+// reached from the wasm client over `/_rpc` — the render carries that as a note.
+// It never type-checks beyond the shared load, lowers, emits, or writes.
+
+/// Where a telemetry / analytics / logging call sends its data. Coarse but
+/// honest — one node per real destination.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Sink {
+    /// `Log.*` — structured logs (console; OTel when the endpoint is set).
+    Logs,
+    /// `Analytics.track` / `.trackEvent` / `.identify` / … — the analytics store.
+    Analytics,
+    /// `Analytics.setConsent` — the per-session consent state.
+    Consent,
+}
+
+impl Sink {
+    /// The honest, full sink description used in the `md` table.
+    pub fn label(self) -> &'static str {
+        match self {
+            Sink::Logs => {
+                "structured logs (console; OTel when OTEL_EXPORTER_OTLP_ENDPOINT set)"
+            }
+            Sink::Analytics => "analytics store (DB)",
+            Sink::Consent => "consent state (per session)",
+        }
+    }
+
+    /// A short label for the Mermaid sink node.
+    fn node_label(self) -> &'static str {
+        match self {
+            Sink::Logs => "Logs",
+            Sink::Analytics => "Analytics DB",
+            Sink::Consent => "Consent",
+        }
+    }
+
+    /// A stable, ascii Mermaid node id, one per sink.
+    fn node_id(self) -> &'static str {
+        match self {
+            Sink::Logs => "sink_logs",
+            Sink::Analytics => "sink_analytics",
+            Sink::Consent => "sink_consent",
+        }
+    }
+
+    /// A Mermaid node declaration with a distinct SHAPE per sink.
+    fn node_decl(self) -> String {
+        let l = self.node_label();
+        match self {
+            // subroutine — a side channel
+            Sink::Logs => format!("sink_logs[[\"{l}\"]]"),
+            // cylinder — a datastore
+            Sink::Analytics => format!("sink_analytics[(\"{l}\")]"),
+            // hexagon — a consent/trust boundary
+            Sink::Consent => format!("sink_consent{{{{\"{l}\"}}}}"),
+        }
+    }
+}
+
+/// One telemetry / analytics / logging call site. Deduplicated: identical rows
+/// (same module + call + event + sink) collapse to one.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct TelemetryCall {
+    /// The user module the call site is in.
+    pub module: String,
+    /// The call, `<ShortModule>.<func>` (`Log.info`, `Analytics.track`).
+    pub call: String,
+    /// The event / message: the first string-literal argument, or `<dynamic>`.
+    pub event: String,
+    /// Where the data goes.
+    pub sink: Sink,
+}
+
+/// The telemetry inventory for a project — pure data the renderer consumes.
+pub struct TelemetryReport {
+    /// The project path, relative to the repo root when possible.
+    pub project: String,
+    /// True when the resolved target is a Sky.Spa wasm client — for the note.
+    pub is_spa: bool,
+    /// Call sites, sorted deterministically and deduplicated.
+    pub calls: Vec<TelemetryCall>,
+    /// Non-fatal reader notes.
+    pub notes: Vec<String>,
+}
+
+/// Classify a resolved callee as a telemetry call. Returns the display call name
+/// (`Log.info`, `Analytics.track`) and its sink, or `None` when the callee is
+/// not a `Std.Log` / `Std.Analytics` function.
+fn telemetry_callee(db: &dyn SkyDb, res: &Res) -> Option<(String, Sink)> {
+    let (full, name): (String, String) = match res {
+        Res::Def(d) => {
+            let loc = db.def_loc(*d)?;
+            (
+                db.module_name(loc.module).to_string(),
+                loc.name.as_str().to_string(),
+            )
+        }
+        // Belt-and-suspenders: if a logging/analytics function ever resolves as a
+        // bare kernel rather than a Sky-source def, catch it by pseudo-module.
+        Res::Kernel { module, func } => (module.as_str().to_string(), func.as_str().to_string()),
+        _ => return None,
+    };
+    let is_log = full == "Std.Log" || full == "Log";
+    let is_analytics = full == "Std.Analytics" || full == "Analytics";
+    if is_log {
+        Some((format!("Log.{name}"), Sink::Logs))
+    } else if is_analytics {
+        // `setConsent` writes consent state; every other Analytics.* effect
+        // writes the analytics store.
+        let sink = if name == "setConsent" {
+            Sink::Consent
+        } else {
+            Sink::Analytics
+        };
+        Some((format!("Analytics.{name}"), sink))
+    } else {
+        None
+    }
+}
+
+/// The first string-literal argument of a call, or `<dynamic>` when the first
+/// argument (or all arguments) is not a bare string literal.
+fn first_str_arg(body: &Body, args: &[ExprId]) -> String {
+    for a in args {
+        if let Expr::Str(s) = &body.exprs[*a] {
+            return s.to_string();
+        }
+    }
+    "<dynamic>".to_string()
+}
+
+/// Walk one expression subtree, recording every telemetry call site into `out`.
+/// Read-only; mirrors the exhaustive traversal in [`crate::spa_partition`].
+fn walk_telemetry(
+    db: &dyn SkyDb,
+    module_name: &str,
+    body: &Body,
+    e: ExprId,
+    out: &mut Vec<TelemetryCall>,
+) {
+    match &body.exprs[e] {
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Chr(_)
+        | Expr::Bool(_)
+        | Expr::Unit
+        | Expr::Var(_)
+        | Expr::Accessor(_)
+        | Expr::Error => {}
+        Expr::List(xs) | Expr::Tuple(xs) => {
+            for x in xs {
+                walk_telemetry(db, module_name, body, *x, out);
+            }
+        }
+        Expr::Record(fields) => {
+            for (_, x) in fields {
+                walk_telemetry(db, module_name, body, *x, out);
+            }
+        }
+        Expr::Update { base, fields } => {
+            walk_telemetry(db, module_name, body, *base, out);
+            for (_, x) in fields {
+                walk_telemetry(db, module_name, body, *x, out);
+            }
+        }
+        Expr::Negate(x) => walk_telemetry(db, module_name, body, *x, out),
+        Expr::Lambda { body: b, .. } => walk_telemetry(db, module_name, body, *b, out),
+        Expr::Call(callee, args) => {
+            if let Expr::Var(res) = &body.exprs[*callee] {
+                if let Some((call, sink)) = telemetry_callee(db, res) {
+                    out.push(TelemetryCall {
+                        module: module_name.to_string(),
+                        call,
+                        event: first_str_arg(body, args),
+                        sink,
+                    });
+                }
+            }
+            walk_telemetry(db, module_name, body, *callee, out);
+            for a in args {
+                walk_telemetry(db, module_name, body, *a, out);
+            }
+        }
+        Expr::Binop { lhs, rhs, .. } => {
+            walk_telemetry(db, module_name, body, *lhs, out);
+            walk_telemetry(db, module_name, body, *rhs, out);
+        }
+        Expr::If { arms, els } => {
+            for (c, t) in arms {
+                walk_telemetry(db, module_name, body, *c, out);
+                walk_telemetry(db, module_name, body, *t, out);
+            }
+            walk_telemetry(db, module_name, body, *els, out);
+        }
+        Expr::Let { defs, body: b } => {
+            for d in defs {
+                walk_telemetry_localdef(db, module_name, body, d, out);
+            }
+            walk_telemetry(db, module_name, body, *b, out);
+        }
+        Expr::Case { subject, branches } => {
+            walk_telemetry(db, module_name, body, *subject, out);
+            for br in branches {
+                walk_telemetry(db, module_name, body, br.body, out);
+            }
+        }
+        Expr::Access(x, _) => walk_telemetry(db, module_name, body, *x, out),
+    }
+}
+
+fn walk_telemetry_localdef(
+    db: &dyn SkyDb,
+    module_name: &str,
+    body: &Body,
+    d: &LocalDef,
+    out: &mut Vec<TelemetryCall>,
+) {
+    walk_telemetry(db, module_name, body, d.body, out);
+}
+
+/// Build the telemetry inventory for a project. Read-only.
+///
+/// `app_target` (the `[app] target`, or a `--target` override) only decides the
+/// `is_spa` note — telemetry call sites live in the user's own modules either
+/// way, so the analysis is the same for every target.
+pub fn analyze_telemetry(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    app_target: Option<&str>,
+) -> Result<TelemetryReport, String> {
+    let (db, _entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let project = project_dir
+        .strip_prefix(repo_root)
+        .unwrap_or(project_dir)
+        .to_string_lossy()
+        .to_string();
+
+    let mut calls: Vec<TelemetryCall> = Vec::new();
+    for mid in &check_ids {
+        let name = db.module_name(*mid).to_string();
+        let resolved = db.resolve(*mid);
+        for (_def, body) in &resolved.bodies {
+            if let Some(root) = body.root {
+                walk_telemetry(&db, &name, body, root, &mut calls);
+            }
+        }
+    }
+    // Deterministic order + dedup of identical rows.
+    calls.sort();
+    calls.dedup();
+
+    let is_spa = app_target.map(target_is_spa_client).unwrap_or(false);
+
+    let mut notes: Vec<String> = Vec::new();
+    if !calls.is_empty() {
+        notes.push(
+            "Log and Analytics are effect kernels: under a Sky.Spa split they run on the \
+             server, reached from the wasm client over /_rpc."
+                .into(),
+        );
+        notes.push(
+            "Detection covers direct `Std.Log` / `Std.Analytics` call sites in the project's \
+             own modules; a call routed through a user helper is listed at that helper."
+                .into(),
+        );
+    }
+
+    Ok(TelemetryReport {
+        project,
+        is_spa,
+        calls,
+        notes,
+    })
+}
+
+/// Render a telemetry report to the requested format. Pure function of `r`.
+///
+/// `telemetry`'s useful form is a table, so the CLI defaults it to [`Format::Md`];
+/// [`Format::Mermaid`] draws a small module → sink flowchart of the same rows.
+pub fn render_telemetry(r: &TelemetryReport, format: Format) -> String {
+    if r.calls.is_empty() {
+        return "No telemetry, analytics, or logging call sites found.\n".to_string();
+    }
+    match format {
+        Format::Mermaid => render_telemetry_mermaid(r),
+        Format::Md => render_telemetry_md(r),
+    }
+}
+
+/// Escape a `|` in a Markdown table cell so it does not split the column.
+fn md_cell(s: &str) -> String {
+    s.replace('|', "\\|")
+}
+
+fn render_telemetry_md(r: &TelemetryReport) -> String {
+    let mut o = String::new();
+    o.push_str(&format!("# Telemetry — {}\n\n", r.project));
+    o.push_str(
+        "Everything this app tracks or logs, and where it goes — one row per \
+         telemetry / analytics / logging call site.\n\n",
+    );
+    o.push_str("| Module | Call | Event | Sink |\n|---|---|---|---|\n");
+    for c in &r.calls {
+        o.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            md_cell(&c.module),
+            md_cell(&c.call),
+            md_cell(&c.event),
+            c.sink.label()
+        ));
+    }
+    if !r.notes.is_empty() {
+        o.push('\n');
+        for n in &r.notes {
+            o.push_str(&format!("> {n}\n"));
+        }
+    }
+    o
+}
+
+/// Sanitise an event string for a Mermaid edge label: `<dynamic>` becomes plain
+/// `dynamic` (angle brackets render as HTML), pipes / quotes / newlines become
+/// spaces, and the label is truncated so the graph stays readable.
+fn mermaid_edge_label(event: &str) -> String {
+    if event == "<dynamic>" {
+        return "dynamic".to_string();
+    }
+    let s: String = event
+        .chars()
+        .map(|c| match c {
+            '|' | '"' | '`' | '\n' | '\r' | '<' | '>' => ' ',
+            other => other,
+        })
+        .collect();
+    let s = s.trim();
+    if s.chars().count() > 40 {
+        let mut t: String = s.chars().take(39).collect();
+        t.push('…');
+        t
+    } else {
+        s.to_string()
+    }
+}
+
+fn render_telemetry_mermaid(r: &TelemetryReport) -> String {
+    let mut o = String::new();
+    o.push_str("```mermaid\n");
+    o.push_str("flowchart LR\n");
+    o.push_str(&format!("  %% sky doc --diagram telemetry — {}\n", r.project));
+
+    // Distinct module + sink nodes actually used.
+    let mut modules: BTreeSet<&str> = BTreeSet::new();
+    let mut sinks: BTreeSet<Sink> = BTreeSet::new();
+    for c in &r.calls {
+        modules.insert(c.module.as_str());
+        sinks.insert(c.sink);
+    }
+    for m in &modules {
+        o.push_str(&format!("  {}[\"{}\"]\n", module_node_id(m), m));
+    }
+    for s in &sinks {
+        o.push_str(&format!("  {}\n", s.node_decl()));
+    }
+    // One edge per distinct (module, event, sink), deduped + sorted.
+    let mut edges: BTreeSet<(String, String, &'static str)> = BTreeSet::new();
+    for c in &r.calls {
+        edges.insert((
+            module_node_id(&c.module),
+            mermaid_edge_label(&c.event),
+            c.sink.node_id(),
+        ));
+    }
+    for (m, label, sink) in &edges {
+        o.push_str(&format!("  {} -->|{}| {}\n", m, label, sink));
+    }
+    o.push_str("```\n");
+    if !r.notes.is_empty() {
+        for n in &r.notes {
+            o.push_str(&format!("\n> {n}\n"));
+        }
+    }
+    o
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,6 +1264,81 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("Server-->>Client: {basket, region}"), "{out}");
+    }
+
+    fn telemetry_report() -> TelemetryReport {
+        TelemetryReport {
+            project: "examples/demo".into(),
+            is_spa: false,
+            calls: vec![
+                TelemetryCall {
+                    module: "Main".into(),
+                    call: "Log.info".into(),
+                    event: "startup".into(),
+                    sink: Sink::Logs,
+                },
+                TelemetryCall {
+                    module: "Update".into(),
+                    call: "Analytics.track".into(),
+                    event: "<dynamic>".into(),
+                    sink: Sink::Analytics,
+                },
+                TelemetryCall {
+                    module: "Main".into(),
+                    call: "Analytics.setConsent".into(),
+                    event: "<dynamic>".into(),
+                    sink: Sink::Consent,
+                },
+            ],
+            notes: vec!["a note".into()],
+        }
+    }
+
+    #[test]
+    fn telemetry_md_lists_each_call_with_its_sink() {
+        let out = render_telemetry(&telemetry_report(), Format::Md);
+        assert!(out.contains("| Module | Call | Event | Sink |"), "{out}");
+        assert!(
+            out.contains(
+                "| Main | Log.info | startup | structured logs (console; OTel when OTEL_EXPORTER_OTLP_ENDPOINT set) |"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("| Update | Analytics.track | <dynamic> | analytics store (DB) |"),
+            "{out}"
+        );
+        assert!(
+            out.contains("| Main | Analytics.setConsent | <dynamic> | consent state (per session) |"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn telemetry_mermaid_draws_module_to_sink_edges() {
+        let out = render_telemetry(&telemetry_report(), Format::Mermaid);
+        assert!(out.contains("flowchart LR"), "{out}");
+        // distinct sink nodes
+        assert!(out.contains("sink_logs[[\"Logs\"]]"), "{out}");
+        assert!(out.contains("sink_analytics[(\"Analytics DB\")]"), "{out}");
+        assert!(out.contains("sink_consent{{\"Consent\"}}"), "{out}");
+        // a labelled module → sink edge; <dynamic> renders as plain `dynamic`
+        assert!(out.contains("m_Main -->|startup| sink_logs"), "{out}");
+        assert!(out.contains("m_Update -->|dynamic| sink_analytics"), "{out}");
+    }
+
+    #[test]
+    fn telemetry_empty_prints_the_no_sites_message() {
+        let r = TelemetryReport {
+            project: "examples/demo".into(),
+            is_spa: false,
+            calls: vec![],
+            notes: vec![],
+        };
+        let md = render_telemetry(&r, Format::Md);
+        assert_eq!(md, "No telemetry, analytics, or logging call sites found.\n");
+        let mm = render_telemetry(&r, Format::Mermaid);
+        assert_eq!(mm, "No telemetry, analytics, or logging call sites found.\n");
     }
 
     #[test]

@@ -300,13 +300,15 @@ terminal view: ↑/↓ navigate, Enter expands the highlighted entry,
 #### `sky doc --diagram <kind> [--format mermaid|md]` (WIP)
 
 A read-only architecture diagram of the current project, emitted to
-stdout. Two kinds ship today — `components` and `wire`:
+stdout. Three kinds ship today — `components`, `wire`, and `telemetry`:
 
 ```bash
 sky doc --diagram components               # fenced ```mermaid flowchart
 sky doc --diagram components --format md   # mermaid + a module→capability table
 sky doc --diagram wire --target web:app    # the Sky.Spa /_rpc contract, as a table
 sky doc --diagram wire --format mermaid --target web:app   # as a sequence diagram
+sky doc --diagram telemetry                # the privacy/observability inventory, as a table
+sky doc --diagram telemetry --format mermaid   # module→sink flowchart
 ```
 
 `components` charts each `src/` module and the external capabilities
@@ -331,12 +333,25 @@ a target that is not a wasm client) prints a short note explaining that
 `wire` describes the Sky.Spa RPC boundary — a Sky.Live app's "wire" is
 the SSE / session channel, not an RPC contract — and exits 0.
 
-Both kinds reuse the same analysis as the Sky.Spa auto-split, so the
-diagram cannot drift from what ships; neither type-checks beyond the
-shared source load, lowers, `go build`s, or writes.
+`telemetry` charts the privacy / observability inventory — everything
+the app tracks or logs, and where it goes. It lists one row per
+telemetry / analytics / logging call site in the project's own modules:
+the module the call is in, the call (`Log.info`, `Analytics.track`,
+`Analytics.setConsent`), the event/message (its first string-literal
+argument, or `<dynamic>`), and the sink — structured logs (console;
+OTel when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), the analytics store
+(DB), or the per-session consent state. `--format` defaults to `md` (a
+table); `mermaid` draws a `module -->|event| sink` flowchart with the
+sinks as distinct nodes. Log and Analytics are effect kernels, so under
+a Sky.Spa split they run on the server, reached over `/_rpc`. An app
+with no such call sites prints a short note and exits 0.
 
-The remaining kinds — `telemetry`, `journey`, `callpath` — are
-planned and exit non-zero with a "not yet implemented" note today.
+The `components` and `wire` kinds reuse the same analysis as the Sky.Spa
+auto-split, so the diagram cannot drift from what ships; no kind
+type-checks beyond the shared source load, lowers, `go build`s, or writes.
+
+The remaining kinds — `journey`, `callpath` — are planned and exit
+non-zero with a "not yet implemented" note today.
 
 ### `sky doctor [--fix] [--verbose]`
 

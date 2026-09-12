@@ -5808,22 +5808,23 @@ fn cmd_doc(args: &[String]) -> ExitCode {
 /// prints a fenced flowchart; `--format md` adds a Markdown legend + table.
 fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[String]) -> ExitCode {
     const PLANNED: &[&str] = &["components", "wire", "telemetry", "journey", "callpath"];
-    if kind != "components" && kind != "wire" {
+    if kind != "components" && kind != "wire" && kind != "telemetry" {
         eprintln!(
             "sky doc --diagram {kind}: not yet implemented.\n\
              Planned diagram kinds: {}.\n\
-             Available in this release: `components`, `wire`.",
+             Available in this release: `components`, `wire`, `telemetry`.",
             PLANNED.join(", ")
         );
         return ExitCode::from(2);
     }
-    // `components` reads best as a flowchart (default `mermaid`); `wire` reads
-    // best as a table (default `md`). An explicit `--format` always wins.
+    // `components` reads best as a flowchart (default `mermaid`); `wire` and
+    // `telemetry` read best as a table (default `md`). An explicit `--format`
+    // always wins.
     let raw_format = flag_value(args, "--format");
     let format = match raw_format.as_deref() {
         Some("mermaid") => project::diagram::Format::Mermaid,
         Some("md") => project::diagram::Format::Md,
-        None if kind == "wire" => project::diagram::Format::Md,
+        None if kind == "wire" || kind == "telemetry" => project::diagram::Format::Md,
         None => project::diagram::Format::Mermaid,
         Some(other) => {
             eprintln!("sky doc --format {other}: unknown format (use `mermaid` or `md`).");
@@ -5900,6 +5901,49 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             }
             Err(e) => {
                 eprintln!("sky doc --diagram wire: {e}");
+                ExitCode::FAILURE
+            }
+        };
+        cleanup(&staged);
+        return out;
+    }
+
+    if kind == "telemetry" {
+        let out = match project::diagram::analyze_telemetry(
+            repo_root,
+            analysis_dir,
+            analysis_entry.as_deref(),
+            app_target.as_deref(),
+        ) {
+            // An app with no telemetry / analytics / logging is not an error:
+            // `render_telemetry` prints the "no call sites" line and we exit 0.
+            Ok(mut report) => {
+                report.project = project_label;
+                print!("{}", project::diagram::render_telemetry(&report, format));
+                ExitCode::SUCCESS
+            }
+            // If the synthesised project failed to load, fall back to the raw
+            // project so an inventory is still produced (call sites live in the
+            // user's own modules either way).
+            Err(_) if staged.is_some() => {
+                match project::diagram::analyze_telemetry(
+                    repo_root,
+                    project_dir,
+                    None,
+                    app_target.as_deref(),
+                ) {
+                    Ok(report) => {
+                        print!("{}", project::diagram::render_telemetry(&report, format));
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("sky doc --diagram telemetry: {e}");
+                        ExitCode::FAILURE
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("sky doc --diagram telemetry: {e}");
                 ExitCode::FAILURE
             }
         };

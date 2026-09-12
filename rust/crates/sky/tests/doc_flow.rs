@@ -285,3 +285,34 @@ fn doc_diagram_components_on_std_app_web_renders_lanes() {
         "staged `.skyapp` scratch dir was not cleaned up"
     );
 }
+
+/// `sky doc --diagram telemetry` on an app with no telemetry / analytics /
+/// logging call site is NOT an error: it prints the "no call sites" line and
+/// exits 0. The `diagram-app-web` fixture only reads env (`System.getenv`), so
+/// it has no Log / Analytics call. Also verifies the staging scratch tree is
+/// cleaned up on the telemetry arm (run under `--target web:app`).
+#[test]
+fn doc_diagram_telemetry_no_sites_exits_zero() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/diagram-app-web");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "telemetry", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram telemetry");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "sky doc --diagram telemetry failed:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("No telemetry, analytics, or logging call sites found."),
+        "expected the no-sites message:\n{stdout}"
+    );
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged `.skyapp` scratch dir was not cleaned up"
+    );
+}
