@@ -15,7 +15,29 @@ import (
 func resetTestModeForTest() {
 	testModeOnce = sync.Once{}
 	testModeOn = false
+	testClockSet = false
+	testSeedSet = false
 	testRng = nil
+}
+
+// Decoupling (phase 3a refinement): SKY_TEST_MODE alone turns on the offline HTTP
+// mock but NOT determinism — so `Data.newId ()` stays unique across runs and DB
+// integration tests are not broken. Determinism is opt-in via SKY_TEST_SEED /
+// SKY_TEST_CLOCK_MS.
+func TestTestModeDecouplesOfflineFromDeterminism(t *testing.T) {
+	os.Unsetenv("SKY_TEST_SEED")
+	os.Unsetenv("SKY_TEST_CLOCK_MS")
+	t.Setenv("SKY_TEST_MODE", "1")
+	resetTestModeForTest()
+	if !testModeActive() {
+		t.Fatalf("SKY_TEST_MODE should enable test mode (offline mock)")
+	}
+	if testClockActive() {
+		t.Fatalf("clock must NOT be fixed without SKY_TEST_CLOCK_MS")
+	}
+	if testSeedActive() {
+		t.Fatalf("RNG must NOT be seeded without SKY_TEST_SEED")
+	}
 }
 
 func TestTestModeClockIsFixedAndAdvanceable(t *testing.T) {

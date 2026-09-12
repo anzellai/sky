@@ -150,7 +150,7 @@ func String_ellipsize(n any, s any) any {
 // Uses crypto/rand via github.com/google/uuid.
 func Uuid_v4() any {
 	return func() any {
-		if testModeActive() {
+		if testSeedActive() {
 			return Ok[any, any](testUuidV4())
 		}
 		u, err := uuid.NewRandom()
@@ -166,7 +166,7 @@ func Uuid_v4() any {
 // time — better for database primary keys than v4.
 func Uuid_v7() any {
 	return func() any {
-		if testModeActive() {
+		if testSeedActive() {
 			return Ok[any, any](testUuidV7())
 		}
 		u, err := uuid.NewV7()

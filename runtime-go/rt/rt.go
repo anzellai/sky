@@ -7024,7 +7024,7 @@ func AnyTaskRun(task any) any {
 //     just strftime-equivalent). No wrapper — bare String.
 func Time_now(_ any) any {
 	return func() any {
-		if testModeActive() {
+		if testClockActive() {
 			return Ok[any, any](int(testNowMillis()))
 		}
 		return Ok[any, any](int(time.Now().UnixMilli()))
@@ -7319,7 +7319,7 @@ func Time_sleep(ms any) any {
 // returns the thunk for auto-force discard or Task chain consumption.
 func Time_unixMillis(_ any) any {
 	return func() any {
-		if testModeActive() {
+		if testClockActive() {
 			return Ok[any, any](int(testNowMillis()))
 		}
 		return Ok[any, any](int(time.Now().UnixMilli()))
@@ -7420,7 +7420,7 @@ func Random_int(lo any, hi any) any {
 		if h <= l {
 			return Ok[any, any](l)
 		}
-		if testModeActive() {
+		if testSeedActive() {
 			return Ok[any, any](l + testRandIntn(h-l+1))
 		}
 		return Ok[any, any](l + mrand.Intn(h-l+1))
@@ -7431,7 +7431,7 @@ func Random_float(lo any, hi any) any {
 	return func() any {
 		l := AsFloat(lo)
 		h := AsFloat(hi)
-		if testModeActive() {
+		if testSeedActive() {
 			return Ok[any, any](l + testRandFloat()*(h-l))
 		}
 		return Ok[any, any](l + mrand.Float64()*(h-l))
