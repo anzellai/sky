@@ -2801,35 +2801,49 @@ fn collect_reads(
             // its read-set instead of over-approximating to the whole model. Sound:
             // a smaller request. A def we cannot resolve, or one that uses its param
             // opaquely, yields the whole model (`None` → reads_whole).
-            let model_positions: Vec<usize> = args
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| is_model_var(body, **a, model_local))
-                .map(|(i, _)| i)
-                .collect();
-            if !model_positions.is_empty() {
-                if let Expr::Var(Res::Def(f)) = &body.exprs[*callee] {
-                    for i in &model_positions {
-                        match helper_readset(db, *f, *i, depth + 1) {
+            let callee_def = match &body.exprs[*callee] {
+                Expr::Var(Res::Def(f)) => Some(*f),
+                _ => None,
+            };
+            for (i, a) in args.iter().enumerate() {
+                if is_model_var(body, *a, model_local) {
+                    // The BARE model threaded into this callee.
+                    match callee_def {
+                        Some(f) => match helper_readset(db, f, i, depth + 1) {
                             Some(fields) => read_fields.extend(fields),
                             None => *reads_whole = true,
-                        }
+                        },
+                        // A non-def callee applied to the bare model uses it
+                        // opaquely — the whole model (sound).
+                        None => *reads_whole = true,
                     }
-                    // Non-model args are walked normally; the callee (a def) is not
-                    // a read of `model`, and each bare-model arg is delegated above.
-                    for (i, a) in args.iter().enumerate() {
-                        if !model_positions.contains(&i) {
-                            go!(*a);
-                        }
-                    }
-                    return;
+                } else if may_carry_model(body, *a, model_local, let_locals, depth) {
+                    // A value that MAY carry the model record onward flows into the
+                    // callee: a `{ model | … }` update, a `Model -> …` helper chain
+                    // (any arity), an `if`/`case`/`let` producing such, a tuple/
+                    // record/list holding it. The callee may read ANY field that
+                    // passes THROUGH — e.g. `recompute (clear { model | region = r })`
+                    // and `recompute (stamp now model)` both read `model.basket`
+                    // inside `recompute` — and from here `collect_reads` cannot map
+                    // those reads back to model fields. Fail CLOSED: send the whole
+                    // model (the sound over-approximation the read-set is meant to
+                    // take when `model` is used non-trivially — see the `BranchIo`
+                    // docs, and the symmetric `writes_whole` on the write side).
+                    // Before this, such a threaded read was silently DROPPED, so the
+                    // RPC ran the branch against a fresh `init ()` and returned a
+                    // wrong, input-independent result (darraghstudio `SetRegion`
+                    // recomputed shipping on an empty basket → always 0). A plain
+                    // `model.field` access is NOT a carrier (its read is recorded by
+                    // the `Access` arm), so precise field reads stay precise.
+                    *reads_whole = true;
+                } else {
+                    go!(*a);
                 }
-                // A non-def callee applied to the bare model — fall through so the
-                // opaque `Var(model)` use forces `reads_whole` (sound).
             }
-            go!(*callee);
-            for a in args {
-                go!(*a);
+            // The callee reference itself is a function, not a model read; walk it
+            // only when it is not a bare def (e.g. a computed callee).
+            if callee_def.is_none() {
+                go!(*callee);
             }
         }
         Expr::Binop { lhs, rhs, .. } => {
@@ -2844,10 +2858,23 @@ fn collect_reads(
             go!(*els);
         }
         Expr::Let { defs, body: b } => {
+            // Thread the let-bound locals so `may_carry_model` / `model_write_shape`
+            // can chase an alias to a model-derived value
+            // (`let m2 = { model | … } in helper m2`). Without this the read walk
+            // saw `m2` as an opaque local and dropped the consuming helper's
+            // pass-through reads — a silent wrong answer. Mirrors the write side
+            // (`collect_writes_tail` / `model_write_shape`).
+            let mut ls = let_locals.clone();
+            add_let_locals(defs, &mut ls);
             for d in defs {
-                go!(d.body);
+                collect_reads(
+                    db, body, d.body, model_local, allowed_bare, &ls, read_fields, reads_whole,
+                    depth,
+                );
             }
-            go!(*b);
+            collect_reads(
+                db, body, *b, model_local, allowed_bare, &ls, read_fields, reads_whole, depth,
+            );
         }
         Expr::Case { subject, branches } => {
             go!(*subject);
@@ -2855,6 +2882,89 @@ fn collect_reads(
                 go!(br.body);
             }
         }
+    }
+}
+
+/// Would the value `e` carry the MODEL RECORD (not just a scalar field of it)
+/// onward into a consumer that receives it? Used by [`collect_reads`]'s `Call`
+/// arm to decide, for a NON-bare-model argument, whether the callee could read
+/// model fields the read walk cannot otherwise account for — in which case the
+/// caller fails closed to `reads_whole` (the whole model rides the RPC request).
+///
+/// TRUE for: the bare model (via a `let` alias), a `{ … | … }` update whose base
+/// carries the model, ANY call/if/case/let/tuple/record/list that transitively
+/// carries the model in a value position, a lambda whose body references the
+/// model. FALSE for a plain `model.field` access (a scalar/sub-value — its read
+/// is recorded precisely by the `Access` arm, and the whole field is sent), and
+/// for values with no model reference (Msg args, literals, arithmetic).
+///
+/// Deliberately return-type-AGNOSTIC and conservative: when in doubt it says
+/// TRUE (a larger request, never a wrong value). This is the read-side mirror of
+/// `model_write_shape`'s fail-closed `None` on the write side.
+fn may_carry_model(
+    body: &Body,
+    e: ExprId,
+    model_local: Option<LocalId>,
+    let_locals: &HashMap<LocalId, ExprId>,
+    depth: usize,
+) -> bool {
+    if depth > IO_DELEGATE_DEPTH {
+        return true; // give up precisely → assume it carries (sound)
+    }
+    match &body.exprs[e] {
+        Expr::Var(Res::Local(l)) => {
+            if Some(*l) == model_local {
+                true
+            } else if let Some(bound) = let_locals.get(l) {
+                may_carry_model(body, *bound, model_local, let_locals, depth + 1)
+            } else {
+                false
+            }
+        }
+        // `{ base | … }` carries the model iff its base does. The field VALUES are
+        // fresh assignments; a model reference inside one is a read handled by the
+        // normal walk, not a carrier of the whole record via this update.
+        Expr::Update { base, .. } => may_carry_model(body, *base, model_local, let_locals, depth),
+        // A call carrying the model in ANY argument may return a model-derived
+        // value (a `Model -> Model` helper); we cannot tell without return types,
+        // so be conservative. A call with only model-free args cannot carry it.
+        Expr::Call(callee, args) => {
+            may_carry_model(body, *callee, model_local, let_locals, depth)
+                || args
+                    .iter()
+                    .any(|a| may_carry_model(body, *a, model_local, let_locals, depth))
+        }
+        Expr::If { arms, els } => {
+            arms.iter()
+                .any(|(_, t)| may_carry_model(body, *t, model_local, let_locals, depth))
+                || may_carry_model(body, *els, model_local, let_locals, depth)
+        }
+        Expr::Case { branches, .. } => branches
+            .iter()
+            .any(|br| may_carry_model(body, br.body, model_local, let_locals, depth)),
+        Expr::Let { defs, body: b } => {
+            let mut ls = let_locals.clone();
+            add_let_locals(defs, &mut ls);
+            may_carry_model(body, *b, model_local, &ls, depth)
+        }
+        Expr::Tuple(xs) | Expr::List(xs) => xs
+            .iter()
+            .any(|x| may_carry_model(body, *x, model_local, let_locals, depth)),
+        Expr::Record(fields) => fields
+            .iter()
+            .any(|(_, v)| may_carry_model(body, *v, model_local, let_locals, depth)),
+        // A lambda is NOT a carrier: it is a callback the callee INVOKES, and its
+        // model references are reads/writes analysed when the read walk descends
+        // into the lambda body (the `Expr::Lambda` arm of `collect_reads`, where
+        // the Call-arm checks still apply to any helper the body threads the model
+        // into) and, for a guard continuation, by the guard-wrapper analysis.
+        // Flagging the lambda itself here wrongly forced `reads_whole` for the
+        // idiomatic `guard model (\_ -> { model | busy = True }, …)` shape.
+        Expr::Negate(x) => may_carry_model(body, *x, model_local, let_locals, depth),
+        // `Access` (model.field) is NOT a whole-model carrier: the field read is
+        // recorded by the `Access` arm and the whole field is sent. Literals and
+        // other leaves carry nothing.
+        _ => false,
     }
 }
 

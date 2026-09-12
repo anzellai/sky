@@ -239,6 +239,16 @@ func TestSpaSSRPage_servesRealBodyHeadModelNotEmptyDiv(t0 *testing.T) {
 	if !strings.Contains(page, liveBaseCSS) {
 		t0.Fatalf("SSR page must inline the base CSS reset:\n%s", page)
 	}
+	// The hydration affordance: `<html>` carries `data-sky-hydrating` at first
+	// paint and the base CSS drives the progress cursor + top bar, so a click
+	// before the wasm boots is visibly "loading", not silently dead. The client
+	// clears the marker after it hydrates (spaClearHydratingMarker).
+	if !strings.Contains(page, `data-sky-hydrating`) {
+		t0.Fatalf("SSR page <html> must carry the data-sky-hydrating marker:\n%s", page)
+	}
+	if !strings.Contains(liveBaseCSS, `html[data-sky-hydrating]`) {
+		t0.Fatalf("base CSS must define the hydration affordance (progress cursor + bar)")
+	}
 	// The initial model is embedded for the client to prime spaModel from.
 	if !strings.Contains(page, `id="sky-model"`) || !strings.Contains(page, `{"page":"Home"}`) {
 		t0.Fatalf("SSR page must embed the initial model blob:\n%s", page)

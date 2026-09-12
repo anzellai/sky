@@ -1,0 +1,121 @@
+module Main exposing (main)
+
+-- Auto-split regression fixture: a SERVER branch threads a model-DERIVED value
+-- (`clear { model | scale = k }`) into a helper (`recompute`) that reads ANOTHER
+-- model field (`m.n`). That read of `n` is reachable ONLY through the helper
+-- chain, never as a direct `model.n` in the branch. The read-set analysis must
+-- NOT drop it: it must over-approximate to the whole model, or the generated RPC
+-- runs the branch against a fresh `init ()` and returns a wrong, input-independent
+-- result. Mirrors darraghstudio `SetRegion` (recomputed shipping on an empty
+-- basket → always 0). See spa_partition::collect_reads (the `model_write_shape`
+-- arm in `Expr::Call`).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { n : Int
+    , scale : Int
+    , log : String
+    }
+
+
+type Msg
+    = Bump
+    | SetScale Int
+    | SetScaleLet Int
+    | SetScaleVia Int
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, scale = 1, log = "" }, Cmd.none )
+
+
+-- A pure-typed SERVER read (`System.getenvOr`) inside a `Model -> Model` helper
+-- that ALSO reads `m.n`. The effect is pure-typed (no `Task`), so a Cmd-keyed
+-- classifier misses it; the body-trace routes the calling branch to the server.
+recompute : Model -> Model
+recompute m =
+    { m | log = System.getenvOr "SCALE" (String.fromInt (m.n * m.scale)) }
+
+
+clear : Model -> Model
+clear m =
+    { m | log = "" }
+
+
+-- A 2-arg field-preserving `… -> Model -> Model` helper. `model_write_shape`
+-- cannot prove a multi-arg helper narrow, so the read walk must fail CLOSED when
+-- its result flows into a reading helper.
+stamp : Int -> Model -> Model
+stamp k m =
+    { m | scale = k }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            -- PURE -> client-local.
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        SetScale k ->
+            -- SERVER (recompute reaches System.getenvOr). The read of `n` is only
+            -- reachable through `recompute (clear { model | scale = k })` — a
+            -- model-derived value passed DIRECTLY to the reading helper.
+            ( recompute (clear { model | scale = k }), Cmd.none )
+
+        SetScaleLet k ->
+            -- Same read of `n`, but the model-derived value is `let`-bound first.
+            -- The read-set analysis must thread `let` aliases or it drops `n`.
+            let
+                scaled =
+                    { model | scale = k }
+            in
+                ( recompute scaled, Cmd.none )
+
+        SetScaleVia k ->
+            -- Same read of `n`, but the model flows through a 2-arg helper
+            -- (`stamp k model`) that `model_write_shape` cannot prove narrow. The
+            -- analysis must fail closed to the whole model here too.
+            ( recompute (stamp k model), Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8 ]
+            [ Ui.text ("n = " ++ String.fromInt model.n)
+            , Ui.text ("scale = " ++ String.fromInt model.scale)
+            , Ui.text model.log
+            , Ui.button [] { onPress = Just Bump, label = Ui.text "Bump" }
+            , Ui.button [] { onPress = Just (SetScale 2), label = Ui.text "x2" }
+            , Ui.button [] { onPress = Just (SetScaleLet 3), label = Ui.text "x3" }
+            , Ui.button [] { onPress = Just (SetScaleVia 4), label = Ui.text "x4" }
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )

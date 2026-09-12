@@ -148,7 +148,11 @@ func spaResultOk(r any) (any, bool) {
 func SpaSSRPage(headHTML, bodyHTML, wasmName, modelJSON string) string {
 	var b strings.Builder
 	b.WriteString(`<!doctype html>` + "\n")
-	b.WriteString(`<html lang="en">` + "\n")
+	// `data-sky-hydrating` drives the first-paint loading affordance (progress
+	// cursor + top bar, liveBaseCSS) until the wasm client boots and hydrates,
+	// then clears it (spaClearHydratingMarker). Without it a click on the
+	// server-rendered DOM before the (heavy) wasm loads is silently dead.
+	b.WriteString(`<html lang="en" data-sky-hydrating="1">` + "\n")
 	b.WriteString(`<head>`)
 	b.WriteString(`<meta charset="utf-8">`)
 	b.WriteString(`<meta name="viewport" content="width=device-width, initial-scale=1">`)

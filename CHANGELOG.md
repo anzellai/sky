@@ -13,6 +13,33 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.24.2 — Sky.Spa: correct RPC read-set + hydration affordance (2026-09-12)
+
+A patch release fixing two issues found running a real **Sky.Spa** app in
+production. No breaking changes; `sky upgrade` is safe from any v0.24.x.
+
+### Fixed
+
+- **Server RPC read-set was incomplete for a value read through a helper.** When
+  an `update` branch computed its result by threading a model-derived value into a
+  helper — e.g. `recompute (clear { model | region = r })`, where `recompute`
+  reads `model.basket` — the auto-split dropped `basket` from the RPC request. The
+  server then ran the branch against a fresh `init ()` (an empty model) and
+  returned a wrong, input-independent result — a silent wrong answer. The read-set
+  now over-approximates to the whole model whenever a model-derived value flows
+  into a callee (the sound behaviour the analysis already took for a bare `model`
+  argument), so the server reconstructs the client's real state. Identity fields
+  are still taken from the verified session cookie, never the wire. (An
+  e-commerce shop mispriced shipping and VAT — recomputed on an empty basket — for
+  every basket change and region switch.)
+- **First-paint clicks are no longer silently dead.** A wasm client attaches its
+  handlers only after it boots and hydrates; on the heavy web target that is not
+  instant, so a click on the server-rendered page before boot did nothing with no
+  feedback. The SSR page (and the static shell) now mark `<html>` with
+  `data-sky-hydrating` at first paint — a progress cursor and a thin top loading
+  bar — which the client clears the moment it hydrates. The not-yet-interactive
+  state is visible instead of a click vanishing.
+
 ## v0.24.1 — Sky.Spa transparent carry + Std.Image (2026-09-11)
 
 A patch release that closes the gaps a normal **Sky.Live** app hit when targeting

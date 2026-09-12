@@ -132,6 +132,11 @@ fn multihop_chain_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-multihop-chain/src/Main.sky")
 }
 
+fn derived_read_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-derived-read/src/Main.sky")
+}
+
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
 /// rather than a fixed `main.wasm`.
 fn dist_has_wasm(dist: &std::path::Path) -> bool {
@@ -292,6 +297,87 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
     assert!(
         out.join("frontend/dist/index.html").is_file(),
         "frontend build must stage dist/index.html"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Read-set completeness for a model-DERIVED value threaded into a helper.
+///
+/// Regression for a silent-wrong-answer bug found in darraghstudio prod: a SERVER
+/// branch `SetRegion` computed shipping through
+/// `recomputeTotals (clear { model | region = r })`, where `recomputeTotals` reads
+/// `model.basket`. That read of `basket` is reachable ONLY through the helper
+/// chain (never a direct `model.basket` in the branch), and the read-set analysis
+/// DROPPED it — so the generated RPC request carried only the Msg arg, the server
+/// rebuilt the model from a fresh `init ()` (empty basket), and shipping came back
+/// `0` for every region (`shippingForBasket []` is 0). No panic, just a wrong
+/// value — the class Sky must never produce.
+///
+/// The fixture mirrors it minimally: `SetScale k` runs
+/// `recompute (clear { model | scale = k })`, and `recompute` reads `m.n` while
+/// doing a pure-typed server read (`System.getenvOr`). The fix
+/// (`spa_partition::collect_reads`, the `model_write_shape` arm) over-approximates
+/// the read-set to the WHOLE model whenever a model-derived value flows into a
+/// callee, so `SetScaleReq` carries every model field — `n` included — and the
+/// handler reconstructs the client's real model instead of `init ()`.
+#[test]
+fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            derived_read_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    // Three branches read `n` ONLY through a helper, via three different shapes the
+    // read-set analysis must all fail CLOSED on (send the whole model):
+    //   * SetScale    — model-derived value passed DIRECTLY to the reading helper
+    //   * SetScaleLet — the model-derived value is `let`-bound first (alias)
+    //   * SetScaleVia — the model flows through a 2-arg helper (`stamp k model`)
+    // For each, the generated `<Msg>Req` must carry the whole model (n/scale/log),
+    // or the server reruns the branch against a fresh `init ()` → wrong answer.
+    for req in ["SetScaleReq", "SetScaleLetReq", "SetScaleViaReq"] {
+        assert!(
+            shared.contains(&format!("type alias {req}")),
+            "{req} must exist (branch must be a SERVER RPC):\n{shared}"
+        );
+        let start = shared.find(&format!("type alias {req}")).unwrap();
+        let block = &shared[start..];
+        let end = block.find("\n\n").unwrap_or(block.len());
+        let block = &block[..end];
+        for field in ["n :", "scale :", "log :"] {
+            assert!(
+                block.contains(field),
+                "{req} must carry `{field}` (whole-model read-set — the helper-threaded \
+                 read of `n` must not be dropped):\n{block}"
+            );
+        }
+    }
+
+    // And the backend handler must reconstruct the model from the wire payload
+    // (`m = { … = p.… }`), NOT from a fresh `init ()`, so the branch runs against
+    // the client's real state.
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    let hstart = back
+        .find("setScaleHandler")
+        .expect("setScaleHandler present");
+    let hblock = &back[hstart..];
+    let hend = hblock.find("Task.succeed").unwrap_or(hblock.len());
+    let hblock = &hblock[..hend];
+    assert!(
+        hblock.contains("n = p.n"),
+        "setScaleHandler must rebuild the model from the payload (n = p.n), not \
+         init ():\n{hblock}"
     );
 
     let _ = std::fs::remove_dir_all(&out);

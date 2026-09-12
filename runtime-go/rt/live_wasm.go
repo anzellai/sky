@@ -168,6 +168,10 @@ func spaRun(cfg any) any {
 	}
 
 	renderCurrent()
+	// The client has now rendered/hydrated, so every handler is attached: clear
+	// the first-paint hydration affordance (`<html data-sky-hydrating>` → progress
+	// cursor + top bar, liveBaseCSS). From here a click lands on a live handler.
+	spaClearHydratingMarker()
 	// Reconcile the address bar to the mounted view's [data-sky-path] marker
 	// (push=false: the loaded URL is already correct — a mount must never mint a
 	// history entry). Then seed the navigation tracker to the mounted path so the
@@ -505,6 +509,22 @@ func renderCurrent() {
 		spaApplyPatches(patches, spaPrev, &vn)
 	}
 	spaPrev = &vn
+}
+
+// spaClearHydratingMarker removes the `data-sky-hydrating` attribute the SSR page
+// (and the static shell) sets on `<html>` for the first-paint loading affordance.
+// Called once the client has rendered/hydrated and all handlers are attached, so
+// the progress cursor + top bar disappear and interaction is live. Best-effort: a
+// missing documentElement (never, in a browser) is a silent no-op.
+func spaClearHydratingMarker() {
+	doc := js.Global().Get("document")
+	if !doc.Truthy() {
+		return
+	}
+	root := doc.Get("documentElement")
+	if root.Truthy() {
+		root.Call("removeAttribute", "data-sky-hydrating")
+	}
 }
 
 // spaSyncURLFromDOM scans the freshly-rendered view for `[data-sky-path]` /

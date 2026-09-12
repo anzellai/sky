@@ -1167,7 +1167,18 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 	`button,input,select,textarea{font:inherit;color:inherit}` +
 	`button{background:none;border:0;padding:0;cursor:pointer;text-align:inherit}` +
 	`a{color:inherit;text-decoration:none}` +
-	`img,video,canvas,svg{display:block;max-width:100%}`
+	`img,video,canvas,svg{display:block;max-width:100%}` +
+	// Sky.Spa hydration affordance. A wasm client attaches its click handlers
+	// only after it boots + hydrates; on the heavy web target that download is
+	// not instant, so a click on the server-rendered DOM before boot is silently
+	// dead ("unresponsive until a few tries"). While `<html data-sky-hydrating>`
+	// is set (first paint, both the SSR page and the static shell; the client
+	// clears it after the first render — spaClearHydratingMarker in live_wasm.go)
+	// show a progress cursor + a thin indeterminate top bar, so the not-yet-
+	// interactive state is VISIBLE rather than a click vanishing with no feedback.
+	`html[data-sky-hydrating]{cursor:progress}` +
+	`html[data-sky-hydrating]::before{content:"";position:fixed;top:0;left:-35%;width:35%;height:3px;z-index:2147483647;background:currentColor;opacity:.45;animation:sky-spa-hydrating 1.1s ease-in-out infinite;pointer-events:none}` +
+	`@keyframes sky-spa-hydrating{0%{left:-35%}100%{left:100%}}`
 
 func applyStyleInjections(n *VNode) {
 	present := scanStyleMarkers(n)

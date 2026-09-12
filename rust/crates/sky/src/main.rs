@@ -4645,11 +4645,19 @@ javac --release 11 -cp "$PLAT" -d build/classes \
 "#;
 
 const WASM_INDEX_HTML: &str = r#"<!doctype html>
-<html lang="en">
+<html lang="en" data-sky-hydrating="1">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sky.Spa</title>
+    <style>
+      /* First-paint hydration affordance (mirrors liveBaseCSS). Cleared by the
+         client after it boots + hydrates (spaClearHydratingMarker), so the blank
+         shell reads as "loading" until interaction is live. */
+      html[data-sky-hydrating]{cursor:progress}
+      html[data-sky-hydrating]::before{content:"";position:fixed;top:0;left:-35%;width:35%;height:3px;z-index:2147483647;background:currentColor;opacity:.45;animation:sky-spa-hydrating 1.1s ease-in-out infinite;pointer-events:none}
+      @keyframes sky-spa-hydrating{0%{left:-35%}100%{left:100%}}
+    </style>
   </head>
   <body>
     <div id="app"></div>

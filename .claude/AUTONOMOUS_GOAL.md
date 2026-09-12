@@ -47,18 +47,66 @@ code. darraghstudio, UNCHANGED, is the driving real-world proof.
    shells to enable persistent storage (session already survives everywhere via
    cookie+SSR). Pure merge/cap logic host-tested.
 
+## SCOPE CORRECTION (2026-09-11) — a drift in this file, and the honest close
+
+This file called the b78311d "migrate to Sky.Spa" commit an "achieved
+prerequisite" and scoped the mandate to four gaps. That was drift (§0 rule 3
+signal phrase). b78311d is a real 1861/1161-line app refactor: pre-migration
+darraghstudio read the Db and env INSIDE views (`Data.listActive ()`,
+`Config.companyName ()`), which works in Sky.Live only because Live views run
+server-side. The migration moved that into model-loaded `data` + pure views. The
+verbatim goal says a Live-pattern app should reach wasm "without refactor
+everything." So the migration IS in the goal's field of view, not outside it.
+
+The architecture reference settles what is closeable (docs/skyspa/design.md, the
+§0.3 authority):
+- §0.1 — the TRANSPARENT auto-partition of an arbitrary Live app is FALSIFIED by
+  measurement (real apps run effects inline and return `Cmd.none`; a classifier
+  ships the DB read to the client). The working mechanism needs a MANDATED
+  DIALECT: `Model = {ui, data}` + effects via `Cmd`/`Task`, no inline server
+  reads.
+- §3.1 / §4 / §8 — that dialect is the v1 contract; full AST-derived auto-RPC
+  (the CPS branch-split, auto-split.md §4 Option B) is a v2 RESEARCH target.
+- §2 — a server effect reachable from client code must be REJECTED with a clear
+  error, and must NEVER be silently classified as client.
+
+So the data-partitioning refactor is architectural FLOOR for v1 (a falsified
+auto-derivation), not a closeable gap. The compiler's honest v1 job is: close the
+RUNTIME gaps transparently AND reject dialect violations with a clear error.
+
+PROBE (2026-09-11, v0.24.1 compiler, real darraghstudio worktree): a view
+reverted to read a server-only CAF (`Data.listActive ()` + `Config.companyName ()`)
+under `--target web:app` → VERDICT (a) CLEAN REJECT. The build fails with a
+precise error naming the tainted view (`spaView_` via `View.view`), the server
+kernel (`System.getenvOr`), the rule (client view must be pure), and the fix
+(move the read to `init`/`update`, embed in the Model). NOT a silent ship
+(soundness holds), NOT transparent hydration.
+
 ## Remaining to close the mandate
 
-- PIV: build darraghstudio UNCHANGED under `--target web:app` and run a browser
-  e2e — forge-role rejected, real login persists across reload, uploaded images
-  serve, consent stays dismissed. Then an independent Judge (fresh context,
-  verbatim goal) confirms zero app edits + gaps closed root-cause.
-- Full release gate green (§0.2.1) before any merge/tag.
-- Verify a desktop/mobile target build carries the same behaviour (per the
-  "applies to desktop/mobile too" directive); wire persistent web storage into
-  the generated mobile/desktop shells so client scratch-state survives relaunch.
-- Prod stays on Sky.Live until the SPA is Judge-verified; no prod SPA redeploy
-  before then. Do NOT tag/release without explicit user ask (standing pref).
+- DONE (proven): the FOUR runtime gaps (forms/static/auth/persistence) close in
+  compiler+runtime with ZERO app edit — PIV curl e2e all-pass + Playwright 13/13
+  on the migrated darraghstudio built UNCHANGED under web:app (see
+  [[spa_transparent_autosplit_gaps]] §PIV + §P5).
+- DONE: shell client-state persistence wired — Android `domStorageEnabled`, iOS
+  `websiteDataStore.default()`, desktop system-webview per-bundle store; session
+  rides the signed cookie + SSR on every shell. On-device emulator relaunch NOT
+  verified (honest caveat in main.rs:3132).
+- DONE (probe): dialect violation → CLEAN compile error, never a silent
+  server-effect-to-client leak.
+- FLOOR (user decision, §0.3 rule 5): the data-partitioning dialect refactor is
+  required for a Live app that used the server-side-view affordance. Transparent
+  auto-derivation is a v2 research target (design.md §0.1 falsification). Decide:
+  accept the v1 dialect + clear-error as the close, OR authorise the v2
+  CPS-branch-split research (Option B, auto-split.md §4).
+- Independent fresh-context Judge renders the verdict (in flight) — I must not
+  self-certify the floor.
+- Follow-on (tracked, not blocking): Playwright e2e CI gate for the js-only
+  form/upload glue.
+- Prod: user chose to deploy the SPA to prod ("let's do it, i will verify in
+  prod", 2026-09-11) — SUPERSEDES the earlier "prod stays Live" line here. SPA is
+  live on darraghstudio.org (v1.1.2); pre-existing image thumbnails backfilled.
+  Do NOT tag/release without explicit user ask (standing pref).
 
 ## Discipline
 PIV per §0.3/§0.4: architecture-consult → adversarial grill → implement →
