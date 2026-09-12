@@ -169,12 +169,25 @@ remove the `spaMsgArg_` rename → `SetRegion`/basket diverge → gate red.
     spa-guard, app examples) — needs moving the ~700-line Std.App->Spa synthesis
     (extract_app_fields/stage_std_app_derived/…) from the sky crate into project;
     cascade-risky (the --target web:app build path). CLI covers App.app today.
-  * 3b/3e embedded ephemeral DB — floor-adjacent pg_embed surgery (temp-permit +
-    auto-start-in-test-mode). DS has PG in all its contexts, so low marginal value.
+  * 3b/3e embedded ephemeral DB — DONE. rejectTempDataDir allows a temp data dir
+    under SKY_TEST_MODE (gated strictly; prod --embed untouched); the testrunner
+    sets SKY_EMBED_POSTGRES + SKY_DATA_DIR=<scratch>/pgdata when a .env.test
+    project declares [database] and no DSN is set. Proven: a [database] project
+    with a .env.test + no DSN runs `sky test` fully offline — the runner spins an
+    ephemeral PG 18.6 cluster, the test writes+reads a row, torn down cleanly.
   * auto-DERIVED happy mock from a typed Codec / Go-FFI boundary (compiler
     HTTP->type analysis). DS Stripe hand-rolls its decoder -> fixture is the path.
   * 3d webhook helper, Log capture (kernel+census) — ergonomics.
-FEATURE STATE (2026-09-13): CORE COMPLETE. Mode A (differential fuzzer)
+SOLE REMAINING TAIL: type-DERIVED happy mock (pillar 3's "derive a default mock
+from the typed boundary via Codec.auto"). Needs runtime type-directed value
+generation from a Codec (or compiler HTTP->type analysis). LOW marginal value for
+the DS-driven mandate: DS's Stripe hand-rolls its decoder (not a Codec boundary),
+so the declarative fixture (DONE) is the right tool there; type-derivation helps
+fuzzing arbitrary Codec-typed boundaries, which DS doesn't have. Judge scoped it
+as a deferral. Everything else in the design's 3 pillars + 2 modes is DONE.
+
+FEATURE STATE (2026-09-13): JUDGE-VERIFIED COMPLETE (@7a4918aa) + Gap A (ephemeral
+DB) since closed. Mode A (differential fuzzer)
 Judge-verified + gated (3 fixtures/9 branches, 2 falsifiers). Mode B (scenario
 e2e) flagship proven (DS checkout webhook + finalize convergence, 7/7 offline).
 Effect substrate: determinism (3a) + mock-by-default (3c) + .env.test activation.
