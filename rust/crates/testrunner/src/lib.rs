@@ -174,6 +174,28 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
         let bin_abs = out_dir.join(configured_bin_name(&project_dir));
         let mut cmd = std::process::Command::new(&bin_abs);
         cmd.current_dir(&project_dir);
+
+        // Test-mode activation (opt-in): a project declares it by committing a
+        // `.env.test`. When present, run the suite in TEST MODE — set
+        // SKY_TEST_MODE (the runtime then serves the offline HTTP mock and fails
+        // closed on any unmocked outbound request; determinism stays opt-in via
+        // SKY_TEST_SEED / SKY_TEST_CLOCK_MS) — and load `.env.test` then
+        // `.env.test.local` (override) into the child env. `.env.test` is the
+        // committed non-secret config + mock toggles; `.env.test.local` the
+        // gitignored sandbox creds for the opt-in contract-drift tier. A project
+        // with no `.env.test` runs exactly as before. The runtime's default mocks
+        // dir (`tests/mocks/`, cwd-relative) resolves because cwd is the project.
+        if project_dir.join(".env.test").is_file() {
+            cmd.env("SKY_TEST_MODE", "1");
+            for f in [".env.test", ".env.test.local"] {
+                if let Ok(contents) = std::fs::read_to_string(project_dir.join(f)) {
+                    for (k, v) in parse_dotenv(&contents) {
+                        cmd.env(k, v);
+                    }
+                }
+            }
+        }
+
         match cmd.status() {
             Ok(status) => run.exit_code = Some(status.code().unwrap_or(1)),
             Err(e) => run.note = format!("run failed: {e}"),
@@ -183,6 +205,37 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
     // Always remove the whole scratch dir (synth entry + build output).
     let _ = std::fs::remove_dir_all(&scratch);
     Ok(run)
+}
+
+/// Parse a minimal `.env` file for test-mode activation: `KEY=VALUE` per line,
+/// `#` comments and blank lines skipped, an optional `export ` prefix stripped,
+/// and surrounding single/double quotes removed from the value. Not a full dotenv
+/// implementation (no interpolation, no multiline) — enough for test config and
+/// mock toggles.
+fn parse_dotenv(contents: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let k = k.trim();
+        if k.is_empty() {
+            continue;
+        }
+        let v = v.trim();
+        let v = v
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(v);
+        out.push((k.to_string(), v.to_string()));
+    }
+    out
 }
 
 /// A unique scratch directory under the OS temp dir for one `sky test` run.
@@ -213,6 +266,21 @@ mod tests {
     fn runs_over_the_project_driver() {
         let s = run_stub(&["a\n", "b\nc\n"]);
         assert_eq!(s.files_analyzed, 2);
+    }
+
+    #[test]
+    fn parse_dotenv_handles_comments_quotes_and_export() {
+        let src = "# a comment\n\nexport DATABASE_URL=postgres://x:y@localhost:5433/db\nDS_STRIPE_WEBHOOK_SECRET=\"whsec_test\"\nQUOTED='single'\n  SPACED = val \n=novalue\nBAD_LINE_NO_EQUALS\n";
+        let got = parse_dotenv(src);
+        assert_eq!(
+            got,
+            vec![
+                ("DATABASE_URL".to_string(), "postgres://x:y@localhost:5433/db".to_string()),
+                ("DS_STRIPE_WEBHOOK_SECRET".to_string(), "whsec_test".to_string()),
+                ("QUOTED".to_string(), "single".to_string()),
+                ("SPACED".to_string(), "val".to_string()),
+            ]
+        );
     }
 
     /// #5: a project with a custom `bin` name must still run its tests. Before the
