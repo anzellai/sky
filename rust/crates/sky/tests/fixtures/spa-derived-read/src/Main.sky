@@ -32,6 +32,7 @@ type Msg
     | SetScale Int
     | SetScaleLet Int
     | SetScaleVia Int
+    | SetScaleArg Int
 
 
 init : () -> ( Model, Cmd Msg )
@@ -88,6 +89,15 @@ update msg model =
             -- analysis must fail closed to the whole model here too.
             ( recompute (stamp k model), Cmd.none )
 
+        SetScaleArg scale ->
+            -- The Msg arg is named `scale`, which COLLIDES with the Model's `scale`
+            -- field. Under the whole-model request the arg must survive as a
+            -- separate `spaMsgArg_scale` field, or the handler runs
+            -- `update (SetScaleArg p.scale)` against the OLD model value and the new
+            -- scale is silently dropped (the darraghstudio `SetRegion` "switching
+            -- location does nothing" bug). `recompute` then reads the NEW scale.
+            ( recompute { model | scale = scale }, Cmd.none )
+
 
 view : Model -> Html Msg
 view model =
@@ -100,6 +110,7 @@ view model =
             , Ui.button [] { onPress = Just (SetScale 2), label = Ui.text "x2" }
             , Ui.button [] { onPress = Just (SetScaleLet 3), label = Ui.text "x3" }
             , Ui.button [] { onPress = Just (SetScaleVia 4), label = Ui.text "x4" }
+            , Ui.button [] { onPress = Just (SetScaleArg 5), label = Ui.text "x5" }
             ]
         )
 

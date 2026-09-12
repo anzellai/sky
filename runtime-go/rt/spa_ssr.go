@@ -179,7 +179,12 @@ func SpaSSRPage(headHTML, bodyHTML, wasmName, modelJSON string) string {
 	b.WriteString(`<script src="/wasm_exec.js"></script>`)
 	b.WriteString(`<script>const go=new Go();WebAssembly.instantiateStreaming(fetch(`)
 	b.WriteString(jsStringLit(rootAbsoluteAsset(wasmName)))
-	b.WriteString(`),go.importObject).then((res)=>{go.run(res.instance);});</script>`)
+	b.WriteString(`),go.importObject).then((res)=>{go.run(res.instance);});`)
+	// Safety net for the blocking hydration overlay: the client normally clears
+	// `data-sky-hydrating` after it hydrates (spaClearHydratingMarker). If the wasm
+	// never boots (a failed fetch/instantiate on a flaky network), drop the
+	// blocking overlay after 12s so the page is not locked forever.
+	b.WriteString(`setTimeout(function(){document.documentElement.removeAttribute('data-sky-hydrating')},12000);</script>`)
 	b.WriteString(`</body></html>`)
 	return b.String()
 }

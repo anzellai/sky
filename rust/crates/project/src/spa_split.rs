@@ -736,6 +736,26 @@ struct ClientResultInfo {
     result_ty: ty::Ty,
 }
 
+/// The wire field name for a Msg argument in the generated RPC request.
+///
+/// A Msg arg whose source name collides with a Model field name — e.g.
+/// `SetRegion region` where the Model ALSO has a `region` field — cannot share
+/// the field in the request record: under `reads_whole_model` the Model field is
+/// already present, so the arg is dropped (a duplicate) and the handler runs
+/// `update (SetRegion p.region)` against the OLD model value (the field), never
+/// the NEW arg the user chose. Rename the colliding arg's wire field with a
+/// reserved `spaMsgArg_` prefix (no user Model field uses it) so BOTH ride the
+/// request — the Model field for reconstruction, the arg for the constructor.
+/// build_wire (the `Req` type), the frontend dispatch payload, and the backend
+/// handler ctor MUST all call this with the same predicate, so they agree.
+fn msg_arg_wire_name(arg: &str, collides_with_model_field: bool) -> String {
+    if collides_with_model_field {
+        format!("spaMsgArg_{arg}")
+    } else {
+        arg.to_string()
+    }
+}
+
 fn build_wire(
     name: &str,
     io: &BranchIo,
@@ -759,8 +779,13 @@ fn build_wire(
             .collect()
     };
     for a in msg_arg_tys {
-        if !req.iter().any(|f| f.name == a.name) {
-            req.push(a.clone());
+        // Rename an arg whose name collides with a Model field so both ride the
+        // request (see msg_arg_wire_name); keep the dedup as a final safety.
+        let collides = model_fields.iter().any(|f| f.name == a.name);
+        let mut a2 = a.clone();
+        a2.name = msg_arg_wire_name(&a.name, collides);
+        if !req.iter().any(|f| f.name == a2.name) {
+            req.push(a2);
         }
     }
     let mut resp: Vec<ModelFieldTy> = if let Some(cr) = client_result {
@@ -4122,7 +4147,13 @@ fn gen_backend(
             let args = io
                 .msg_args
                 .iter()
-                .map(|a| format!(" p.{a}"))
+                .map(|a| {
+                    // Read the arg from its (possibly renamed) wire field — must
+                    // match build_wire + the dispatch, or a name collision reads
+                    // the OLD model field instead of the arg (see msg_arg_wire_name).
+                    let collides = model_fields.iter().any(|f| f.name == *a);
+                    format!(" p.{}", msg_arg_wire_name(a, collides))
+                })
                 .collect::<String>();
             format!("({name}{args})")
         };
@@ -4998,9 +5029,12 @@ fn gen_frontend_update(
                     .map(|f| format!("{f} = {model_param}.{f}"))
                     .collect();
                 for a in &io.msg_args {
-                    if !model_field_names.iter().any(|f| f == a) {
-                        parts.push(format!("{a} = {a}"));
-                    }
+                    // Send the arg VALUE under its (possibly renamed) wire field,
+                    // NOT skipped — a name collision with a Model field must keep
+                    // both (see msg_arg_wire_name). `spaMsgArg_region = region`
+                    // carries the NEW region; `region = model.region` the old one.
+                    let collides = model_field_names.iter().any(|f| f == a);
+                    parts.push(format!("{} = {a}", msg_arg_wire_name(a, collides)));
                 }
                 if parts.is_empty() {
                     "{}".to_string()
@@ -5014,7 +5048,9 @@ fn gen_frontend_update(
                     .map(|f| format!("{f} = {model_param}.{f}"))
                     .collect();
                 for a in &io.msg_args {
-                    parts.push(format!("{a} = {a}"));
+                    // Same collision-safe wire name as build_wire + the handler.
+                    let collides = model_field_names.iter().any(|f| f == a);
+                    parts.push(format!("{} = {a}", msg_arg_wire_name(a, collides)));
                 }
                 if parts.is_empty() {
                     "{}".to_string()

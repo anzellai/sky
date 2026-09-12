@@ -13,6 +13,29 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.24.3 — Sky.Spa: Msg-arg/Model-field collision + blocking hydration overlay (2026-09-12)
+
+A patch fixing two issues found running darraghstudio's basket in production. No
+breaking changes; `sky upgrade` is safe from any v0.24.x.
+
+### Fixed
+
+- **A Msg argument whose name collides with a Model field was dropped from the RPC
+  request.** `SetRegion region` where the Model also has a `region` field: under
+  the whole-model request (v0.24.2), the Model field shadowed the arg, so the
+  generated handler ran `update (SetRegion p.region)` against the OLD model value
+  and the newly chosen value was silently lost — switching region in the basket
+  did nothing. The colliding arg now rides a reserved, collision-proof
+  `spaMsgArg_<name>` field in the request, threaded identically through the request
+  type, the client dispatch, and the handler, so the Model field (for
+  reconstruction) and the arg (for the constructor) both survive.
+- **The first-paint loading affordance now blocks interaction.** The v0.24.2
+  progress cursor + bar signalled loading but did not stop clicks, so during the
+  wasm boot a user could click into not-yet-live controls and think the site was
+  broken. A full-viewport overlay now intercepts pointer events and shows
+  "Loading…" until the client hydrates, with a 12s safety timeout so a failed wasm
+  load never locks the page.
+
 ## v0.24.2 — Sky.Spa: correct RPC read-set + hydration affordance (2026-09-12)
 
 A patch release fixing two issues found running a real **Sky.Spa** app in

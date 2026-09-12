@@ -380,6 +380,29 @@ fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
          init ():\n{hblock}"
     );
 
+    // Msg-arg / Model-field NAME COLLISION: `SetScaleArg scale` binds an arg named
+    // `scale`, which the Model also has. Under the whole-model request the arg must
+    // ride a RENAMED field (`spaMsgArg_scale`) so the handler uses the NEW value,
+    // not the old model field. (The darraghstudio `SetRegion` "switching location
+    // does nothing" bug: the arg was dropped as a duplicate.)
+    assert!(
+        shared.contains("spaMsgArg_scale"),
+        "SetScaleArgReq must carry the collision-renamed Msg arg `spaMsgArg_scale` \
+         alongside the model's `scale` field:\n{shared}"
+    );
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    assert!(
+        front.contains("spaMsgArg_scale = scale"),
+        "the dispatch must send the NEW arg value under the renamed field \
+         (spaMsgArg_scale = scale):\n(SetScaleArg dispatch missing)"
+    );
+    assert!(
+        back.contains("update (SetScaleArg p.spaMsgArg_scale)"),
+        "the handler must construct the Msg from the renamed arg field \
+         (update (SetScaleArg p.spaMsgArg_scale)), not p.scale (the old model \
+         field):\n(SetScaleArg handler wrong)"
+    );
+
     let _ = std::fs::remove_dir_all(&out);
 }
 

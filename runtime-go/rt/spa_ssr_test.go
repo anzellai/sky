@@ -249,6 +249,16 @@ func TestSpaSSRPage_servesRealBodyHeadModelNotEmptyDiv(t0 *testing.T) {
 	if !strings.Contains(liveBaseCSS, `html[data-sky-hydrating]`) {
 		t0.Fatalf("base CSS must define the hydration affordance (progress cursor + bar)")
 	}
+	// The overlay BLOCKS interaction (pointer-events:auto) until hydration, so a
+	// pre-boot click is caught + told to wait, not swallowed into a dead control.
+	if !strings.Contains(liveBaseCSS, `html[data-sky-hydrating]::after`) ||
+		!strings.Contains(liveBaseCSS, `pointer-events:auto`) {
+		t0.Fatalf("base CSS must define the blocking hydration overlay (::after, pointer-events:auto)")
+	}
+	// A safety timeout drops the blocking marker if the wasm never boots.
+	if !strings.Contains(page, `removeAttribute('data-sky-hydrating')`) {
+		t0.Fatalf("SSR page must carry the hydration-overlay safety timeout:\n%s", page)
+	}
 	// The initial model is embedded for the client to prime spaModel from.
 	if !strings.Contains(page, `id="sky-model"`) || !strings.Contains(page, `{"page":"Home"}`) {
 		t0.Fatalf("SSR page must embed the initial model blob:\n%s", page)

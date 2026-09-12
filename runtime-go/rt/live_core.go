@@ -1177,7 +1177,16 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 	// show a progress cursor + a thin indeterminate top bar, so the not-yet-
 	// interactive state is VISIBLE rather than a click vanishing with no feedback.
 	`html[data-sky-hydrating]{cursor:progress}` +
-	`html[data-sky-hydrating]::before{content:"";position:fixed;top:0;left:-35%;width:35%;height:3px;z-index:2147483647;background:currentColor;opacity:.45;animation:sky-spa-hydrating 1.1s ease-in-out infinite;pointer-events:none}` +
+	// A thin indeterminate top bar (the progress cue).
+	`html[data-sky-hydrating]::before{content:"";position:fixed;top:0;left:-35%;width:35%;height:3px;z-index:2147483647;background:currentColor;opacity:.55;animation:sky-spa-hydrating 1.1s ease-in-out infinite;pointer-events:none}` +
+	// A full-viewport overlay that INTERCEPTS pointer events until the client
+	// hydrates, so a click on the not-yet-live server-rendered controls is caught
+	// here (and shows "Loading…") instead of silently doing nothing — the user is
+	// told to wait rather than click into dead buttons. A neutral 15%-grey veil
+	// reads on both light and dark themes; `pointer-events:auto` does the blocking.
+	// Cleared with the marker after hydration (spaClearHydratingMarker), and by a
+	// safety timeout in the boot shell so a failed wasm load never locks the page.
+	`html[data-sky-hydrating]::after{content:"Loading\2026";position:fixed;inset:0;z-index:2147483646;display:grid;place-items:center;background:rgba(127,127,127,.15);color:currentColor;font:600 15px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;letter-spacing:.02em;cursor:progress;pointer-events:auto;-webkit-backdrop-filter:blur(1px);backdrop-filter:blur(1px)}` +
 	`@keyframes sky-spa-hydrating{0%{left:-35%}100%{left:100%}}`
 
 func applyStyleInjections(n *VNode) {
