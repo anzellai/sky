@@ -2817,24 +2817,29 @@ fn collect_reads(
                         // opaquely — the whole model (sound).
                         None => *reads_whole = true,
                     }
-                } else if may_carry_model(body, *a, model_local, let_locals, depth) {
-                    // A value that MAY carry the model record onward flows into the
-                    // callee: a `{ model | … }` update, a `Model -> …` helper chain
-                    // (any arity), an `if`/`case`/`let` producing such, a tuple/
-                    // record/list holding it. The callee may read ANY field that
-                    // passes THROUGH — e.g. `recompute (clear { model | region = r })`
-                    // and `recompute (stamp now model)` both read `model.basket`
-                    // inside `recompute` — and from here `collect_reads` cannot map
-                    // those reads back to model fields. Fail CLOSED: send the whole
-                    // model (the sound over-approximation the read-set is meant to
-                    // take when `model` is used non-trivially — see the `BranchIo`
-                    // docs, and the symmetric `writes_whole` on the write side).
-                    // Before this, such a threaded read was silently DROPPED, so the
-                    // RPC ran the branch against a fresh `init ()` and returned a
-                    // wrong, input-independent result (darraghstudio `SetRegion`
-                    // recomputed shipping on an empty basket → always 0). A plain
-                    // `model.field` access is NOT a carrier (its read is recorded by
-                    // the `Access` arm), so precise field reads stay precise.
+                } else if model_write_shape(db, body, *a, model_local, let_locals, depth).is_some()
+                {
+                    // A provably model-DERIVED value (one that RETURNS the model
+                    // record) flows into the callee: a `{ model | … }` update, a
+                    // field-preserving `Model -> Model` helper chain (any arity — see
+                    // `model_write_shape`), or a `let`/alias of such. The callee may
+                    // read any field that passes THROUGH the derivation — e.g.
+                    // `recompute (clear { model | region = r })` and
+                    // `recompute (stamp k model)` both read `model.basket` inside
+                    // `recompute` — and from here `collect_reads` cannot map those
+                    // reads back to model fields. Fail CLOSED: send the whole model
+                    // (the sound over-approximation, symmetric with the write side's
+                    // `writes_whole`). Before this, such a threaded read was silently
+                    // DROPPED, so the RPC ran the branch against a fresh `init ()`
+                    // and returned a wrong, input-independent result (darraghstudio
+                    // `SetRegion` recomputed shipping on an empty basket → 0).
+                    //
+                    // `model_write_shape` is return-type-aware: it is `None` for a
+                    // call that returns a NON-model (`pluck model : … -> Tag`), so a
+                    // pure accessor threaded into a helper stays PRECISE (its read is
+                    // recorded by the nested walk), and `None` for a plain
+                    // `model.field` access (recorded by the `Access` arm). Only a
+                    // value that is itself the model record forces the whole model.
                     *reads_whole = true;
                 } else {
                     go!(*a);
@@ -2882,89 +2887,6 @@ fn collect_reads(
                 go!(br.body);
             }
         }
-    }
-}
-
-/// Would the value `e` carry the MODEL RECORD (not just a scalar field of it)
-/// onward into a consumer that receives it? Used by [`collect_reads`]'s `Call`
-/// arm to decide, for a NON-bare-model argument, whether the callee could read
-/// model fields the read walk cannot otherwise account for — in which case the
-/// caller fails closed to `reads_whole` (the whole model rides the RPC request).
-///
-/// TRUE for: the bare model (via a `let` alias), a `{ … | … }` update whose base
-/// carries the model, ANY call/if/case/let/tuple/record/list that transitively
-/// carries the model in a value position, a lambda whose body references the
-/// model. FALSE for a plain `model.field` access (a scalar/sub-value — its read
-/// is recorded precisely by the `Access` arm, and the whole field is sent), and
-/// for values with no model reference (Msg args, literals, arithmetic).
-///
-/// Deliberately return-type-AGNOSTIC and conservative: when in doubt it says
-/// TRUE (a larger request, never a wrong value). This is the read-side mirror of
-/// `model_write_shape`'s fail-closed `None` on the write side.
-fn may_carry_model(
-    body: &Body,
-    e: ExprId,
-    model_local: Option<LocalId>,
-    let_locals: &HashMap<LocalId, ExprId>,
-    depth: usize,
-) -> bool {
-    if depth > IO_DELEGATE_DEPTH {
-        return true; // give up precisely → assume it carries (sound)
-    }
-    match &body.exprs[e] {
-        Expr::Var(Res::Local(l)) => {
-            if Some(*l) == model_local {
-                true
-            } else if let Some(bound) = let_locals.get(l) {
-                may_carry_model(body, *bound, model_local, let_locals, depth + 1)
-            } else {
-                false
-            }
-        }
-        // `{ base | … }` carries the model iff its base does. The field VALUES are
-        // fresh assignments; a model reference inside one is a read handled by the
-        // normal walk, not a carrier of the whole record via this update.
-        Expr::Update { base, .. } => may_carry_model(body, *base, model_local, let_locals, depth),
-        // A call carrying the model in ANY argument may return a model-derived
-        // value (a `Model -> Model` helper); we cannot tell without return types,
-        // so be conservative. A call with only model-free args cannot carry it.
-        Expr::Call(callee, args) => {
-            may_carry_model(body, *callee, model_local, let_locals, depth)
-                || args
-                    .iter()
-                    .any(|a| may_carry_model(body, *a, model_local, let_locals, depth))
-        }
-        Expr::If { arms, els } => {
-            arms.iter()
-                .any(|(_, t)| may_carry_model(body, *t, model_local, let_locals, depth))
-                || may_carry_model(body, *els, model_local, let_locals, depth)
-        }
-        Expr::Case { branches, .. } => branches
-            .iter()
-            .any(|br| may_carry_model(body, br.body, model_local, let_locals, depth)),
-        Expr::Let { defs, body: b } => {
-            let mut ls = let_locals.clone();
-            add_let_locals(defs, &mut ls);
-            may_carry_model(body, *b, model_local, &ls, depth)
-        }
-        Expr::Tuple(xs) | Expr::List(xs) => xs
-            .iter()
-            .any(|x| may_carry_model(body, *x, model_local, let_locals, depth)),
-        Expr::Record(fields) => fields
-            .iter()
-            .any(|(_, v)| may_carry_model(body, *v, model_local, let_locals, depth)),
-        // A lambda is NOT a carrier: it is a callback the callee INVOKES, and its
-        // model references are reads/writes analysed when the read walk descends
-        // into the lambda body (the `Expr::Lambda` arm of `collect_reads`, where
-        // the Call-arm checks still apply to any helper the body threads the model
-        // into) and, for a guard continuation, by the guard-wrapper analysis.
-        // Flagging the lambda itself here wrongly forced `reads_whole` for the
-        // idiomatic `guard model (\_ -> { model | busy = True }, …)` shape.
-        Expr::Negate(x) => may_carry_model(body, *x, model_local, let_locals, depth),
-        // `Access` (model.field) is NOT a whole-model carrier: the field read is
-        // recorded by the `Access` arm and the whole field is sent. Literals and
-        // other leaves carry nothing.
-        _ => false,
     }
 }
 
@@ -3145,21 +3067,6 @@ fn add_let_locals(defs: &[LocalDef], ls: &mut HashMap<LocalId, ExprId>) {
     }
 }
 
-/// The single value-parameter local of a def (`f m = …` → `m`'s `LocalId`), when
-/// the parameter is a plain `Var`/`Alias` binder. `None` for a nullary def, a
-/// multi-parameter def, or a destructured parameter — the caller then cannot
-/// prove a narrow shape and over-approximates.
-fn single_param_local(body: &Body) -> Option<LocalId> {
-    if body.params.len() != 1 {
-        return None;
-    }
-    match &body.pats[body.params[0]] {
-        Pattern::Var(l) => Some(*l),
-        Pattern::Alias(_, l) => Some(*l),
-        _ => None,
-    }
-}
-
 /// The value-parameter local at position `i` of a def, when it is a plain
 /// `Var`/`Alias` binder. Used to map a bare-model argument to the helper
 /// parameter it flows into. `None` when the position is absent or destructured.
@@ -3172,13 +3079,16 @@ fn param_local_at(body: &Body, i: usize) -> Option<LocalId> {
     }
 }
 
-/// The write-set of a `Model -> Model` helper `f`, when it is PROVABLY
-/// field-preserving — its body (in tail position) returns `{ param | … }`,
-/// directly or through a chain of field-preserving helpers. `Some(fields)` names
-/// the fields it rewrites; `None` when `f` is not provably field-preserving (it
-/// returns a fresh record, uses its parameter opaquely, or could not be
-/// resolved) — the caller then over-approximates to the whole model.
-fn helper_writeset(db: &dyn SkyDb, f: DefId, depth: usize) -> Option<BTreeSet<String>> {
+/// The write-set of a helper `f : … -> Model -> … -> Model` (returning a BARE
+/// `Model`) that takes its model parameter at position `i`. `Some(fields)` when `f` is provably
+/// field-preserving over that parameter (a `{ param | … }` return, directly or
+/// through a field-preserving chain, via [`model_write_shape`]); `None` when it is
+/// not — e.g. it returns a NON-model value (`pluck model : … -> Tag` → the body is
+/// not a `{ param | … }` shape), uses the parameter opaquely, or could not be
+/// resolved. Uses `model_write_shape` (a bare-`Model` return), NOT the
+/// tuple-based `inherit_delegate_writes` (which analyses a `(Model, Cmd)` arm
+/// tail).
+fn helper_writeset_at(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> Option<BTreeSet<String>> {
     if depth > IO_DELEGATE_DEPTH {
         return None;
     }
@@ -3186,7 +3096,7 @@ fn helper_writeset(db: &dyn SkyDb, f: DefId, depth: usize) -> Option<BTreeSet<St
     let resolved = db.resolve(loc.module);
     let body = resolved.bodies.get(&f)?;
     let root = body.root?;
-    let mlocal = single_param_local(body)?;
+    let mlocal = param_local_at(body, i)?;
     let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
     model_write_shape(db, body, root, Some(mlocal), &let_locals, depth + 1)
 }
@@ -3457,15 +3367,35 @@ fn model_write_shape(
         // field-preserving argument. The written set is the union. The helper
         // call crosses a def boundary, so it spends depth; the argument is a
         // structural sub-expression and does not.
-        Expr::Call(callee, args) if args.len() == 1 => {
-            if let Expr::Var(Res::Def(f)) = &body.exprs[*callee] {
-                let arg = model_write_shape(db, body, args[0], model_local, let_locals, depth)?;
-                let mut s = helper_writeset(db, *f, depth + 1)?;
-                s.extend(arg);
-                Some(s)
-            } else {
-                None
+        // `f a0 … an` — a field-preserving `… -> Model -> … -> Model` helper applied
+        // to a field-preserving model-derived value in EXACTLY ONE argument
+        // position. The written set is the helper's own writes on THAT parameter
+        // (`helper_writeset_at`, which honours the model's position) unioned with the
+        // derived argument's writes. The other arguments carry Msg payloads or pure
+        // values; they never widen the MODEL shape. Zero or ≥2 model-derived args ⇒
+        // ambiguous target ⇒ `None` (whole model). A callee that returns a NON-model
+        // (`pluck model : … -> Tag`) yields `None` via `helper_writeset_at`, so it is
+        // NOT treated as a model-returning value — the read-side guard then leaves a
+        // pure accessor precise. Generalises the former single-argument form.
+        Expr::Call(callee, args) => {
+            let Expr::Var(Res::Def(f)) = &body.exprs[*callee] else {
+                return None;
+            };
+            let derived: Vec<(usize, BTreeSet<String>)> = args
+                .iter()
+                .enumerate()
+                .filter_map(|(i, a)| {
+                    model_write_shape(db, body, *a, model_local, let_locals, depth)
+                        .map(|s| (i, s))
+                })
+                .collect();
+            if derived.len() != 1 {
+                return None;
             }
+            let (i, arg_shape) = &derived[0];
+            let mut s = helper_writeset_at(db, *f, *i, depth + 1)?;
+            s.extend(arg_shape.iter().cloned());
+            Some(s)
         }
         // `let`/`if`/`case` scaffolding is structural — a finite HIR sub-tree, so
         // it preserves depth (matches the tail walk in `collect_writes_tail`).
