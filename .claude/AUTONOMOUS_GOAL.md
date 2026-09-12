@@ -125,8 +125,27 @@ remove the `spaMsgArg_` rename → `SetRegion`/basket diverge → gate red.
     env-before-first-force point). Then 3c outbound-HTTP mock (skyHTTPClient
     RoundTripper — the Stripe seam), 3d in-process signed webhook, 3e temp
     embedded cluster.
-- Phase 4 (DS Stripe checkout->webhook->finalize scenario e2e; RPC-handler
-  in-process leg; scenario DSL) REMAINS.
+- Phase 4 (DS Stripe scenario e2e) — FLAGSHIP WEBHOOK HALF PROVEN.
+  darraghstudio/tests/CheckoutWebhookTest.sky (committed LOCAL to DS main, NOT
+  pushed — a DS push deploys to prod): a signed synthetic
+  checkout.session.completed -> REAL Payments.handleWebhook -> 1 order + both
+  line items (200) -> redelivery idempotent (200, no 2nd row). Runs OFFLINE on
+  the existing sky test runner against local PG :5433, no Stripe account/network.
+  Wired into DS ci.yml beside OrderTxnTest (dummy DS_STRIPE_WEBHOOK_SECRET).
+  Proves mode-B scenario testing works TODAY on existing Sky primitives — the
+  effect-mock harness only reduces setup.
+  - REMAINING Phase 4: the CLIENT convergence leg (RunFinalize/OrderFinalized).
+    RunFinalize's Just branch is exactly Data.orderByStripe sid (the "poll finds
+    the webhook's order" convergence — data half already proven by the webhook
+    test); its model-mapping needs `update` importable, which DS Main does not
+    expose -> needs the harness-synth entry / Server.inject RPC-in-process leg.
+  - REMAINING for the full checkout flow: createSession/retrieveSession need the
+    3c outbound-HTTP mock (skyHTTPClient RoundTripper); the webhook (crux) does
+    not.
+- REMAINING Phase 3 conveniences (friction reducers, not blockers — the PIV is
+  proven without them): 3b ephemeral-DB automation, 3c HTTP mock (+ Sky.Test API
+  = new kernel + stdlib + census), 3d webhook helper, 3e temp embedded cluster,
+  3a-tail Log capture.
 
 ## Not-done tail (carry, not blockers)
 - Sky.Spa cache-busting headers (HTML `no-cache` + `immutable` hashed assets +
