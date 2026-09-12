@@ -232,7 +232,7 @@
       "mutation": "spa-diff-fuzz.drop-read-field",
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1789239757
+      "proven_at_unix": 1789254529
     },
     "verify-cli": {
       "mutation": "verify-cli.drop-expected-output",

@@ -506,7 +506,7 @@
       "tier": "T1"
     },
     "spa-diff-fuzz": {
-      "expected_assertions": 6,
+      "expected_assertions": 9,
       "falsifier_mutation": "spa-diff-fuzz.drop-read-field",
       "falsifier_proven": true,
       "summary": "Sky.Spa differential split fuzzer: split leg == direct update over random (Model, Msg)",
