@@ -62,6 +62,34 @@ ONE next-release tooling stream WITH auto-testing — same typed Msg/Model/effec
 Sky.Spa read/write-set foundation (diagrams visualise the machine; the fuzzer
 exercises it; `wire` read/write-sets are what the differential check verifies).
 
+## Phase 2 CORRECTED oracle design (after §0.4 grill, 2026-09-12 — REVISE→PROCEED)
+The naive "check every server branch; overlay identity away" oracle has false
+POSITIVES and false NEGATIVES. Corrected (4 blocking fixes, priority order):
+1. SEED identity identically, do not overlay it. Mint a signed `sky_sid` from the
+   generated model's identity projection (reuse Auth.signToken / signedResponse_
+   with the test secret) and feed BOTH legs, so `verifiedSession_` returns the
+   same identity. Overlaying masks a real drop in an excluded field AND
+   false-positives when an excluded field feeds a non-excluded write (DS
+   RunLoadAdmin: session read → adminProducts write).
+2. The DIRECT reference mirrors the split's SERVER semantics: run guard +
+   withRequest + session-verify on BOTH legs; they differ ONLY in the read-set /
+   write-set / Msg-arg plumbing. Reference = update on the WHOLE model (no read-set
+   projection) with the same seeded identity + guard/withRequest; split = the real
+   RPC round-trip. A guarded-DENY branch → same result both legs (no divergence).
+3. TRANSITIVE forces-effect fence. Check only server branches whose update forces
+   NO effect in a RUN position (Task.run / `let _ = task` in-body, propagated
+   through callees). `inline_force` is arm-local + reason-only (spa_partition.rs
+   :217,343,412) — NOT a gate; build the transitive analysis. `System.getenvOr` is
+   EXEMPT (pure-typed String->String->String, deterministic both legs). Skip
+   DB-reaching branches → phase 3.
+4. SKIP chaining + pattern-2 client-result ROOT branches (field-excluding their
+   writes makes the check vacuous).
+FLAGSHIP scope: phase 2 covers the shipped bug class via `SetRegion` + the pure
+recompute branches (IncQty/DecQty/RemoveFromBasket). `AddToBasket`/`KickCheckout`/
+`RunFinalize`/`RunLoadAdmin` force DB reads → phase 3. genModel NOT withheld for DS
+(all Model fields generatable). Falsifiers caught: drop a read/write-set field OR
+remove the `spaMsgArg_` rename → `SetRegion`/basket diverge → gate red.
+
 ## Not-done tail (carry, not blockers)
 - Sky.Spa cache-busting headers (HTML `no-cache` + `immutable` hashed assets +
   hash `wasm_exec.js`) — queued Sky.Spa runtime patch (a separate fix).
