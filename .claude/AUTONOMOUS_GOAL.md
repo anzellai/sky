@@ -156,12 +156,28 @@ remove the `spaMsgArg_` rename → `SetRegion`/basket diverge → gate red.
   tests/mocks fixture -> sky test auto-mocks offline, unmocked fails closed, no
   manual env). This answers the user's "aren't mocks automatic?" — YES: zero test
   code, fixtures as data, auto failure-mode.
-- REMAINING (friction reducers / completeness): 3b ephemeral-DB automation (so a
-  scenario needs no live PG); client convergence RunFinalize (needs update-import
-  / RPC-in-process leg); auto-DERIVED happy mock from a typed Codec boundary (the
-  fuzzer-side auto-mock; DS Stripe hand-rolls its decoder so it needs a fixture);
-  3d webhook helper (DRY the signed-request build); 3e temp embedded cluster;
-  3a-tail Log capture.
+- CLIENT CONVERGENCE — DONE. DS Main now exposes update+init; CheckoutWebhookTest
+  extended (7/7): after the webhook records the order, the SPA's RunFinalize poll
+  (real update) finds it by session id and converges WITHOUT a Stripe call +
+  clears the basket. Both halves of "how the SPA reacts" proven offline.
+- DIFF-FUZZ GATE BROADENED — DONE. 3 direct-Spa.app fixtures / 9 checkable
+  branches (spa-derived-read 4, spa-diff-narrow 2, spa-partition-io 3), 2 proven
+  falsifiers.
+- REMAINING (all large / floor-adjacent follow-ups, correctly deferred — the
+  feature core is complete + proven without them):
+  * App.app synthesis INTO the in-process gate (so it covers App.app apps: DS,
+    spa-guard, app examples) — needs moving the ~700-line Std.App->Spa synthesis
+    (extract_app_fields/stage_std_app_derived/…) from the sky crate into project;
+    cascade-risky (the --target web:app build path). CLI covers App.app today.
+  * 3b/3e embedded ephemeral DB — floor-adjacent pg_embed surgery (temp-permit +
+    auto-start-in-test-mode). DS has PG in all its contexts, so low marginal value.
+  * auto-DERIVED happy mock from a typed Codec / Go-FFI boundary (compiler
+    HTTP->type analysis). DS Stripe hand-rolls its decoder -> fixture is the path.
+  * 3d webhook helper, Log capture (kernel+census) — ergonomics.
+FEATURE STATE (2026-09-13): CORE COMPLETE. Mode A (differential fuzzer)
+Judge-verified + gated (3 fixtures/9 branches, 2 falsifiers). Mode B (scenario
+e2e) flagship proven (DS checkout webhook + finalize convergence, 7/7 offline).
+Effect substrate: determinism (3a) + mock-by-default (3c) + .env.test activation.
 
 ## Not-done tail (carry, not blockers)
 - Sky.Spa cache-busting headers (HTML `no-cache` + `immutable` hashed assets +
