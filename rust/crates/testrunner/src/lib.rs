@@ -187,6 +187,11 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
         // dir (`tests/mocks/`, cwd-relative) resolves because cwd is the project.
         if project_dir.join(".env.test").is_file() {
             cmd.env("SKY_TEST_MODE", "1");
+            // A per-run log-capture file so a scenario can assert on what the app
+            // logged (read it back with File.read on the same env var). Removed
+            // with the scratch dir at the end of the run.
+            let log_capture = scratch.join("captured-logs.txt");
+            cmd.env("SKY_TEST_LOG_CAPTURE", &log_capture);
             for f in [".env.test", ".env.test.local"] {
                 if let Ok(contents) = std::fs::read_to_string(project_dir.join(f)) {
                     for (k, v) in parse_dotenv(&contents) {

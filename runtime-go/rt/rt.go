@@ -1220,6 +1220,7 @@ func Log_println(args ...any) any {
 	captured := append([]any(nil), args...)
 	return func() any {
 		fmt.Println(captured...)
+		testCaptureLog(fmt.Sprint(captured...))
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -1227,6 +1228,7 @@ func Log_println(args ...any) any {
 func Log_printlnT(arg any) any {
 	return func() any {
 		fmt.Println(arg)
+		testCaptureLog(fmt.Sprintf("%v", arg))
 		return Ok[any, any](struct{}{})
 	}
 }
@@ -1304,6 +1306,9 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 		Fields:  fields,
 	}
 	telemetry.Default().AppendLog(entry)
+	// Test-mode log capture: a scenario test reads these lines back to assert on
+	// what the app logged (see testCaptureLog). No-op outside test mode.
+	testCaptureLog(levelName + ": " + msg)
 	// Dual-write to the parent's telemetry store via the push
 	// exporter when this process is a sub-app. Drop on overflow,
 	// rate-limited warning; never blocks the caller. Split by build

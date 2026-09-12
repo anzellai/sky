@@ -79,6 +79,8 @@ func initTestMode() {
 			}
 		}
 		testRng = mrand.New(mrand.NewSource(seed))
+
+		testLogCapturePath = os.Getenv("SKY_TEST_LOG_CAPTURE")
 	})
 }
 
@@ -119,6 +121,26 @@ func TestAdvanceClockMillis(delta int64) int64 {
 		return 0
 	}
 	return testClockMs.Add(delta)
+}
+
+// testLogCapturePath is the file log lines are appended to in test mode (from
+// SKY_TEST_LOG_CAPTURE); empty disables capture. Read once with the rest of the
+// test-mode env. A scenario test reads this file back (via File.read on
+// `System.getenvOr "SKY_TEST_LOG_CAPTURE" ""`) to assert on what the app logged —
+// so log capture needs NO new kernel, just the existing File / System ones.
+var testLogCapturePath string
+
+// testCaptureLog appends one log line to the capture file when test mode is on
+// and a capture path is set. Best-effort (a failed write never disturbs the app);
+// open-append-close per line keeps it simple and correct for low-volume test logs.
+func testCaptureLog(line string) {
+	if !testModeActive() || testLogCapturePath == "" {
+		return
+	}
+	if f, err := os.OpenFile(testLogCapturePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		_, _ = f.WriteString(line + "\n")
+		_ = f.Close()
+	}
 }
 
 // testRandIntn returns a deterministic Intn(n) from the seeded stream.
