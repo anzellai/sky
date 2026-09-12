@@ -90,6 +90,29 @@ recompute branches (IncQty/DecQty/RemoveFromBasket). `AddToBasket`/`KickCheckout
 (all Model fields generatable). Falsifiers caught: drop a read/write-set field OR
 remove the `spaMsgArg_` rename → `SetRegion`/basket diverge → gate red.
 
+## Progress (2026-09-12)
+- Phase 1 DONE (0bb49a6c): shared wire emit + spa_diff_gen value-generator emitter.
+- Phase 2 DONE (through cf7d2e83): differential split fuzzer.
+  - forces-effect fence (spa_partition: BranchVerdict.forces_effect, Graph
+    fixpoint) — keys on the `Task_run` Ffi symbol (Task.run is stdlib Sky source,
+    resolves Res::Def not Res::Kernel — the original inline_force arm never fired).
+  - emit_ctor_app extracted (shared by backend + harness).
+  - spa_diff_harness emitter + `sky spa-diff-fuzz` CLI (synthesises the Spa entry
+    for Std.App apps) + HIR-backed MapTypeResolver.
+  - Gate `spa-diff-fuzz` (Tier::T2) in the harness registry + bodies, falsifier
+    `drop-msgarg-rename` PROVEN; scripts/spa-diff-fuzz.sh runner.
+  - FLAGSHIP: darraghstudio fuzzes OFFLINE (no DB/creds) — fence selects the 4
+    pure branches (SetRegion, DecQty, RemoveFromBasket, ClearBasket), 200 checks
+    pass; the collision falsifier catches `SetRegion` (the shipped region-switch
+    bug) with exit 1 while compiling clean.
+  - CARRY into a strengthening: the gate's proven falsifier is the COLLISION
+    class; the read/write-set FIELD-DROP class uses the same machinery but no
+    in-repo fixture has a NARROW read-set to exercise it directly (all
+    over-approximate to whole-model). Add a narrow-read-set fixture branch + a
+    read-set-drop falsifier to prove that half explicitly.
+- Phase 3 (deterministic effect-mock harness) + Phase 4 (DS Stripe scenario e2e)
+  REMAIN.
+
 ## Not-done tail (carry, not blockers)
 - Sky.Spa cache-busting headers (HTML `no-cache` + `immutable` hashed assets +
   hash `wasm_exec.js`) — queued Sky.Spa runtime patch (a separate fix).
