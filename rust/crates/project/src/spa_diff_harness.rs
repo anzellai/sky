@@ -42,6 +42,18 @@
 use crate::spa_diff_gen::{GenModule, TypeResolver};
 use crate::spa_partition::{BranchIo, ModelFieldTy, SpaPartitionReport};
 
+/// A resolver that resolves NO nominal type — sufficient for an app whose Model
+/// and Msg args are all scalars / `List` / `Maybe` / `Result` of scalars (the
+/// `spa-derived-read` fixture). An app with a nominal record/union field needs
+/// the HIR-backed resolver ([`HirTypeResolver`]); with this one such a field is
+/// not generatable and `genModel` is withheld (loudly).
+pub struct NoTypeResolver;
+impl TypeResolver for NoTypeResolver {
+    fn resolve(&self, _name: &str) -> Option<crate::spa_diff_gen::TypeDef> {
+        None
+    }
+}
+
 /// The tail ctor NAME of a branch label (`GotTodos (Ok _)` → `GotTodos`,
 /// `SetRegion` → `SetRegion`).
 fn ctor_of(label: &str) -> &str {
@@ -185,13 +197,17 @@ pub fn emit_harness(
 
     out.snippet = s;
     out.checked = checked.iter().map(|b| b.ctor.clone()).collect();
-    // The plumbing uses `Cmd.none` (apply-delta), `String.fromInt` (driver +
-    // prelude), `Std.Log.println` + `Task`/`Error` (main). Prelude carries Task /
-    // Error / Result; the rest the caller ensures are imported.
+    // Imports the snippet needs. The caller injects these, deduped: the two
+    // shared-alias imports (`Cmd` for apply-delta's `Cmd.none`, `String` for the
+    // prelude's `String.fromInt`) are skipped when the app already imports that
+    // module; the two UNIQUE-alias imports (`SpaDiffLog`, `SpaDiffError`, used by
+    // `main`) are always added — a second alias of a module the app may already
+    // import under its own name, so they never collide with app bindings.
     out.required_imports = vec![
         "import Std.Cmd as Cmd".to_string(),
         "import Sky.Core.String as String".to_string(),
-        "import Std.Log exposing (println)".to_string(),
+        "import Std.Log as SpaDiffLog".to_string(),
+        "import Sky.Core.Error as SpaDiffError".to_string(),
     ];
     out
 }
@@ -306,10 +322,10 @@ fn emit_driver(iters: usize, seed0: i64) -> String {
          main =\n\
          \x20   case spaDiffLoop spaDiffIters spaDiffSeed0 0 of\n\
          \x20       Ok c ->\n\
-         \x20           println (\"spa-diff-fuzz ok: \" ++ String.fromInt c ++ \" checks passed\")\n\n\
+         \x20           SpaDiffLog.println (\"spa-diff-fuzz ok: \" ++ String.fromInt c ++ \" checks passed\")\n\n\
          \x20       Err e ->\n\
-         \x20           println (\"spa-diff-fuzz FAIL: \" ++ e)\n\
-         \x20               |> Task.andThen (\\_ -> Task.fail (Error.generic (\"spa-diff-fuzz divergence: \" ++ e)))\n"
+         \x20           SpaDiffLog.println (\"spa-diff-fuzz FAIL: \" ++ e)\n\
+         \x20               |> Task.andThen (\\_ -> Task.fail (SpaDiffError.unexpected (\"spa-diff-fuzz divergence: \" ++ e)))\n"
     )
 }
 

@@ -94,6 +94,7 @@ fn main() -> ExitCode {
         Some("console-serve") => cmd_console_serve(&args[1..]),
         Some("spa-partition") => cmd_spa_partition(&args[1..]),
         Some("spa-split") => cmd_spa_split(&args[1..]),
+        Some("spa-diff-fuzz") => cmd_spa_diff_fuzz(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
@@ -2584,6 +2585,72 @@ fn spa_split_and_build(
 /// `sky build` / `sky run` on a `Spa.app` entry call the same engine
 /// (`spa_split_and_build`) automatically; this verb is the explicit form that
 /// takes `--out`, `--broker` and a frontend `--target`.
+/// `sky spa-diff-fuzz <file.sky> [--out <dir>] [--iters N] [--seed S]` — generate
+/// the Sky.Spa differential split-fuzzer harness project (phase 2 of the auto-
+/// testing feature). It writes a self-contained CLI project that runs each
+/// checkable server branch two ways (direct vs the split plumbing) over random
+/// `(Model, Msg)` and exits non-zero on a divergence. Build + run it to gate
+/// read/write-set + Msg-arg-collision regressions in CI.
+fn cmd_spa_diff_fuzz(args: &[String]) -> ExitCode {
+    let (positional, out) = parse_out(args);
+    let iters: usize = args
+        .iter()
+        .position(|a| a == "--iters")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200);
+    let seed: i64 = args
+        .iter()
+        .position(|a| a == "--seed")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20260912);
+    let file = match resolve_entry_arg(
+        &positional,
+        "usage: sky spa-diff-fuzz <file.sky> [--out <dir>] [--iters N] [--seed S]  (or run inside a Sky.Spa project directory)",
+    ) {
+        Ok(f) => f,
+        Err(code) => return code,
+    };
+    let file = file.as_path();
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    let out_dir = match out {
+        Some(o) => PathBuf::from(o),
+        None => project_dir.join(".difffuzz"),
+    };
+    match project::spa_split::generate_diff_fuzz(
+        &repo_root,
+        &project_dir,
+        entry_module_name(file).as_deref(),
+        &out_dir,
+        iters,
+        seed,
+    ) {
+        Ok(report) => {
+            println!(
+                "spa-diff-fuzz: generated harness for {} checkable branch(es): {}",
+                report.checked.len(),
+                report.checked.join(", ")
+            );
+            for n in &report.notes {
+                println!("  note: {n}");
+            }
+            println!(
+                "\nRun: (cd {} && sky build {} && ./sky-out/app)",
+                report.out_dir, report.entry_rel
+            );
+            println!("  a non-zero exit = a read/write-set drop or Msg-arg collision was found.");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky spa-diff-fuzz: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn cmd_spa_split(args: &[String]) -> ExitCode {
     let (positional, out) = parse_out(args);
     // `--build` (or `--target <t>`, which implies build): after generating, build

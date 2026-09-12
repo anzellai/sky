@@ -2300,6 +2300,176 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     })
 }
 
+/// The report of a `sky spa-diff-fuzz` generation.
+pub struct DiffFuzzReport {
+    /// The generated harness project directory.
+    pub out_dir: String,
+    /// The harness entry file, relative to `out_dir` (`src/Main.sky`).
+    pub entry_rel: String,
+    /// The Msg ctors the harness actually diffs.
+    pub checked: Vec<String>,
+    /// Loud skips (fenced-out branches, withheld generators, …).
+    pub notes: Vec<String>,
+}
+
+/// Generate the differential split-fuzzer harness project for an auto-split app
+/// (phase 2 of `docs/design/auto-testing.md`). Produces a self-contained CLI
+/// project under `out_dir`: a copy of the app's `src/` with the entry module's
+/// `main` replaced by the fuzz driver + the emitted per-branch differential
+/// checks (see `spa_diff_harness`). `sky build`+run the result; it exits non-zero
+/// on the first divergence. Read-only against the input project.
+pub fn generate_diff_fuzz(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    out_dir: &Path,
+    iters: usize,
+    seed: i64,
+) -> Result<DiffFuzzReport, String> {
+    let (db, entry, check_ids) = crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let proj_name = project_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "app".to_string());
+    let report = spa_partition::analyze_loaded(&db, entry, &check_ids, proj_name.clone())?;
+    if report.whole_update.is_some() || report.branches.is_empty() {
+        return Err(
+            "cannot fuzz: `update` has no resolvable `case msg of` (per-branch analysis unavailable)".into(),
+        );
+    }
+
+    // Model / Msg type names, from the entry `view`/`update` annotation + the
+    // `update` annotation's first arrow segment.
+    let entry_parse = db.module_parse(entry);
+    let esrc = entry_parse.syntax().text().to_string();
+    let efile = entry_parse.tree();
+    // `update`'s annotation lives in whatever module DECLARES it (may be a sibling).
+    let update_anno = report
+        .update_module_name
+        .as_deref()
+        .and_then(|un| check_ids.iter().find(|m| db.module_name(**m) == un).copied())
+        .map(|um| {
+            let p = db.module_parse(um);
+            let s = p.syntax().text().to_string();
+            (p.tree(), s)
+        })
+        .and_then(|(f, s)| decl_text_by(&f, &s, "update", DeclKind::TypeAnno))
+        .or_else(|| decl_text_by(&efile, &esrc, "update", DeclKind::TypeAnno))
+        .unwrap_or_else(|| "update : Msg -> Model -> ( Model, Cmd Msg )".to_string());
+    let model_ty = model_type_name(&efile, &esrc).unwrap_or_else(|| "Model".to_string());
+    let msg_ty = nth_arrow_segment(&update_anno, 0).unwrap_or_else(|| "Msg".to_string());
+
+    // Fence + emit. Phase 2 uses the no-op resolver (scalars / List / Maybe /
+    // Result of scalars are generatable without it); a nominal record/union field
+    // withholds `genModel` loudly until the HIR-backed resolver lands.
+    let (checkable, fence_notes) = crate::spa_diff_harness::select_checkable(&report);
+    let resolver = crate::spa_diff_harness::NoTypeResolver;
+    let out = crate::spa_diff_harness::emit_harness(
+        &model_ty,
+        &msg_ty,
+        &report.model_fields,
+        &checkable,
+        &resolver,
+        iters,
+        seed,
+    );
+    let mut notes = fence_notes;
+    notes.extend(out.notes.iter().cloned());
+    if out.checked.is_empty() {
+        return Err(format!(
+            "no runnable differential harness for `{proj_name}` — nothing proven. Notes: {}",
+            notes.join("; ")
+        ));
+    }
+
+    // Copy the app's source tree, then rewrite the entry module copy.
+    let source_root = crate::build::configured_source_root(project_dir);
+    let src_root = project_dir.join(&source_root);
+    let harness_src = out_dir.join("src");
+    if harness_src.exists() {
+        std::fs::remove_dir_all(&harness_src)
+            .map_err(|e| format!("clean {}: {e}", harness_src.display()))?;
+    }
+    copy_tree(&src_root, &harness_src)?;
+
+    let entry_rel = module_relpath(&db.module_name(entry));
+    let entry_file = harness_src.join(&entry_rel);
+    let orig = std::fs::read_to_string(&entry_file)
+        .map_err(|e| format!("read entry {}: {e}", entry_file.display()))?;
+    let oparse = syntax::parse(&orig, base::FileId(0));
+    let ofile = oparse.tree();
+    // Strip the app's `main` (Spa.app) — the harness supplies its own CLI `main`.
+    let mut strip = BTreeSet::new();
+    strip.insert("main".to_string());
+    let stripped = strip_decls_by_name(&ofile, &orig, &strip);
+    // Inject the harness's imports, deduped by module path (the shared-alias ones)
+    // or always added (the unique-alias ones — a second alias never collides).
+    let existing = collect_imports(&ofile, &orig);
+    let with_imports = inject_harness_imports(&stripped, &existing, &out.required_imports);
+    let final_src = format!("{with_imports}\n\n{}", out.snippet);
+    std::fs::write(&entry_file, &final_src)
+        .map_err(|e| format!("write harness entry {}: {e}", entry_file.display()))?;
+
+    // sky.toml — a plain CLI project (the harness `main : Task Error ()`). The
+    // `[spa] generated` marker is unnecessary (main is not `Spa.app`), but set it
+    // so `sky build` never mistakes the copied `view`/`subscriptions` for an app.
+    let toml = format!(
+        "name = \"{proj_name}-difffuzz\"\nversion = \"0.1.0\"\nentry = \"src/{entry_rel}\"\n\n[source]\nroot = \"src\"\n\n[spa]\ngenerated = true\nrole = \"difffuzz\"\n"
+    );
+    std::fs::write(out_dir.join("sky.toml"), toml)
+        .map_err(|e| format!("write harness sky.toml: {e}"))?;
+    // Carry the app's third-party deps so the copied modules resolve.
+    propagate_deps(project_dir, out_dir)?;
+
+    Ok(DiffFuzzReport {
+        out_dir: out_dir.to_string_lossy().to_string(),
+        entry_rel: format!("src/{entry_rel}"),
+        checked: out.checked,
+        notes,
+    })
+}
+
+/// Inject the harness's required imports into a module source, after the last
+/// existing import (or after the module header when there are none). A
+/// `import <Mod> as <Alias>` line is skipped when `<Mod>` is already imported AND
+/// its declared alias is a SHARED one (`Cmd` / `String`) — those exist only to
+/// provide the bare `Cmd.none` / `String.fromInt` the emitted plumbing uses, so
+/// an existing import of the same module already provides them. The UNIQUE-alias
+/// lines (`as SpaDiffLog` / `as SpaDiffError`) are always added.
+fn inject_harness_imports(src: &str, existing: &[ImportInfo], required: &[String]) -> String {
+    let mut to_add: Vec<String> = Vec::new();
+    for line in required {
+        // Parse `import <Mod> as <Alias>`.
+        let rest = line.trim_start_matches("import ").trim();
+        let module_path = rest.split_whitespace().next().unwrap_or("").to_string();
+        let is_unique_alias = line.contains(" as SpaDiff");
+        if is_unique_alias {
+            to_add.push(line.clone());
+        } else if !existing.iter().any(|i| i.module_path == module_path) {
+            to_add.push(line.clone());
+        }
+    }
+    if to_add.is_empty() {
+        return src.to_string();
+    }
+    let block = to_add.join("\n");
+    // Insert after the last `import ` line at column 0, else after the first line
+    // (the module header).
+    let insert_at = src
+        .match_indices("\nimport ")
+        .last()
+        .map(|(i, _)| {
+            // End of that import line.
+            let after = i + 1;
+            src[after..].find('\n').map(|nl| after + nl).unwrap_or(src.len())
+        })
+        .or_else(|| src.find('\n'));
+    match insert_at {
+        Some(pos) => format!("{}\n{block}{}", &src[..pos], &src[pos..]),
+        None => format!("{src}\n{block}\n"),
+    }
+}
+
 /// Every string-literal argument of a `Bundle.<func>` call in `src`, matched on
 /// word boundaries (so `withAsset` does not match `withAssetDir`). Mirrors
 /// `scan_bundle_calls_all` in the sky crate — kept local to avoid a cross-crate
