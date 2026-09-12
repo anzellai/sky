@@ -300,7 +300,8 @@ terminal view: ↑/↓ navigate, Enter expands the highlighted entry,
 #### `sky doc --diagram <kind> [--format mermaid|md]` (WIP)
 
 A read-only architecture diagram of the current project, emitted to
-stdout. Three kinds ship today — `components`, `wire`, and `telemetry`:
+stdout. Four kinds ship today — `components`, `wire`, `telemetry`, and
+`journey`:
 
 ```bash
 sky doc --diagram components               # fenced ```mermaid flowchart
@@ -309,6 +310,9 @@ sky doc --diagram wire --target web:app    # the Sky.Spa /_rpc contract, as a ta
 sky doc --diagram wire --format mermaid --target web:app   # as a sequence diagram
 sky doc --diagram telemetry                # the privacy/observability inventory, as a table
 sky doc --diagram telemetry --format mermaid   # module→sink flowchart
+sky doc --diagram journey                  # pages + annotated action inventory, as a flowchart
+sky doc --diagram journey --format md      # the page list + the action table
+sky doc --diagram journey --target web:app # client/server split per action (Sky.Spa)
 ```
 
 `components` charts each `src/` module and the external capabilities
@@ -346,12 +350,28 @@ sinks as distinct nodes. Log and Analytics are effect kernels, so under
 a Sky.Spa split they run on the server, reached over `/_rpc`. An app
 with no such call sites prints a short note and exits 0.
 
-The `components` and `wire` kinds reuse the same analysis as the Sky.Spa
-auto-split, so the diagram cannot drift from what ships; no kind
-type-checks beyond the shared source load, lowers, `go build`s, or writes.
+`journey` charts the user journey — the app's pages and what a user does
+on them. It lists the pages (the `Page` union the Model's page field uses,
+each with its URL when the app declares an `App.withRoutes` table) and an
+annotated action inventory: every `update` Msg, marked `client` or
+`server (POST /_rpc/<Msg>)` under a Sky.Spa target (reusing the same
+client/server split `wire` computes) or `server (SSE)` on a Sky.Live app,
+plus the page(s) each action navigates to (a branch that sets the page
+field to a page constructor; a run-time-chosen target shows as
+`(dynamic page)`). Per-page attribution is best-effort: actions are one
+inventory, and a navigation target is the page an action routes TO — the
+source page is not attributed, since an action can fire from any page.
+`--format` defaults to `mermaid` (a page/nav flowchart); `md` gives the
+page list + the action table. When the pages cannot be determined it prints
+a short note and exits 0.
 
-The remaining kinds — `journey`, `callpath` — are planned and exit
-non-zero with a "not yet implemented" note today.
+The `components`, `wire`, and `journey` kinds reuse the same analysis as
+the Sky.Spa auto-split, so the diagram cannot drift from what ships; no
+kind type-checks beyond the shared source load, lowers, `go build`s, or
+writes.
+
+The remaining kind — `callpath` — is planned and exits non-zero with a
+"not yet implemented" note today.
 
 ### `sky doctor [--fix] [--verbose]`
 

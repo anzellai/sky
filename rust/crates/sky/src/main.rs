@@ -5808,18 +5808,18 @@ fn cmd_doc(args: &[String]) -> ExitCode {
 /// prints a fenced flowchart; `--format md` adds a Markdown legend + table.
 fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[String]) -> ExitCode {
     const PLANNED: &[&str] = &["components", "wire", "telemetry", "journey", "callpath"];
-    if kind != "components" && kind != "wire" && kind != "telemetry" {
+    if kind != "components" && kind != "wire" && kind != "telemetry" && kind != "journey" {
         eprintln!(
             "sky doc --diagram {kind}: not yet implemented.\n\
              Planned diagram kinds: {}.\n\
-             Available in this release: `components`, `wire`, `telemetry`.",
+             Available in this release: `components`, `wire`, `telemetry`, `journey`.",
             PLANNED.join(", ")
         );
         return ExitCode::from(2);
     }
-    // `components` reads best as a flowchart (default `mermaid`); `wire` and
-    // `telemetry` read best as a table (default `md`). An explicit `--format`
-    // always wins.
+    // `components` + `journey` read best as a flowchart (default `mermaid`);
+    // `wire` and `telemetry` read best as a table (default `md`). An explicit
+    // `--format` always wins.
     let raw_format = flag_value(args, "--format");
     let format = match raw_format.as_deref() {
         Some("mermaid") => project::diagram::Format::Mermaid,
@@ -5901,6 +5901,49 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             }
             Err(e) => {
                 eprintln!("sky doc --diagram wire: {e}");
+                ExitCode::FAILURE
+            }
+        };
+        cleanup(&staged);
+        return out;
+    }
+
+    if kind == "journey" {
+        let out = match project::diagram::analyze_journey(
+            repo_root,
+            analysis_dir,
+            analysis_entry.as_deref(),
+            app_target.as_deref(),
+        ) {
+            // An app with no discernible pages is not an error: the report
+            // carries the note and (when available) the action inventory.
+            Ok(mut report) => {
+                report.project = project_label;
+                print!("{}", project::diagram::render_journey(&report, format));
+                ExitCode::SUCCESS
+            }
+            // If the synthesised project failed to load, fall back to the raw
+            // project so a journey is still produced (pages + actions live in
+            // the user's own modules either way; classification degrades).
+            Err(_) if staged.is_some() => {
+                match project::diagram::analyze_journey(
+                    repo_root,
+                    project_dir,
+                    None,
+                    app_target.as_deref(),
+                ) {
+                    Ok(report) => {
+                        print!("{}", project::diagram::render_journey(&report, format));
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("sky doc --diagram journey: {e}");
+                        ExitCode::FAILURE
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("sky doc --diagram journey: {e}");
                 ExitCode::FAILURE
             }
         };

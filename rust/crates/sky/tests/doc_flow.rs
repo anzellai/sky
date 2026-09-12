@@ -316,3 +316,46 @@ fn doc_diagram_telemetry_no_sites_exits_zero() {
         "staged `.skyapp` scratch dir was not cleaned up"
     );
 }
+
+/// `sky doc --diagram journey` on a real multi-page Sky.Live app (examples/
+/// 19-skyforum: a `Page` union `HomePage | PostPage Int | LoginPage`, a Model
+/// `currentPage : Page`, and an `update` that reroutes to `LoginPage` /
+/// `HomePage`). It must name at least two pages and at least one action, with no
+/// go build and no staging (the bare Live target does not synthesise a client).
+#[test]
+fn doc_diagram_journey_on_skyforum_lists_pages_and_actions() {
+    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/19-skyforum");
+    if !project.join("src/State.sky").exists() {
+        // The example is part of the repo; if a checkout omits it, skip loudly.
+        eprintln!("skipping: examples/19-skyforum not present at {project:?}");
+        return;
+    }
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "journey", "--format", "md"])
+        .current_dir(&project)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram journey");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "sky doc --diagram journey failed:\n{stdout}{stderr}"
+    );
+    // The page set (>= 2 pages), recovered from the `Page` union.
+    assert!(stdout.contains("## Pages"), "no Pages section:\n{stdout}");
+    assert!(stdout.contains("| HomePage |"), "missing HomePage:\n{stdout}");
+    assert!(stdout.contains("| LoginPage |"), "missing LoginPage:\n{stdout}");
+    // The action inventory (>= 1 action), and a recovered navigation target.
+    assert!(stdout.contains("## Actions"), "no Actions section:\n{stdout}");
+    assert!(stdout.contains("| Navigate |"), "missing Navigate action:\n{stdout}");
+    assert!(
+        stdout.contains("| UpvotePost | server (SSE) | LoginPage |"),
+        "UpvotePost should reroute to LoginPage over SSE (Live):\n{stdout}"
+    );
+    // A bare Live target never stages a client, so no `.skyapp` scratch tree.
+    assert!(
+        !project.join(".skyapp/diagram").exists(),
+        "journey left a staged `.skyapp/diagram` scratch dir"
+    );
+}

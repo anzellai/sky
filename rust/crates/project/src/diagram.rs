@@ -17,10 +17,11 @@
 //! "any effect -> server" rule), with the `/_rpc` boundary between them. A
 //! non-Spa app (Sky.Live / Http / Cli) renders a single lane — still useful.
 
-use base::DefId;
-use hir::{Body, Expr, ExprId, LocalDef, Res, SkyDb};
+use base::{DefId, ModuleId};
+use hir::{Body, Expr, ExprId, LocalDef, PatId, Pattern, Res, SkyDb};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
+use syntax::ast;
 
 /// A single external capability bucket a module can touch. The set is
 /// deliberately small + fixed so the diagram stays readable — one node per
@@ -1109,6 +1110,654 @@ fn render_telemetry_mermaid(r: &TelemetryReport) -> String {
     o
 }
 
+// ===========================================================================
+// `sky doc --diagram journey` — the user journey: pages + actions.
+// ===========================================================================
+//
+// What are the app's pages, and what does a user DO on them? Two linked things:
+//   1. a PAGE set — the `Page` ADT the Model's page field uses, plus the
+//      URL of each page when the app declares an `App.withRoutes` table
+//      (`App.route "/" HomePage`, `App.routeParam "/p/:slug" ProductPage`); and
+//   2. an ACTION inventory — every `update` Msg, annotated `[client]` /
+//      `[server /_rpc/<Msg>]` (reusing the SAME client/server classification
+//      `wire` computes, via the Sky.Spa auto-split), plus the page(s) each
+//      action navigates to (a branch that sets the page field to a page
+//      constructor).
+//
+// Extraction is deliberately conservative — a correct inventory beats a wrong
+// per-page graph. Pages, the page field, and the Page union are all recovered
+// from the resolved HIR (the constructors an `update` branch assigns to the page
+// field, and the `App.route` table), never guessed. Per-page action attribution
+// is NOT attempted (an action can fire from any page); the actions are shown as
+// one annotated inventory, and navigation targets are the pages an action routes
+// TO, with the source page left unattributed. It never type-checks beyond the
+// shared load, lowers, emits, or writes.
+
+/// One page in the app — a `Page` ADT variant, with its route URL when the app
+/// declares one.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct JourneyPage {
+    /// The page constructor name (`HomePage`, `ProductPage`).
+    pub name: String,
+    /// The route URL from an `App.withRoutes` table, if the app has one.
+    pub url: Option<String>,
+}
+
+/// One user action — an `update` Msg constructor.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct JourneyAction {
+    /// The Msg constructor name (`Navigate`, `UpvotePost`).
+    pub msg: String,
+    /// `Some(true)` → the action round-trips as `POST /_rpc/<Msg>`; `Some(false)`
+    /// → it runs in the browser (client); `None` → not classified (a Sky.Live
+    /// app, where every action round-trips over SSE — see the report notes).
+    pub server: Option<bool>,
+    /// Page constructors this action deterministically navigates to (it sets the
+    /// page field to that constructor in tail position). Sorted, deduped.
+    pub navigates_to: Vec<String>,
+    /// The action sets the page field to a non-constant value (a Msg arg, a
+    /// helper call) — it navigates, but the target is chosen at run time.
+    pub dynamic_nav: bool,
+}
+
+/// The user journey for a project — pure data the renderer consumes.
+pub struct JourneyReport {
+    /// The project path, relative to the repo root when possible.
+    pub project: String,
+    /// True when the resolved target is a Sky.Spa wasm client — for the note.
+    pub is_spa: bool,
+    /// The resolved `[app] target` (or the `--target` override), for the note.
+    pub target: Option<String>,
+    /// The app's pages, sorted by name.
+    pub pages: Vec<JourneyPage>,
+    /// The Model field that holds the current page (`page`, `currentPage`), when
+    /// it could be identified — the anchor for navigation-edge detection.
+    pub page_field: Option<String>,
+    /// The user actions, sorted by Msg name.
+    pub actions: Vec<JourneyAction>,
+    /// True when per-action client/server classification is available (a Sky.Spa
+    /// client, via the auto-split); false on a Sky.Live app (SSE round-trips).
+    pub classified: bool,
+    /// Non-fatal reader notes.
+    pub notes: Vec<String>,
+}
+
+/// Visit every sub-expression of `body` reachable from `e`, calling `f` on each
+/// (including `e` itself). Read-only; mirrors the exhaustive traversal used by
+/// the telemetry walk, factored so the route-table + navigation scans share it.
+fn walk_exprs(body: &Body, e: ExprId, f: &mut dyn FnMut(ExprId)) {
+    f(e);
+    match &body.exprs[e] {
+        Expr::List(xs) | Expr::Tuple(xs) => {
+            for x in xs {
+                walk_exprs(body, *x, f);
+            }
+        }
+        Expr::Record(fields) => {
+            for (_, x) in fields {
+                walk_exprs(body, *x, f);
+            }
+        }
+        Expr::Update { base, fields } => {
+            walk_exprs(body, *base, f);
+            for (_, x) in fields {
+                walk_exprs(body, *x, f);
+            }
+        }
+        Expr::Negate(x) => walk_exprs(body, *x, f),
+        Expr::Lambda { body: b, .. } => walk_exprs(body, *b, f),
+        Expr::Call(callee, args) => {
+            walk_exprs(body, *callee, f);
+            for a in args {
+                walk_exprs(body, *a, f);
+            }
+        }
+        Expr::Binop { lhs, rhs, .. } => {
+            walk_exprs(body, *lhs, f);
+            walk_exprs(body, *rhs, f);
+        }
+        Expr::If { arms, els } => {
+            for (c, t) in arms {
+                walk_exprs(body, *c, f);
+                walk_exprs(body, *t, f);
+            }
+            walk_exprs(body, *els, f);
+        }
+        Expr::Let { defs, body: b } => {
+            for d in defs {
+                walk_exprs(body, d.body, f);
+            }
+            walk_exprs(body, *b, f);
+        }
+        Expr::Case { subject, branches } => {
+            walk_exprs(body, *subject, f);
+            for br in branches {
+                walk_exprs(body, br.body, f);
+            }
+        }
+        Expr::Access(x, _) => walk_exprs(body, *x, f),
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Chr(_)
+        | Expr::Bool(_)
+        | Expr::Unit
+        | Expr::Var(_)
+        | Expr::Accessor(_)
+        | Expr::Error => {}
+    }
+}
+
+/// If `e` (or, for an applied constructor, its callee) resolves to a data
+/// constructor, return `(ctor name, owning-union DefId)`. `None` for any other
+/// value (a variable, a helper call, a literal) — which the navigation scan
+/// treats as a dynamic (run-time-chosen) page target.
+fn value_ctor(db: &dyn SkyDb, body: &Body, e: ExprId) -> Option<(String, DefId)> {
+    match &body.exprs[e] {
+        Expr::Var(Res::Ctor(cref)) => {
+            let nm = db.def_loc(cref.def)?.name.as_str().to_string();
+            Some((nm, cref.type_))
+        }
+        // `PostPage 3` / `ProductPage slug` — the head is the constructor.
+        Expr::Call(callee, _) => value_ctor(db, body, *callee),
+        _ => None,
+    }
+}
+
+/// The constructor name a `case` arm pattern matches (`UpvotePost id` →
+/// `UpvotePost`), unwrapping an `as` alias. `None` for a wildcard / literal arm.
+fn pattern_ctor_name(body: &Body, p: PatId) -> Option<String> {
+    match &body.pats[p] {
+        Pattern::Ctor { name, .. } => Some(name.as_str().to_string()),
+        Pattern::Alias(inner, _) => pattern_ctor_name(body, *inner),
+        _ => None,
+    }
+}
+
+/// The `case msg of` that dispatches `update`. `update msg model = case msg of …`
+/// resolves to a body whose root is that `Case` (possibly under `let` bindings).
+fn find_dispatch_case(body: &Body) -> Option<ExprId> {
+    let mut e = body.root?;
+    loop {
+        match &body.exprs[e] {
+            Expr::Case { .. } => return Some(e),
+            Expr::Let { body: b, .. } => e = *b,
+            _ => return None,
+        }
+    }
+}
+
+/// The constructor names of a union declared as `name` in `module`, in source
+/// order — read from the module's parse tree. Empty when the union is not found.
+fn union_variants(db: &dyn SkyDb, module: ModuleId, name: &str) -> Vec<String> {
+    let tree = db.module_parse(module).tree();
+    for d in tree.decls() {
+        if let ast::Decl::Union(u) = d {
+            if u.name().map(|t| t.text().to_string()).as_deref() == Some(name) {
+                return u
+                    .variants()
+                    .iter()
+                    .filter_map(|v| v.name().map(|t| t.text().to_string()))
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// A page-field name preference score: a field whose name mentions `page` /
+/// `route` is a stronger page-field candidate than an arbitrary field that
+/// happens to hold a union value.
+fn page_field_pref(name: &str) -> u8 {
+    let l = name.to_ascii_lowercase();
+    if l.contains("page") || l.contains("route") || l.contains("screen") {
+        1
+    } else {
+        0
+    }
+}
+
+/// Build the user journey for a project. Read-only.
+///
+/// `app_target` (the `[app] target`, or a `--target` override) decides whether
+/// per-action client/server classification is available: it is derived from the
+/// Sky.Spa auto-split, which only exists for a wasm-client target. On any target
+/// the pages + action inventory are recovered; a Sky.Live app simply has no
+/// per-`/_rpc` split (every action round-trips over SSE), noted in the report.
+pub fn analyze_journey(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    app_target: Option<&str>,
+) -> Result<JourneyReport, String> {
+    let (db, _entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let project = project_dir
+        .strip_prefix(repo_root)
+        .unwrap_or(project_dir)
+        .to_string_lossy()
+        .to_string();
+    let is_spa = app_target.map(target_is_spa_client).unwrap_or(false);
+    // Only a user-declared union can be an app page. This excludes builtin /
+    // stdlib unions (`Maybe`, `Result`, `List`) an `update` branch also assigns
+    // (`session = Just …`) — and, defensively, keeps every `module_parse` /
+    // `def_loc` below off the builtin pseudo-module (whose id is not a real
+    // module row).
+    let project_modules: HashSet<ModuleId> = check_ids.iter().copied().collect();
+    let is_project_union = |u: DefId| -> bool {
+        db.def_loc(u)
+            .map(|l| project_modules.contains(&l.module))
+            .unwrap_or(false)
+    };
+
+    // ---- 1. the `App.withRoutes` table: page constructor -> URL. ----
+    let mut route_urls: HashMap<String, String> = HashMap::new();
+    let mut route_union: Option<DefId> = None;
+    let mut api_endpoints: Vec<String> = Vec::new();
+    for mid in &check_ids {
+        let resolved = db.resolve(*mid);
+        for (_d, body) in &resolved.bodies {
+            let Some(root) = body.root else { continue };
+            let mut ids: Vec<ExprId> = Vec::new();
+            walk_exprs(body, root, &mut |e| ids.push(e));
+            for e in ids {
+                let Expr::Call(callee, args) = &body.exprs[e] else {
+                    continue;
+                };
+                let Expr::Var(Res::Def(d)) = &body.exprs[*callee] else {
+                    continue;
+                };
+                let Some(loc) = db.def_loc(*d) else { continue };
+                if db.module_name(loc.module) != "Std.App" {
+                    continue;
+                }
+                let fname = loc.name.as_str();
+                if (fname == "route" || fname == "routeParam") && args.len() >= 2 {
+                    if let Expr::Str(url) = &body.exprs[args[0]] {
+                        if let Some((cn, ct)) = value_ctor(&db, body, args[1]) {
+                            if is_project_union(ct) {
+                                route_urls.entry(cn).or_insert_with(|| url.to_string());
+                                route_union.get_or_insert(ct);
+                            }
+                        }
+                    }
+                } else if fname == "api" && !args.is_empty() {
+                    if let Expr::Str(sig) = &body.exprs[args[0]] {
+                        api_endpoints.push(sig.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- 2. `update`'s dispatch branches: per Msg, the page-field assignments. -
+    let mut update_ref: Option<(ModuleId, DefId)> = None;
+    for mid in &check_ids {
+        let resolved = db.resolve(*mid);
+        if let Some(td) = resolved.top_defs.iter().find(|t| t.name.as_str() == "update") {
+            update_ref = Some((*mid, td.def));
+            break;
+        }
+    }
+    // (msg, [(field, Some((ctor, union)) | None)]) — None = a non-constructor
+    // value assigned to that field (a variable / helper call).
+    let mut branches_raw: Vec<(String, Vec<(String, Option<(String, DefId)>)>)> = Vec::new();
+    if let Some((umod, udef)) = update_ref {
+        let resolved = db.resolve(umod);
+        if let Some(body) = resolved.bodies.get(&udef) {
+            if let Some(case_e) = find_dispatch_case(body) {
+                if let Expr::Case { branches, .. } = &body.exprs[case_e] {
+                    for br in branches {
+                        let Some(msg) = pattern_ctor_name(body, br.pat) else {
+                            continue;
+                        };
+                        let mut ids: Vec<ExprId> = Vec::new();
+                        walk_exprs(body, br.body, &mut |e| ids.push(e));
+                        let mut assigns: Vec<(String, Option<(String, DefId)>)> = Vec::new();
+                        for e in ids {
+                            if let Expr::Update { fields, .. } = &body.exprs[e] {
+                                for (fname, fv) in fields {
+                                    assigns.push((
+                                        fname.as_str().to_string(),
+                                        value_ctor(&db, body, *fv),
+                                    ));
+                                }
+                            }
+                        }
+                        branches_raw.push((msg, assigns));
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- 3. identify the Page union + the Model page field. ----
+    let mut union_ctors: HashMap<DefId, HashSet<String>> = HashMap::new();
+    let mut field_union_count: HashMap<(String, DefId), usize> = HashMap::new();
+    for (_msg, assigns) in &branches_raw {
+        for (field, oc) in assigns {
+            if let Some((cn, u)) = oc {
+                if !is_project_union(*u) {
+                    continue;
+                }
+                union_ctors.entry(*u).or_default().insert(cn.clone());
+                *field_union_count.entry((field.clone(), *u)).or_default() += 1;
+            }
+        }
+    }
+    // Prefer the route table's union (authoritative); else the union with the
+    // most distinct constructors assigned to a page field (ties → lowest DefId).
+    let page_union: Option<DefId> = route_union.or_else(|| {
+        let mut v: Vec<(DefId, usize)> =
+            union_ctors.iter().map(|(u, s)| (*u, s.len())).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        v.first().map(|(u, _)| *u)
+    });
+    let page_field: Option<String> = page_union.and_then(|pu| {
+        let mut cands: Vec<(String, usize)> = field_union_count
+            .iter()
+            .filter(|((_, u), _)| *u == pu)
+            .map(|((f, _), c)| (f.clone(), *c))
+            .collect();
+        cands.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then(page_field_pref(&b.0).cmp(&page_field_pref(&a.0)))
+                .then(a.0.cmp(&b.0))
+        });
+        cands.first().map(|(f, _)| f.clone())
+    });
+
+    // ---- 4. the page set: the Page union's variants (+ route URLs). ----
+    let mut pages: Vec<JourneyPage> = Vec::new();
+    if let Some(pu) = page_union {
+        if let Some(loc) = db.def_loc(pu) {
+            for name in union_variants(&db, loc.module, loc.name.as_str()) {
+                let url = route_urls.get(&name).cloned();
+                pages.push(JourneyPage { name, url });
+            }
+        }
+    }
+    // Route-table-only fallback (the union could not be enumerated).
+    if pages.is_empty() && !route_urls.is_empty() {
+        for (name, url) in &route_urls {
+            pages.push(JourneyPage {
+                name: name.clone(),
+                url: Some(url.clone()),
+            });
+        }
+    }
+    pages.sort_by(|a, b| a.name.cmp(&b.name));
+    pages.dedup_by(|a, b| a.name == b.name);
+
+    // ---- 5. the action inventory + navigation targets. ----
+    let mut actions: Vec<JourneyAction> = Vec::new();
+    for (msg, assigns) in &branches_raw {
+        let mut nav: BTreeSet<String> = BTreeSet::new();
+        let mut dynamic = false;
+        if let Some(pf) = &page_field {
+            for (field, oc) in assigns {
+                if field != pf {
+                    continue;
+                }
+                match oc {
+                    Some((cn, u)) if Some(*u) == page_union => {
+                        nav.insert(cn.clone());
+                    }
+                    _ => dynamic = true,
+                }
+            }
+        }
+        actions.push(JourneyAction {
+            msg: msg.clone(),
+            server: None,
+            navigates_to: nav.into_iter().collect(),
+            dynamic_nav: dynamic,
+        });
+    }
+    actions.sort_by(|a, b| a.msg.cmp(&b.msg));
+    actions.dedup_by(|a, b| a.msg == b.msg);
+
+    // ---- 6. client/server classification, reusing the Sky.Spa auto-split. ----
+    let mut classified = false;
+    if is_spa {
+        if let Ok(report) = crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
+            let mut server_by_msg: HashMap<String, bool> = HashMap::new();
+            for b in &report.branches {
+                let ctor = b.msg.split_whitespace().next().unwrap_or(&b.msg).to_string();
+                server_by_msg.insert(ctor, b.server);
+            }
+            if actions.is_empty() {
+                // Our own branch scan found nothing (a lambda / delegating
+                // `update`); fall back to the auto-split's Msg inventory.
+                let mut names: Vec<String> = server_by_msg.keys().cloned().collect();
+                names.sort();
+                for n in names {
+                    let server = server_by_msg.get(&n).copied();
+                    actions.push(JourneyAction {
+                        msg: n,
+                        server,
+                        navigates_to: Vec::new(),
+                        dynamic_nav: false,
+                    });
+                }
+            } else {
+                for a in &mut actions {
+                    if let Some(s) = server_by_msg.get(&a.msg) {
+                        a.server = Some(*s);
+                    }
+                }
+            }
+            classified = true;
+        }
+    }
+
+    // ---- 7. notes. ----
+    let mut notes: Vec<String> = Vec::new();
+    if pages.is_empty() {
+        notes.push(
+            "Pages could not be determined: no `Page` union or `App.withRoutes` table was \
+             found. Showing the action inventory only."
+                .into(),
+        );
+    }
+    if !actions.is_empty() {
+        notes.push(
+            "Actions are shown as one inventory (per-page attribution is best-effort): the \
+             `Navigates to` column is where an action routes; its source page is not \
+             attributed, since an action can fire from any page."
+                .into(),
+        );
+    }
+    if classified {
+        notes.push(
+            "`server` actions round-trip as `POST /_rpc/<Msg>`; `client` actions run in the \
+             browser (wasm). Classification reuses the Sky.Spa auto-split (see `--diagram wire`)."
+                .into(),
+        );
+    } else if !actions.is_empty() {
+        notes.push(
+            "This app is not built as a Sky.Spa wasm client, so there is no per-action \
+             client/server split: on Sky.Live every action round-trips to the server over \
+             the session's SSE channel."
+                .into(),
+        );
+    }
+    if !api_endpoints.is_empty() {
+        api_endpoints.sort();
+        api_endpoints.dedup();
+        notes.push(format!(
+            "Server API endpoints (routed, not user pages): {}.",
+            api_endpoints.join(", ")
+        ));
+    }
+
+    Ok(JourneyReport {
+        project,
+        is_spa,
+        target: app_target.map(str::to_string),
+        pages,
+        page_field,
+        actions,
+        classified,
+        notes,
+    })
+}
+
+/// A stable, ascii Mermaid node id for a page constructor name.
+fn page_node_id(name: &str) -> String {
+    let mut s = String::with_capacity(name.len() + 3);
+    s.push_str("pg_");
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            s.push(ch);
+        } else {
+            s.push('_');
+        }
+    }
+    s
+}
+
+/// Render a user journey to the requested format. Pure function of `r`.
+///
+/// A page/navigation map is inherently visual, so the CLI defaults `journey` to
+/// [`Format::Mermaid`]; [`Format::Md`] gives the page list + the annotated
+/// action table.
+pub fn render_journey(r: &JourneyReport, format: Format) -> String {
+    match format {
+        Format::Mermaid => render_journey_mermaid(r),
+        Format::Md => render_journey_md(r),
+    }
+}
+
+fn render_journey_mermaid(r: &JourneyReport) -> String {
+    let mut o = String::new();
+    o.push_str("```mermaid\n");
+    o.push_str("flowchart LR\n");
+    o.push_str(&format!("  %% sky doc --diagram journey — {}\n", r.project));
+    if r.pages.is_empty() && r.actions.is_empty() {
+        o.push_str("  empty[\"no pages or actions found\"]\n");
+        o.push_str("```\n");
+        for n in &r.notes {
+            o.push_str(&format!("\n> {n}\n"));
+        }
+        return o;
+    }
+    for p in &r.pages {
+        let label = match &p.url {
+            Some(u) => format!("{} · {}", p.name, u),
+            None => p.name.clone(),
+        };
+        o.push_str(&format!(
+            "  {}[\"{}\"]\n",
+            page_node_id(&p.name),
+            label.replace('"', "'")
+        ));
+    }
+    let any_nav = r
+        .actions
+        .iter()
+        .any(|a| !a.navigates_to.is_empty() || a.dynamic_nav);
+    if any_nav {
+        // A single hub stands in for "wherever the user is": navigation edges are
+        // labelled by the Msg and point at the destination page. The source page
+        // is deliberately not attributed (an action can fire from any page).
+        o.push_str("  user((\"user action\"))\n");
+        let mut dyn_needed = false;
+        for a in &r.actions {
+            for t in &a.navigates_to {
+                o.push_str(&format!(
+                    "  user -->|{}| {}\n",
+                    mermaid_edge_label(&a.msg),
+                    page_node_id(t)
+                ));
+            }
+            if a.dynamic_nav {
+                dyn_needed = true;
+            }
+        }
+        if dyn_needed {
+            o.push_str("  page_dyn((\"any page\"))\n");
+            for a in &r.actions {
+                if a.dynamic_nav {
+                    o.push_str(&format!(
+                        "  user -->|{}| page_dyn\n",
+                        mermaid_edge_label(&a.msg)
+                    ));
+                }
+            }
+        }
+    }
+    o.push_str("```\n");
+    for n in &r.notes {
+        o.push_str(&format!("\n> {n}\n"));
+    }
+    o
+}
+
+fn render_journey_md(r: &JourneyReport) -> String {
+    let mut o = String::new();
+    o.push_str(&format!("# User journey — {}\n\n", r.project));
+    o.push_str(&format!(
+        "App shape: {}\n\n",
+        if r.classified {
+            "Sky.Spa (client/server split over /_rpc)"
+        } else {
+            "single-process (Sky.Live / Http)"
+        }
+    ));
+    if r.pages.is_empty() && r.actions.is_empty() {
+        for n in &r.notes {
+            o.push_str(&format!("> {n}\n"));
+        }
+        return o;
+    }
+    o.push_str("## Pages\n\n");
+    if r.pages.is_empty() {
+        o.push_str("_Pages could not be determined._\n\n");
+    } else {
+        o.push_str("| Page | URL |\n|---|---|\n");
+        for p in &r.pages {
+            let url = p.url.as_deref().map(md_cell).unwrap_or_else(|| "—".into());
+            o.push_str(&format!("| {} | {} |\n", md_cell(&p.name), url));
+        }
+        o.push('\n');
+    }
+    o.push_str("## Actions\n\n");
+    o.push_str(
+        "Each user action (Msg): whether it runs in the browser or round-trips to the \
+         server, and the page(s) it navigates to.\n\n",
+    );
+    o.push_str("| Action | Runs | Navigates to |\n|---|---|---|\n");
+    for a in &r.actions {
+        let runs = match a.server {
+            Some(true) => format!("server (POST /_rpc/{})", a.msg),
+            Some(false) => "client".to_string(),
+            None if r.classified => "client".to_string(),
+            None => "server (SSE)".to_string(),
+        };
+        let mut nav = a.navigates_to.clone();
+        if a.dynamic_nav {
+            nav.push("(dynamic page)".to_string());
+        }
+        let nav_s = if nav.is_empty() {
+            "—".to_string()
+        } else {
+            nav.join(", ")
+        };
+        o.push_str(&format!(
+            "| {} | {} | {} |\n",
+            md_cell(&a.msg),
+            runs,
+            md_cell(&nav_s)
+        ));
+    }
+    o.push('\n');
+    for n in &r.notes {
+        o.push_str(&format!("> {n}\n"));
+    }
+    o
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1354,5 +2003,99 @@ mod tests {
         let out = render_wire(&r, Format::Md);
         assert!(!out.contains("| Endpoint |"), "{out}");
         assert!(out.contains("not a Sky.Spa wasm client"), "{out}");
+    }
+
+    fn journey_report(classified: bool) -> JourneyReport {
+        JourneyReport {
+            project: "examples/demo".into(),
+            is_spa: classified,
+            target: Some("web:app".into()),
+            pages: vec![
+                JourneyPage {
+                    name: "HomePage".into(),
+                    url: Some("/".into()),
+                },
+                JourneyPage {
+                    name: "LoginPage".into(),
+                    url: None,
+                },
+            ],
+            page_field: Some("currentPage".into()),
+            actions: vec![
+                JourneyAction {
+                    msg: "Navigate".into(),
+                    server: if classified { Some(false) } else { None },
+                    navigates_to: vec![],
+                    dynamic_nav: true,
+                },
+                JourneyAction {
+                    msg: "UpvotePost".into(),
+                    server: if classified { Some(true) } else { None },
+                    navigates_to: vec!["LoginPage".into()],
+                    dynamic_nav: false,
+                },
+            ],
+            classified,
+            notes: vec!["a note".into()],
+        }
+    }
+
+    #[test]
+    fn journey_md_lists_pages_and_annotated_actions() {
+        let out = render_journey(&journey_report(true), Format::Md);
+        assert!(out.contains("## Pages"), "{out}");
+        assert!(out.contains("| HomePage | / |"), "{out}");
+        assert!(out.contains("| LoginPage | — |"), "{out}");
+        assert!(out.contains("## Actions"), "{out}");
+        // a server action names its /_rpc endpoint; a nav target is listed
+        assert!(
+            out.contains("| UpvotePost | server (POST /_rpc/UpvotePost) | LoginPage |"),
+            "{out}"
+        );
+        // a client action that navigates to a dynamic page
+        assert!(
+            out.contains("| Navigate | client | (dynamic page) |"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn journey_md_live_marks_actions_as_sse() {
+        let out = render_journey(&journey_report(false), Format::Md);
+        // no per-/_rpc split on Live — every action round-trips over SSE
+        assert!(out.contains("| UpvotePost | server (SSE) | LoginPage |"), "{out}");
+        assert!(out.contains("| Navigate | server (SSE) | (dynamic page) |"), "{out}");
+    }
+
+    #[test]
+    fn journey_mermaid_draws_pages_and_nav_edges() {
+        let out = render_journey(&journey_report(true), Format::Mermaid);
+        assert!(out.contains("flowchart LR"), "{out}");
+        // page nodes (URL folded into the label)
+        assert!(out.contains("pg_HomePage[\"HomePage · /\"]"), "{out}");
+        assert!(out.contains("pg_LoginPage[\"LoginPage\"]"), "{out}");
+        // a labelled navigation edge into a page, plus the dynamic-page hub
+        assert!(out.contains("user -->|UpvotePost| pg_LoginPage"), "{out}");
+        assert!(out.contains("page_dyn"), "{out}");
+        assert!(out.contains("user -->|Navigate| page_dyn"), "{out}");
+    }
+
+    #[test]
+    fn journey_empty_renders_a_placeholder_not_an_error() {
+        let r = JourneyReport {
+            project: "examples/demo".into(),
+            is_spa: false,
+            target: None,
+            pages: vec![],
+            page_field: None,
+            actions: vec![],
+            classified: false,
+            notes: vec!["nothing found".into()],
+        };
+        let mm = render_journey(&r, Format::Mermaid);
+        assert!(mm.contains("no pages or actions found"), "{mm}");
+        assert!(mm.contains("nothing found"), "{mm}");
+        let md = render_journey(&r, Format::Md);
+        assert!(md.contains("nothing found"), "{md}");
     }
 }
