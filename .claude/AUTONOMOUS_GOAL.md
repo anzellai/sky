@@ -1,116 +1,70 @@
 # Autonomous goal (verbatim)
 
-Set 2026-09-11. Supersedes the 2026-09-06 sky-lang.org SSR mandate (shipped) and
-the partitioning-maturity mandate (achieved prerequisite: darraghstudio
-partitions + builds `--target web:app`, shipped as SPA at tag v1.1.1).
+Set 2026-09-12. Supersedes the 2026-09-11 SPA transparent-carry mandate (closed at
+the v1 architectural ceiling: runtime gaps transparent + dialect violations
+rejected cleanly; darraghstudio SPA live in prod, region-switch + read-set +
+hydration fixes shipped in sky v0.24.2/v0.24.3).
 
-> we will need to understand user may start off from sky.live pattern, and if
-> they render/target wasm app, it shouldn't require them 'refactor' everything
-> to work, so all the gaps you identified should work behind the scene, without
-> user changes their code
+> actually perhaps design the auto tests feature for sky FIRST, then we can use
+> that to run against DB?
 >
-> also remember all the issues we found for wasm web, will apply for desktop
-> mobile apps too
+> DS app
 >
-> ok please proceed fully unattended + autonomous + PIV
-
-Later steers (2026-09-11): reuse Sky.Live's session logic so a developer can
-switch `--target` between Live and SPA and the end user gets the same session
-experience; but the SPA MUST stay the SCALABLE target (stateless, no server
-session store, no sticky sessions).
+> we're aligned, please proceed completely unattended + autonomous + PIV
 
 ## The mandate
 
-A Sky.Live app that targets a wasm client (`--target web:app` AND `desktop:*` /
-`mobile:*` / `tablet:*`) must JUST WORK with ZERO app refactor. Every gap closes
-in the COMPILER auto-split + the Sky.Spa RUNTIME, never by the author adding
-code. darraghstudio, UNCHANGED, is the driving real-world proof.
+Build the Sky **auto-testing** feature per `docs/design/auto-testing.md`, driven by
+the darraghstudio (DS) app as the real-world proof (the same way DS drives the
+compiler work). The feature must let a Sky app be tested end-to-end **offline, in
+CI, with no credentials** for the app's own effects, and catch the
+silent-wrong-answer class we hit in prod (RPC read-set drops / Msg-arg collisions)
+automatically.
 
-## The gaps + status (branch feat/spa-transparent-carry)
+Three pillars (design doc): (1) auto-derived `Msg`/`Model` generators from types;
+(2) a deterministic test interpreter for Sky's OWN effects — ephemeral embedded
+Postgres (migrate+seed+teardown per run), fixed clock, seeded Random/Uuid, test
+Auth, in-process own-HTTP; (3) mock-by-default for EXTERNAL integrations derived
+from the typed boundary (`.env.test` config + `.env.test.local` sandbox creds).
 
-1. FORMS method=post — DONE (8940542a).
-2. STATIC runtime uploads — DONE (655fc969): live `Server.static` mount for the
-   app's dir before the dist catch-all + `backend/<dir>` seed. Verified in a real
-   darraghstudio web:app build.
-3. AUTH-TRUST (forge-role privilege escalation) — DONE (cfd3876a): STATELESS
-   signed session. The backend signs the identity projection into an httpOnly
-   `sky_sid` cookie on login (Auth.signToken, reuses Sky.Live's Std.Auth) and
-   VERIFIES it on every RPC + SSR, taking the session from the cookie, never the
-   wire. No server store → the SPA stays scalable. Secret = `Spa_sessionSecret`
-   kernel (env `SKY_SPA_SESSION_SECRET` >=32B for multi-replica, else
-   auto-mint+persist for a single VM). Sign-out endpoint `POST /_rpc/__spaSignOut`.
-   Gates green + full spa_split_flow suite 52/52.
-4. RELOAD PERSISTENCE (consent/cart/page) — DONE (2107468b): the wasm client
-   persists the whole model to localStorage after each step and, on boot, merges
-   it over the SSR seed but takes the session from the server-verified seed, not
-   localStorage. Sign-out forwarded. Cross-target note left for the mobile/desktop
-   shells to enable persistent storage (session already survives everywhere via
-   cookie+SSR). Pure merge/cap logic host-tested.
+Two modes: (A) the **differential split fuzzer** — random reachable `(Model, Msg)`,
+assert `update`-via-Sky.Spa-split == `update`-direct + no unclassified panic (the
+FREE ORACLE — no hand-written oracle; catches read/write-set + Msg-arg-collision
+regressions in CI); (B) **scenario e2e** — scripted `Msg` journeys + synthetic
+inbound events (webhooks) + DB/Model assertions, mocked externals.
 
-## SCOPE CORRECTION (2026-09-11) — a drift in this file, and the honest close
+FLAGSHIP PIV: the DS checkout flow run OFFLINE end to end — ephemeral DB, mocked
+Stripe `createSession`/`retrieveSession`, a signed synthetic
+`checkout.session.completed` POSTed to `/webhooks/stripe` (real `handleWebhook`),
+and the poll-based `RunFinalize` convergence proved idempotent (one order row
+whichever of webhook/poll arrives first; redelivery a no-op). Local Postgres is up
+on :5433 and DS test keys are in DS `.env`, so the scenario is runnable once the
+harness exists.
 
-This file called the b78311d "migrate to Sky.Spa" commit an "achieved
-prerequisite" and scoped the mandate to four gaps. That was drift (§0 rule 3
-signal phrase). b78311d is a real 1861/1161-line app refactor: pre-migration
-darraghstudio read the Db and env INSIDE views (`Data.listActive ()`,
-`Config.companyName ()`), which works in Sky.Live only because Live views run
-server-side. The migration moved that into model-loaded `data` + pure views. The
-verbatim goal says a Live-pattern app should reach wasm "without refactor
-everything." So the migration IS in the goal's field of view, not outside it.
+## Phasing (design doc §Phasing)
+1. Auto-derive `Msg`/`Model` generators from types (reuse `Codec.auto` type-walk /
+   `xtask erasure-fuzz` value-gen).
+2. **Differential split fuzzer** (mode A) — biggest bang, smallest surface (no
+   effect mocking beyond identical stubs). Wire over examples + DS as a gate.
+3. Deterministic effect-mock harness (ephemeral DB, fixed clock/RNG, in-process
+   own-HTTP) — the enabler for mode B.
+4. Scenario e2e (mode B), DS checkout/webhook/finalize as the first suite.
 
-The architecture reference settles what is closeable (docs/skyspa/design.md, the
-§0.3 authority):
-- §0.1 — the TRANSPARENT auto-partition of an arbitrary Live app is FALSIFIED by
-  measurement (real apps run effects inline and return `Cmd.none`; a classifier
-  ships the DB read to the client). The working mechanism needs a MANDATED
-  DIALECT: `Model = {ui, data}` + effects via `Cmd`/`Task`, no inline server
-  reads.
-- §3.1 / §4 / §8 — that dialect is the v1 contract; full AST-derived auto-RPC
-  (the CPS branch-split, auto-split.md §4 Option B) is a v2 RESEARCH target.
-- §2 — a server effect reachable from client code must be REJECTED with a clear
-  error, and must NEVER be silently classified as client.
+## Discipline (§0.3/§0.4)
+Architecture-Consult FIRST (docs/rust-rewrite/ + docs/architecture/
+sky-stdlib-correctness.md) → adversarial grill → implement per phase → fresh
+Judge. Every feature/bug → a regression test first. No `Result String`; secrets
+typed; root-cause only. Full release gate green before any merge/tag; user owns
+tags (no auto-tag). Responses ASD-STE100 British English, plain punctuation.
 
-So the data-partitioning refactor is architectural FLOOR for v1 (a falsified
-auto-derivation), not a closeable gap. The compiler's honest v1 job is: close the
-RUNTIME gaps transparently AND reject dialect violations with a clear error.
+The DIAGRAMS (`sky doc --diagram`, 4 kinds, done on feat/sky-doc-diagram) ship as
+ONE next-release tooling stream WITH auto-testing — same typed Msg/Model/effect +
+Sky.Spa read/write-set foundation (diagrams visualise the machine; the fuzzer
+exercises it; `wire` read/write-sets are what the differential check verifies).
 
-PROBE (2026-09-11, v0.24.1 compiler, real darraghstudio worktree): a view
-reverted to read a server-only CAF (`Data.listActive ()` + `Config.companyName ()`)
-under `--target web:app` → VERDICT (a) CLEAN REJECT. The build fails with a
-precise error naming the tainted view (`spaView_` via `View.view`), the server
-kernel (`System.getenvOr`), the rule (client view must be pure), and the fix
-(move the read to `init`/`update`, embed in the Model). NOT a silent ship
-(soundness holds), NOT transparent hydration.
-
-## Remaining to close the mandate
-
-- DONE (proven): the FOUR runtime gaps (forms/static/auth/persistence) close in
-  compiler+runtime with ZERO app edit — PIV curl e2e all-pass + Playwright 13/13
-  on the migrated darraghstudio built UNCHANGED under web:app (see
-  [[spa_transparent_autosplit_gaps]] §PIV + §P5).
-- DONE: shell client-state persistence wired — Android `domStorageEnabled`, iOS
-  `websiteDataStore.default()`, desktop system-webview per-bundle store; session
-  rides the signed cookie + SSR on every shell. On-device emulator relaunch NOT
-  verified (honest caveat in main.rs:3132).
-- DONE (probe): dialect violation → CLEAN compile error, never a silent
-  server-effect-to-client leak.
-- FLOOR (user decision, §0.3 rule 5): the data-partitioning dialect refactor is
-  required for a Live app that used the server-side-view affordance. Transparent
-  auto-derivation is a v2 research target (design.md §0.1 falsification). Decide:
-  accept the v1 dialect + clear-error as the close, OR authorise the v2
-  CPS-branch-split research (Option B, auto-split.md §4).
-- Independent fresh-context Judge renders the verdict (in flight) — I must not
-  self-certify the floor.
-- Follow-on (tracked, not blocking): Playwright e2e CI gate for the js-only
-  form/upload glue.
-- Prod: user chose to deploy the SPA to prod ("let's do it, i will verify in
-  prod", 2026-09-11) — SUPERSEDES the earlier "prod stays Live" line here. SPA is
-  live on darraghstudio.org (v1.1.2); pre-existing image thumbnails backfilled.
-  Do NOT tag/release without explicit user ask (standing pref).
-
-## Discipline
-PIV per §0.3/§0.4: architecture-consult → adversarial grill → implement →
-fresh-context Judge. Regression-test-first. No `Result String`; secrets typed;
-root-cause only. Responses ASD-STE100 British-English, plain punctuation, no
-filler. Never run git commits concurrently with a delegated committing agent
-(2026-09-11 lesson: an executor's `git reset` orphaned a parallel commit).
+## Not-done tail (carry, not blockers)
+- Sky.Spa cache-busting headers (HTML `no-cache` + `immutable` hashed assets +
+  hash `wasm_exec.js`) — queued Sky.Spa runtime patch (a separate fix).
+- DS corrupt Chatterbus product image (4f8e2542, 103-byte) — needs admin re-upload
+  (user).
+- CI parallelized gate (merged main) validates on the next release.
