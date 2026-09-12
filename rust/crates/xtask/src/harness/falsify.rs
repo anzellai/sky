@@ -443,8 +443,26 @@ fn verify_one(
         m.kind,
         MutationKind::ReplaceOnce { path, .. } if path.ends_with(".rs")
     );
+    // Capture the reverted file + its ORIGINAL mtime before the patch drops. The
+    // revert restores byte-identical content AND puts the old mtime back (so a
+    // sibling gate's fresh-compiler guard is unperturbed — see Patch::revert). But
+    // that SAME restoration defeats the rebuild below: `cargo` compares mtimes, so
+    // a source stamped OLDER than the artefacts the mutated run just built is read
+    // as up-to-date and NOT recompiled — leaving `xtask` (and its `project` dep)
+    // holding the MUTATION. That is a self-inflicted stale binary: a later gate
+    // then FALSE-REDs on a compiler it did not build. Bump the reverted source to
+    // "now" so cargo genuinely rebuilds from the clean content, then put the old
+    // mtime back so the sibling fresh-compiler protection still holds.
+    let restore_target: Option<(PathBuf, Option<std::time::SystemTime>)> = if rebuilt_source {
+        _patch.as_ref().map(|p| (p.path.clone(), p.original_mtime))
+    } else {
+        None
+    };
     drop(_patch);
     if rebuilt_source {
+        if let Some((p, _)) = &restore_target {
+            set_mtime(p, std::time::SystemTime::now());
+        }
         if let Err(e) = rebuild_xtask(&opts.repo_root, budget) {
             eprintln!(
                 "harness: WARNING — could not rebuild after reverting {}: {e}\n\
@@ -452,6 +470,11 @@ fn verify_one(
                  any later result.",
                 m.id
             );
+        }
+        // Put the freshness clock back where the revert left it, now that cargo
+        // has recompiled from the clean source.
+        if let Some((p, Some(mt))) = &restore_target {
+            set_mtime(p, *mt);
         }
     }
 
@@ -461,6 +484,15 @@ fn verify_one(
         outcome,
         as_declared,
         detail,
+    }
+}
+
+/// Best-effort set of a file's modified time. Used around the post-revert
+/// rebuild to force cargo to recompile from the restored source (mtime bumped to
+/// now) and then to put the freshness stamp back where the revert left it.
+fn set_mtime(path: &Path, mt: std::time::SystemTime) {
+    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(path) {
+        let _ = f.set_modified(mt);
     }
 }
 

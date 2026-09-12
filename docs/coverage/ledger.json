@@ -506,8 +506,8 @@
       "tier": "T1"
     },
     "spa-diff-fuzz": {
-      "expected_assertions": 4,
-      "falsifier_mutation": "spa-diff-fuzz.drop-msgarg-rename",
+      "expected_assertions": 6,
+      "falsifier_mutation": "spa-diff-fuzz.drop-read-field",
       "falsifier_proven": true,
       "summary": "Sky.Spa differential split fuzzer: split leg == direct update over random (Model, Msg)",
       "surfaces": [
@@ -14105,7 +14105,7 @@
       "refs_generous": 102,
       "refs_qualified": 97,
       "role": "Layer2",
-      "sky_files": 94,
+      "sky_files": 95,
       "sky_toml_sections": []
     },
     {

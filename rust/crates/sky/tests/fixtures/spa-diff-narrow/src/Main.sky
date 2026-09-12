@@ -1,0 +1,90 @@
+module Main exposing (main)
+
+-- Diff-fuzz fixture: NARROW read-set / write-set server branches, to exercise the
+-- narrow wire path (emit_build_req narrow, emit_reconstruct `{ base | … }` seeded
+-- from `init`, emit_write_set_encode narrow, emit_apply_delta narrow) end to end.
+-- `spa-derived-read` covers the WHOLE-model read path + the Msg-arg collision;
+-- this one covers a dropped NARROW read field — the darraghstudio basket-read bug
+-- class. Both branches reach the pure-typed `System.getenvOr`, so they are SERVER
+-- but force NO effect (deterministic under identical stubs) and stay checkable.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+type alias Model =
+    { count : Int
+    , label : String
+    , tag : String
+    }
+
+type Msg
+    = Tick
+    | SetCount Int
+    | Relabel
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, label = "", tag = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Tick ->
+            -- PURE -> client-local (no server reach).
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        SetCount v ->
+            -- SERVER (getenvOr), NARROW read-set [count] (direct model.count, no
+            -- helper), NARROW write-set [label], Msg arg [v]. The read of `count`
+            -- MUST ride the request; drop it and the server reconstructs `count`
+            -- from `init ()` (0) and returns a wrong, input-independent label.
+            ( { model | label = System.getenvOr "LBL" (String.fromInt (model.count + v))
+              }
+            , Cmd.none
+            )
+
+        Relabel ->
+            -- SERVER (getenvOr), NARROW read-set [label], NARROW write-set [tag].
+            ( { model | tag = System.getenvOr "TAG" model.label }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("count = " ++ String.fromInt model.count)
+            , Ui.text ("label = " ++ model.label)
+            , Ui.text ("tag = " ++ model.tag)
+            , Ui.button [] { onPress = Just Tick, label = Ui.text "tick" }
+            , Ui.button
+                  []
+                  { onPress = Just (SetCount 7), label = Ui.text "set" }
+            , Ui.button [] { onPress = Just Relabel, label = Ui.text "relabel" }
+            ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

@@ -347,18 +347,33 @@ pub static GATES: &[Gate] = &[
         expected: bodies::SPA_DIFF_FUZZ_EXPECTED,
         expect: Expect::Falsifiable,
         summary: "Sky.Spa differential split fuzzer: split leg == direct update over random (Model, Msg)",
-        mutations: Mutations::new(&[Mutation {
-            id: "spa-diff-fuzz.drop-msgarg-rename",
-            description: "make the Msg-reconstruct read a colliding arg under its BARE wire \
-                          name (ignore the spaMsgArg_ rename); the harness still COMPILES but \
-                          SetScaleArg's split leg reads the OLD model field, so its split-vs-\
-                          direct comparison must go red",
-            kind: MutationKind::ReplaceOnce {
-                path: "rust/crates/project/src/spa_split.rs",
-                from: "format!(\" p.{}\", msg_arg_wire_name(a, collides))",
-                to: "format!(\" p.{a}\")",
+        mutations: Mutations::new(&[
+            Mutation {
+                id: "spa-diff-fuzz.drop-msgarg-rename",
+                description: "make the Msg-reconstruct read a colliding arg under its BARE wire \
+                              name (ignore the spaMsgArg_ rename); the harness still COMPILES but \
+                              SetScaleArg's split leg reads the OLD model field, so its split-vs-\
+                              direct comparison must go red (the Msg-arg-collision class)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/project/src/spa_split.rs",
+                    from: "format!(\" p.{}\", msg_arg_wire_name(a, collides))",
+                    to: "format!(\" p.{a}\")",
+                },
             },
-        }]),
+            Mutation {
+                id: "spa-diff-fuzz.drop-read-field",
+                description: "make the narrow server-leg reconstruct seed a read field from \
+                              `init ()` instead of the request wire (`base.<f>` not `p.<f>`); \
+                              spa-diff-narrow's SetCount then computes on init's count, so its \
+                              split-vs-direct comparison must go red (the read-set-drop class — \
+                              the darraghstudio basket-read bug)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/project/src/spa_split.rs",
+                    from: "format!(\"{sep}{f} = p.{f}\")",
+                    to: "format!(\"{sep}{f} = base.{f}\")",
+                },
+            },
+        ]),
         body: bodies::spa_diff_fuzz,
     },
     // ---- Layer 1: the combinatorial corpus (v2 §3) -------------------------

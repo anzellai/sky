@@ -93,12 +93,14 @@ pub const VERIFY_CLI_EXPECTED: u64 = 13;
 /// `examples/*` projects that own a `tests/` directory. Measured: 6.
 pub const SKY_VERIFY_EXPECTED: u64 = 6;
 
-/// Total checkable branches across the diff-fuzz fixtures. Measured:
-/// `spa-derived-read` has **4** (SetScale / SetScaleLet / SetScaleVia /
-/// SetScaleArg — all reach the pure-typed `System.getenvOr`, so effect-free and
-/// checkable; `Bump` is client, and there are no DB/chaining branches). Exact:
-/// a fence change that drops or adds a checkable branch flips this and fails.
-pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 4;
+/// Total checkable branches across the diff-fuzz fixtures. Measured: **6**.
+/// `spa-derived-read` has 4 (SetScale / SetScaleLet / SetScaleVia / SetScaleArg —
+/// whole-model reads + the Msg-arg collision) and `spa-diff-narrow` has 2
+/// (SetCount / Relabel — NARROW read/write sets). All reach the pure-typed
+/// `System.getenvOr`, so they are effect-free and checkable; the client branches
+/// (`Bump` / `Tick`) are excluded. Exact: a fence change that drops or adds a
+/// checkable branch flips this and fails.
+pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 6;
 
 // ---------------------------------------------------------------------------
 // In-process gates
@@ -400,7 +402,10 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
     // direct `Spa.app` entry, so no App.app synthesis is needed. `spa-derived-read`
     // mirrors the two shipped bugs: a helper-threaded model read (SetScale/Via/Let)
     // and a Msg-arg/Model-field collision (SetScaleArg).
-    const FIXTURES: &[&str] = &["rust/crates/sky/tests/fixtures/spa-derived-read"];
+    const FIXTURES: &[&str] = &[
+        "rust/crates/sky/tests/fixtures/spa-derived-read",
+        "rust/crates/sky/tests/fixtures/spa-diff-narrow",
+    ];
     let mut assertions = 0u64;
     for fx in FIXTURES {
         let project_dir = ctx.repo_root.join(fx);
