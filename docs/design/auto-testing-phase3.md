@@ -1,5 +1,13 @@
 # Sky auto-testing — Phase 3: the deterministic effect-mock harness
 
+> Progress (2026-09-12): 3a (determinism kernels), 3c (mock-by-default outbound
+> HTTP), the 3a offline/determinism DECOUPLE, and opt-in ACTIVATION via
+> `.env.test` are DONE + verified (runtime-go/rt/test_mode.go, test_http.go;
+> rust/crates/testrunner). Remaining: 3b ephemeral-DB automation, 3e temp
+> cluster, 3d webhook helper, auto-derived happy mock from a typed Codec, Log
+> capture. The flagship webhook scenario PIV is proven at
+> darraghstudio/tests/CheckoutWebhookTest.sky.
+>
 > Status: DESIGN (Architecture-Consult PROCEED, 2026-09-12). The enabler for
 > mode B (scenario e2e), whose flagship is the darraghstudio (DS) Stripe
 > checkout -> webhook -> finalize flow run OFFLINE. Phase 2 (the differential

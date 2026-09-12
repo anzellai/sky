@@ -142,9 +142,25 @@ remove the `spaMsgArg_` rename → `SetRegion`/basket diverge → gate red.
   - REMAINING for the full checkout flow: createSession/retrieveSession need the
     3c outbound-HTTP mock (skyHTTPClient RoundTripper); the webhook (crux) does
     not.
-- REMAINING Phase 3 conveniences (friction reducers, not blockers — the PIV is
-  proven without them): 3b ephemeral-DB automation, 3c HTTP mock (+ Sky.Test API
-  = new kernel + stdlib + census), 3d webhook helper, 3e temp embedded cluster,
+- 3c MOCK-BY-DEFAULT (outbound HTTP) — DONE. runtime-go/rt/test_http.go: in test
+  mode the shared client's transport intercepts every outbound request; a
+  declarative fixture (tests/mocks/*.json, matched by method+urlContains) serves
+  it, anything unmatched FAILS CLOSED (auto error-mode coverage). No per-project
+  mock CODE — a fixture is DATA. Prod unchanged (passthrough off test mode).
+- 3a-DECOUPLE — DONE. SKY_TEST_MODE gates only the offline mock; determinism
+  (fixed clock / seeded Random+Uuid) is opt-in via SKY_TEST_CLOCK_MS /
+  SKY_TEST_SEED, so Data.newId() stays unique across runs (no broken DB tests).
+- ACTIVATION — DONE. testrunner: a project with a `.env.test` runs `sky test` in
+  test mode (sets SKY_TEST_MODE, loads .env.test + .env.test.local). Opt-in ->
+  existing projects unaffected. PROVEN end-to-end (mockdemo: .env.test + a
+  tests/mocks fixture -> sky test auto-mocks offline, unmocked fails closed, no
+  manual env). This answers the user's "aren't mocks automatic?" — YES: zero test
+  code, fixtures as data, auto failure-mode.
+- REMAINING (friction reducers / completeness): 3b ephemeral-DB automation (so a
+  scenario needs no live PG); client convergence RunFinalize (needs update-import
+  / RPC-in-process leg); auto-DERIVED happy mock from a typed Codec boundary (the
+  fuzzer-side auto-mock; DS Stripe hand-rolls its decoder so it needs a fixture);
+  3d webhook helper (DRY the signed-request build); 3e temp embedded cluster;
   3a-tail Log capture.
 
 ## Not-done tail (carry, not blockers)
