@@ -756,6 +756,168 @@ fn msg_arg_wire_name(arg: &str, collides_with_model_field: bool) -> String {
     }
 }
 
+// ---- shared wire emit (the soundness keystone) ---------------------------
+//
+// These four pure emitters produce the per-branch wire plumbing of the Sky.Spa
+// split: the client builds a request (`emit_build_req`), the server reconstructs
+// the `update` input model from it (`emit_reconstruct`), the server encodes the
+// write-set into a response (`emit_write_set_encode`), and the client folds that
+// response back into its model (`emit_apply_delta`). They form the round-trip
+//
+//     build_req (client out) → reconstruct (server in) → [update]
+//                            → write_set_encode (server out) → apply_delta (client in)
+//
+// The real split emits from them today (`gen_backend` / `gen_frontend_update`).
+// The differential split fuzzer (phase 2) emits its harness from the SAME
+// functions, so it proves the exact reconstruct/build/apply the app ships rather
+// than a re-implementation. Any read/write-set drop or Msg-arg-collision bug is
+// therefore present identically on both legs the fuzzer diffs — which is the
+// whole reason the fuzzer can act as a free oracle. Keep them byte-for-byte
+// faithful to the split's emitted text; the `spa_split_flow` tests pin it.
+
+/// SHARED WIRE EMIT — server leg: reconstruct the `update` input model from the
+/// decoded request `p`. Returns the `let`-binding lines (absolute 16-space
+/// indentation) that bind `m` (and `base`, where the read-set needs `init ()`).
+/// Session / withRequest / guard overrides are layered on by the caller — they
+/// are trust plumbing, not wire plumbing, so they stay out of the shared emit.
+pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> String {
+    if io.reads_whole_model && io.msg_args.is_empty() {
+        // Req IS the whole model.
+        "                m =\n                    p\n".to_string()
+    } else if io.reads_whole_model {
+        // Whole model PLUS Msg-arg fields — `p` carries the Msg args too
+        // (build_wire appends them), so `p` is WIDER than `Model`. Select the
+        // model fields back out into a `Model` record; the Msg args are read
+        // separately via `p.<arg>` in the ctor application by the caller.
+        let sets = model_fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let sep = if i == 0 { "" } else { ", " };
+                format!("{sep}{} = p.{}", f.name, f.name)
+            })
+            .collect::<String>();
+        format!("                m =\n                    {{ {sets} }}\n")
+    } else if io.read_fields.is_empty() {
+        "                ( base, _ ) =\n                    init ()\n\n                m =\n                    base\n".to_string()
+    } else {
+        let sets = io
+            .read_fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let sep = if i == 0 { "" } else { ", " };
+                format!("{sep}{f} = p.{f}")
+            })
+            .collect::<String>();
+        format!(
+            "                ( base, _ ) =\n                    init ()\n\n                m =\n                    {{ base | {sets} }}\n"
+        )
+    }
+}
+
+/// SHARED WIRE EMIT — client leg: build the RPC `Req` value from the client
+/// model + Msg args. The exact inverse of [`emit_reconstruct`]'s read-set — what
+/// the frontend SENDS is what the backend reconstructs.
+pub(crate) fn emit_build_req(
+    io: &BranchIo,
+    model_param: &str,
+    model_field_names: &[String],
+) -> String {
+    // A `reads_whole_model` branch with NO Msg args sends bare `model` (the
+    // backend `Req` IS the whole model). But a whole-model branch that ALSO binds
+    // Msg args must NOT send bare `model` — the backend `Req` carries the Msg-arg
+    // fields too (build_wire appends them) and the handler reads `p.<arg>`; bare
+    // `model` has no such field, so the decode fails with "record is missing
+    // field(s): <arg>". Build the explicit record covering every model field PLUS
+    // each Msg arg.
+    if io.reads_whole_model && io.msg_args.is_empty() {
+        model_param.to_string()
+    } else if io.reads_whole_model {
+        let mut parts: Vec<String> = model_field_names
+            .iter()
+            .map(|f| format!("{f} = {model_param}.{f}"))
+            .collect();
+        for a in &io.msg_args {
+            // Send the arg VALUE under its (possibly renamed) wire field, NOT
+            // skipped — a name collision with a Model field must keep both (see
+            // msg_arg_wire_name). `spaMsgArg_region = region` carries the NEW
+            // region; `region = model.region` the old one.
+            let collides = model_field_names.iter().any(|f| f == a);
+            parts.push(format!("{} = {a}", msg_arg_wire_name(a, collides)));
+        }
+        if parts.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{ {} }}", parts.join(", "))
+        }
+    } else {
+        let mut parts: Vec<String> = io
+            .read_fields
+            .iter()
+            .map(|f| format!("{f} = {model_param}.{f}"))
+            .collect();
+        for a in &io.msg_args {
+            // Same collision-safe wire name as build_wire + the handler.
+            let collides = model_field_names.iter().any(|f| f == a);
+            parts.push(format!("{} = {a}", msg_arg_wire_name(a, collides)));
+        }
+        if parts.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{ {} }}", parts.join(", "))
+        }
+    }
+}
+
+/// SHARED WIRE EMIT — server leg: encode the write-set into the RPC `Resp` value,
+/// read from the post-`update` model. The exact inverse of [`emit_apply_delta`].
+/// `result_model` is the Sky binding holding the model to read (`m2`, or `mFinal`
+/// for a settled server chain). The PATTERN-2 client-result response (a single
+/// `result` field) is handled by the caller, not here.
+pub(crate) fn emit_write_set_encode(
+    io: &BranchIo,
+    resp_field_names: &[String],
+    result_model: &str,
+) -> String {
+    if io.writes_whole_model {
+        result_model.to_string()
+    } else if resp_field_names.is_empty() {
+        "{}".to_string()
+    } else {
+        let sets = resp_field_names
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let sep = if i == 0 { "" } else { ", " };
+                format!("{sep}{f} = {result_model}.{f}")
+            })
+            .collect::<String>();
+        format!("{{ {sets} }}")
+    }
+}
+
+/// SHARED WIRE EMIT — client leg: fold the RPC `Resp` write-set back into the
+/// client model. The exact inverse of [`emit_write_set_encode`]. Returns the
+/// `( model, Cmd.none )` tuple body of an `Applied<Msg> (Ok resp)` arm. The
+/// PATTERN-2 client-result apply (dispatch the result Msg into `update`) is
+/// handled by the caller, not here.
+pub(crate) fn emit_apply_delta(io: &BranchIo, model_param: &str) -> String {
+    if io.writes_whole_model {
+        format!("            ( resp, Cmd.none )")
+    } else if io.write_fields.is_empty() {
+        format!("            ( {model_param}, Cmd.none )")
+    } else {
+        let sets = io
+            .write_fields
+            .iter()
+            .map(|f| format!("{f} = resp.{f}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("            ( {{ {model_param} | {sets} }}, Cmd.none )")
+    }
+}
+
 fn build_wire(
     name: &str,
     io: &BranchIo,
@@ -4060,40 +4222,10 @@ fn gen_backend(
             io.write_fields.clone()
         };
 
-        // The model the branch runs against.
-        let mut run_setup = if io.reads_whole_model && io.msg_args.is_empty() {
-            // Req IS the whole model.
-            "                m =\n                    p\n".to_string()
-        } else if io.reads_whole_model {
-            // Whole model PLUS Msg-arg fields — `p` carries the Msg args too
-            // (build_wire appends them), so `p` is WIDER than `Model`. Select the
-            // model fields back out into a `Model` record; the Msg args are read
-            // separately via `p.<arg>` in the ctor application below.
-            let sets = model_fields
-                .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    let sep = if i == 0 { "" } else { ", " };
-                    format!("{sep}{} = p.{}", f.name, f.name)
-                })
-                .collect::<String>();
-            format!("                m =\n                    {{ {sets} }}\n")
-        } else if io.read_fields.is_empty() {
-            "                ( base, _ ) =\n                    init ()\n\n                m =\n                    base\n".to_string()
-        } else {
-            let sets = io
-                .read_fields
-                .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    let sep = if i == 0 { "" } else { ", " };
-                    format!("{sep}{f} = p.{f}")
-                })
-                .collect::<String>();
-            format!(
-                "                ( base, _ ) =\n                    init ()\n\n                m =\n                    {{ base | {sets} }}\n"
-            )
-        };
+        // The model the branch runs against — the shared server-leg reconstruct
+        // (also emitted by the phase-2 differential fuzzer). Session / withRequest
+        // / guard overrides are layered on below.
+        let mut run_setup = emit_reconstruct(io, model_fields);
         // Fix 5 (Judge finding 5): re-apply the `App.withRequest` hook
         // (`spaOnRequest_`) to the model server-side BEFORE the guard and update
         // run. `m` above is built from the wire payload `p`, which the wasm
@@ -4177,20 +4309,9 @@ fn gen_backend(
         // The response value.
         let resp_val = if is_client_result {
             "{ result = result }".to_string()
-        } else if io.writes_whole_model {
-            result_model.to_string()
-        } else if resp_field_names.is_empty() {
-            "{}".to_string()
         } else {
-            let sets = resp_field_names
-                .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    let sep = if i == 0 { "" } else { ", " };
-                    format!("{sep}{f} = {result_model}.{f}")
-                })
-                .collect::<String>();
-            format!("{{ {sets} }}")
+            // Shared server-leg write-set encode (also emitted by the phase-2 fuzzer).
+            emit_write_set_encode(io, &resp_field_names, result_model)
         };
         // STATELESS SIGNED SESSION write path: when this branch ESTABLISHES an
         // identity field (its write-set intersects the projection), wrap the JSON
@@ -5014,50 +5135,10 @@ fn gen_frontend_update(
             let pat_text = pat.map(|p| slice(src, &p).to_string()).unwrap_or_else(|| m.clone());
             let req_codec = format!("{}ReqCodec", lower_first(&m));
             let resp_codec = format!("{}RespCodec", lower_first(&m));
-            // Request payload. A `reads_whole_model` branch with NO Msg args sends
-            // bare `model` (the backend `Req` IS the whole model). But a whole-model
-            // branch that ALSO binds Msg args must NOT send bare `model` — the
-            // backend `Req` carries the Msg-arg fields too (build_wire appends them),
-            // and the handler reads `p.<arg>`; bare `model` has no such field, so the
-            // decode fails with "record is missing field(s): <arg>". Build the
-            // explicit record covering every model field PLUS each Msg arg.
-            let payload = if io.reads_whole_model && io.msg_args.is_empty() {
-                model_param.to_string()
-            } else if io.reads_whole_model {
-                let mut parts: Vec<String> = model_field_names
-                    .iter()
-                    .map(|f| format!("{f} = {model_param}.{f}"))
-                    .collect();
-                for a in &io.msg_args {
-                    // Send the arg VALUE under its (possibly renamed) wire field,
-                    // NOT skipped — a name collision with a Model field must keep
-                    // both (see msg_arg_wire_name). `spaMsgArg_region = region`
-                    // carries the NEW region; `region = model.region` the old one.
-                    let collides = model_field_names.iter().any(|f| f == a);
-                    parts.push(format!("{} = {a}", msg_arg_wire_name(a, collides)));
-                }
-                if parts.is_empty() {
-                    "{}".to_string()
-                } else {
-                    format!("{{ {} }}", parts.join(", "))
-                }
-            } else {
-                let mut parts: Vec<String> = io
-                    .read_fields
-                    .iter()
-                    .map(|f| format!("{f} = {model_param}.{f}"))
-                    .collect();
-                for a in &io.msg_args {
-                    // Same collision-safe wire name as build_wire + the handler.
-                    let collides = model_field_names.iter().any(|f| f == a);
-                    parts.push(format!("{} = {a}", msg_arg_wire_name(a, collides)));
-                }
-                if parts.is_empty() {
-                    "{}".to_string()
-                } else {
-                    format!("{{ {} }}", parts.join(", "))
-                }
-            };
+            // Request payload — the shared client-leg build-req (also emitted by
+            // the phase-2 differential fuzzer). The inverse of the backend's
+            // reconstruct: what is sent is what is reconstructed.
+            let payload = emit_build_req(io, model_param, model_field_names);
             arms_out.push_str(&format!(
                 "        {pat_text} ->\n            ( {model_param}\n            , Spa.postJson {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m}\n            )\n\n"
             ));
@@ -5077,18 +5158,9 @@ fn gen_frontend_update(
         // wasm client — never decompose the `Result` into Ok/Err binders.
         let apply = if let Some(cr) = client_result.get(m) {
             format!("            update ({} resp.result) {model_param}", cr.result_msg)
-        } else if io.writes_whole_model {
-            format!("            ( resp, Cmd.none )")
-        } else if io.write_fields.is_empty() {
-            format!("            ( {model_param}, Cmd.none )")
         } else {
-            let sets = io
-                .write_fields
-                .iter()
-                .map(|f| format!("{f} = resp.{f}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("            ( {{ {model_param} | {sets} }}, Cmd.none )")
+            // Shared client-leg apply-delta (also emitted by the phase-2 fuzzer).
+            emit_apply_delta(io, model_param)
         };
         // The Err arm. When the app declared `App.withRpcError`, route the error
         // INTO `update` via `spaRpcError_ e` so the app's own view can show it
