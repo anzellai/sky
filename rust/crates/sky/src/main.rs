@@ -5756,7 +5756,11 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             return ExitCode::from(2);
         }
     };
-    let app_target = sky_toml_app_target(project_dir);
+    // `--target` mirrors `sky build --target`: it decides the client/server split.
+    // A CLI `--target` wins over the `sky.toml` `[app] target`, so an app whose
+    // target is chosen at build time (e.g. `--target web:app` in CI, with no pin
+    // in sky.toml) can still be diagrammed as the Sky.Spa client it ships as.
+    let app_target = flag_value(args, "--target").or_else(|| sky_toml_app_target(project_dir));
     match project::diagram::analyze_components(repo_root, project_dir, None, app_target.as_deref()) {
         Ok(graph) => {
             print!("{}", project::diagram::render_components(&graph, format));
