@@ -113,8 +113,20 @@ remove the `spaMsgArg_` rename → `SetRegion`/basket diverge → gate red.
     * B. falsifier machinery could leave a stale xtask binary (false-RED, never
       false-green) -> revert now bumps mtime, rebuilds, restores mtime; verified
       the gate self-heals immediately after --verify-falsifiers.
-- Phase 3 (deterministic effect-mock harness: ephemeral DB, fixed clock/RNG,
-  in-process own-HTTP) + Phase 4 (DS Stripe scenario e2e) REMAIN.
+- Phase 3 (deterministic effect-mock harness) — STARTED. Full architecture at
+  docs/design/auto-testing-phase3.md (Architecture-Consult PROCEED; 3a-3e).
+  - 3a DONE (determinism kernels): Time/Random/Uuid gated on SKY_TEST_MODE
+    (fixed+advanceable clock + seeded per-call stream), off by default. Go tests
+    + full rt suite green (55.9s). runtime-go/rt/test_mode.go.
+  - 3a tail DEFERRED (not flagship-blocking): Log capture needs a stdlib+kernel
+    read API; test Auth needs no runtime change (secret is an argument).
+  - NEXT: 3b ephemeral DB against local PG :5433 (testrunner creates + migrates +
+    tears down, sets DATABASE_URL before spawn — mind the CAF-connect
+    env-before-first-force point). Then 3c outbound-HTTP mock (skyHTTPClient
+    RoundTripper — the Stripe seam), 3d in-process signed webhook, 3e temp
+    embedded cluster.
+- Phase 4 (DS Stripe checkout->webhook->finalize scenario e2e; RPC-handler
+  in-process leg; scenario DSL) REMAINS.
 
 ## Not-done tail (carry, not blockers)
 - Sky.Spa cache-busting headers (HTML `no-cache` + `immutable` hashed assets +
