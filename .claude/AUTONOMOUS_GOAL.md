@@ -105,13 +105,16 @@ remove the `spaMsgArg_` rename → `SetRegion`/basket diverge → gate red.
     pure branches (SetRegion, DecQty, RemoveFromBasket, ClearBasket), 200 checks
     pass; the collision falsifier catches `SetRegion` (the shipped region-switch
     bug) with exit 1 while compiling clean.
-  - CARRY into a strengthening: the gate's proven falsifier is the COLLISION
-    class; the read/write-set FIELD-DROP class uses the same machinery but no
-    in-repo fixture has a NARROW read-set to exercise it directly (all
-    over-approximate to whole-model). Add a narrow-read-set fixture branch + a
-    read-set-drop falsifier to prove that half explicitly.
-- Phase 3 (deterministic effect-mock harness) + Phase 4 (DS Stripe scenario e2e)
-  REMAIN.
+  - JUDGE (fresh context, cf7d2e83): "PHASE 2 ACHIEVED + VERIFIED". Two
+    non-disqualifying findings, both now CLOSED (4246a6de):
+    * A. read/write-set field-drop was under-proven -> added the spa-diff-narrow
+      fixture (narrow read/write sets) + a 2nd declared falsifier
+      (drop-read-field). Both falsifiers PROVEN; gate 6/6.
+    * B. falsifier machinery could leave a stale xtask binary (false-RED, never
+      false-green) -> revert now bumps mtime, rebuilds, restores mtime; verified
+      the gate self-heals immediately after --verify-falsifiers.
+- Phase 3 (deterministic effect-mock harness: ephemeral DB, fixed clock/RNG,
+  in-process own-HTTP) + Phase 4 (DS Stripe scenario e2e) REMAIN.
 
 ## Not-done tail (carry, not blockers)
 - Sky.Spa cache-busting headers (HTML `no-cache` + `immutable` hashed assets +
