@@ -12,9 +12,14 @@
 > Rust (cargo workspace at `rust/`) — the typed-Go output and the
 > "if it compiles, it works" guarantee carry over unchanged. The
 > retired Haskell compiler stays under `legacy-haskell-compiler/` as
-> the differential oracle. **New in v0.23: [Std.App](docs/skyapp/overview.md)** —
-> one builder + one `--target` for every app shape, and secrets are now the
-> typed, self-redacting [`Sky.Core.Secret`](docs/security/secret-migration.md).
+> the differential oracle. **New in v0.24: [automated testing](docs/tooling/testing.md)**
+> — `sky fuzz` (a no-panic model fuzzer; `--target web:app` adds a differential
+> split oracle) and mock-by-default test mode — and **audit-grade
+> [architecture diagrams](docs/tooling/cli.md)** (`sky doc --diagram`: C4
+> container, data-flow, TEA state machine and egress, as PlantUML or a self-drawn
+> SVG). Since v0.23: [Std.App](docs/skyapp/overview.md) (one builder + one
+> `--target` for every app shape) and the typed, self-redacting
+> [`Sky.Core.Secret`](docs/security/secret-migration.md).
 
 Sky is a **fullstack functional language that compiles to typed Go**.
 You write Elm-style syntax — explicit types, exhaustive pattern matching,

@@ -23,6 +23,51 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `brotli` is optional: absent, `sky build` warns once with an install hint and
   falls back to gzip. The stale-bundle clean now also removes old `.br`/`.gz`.
 
+## v0.24.5 — Audit-grade architecture diagrams + one fuzz command (2026-09-13)
+
+Refines v0.24.4's testing and diagram features. One breaking CLI change: the
+`sky spa-diff-fuzz` verb is retired, folded into `sky fuzz --target` (below).
+`sky upgrade` is otherwise safe from any v0.24.x.
+
+### Changed
+
+- **`sky doc --diagram` is now audit-grade, and PlantUML replaces Mermaid.** The
+  four kinds are redrawn to the conventions an architecture review and a SOC2 /
+  ISO audit actually use, still generated from the typed IR so they cannot drift:
+  - `components` → a **C4 container diagram** with dashed trust-boundary zones
+    (browser untrusted / server trusted / external), the data stores listing the
+    real `Std.Db` table names, the audit-log egress sink, the auth boundary on
+    the `/_rpc` crossing, and the pure-vs-effectful action split made concrete.
+  - `wire` → a **data-flow diagram** with the client/server trust boundary, the
+    full `/_rpc` request/response contract (per-endpoint effect families), and a
+    separate HTTP-endpoints section that now includes raw `App.api` routes such
+    as an inbound webhook, drawn as an external entity crossing the boundary.
+  - `journey` → a real **TEA state machine**: pages are states, navigating Msgs
+    are transitions (parallel edges collapsed, no label overlap), and the actions
+    split into typed **Pure** (client-only UI) and **Effectful** (server, with
+    the effect families) sections.
+  - `telemetry` → a **data-egress inventory** grouped internal / external / consent.
+  Three formats: `puml` (default, renders in any PlantUML tool), `md` (tables),
+  and a self-contained `svg` we draw ourselves with no external tool; `--out
+  <path>` writes to a file. Every diagram is target-aware across Sky.Spa /
+  Sky.Live / Sky.Tui / Sky.Cli / Sky.Http.Server, and is titled by the app name
+  (from `sky.toml`), not a machine-local file path.
+- **One fuzz command: `sky fuzz [--target <t>]`.** `sky fuzz` always runs the
+  model no-panic net; when `--target` selects a Sky.Spa client split (`web:app`,
+  `mobile*`, `desktop:<os>`, `tablet:<os>`) it additionally runs the differential
+  split oracle (each random `(Model, Msg)` run directly and through the split,
+  asserting they agree). A non-split target, or none, runs the model net alone. A
+  Postgres app that carries its DSN in `.env` now fuzzes offline cleanly.
+
+### Removed
+
+- **`sky spa-diff-fuzz`** — retired and folded into `sky fuzz --target web:app`.
+  Its differential-oracle library and its registered T2 gate are unchanged, so
+  no coverage is lost.
+
+Full reference: [testing a Sky project](docs/tooling/testing.md) and the
+`sky doc --diagram` section of [the CLI reference](docs/tooling/cli.md).
+
 ## v0.24.4 — Automated testing + architecture diagrams (2026-09-13)
 
 Two additive feature families: a testing suite that derives its inputs from the

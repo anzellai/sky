@@ -409,6 +409,7 @@ sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes
 sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update; a Sky.Spa target adds the differential split oracle
 sky fmt src/Main.sky         # format (always run after editing .sky)
 sky doc <Module> | --list    # API docs (the source of truth for signatures)
+sky doc --diagram <kind>     # architecture diagram from the typed IR: components (C4) | wire (DFD) | journey | telemetry; --format puml|md|svg
 sky watch src/Main.sky       # rebuild + restart on save
 sky add <go/pkg> | remove | install | update   # Go FFI deps
 ```
