@@ -229,7 +229,7 @@ jobs:
     # coerce-floor. `build-run --all` moved to gate-buildrun and the ~14-min T1
     # harness moved to gate-t1, so this job is workspace tests + corpus +
     # coerce-floor only — comfortably inside 30 min.
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
@@ -294,7 +294,10 @@ jobs:
   # postgres-arm gates. Not the rust-cache writer (gate-core writes it).
   gate-t1:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The T1 harness release-compiles the workspace from a cold release cache
+    # (~15-20 min) then runs ~14 min of gates; 40 gives margin over the measured
+    # 28 min so a slightly slower runner does not false-red.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
