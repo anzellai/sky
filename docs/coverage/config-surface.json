@@ -48,14 +48,14 @@
   ],
   "pre_binary": {
     "bin": [
-      "rust/crates/project/src/build.rs:1484 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1560 (sky_toml_project_key)"
     ],
     "database.driver": [
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1576 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:7862 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:8500 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:143 (toml_value)"
@@ -89,7 +89,7 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "root": [
-      "rust/crates/project/src/build.rs:1490 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1566 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
@@ -157,6 +157,11 @@
     "SKY_TELEMETRY_DB_CAPACITY",
     "SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW",
     "SKY_TELEMETRY_SYNCHRONOUS_COMMIT",
+    "SKY_TEST_CLOCK_MS",
+    "SKY_TEST_LOG_CAPTURE",
+    "SKY_TEST_MOCKS_DIR",
+    "SKY_TEST_MODE",
+    "SKY_TEST_SEED",
     "SKY_TRACE_HONOR_REMOTE_PARENT",
     "SKY_TUI_LOG",
     "SKY_TUI_QUIET",
@@ -234,11 +239,11 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 104,
+    "documented_names": 109,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 14,
     "read_without_doc": 26,
-    "runtime_read_literal_sky_names": 40,
+    "runtime_read_literal_sky_names": 45,
     "runtime_read_suffixes": 45,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,

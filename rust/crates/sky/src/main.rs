@@ -1034,10 +1034,10 @@ fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf,
 /// This reuses [`synthesize_spa_source`] (the build's own App→Spa synthesis) and
 /// [`stage_std_app_derived`] (the build's own staging), so the staged project is
 /// byte-for-byte what the build would split. It stages into
-/// `<project>/.skyapp/diagram/` — NOT the build's `.skyapp/web-app/` and NOT the
-/// user's `src/` — so it never disturbs a build or the user's sources. The
-/// staged `sky.toml` gets the `[spa] generated = true` marker so nothing ever
-/// re-splits it.
+/// a UNIQUE system-temp dir — NOT the build's `.skyapp/web-app/` and NOT the
+/// user's `src/` — so it never disturbs a build or the user's sources, and two
+/// concurrent runs never collide. The staged `sky.toml` gets the `[spa]
+/// generated = true` marker so nothing ever re-splits it.
 ///
 /// Returns `Some((staged_dir, entry_module))` when synthesis applied and staged
 /// cleanly. Returns `None` when it does not apply — the target is not a wasm
@@ -1073,7 +1073,19 @@ fn stage_diagram_spa(
     // Only an `App.web`/`App.app` (`Std.App`) entry is synthesizable into a Spa
     // entry; anything else returns None here.
     let synthesized = synthesize_spa_source(&entry_src)?;
-    let out_root = project_dir.join(".skyapp").join("diagram");
+    // Stage into a UNIQUE system-temp dir, NOT `<project>/.skyapp` — the diagram
+    // is read-only w.r.t. the project, and a per-invocation dir means two
+    // concurrent `sky doc --diagram` runs (or a diagram run beside a build) never
+    // race on a shared `.skyapp`. `stage_std_app_derived` symlinks `.skydeps` /
+    // `sky-ffi` by ABSOLUTE path, so deps still resolve from the temp copy.
+    let out_root = std::env::temp_dir().join(format!(
+        "sky-diagram-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
     let src_to = stage_std_app_derived(project_dir, &out_root).ok()?;
     let entry_name = entry_file.file_name()?;
     let synth_entry = src_to.join(entry_name);
@@ -6185,16 +6197,11 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
         .unwrap_or(project_dir)
         .to_string_lossy()
         .to_string();
-    // Best-effort clean of the staged scratch tree once the report is rendered.
-    // Remove `.skyapp/diagram/`, then the `.skyapp/` parent ONLY if it is now
-    // empty — `remove_dir` never deletes a non-empty dir, so a build's
-    // `.skyapp/web-app` / `.skyapp/check` is never disturbed.
+    // Best-effort clean of the staged scratch tree (a unique system-temp dir)
+    // once the report is rendered. Nothing under the project is touched.
     let cleanup = |staged: &Option<(PathBuf, Option<String>)>| {
         if let Some((dir, _)) = staged {
             let _ = std::fs::remove_dir_all(dir);
-            if let Some(parent) = dir.parent() {
-                let _ = std::fs::remove_dir(parent);
-            }
         }
     };
 

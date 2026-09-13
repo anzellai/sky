@@ -186,6 +186,8 @@ pub(crate) const GENERATED_DIRS: &[&str] = &[
     ".skydeps",
     ".split",
     ".skyapp",
+    ".modelfuzz",
+    ".difffuzz",
     "sky-ffi",
     "node_modules",
 ];

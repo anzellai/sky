@@ -20,9 +20,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 160 |
-| covered by the new corpus (>= Asserted) | 140 |
-| verdict `stronger` | 135 |
+| surfaces | 161 |
+| covered by the new corpus (>= Asserted) | 141 |
+| verdict `stronger` | 136 |
 | verdict `equal` | 25 |
 | verdict `weaker` | 0 |
 | corpus units | 81 |
@@ -34,8 +34,8 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 10 | 10.6% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 708 | 38.0% |
-| symbols unreferenced under the generous rule | 626 | 33.6% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 707 | 38.0% |
+| symbols unreferenced under the generous rule | 625 | 33.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -106,6 +106,7 @@ None.
 | `cli.doc` | cli | None | Falsified | stronger |
 | `cli.doctor` | cli | None | Falsified | stronger |
 | `cli.fmt` | cli | None | None | equal |
+| `cli.fuzz` | cli | None | Falsified | stronger |
 | `cli.init` | cli | None | Falsified | stronger |
 | `cli.install` | cli | Runs | Falsified | stronger |
 | `cli.lsp` | cli | None | None | equal |

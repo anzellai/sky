@@ -13,8 +13,7 @@
     "dispatched_but_undocumented": [
       "console-serve",
       "init",
-      "migrate",
-      "spa-diff-fuzz"
+      "migrate"
     ],
     "documented_but_not_dispatched": [],
     "verbs": [
@@ -29,6 +28,7 @@
       "doc",
       "doctor",
       "fmt",
+      "fuzz",
       "init",
       "install",
       "lsp",
@@ -679,11 +679,11 @@
   "summary": {
     "stdlib_entries": 1862,
     "stdlib_modules": 94,
-    "surfaces_covered": 140,
-    "surfaces_covered_pct": 87.5,
+    "surfaces_covered": 141,
+    "surfaces_covered_pct": 87.6,
     "surfaces_equal": 25,
-    "surfaces_stronger": 135,
-    "surfaces_total": 160,
+    "surfaces_stronger": 136,
+    "surfaces_total": 161,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -986,6 +986,28 @@
       "description": "`sky fmt`",
       "id": "cli.fmt",
       "verdict": "equal"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky fuzz`",
+      "id": "cli.fuzz",
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -3538,6 +3560,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -12117,10 +12144,9 @@
           ]
         },
         "Sky.Core.Http": {
-          "count": 4,
+          "count": 3,
           "symbols": [
             "parseQuery",
-            "withBody",
             "withMaxRedirects",
             "withUrl"
           ]
@@ -13015,7 +13041,7 @@
           ]
         }
       },
-      "count": 626,
+      "count": 625,
       "pct_of_denominator": 33.6
     },
     "symbols_unreferenced_strict": {
@@ -13098,10 +13124,9 @@
           ]
         },
         "Sky.Core.Http": {
-          "count": 4,
+          "count": 3,
           "symbols": [
             "parseQuery",
-            "withBody",
             "withMaxRedirects",
             "withUrl"
           ]
@@ -14079,7 +14104,7 @@
           ]
         }
       },
-      "count": 708,
+      "count": 707,
       "pct_of_denominator": 38.0
     }
   },
@@ -14100,12 +14125,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 22,
+      "modules_imported": 23,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 102,
-      "refs_qualified": 97,
+      "refs_generous": 108,
+      "refs_qualified": 103,
       "role": "Layer2",
-      "sky_files": 95,
+      "sky_files": 97,
       "sky_toml_sections": []
     },
     {
