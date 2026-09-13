@@ -365,7 +365,34 @@ Output lines: `  ok: <name>`, `  FAIL build: …`, `  FAIL go-build: …`,
 
 ### `sky test <file>`
 
-Run a Sky test module. See [`testing.md`](testing.md).
+Run a Sky test module. See [`testing.md`](testing.md). A project with a
+`.env.test` file runs in **test mode**: outbound HTTP is mocked from
+`tests/mocks/` fixtures (unmatched requests fail closed), a `[database]` project
+gets an ephemeral offline database, and `SKY_TEST_SEED` / `SKY_TEST_CLOCK_MS`
+make effects deterministic. The mock fixture shape and the multi-outcome patterns
+are in [`testing.md`](testing.md#test-mode-offline-effects-and-mock-by-default).
+
+### `sky fuzz <file>`
+
+Model-based no-panic fuzzer for any TEA app (Spa or Live). Derives a `Msg`
+generator from the app's own `Msg` union, folds random `Msg` sequences from
+`init ()` through the real `update`, and asserts no unclassified panic. Runs
+offline under test mode.
+
+```bash
+sky fuzz src/Main.sky --iters 500 --seed 42
+```
+
+Exit `0` on PASS, non-zero on the first sequence that panics (reproducible with
+the same `--seed`). See
+[`testing.md`](testing.md#sky-fuzz-entry--the-model-no-panic-net-any-tea-app).
+
+### `sky spa-diff-fuzz <file>`
+
+Differential split fuzzer for a Sky.Spa app: runs each random `(Model, Msg)`
+directly and through the client/server split, and asserts the two agree — a free
+oracle that catches dropped read/write-set fields and `Msg`-argument collisions.
+See [`testing.md`](testing.md#sky-spa-diff-fuzz-entry--the-differential-split-oracle-skyspa).
 
 ## Configuration
 

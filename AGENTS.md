@@ -380,6 +380,8 @@ sky watch src/Main.sky           # file-watch rebuild + restart
 sky verify                       # project pre-release gate: fmt + check + build + tests
 sky fmt src/Main.sky             # opinionated formatter (idempotent)
 sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per-case JSON report)
+sky fuzz src/Main.sky            # model no-panic fuzzer: random Msgs → update, any TEA app
+sky spa-diff-fuzz src/Main.sky   # Sky.Spa differential split oracle (free, catches read/write-set drops)
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
 sky db start | stop [--all] | ps [--all]                       # local PostgreSQL cluster
@@ -650,6 +652,7 @@ before assuming a limitation still holds.
 | `Std.Auth` | `docs/skyauth/overview.md` |
 | `Std.Db` / Codec / Store / migrations | `docs/skydb/overview.md` |
 | CLI + LSP | `docs/tooling/cli.md`, `docs/tooling/lsp.md` |
+| Testing: `sky test`, test mode + mocks, `sky fuzz` | `docs/tooling/testing.md` |
 | `sky.toml` + env vars | `docs/sky-toml.md` |
 | Observability / console | `docs/observability.md` |
 | Getting started | `docs/getting-started.md`, `README.md` |

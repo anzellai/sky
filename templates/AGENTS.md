@@ -406,6 +406,7 @@ sky run src/Main.sky         # build + run   (--profile for runtime CPU/mem/hang
 sky check src/Main.sky       # type-check + go build (keeps no binary — but DOES compile)
 sky verify                   # one-shot project gate: fmt + check + build + tests
 sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes a per-case JSON report)
+sky fuzz src/Main.sky        # model no-panic fuzzer: random Msgs → update (any TEA app), offline
 sky fmt src/Main.sky         # format (always run after editing .sky)
 sky doc <Module> | --list    # API docs (the source of truth for signatures)
 sky watch src/Main.sky       # rebuild + restart on save
@@ -425,6 +426,26 @@ check` type-checks the shared source without splitting; `sky spa-split <entry>
 Run `sky verify` before you consider a change done — it runs fmt-clean +
 type-check + production build + every `tests/*.sky` suite, and exits non-zero on
 any failure.
+
+**Test mode and mocks (offline scenario tests).** A project with a `.env.test`
+file runs `sky test` in test mode: outbound HTTP is mocked, a `[database]`
+project gets an ephemeral offline database, and `SKY_TEST_SEED` /
+`SKY_TEST_CLOCK_MS` make effects deterministic. A mock is one JSON file under
+`tests/mocks/`; an unmatched outbound request fails closed (so the app's error
+path runs for free). The shape:
+
+```json
+{ "match": { "method": "POST", "urlContains": "/v1/charge" },
+  "status": 200,
+  "body": "{\"id\":\"ch_test_1\",\"status\":\"succeeded\"}" }
+```
+
+`method` and `urlContains` are optional (absent matches anything); first match
+wins in filename order; `body` is the response verbatim — paste a captured
+payload. For success/pending/failure on one URL, keep separate dirs and pick one
+with `SKY_TEST_MOCKS_DIR`. `sky fuzz src/Main.sky` folds random `Msg`s through
+`update` and asserts no unclassified panic. Full reference:
+`docs/tooling/testing.md`.
 
 **`sky check` is not a cheap tier.** It is `sky build` minus keeping the
 artifact: both invoke `go build` on the emitted Go. Do not design a "fast
