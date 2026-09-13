@@ -167,3 +167,11 @@ isolated-target/
 # Sky.Spa spike build artifacts
 docs/skyspa/spike/main.wasm
 docs/skyspa/spike/wasm_exec.js
+
+# Auto-testing fuzzer scratch dirs (differential split fuzz + model fuzz)
+.difffuzz/
+.modelfuzz/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json

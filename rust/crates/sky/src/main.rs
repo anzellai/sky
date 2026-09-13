@@ -95,6 +95,7 @@ fn main() -> ExitCode {
         Some("spa-partition") => cmd_spa_partition(&args[1..]),
         Some("spa-split") => cmd_spa_split(&args[1..]),
         Some("spa-diff-fuzz") => cmd_spa_diff_fuzz(&args[1..]),
+        Some("fuzz") => cmd_fuzz(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
@@ -2591,6 +2592,123 @@ fn spa_split_and_build(
 /// checkable server branch two ways (direct vs the split plumbing) over random
 /// `(Model, Msg)` and exits non-zero on a divergence. Build + run it to gate
 /// read/write-set + Msg-arg-collision regressions in CI.
+/// `sky fuzz <file.sky> [--iters N] [--seed S]` — the MODEL fuzzer for ANY TEA
+/// app (Sky.Live, Sky.Spa, Std.App terminal/desktop). It folds random Msgs
+/// through the app's REAL `update` from `init ()` and asserts no unclassified
+/// panic — the automatic soundness net for Live apps the differential fuzzer
+/// cannot cover. Generates the harness, builds it, and runs it in TEST MODE
+/// (deterministic effects + an ephemeral embedded Postgres when the project
+/// declares a [database] and no DSN is set), so it runs offline.
+fn cmd_fuzz(args: &[String]) -> ExitCode {
+    let iters: usize = args
+        .iter()
+        .position(|a| a == "--iters")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
+    let seed: i64 = args
+        .iter()
+        .position(|a| a == "--seed")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20260912);
+    let file = match resolve_entry_arg(
+        &args.iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>(),
+        "usage: sky fuzz <file.sky> [--iters N] [--seed S]  (or run inside a Sky app project)",
+    ) {
+        Ok(f) => f,
+        Err(code) => return code,
+    };
+    let file = file.as_path();
+    let Some((repo_root, project_dir)) = resolve(file) else {
+        return ExitCode::FAILURE;
+    };
+    let out_dir = project_dir.join(".modelfuzz");
+    let report = match project::spa_split::generate_model_fuzz(
+        &repo_root,
+        &project_dir,
+        entry_module_name(file).as_deref(),
+        &out_dir,
+        iters,
+        seed,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("sky fuzz: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "sky fuzz: {} Msg ctor(s) in scope: {}",
+        report.checked.len(),
+        report.checked.join(", ")
+    );
+    for n in &report.notes {
+        println!("  note: {n}");
+    }
+
+    // Build the harness (no run — we run it ourselves with the test-mode env).
+    let opts = BuildOptions {
+        repo_root: repo_root.clone(),
+        example_dir: out_dir.clone(),
+        out_dir_name: "sky-out".to_string(),
+        out_dir_abs: None,
+        run: false,
+        stdin: None,
+        entry_module: None,
+        progress: false,
+        embed_bundle: None,
+        wasm: false,
+    };
+    let built = build_example(&opts);
+    if !built.emitted {
+        eprintln!("sky fuzz: harness build failed: {}", built.note);
+        return ExitCode::FAILURE;
+    }
+
+    // Run in TEST MODE. Deterministic clock/seed so a crash reproduces; an
+    // ephemeral embedded Postgres when the project declares a [database] and no
+    // DSN is set (so a DB app fuzzes offline).
+    let app = out_dir.join("sky-out").join(project::configured_bin_name(&project_dir));
+    let mut cmd = std::process::Command::new(&app);
+    cmd.current_dir(&project_dir);
+    cmd.env("SKY_TEST_MODE", "1");
+    cmd.env("SKY_TEST_SEED", seed.to_string());
+    cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
+    let has_dsn = std::env::var_os("DATABASE_URL").is_some();
+    if !has_dsn && project_declares_database(&project_dir) {
+        cmd.env("SKY_EMBED_POSTGRES", "1");
+        cmd.env("SKY_DATA_DIR", out_dir.join("pgdata"));
+    }
+    let status = cmd.status();
+    match status {
+        Ok(s) if s.success() => {
+            println!("sky fuzz: PASS — {iters} random Msg sequences, no unclassified panic");
+            ExitCode::SUCCESS
+        }
+        Ok(s) => {
+            eprintln!(
+                "sky fuzz: FAIL — the app panicked or exited non-zero (code {:?}) under a random Msg sequence. \
+                 Re-run reproduces it with --seed {seed}.",
+                s.code()
+            );
+            ExitCode::FAILURE
+        }
+        Err(e) => {
+            eprintln!("sky fuzz: could not run the harness: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// True when the project's `sky.toml` declares a `[database]` — the signal to
+/// provision an ephemeral embedded Postgres for a DB app being fuzzed offline.
+fn project_declares_database(project_dir: &Path) -> bool {
+    std::fs::read_to_string(project_dir.join("sky.toml"))
+        .map(|s| s.lines().map(str::trim).any(|l| l == "[database]" || l.starts_with("[database]")))
+        .unwrap_or(false)
+}
+
 fn cmd_spa_diff_fuzz(args: &[String]) -> ExitCode {
     let (positional, out) = parse_out(args);
     let iters: usize = args

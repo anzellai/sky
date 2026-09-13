@@ -364,6 +364,120 @@ fn emit_driver(iters: usize, seed0: i64) -> String {
     )
 }
 
+/// The output of the model-fuzzer emitter.
+#[derive(Debug, Default)]
+pub struct ModelFuzzOutput {
+    /// Sky source to append to a copy of the entry module (its `main` stripped):
+    /// the generators + a driver that folds random Msgs through `update` from
+    /// `init ()`.
+    pub snippet: String,
+    /// Loud skips (a Msg ctor whose args are not generatable, …).
+    pub notes: Vec<String>,
+    /// The Msg ctors the fuzzer can drive.
+    pub covered: Vec<String>,
+    /// Imports the snippet needs (merged by the caller, deduped).
+    pub required_imports: Vec<String>,
+}
+
+/// Emit the MODEL FUZZER harness: a `genMsg` over the app's whole Msg union plus
+/// a driver that starts from `init ()` and folds `iters` random Msgs through the
+/// app's REAL `update`, asserting no unclassified panic (a panic crashes the
+/// process → non-zero exit). This is the automatic net for ANY TEA app — Sky.Live
+/// included — because it never touches the RPC split: it just exercises `update`.
+/// Starting from `init` and applying arbitrary Msgs keeps every visited state
+/// REACHABLE (a client can send any well-typed Msg, so a sound app must not panic
+/// on any of them), which is what makes a no-panic assertion valid here.
+pub fn emit_model_fuzz(
+    model_type: &str,
+    msg_type: &str,
+    resolver: &dyn TypeResolver,
+    iters: usize,
+    seed0: i64,
+) -> ModelFuzzOutput {
+    let mut out = ModelFuzzOutput::default();
+    let mut gen = GenModule::new(resolver);
+
+    let tail = msg_type.rsplit('.').next().unwrap_or(msg_type);
+    let Some(crate::spa_diff_gen::TypeDef::Union(ctors)) = resolver.resolve(tail) else {
+        out.notes
+            .push(format!("Msg type `{msg_type}` did not resolve to a union — nothing to fuzz"));
+        return out;
+    };
+    for (ctor, arg_tys) in &ctors {
+        let args: Vec<ModelFieldTy> = arg_tys
+            .iter()
+            .enumerate()
+            .map(|(i, t)| ModelFieldTy {
+                name: format!("a{i}"),
+                ty_name: String::new(),
+                codec: None,
+                ty: Some(t.clone()),
+            })
+            .collect();
+        if gen.emit_msg(msg_type, ctor, &args) {
+            out.covered.push(ctor.clone());
+        }
+    }
+    gen.emit_msg_dispatch();
+    let gout = gen.finish();
+    out.notes.extend(gout.notes);
+    if out.covered.is_empty() {
+        out.notes
+            .push("no Msg ctor was generatable — model fuzzer proves nothing".into());
+        out.snippet = gout.source;
+        return out;
+    }
+
+    let mut s = gout.source;
+    s.push('\n');
+    s.push_str(&format!(
+        "-- Model fuzzer: from `init ()`, fold random Msgs through the REAL `update`,\n\
+         -- asserting no unclassified panic. Reachable by construction (any Msg is a\n\
+         -- valid client input). Applies to ANY TEA app — no Sky.Spa split needed.\n\
+         spaFuzzStep : Seed -> {model_type} -> ( {model_type}, Seed )\n\
+         spaFuzzStep s0 model =\n\
+         \x20   let\n\
+         \x20       ( msg, s1 ) =\n\
+         \x20           genMsg s0\n\n\
+         \x20       ( m2, _ ) =\n\
+         \x20           update msg model\n\
+         \x20   in\n\
+         \x20   ( m2, s1 )\n\n\n\
+         spaFuzzLoop : Int -> Seed -> {model_type} -> Int -> Int\n\
+         spaFuzzLoop remaining s model count =\n\
+         \x20   if remaining <= 0 then\n\
+         \x20       count\n\n\
+         \x20   else\n\
+         \x20       let\n\
+         \x20           ( m2, s2 ) =\n\
+         \x20               spaFuzzStep s model\n\
+         \x20       in\n\
+         \x20       spaFuzzLoop (remaining - 1) s2 m2 (count + 1)\n\n\n\
+         spaFuzzIters : Int\n\
+         spaFuzzIters =\n\
+         \x20   {iters}\n\n\n\
+         spaFuzzSeed0 : Seed\n\
+         spaFuzzSeed0 =\n\
+         \x20   {seed0}\n\n\n\
+         main : Task Error ()\n\
+         main =\n\
+         \x20   let\n\
+         \x20       ( m0, _ ) =\n\
+         \x20           init ()\n\n\
+         \x20       count =\n\
+         \x20           spaFuzzLoop spaFuzzIters spaFuzzSeed0 m0 0\n\
+         \x20   in\n\
+         \x20   SpaDiffLog.println (\"model-fuzz ok: \" ++ String.fromInt count ++ \" steps, no unclassified panic\")\n"
+    ));
+
+    out.snippet = s;
+    out.required_imports = vec![
+        "import Sky.Core.String as String".to_string(),
+        "import Std.Log as SpaDiffLog".to_string(),
+    ];
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

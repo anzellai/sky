@@ -2470,6 +2470,133 @@ pub fn generate_diff_fuzz(
     })
 }
 
+/// Generate the MODEL-FUZZER harness project for ANY TEA app (Sky.Live, Sky.Spa,
+/// or a `Std.App` terminal/desktop app). Unlike the differential fuzzer this does
+/// not touch the split — it folds random Msgs through the app's REAL `update` from
+/// `init ()` and asserts no unclassified panic — so it is the automatic net for
+/// Sky.Live apps, which have no split to diff. Produces a self-contained CLI
+/// project under `out_dir`; the caller builds + runs it (in test mode, so effects
+/// go through the deterministic substrate + ephemeral DB).
+pub fn generate_model_fuzz(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    out_dir: &Path,
+    iters: usize,
+    seed: i64,
+) -> Result<DiffFuzzReport, String> {
+    let (db, entry, check_ids) = crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let proj_name = project_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "app".to_string());
+    // Confirm this is a TEA app (has an `update` reachable from an App/Spa config).
+    // The model fuzzer does NOT need a resolvable `case msg of` — any `update`
+    // works — so a `whole_update` verdict is fine here (unlike the differential
+    // fuzzer, which needs per-branch I/O).
+    let report = spa_partition::analyze_loaded(&db, entry, &check_ids, proj_name.clone())?;
+
+    let entry_parse = db.module_parse(entry);
+    let esrc = entry_parse.syntax().text().to_string();
+    let efile = entry_parse.tree();
+    let update_anno = report
+        .update_module_name
+        .as_deref()
+        .and_then(|un| check_ids.iter().find(|m| db.module_name(**m) == un).copied())
+        .map(|um| {
+            let p = db.module_parse(um);
+            let s = p.syntax().text().to_string();
+            (p.tree(), s)
+        })
+        .and_then(|(f, s)| decl_text_by(&f, &s, "update", DeclKind::TypeAnno))
+        .or_else(|| decl_text_by(&efile, &esrc, "update", DeclKind::TypeAnno))
+        .unwrap_or_else(|| "update : Msg -> Model -> ( Model, Cmd Msg )".to_string());
+    let model_ty = model_type_name(&efile, &esrc).unwrap_or_else(|| "Model".to_string());
+    let msg_ty = nth_arrow_segment(&update_anno, 0).unwrap_or_else(|| "Msg".to_string());
+
+    // Resolver over the project's own type decls (for the Msg union + nested types).
+    let mut tymap: HashMap<String, crate::spa_diff_gen::TypeDef> = HashMap::new();
+    for m in &check_ids {
+        let tree = db.module_parse(*m).tree();
+        for decl in tree.decls() {
+            match decl {
+                syntax::ast::Decl::Union(u) => {
+                    if let Some(nm) = u.name() {
+                        let ctors: Vec<(String, Vec<ty::Ty>)> = u
+                            .variants()
+                            .into_iter()
+                            .filter_map(|v| {
+                                v.name()
+                                    .map(|cn| (cn.text().to_string(), ty::variant_arg_types(v.syntax())))
+                            })
+                            .collect();
+                        tymap.insert(nm.text().to_string(), crate::spa_diff_gen::TypeDef::Union(ctors));
+                    }
+                }
+                syntax::ast::Decl::Alias(a) => {
+                    if let Some(nm) = a.name() {
+                        let fields = ty::record_alias_fields(a.syntax());
+                        if !fields.is_empty() {
+                            tymap.insert(
+                                nm.text().to_string(),
+                                crate::spa_diff_gen::TypeDef::Record(fields),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let resolver = crate::spa_diff_harness::MapTypeResolver(tymap);
+    let out = crate::spa_diff_harness::emit_model_fuzz(&model_ty, &msg_ty, &resolver, iters, seed);
+    if out.covered.is_empty() {
+        return Err(format!(
+            "no runnable model fuzzer for `{proj_name}` — no Msg ctor was generatable. Notes: {}",
+            out.notes.join("; ")
+        ));
+    }
+
+    let source_root = crate::build::configured_source_root(project_dir);
+    let src_root = project_dir.join(&source_root);
+    let harness_src = out_dir.join("src");
+    if harness_src.exists() {
+        std::fs::remove_dir_all(&harness_src)
+            .map_err(|e| format!("clean {}: {e}", harness_src.display()))?;
+    }
+    copy_tree(&src_root, &harness_src)?;
+
+    let entry_rel = module_relpath(&db.module_name(entry));
+    let entry_file = harness_src.join(&entry_rel);
+    let orig = std::fs::read_to_string(&entry_file)
+        .map_err(|e| format!("read entry {}: {e}", entry_file.display()))?;
+    let oparse = syntax::parse(&orig, base::FileId(0));
+    let ofile = oparse.tree();
+    let mut strip = BTreeSet::new();
+    strip.insert("main".to_string());
+    let stripped = strip_decls_by_name(&ofile, &orig, &strip);
+    let existing = collect_imports(&ofile, &orig);
+    let with_imports = inject_harness_imports(&stripped, &existing, &out.required_imports);
+    let final_src = format!("{with_imports}\n\n{}", out.snippet);
+    std::fs::write(&entry_file, &final_src)
+        .map_err(|e| format!("write model-fuzz entry {}: {e}", entry_file.display()))?;
+
+    let toml = format!(
+        "name = \"{proj_name}-modelfuzz\"\nversion = \"0.1.0\"\nentry = \"src/{entry_rel}\"\n\n[source]\nroot = \"src\"\n\n[spa]\ngenerated = true\nrole = \"modelfuzz\"\n"
+    );
+    std::fs::write(out_dir.join("sky.toml"), toml)
+        .map_err(|e| format!("write model-fuzz sky.toml: {e}"))?;
+    propagate_deps(project_dir, out_dir)?;
+
+    Ok(DiffFuzzReport {
+        out_dir: out_dir.to_string_lossy().to_string(),
+        entry_rel: format!("src/{entry_rel}"),
+        checked: out.covered,
+        notes: out.notes,
+    })
+}
+
 /// Inject the harness's required imports into a module source, after the last
 /// existing import (or after the module header when there are none). A
 /// `import <Mod> as <Alias>` line is skipped when `<Mod>` is already imported AND
