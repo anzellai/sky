@@ -272,6 +272,17 @@ jobs:
       # can spawn `sky build`. The v0.23.0 publish failed because build-run ran
       # before the install; the composite ordering makes that recurrence
       # impossible.
+      # The go-build cache grows through the corpus + coerce-floor emits above;
+      # `build-run --all` then builds AND runs every example and needs headroom.
+      # Clear the accumulated go cache right before the sweep so it starts from a
+      # known-small floor (the OS-junk reclaim is already done above). This is the
+      # actual disk cause behind the "only 2 GB free" aborts, and it is cheap:
+      # build-run repopulates only what it needs.
+      - name: Reclaim the go-build cache before the sweep
+        working-directory: rust
+        run: |
+          go clean -cache || true
+          df -h /
       - name: Codegen build + run
         working-directory: rust
         run: |

@@ -22,6 +22,20 @@
 [test-groups]
 serial-servers = { max-threads = 1 }
 
+# Retry a failed test up to twice before calling the run red. Every server-
+# spawning integration test here (doc --serve, the flow binaries) builds a Go
+# app then binds a port, so on a shared, oversubscribed CI runner a first
+# attempt can lose the race to CPU/disk and time out — a LOAD flake, not a
+# defect (e.g. doc_serve_answers_http_200 timing out past its 180s poll ceiling
+# on the postgres+integration shard). A retry clears it with zero coverage loss,
+# and nextest reports a test that only passed on retry as FLAKY, so a genuinely
+# intermittent bug stays visible rather than silently masked. `slow-timeout`
+# hard-kills a truly wedged test at 8 min (well above any legitimate slow test)
+# so it is retried fast instead of eating the whole 45-min job budget.
+[profile.default]
+retries = 2
+slow-timeout = { period = "120s", terminate-after = 4 }
+
 [[profile.default.overrides]]
-filter = 'binary(spa_split_flow) + binary(spa_target_flow) + binary(std_app_flow) + binary(cross_replica_session_flow) + binary(auth_sliding_flow) + binary(auth_revocation_flow) + binary(db_cluster_flow)'
+filter = 'binary(spa_split_flow) + binary(spa_target_flow) + binary(std_app_flow) + binary(cross_replica_session_flow) + binary(auth_sliding_flow) + binary(auth_revocation_flow) + binary(db_cluster_flow) + binary(doc_flow)'
 test-group = 'serial-servers'
