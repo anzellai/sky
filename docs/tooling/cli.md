@@ -320,13 +320,15 @@ sky doc --diagram journey --target web:app # client/server split per action (Sky
 ```
 
 The PlantUML output is a raw `@startuml … @enduml` document with one
-`title` line, a shared `skinparam` block, and a `legend` — no prose, no
-notes, no Markdown fence — so it pipes straight into a `.puml` file. The
-SVG output is a complete `<svg>…</svg>` document, laid out with
-orthogonal edges only, collapsed parallel edges, generous spacing, a
-legend, and a canvas sized to its content — no diagonal spaghetti and no
-overlapping labels. Only the `md` format carries the detailed table and
-reader notes.
+`title` line, a shared `skinparam` block, and a `legend` — so it pipes
+straight into a `.puml` file. The SVG output is a complete `<svg>…</svg>`
+document, laid out with orthogonal edges only, collapsed parallel edges,
+generous spacing, a legend, and a canvas sized to its content — no diagonal
+spaghetti and no overlapping labels. **All three formats carry the same
+depth** — the table lists, the per-branch effect families, the effectful /
+pure action split — as node labels + notes (puml), sections + tables (md),
+or drawn sections (svg); the `md` form additionally carries the reader
+notes as prose.
 
 The three architecture kinds are **target-aware**: the zones, crossing
 labels and sections change with the app shape derived from the resolved

@@ -98,10 +98,15 @@ fn app_notes_as_a_spa_client_has_both_lanes_and_the_rpc_boundary() {
         out.contains("rectangle \"Server · trusted\" <<boundary>>"),
         "{out}"
     );
-    assert!(out.contains("database \"Database\" as store0"), "{out}");
+    // The Database node now lists the real table name (`notes`) in its label.
+    assert!(
+        out.contains("database \"Database\\nnotes\" as store0"),
+        "Database node should list the `notes` table:\n{out}"
+    );
     assert!(out.contains("backend --> store0 : SQL"), "{out}");
-    // the client crosses /_rpc into the backend.
+    // the client crosses /_rpc into the backend, labelled with the effectful count.
     assert!(out.contains("spa --> backend : /_rpc"), "{out}");
+    assert!(out.contains("effectful"), "the /_rpc edge carries the effectful count:\n{out}");
 
     // The Database container lists the app's real table names — `notes` is the
     // `Store.fromCodec "notes"` table this app declares.

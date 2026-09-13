@@ -409,6 +409,21 @@ fn doc_diagram_wire_charts_the_app_api_webhook() {
         stdout.contains("| POST | /webhooks/stripe | Main.handleWebhook | raw api · CSRF-exempt |"),
         "missing the CSRF-exempt webhook row:\n{stdout}"
     );
+    // Default puml carries the same depth: the webhook endpoint + a per-endpoint
+    // effects note (Save reaches System via the bootId CAF).
+    let puml = Command::new(SKY)
+        .args(["doc", "--diagram", "wire", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram wire puml");
+    let puml = String::from_utf8_lossy(&puml.stdout);
+    assert!(puml.starts_with("@startuml"), "not puml:\n{puml}");
+    assert!(puml.contains("/webhooks/stripe"), "webhook missing from puml:\n{puml}");
+    assert!(
+        puml.contains("note right of ep") && puml.contains("effects:"),
+        "puml missing per-endpoint effects note:\n{puml}"
+    );
     assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
 }
 
@@ -443,6 +458,17 @@ fn doc_diagram_journey_splits_effectful_and_pure() {
     let svg = String::from_utf8_lossy(&svg.stdout);
     assert!(svg.contains("Effectful actions"), "no Effectful section:\n{svg}");
     assert!(svg.contains("Pure actions"), "no Pure section:\n{svg}");
+    // Default puml carries the same split as two floating notes.
+    let puml = Command::new(SKY)
+        .args(["doc", "--diagram", "journey", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram journey puml");
+    let puml = String::from_utf8_lossy(&puml.stdout);
+    assert!(puml.contains("note as effectful_note"), "no Effectful note in puml:\n{puml}");
+    assert!(puml.contains("<b>Effectful actions"), "no Effectful heading in puml:\n{puml}");
+    assert!(puml.contains("note as pure_note"), "no Pure note in puml:\n{puml}");
     assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
 }
 
@@ -472,6 +498,20 @@ fn doc_diagram_components_lists_db_table_names() {
         .expect("spawn sky doc --diagram components svg");
     let svg = String::from_utf8_lossy(&svg.stdout);
     assert!(svg.contains(">widgets<"), "table name inside the Database store:\n{svg}");
+    // Default puml carries the table name in the Database node label + the
+    // effectful count on the /_rpc crossing.
+    let puml = Command::new(SKY)
+        .args(["doc", "--diagram", "components", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram components puml");
+    let puml = String::from_utf8_lossy(&puml.stdout);
+    assert!(
+        puml.contains("database \"Database\\nwidgets\""),
+        "puml Database node must list the table:\n{puml}"
+    );
+    assert!(puml.contains("effectful"), "puml /_rpc edge must carry the effectful count:\n{puml}");
     assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
 }
 

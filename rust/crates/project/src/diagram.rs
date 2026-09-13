@@ -559,6 +559,21 @@ fn classify_c4(g: &ComponentGraph) -> C4Caps {
     }
 }
 
+/// The table-name lines for a PlantUML database-node label: up to eight names
+/// joined by `\n`, with a `+N more` line when there are more. Empty when the app
+/// declares no tables.
+fn puml_table_lines(tables: &[String]) -> String {
+    if tables.is_empty() {
+        return String::new();
+    }
+    let cap = 8usize;
+    let mut lines: Vec<String> = tables.iter().take(cap).cloned().collect();
+    if tables.len() > cap {
+        lines.push(format!("+{} more", tables.len() - cap));
+    }
+    lines.join("\\n")
+}
+
 /// The Backend container subtitle: `also: <inline caps>` (or empty).
 fn backend_subtitle(c: &C4Caps) -> String {
     if c.inline.is_empty() {
@@ -584,12 +599,24 @@ fn render_components_puml(g: &ComponentGraph) -> String {
         o.push_str("  rectangle \"SPA\\n«wasm client»\" as spa <<container>>\n");
         o.push_str("}\n");
     }
-    o.push_str("rectangle \"Server · trusted\" <<boundary>> {\n");
+    let server_zone = match g.shape {
+        AppShape::Tui | AppShape::Cli => "Process · local",
+        _ => "Server · trusted",
+    };
+    o.push_str(&format!("rectangle \"{server_zone}\" <<boundary>> {{\n"));
     o.push_str(&format!(
         "  rectangle \"{backend_desc}\" as backend <<container>>\n"
     ));
+    // The Database node lists the app's real table names (cap 8 + "+N more").
+    let table_label = puml_table_lines(&g.tables);
     for (i, (label, _)) in c.stores.iter().enumerate() {
-        o.push_str(&format!("  database \"{label}\" as store{i}\n"));
+        if *label == "Database" && !table_label.is_empty() {
+            o.push_str(&format!(
+                "  database \"Database\\n{table_label}\" as store{i}\n"
+            ));
+        } else {
+            o.push_str(&format!("  database \"{label}\" as store{i}\n"));
+        }
     }
     if c.egress.is_some() {
         o.push_str("  queue \"Audit / logs\\n(egress)\" as egress\n");
@@ -609,16 +636,23 @@ fn render_components_puml(g: &ComponentGraph) -> String {
     if g.is_spa {
         o.push_str("user --> spa : uses · HTTPS\n");
         let auth = if c.auth { " · auth" } else { "" };
-        o.push_str(&format!("spa --> backend : /_rpc{auth}\n"));
+        // Label the /_rpc crossing with the count of EFFECTFUL actions that
+        // round-trip; a note carries the PURE client-action count.
+        let eff = g.rpc_effectful.map(|n| format!(" · {n} effectful")).unwrap_or_default();
+        o.push_str(&format!("spa --> backend : /_rpc{auth}{eff}\n"));
+        if let Some(pure) = g.rpc_pure {
+            o.push_str(&format!(
+                "note bottom of spa : {pure} pure client actions (wasm)\n"
+            ));
+        }
     } else {
-        let via = if matches!(g.capabilities.iter().next(), Some(_))
-            && g.capabilities.contains(&Capability::Realtime)
-        {
-            "HTTPS + SSE"
-        } else {
-            "HTTPS"
+        let via = match g.shape {
+            AppShape::Tui | AppShape::Cli => "in-process",
+            AppShape::Live => "HTTPS + SSE",
+            _ if g.capabilities.contains(&Capability::Realtime) => "HTTPS + SSE",
+            _ => "HTTPS",
         };
-        let auth = if c.auth { " · auth" } else { "" };
+        let auth = if c.auth && !g.shape.is_terminal() { " · auth" } else { "" };
         o.push_str(&format!("user --> backend : {via}{auth}\n"));
     }
     for (i, (_, edge)) in c.stores.iter().enumerate() {
@@ -1623,6 +1657,12 @@ fn render_wire_puml(r: &WireReport) -> String {
             ));
         }
         o.push_str("}\n");
+        // Per-endpoint effect families (from the partition report) as notes.
+        for (i, e) in r.endpoints.iter().enumerate() {
+            if let Some(fx) = &e.effects {
+                o.push_str(&format!("note right of ep{i} : effects: {}\n", puml_msg_text(fx)));
+            }
+        }
         // An external inbound entity for any raw `api` endpoint (a webhook sender).
         if r.http_endpoints.iter().any(|e| e.kind == EndpointKind::RawApi) {
             o.push_str("rectangle \"External\\n«webhook / API client»\" as X <<boundary>>\n");
@@ -3370,12 +3410,51 @@ fn puml_arrow(color: &str) -> String {
     }
 }
 
+/// The Effectful / Pure floating-note blocks for the given actions (shared by the
+/// page-based and page-less puml journeys).
+fn puml_action_notes(o: &mut String, shape: AppShape, actions: &[&JourneyAction]) {
+    let effectful: Vec<&&JourneyAction> = actions.iter().filter(|a| a.effectful).collect();
+    let pure: Vec<&&JourneyAction> = actions.iter().filter(|a| !a.effectful).collect();
+    if !effectful.is_empty() {
+        o.push_str("note as effectful_note\n");
+        o.push_str(&format!("  <b>{}</b>\n", effectful_section_label(shape, effectful.len())));
+        for a in &effectful {
+            o.push_str(&format!("  {}\n", action_chip_label(a)));
+        }
+        o.push_str("end note\n");
+    }
+    if !pure.is_empty() {
+        o.push_str("note as pure_note\n");
+        o.push_str(&format!("  <b>{}</b>\n", pure_section_label(shape, pure.len())));
+        for a in &pure {
+            o.push_str(&format!("  {}\n", short_edge_label(&a.msg)));
+        }
+        o.push_str("end note\n");
+    }
+}
+
 fn render_journey_puml(r: &JourneyReport) -> String {
     let mut o = puml_header(&format!("User journey (TEA state machine) — {}", r.project));
-    let Some(init) = initial_page(r) else {
-        // No pages: a single clear state, never a broken diagram.
-        o.push_str("state \"No pages found\" as none\n");
+    // Http: no pages, no TEA loop.
+    if r.shape == AppShape::Http {
+        o.push_str("state \"HTTP API — no user journey\" as none\n");
         o.push_str("[*] --> none\n");
+        o.push_str("note bottom of none : see `--diagram wire` for the endpoint map\n");
+        o.push_str(&puml_footer());
+        return o;
+    }
+    let Some(init) = initial_page(r) else {
+        // No pages (a Cli / Tui TEA loop): no state machine — just the Effectful
+        // and Pure action inventory. A truly empty app gets one clear state.
+        if r.actions.is_empty() {
+            o.push_str("state \"No pages found\" as none\n");
+            o.push_str("[*] --> none\n");
+        } else {
+            o.push_str("state \"Actions (no pages — TEA loop)\" as loop\n");
+            o.push_str("[*] --> loop\n");
+            let all: Vec<&JourneyAction> = r.actions.iter().collect();
+            puml_action_notes(&mut o, r.shape, &all);
+        }
         o.push_str(&puml_footer());
         return o;
     };
@@ -3426,27 +3505,10 @@ fn render_journey_puml(r: &JourneyReport) -> String {
         ));
     }
 
-    // Non-navigating actions: Effectful + Pure sections inside the initial state.
+    // Non-navigating actions: two floating notes — Effectful (chips annotated
+    // with their effect families) and Pure — the same typed split the SVG draws.
     let internal = non_nav_actions(r);
-    let effectful: Vec<&&JourneyAction> = internal.iter().filter(|a| a.effectful).collect();
-    let pure: Vec<&&JourneyAction> = internal.iter().filter(|a| !a.effectful).collect();
-    if !effectful.is_empty() {
-        o.push_str(&format!("{init_id} : --- effectful actions ---\n"));
-        for a in &effectful {
-            let fams = if a.effect_families.is_empty() {
-                String::new()
-            } else {
-                format!(" [{}]", a.effect_families.join(", "))
-            };
-            o.push_str(&format!("{init_id} : {}{}\n", short_edge_label(&a.msg), fams));
-        }
-    }
-    if !pure.is_empty() {
-        o.push_str(&format!("{init_id} : --- pure actions ---\n"));
-        for a in &pure {
-            o.push_str(&format!("{init_id} : {}\n", short_edge_label(&a.msg)));
-        }
-    }
+    puml_action_notes(&mut o, r.shape, &internal);
 
     o.push_str("legend right\n");
     o.push_str("  <b>TEA state machine</b>\n");
@@ -3929,8 +3991,9 @@ mod tests {
         // Database collapses to a data store reached by a SQL edge.
         assert!(out.contains("database \"Database\" as store0"), "{out}");
         assert!(out.contains("backend --> store0 : SQL"), "{out}");
-        // Auth is a control marker on the client → server crossing.
-        assert!(out.contains("user --> backend : HTTPS · auth"), "{out}");
+        // Auth is a control marker on the client → server crossing; a Live app's
+        // crossing is HTTPS + SSE (the session channel).
+        assert!(out.contains("user --> backend : HTTPS + SSE · auth"), "{out}");
         // single lane: no browser zone, no /_rpc crossing.
         assert!(!out.contains("Browser · untrusted"), "{out}");
         assert!(!out.contains("/_rpc"), "{out}");
@@ -3953,6 +4016,31 @@ mod tests {
         assert!(out.contains("spa --> backend : /_rpc · auth"), "{out}");
         assert!(out.contains("database \"Database\" as store0"), "{out}");
         assert!(out.contains("backend --> store0 : SQL"), "{out}");
+    }
+
+    #[test]
+    fn components_puml_lists_tables_and_rpc_counts() {
+        let g = graph_with(true, vec!["users".into(), "orders".into()], Some(3), Some(5));
+        let out = render_components(&g, Format::Puml);
+        // The Database node label carries the real table names.
+        assert!(
+            out.contains("database \"Database\\nusers\\norders\" as store0"),
+            "table list in the Database node:\n{out}"
+        );
+        // The /_rpc crossing carries the effectful count; a note the pure count.
+        assert!(out.contains("spa --> backend : /_rpc · auth · 3 effectful"), "{out}");
+        assert!(
+            out.contains("note bottom of spa : 5 pure client actions (wasm)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn components_puml_caps_tables_with_plus_n_more() {
+        let tables: Vec<String> = (0..12).map(|i| format!("t{i}")).collect();
+        let g = graph_with(false, tables, None, None);
+        let out = render_components(&g, Format::Puml);
+        assert!(out.contains("\\n+4 more\""), "over-cap folds into +N more:\n{out}");
     }
 
     #[test]
@@ -4173,6 +4261,8 @@ mod tests {
         // per-endpoint request + response across the boundary.
         assert!(out.contains("req {basket, region} + {region}"), "{out}");
         assert!(out.contains("resp {basket, region}"), "{out}");
+        // per-endpoint effect families as a note (SetRegion reaches Db).
+        assert!(out.contains("note right of ep") && out.contains("effects: Db"), "no effects note:\n{out}");
         assert!(!out.contains("```"), "{out}");
     }
 
@@ -4505,9 +4595,11 @@ mod tests {
             out.contains("pg_HomePage -[#2b6cb0]-> dyn_pg : Navigate"),
             "{out}"
         );
-        // a non-navigating effectful action, annotated with its effect family
-        assert!(out.contains("pg_HomePage : --- effectful actions ---"), "{out}");
-        assert!(out.contains("pg_HomePage : Refresh [Http]"), "{out}");
+        // Non-navigating actions split into Effectful / Pure floating notes, the
+        // effectful chip annotated with its effect family.
+        assert!(out.contains("note as effectful_note"), "no effectful note:\n{out}");
+        assert!(out.contains("<b>Effectful actions (1)"), "{out}");
+        assert!(out.contains("Refresh · Http"), "effect family on the chip:\n{out}");
         assert!(!out.contains("```"), "{out}");
     }
 
