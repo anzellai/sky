@@ -94,7 +94,6 @@ fn main() -> ExitCode {
         Some("console-serve") => cmd_console_serve(&args[1..]),
         Some("spa-partition") => cmd_spa_partition(&args[1..]),
         Some("spa-split") => cmd_spa_split(&args[1..]),
-        Some("spa-diff-fuzz") => cmd_spa_diff_fuzz(&args[1..]),
         Some("fuzz") => cmd_fuzz(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
         Some(other) => {
@@ -2667,19 +2666,79 @@ fn spa_split_and_build(
 /// `sky build` / `sky run` on a `Spa.app` entry call the same engine
 /// (`spa_split_and_build`) automatically; this verb is the explicit form that
 /// takes `--out`, `--broker` and a frontend `--target`.
-/// `sky spa-diff-fuzz <file.sky> [--out <dir>] [--iters N] [--seed S]` — generate
-/// the Sky.Spa differential split-fuzzer harness project (phase 2 of the auto-
-/// testing feature). It writes a self-contained CLI project that runs each
-/// checkable server branch two ways (direct vs the split plumbing) over random
-/// `(Model, Msg)` and exits non-zero on a divergence. Build + run it to gate
-/// read/write-set + Msg-arg-collision regressions in CI.
-/// `sky fuzz <file.sky> [--iters N] [--seed S]` — the MODEL fuzzer for ANY TEA
-/// app (Sky.Live, Sky.Spa, Std.App terminal/desktop). It folds random Msgs
-/// through the app's REAL `update` from `init ()` and asserts no unclassified
-/// panic — the automatic soundness net for Live apps the differential fuzzer
-/// cannot cover. Generates the harness, builds it, and runs it in TEST MODE
-/// (deterministic effects + an ephemeral embedded Postgres when the project
-/// declares a [database] and no DSN is set), so it runs offline.
+/// Build a generated fuzz harness project and run it in TEST MODE, returning
+/// `Ok(())` on a clean exit and `Err(msg)` on a build failure, a spawn failure,
+/// or a non-zero exit (a caught bug). Shared by BOTH nets `sky fuzz` runs — the
+/// model no-panic net and the differential split oracle — so they build + run
+/// identically: deterministic clock/seed (a crash reproduces), and an offline
+/// database when the app declares one. The bin name is read from the HARNESS
+/// project (both generators emit the default `app`), not the original app, so a
+/// project with a custom `[project] bin` still fuzzes.
+fn build_and_run_fuzz_harness(
+    repo_root: &Path,
+    harness_dir: &Path,
+    app_project_dir: &Path,
+    seed: i64,
+) -> Result<(), String> {
+    let opts = BuildOptions {
+        repo_root: repo_root.to_path_buf(),
+        example_dir: harness_dir.to_path_buf(),
+        out_dir_name: "sky-out".to_string(),
+        out_dir_abs: None,
+        run: false,
+        stdin: None,
+        entry_module: None,
+        progress: false,
+        embed_bundle: None,
+        wasm: false,
+    };
+    let built = build_example(&opts);
+    if !built.emitted {
+        return Err(format!("harness build failed: {}", built.note));
+    }
+    // Run in TEST MODE. The offline DB engine decides how: a Postgres app gets
+    // an ephemeral embedded cluster; a SQLite app is already offline and just
+    // has its path redirected to a scratch file (forcing embedded Postgres onto
+    // a SQLite app is a conflict the runtime refuses — see `offline_db_plan`).
+    let app = harness_dir.join("sky-out").join(project::configured_bin_name(harness_dir));
+    let mut cmd = std::process::Command::new(&app);
+    cmd.current_dir(app_project_dir);
+    cmd.env("SKY_TEST_MODE", "1");
+    cmd.env("SKY_TEST_SEED", seed.to_string());
+    cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
+    if std::env::var_os("DATABASE_URL").is_none() {
+        match project::offline_db_plan(app_project_dir) {
+            project::OfflineDbPlan::Postgres => {
+                cmd.env("SKY_EMBED_POSTGRES", "1");
+                cmd.env("SKY_DATA_DIR", harness_dir.join("pgdata"));
+            }
+            project::OfflineDbPlan::Sqlite { db_path_env } => {
+                cmd.env(db_path_env, harness_dir.join("fuzz.db"));
+            }
+            project::OfflineDbPlan::None => {}
+        }
+    }
+    match cmd.status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("non-zero exit (code {:?})", s.code())),
+        Err(e) => Err(format!("could not run the harness: {e}")),
+    }
+}
+
+/// `sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]` — the
+/// unified app fuzzer for ANY TEA app (Sky.Live, Sky.Spa, Std.App terminal /
+/// desktop). It ALWAYS runs the MODEL no-panic net: fold random Msgs through the
+/// app's REAL `update` from `init ()`, asserting no unclassified panic. When
+/// `--target` selects a client/server split (a Sky.Spa wasm client — `web:app`,
+/// `mobile*`, `desktop:<os>`, `tablet:<os>`) it ALSO runs the DIFFERENTIAL split
+/// oracle: each checkable server branch run two ways (direct vs the RPC split
+/// plumbing) over the same random `(Model, Msg)`, asserting they agree, so a
+/// dropped read/write-set field or a Msg-arg collision is caught mechanically.
+/// The target defaults to the project's `sky.toml [app] target`; a non-split
+/// target (or none) runs the model net alone. Both nets build + run offline in
+/// TEST MODE (deterministic effects + an ephemeral DB when the project declares
+/// one). This replaces the former `sky spa-diff-fuzz` verb — its coverage is now
+/// `sky fuzz --target web:app`.
 fn cmd_fuzz(args: &[String]) -> ExitCode {
     let iters: usize = args
         .iter()
@@ -2695,7 +2754,7 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
         .unwrap_or(20260912);
     let file = match resolve_entry_arg(
         &args.iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>(),
-        "usage: sky fuzz <file.sky> [--iters N] [--seed S]  (or run inside a Sky app project)",
+        "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]  (or run inside a Sky app project)",
     ) {
         Ok(f) => f,
         Err(code) => return code,
@@ -2704,12 +2763,18 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
-    let out_dir = project_dir.join(".modelfuzz");
+    // An explicit `--target` overrides the project's `sky.toml [app] target`. It
+    // decides ONLY whether the differential split oracle also runs — the model
+    // net is target-independent (`update` is `update` on every shape).
+    let target = flag_value(args, "--target").or_else(|| sky_toml_app_target(&project_dir));
+
+    // --- 1. Model no-panic net (always) ---
+    let model_out = project_dir.join(".modelfuzz");
     let report = match project::spa_split::generate_model_fuzz(
         &repo_root,
         &project_dir,
         entry_module_name(file).as_deref(),
-        &out_dir,
+        &model_out,
         iters,
         seed,
     ) {
@@ -2727,108 +2792,33 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     for n in &report.notes {
         println!("  note: {n}");
     }
-
-    // Build the harness (no run — we run it ourselves with the test-mode env).
-    let opts = BuildOptions {
-        repo_root: repo_root.clone(),
-        example_dir: out_dir.clone(),
-        out_dir_name: "sky-out".to_string(),
-        out_dir_abs: None,
-        run: false,
-        stdin: None,
-        entry_module: None,
-        progress: false,
-        embed_bundle: None,
-        wasm: false,
-    };
-    let built = build_example(&opts);
-    if !built.emitted {
-        eprintln!("sky fuzz: harness build failed: {}", built.note);
-        return ExitCode::FAILURE;
-    }
-
-    // Run in TEST MODE. Deterministic clock/seed so a crash reproduces; an
-    // offline database when the project declares one (so a DB app fuzzes with no
-    // live server and no network). The engine decides how: a Postgres app gets
-    // an ephemeral embedded cluster; a SQLite app is already offline and just has
-    // its path redirected to a scratch file (forcing embedded Postgres onto a
-    // SQLite app is a conflict the runtime refuses — see `offline_db_plan`).
-    let app = out_dir.join("sky-out").join(project::configured_bin_name(&project_dir));
-    let mut cmd = std::process::Command::new(&app);
-    cmd.current_dir(&project_dir);
-    cmd.env("SKY_TEST_MODE", "1");
-    cmd.env("SKY_TEST_SEED", seed.to_string());
-    cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
-    let has_dsn = std::env::var_os("DATABASE_URL").is_some();
-    if !has_dsn {
-        match project::offline_db_plan(&project_dir) {
-            project::OfflineDbPlan::Postgres => {
-                cmd.env("SKY_EMBED_POSTGRES", "1");
-                cmd.env("SKY_DATA_DIR", out_dir.join("pgdata"));
-            }
-            project::OfflineDbPlan::Sqlite { db_path_env } => {
-                cmd.env(db_path_env, out_dir.join("fuzz.db"));
-            }
-            project::OfflineDbPlan::None => {}
-        }
-    }
-    let status = cmd.status();
-    match status {
-        Ok(s) if s.success() => {
-            println!("sky fuzz: PASS — {iters} random Msg sequences, no unclassified panic");
-            ExitCode::SUCCESS
-        }
-        Ok(s) => {
-            eprintln!(
-                "sky fuzz: FAIL — the app panicked or exited non-zero (code {:?}) under a random Msg sequence. \
-                 Re-run reproduces it with --seed {seed}.",
-                s.code()
-            );
-            ExitCode::FAILURE
+    match build_and_run_fuzz_harness(&repo_root, &model_out, &project_dir, seed) {
+        Ok(()) => {
+            println!("sky fuzz: model net PASS — {iters} random Msg sequences, no unclassified panic");
         }
         Err(e) => {
-            eprintln!("sky fuzz: could not run the harness: {e}");
-            ExitCode::FAILURE
+            eprintln!(
+                "sky fuzz: model net FAIL — {e} under a random Msg sequence. \
+                 Re-run reproduces it with --seed {seed}."
+            );
+            return ExitCode::FAILURE;
         }
     }
-}
 
-fn cmd_spa_diff_fuzz(args: &[String]) -> ExitCode {
-    let (positional, out) = parse_out(args);
-    let iters: usize = args
-        .iter()
-        .position(|a| a == "--iters")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(200);
-    let seed: i64 = args
-        .iter()
-        .position(|a| a == "--seed")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20260912);
-    let file = match resolve_entry_arg(
-        &positional,
-        "usage: sky spa-diff-fuzz <file.sky> [--out <dir>] [--iters N] [--seed S]  (or run inside a Sky.Spa project directory)",
-    ) {
-        Ok(f) => f,
-        Err(code) => return code,
-    };
-    let file = file.as_path();
-    let Some((repo_root, project_dir)) = resolve(file) else {
-        return ExitCode::FAILURE;
-    };
-    let out_dir = match out {
-        Some(o) => PathBuf::from(o),
-        None => project_dir.join(".difffuzz"),
-    };
+    // --- 2. Differential split oracle (Sky.Spa client targets only) ---
+    let run_split = target.as_deref().map(project::diagram::target_is_spa_client).unwrap_or(false);
+    if !run_split {
+        if let Some(t) = &target {
+            println!("sky fuzz: target {t} has no client/server split — model net only.");
+        }
+        return ExitCode::SUCCESS;
+    }
     // A `Std.App` app (`App.app`/`App.web` + `App.run`) is not itself a `Spa.app`,
-    // so the auto-split's per-branch analysis cannot resolve its `update` from the
-    // raw entry — `sky build --target web:app` first SYNTHESISES a `Spa.app` entry
-    // that references init/update/view/subscriptions directly. Do the SAME here so
-    // the fuzzer sees the exact source the split partitions: synthesise, stage a
-    // copy (+ symlinked deps), and point the fuzzer at the staged project. An
-    // entry that is already a `Spa.app` (synthesis returns None) is fuzzed as-is.
+    // so the split's per-branch analysis cannot resolve its `update` from the raw
+    // entry — `sky build --target web:app` first SYNTHESISES a `Spa.app` entry.
+    // Do the SAME here so the oracle sees the exact source the split partitions:
+    // synthesise, stage a copy (+ symlinked deps), point the oracle at it. An
+    // entry already a `Spa.app` (synthesis returns None) is fuzzed as-is.
     let entry_src = std::fs::read_to_string(file).unwrap_or_default();
     let (fuzz_repo, fuzz_project, fuzz_entry): (PathBuf, PathBuf, Option<String>) =
         match synthesize_spa_source(&entry_src) {
@@ -2841,43 +2831,54 @@ fn cmd_spa_diff_fuzz(args: &[String]) -> ExitCode {
                 let entry_name = file.file_name().unwrap_or_default();
                 let synth_entry = src_to.join(entry_name);
                 if let Err(e) = std::fs::write(&synth_entry, synth) {
-                    eprintln!("sky spa-diff-fuzz: write synthesised Spa entry: {e}");
+                    eprintln!("sky fuzz: write synthesised Spa entry: {e}");
                     return ExitCode::FAILURE;
                 }
-                (
-                    repo_root.clone(),
-                    staging,
-                    entry_module_name(&synth_entry),
-                )
+                (repo_root.clone(), staging, entry_module_name(&synth_entry))
             }
             None => (repo_root.clone(), project_dir.clone(), entry_module_name(file)),
         };
-    match project::spa_split::generate_diff_fuzz(
+    let diff_out = project_dir.join(".difffuzz");
+    let diff_report = match project::spa_split::generate_diff_fuzz(
         &fuzz_repo,
         &fuzz_project,
         fuzz_entry.as_deref(),
-        &out_dir,
+        &diff_out,
         iters,
         seed,
     ) {
-        Ok(report) => {
-            println!(
-                "spa-diff-fuzz: generated harness for {} checkable branch(es): {}",
-                report.checked.len(),
-                report.checked.join(", ")
-            );
-            for n in &report.notes {
-                println!("  note: {n}");
-            }
-            println!(
-                "\nRun: (cd {} && sky build {} && ./sky-out/app)",
-                report.out_dir, report.entry_rel
-            );
-            println!("  a non-zero exit = a read/write-set drop or Msg-arg collision was found.");
+        Ok(r) => r,
+        Err(e) if e.contains("case msg of") => {
+            // The split oracle needs a resolvable `case msg of` to project each
+            // branch's read/write set. A whole-`update` app has no per-branch
+            // partition to diff — the model net already covered it. Skip, do not
+            // fail: a real bug is a divergence, not the absence of a dispatch.
+            println!("sky fuzz: split oracle skipped — {e}.");
+            return ExitCode::SUCCESS;
+        }
+        Err(e) => {
+            eprintln!("sky fuzz: split oracle: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "sky fuzz: split oracle — {} checkable branch(es): {}",
+        diff_report.checked.len(),
+        diff_report.checked.join(", ")
+    );
+    for n in &diff_report.notes {
+        println!("  note: {n}");
+    }
+    match build_and_run_fuzz_harness(&repo_root, &diff_out, &project_dir, seed) {
+        Ok(()) => {
+            println!("sky fuzz: split oracle PASS — direct and split legs agree on every branch");
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("sky spa-diff-fuzz: {e}");
+            eprintln!(
+                "sky fuzz: split oracle FAIL — {e}: a read/write-set drop or a Msg-arg collision \
+                 diverged the split leg from the direct update. Re-run reproduces it with --seed {seed}."
+            );
             ExitCode::FAILURE
         }
     }
@@ -9781,6 +9782,8 @@ fn print_help() {
          \x20 verify [target]      build + run each example / the project\n\
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
+         \x20 fuzz  <file> [--target <t>]  no-panic model fuzz of update; --target web:app etc. adds the differential split oracle\n\
+         \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (components|wire|journey|telemetry)\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );
