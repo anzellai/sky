@@ -299,12 +299,14 @@ terminal view: ↑/↓ navigate, Enter expands the highlighted entry,
 
 #### `sky doc --diagram <kind> [--format puml|md|svg] [--out <path>]`
 
-A read-only architecture diagram of the current project. Four kinds
-ship today — `components`, `wire`, `telemetry`, and `journey`. Three
-formats are available for every kind: `puml` (raw PlantUML, the
-default), `md` (a Markdown table), and `svg` (a self-contained SVG the
-compiler draws itself, with no external tool). `--out <path>` writes
-the output to a file instead of stdout. Mermaid is retired.
+A read-only architecture diagram of the current project, drawn to an
+audit-grade standard — the kind an engineer uses for an architecture
+deep-dive and that stands up in a SOC2 / ISO review. Four kinds ship
+today — `components`, `wire`, `telemetry`, and `journey`. Three formats
+are available for every kind: `puml` (raw PlantUML, the default), `md`
+(a Markdown table), and `svg` (a self-contained SVG the compiler draws
+itself, with no external tool). `--out <path>` writes the output to a
+file instead of stdout. Mermaid is retired.
 
 ```bash
 sky doc --diagram components               # raw PlantUML (default)
@@ -318,61 +320,72 @@ sky doc --diagram journey --target web:app # client/server split per action (Sky
 ```
 
 The PlantUML output is a raw `@startuml … @enduml` document with one
-`title` line and a shared `skinparam` block — no prose, no notes, no
-Markdown fence — so it pipes straight into a `.puml` file. The SVG
-output is a complete `<svg>…</svg>` document. Only the `md` format
-carries reader notes.
+`title` line, a shared `skinparam` block, and a `legend` — no prose, no
+notes, no Markdown fence — so it pipes straight into a `.puml` file. The
+SVG output is a complete `<svg>…</svg>` document, laid out with
+orthogonal edges only, collapsed parallel edges, generous spacing, a
+legend, and a canvas sized to its content — no diagonal spaghetti and no
+overlapping labels. Only the `md` format carries the detailed table and
+reader notes.
 
-`components` charts each `src/` module and the external capabilities
-it reaches — Database, External HTTP, Auth, File, Env/Config,
-Telemetry/Logs, Jobs, Realtime/SSE, and Time/Random/Uuid — as
-capability nodes with `Module --> Capability` edges. Each capability
-has its own node kind (a database, a cloud, a queue, and so on). For a
-Sky.Spa app (a `web:app` / `mobile*` / `desktop:*` / `tablet:*`
-target, or an explicit `Std.Spa` use) it splits into a `Client · wasm`
-package (the modules) and a `Server · effects` package (the
-capabilities), with the `/_rpc` boundary between them, matching the
-"any effect runs on the server" split.
+`components` is a **C4 container diagram**. It does not draw every
+module (that detail stays in the `md` table); it collapses the app to a
+handful of containers inside dashed **trust-boundary zones**, left →
+right: a `User` actor, a `Browser · untrusted` zone holding the `SPA`
+«wasm client» (for a Sky.Spa target — a `web:app` / `mobile*` /
+`desktop:*` / `tablet:*` target, or an explicit `Std.Spa` use), a
+`Server · trusted` zone holding the `Backend` «native» container with
+its data stores (Database, Files) and an audit-egress sink below it, and
+an `External` zone holding any External HTTP systems outside the
+boundary. Auth is a control marker on the client → server crossing; the
+remaining effect families (Env/Config, Jobs, Realtime, Time/Random/Uuid)
+fold into the Backend subtitle. A non-Spa app (Sky.Live / Http / Cli)
+drops the Browser zone and connects the actor straight to the Backend
+(`HTTPS + SSE` for Live).
 
-`wire` charts an app's client boundary. For a Sky.Spa app it charts the
-auto-derived RPC contract — otherwise invisible to the author: every
-SERVER `update` branch that becomes a `POST /_rpc/<Msg>` endpoint, with
-its REQUEST (the Model fields the branch reads plus the Msg args, or
-"whole model") and its RESPONSE (the Model fields it writes), so a
-missing read is visible at a glance. For a non-Spa Sky.Http.Server /
-API-only app it charts the HTTP endpoint map instead — one row per
+`wire` is a **data-flow diagram (DFD)**. The headline is the trust
+boundary: a `Client · untrusted` external entity and a `Server · trusted`
+process either side of a dashed boundary line, with a representative
+request / response crossing it. Below, an **Endpoints** section tables
+every crossing. For a Sky.Spa app the endpoints are the auto-derived RPC
+contract — every SERVER `update` branch that becomes a `POST /_rpc/<Msg>`
+endpoint, with its REQUEST (the Model fields the branch reads plus the
+Msg args, or "whole model") and its RESPONSE (the fields it writes), so
+a missing read is visible at a glance. For a non-Spa Sky.Http.Server /
+API-only app the section is the HTTP endpoint map — one row per
 registered route (method, path, handler), recovered from the resolved
-HIR (`Server.get`, `Server.post`, `Server.api`, …). `--target`
-overrides the `sky.toml` `[app] target`. An app with neither an
-`/_rpc` contract nor a discoverable route table prints one clear line.
+HIR (`Server.get`, `Server.post`, `Server.api`, …). `--target` overrides
+the `sky.toml` `[app] target`. An app with neither an `/_rpc` contract
+nor a discoverable route table prints one clear line.
 
-`telemetry` charts the privacy / observability inventory — everything
-the app tracks or logs, and where it goes. It lists one row per
-telemetry / analytics / logging call site in the project's own modules:
-the module the call is in, the call (`Log.info`, `Analytics.track`,
-`Analytics.setConsent`), the event/message (its first string-literal
-argument, or `<dynamic>`), and the sink — structured logs (console;
-OTel when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), the analytics store
-(DB), or the per-session consent state. The `puml` and `svg` forms draw
-a `module → sink` graph with the events as edge labels and the sinks as
-distinct node kinds (a queue for logs, a database for analytics, a card
-for consent). Log and Analytics are effect kernels, so under a Sky.Spa
-split they run on the server, reached over `/_rpc`. An app with no such
-call sites prints a short note and exits 0.
+`telemetry` is a **data-egress inventory** — what behavioural data
+leaves the system, and to where. Modules sit on the left; the sinks on
+the right are grouped into `Internal` (structured logs — console; OTel
+when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), `External egress` (the
+analytics store), and `Consent` (the per-session consent state). One
+collapsed edge per module → sink pair carries the comma-joined events
+(no parallel overlapping edges); a chatty module is summarised as a few
+events plus "+N more" (the full list stays in the `md` table). Log and
+Analytics are effect kernels, so under a Sky.Spa split they run on the
+server, reached over `/_rpc`. An app with no such call sites prints a
+short note and exits 0.
 
-`journey` charts the user journey as a page STATE MACHINE. Each page (a
-`Page` union variant the Model's page field uses, with its URL when the
-app declares an `App.withRoutes` table) is a state; the app's initial
-page carries the `[*]` entry; every `update` Msg that navigates is a
-transition labelled by the Msg, tagged `[server]` when it round-trips
-as `POST /_rpc/<Msg>` under a Sky.Spa target (reusing the same
-client/server split `wire` computes). A run-time-chosen target routes
-to a `(dynamic page)` state, and non-navigating actions are listed as
-internal events on the initial page. Per-page attribution is
-best-effort: a navigation target is the page an action routes TO, and
-the source page is not attributed, since an action can fire from any
-page (the `md` form carries that note). When no pages can be determined
-it prints one clear line, not a broken diagram.
+`journey` is a **TEA state machine**. Each page (a `Page` union variant
+the Model's page field uses, with its URL when the app declares an
+`App.withRoutes` table) is a state, ranked left → right from the initial
+page (which carries the `[*]` entry). Parallel Msgs between the same two
+states are **collapsed onto one edge** whose label lists them, so labels
+never stack on top of each other; a self-navigation is one collapsed
+self-loop. Navigating Msgs are transitions, coloured orange when they
+round-trip as `POST /_rpc/<Msg>` under a Sky.Spa target and blue when
+they run client-side (reusing the same client/server split `wire`
+computes); a run-time-chosen target routes to a `(dynamic page)` state.
+Pages with no attributed transition and non-navigating internal events
+are listed in tidy inventory sections below the machine. Per-page
+attribution is best-effort: a navigation target is the page an action
+routes TO, and the source page is not attributed, since an action can
+fire from any page (the `md` form carries that note). When no pages can
+be determined it prints one clear line, not a broken diagram.
 
 The `components`, `wire`, and `journey` kinds reuse the same analysis as
 the Sky.Spa auto-split, so the diagram cannot drift from what ships; no

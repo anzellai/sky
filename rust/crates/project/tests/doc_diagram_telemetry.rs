@@ -42,7 +42,10 @@ fn todo_cli_lists_its_log_call_sites_with_sinks() {
     assert!(
         r.calls.iter().all(|c| c.sink == Sink::Logs),
         "07-todo-cli only logs; got {:?}",
-        r.calls.iter().map(|c| (&c.call, c.sink)).collect::<Vec<_>>()
+        r.calls
+            .iter()
+            .map(|c| (&c.call, c.sink))
+            .collect::<Vec<_>>()
     );
 
     // A specific string-literal event is captured verbatim.
@@ -51,7 +54,10 @@ fn todo_cli_lists_its_log_call_sites_with_sinks() {
             .iter()
             .any(|c| c.call == "Log.info" && c.event == "Sky TODO - A simple todo manager"),
         "expected the Log.info startup line; got {:?}",
-        r.calls.iter().map(|c| (&c.call, &c.event)).collect::<Vec<_>>()
+        r.calls
+            .iter()
+            .map(|c| (&c.call, &c.event))
+            .collect::<Vec<_>>()
     );
     // `*With` variants: the message is the first string literal, the props follow.
     assert!(
@@ -59,7 +65,10 @@ fn todo_cli_lists_its_log_call_sites_with_sinks() {
             .iter()
             .any(|c| c.call == "Log.errorWith" && c.event == "todo-cli"),
         "expected Log.errorWith with its message; got {:?}",
-        r.calls.iter().map(|c| (&c.call, &c.event)).collect::<Vec<_>>()
+        r.calls
+            .iter()
+            .map(|c| (&c.call, &c.event))
+            .collect::<Vec<_>>()
     );
 
     // The md table lists the call with its full sink description.
@@ -72,17 +81,27 @@ fn todo_cli_lists_its_log_call_sites_with_sinks() {
         "{md}"
     );
     // The server-side note is present.
-    assert!(md.contains("effect kernels") && md.contains("/_rpc"), "{md}");
+    assert!(
+        md.contains("effect kernels") && md.contains("/_rpc"),
+        "{md}"
+    );
 
-    // The PlantUML form draws a module → logs-sink edge.
+    // The PlantUML form groups the sinks and draws a module → logs-sink edge.
     let puml = render_telemetry(&r, Format::Puml);
     assert!(puml.starts_with("@startuml"), "{puml}");
+    assert!(
+        puml.contains("rectangle \"Internal\" <<boundary>>"),
+        "{puml}"
+    );
     assert!(puml.contains("queue \"Logs\" as sink_logs"), "{puml}");
-    assert!(puml.contains("m_Main --> sink_logs :"), "{puml}");
+    assert!(puml.contains("m_Main -[#333333]-> sink_logs :"), "{puml}");
 
     // The SVG form is well-formed.
     let svg = render_telemetry(&r, Format::Svg);
-    assert!(svg.trim_start().starts_with("<svg") && svg.trim_end().ends_with("</svg>"), "{svg}");
+    assert!(
+        svg.trim_start().starts_with("<svg") && svg.trim_end().ends_with("</svg>"),
+        "{svg}"
+    );
     assert!(svg.contains("Logs"), "{svg}");
 }
 
@@ -99,6 +118,9 @@ fn hello_world_logs_one_line() {
             .iter()
             .any(|c| c.call == "Log.println" && c.event == "Hello from Sky!"),
         "expected the hello-world println line; got {:?}",
-        r.calls.iter().map(|c| (&c.call, &c.event)).collect::<Vec<_>>()
+        r.calls
+            .iter()
+            .map(|c| (&c.call, &c.event))
+            .collect::<Vec<_>>()
     );
 }

@@ -78,16 +78,25 @@ fn spa_app_has_rpc_endpoint_rows_with_request_and_response() {
         save.response
     );
 
-    // PlantUML form is a per-endpoint sequence diagram.
+    // PlantUML form is a data-flow diagram: an endpoint process per crossing.
     let puml = render_wire(&r, Format::Puml);
     assert!(puml.starts_with("@startuml"), "{puml}");
-    assert!(puml.contains("== SaveNarrow =="), "{puml}");
-    assert!(puml.contains("C -> S : POST /_rpc/SaveNarrow"), "{puml}");
-    assert!(puml.contains("S --> C : writes"), "{puml}");
+    assert!(
+        puml.contains("rectangle \"Client · untrusted\" <<boundary>>"),
+        "{puml}"
+    );
+    assert!(
+        puml.contains("rectangle \"POST /_rpc/SaveNarrow\""),
+        "{puml}"
+    );
+    assert!(puml.contains("resp {log, n, tag}"), "{puml}");
 
     // SVG form is a well-formed sequence diagram.
     let svg = render_wire(&r, Format::Svg);
-    assert!(svg.trim_start().starts_with("<svg") && svg.trim_end().ends_with("</svg>"), "{svg}");
+    assert!(
+        svg.trim_start().starts_with("<svg") && svg.trim_end().ends_with("</svg>"),
+        "{svg}"
+    );
 }
 
 #[test]
@@ -102,9 +111,15 @@ fn std_app_inline_effect_shape_degrades_gracefully_not_an_error() {
 
     assert!(r.is_spa, "web:app is a Sky.Spa wasm-client target");
     if r.endpoints.is_empty() {
-        assert!(r.limited, "no endpoints ⇒ the report must be marked limited");
+        assert!(
+            r.limited,
+            "no endpoints ⇒ the report must be marked limited"
+        );
         let md = render_wire(&r, Format::Md);
-        assert!(md.contains("limited"), "expected a limited-extraction note: {md}");
+        assert!(
+            md.contains("limited"),
+            "expected a limited-extraction note: {md}"
+        );
     }
 }
 
@@ -119,7 +134,10 @@ fn metadata_service_charts_its_http_endpoint_map() {
         .unwrap_or_else(|e| panic!("analyze_wire failed: {e}"));
 
     assert!(!r.is_spa, "a plain Http service is not a Sky.Spa client");
-    assert!(r.endpoints.is_empty(), "a non-Spa app has no /_rpc endpoints");
+    assert!(
+        r.endpoints.is_empty(),
+        "a non-Spa app has no /_rpc endpoints"
+    );
     assert!(
         !r.http_endpoints.is_empty(),
         "expected a Sky.Http.Server route map; got none"
@@ -137,11 +155,15 @@ fn metadata_service_charts_its_http_endpoint_map() {
     // The HTTP endpoint table, not the /_rpc table.
     assert!(md.contains("| Method | Path | Handler |"), "{md}");
     assert!(md.contains("| GET | / | handleRoot |"), "{md}");
-    assert!(!md.contains("| Endpoint |"), "no /_rpc table for an HTTP app:\n{md}");
+    assert!(
+        !md.contains("| Endpoint |"),
+        "no /_rpc table for an HTTP app:\n{md}"
+    );
 
-    // PlantUML + SVG both render the map.
+    // PlantUML + SVG both render the endpoint map as a DFD.
     let puml = render_wire(&r, Format::Puml);
-    assert!(puml.contains("C -> S : GET /"), "{puml}");
+    assert!(puml.contains("rectangle \"GET /\""), "{puml}");
     let svg = render_wire(&r, Format::Svg);
     assert!(svg.trim_start().starts_with("<svg"), "{svg}");
+    assert!(svg.contains("Endpoints (HTTP)"), "{svg}");
 }

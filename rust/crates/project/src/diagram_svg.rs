@@ -21,6 +21,12 @@ pub const PKG_FILL: &str = "#fbfbfc";
 pub const SERVER_EDGE: &str = "#d9822b";
 /// A client (in-browser) edge.
 pub const CLIENT_EDGE: &str = "#2b6cb0";
+/// An external system / egress sink accent (data that leaves the trust boundary).
+pub const EXTERNAL: &str = "#7c3aed";
+/// The trust-boundary accent for the UNTRUSTED side (browser / client).
+pub const BOUNDARY_UNTRUSTED: &str = "#c2410c";
+/// The trust-boundary accent for the TRUSTED side (server).
+pub const BOUNDARY_TRUSTED: &str = "#2f855a";
 
 /// The font stack. A real fallback chain so the SVG renders without web fonts.
 pub const FONT: &str = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
@@ -105,7 +111,17 @@ impl Svg {
     }
 
     /// A raw rounded rectangle.
-    pub fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, rx: f64, fill: &str, stroke: &str, sw: f64) {
+    pub fn rect(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        rx: f64,
+        fill: &str,
+        stroke: &str,
+        sw: f64,
+    ) {
         self.body.push_str(&format!(
             "  <rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" height=\"{h:.1}\" rx=\"{rx:.1}\" \
              fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{sw:.1}\"/>\n"
@@ -114,7 +130,16 @@ impl Svg {
     }
 
     /// A single line of text. `anchor` is `start` / `middle` / `end`.
-    pub fn text(&mut self, x: f64, y: f64, s: &str, anchor: &str, size: f64, weight: &str, fill: &str) {
+    pub fn text(
+        &mut self,
+        x: f64,
+        y: f64,
+        s: &str,
+        anchor: &str,
+        size: f64,
+        weight: &str,
+        fill: &str,
+    ) {
         self.body.push_str(&format!(
             "  <text x=\"{x:.1}\" y=\"{y:.1}\" text-anchor=\"{anchor}\" \
              font-family=\"{FONT}\" font-size=\"{size:.1}\" font-weight=\"{weight}\" \
@@ -126,7 +151,16 @@ impl Svg {
 
     /// A box label: `lines` centred horizontally on `cx`, vertically centred in
     /// the band `[y_top, y_top+h]`, at `size`px with `weight`.
-    pub fn centred_lines(&mut self, cx: f64, y_top: f64, h: f64, lines: &[String], size: f64, weight: &str, fill: &str) {
+    pub fn centred_lines(
+        &mut self,
+        cx: f64,
+        y_top: f64,
+        h: f64,
+        lines: &[String],
+        size: f64,
+        weight: &str,
+        fill: &str,
+    ) {
         let n = lines.len() as f64;
         let line_h = size * 1.25;
         let block = n * line_h;
@@ -139,7 +173,17 @@ impl Svg {
 
     /// A standard module / page node: a rounded rectangle with a centred title
     /// and an optional smaller subtitle beneath it.
-    pub fn node(&mut self, x: f64, y: f64, w: f64, h: f64, fill: &str, stroke: &str, title: &str, subtitle: Option<&str>) {
+    pub fn node(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        fill: &str,
+        stroke: &str,
+        title: &str,
+        subtitle: Option<&str>,
+    ) {
         self.rect(x, y, w, h, 8.0, fill, stroke, 1.5);
         let cx = x + w / 2.0;
         match subtitle {
@@ -156,7 +200,16 @@ impl Svg {
 
     /// A database cylinder: a rounded rectangle with an ellipse arc across the
     /// top, so it reads as a datastore, not a plain box.
-    pub fn database(&mut self, x: f64, y: f64, w: f64, h: f64, fill: &str, stroke: &str, label: &str) {
+    pub fn database(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        fill: &str,
+        stroke: &str,
+        label: &str,
+    ) {
         let ry = 6.0;
         self.rect(x, y, w, h, 6.0, fill, stroke, 1.5);
         // top ellipse line
@@ -212,7 +265,10 @@ impl Svg {
         }
         self.markers.insert(color.to_string());
         let mid = Self::marker_id(color);
-        let pts: Vec<String> = points.iter().map(|(x, y)| format!("{x:.1},{y:.1}")).collect();
+        let pts: Vec<String> = points
+            .iter()
+            .map(|(x, y)| format!("{x:.1},{y:.1}"))
+            .collect();
         self.body.push_str(&format!(
             "  <polyline points=\"{}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\" \
              marker-end=\"url(#{mid})\"/>\n",
@@ -238,7 +294,15 @@ impl Svg {
             "  <path d=\"M {x_right:.1} {y1:.1} C {bulge:.1} {y1:.1} {bulge:.1} {y2:.1} {x_right:.1} {y2:.1}\" \
              fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\" marker-end=\"url(#{mid})\"/>\n"
         ));
-        self.text(bulge + 4.0, (y1 + y2) / 2.0 + 3.0, label, "start", 10.5, "500", color);
+        self.text(
+            bulge + 4.0,
+            (y1 + y2) / 2.0 + 3.0,
+            label,
+            "start",
+            10.5,
+            "500",
+            color,
+        );
         self.touch(bulge + text_width(label, 10.5) + 8.0, y2);
     }
 
@@ -278,17 +342,46 @@ impl Svg {
     /// A C4 CONTAINER box: a filled rounded rectangle with a bold title, a small
     /// «stereotype» line (e.g. «wasm client»), and an optional grey subtitle.
     /// Reads as a deployable unit, distinct from a capability shape.
-    pub fn container(&mut self, x: f64, y: f64, w: f64, h: f64, fill: &str, title: &str, stereotype: &str, subtitle: Option<&str>) {
+    pub fn container(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        fill: &str,
+        title: &str,
+        stereotype: &str,
+        subtitle: Option<&str>,
+    ) {
         self.rect(x, y, w, h, 8.0, fill, STROKE, 1.5);
         let cx = x + w / 2.0;
         self.text(cx, y + 24.0, title, "middle", 13.0, "700", TEXT);
         if !stereotype.is_empty() {
-            self.text(cx, y + 40.0, &format!("«{stereotype}»"), "middle", 10.5, "500", SUBTLE);
+            self.text(
+                cx,
+                y + 40.0,
+                &format!("«{stereotype}»"),
+                "middle",
+                10.5,
+                "500",
+                SUBTLE,
+            );
         }
         if let Some(sub) = subtitle {
             if !sub.is_empty() {
-                for (i, l) in wrap(sub, ((w - 20.0) / (10.5 * 0.6)).max(1.0) as usize).iter().enumerate() {
-                    self.text(cx, y + 56.0 + i as f64 * 13.0, l, "middle", 10.0, "400", SUBTLE);
+                for (i, l) in wrap(sub, ((w - 20.0) / (10.5 * 0.6)).max(1.0) as usize)
+                    .iter()
+                    .enumerate()
+                {
+                    self.text(
+                        cx,
+                        y + 56.0 + i as f64 * 13.0,
+                        l,
+                        "middle",
+                        10.0,
+                        "400",
+                        SUBTLE,
+                    );
                 }
             }
         }
@@ -352,7 +445,12 @@ impl Svg {
             return;
         }
         let row_h = 18.0;
-        let w = 12.0 + rows.iter().map(|(_, t)| 26.0 + text_width(t, 10.5)).fold(0.0_f64, f64::max) + 12.0;
+        let w = 12.0
+            + rows
+                .iter()
+                .map(|(_, t)| 26.0 + text_width(t, 10.5))
+                .fold(0.0_f64, f64::max)
+            + 12.0;
         let h = 24.0 + rows.len() as f64 * row_h;
         self.rect(x, y, w, h, 6.0, "#ffffff", PKG_STROKE, 1.0);
         self.text(x + 10.0, y + 16.0, "Legend", "start", 10.5, "700", SUBTLE);
@@ -367,6 +465,166 @@ impl Svg {
     /// A plain text caption (grey, small) — read/write hints, notes on a lane.
     pub fn caption(&mut self, x: f64, y: f64, s: &str, anchor: &str) {
         self.text(x, y, s, anchor, 10.5, "400", SUBTLE);
+    }
+
+    /// A plain straight line with NO arrowhead — a table rule, a boundary line, a
+    /// separator. (Unlike [`Svg::edge`] / [`Svg::polyline`], which always carry a
+    /// marker.) `dashed` draws it as a dashed rule.
+    pub fn rule(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, color: &str, dashed: bool) {
+        let dash = if dashed {
+            " stroke-dasharray=\"5 4\""
+        } else {
+            ""
+        };
+        self.body.push_str(&format!(
+            "  <line x1=\"{x1:.1}\" y1=\"{y1:.1}\" x2=\"{x2:.1}\" y2=\"{y2:.1}\" \
+             stroke=\"{color}\" stroke-width=\"1.0\"{dash}/>\n"
+        ));
+        self.touch(x1.max(x2), y1.max(y2));
+    }
+
+    /// A multi-line edge label: a white rounded plate carrying `lines` centred on
+    /// `(cx, cy)`, coloured `color`. Used for a COLLAPSED parallel edge, whose
+    /// label lists every Msg that shares the same source→target transition — one
+    /// plate, stacked lines, never labels drawn on top of each other. The plate
+    /// is opaque so it stays legible over a connector line.
+    pub fn plate_lines(&mut self, cx: f64, cy: f64, lines: &[String], color: &str) {
+        if lines.is_empty() {
+            return;
+        }
+        let size = 10.5;
+        let line_h = 14.0;
+        let w = lines
+            .iter()
+            .map(|l| text_width(l, size))
+            .fold(0.0_f64, f64::max)
+            + 12.0;
+        let h = lines.len() as f64 * line_h + 8.0;
+        let x = cx - w / 2.0;
+        let y = cy - h / 2.0;
+        self.rect(x, y, w, h, 4.0, "#ffffff", "#e2e5ea", 1.0);
+        let first = y + 4.0 + size * 0.85;
+        for (i, l) in lines.iter().enumerate() {
+            self.text(
+                cx,
+                first + i as f64 * line_h,
+                l,
+                "middle",
+                size,
+                "500",
+                color,
+            );
+        }
+        self.touch(x + w, y + h);
+    }
+
+    /// The pixel height a [`Svg::plate_lines`] plate needs for `n` lines — so a
+    /// caller can reserve vertical space per row and guarantee no overlap.
+    pub fn plate_height(n: usize) -> f64 {
+        n.max(1) as f64 * 14.0 + 8.0
+    }
+
+    /// An orthogonal connector routed through an EXPLICIT bend coordinate, with an
+    /// arrowhead on the end and NO label (the caller places a [`Svg::plate_lines`]
+    /// where it wants it). `horizontal = true` routes H→V→H through the vertical
+    /// line `x = mid`; `false` routes V→H→V through the horizontal line `y = mid`.
+    /// An explicit bend lets a caller stagger many edges that share one source, so
+    /// their trunks never overlap into one thick smear.
+    pub fn ortho_via(
+        &mut self,
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        mid: f64,
+        horizontal: bool,
+        color: &str,
+    ) {
+        self.markers.insert(color.to_string());
+        let mid_id = Self::marker_id(color);
+        let pts = if horizontal {
+            [(x1, y1), (mid, y1), (mid, y2), (x2, y2)]
+        } else {
+            [(x1, y1), (x1, mid), (x2, mid), (x2, y2)]
+        };
+        let s: Vec<String> = pts.iter().map(|(x, y)| format!("{x:.1},{y:.1}")).collect();
+        self.body.push_str(&format!(
+            "  <polyline points=\"{}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\" \
+             marker-end=\"url(#{mid_id})\"/>\n",
+            s.join(" ")
+        ));
+        for (x, y) in pts {
+            self.touch(x, y);
+        }
+    }
+
+    /// A self-loop arc on the right side of a box, centred vertically on `cy`, with
+    /// an arrowhead back into the box. Returns the anchor point where the caller
+    /// should place the loop's [`Svg::plate_lines`] label. Drawing the arc and the
+    /// label separately lets a self-loop carry a COLLAPSED multi-Msg label too.
+    pub fn loop_arc(&mut self, x_right: f64, cy: f64, color: &str) -> (f64, f64) {
+        self.markers.insert(color.to_string());
+        let mid = Self::marker_id(color);
+        let y1 = cy - 10.0;
+        let y2 = cy + 10.0;
+        let bulge = x_right + 34.0;
+        self.body.push_str(&format!(
+            "  <path d=\"M {x_right:.1} {y1:.1} C {bulge:.1} {y1:.1} {bulge:.1} {y2:.1} {x_right:.1} {y2:.1}\" \
+             fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\" marker-end=\"url(#{mid})\"/>\n"
+        ));
+        self.touch(bulge, y2);
+        (bulge + 6.0, cy)
+    }
+
+    /// A small pill / chip carrying `text` — a compact list item (an internal
+    /// event, an "other" page) laid out in a wrapped grid. `border` outlines it,
+    /// `text_color` fills the label. Returns the chip WIDTH so the caller can flow
+    /// the next chip. Fixed height ([`Svg::CHIP_H`]).
+    pub fn chip(&mut self, x: f64, y: f64, text: &str, border: &str, text_color: &str) -> f64 {
+        let w = text_width(text, 10.5) + 16.0;
+        self.rect(x, y, w, Self::CHIP_H, 9.0, "#ffffff", border, 1.0);
+        self.text(
+            x + w / 2.0,
+            y + Self::CHIP_H / 2.0 + 3.5,
+            text,
+            "middle",
+            10.5,
+            "500",
+            text_color,
+        );
+        w
+    }
+
+    /// The fixed height of a [`Svg::chip`].
+    pub const CHIP_H: f64 = 22.0;
+
+    /// A small padlock glyph centred on `(cx, cy)`, coloured `color` — the CONTROL
+    /// marker stamped on a boundary crossing that authenticates (the backend
+    /// authenticates every request). Reads as "this crossing is guarded".
+    pub fn lock(&mut self, cx: f64, cy: f64, color: &str) {
+        // body
+        let bw = 11.0;
+        let bh = 8.0;
+        let bx = cx - bw / 2.0;
+        let by = cy - 1.0;
+        self.rect(bx, by, bw, bh, 1.5, "#ffffff", color, 1.5);
+        // shackle
+        self.body.push_str(&format!(
+            "  <path d=\"M {l:.1} {by:.1} v -3 a {r:.1} {r:.1} 0 0 1 {d:.1} 0 v 3\" \
+             fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\"/>\n",
+            l = cx - 3.5,
+            r = 3.5,
+            d = 7.0,
+            by = by,
+        ));
+        self.touch(cx + bw, cy + bh);
+    }
+
+    /// A datastore cylinder styled as a data store in a trust zone — an alias for
+    /// [`Svg::database`] with the audit-diagram fill, kept named so the C4 code
+    /// reads intentionally ("draw a data store", not "draw a database").
+    pub fn datastore(&mut self, x: f64, y: f64, w: f64, h: f64, label: &str, accent: &str) {
+        self.database(x, y, w, h, FILL_ALT, accent, label);
     }
 
     /// Finish the document: header (width/height + viewBox), `<defs>` with one
@@ -391,7 +649,9 @@ impl Svg {
             ));
         }
         o.push_str("  </defs>\n");
-        o.push_str(&format!("  <rect x=\"0\" y=\"0\" width=\"{w:.0}\" height=\"{h:.0}\" fill=\"{FILL}\"/>\n"));
+        o.push_str(&format!(
+            "  <rect x=\"0\" y=\"0\" width=\"{w:.0}\" height=\"{h:.0}\" fill=\"{FILL}\"/>\n"
+        ));
         if !self.title.is_empty() {
             o.push_str(&format!(
                 "  <text x=\"{pad:.0}\" y=\"20\" text-anchor=\"start\" font-family=\"{FONT}\" \
@@ -400,7 +660,10 @@ impl Svg {
             ));
         }
         // Shift the body down below the title band.
-        o.push_str(&format!("  <g transform=\"translate({pad:.0},{ty:.0})\">\n", ty = title_h));
+        o.push_str(&format!(
+            "  <g transform=\"translate({pad:.0},{ty:.0})\">\n",
+            ty = title_h
+        ));
         o.push_str(&self.body);
         o.push_str("  </g>\n");
         o.push_str("</svg>\n");

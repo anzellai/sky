@@ -80,52 +80,6 @@ impl Capability {
             Capability::Nondeterminism => "Time/Random/Uuid",
         }
     }
-
-    /// The Mermaid node id — stable, ascii, one per bucket.
-    fn node_id(self) -> &'static str {
-        match self {
-            Capability::Database => "cap_db",
-            Capability::ExternalHttp => "cap_http",
-            Capability::Auth => "cap_auth",
-            Capability::File => "cap_file",
-            Capability::EnvConfig => "cap_env",
-            Capability::Telemetry => "cap_log",
-            Capability::Jobs => "cap_jobs",
-            Capability::Realtime => "cap_live",
-            Capability::Nondeterminism => "cap_nd",
-        }
-    }
-
-    /// A PlantUML node declaration with a distinct KIND per capability, so a
-    /// capability reads differently from the plain-rectangle module nodes:
-    /// Database→database, External HTTP→cloud, Auth→component <<security>>,
-    /// File→folder, Env/Config + Time/Random/Uuid→card, Telemetry + Jobs +
-    /// Realtime→queue.
-    fn puml_decl(self) -> String {
-        let l = self.label();
-        let id = self.node_id();
-        match self {
-            Capability::Database => format!("database \"{l}\" as {id}"),
-            Capability::ExternalHttp => format!("cloud \"{l}\" as {id}"),
-            Capability::Auth => format!("component \"{l}\" as {id} <<security>>"),
-            Capability::File => format!("folder \"{l}\" as {id}"),
-            Capability::EnvConfig => format!("card \"{l}\" as {id}"),
-            Capability::Telemetry => format!("queue \"{l}\" as {id}"),
-            Capability::Jobs => format!("queue \"{l}\" as {id}"),
-            Capability::Realtime => format!("queue \"{l}\" as {id}"),
-            Capability::Nondeterminism => format!("card \"{l}\" as {id}"),
-        }
-    }
-
-    /// Which SVG shape draws this capability — a datastore cylinder, a queue, or
-    /// a plain node.
-    fn svg_shape(self) -> SvgShape {
-        match self {
-            Capability::Database => SvgShape::Database,
-            Capability::Telemetry | Capability::Jobs | Capability::Realtime => SvgShape::Queue,
-            _ => SvgShape::Node,
-        }
-    }
 }
 
 /// The three distinct SVG shapes a capability / sink node can take.
@@ -137,11 +91,44 @@ enum SvgShape {
 }
 
 /// Draw one shaped node into the SVG at `(x, y)` with size `(w, h)`.
-fn svg_shaped_node(svg: &mut diagram_svg::Svg, shape: SvgShape, x: f64, y: f64, w: f64, h: f64, label: &str) {
+fn svg_shaped_node(
+    svg: &mut diagram_svg::Svg,
+    shape: SvgShape,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    label: &str,
+) {
     match shape {
-        SvgShape::Node => svg.node(x, y, w, h, diagram_svg::FILL_ALT, diagram_svg::STROKE, label, None),
-        SvgShape::Database => svg.database(x, y, w, h, diagram_svg::FILL_ALT, diagram_svg::STROKE, label),
-        SvgShape::Queue => svg.queue(x, y, w, h, diagram_svg::FILL_ALT, diagram_svg::STROKE, label),
+        SvgShape::Node => svg.node(
+            x,
+            y,
+            w,
+            h,
+            diagram_svg::FILL_ALT,
+            diagram_svg::STROKE,
+            label,
+            None,
+        ),
+        SvgShape::Database => svg.database(
+            x,
+            y,
+            w,
+            h,
+            diagram_svg::FILL_ALT,
+            diagram_svg::STROKE,
+            label,
+        ),
+        SvgShape::Queue => svg.queue(
+            x,
+            y,
+            w,
+            h,
+            diagram_svg::FILL_ALT,
+            diagram_svg::STROKE,
+            label,
+        ),
     }
 }
 
@@ -408,41 +395,134 @@ fn module_node_id(name: &str) -> String {
     s
 }
 
-fn render_components_puml(g: &ComponentGraph) -> String {
-    let mut o = puml_header(&format!("Components — {}", g.project));
-    if g.is_spa {
-        o.push_str("package \"Client · wasm\" {\n");
-        for m in &g.modules {
-            o.push_str(&format!("  component \"{}\" as {}\n", m.module, module_node_id(&m.module)));
-        }
-        o.push_str("}\n");
-        o.push_str("interface \"/_rpc\" as rpc\n");
-        o.push_str("package \"Server · effects\" {\n");
-        for c in &g.capabilities {
-            o.push_str(&format!("  {}\n", c.puml_decl()));
-        }
-        o.push_str("}\n");
-        for m in &g.modules {
-            if !m.caps.is_empty() {
-                o.push_str(&format!("{} --> rpc\n", module_node_id(&m.module)));
-            }
-        }
-        for c in &g.capabilities {
-            o.push_str(&format!("rpc --> {}\n", c.node_id()));
-        }
-    } else {
-        for m in &g.modules {
-            o.push_str(&format!("component \"{}\" as {}\n", m.module, module_node_id(&m.module)));
-        }
-        for c in &g.capabilities {
-            o.push_str(&format!("{}\n", c.puml_decl()));
-        }
-        for m in &g.modules {
-            for c in &m.caps {
-                o.push_str(&format!("{} --> {}\n", module_node_id(&m.module), c.node_id()));
-            }
+/// The capabilities of a project, collapsed into the C4 CONTAINER roles the
+/// components diagram draws: data stores + an egress sink inside the trust
+/// boundary, external systems outside it, an auth control on the crossing, and
+/// the remaining effect families folded into the Backend container's subtitle.
+struct C4Caps {
+    /// Data stores in the server zone: `(label, edge label)`, e.g.
+    /// `("Database", "SQL")`, `("Files", "read/write")`. Drawn as datastores.
+    stores: Vec<(&'static str, &'static str)>,
+    /// The egress sink (Telemetry/Logs), when present. Drawn as a queue labelled
+    /// audit egress in the server zone.
+    egress: Option<&'static str>,
+    /// External systems OUTSIDE the trust boundary (External HTTP). Drawn as
+    /// containers in the External zone.
+    externals: Vec<&'static str>,
+    /// The backend authenticates requests — a control marker on the crossing.
+    auth: bool,
+    /// Effect families that are not their own node: Env/Config, Jobs, Realtime,
+    /// Time/Random/Uuid — folded into the Backend container's subtitle.
+    inline: Vec<&'static str>,
+}
+
+fn classify_c4(g: &ComponentGraph) -> C4Caps {
+    let mut stores: Vec<(&'static str, &'static str)> = Vec::new();
+    let mut egress = None;
+    let mut externals: Vec<&'static str> = Vec::new();
+    let mut auth = false;
+    let mut inline: Vec<&'static str> = Vec::new();
+    for c in &g.capabilities {
+        match c {
+            Capability::Database => stores.push(("Database", "SQL")),
+            Capability::File => stores.push(("Files", "read/write")),
+            Capability::ExternalHttp => externals.push("External HTTP APIs"),
+            Capability::Telemetry => egress = Some("Audit / logs"),
+            Capability::Auth => auth = true,
+            Capability::EnvConfig => inline.push("Env/Config"),
+            Capability::Jobs => inline.push("Jobs"),
+            Capability::Realtime => inline.push("Realtime/SSE"),
+            Capability::Nondeterminism => inline.push("Time/Random/Uuid"),
         }
     }
+    C4Caps {
+        stores,
+        egress,
+        externals,
+        auth,
+        inline,
+    }
+}
+
+/// The Backend container subtitle: `also: <inline caps>` (or empty).
+fn backend_subtitle(c: &C4Caps) -> String {
+    if c.inline.is_empty() {
+        String::new()
+    } else {
+        format!("also: {}", c.inline.join(", "))
+    }
+}
+
+fn render_components_puml(g: &ComponentGraph) -> String {
+    let mut o = puml_header(&format!("Components (C4 container) — {}", g.project));
+    let c = classify_c4(g);
+    let sub = backend_subtitle(&c);
+    let backend_desc = if sub.is_empty() {
+        "Backend\\n«native»".to_string()
+    } else {
+        format!("Backend\\n«native»\\n{sub}")
+    };
+
+    o.push_str("actor \"User\" as user\n");
+    if g.is_spa {
+        o.push_str("rectangle \"Browser · untrusted\" <<boundary>> {\n");
+        o.push_str("  rectangle \"SPA\\n«wasm client»\" as spa <<container>>\n");
+        o.push_str("}\n");
+    }
+    o.push_str("rectangle \"Server · trusted\" <<boundary>> {\n");
+    o.push_str(&format!(
+        "  rectangle \"{backend_desc}\" as backend <<container>>\n"
+    ));
+    for (i, (label, _)) in c.stores.iter().enumerate() {
+        o.push_str(&format!("  database \"{label}\" as store{i}\n"));
+    }
+    if c.egress.is_some() {
+        o.push_str("  queue \"Audit / logs\\n(egress)\" as egress\n");
+    }
+    o.push_str("}\n");
+    if !c.externals.is_empty() {
+        o.push_str("rectangle \"External\" <<boundary>> {\n");
+        for (i, label) in c.externals.iter().enumerate() {
+            o.push_str(&format!(
+                "  rectangle \"{label}\\n«external system»\" as ext{i} <<container>>\n"
+            ));
+        }
+        o.push_str("}\n");
+    }
+
+    // Edges.
+    if g.is_spa {
+        o.push_str("user --> spa : uses · HTTPS\n");
+        let auth = if c.auth { " · auth" } else { "" };
+        o.push_str(&format!("spa --> backend : /_rpc{auth}\n"));
+    } else {
+        let via = if matches!(g.capabilities.iter().next(), Some(_))
+            && g.capabilities.contains(&Capability::Realtime)
+        {
+            "HTTPS + SSE"
+        } else {
+            "HTTPS"
+        };
+        let auth = if c.auth { " · auth" } else { "" };
+        o.push_str(&format!("user --> backend : {via}{auth}\n"));
+    }
+    for (i, (_, edge)) in c.stores.iter().enumerate() {
+        o.push_str(&format!("backend --> store{i} : {edge}\n"));
+    }
+    if c.egress.is_some() {
+        o.push_str("backend --> egress : audit log\n");
+    }
+    for i in 0..c.externals.len() {
+        o.push_str(&format!("backend --> ext{i} : HTTPS\n"));
+    }
+
+    // A legend decodes the shapes + the trust boundary.
+    o.push_str("legend right\n");
+    o.push_str("  <b>C4 container view</b>\n");
+    o.push_str("  boundary = trust zone (dashed)\n");
+    o.push_str("  database = data store · queue = egress\n");
+    o.push_str("  external rectangle = outside the boundary\n");
+    o.push_str("endlegend\n");
     o.push_str(&puml_footer());
     o
 }
@@ -463,9 +543,17 @@ fn render_components_md(g: &ComponentGraph) -> String {
         let caps = if m.caps.is_empty() {
             "—".to_string()
         } else {
-            m.caps.iter().map(|c| c.label()).collect::<Vec<_>>().join(", ")
+            m.caps
+                .iter()
+                .map(|c| c.label())
+                .collect::<Vec<_>>()
+                .join(", ")
         };
-        o.push_str(&format!("| {} | {} |\n", md_cell(&m.module), md_cell(&caps)));
+        o.push_str(&format!(
+            "| {} | {} |\n",
+            md_cell(&m.module),
+            md_cell(&caps)
+        ));
     }
     if !g.notes.is_empty() {
         o.push('\n');
@@ -479,83 +567,316 @@ fn render_components_md(g: &ComponentGraph) -> String {
 const NODE_H: f64 = 44.0;
 const VGAP: f64 = 18.0;
 
+/// The flagship: a C4 CONTAINER diagram. A handful of containers inside dashed
+/// TRUST-BOUNDARY zones, left → right, with orthogonal edges only. The module →
+/// capability detail stays in the `md` table; here every capability collapses to
+/// its C4 role ([`classify_c4`]).
 fn render_components_svg(g: &ComponentGraph) -> String {
-    let mut svg = diagram_svg::Svg::new(&format!("Components — {}", g.project));
-    let mod_w = 160.0;
-    let cap_w = 160.0;
+    use diagram_svg as d;
+    let mut svg = d::Svg::new(&format!("Components (C4 container) — {}", g.project));
+    let c = classify_c4(g);
 
+    // ---- sizing ----
+    let ztop = 12.0;
+    let zpad = 16.0;
+    let zhdr = 24.0;
+    let col_gap = 96.0;
+
+    let backend_w: f64 = 244.0;
+    let sub = backend_subtitle(&c);
+    let sub_lines = if sub.is_empty() {
+        0
+    } else {
+        d::wrap(&sub, ((backend_w - 20.0) / (10.5 * 0.6)) as usize).len()
+    };
+    let backend_h = if sub_lines == 0 {
+        54.0
+    } else {
+        56.0 + sub_lines as f64 * 13.0 + 12.0
+    };
+
+    let store_w = 132.0;
+    let store_h = 50.0;
+    let store_gap = 22.0;
+    // egress rides the store row as its last item.
+    let n_store_items = c.stores.len() + if c.egress.is_some() { 1 } else { 0 };
+    let store_row_w = if n_store_items == 0 {
+        0.0
+    } else {
+        n_store_items as f64 * store_w + (n_store_items as f64 - 1.0) * store_gap
+    };
+    let store_vgap = 46.0;
+
+    let spa_w = 176.0;
+    let spa_h = 62.0;
+    let ext_w = 188.0;
+    let ext_h = 62.0;
+    let ext_gap = 22.0;
+    let n_ext = c.externals.len();
+    let ext_stack_h = if n_ext == 0 {
+        0.0
+    } else {
+        n_ext as f64 * ext_h + (n_ext as f64 - 1.0) * ext_gap
+    };
+
+    // Flow centre-line Y: high enough that the tallest centred group clears the
+    // zone header, and the store row below the backend fits above the legend.
+    let half_max = (backend_h / 2.0)
+        .max(if g.is_spa { spa_h / 2.0 } else { 0.0 })
+        .max(ext_stack_h / 2.0);
+    let flow_y = ztop + zhdr + zpad + half_max;
+
+    // ---- x layout ----
+    let lx = 8.0;
+    let actor_cx = lx + 22.0;
+    let mut x = lx + 56.0 + col_gap;
+
+    let (spa_zone_x, spa_x) = if g.is_spa {
+        let zx = x;
+        let sx = zx + zpad;
+        x = zx + spa_w + 2.0 * zpad + col_gap;
+        (zx, sx)
+    } else {
+        (0.0, 0.0)
+    };
+
+    let server_block_w = backend_w.max(store_row_w);
+    let server_zone_x = x;
+    let server_block_x = server_zone_x + zpad;
+    let backend_x = server_block_x + (server_block_w - backend_w) / 2.0;
+    let store_row_x = server_block_x + (server_block_w - store_row_w) / 2.0;
+    x = server_zone_x + server_block_w + 2.0 * zpad;
+
+    let (ext_zone_x, ext_x) = if n_ext > 0 {
+        x += col_gap;
+        let zx = x;
+        let ex = zx + zpad;
+        (zx, ex)
+    } else {
+        (0.0, 0.0)
+    };
+    let _ = x;
+
+    // ---- vertical placement ----
+    let backend_y = flow_y - backend_h / 2.0;
+    let store_y = backend_y + backend_h + store_vgap;
+    let spa_y = flow_y - spa_h / 2.0;
+    let ext_top = flow_y - ext_stack_h / 2.0;
+
+    // Shared zone bottom, so the trust zones read as aligned columns.
+    let mut zbottom = backend_y + backend_h;
+    if n_store_items > 0 {
+        zbottom = zbottom.max(store_y + store_h);
+    }
     if g.is_spa {
-        // Three columns inside light package boxes: Client → /_rpc → Server.
-        let pad = 14.0;
-        let hdr = 26.0;
-        let client_x = 0.0;
-        let client_inner_x = client_x + pad;
-        let n_mod = g.modules.len().max(1) as f64;
-        let n_cap = g.capabilities.len().max(1) as f64;
-        let client_h = hdr + pad + n_mod * NODE_H + (n_mod - 1.0) * VGAP + pad;
-        let server_h = hdr + pad + n_cap * NODE_H + (n_cap - 1.0) * VGAP + pad;
-        let lane_h = client_h.max(server_h);
-        let rpc_x = client_x + mod_w + 2.0 * pad + 60.0;
-        let rpc_w = 90.0;
-        let server_x = rpc_x + rpc_w + 60.0;
-        let server_inner_x = server_x + pad;
+        zbottom = zbottom.max(spa_y + spa_h);
+    }
+    if n_ext > 0 {
+        zbottom = zbottom.max(ext_top + ext_stack_h);
+    }
+    zbottom += zpad;
+    let zone_h = zbottom - ztop;
 
-        svg.package(client_x, 0.0, mod_w + 2.0 * pad, lane_h, "Client · wasm");
-        let mut mod_cy: Vec<f64> = Vec::new();
-        for (i, m) in g.modules.iter().enumerate() {
-            let y = hdr + pad + i as f64 * (NODE_H + VGAP);
-            svg.node(client_inner_x, y, mod_w, NODE_H, diagram_svg::FILL, diagram_svg::STROKE, &m.module, None);
-            mod_cy.push(y + NODE_H / 2.0);
-        }
+    // ---- draw zones (dashed, behind the containers) ----
+    if g.is_spa {
+        svg.zone(
+            spa_zone_x,
+            ztop,
+            spa_w + 2.0 * zpad,
+            zone_h,
+            "Browser · untrusted",
+            d::BOUNDARY_UNTRUSTED,
+        );
+    }
+    svg.zone(
+        server_zone_x,
+        ztop,
+        server_block_w + 2.0 * zpad,
+        zone_h,
+        "Server · trusted",
+        d::BOUNDARY_TRUSTED,
+    );
+    if n_ext > 0 {
+        svg.zone(
+            ext_zone_x,
+            ztop,
+            ext_w + 2.0 * zpad,
+            zone_h,
+            "External · untrusted",
+            d::EXTERNAL,
+        );
+    }
 
-        // /_rpc boundary node, vertically centred.
-        let rpc_h = 40.0;
-        let rpc_y = (lane_h - rpc_h) / 2.0;
-        svg.node(rpc_x, rpc_y, rpc_w, rpc_h, diagram_svg::FILL_ALT, diagram_svg::STROKE, "/_rpc", None);
-        let rpc_cy = rpc_y + rpc_h / 2.0;
+    // ---- actor ----
+    svg.actor(actor_cx, flow_y - 44.0, "User");
 
-        svg.package(server_x, 0.0, cap_w + 2.0 * pad, lane_h, "Server · effects");
-        let mut cap_cy: Vec<f64> = Vec::new();
-        for (j, c) in g.capabilities.iter().enumerate() {
-            let y = hdr + pad + j as f64 * (NODE_H + VGAP);
-            svg_shaped_node(&mut svg, c.svg_shape(), server_inner_x, y, cap_w, NODE_H, c.label());
-            cap_cy.push(y + NODE_H / 2.0);
-        }
+    // ---- SPA container ----
+    if g.is_spa {
+        svg.container(
+            spa_x,
+            spa_y,
+            spa_w,
+            spa_h,
+            d::FILL,
+            "SPA",
+            "wasm client",
+            None,
+        );
+    }
 
-        // module → /_rpc (only modules that reach an effect), then /_rpc → cap.
-        for (i, m) in g.modules.iter().enumerate() {
-            if !m.caps.is_empty() {
-                svg.edge(client_inner_x + mod_w, mod_cy[i], rpc_x, rpc_cy, diagram_svg::SERVER_EDGE, None);
-            }
-        }
-        for j in 0..g.capabilities.len() {
-            svg.edge(rpc_x + rpc_w, rpc_cy, server_inner_x, cap_cy[j], diagram_svg::SERVER_EDGE, None);
+    // ---- Backend container ----
+    let backend_cx = backend_x + backend_w / 2.0;
+    svg.container(
+        backend_x,
+        backend_y,
+        backend_w,
+        backend_h,
+        d::FILL,
+        "Backend",
+        "native",
+        if sub.is_empty() {
+            None
+        } else {
+            Some(sub.as_str())
+        },
+    );
+
+    // ---- store row (data stores + egress) ----
+    let mut store_centres: Vec<(f64, &'static str, bool)> = Vec::new(); // (cx, edge_label, is_egress)
+    let mut sx = store_row_x;
+    for (label, edge) in &c.stores {
+        svg.datastore(sx, store_y, store_w, store_h, label, d::STROKE);
+        store_centres.push((sx + store_w / 2.0, edge, false));
+        sx += store_w + store_gap;
+    }
+    if let Some(egress) = c.egress {
+        svg.queue(
+            sx,
+            store_y,
+            store_w,
+            store_h,
+            d::FILL_ALT,
+            d::EXTERNAL,
+            egress,
+        );
+        store_centres.push((sx + store_w / 2.0, "audit log", true));
+    }
+
+    // ---- external containers ----
+    let mut ext_cys: Vec<f64> = Vec::new();
+    for (i, label) in c.externals.iter().enumerate() {
+        let ey = ext_top + i as f64 * (ext_h + ext_gap);
+        svg.container(
+            ext_x,
+            ey,
+            ext_w,
+            ext_h,
+            d::FILL,
+            label,
+            "external system",
+            None,
+        );
+        ext_cys.push(ey + ext_h / 2.0);
+    }
+
+    // ---- edges ----
+    // actor → (SPA | Backend)
+    if g.is_spa {
+        svg.ortho(
+            actor_cx + 20.0,
+            flow_y,
+            spa_x,
+            flow_y,
+            d::STROKE,
+            Some("uses · HTTPS"),
+        );
+        // SPA → Backend across the boundary — the /_rpc crossing.
+        let mx = (spa_x + spa_w + backend_x) / 2.0;
+        svg.ortho(
+            spa_x + spa_w,
+            flow_y,
+            backend_x,
+            flow_y,
+            d::SERVER_EDGE,
+            Some("/_rpc"),
+        );
+        if c.auth {
+            svg.lock(mx, flow_y + 12.0, d::SERVER_EDGE);
+            svg.caption(mx + 10.0, flow_y + 20.0, "auth", "start");
         }
     } else {
-        // Two layered columns: modules → capabilities.
-        let mod_x = 0.0;
-        let cap_x = mod_x + mod_w + 170.0;
-        let mut mod_cy: Vec<f64> = Vec::new();
-        for (i, m) in g.modules.iter().enumerate() {
-            let y = i as f64 * (NODE_H + VGAP);
-            svg.node(mod_x, y, mod_w, NODE_H, diagram_svg::FILL, diagram_svg::STROKE, &m.module, None);
-            mod_cy.push(y + NODE_H / 2.0);
-        }
-        let caps: Vec<Capability> = g.capabilities.iter().copied().collect();
-        let mut cap_cy: std::collections::HashMap<Capability, f64> = std::collections::HashMap::new();
-        for (j, c) in caps.iter().enumerate() {
-            let y = j as f64 * (NODE_H + VGAP);
-            svg_shaped_node(&mut svg, c.svg_shape(), cap_x, y, cap_w, NODE_H, c.label());
-            cap_cy.insert(*c, y + NODE_H / 2.0);
-        }
-        for (i, m) in g.modules.iter().enumerate() {
-            for c in &m.caps {
-                if let Some(cy) = cap_cy.get(c) {
-                    svg.edge(mod_x + mod_w, mod_cy[i], cap_x, *cy, diagram_svg::STROKE, None);
-                }
-            }
+        let via = if g.capabilities.contains(&Capability::Realtime) {
+            "HTTPS + SSE"
+        } else {
+            "HTTPS"
+        };
+        let mx = (actor_cx + 20.0 + backend_x) / 2.0;
+        svg.ortho(
+            actor_cx + 20.0,
+            flow_y,
+            backend_x,
+            flow_y,
+            d::SERVER_EDGE,
+            Some(via),
+        );
+        if c.auth {
+            svg.lock(mx, flow_y + 12.0, d::SERVER_EDGE);
+            svg.caption(mx + 10.0, flow_y + 20.0, "auth", "start");
         }
     }
+
+    // Backend → stores (a staggered comb, one drop per store, no trunk smear).
+    let bus_y = backend_y + backend_h + store_vgap * 0.42;
+    for (cx, edge, is_egress) in &store_centres {
+        let color = if *is_egress { d::EXTERNAL } else { d::STROKE };
+        svg.ortho_via(
+            backend_cx,
+            backend_y + backend_h,
+            *cx,
+            store_y,
+            bus_y,
+            false,
+            color,
+        );
+        svg.plate_lines(*cx, (bus_y + store_y) / 2.0, &[edge.to_string()], color);
+    }
+
+    // Backend → external systems.
+    for (i, cy) in ext_cys.iter().enumerate() {
+        let mid = backend_x + backend_w + col_gap * 0.5 + i as f64 * 14.0;
+        svg.ortho_via(
+            backend_x + backend_w,
+            flow_y,
+            ext_x,
+            *cy,
+            mid,
+            true,
+            d::EXTERNAL,
+        );
+        svg.plate_lines(
+            (backend_x + backend_w + ext_x) / 2.0,
+            (flow_y + *cy) / 2.0,
+            &["HTTPS".to_string()],
+            d::EXTERNAL,
+        );
+    }
+
+    // ---- legend (only rows the diagram actually uses) ----
+    let mut rows: Vec<(String, String)> =
+        vec![(d::BOUNDARY_TRUSTED.into(), "trust boundary (dashed)".into())];
+    if !c.stores.is_empty() {
+        rows.push((d::STROKE.into(), "data store".into()));
+    }
+    if c.egress.is_some() || n_ext > 0 {
+        rows.push((d::EXTERNAL.into(), "egress / external system".into()));
+    }
+    if g.is_spa {
+        rows.push((d::SERVER_EDGE.into(), "/_rpc server round-trip".into()));
+    } else {
+        rows.push((d::SERVER_EDGE.into(), "client → server request".into()));
+    }
+    svg.legend(lx, zbottom + 18.0, &rows);
+
     svg.render()
 }
 
@@ -683,8 +1004,8 @@ pub fn analyze_wire(
         // app DOES have an HTTP endpoint map — recover it from the resolved HIR
         // (`Server.get "/path" handler`, `Server.post`, …). If none is found the
         // app has no client boundary at all, and we degrade to a single note.
-        let http_endpoints = analyze_http_endpoints(repo_root, project_dir, entry_module)
-            .unwrap_or_default();
+        let http_endpoints =
+            analyze_http_endpoints(repo_root, project_dir, entry_module).unwrap_or_default();
         let mut notes: Vec<String> = Vec::new();
         if http_endpoints.is_empty() {
             let tgt = app_target.unwrap_or("<none>");
@@ -723,7 +1044,12 @@ pub fn analyze_wire(
         }
         // `b.msg` is the arm pattern (`"SaveVia _"`); the endpoint is named by
         // the constructor alone (`SaveVia`).
-        let ctor = b.msg.split_whitespace().next().unwrap_or(&b.msg).to_string();
+        let ctor = b
+            .msg
+            .split_whitespace()
+            .next()
+            .unwrap_or(&b.msg)
+            .to_string();
         endpoints.push(WireEndpoint {
             msg: ctor,
             request: wire_request(io),
@@ -837,7 +1163,11 @@ fn analyze_http_endpoints(
                         _ => None,
                     })
                     .unwrap_or_else(|| "<inline>".to_string());
-                out.insert(HttpEndpoint { method, path, handler });
+                out.insert(HttpEndpoint {
+                    method,
+                    path,
+                    handler,
+                });
             }
         }
     }
@@ -895,39 +1225,78 @@ fn render_wire_md(r: &WireReport) -> String {
 }
 
 fn render_wire_puml(r: &WireReport) -> String {
-    let mut o = puml_header(&format!("Wire — {}", r.project));
-    if r.is_spa && !r.endpoints.is_empty() {
-        o.push_str("participant \"Client · wasm\" as C\n");
-        o.push_str("participant Server as S\n");
-        for e in &r.endpoints {
-            o.push_str(&format!("== {} ==\n", e.msg));
-            o.push_str(&format!("C -> S : POST /_rpc/{}\n", e.msg));
-            o.push_str(&format!(
-                "note right of S\n  reads {}\n  args {}\nend note\n",
-                puml_note_text(&e.request),
-                e.msg
-            ));
-            o.push_str(&format!("S --> C : writes {}\n", puml_msg_text(&e.response)));
+    let mut o = puml_header(&format!("Wire (data-flow) — {}", r.project));
+    let spa = r.is_spa && !r.endpoints.is_empty();
+    let http = !spa && !r.http_endpoints.is_empty();
+    if spa || http {
+        // The two entities either side of the trust boundary.
+        o.push_str("rectangle \"Client · untrusted\" <<boundary>> {\n");
+        o.push_str("  actor \"Client\" as C\n");
+        o.push_str("}\n");
+        o.push_str("rectangle \"Server · trusted\" <<boundary>> {\n");
+        o.push_str("  rectangle \"Server\\n«process»\" as S <<container>>\n");
+        // Endpoints listed as processes inside the server boundary.
+        if spa {
+            for (i, e) in r.endpoints.iter().enumerate() {
+                o.push_str(&format!(
+                    "  rectangle \"POST /_rpc/{}\" as ep{i} <<endpoint>>\n",
+                    e.msg
+                ));
+            }
+        } else {
+            for (i, e) in r.http_endpoints.iter().enumerate() {
+                o.push_str(&format!(
+                    "  rectangle \"{} {}\" as ep{i} <<endpoint>>\n",
+                    e.method, e.path
+                ));
+            }
         }
-    } else if !r.http_endpoints.is_empty() {
-        o.push_str("participant Client as C\n");
-        o.push_str("participant Server as S\n");
-        for e in &r.http_endpoints {
-            o.push_str(&format!("C -> S : {} {}\n", e.method, e.path));
-            o.push_str(&format!("S --> C : {}\n", e.handler));
+        o.push_str("}\n");
+        // Each endpoint is one request in + one response out across the boundary.
+        if spa {
+            for (i, e) in r.endpoints.iter().enumerate() {
+                o.push_str(&format!(
+                    "C -[{}]-> ep{i} : req {}\n",
+                    diagram_svg::SERVER_EDGE,
+                    puml_msg_text(&e.request),
+                ));
+                o.push_str(&format!(
+                    "ep{i} -[{}]-> C : resp {}\n",
+                    diagram_svg::CLIENT_EDGE,
+                    puml_msg_text(&e.response),
+                ));
+            }
+        } else {
+            for (i, e) in r.http_endpoints.iter().enumerate() {
+                o.push_str(&format!(
+                    "C -[{}]-> ep{i} : request\n",
+                    diagram_svg::SERVER_EDGE
+                ));
+                o.push_str(&format!(
+                    "ep{i} -[{}]-> C : {}\n",
+                    diagram_svg::CLIENT_EDGE,
+                    puml_msg_text(&e.handler),
+                ));
+            }
         }
+        let title = if spa {
+            "/_rpc contract"
+        } else {
+            "HTTP endpoint map"
+        };
+        o.push_str("legend right\n");
+        o.push_str(&format!("  <b>Data-flow ({title})</b>\n"));
+        o.push_str("  boundary = trust zone (dashed)\n");
+        o.push_str("  orange = request (client -> server)\n");
+        o.push_str("  blue = response (server -> client)\n");
+        o.push_str("endlegend\n");
     } else {
-        // Nothing to chart — a single concise note keeps the file valid.
-        o.push_str("note over \"Client\",\"Server\" : no client boundary to chart\n");
+        o.push_str("rectangle \"Client\" as C\n");
+        o.push_str("rectangle \"Server\" as S\n");
+        o.push_str("C .. S : no client boundary to chart\n");
     }
     o.push_str(&puml_footer());
     o
-}
-
-/// Sanitise a request/response payload string for a PlantUML `note` body: strip
-/// characters that break the note grammar.
-fn puml_note_text(s: &str) -> String {
-    s.replace('\n', " ").replace('\r', " ")
 }
 
 /// Sanitise a message-label string for a PlantUML `->` arrow label.
@@ -935,54 +1304,239 @@ fn puml_msg_text(s: &str) -> String {
     s.replace('\n', " ").replace('\r', " ").replace(':', " ")
 }
 
+/// A DATA-FLOW diagram (DFD). The headline is the trust boundary: a Client
+/// external entity (untrusted) and a Server process (trusted) either side of a
+/// dashed boundary line, with a representative request/response crossing it. An
+/// "Endpoints" section below is a neat table of every crossing and its per-row
+/// request / response fields — never a hairball of crossing arrows.
 fn render_wire_svg(r: &WireReport) -> String {
-    let mut svg = diagram_svg::Svg::new(&format!("Wire — {}", r.project));
-    let client_x = 140.0;
-    let server_x = 460.0;
-    let head_h = 34.0;
-
+    use diagram_svg as d;
+    let mut svg = d::Svg::new(&format!("Wire (data-flow) — {}", r.project));
     let spa = r.is_spa && !r.endpoints.is_empty();
     let http = !spa && !r.http_endpoints.is_empty();
     if !spa && !http {
-        svg.text(0.0, 20.0, "No client boundary to chart.", "start", 12.0, "400", diagram_svg::SUBTLE);
+        svg.text(
+            8.0,
+            20.0,
+            "No client boundary to chart.",
+            "start",
+            12.0,
+            "400",
+            d::SUBTLE,
+        );
         return svg.render();
     }
 
-    // Two lifeline heads.
-    let (left_label, right_label) = if spa {
-        ("Client · wasm", "Server")
+    // ---- headline band: Client entity | boundary | Server process ----
+    let lx = 8.0;
+    let zpad = 16.0;
+    let zhdr = 22.0;
+    let ztop = 12.0;
+    let band_content_h = 62.0;
+    let band_h = zhdr + zpad + band_content_h + zpad;
+    let flow_y = ztop + zhdr + zpad + band_content_h / 2.0;
+
+    let client_zone_w = 150.0;
+    let server_zone_w = 190.0;
+    let gap = 150.0;
+    let client_zone_x = lx;
+    let server_zone_x = client_zone_x + client_zone_w + gap;
+    let boundary_x = client_zone_x + client_zone_w + gap / 2.0;
+
+    svg.zone(
+        client_zone_x,
+        ztop,
+        client_zone_w,
+        band_h,
+        "Client · untrusted",
+        d::BOUNDARY_UNTRUSTED,
+    );
+    svg.actor(client_zone_x + client_zone_w / 2.0, flow_y - 30.0, "Client");
+    svg.zone(
+        server_zone_x,
+        ztop,
+        server_zone_w,
+        band_h,
+        "Server · trusted",
+        d::BOUNDARY_TRUSTED,
+    );
+    let srv_x = server_zone_x + zpad;
+    let srv_w = server_zone_w - 2.0 * zpad;
+    svg.container(
+        srv_x,
+        flow_y - band_content_h / 2.0,
+        srv_w,
+        band_content_h,
+        d::FILL,
+        "Server",
+        "process",
+        None,
+    );
+
+    // The trust boundary: a dashed vertical line the crossings must pass.
+    let band_bottom = ztop + band_h;
+    svg.rule(
+        boundary_x,
+        ztop + 4.0,
+        boundary_x,
+        band_bottom - 16.0,
+        d::SUBTLE,
+        true,
+    );
+    svg.text(
+        boundary_x,
+        band_bottom - 3.0,
+        "trust boundary",
+        "middle",
+        9.5,
+        "600",
+        d::SUBTLE,
+    );
+
+    // Representative request/response crossing.
+    let cross = if spa { "/_rpc" } else { "HTTP" };
+    svg.ortho(
+        client_zone_x + client_zone_w / 2.0 + 20.0,
+        flow_y - 12.0,
+        srv_x,
+        flow_y - 12.0,
+        d::SERVER_EDGE,
+        Some(&format!("request · {cross}")),
+    );
+    svg.ortho(
+        srv_x,
+        flow_y + 14.0,
+        client_zone_x + client_zone_w / 2.0 + 20.0,
+        flow_y + 14.0,
+        d::CLIENT_EDGE,
+        Some("response"),
+    );
+
+    // ---- Endpoints section: a table, one row per endpoint ----
+    let sec_x = lx;
+    let sec_top = band_bottom + 26.0;
+    let sec_hdr = 44.0;
+    let pad = 12.0;
+    let wrap_chars = 30usize;
+
+    // Column geometry.
+    let (c1_title, c2_title, c3_title) = if spa {
+        (
+            "Endpoint (Msg)",
+            "Request (client → server)",
+            "Response (server → client)",
+        )
     } else {
-        ("Client", "Server")
+        ("Method", "Path", "Handler")
     };
-    svg.node(client_x - 70.0, 0.0, 140.0, head_h, diagram_svg::FILL_ALT, diagram_svg::STROKE, left_label, None);
-    svg.node(server_x - 70.0, 0.0, 140.0, head_h, diagram_svg::FILL_ALT, diagram_svg::STROKE, right_label, None);
+    let c1_x = sec_x + pad;
+    let c1_w = if spa { 190.0 } else { 90.0 };
+    let c2_x = c1_x + c1_w + 20.0;
+    let c2_w = if spa { 230.0 } else { 220.0 };
+    let c3_x = c2_x + c2_w + 20.0;
+    let c3_w = if spa { 200.0 } else { 200.0 };
+    let sec_w = c3_x + c3_w + pad - sec_x;
 
-    let n = if spa { r.endpoints.len() } else { r.http_endpoints.len() };
-    let step = 64.0;
-    let top = head_h + 24.0;
-    let bottom = top + (n as f64) * step + 8.0;
-
-    // Lifelines.
-    svg.edge(client_x, head_h, client_x, bottom, diagram_svg::PKG_STROKE, None);
-    svg.edge(server_x, head_h, server_x, bottom, diagram_svg::PKG_STROKE, None);
-
-    let mut y = top + 12.0;
-    if spa {
-        for e in &r.endpoints {
-            svg.edge(client_x, y, server_x, y, diagram_svg::SERVER_EDGE, Some(&format!("POST /_rpc/{}", e.msg)));
-            svg.caption(server_x + 12.0, y - 4.0, &format!("reads {}", e.request), "start");
-            let ry = y + 26.0;
-            svg.edge(server_x, ry, client_x, ry, diagram_svg::CLIENT_EDGE, Some(&format!("writes {}", e.response)));
-            y += step;
-        }
-    } else {
-        for e in &r.http_endpoints {
-            svg.edge(client_x, y, server_x, y, diagram_svg::SERVER_EDGE, Some(&format!("{} {}", e.method, e.path)));
-            let ry = y + 26.0;
-            svg.edge(server_x, ry, client_x, ry, diagram_svg::CLIENT_EDGE, Some(&e.handler));
-            y += step;
-        }
+    // Row model.
+    struct WRow {
+        c1: String,
+        c2: Vec<String>,
+        c3: Vec<String>,
     }
+    let wrap_col = |s: &str, w: usize| d::wrap(s, w);
+    let rows: Vec<WRow> = if spa {
+        r.endpoints
+            .iter()
+            .map(|e| WRow {
+                c1: format!("POST /_rpc/{}", e.msg),
+                c2: wrap_col(&e.request, wrap_chars),
+                c3: wrap_col(&e.response, wrap_chars),
+            })
+            .collect()
+    } else {
+        r.http_endpoints
+            .iter()
+            .map(|e| WRow {
+                c1: e.method.clone(),
+                c2: wrap_col(&e.path, wrap_chars),
+                c3: wrap_col(&e.handler, wrap_chars),
+            })
+            .collect()
+    };
+
+    // Measure heights, then draw the section box, header, rows.
+    let line_h = 15.0;
+    let row_pad = 10.0;
+    let row_heights: Vec<f64> = rows
+        .iter()
+        .map(|r| {
+            let n = r.c2.len().max(r.c3.len()).max(1);
+            n as f64 * line_h + row_pad
+        })
+        .collect();
+    let body_h: f64 = row_heights.iter().sum();
+    let sec_h = sec_hdr + body_h + pad;
+
+    svg.package(
+        sec_x,
+        sec_top,
+        sec_w,
+        sec_h,
+        &format!("Endpoints ({})", if spa { "/_rpc" } else { "HTTP" }),
+    );
+    // Column headers.
+    let hdr_y = sec_top + sec_hdr + 2.0;
+    svg.text(c1_x, hdr_y, c1_title, "start", 10.5, "700", d::SUBTLE);
+    svg.text(c2_x, hdr_y, c2_title, "start", 10.5, "700", d::SERVER_EDGE);
+    svg.text(c3_x, hdr_y, c3_title, "start", 10.5, "700", d::CLIENT_EDGE);
+    // Rows.
+    let mut ry = hdr_y + 8.0;
+    for (row, rh) in rows.iter().zip(&row_heights) {
+        // separator rule above each row.
+        svg.rule(c1_x - 4.0, ry, sec_x + sec_w - pad, ry, "#e2e5ea", false);
+        let base = ry + line_h;
+        svg.text(c1_x, base, &row.c1, "start", 11.0, "600", d::TEXT);
+        for (i, l) in row.c2.iter().enumerate() {
+            svg.text(
+                c2_x,
+                base + i as f64 * line_h,
+                l,
+                "start",
+                10.5,
+                "500",
+                d::TEXT,
+            );
+        }
+        for (i, l) in row.c3.iter().enumerate() {
+            svg.text(
+                c3_x,
+                base + i as f64 * line_h,
+                l,
+                "start",
+                10.5,
+                "500",
+                d::TEXT,
+            );
+        }
+        ry += rh;
+    }
+
+    // Legend.
+    let rows_l = vec![
+        (
+            d::BOUNDARY_TRUSTED.to_string(),
+            "trust boundary (dashed)".to_string(),
+        ),
+        (
+            d::SERVER_EDGE.to_string(),
+            "request (client → server)".to_string(),
+        ),
+        (
+            d::CLIENT_EDGE.to_string(),
+            "response (server → client)".to_string(),
+        ),
+    ];
+    svg.legend(sec_x, sec_top + sec_h + 18.0, &rows_l);
     svg.render()
 }
 
@@ -1026,9 +1580,7 @@ impl Sink {
     /// The honest, full sink description used in the `md` table.
     pub fn label(self) -> &'static str {
         match self {
-            Sink::Logs => {
-                "structured logs (console; OTel when OTEL_EXPORTER_OTLP_ENDPOINT set)"
-            }
+            Sink::Logs => "structured logs (console; OTel when OTEL_EXPORTER_OTLP_ENDPOINT set)",
             Sink::Analytics => "analytics store (DB)",
             Sink::Consent => "consent state (per session)",
         }
@@ -1070,6 +1622,25 @@ impl Sink {
             Sink::Logs => SvgShape::Queue,
             Sink::Analytics => SvgShape::Database,
             Sink::Consent => SvgShape::Node,
+        }
+    }
+
+    /// The egress grouping an auditor reads: does this data stay INTERNAL, leave
+    /// the system as EXTERNAL egress, or record a Consent decision?
+    fn group(self) -> &'static str {
+        match self {
+            Sink::Logs => "Internal",
+            Sink::Analytics => "External egress",
+            Sink::Consent => "Consent",
+        }
+    }
+
+    /// The edge / accent colour for this sink's group.
+    fn edge_color(self) -> &'static str {
+        match self {
+            Sink::Logs => diagram_svg::STROKE,
+            Sink::Analytics => diagram_svg::EXTERNAL,
+            Sink::Consent => diagram_svg::CLIENT_EDGE,
         }
     }
 }
@@ -1387,48 +1958,215 @@ fn telemetry_edges(r: &TelemetryReport) -> Vec<(String, Sink, String)> {
 }
 
 fn render_telemetry_puml(r: &TelemetryReport) -> String {
-    let mut o = puml_header(&format!("Telemetry — {}", r.project));
+    let mut o = puml_header(&format!("Telemetry (data egress) — {}", r.project));
     let (modules, sinks) = telemetry_nodes(r);
-    o.push_str("package \"Modules\" {\n");
+    o.push_str("rectangle \"App modules\" <<boundary>> {\n");
     for m in &modules {
         o.push_str(&format!("  component \"{}\" as {}\n", m, module_node_id(m)));
     }
     o.push_str("}\n");
-    for s in &sinks {
-        o.push_str(&format!("{}\n", s.puml_decl()));
+    // Sinks grouped by egress destination, in a fixed order.
+    for group in ["Internal", "External egress", "Consent"] {
+        let present: Vec<&Sink> = sinks.iter().filter(|s| s.group() == group).collect();
+        if present.is_empty() {
+            continue;
+        }
+        o.push_str(&format!("rectangle \"{group}\" <<boundary>> {{\n"));
+        for s in present {
+            o.push_str(&format!("  {}\n", s.puml_decl()));
+        }
+        o.push_str("}\n");
     }
     for (m, s, label) in telemetry_edges(r) {
-        o.push_str(&format!("{} --> {} : {}\n", module_node_id(&m), s.node_id(), label));
+        o.push_str(&format!(
+            "{} -[{}]-> {} : {}\n",
+            module_node_id(&m),
+            s.edge_color(),
+            s.node_id(),
+            label,
+        ));
     }
+    o.push_str("legend right\n");
+    o.push_str("  <b>Data egress inventory</b>\n");
+    o.push_str("  what behavioural data leaves, and to where\n");
+    o.push_str("  grey = internal · violet = external egress\n");
+    o.push_str("  blue = consent state\n");
+    o.push_str("endlegend\n");
     o.push_str(&puml_footer());
     o
 }
 
-fn render_telemetry_svg(r: &TelemetryReport) -> String {
-    let mut svg = diagram_svg::Svg::new(&format!("Telemetry — {}", r.project));
-    let (modules, sinks) = telemetry_nodes(r);
-    let mod_w = 170.0;
-    let sink_w = 170.0;
-    let mod_x = 0.0;
-    let sink_x = mod_x + mod_w + 200.0;
+/// A data-EGRESS inventory. Modules on the left; sinks on the right, grouped into
+/// INTERNAL / EXTERNAL egress / Consent sections. One collapsed edge per
+/// module→sink pair carries the comma-joined events (never parallel overlapping
+/// edges). An auditor reads it as "what behavioural data leaves, and to where".
+/// The capped event lines for one telemetry edge label: many events on one
+/// module→sink pair are summarised (first few + "+N more") and wrapped, so a
+/// chatty module — a CLI that logs a dozen lines — does not produce one giant
+/// unbounded label. The FULL list stays in the `md` table.
+fn telemetry_edge_lines(label: &str) -> Vec<String> {
+    let events: Vec<&str> = label.split(", ").collect();
+    let cap = 5usize;
+    let joined = if events.len() > cap {
+        events[..cap].join(", ")
+    } else {
+        label.to_string()
+    };
+    let mut lines = diagram_svg::wrap(&joined, 24);
+    if lines.len() > 6 {
+        lines.truncate(6);
+        lines.push("…".into());
+    }
+    if events.len() > cap {
+        lines.push(format!("+{} more events", events.len() - cap));
+    }
+    lines
+}
 
+fn render_telemetry_svg(r: &TelemetryReport) -> String {
+    use diagram_svg as d;
+    let mut svg = d::Svg::new(&format!("Telemetry (data egress) — {}", r.project));
+    let (modules, sinks) = telemetry_nodes(r);
+
+    let mod_w = 190.0;
+    let sink_w = 176.0;
+    let lx = 8.0;
+    let mod_x = lx;
+    let col_gap = 280.0;
+    let sink_x = mod_x + mod_w + col_gap;
+
+    // Pre-compute edges + capped labels, and reserve headroom above the first
+    // module so a tall edge plate never overruns the title band.
+    let edges: Vec<(String, Sink, Vec<String>)> = telemetry_edges(r)
+        .into_iter()
+        .map(|(m, s, label)| (m, s, telemetry_edge_lines(&label)))
+        .collect();
+    let max_lines = edges.iter().map(|(_, _, l)| l.len()).max().unwrap_or(1);
+    let top = 14.0 + (d::Svg::plate_height(max_lines) / 2.0 - NODE_H / 2.0).max(0.0) + 24.0;
+
+    // Left: module nodes stacked, with the row step widened when the edge plates
+    // are tall so a plate never runs into the next module's plate.
+    let mod_step = (NODE_H + VGAP).max(d::Svg::plate_height(max_lines) + 16.0);
     let mut mod_cy: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-    for (i, m) in modules.iter().enumerate() {
-        let y = i as f64 * (NODE_H + VGAP);
-        svg.node(mod_x, y, mod_w, NODE_H, diagram_svg::FILL, diagram_svg::STROKE, m, None);
-        mod_cy.insert(m.clone(), y + NODE_H / 2.0);
+    let mut my = top;
+    for m in &modules {
+        svg.node(
+            mod_x,
+            my + (mod_step - NODE_H) / 2.0,
+            mod_w,
+            NODE_H,
+            d::FILL,
+            d::STROKE,
+            m,
+            None,
+        );
+        mod_cy.insert(m.clone(), my + mod_step / 2.0);
+        my += mod_step;
     }
+    let mod_block_bottom = my - (mod_step - NODE_H);
+
+    // Right: sinks grouped in fixed order, each in its own labelled section box.
+    let sink_h = 50.0;
+    let sec_pad = 12.0;
+    let sec_hdr = 24.0;
+    let sec_gap = 20.0;
     let mut sink_cy: std::collections::HashMap<Sink, f64> = std::collections::HashMap::new();
-    for (j, s) in sinks.iter().enumerate() {
-        let y = j as f64 * (NODE_H + VGAP);
-        svg_shaped_node(&mut svg, s.svg_shape(), sink_x, y, sink_w, NODE_H, s.node_label());
-        sink_cy.insert(*s, y + NODE_H / 2.0);
+    let mut sy = top;
+    for group in ["Internal", "External egress", "Consent"] {
+        let present: Vec<Sink> = sinks
+            .iter()
+            .copied()
+            .filter(|s| s.group() == group)
+            .collect();
+        if present.is_empty() {
+            continue;
+        }
+        let sec_h = sec_hdr
+            + sec_pad
+            + present.len() as f64 * sink_h
+            + (present.len() as f64 - 1.0) * 10.0
+            + sec_pad;
+        let accent = present[0].edge_color();
+        svg.zone(
+            sink_x - sec_pad,
+            sy,
+            sink_w + 2.0 * sec_pad,
+            sec_h,
+            group,
+            accent,
+        );
+        let mut iy = sy + sec_hdr + sec_pad;
+        for s in &present {
+            svg_shaped_node(
+                &mut svg,
+                s.svg_shape(),
+                sink_x,
+                iy,
+                sink_w,
+                sink_h,
+                s.node_label(),
+            );
+            sink_cy.insert(*s, iy + sink_h / 2.0);
+            iy += sink_h + 10.0;
+        }
+        sy += sec_h + sec_gap;
     }
-    for (m, s, label) in telemetry_edges(r) {
-        if let (Some(my), Some(sy)) = (mod_cy.get(&m), sink_cy.get(&s)) {
-            svg.edge(mod_x + mod_w, *my, sink_x, *sy, diagram_svg::STROKE, Some(&label));
+    let sink_block_bottom = sy - sec_gap;
+
+    // Collapsed edges: one per (module, sink). A module with several sinks fans
+    // out; its labels are staggered vertically around the module row so no two
+    // ever share a line, and each edge's bend X is staggered across the gap so no
+    // two trunks smear together.
+    let n_edges = edges.len().max(1) as f64;
+    // Per-module edge count + running index, to stagger same-module labels.
+    let mut per_mod_total: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for (m, _, _) in &edges {
+        *per_mod_total.entry(m.clone()).or_default() += 1;
+    }
+    let mut per_mod_seen: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for (i, (m, s, lines)) in edges.iter().enumerate() {
+        if let (Some(myc), Some(syc)) = (mod_cy.get(m), sink_cy.get(s)) {
+            let color = s.edge_color();
+            let kc = *per_mod_total.get(m).unwrap_or(&1);
+            let k = per_mod_seen.entry(m.clone()).or_insert(0);
+            // Stagger the exit Y across the module's right edge for its own edges.
+            let exit_y = *myc
+                + (*k as f64 - (kc as f64 - 1.0) / 2.0) * (d::Svg::plate_height(max_lines) + 8.0);
+            *k += 1;
+            let frac = (i as f64 + 1.0) / (n_edges + 1.0);
+            let mid_x = mod_x + mod_w + col_gap * (0.30 + 0.42 * frac);
+            svg.ortho_via(mod_x + mod_w, exit_y, sink_x, *syc, mid_x, true, color);
+            // Event label near the module end, at the (staggered) exit row.
+            let plate_w = lines
+                .iter()
+                .map(|l| d::text_width(l, 10.5))
+                .fold(0.0, f64::max)
+                + 12.0;
+            svg.plate_lines(mod_x + mod_w + 16.0 + plate_w / 2.0, exit_y, lines, color);
         }
     }
+
+    // Legend (only the sink groups this app actually uses).
+    let mut rows: Vec<(String, String)> = Vec::new();
+    if sinks.contains(&Sink::Logs) {
+        rows.push((
+            d::STROKE.to_string(),
+            "internal (logs / console)".to_string(),
+        ));
+    }
+    if sinks.contains(&Sink::Analytics) {
+        rows.push((
+            d::EXTERNAL.to_string(),
+            "external egress (analytics store)".to_string(),
+        ));
+    }
+    if sinks.contains(&Sink::Consent) {
+        rows.push((d::CLIENT_EDGE.to_string(), "consent state".to_string()));
+    }
+    let legend_y = mod_block_bottom.max(sink_block_bottom) + 20.0;
+    svg.legend(lx, legend_y, &rows);
     svg.render()
 }
 
@@ -1716,7 +2454,11 @@ pub fn analyze_journey(
     let mut update_ref: Option<(ModuleId, DefId)> = None;
     for mid in &check_ids {
         let resolved = db.resolve(*mid);
-        if let Some(td) = resolved.top_defs.iter().find(|t| t.name.as_str() == "update") {
+        if let Some(td) = resolved
+            .top_defs
+            .iter()
+            .find(|t| t.name.as_str() == "update")
+        {
             update_ref = Some((*mid, td.def));
             break;
         }
@@ -1770,8 +2512,7 @@ pub fn analyze_journey(
     // Prefer the route table's union (authoritative); else the union with the
     // most distinct constructors assigned to a page field (ties → lowest DefId).
     let page_union: Option<DefId> = route_union.or_else(|| {
-        let mut v: Vec<(DefId, usize)> =
-            union_ctors.iter().map(|(u, s)| (*u, s.len())).collect();
+        let mut v: Vec<(DefId, usize)> = union_ctors.iter().map(|(u, s)| (*u, s.len())).collect();
         v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         v.first().map(|(u, _)| *u)
     });
@@ -1845,7 +2586,12 @@ pub fn analyze_journey(
         if let Ok(report) = crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
             let mut server_by_msg: HashMap<String, bool> = HashMap::new();
             for b in &report.branches {
-                let ctor = b.msg.split_whitespace().next().unwrap_or(&b.msg).to_string();
+                let ctor = b
+                    .msg
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(&b.msg)
+                    .to_string();
                 server_by_msg.insert(ctor, b.server);
             }
             if actions.is_empty() {
@@ -1959,9 +2705,77 @@ fn non_nav_actions(r: &JourneyReport) -> Vec<&JourneyAction> {
         .collect()
 }
 
-/// Does any action navigate to a run-time-chosen page?
-fn any_dynamic_nav(r: &JourneyReport) -> bool {
-    r.actions.iter().any(|a| a.dynamic_nav)
+/// One collapsed transition: every Msg that shares the same `source → target`
+/// seam, as `(msg, server)` pairs. Collapsing parallel edges is the fix for the
+/// overlap disaster — five Msgs from Home to Login become ONE labelled edge.
+struct JourneyEdge {
+    msgs: Vec<(String, Option<bool>)>,
+}
+
+impl JourneyEdge {
+    /// The edge colour: server-orange when every Msg round-trips, client-blue when
+    /// every Msg is client-side, neutral when the Msgs mix (or are unclassified,
+    /// e.g. a Sky.Live app where every action is an SSE round-trip).
+    fn color(&self) -> &'static str {
+        let mut any_server = false;
+        let mut any_client = false;
+        for (_, s) in &self.msgs {
+            match s {
+                Some(true) => any_server = true,
+                Some(false) => any_client = true,
+                None => {}
+            }
+        }
+        match (any_server, any_client) {
+            (true, false) => diagram_svg::SERVER_EDGE,
+            (false, true) => diagram_svg::CLIENT_EDGE,
+            _ => diagram_svg::STROKE,
+        }
+    }
+
+    /// The label lines: one Msg per line, sorted, deduped.
+    fn lines(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.msgs.iter().map(|(m, _)| m.clone()).collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+}
+
+/// Collapse the action inventory into transition seams, all sourced at the
+/// initial page (per-page attribution is not attempted — see the module note):
+/// `(self-loop Msgs, per-target Msgs, dynamic-target Msgs)`. Every parallel edge
+/// between the same two states is merged into one entry, so no two labels ever
+/// stack on the same line.
+fn journey_edges(
+    r: &JourneyReport,
+    init_name: &str,
+) -> (
+    JourneyEdge,
+    std::collections::BTreeMap<String, JourneyEdge>,
+    JourneyEdge,
+) {
+    let mut self_edge = JourneyEdge { msgs: Vec::new() };
+    let mut by_target: std::collections::BTreeMap<String, JourneyEdge> =
+        std::collections::BTreeMap::new();
+    let mut dyn_edge = JourneyEdge { msgs: Vec::new() };
+    for a in &r.actions {
+        for t in &a.navigates_to {
+            if t == init_name {
+                self_edge.msgs.push((a.msg.clone(), a.server));
+            } else {
+                by_target
+                    .entry(t.clone())
+                    .or_insert_with(|| JourneyEdge { msgs: Vec::new() })
+                    .msgs
+                    .push((a.msg.clone(), a.server));
+            }
+        }
+        if a.dynamic_nav {
+            dyn_edge.msgs.push((a.msg.clone(), a.server));
+        }
+    }
+    (self_edge, by_target, dyn_edge)
 }
 
 /// Render a user journey to the requested format. Pure function of `r`.
@@ -1976,8 +2790,17 @@ pub fn render_journey(r: &JourneyReport, format: Format) -> String {
     }
 }
 
+/// A PlantUML per-edge colour directive (`-[#rrggbb]->`) for a collapsed edge.
+fn puml_arrow(color: &str) -> String {
+    if color == diagram_svg::STROKE {
+        "-->".to_string()
+    } else {
+        format!("-[{color}]->")
+    }
+}
+
 fn render_journey_puml(r: &JourneyReport) -> String {
-    let mut o = puml_header(&format!("User journey — {}", r.project));
+    let mut o = puml_header(&format!("User journey (TEA state machine) — {}", r.project));
     let Some(init) = initial_page(r) else {
         // No pages: a single clear state, never a broken diagram.
         o.push_str("state \"No pages found\" as none\n");
@@ -1985,155 +2808,354 @@ fn render_journey_puml(r: &JourneyReport) -> String {
         o.push_str(&puml_footer());
         return o;
     };
+    let init_name = r.pages[init].name.clone();
+    let init_id = page_node_id(&init_name);
+    let (self_edge, by_target, dyn_edge) = journey_edges(r, &init_name);
+
     // One state per page (URL folded into the label as a second line).
     for p in &r.pages {
         let label = match &p.url {
             Some(u) => format!("{}\\n{}", p.name, u),
             None => p.name.clone(),
         };
-        o.push_str(&format!("state \"{}\" as {}\n", label, page_node_id(&p.name)));
+        o.push_str(&format!(
+            "state \"{}\" as {}\n",
+            label,
+            page_node_id(&p.name)
+        ));
     }
-    let init_id = page_node_id(&r.pages[init].name);
+    let has_dyn = !dyn_edge.msgs.is_empty();
+    if has_dyn {
+        o.push_str("state \"(dynamic page)\\nchosen at run time\" as dyn_pg\n");
+    }
     o.push_str(&format!("[*] --> {init_id}\n"));
-    // Navigating transitions from the initial page to each target.
-    for a in &r.actions {
-        let tag = if a.server == Some(true) { " [server]" } else { "" };
-        for t in &a.navigates_to {
+
+    // Collapsed navigating transitions: one arrow per seam, its label the Msg
+    // list (never parallel edges with stacked labels).
+    for (target, edge) in &by_target {
+        o.push_str(&format!(
+            "{init_id} {} {} : {}\n",
+            puml_arrow(edge.color()),
+            page_node_id(target),
+            edge.lines().join("\\n"),
+        ));
+    }
+    if !self_edge.msgs.is_empty() {
+        o.push_str(&format!(
+            "{init_id} {} {init_id} : {}\n",
+            puml_arrow(self_edge.color()),
+            self_edge.lines().join("\\n"),
+        ));
+    }
+    if has_dyn {
+        o.push_str(&format!(
+            "{init_id} {} dyn_pg : {}\n",
+            puml_arrow(dyn_edge.color()),
+            dyn_edge.lines().join("\\n"),
+        ));
+    }
+
+    // Non-navigating actions: internal events, grouped inside the initial state.
+    let internal = non_nav_actions(r);
+    if !internal.is_empty() {
+        o.push_str(&format!("{init_id} : --- internal events ---\n"));
+        for a in &internal {
+            let tag = match a.server {
+                Some(true) => " [server]",
+                Some(false) => " [client]",
+                None => "",
+            };
             o.push_str(&format!(
-                "{init_id} --> {} : {}{}\n",
-                page_node_id(t),
-                short_edge_label(&a.msg),
-                tag
-            ));
-        }
-        if a.dynamic_nav {
-            o.push_str(&format!(
-                "{init_id} --> {init_id} : {}{} (dynamic)\n",
+                "{init_id} : {}{}\n",
                 short_edge_label(&a.msg),
                 tag
             ));
         }
     }
-    // Non-navigating actions: internal events on the initial page state.
-    for a in non_nav_actions(r) {
-        let tag = if a.server == Some(true) { " [server]" } else { "" };
-        o.push_str(&format!("{init_id} : {}{}\n", short_edge_label(&a.msg), tag));
-    }
+
+    o.push_str("legend right\n");
+    o.push_str("  <b>TEA state machine</b>\n");
+    o.push_str("  states = pages · [*] = initial\n");
+    o.push_str("  orange = server round-trip · blue = client\n");
+    o.push_str("  parallel Msgs are collapsed onto one edge\n");
+    o.push_str("endlegend\n");
     o.push_str(&puml_footer());
     o
 }
 
+/// Flow a list of `(text, border, text)` chips into a wrapped grid starting at
+/// `(x0, y0)`, wrapping before `max_x`. Returns the bottom Y. Used for the
+/// "Other pages" and "Internal events" inventory sections, which can be long.
+fn chip_grid(
+    svg: &mut diagram_svg::Svg,
+    items: &[(String, &'static str, &'static str)],
+    x0: f64,
+    y0: f64,
+    max_x: f64,
+) -> f64 {
+    let gap = 8.0;
+    let row_gap = 8.0;
+    let mut cx = x0;
+    let mut cy = y0;
+    for (text, border, tcolor) in items {
+        let w = diagram_svg::text_width(text, 10.5) + 16.0;
+        if cx > x0 && cx + w > max_x {
+            cx = x0;
+            cy += diagram_svg::Svg::CHIP_H + row_gap;
+        }
+        let drawn = svg.chip(cx, cy, text, border, tcolor);
+        cx += drawn + gap;
+    }
+    cy + diagram_svg::Svg::CHIP_H
+}
+
+/// The flagship fix: a clean TEA STATE MACHINE. Pages are states ranked left →
+/// right from the initial page; parallel Msgs between the same two states are
+/// COLLAPSED onto one orthogonally-routed edge (no stacked labels); pages with
+/// no attributed transition and non-navigating internal events go into tidy
+/// inventory sections below, so nothing overlaps.
 fn render_journey_svg(r: &JourneyReport) -> String {
-    let mut svg = diagram_svg::Svg::new(&format!("User journey — {}", r.project));
+    use diagram_svg as d;
+    let mut svg = d::Svg::new(&format!("User journey (TEA state machine) — {}", r.project));
     let Some(init) = initial_page(r) else {
-        svg.node(0.0, 0.0, 200.0, NODE_H, diagram_svg::FILL, diagram_svg::STROKE, "No pages found", None);
+        svg.node(
+            8.0,
+            8.0,
+            200.0,
+            NODE_H,
+            d::FILL,
+            d::STROKE,
+            "No pages found",
+            None,
+        );
         return svg.render();
     };
-    let page_w = 160.0;
-    let col_gap = 190.0;
-    let row_h = 78.0;
-
-    // BFS rank from the initial page: rank 0 = initial, rank 1 = everything else.
     let init_name = r.pages[init].name.clone();
-    let mut rank: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    rank.insert(init_name.clone(), 0);
-    for p in &r.pages {
-        rank.entry(p.name.clone()).or_insert(1);
-    }
-    let has_dyn = any_dynamic_nav(r);
+    let (self_edge, by_target, dyn_edge) = journey_edges(r, &init_name);
+    let has_dyn = !dyn_edge.msgs.is_empty();
 
-    // Assign a slot (column, row) to each page + the dynamic pseudo-state.
-    let mut col_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    let mut pos: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
-    // Initial first (top of column 0), then the rest in name order.
-    let mut ordered: Vec<&JourneyPage> = r.pages.iter().collect();
-    ordered.sort_by(|a, b| {
-        let ra = if a.name == init_name { 0 } else { 1 };
-        let rb = if b.name == init_name { 0 } else { 1 };
-        ra.cmp(&rb).then(a.name.cmp(&b.name))
-    });
-    let internal = non_nav_actions(r);
-    // The initial box is taller when it carries internal events.
-    let init_h = NODE_H + (internal.len() as f64) * 15.0 + if internal.is_empty() { 0.0 } else { 8.0 };
+    let page_w = 168.0;
+    let col0_x = 46.0;
+    let col_gap = 300.0;
+    let col1_x = col0_x + page_w + col_gap;
+    let top = 14.0;
 
-    for p in &ordered {
-        let col = *rank.get(&p.name).unwrap_or(&1);
-        let row = *col_counts.entry(col).or_insert(0);
-        col_counts.insert(col, row + 1);
-        let x = 40.0 + col as f64 * (page_w + col_gap);
-        let y = row as f64 * row_h;
-        pos.insert(p.name.clone(), (x, y));
+    // Column-1 rows: every navigated target (sorted) then the dynamic state.
+    // Row height reserves room for the (possibly multi-line) collapsed label.
+    struct Row {
+        key: String,
+        is_dyn: bool,
+        cy: f64,
     }
-    // The dynamic pseudo-state sits in column 1 after the pages.
-    if has_dyn {
-        let col = 1usize;
-        let row = *col_counts.entry(col).or_insert(0);
-        col_counts.insert(col, row + 1);
-        let x = 40.0 + col as f64 * (page_w + col_gap);
-        let y = row as f64 * row_h;
-        pos.insert("__dyn__".to_string(), (x, y));
-    }
-
-    // Entry marker: a small filled circle to the left of the initial page.
-    let (ix, iy) = pos[&init_name];
-    svg.rect(ix - 26.0, iy + init_h / 2.0 - 5.0, 10.0, 10.0, 5.0, diagram_svg::TEXT, diagram_svg::TEXT, 1.0);
-    svg.edge(ix - 14.0, iy + init_h / 2.0, ix, iy + init_h / 2.0, diagram_svg::STROKE, None);
-
-    // Draw the page states.
-    for p in &r.pages {
-        let (x, y) = pos[&p.name];
-        let h = if p.name == init_name { init_h } else { NODE_H };
-        if p.name == init_name && !internal.is_empty() {
-            svg.rect(x, y, page_w, h, 8.0, diagram_svg::FILL, diagram_svg::STROKE, 1.5);
-            match &p.url {
-                Some(u) => {
-                    svg.text(x + page_w / 2.0, y + 18.0, &p.name, "middle", 13.0, "600", diagram_svg::TEXT);
-                    svg.text(x + page_w / 2.0, y + 32.0, u, "middle", 11.0, "400", diagram_svg::SUBTLE);
-                }
-                None => {
-                    svg.text(x + page_w / 2.0, y + 26.0, &p.name, "middle", 13.0, "600", diagram_svg::TEXT);
-                }
-            }
-            let mut ly = y + NODE_H + 4.0;
-            for a in &internal {
-                let color = if a.server == Some(true) { diagram_svg::SERVER_EDGE } else { diagram_svg::SUBTLE };
-                svg.text(x + 10.0, ly + 8.0, &short_edge_label(&a.msg), "start", 10.5, "500", color);
-                ly += 15.0;
-            }
-        } else {
-            svg.node(x, y, page_w, h, diagram_svg::FILL, diagram_svg::STROKE, &p.name, p.url.as_deref());
-        }
-    }
-    // The dynamic pseudo-state.
-    if has_dyn {
-        let (x, y) = pos["__dyn__"];
-        svg.node(x, y, page_w, NODE_H, diagram_svg::FILL_ALT, diagram_svg::PKG_STROKE, "(dynamic page)", None);
-    }
-
-    // Transitions from the initial page.
-    let init_right = ix + page_w;
-    let init_cy = iy + init_h / 2.0;
-    for a in &r.actions {
-        let color = match a.server {
-            Some(true) => diagram_svg::SERVER_EDGE,
-            Some(false) => diagram_svg::CLIENT_EDGE,
-            None => diagram_svg::STROKE,
+    let mut rows: Vec<Row> = Vec::new();
+    let mut y = top;
+    let push_row =
+        |rows: &mut Vec<Row>, y: &mut f64, key: String, is_dyn: bool, label_lines: usize| {
+            let h = NODE_H.max(d::Svg::plate_height(label_lines));
+            rows.push(Row {
+                key,
+                is_dyn,
+                cy: *y + h / 2.0,
+            });
+            *y += h + 26.0;
         };
-        for t in &a.navigates_to {
-            if let Some((tx, ty)) = pos.get(t) {
-                if t == &init_name {
-                    svg.self_loop(init_right, iy, color, &short_edge_label(&a.msg));
-                } else {
-                    svg.edge(init_right, init_cy, *tx, ty + NODE_H / 2.0, color, Some(&short_edge_label(&a.msg)));
-                }
-            }
-        }
-        if a.dynamic_nav {
-            if let Some((tx, ty)) = pos.get("__dyn__") {
-                svg.edge(init_right, init_cy, *tx, ty + NODE_H / 2.0, color, Some(&short_edge_label(&a.msg)));
-            }
-        }
+    for (t, edge) in &by_target {
+        push_row(&mut rows, &mut y, t.clone(), false, edge.lines().len());
     }
+    if has_dyn {
+        push_row(
+            &mut rows,
+            &mut y,
+            "__dyn__".into(),
+            true,
+            dyn_edge.lines().len(),
+        );
+    }
+    let col1_bottom = if rows.is_empty() {
+        top + NODE_H
+    } else {
+        y - 26.0
+    };
+
+    // Initial page: vertically centred against the column-1 block.
+    let init_cy = ((top + col1_bottom) / 2.0).max(top + NODE_H / 2.0);
+    let init_y = init_cy - NODE_H / 2.0;
+    let init_url = r.pages[init].url.clone();
+
+    // Entry marker + arrow into the initial page.
+    svg.rect(
+        col0_x - 30.0,
+        init_cy - 5.0,
+        10.0,
+        10.0,
+        5.0,
+        d::TEXT,
+        d::TEXT,
+        1.0,
+    );
+    svg.ortho(col0_x - 18.0, init_cy, col0_x, init_cy, d::STROKE, None);
+    // The initial state box.
+    svg.node(
+        col0_x,
+        init_y,
+        page_w,
+        NODE_H,
+        d::FILL,
+        d::STROKE,
+        &init_name,
+        init_url.as_deref(),
+    );
+
+    // Column-1 state boxes.
+    let mut pos: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
+    for row in &rows {
+        let ry = row.cy - NODE_H / 2.0;
+        if row.is_dyn {
+            svg.node(
+                col1_x,
+                ry,
+                page_w,
+                NODE_H,
+                d::FILL_ALT,
+                d::PKG_STROKE,
+                "(dynamic page)",
+                Some("run-time chosen"),
+            );
+        } else {
+            let url = r
+                .pages
+                .iter()
+                .find(|p| p.name == row.key)
+                .and_then(|p| p.url.clone());
+            svg.node(
+                col1_x,
+                ry,
+                page_w,
+                NODE_H,
+                d::FILL,
+                d::STROKE,
+                &row.key,
+                url.as_deref(),
+            );
+        }
+        pos.insert(row.key.clone(), (col1_x, row.cy));
+    }
+
+    // Collapsed navigating edges, orthogonally routed with staggered bends so no
+    // two trunks smear together, each labelled by its full Msg list on one plate.
+    let init_right = col0_x + page_w;
+    let n_rows = rows.len().max(1) as f64;
+    for (i, row) in rows.iter().enumerate() {
+        let edge = if row.is_dyn {
+            &dyn_edge
+        } else {
+            by_target.get(&row.key).unwrap()
+        };
+        let color = edge.color();
+        let lines = edge.lines();
+        // Source Y is staggered across the LOWER part of the init box edge, so no
+        // target edge crosses the self-loop that sits at the box top. The bend X
+        // is staggered across the gap so trunks never smear together.
+        let src_y = init_y + NODE_H * (0.42 + 0.5 * (i as f64 + 1.0) / (n_rows + 1.0));
+        let mid_x = init_right + col_gap * (0.28 + 0.38 * (i as f64 + 1.0) / (n_rows + 1.0));
+        svg.ortho_via(init_right, src_y, col1_x, row.cy, mid_x, true, color);
+        // The label sits HARD RIGHT, pinned to the target box, so it never
+        // reaches the source area where the self-loop lives.
+        let plate_w = lines
+            .iter()
+            .map(|l| d::text_width(l, 10.5))
+            .fold(0.0, f64::max)
+            + 12.0;
+        svg.plate_lines(col1_x - 16.0 - plate_w / 2.0, row.cy, &lines, color);
+    }
+    // Self-loop (collapsed) on the initial state — arc + label near the source,
+    // at the box top, clear of the target edges that exit the lower half.
+    if !self_edge.msgs.is_empty() {
+        let (lx, ly) = svg.loop_arc(init_right, init_y + 12.0, self_edge.color());
+        let lines = self_edge.lines();
+        let w = lines
+            .iter()
+            .map(|l| d::text_width(l, 10.5))
+            .fold(0.0, f64::max)
+            + 12.0;
+        svg.plate_lines(lx + w / 2.0, ly, &lines, self_edge.color());
+    }
+
+    let content_right = col1_x + page_w + 40.0;
+    let mut section_y = col1_bottom.max(init_y + NODE_H) + 34.0;
+
+    // "Other pages" inventory: pages with no attributed transition.
+    let linked: std::collections::HashSet<String> = rows
+        .iter()
+        .filter(|r| !r.is_dyn)
+        .map(|r| r.key.clone())
+        .chain(std::iter::once(init_name.clone()))
+        .collect();
+    let other: Vec<(String, &'static str, &'static str)> = r
+        .pages
+        .iter()
+        .filter(|p| !linked.contains(&p.name))
+        .map(|p| {
+            let label = match &p.url {
+                Some(u) => format!("{} · {}", p.name, u),
+                None => p.name.clone(),
+            };
+            (label, d::PKG_STROKE, d::TEXT)
+        })
+        .collect();
+    if !other.is_empty() {
+        svg.text(
+            col0_x,
+            section_y,
+            &format!("Other pages ({}) — no attributed transition", other.len()),
+            "start",
+            12.0,
+            "700",
+            d::SUBTLE,
+        );
+        section_y = chip_grid(&mut svg, &other, col0_x, section_y + 10.0, content_right) + 20.0;
+    }
+
+    // "Internal events" inventory: non-navigating Msgs, coloured by class.
+    let internal = non_nav_actions(r);
+    if !internal.is_empty() {
+        let items: Vec<(String, &'static str, &'static str)> = internal
+            .iter()
+            .map(|a| {
+                let color = match a.server {
+                    Some(true) => d::SERVER_EDGE,
+                    Some(false) => d::CLIENT_EDGE,
+                    None => d::SUBTLE,
+                };
+                (short_edge_label(&a.msg), color, color)
+            })
+            .collect();
+        svg.text(
+            col0_x,
+            section_y,
+            &format!(
+                "Internal events ({}) — update the model, no navigation",
+                items.len()
+            ),
+            "start",
+            12.0,
+            "700",
+            d::SUBTLE,
+        );
+        section_y = chip_grid(&mut svg, &items, col0_x, section_y + 10.0, content_right) + 16.0;
+    }
+
+    // Legend.
+    let mut lrows: Vec<(String, String)> = Vec::new();
+    if r.classified {
+        lrows.push((d::SERVER_EDGE.into(), "server round-trip (/_rpc)".into()));
+        lrows.push((d::CLIENT_EDGE.into(), "client action (wasm)".into()));
+    } else {
+        lrows.push((d::STROKE.into(), "navigation (SSE round-trip)".into()));
+    }
+    lrows.push((d::PKG_STROKE.into(), "run-time / other page".into()));
+    svg.legend(col0_x, section_y + 6.0, &lrows);
+
     svg.render()
 }
 
@@ -2213,8 +3235,14 @@ mod tests {
             project: "examples/demo".into(),
             is_spa,
             modules: vec![
-                ModuleUse { module: "Api".into(), caps: api },
-                ModuleUse { module: "View".into(), caps: BTreeSet::new() },
+                ModuleUse {
+                    module: "Api".into(),
+                    caps: api,
+                },
+                ModuleUse {
+                    module: "View".into(),
+                    caps: BTreeSet::new(),
+                },
             ],
             capabilities: {
                 let mut s = BTreeSet::new();
@@ -2232,30 +3260,65 @@ mod tests {
     fn count(hay: &str, needle: &str) -> usize {
         hay.matches(needle).count()
     }
+    /// The `y` attribute of the first `<text …>label</text>` node whose content
+    /// is exactly `label` — used to prove two stacked labels sit on distinct rows.
+    fn text_y(svg: &str, label: &str) -> Option<f64> {
+        let needle = format!(">{label}</text>");
+        for seg in svg.split("<text").skip(1) {
+            let head = seg.split('>').next().unwrap_or("");
+            if seg.contains(&needle) {
+                if let Some(i) = head.find("y=\"") {
+                    let rest = &head[i + 3..];
+                    if let Some(j) = rest.find('"') {
+                        return rest[..j].parse().ok();
+                    }
+                }
+            }
+        }
+        None
+    }
 
     // ---- components ----
 
     #[test]
-    fn components_puml_single_lane() {
+    fn components_puml_single_lane_is_c4() {
         let out = render_components(&graph(false), Format::Puml);
         assert!(out.starts_with("@startuml"), "{out}");
         assert!(out.trim_end().ends_with("@enduml"), "{out}");
-        assert!(out.contains("database \"Database\" as cap_db"), "{out}");
-        assert!(out.contains("component \"Auth\" as cap_auth <<security>>"), "{out}");
-        assert!(out.contains("m_Api --> cap_db"), "{out}");
-        // no prose, no fence
+        // C4: an actor, a trust-boundary server zone, a Backend container.
+        assert!(out.contains("actor \"User\" as user"), "{out}");
+        assert!(
+            out.contains("rectangle \"Server · trusted\" <<boundary>>"),
+            "{out}"
+        );
+        assert!(out.contains("as backend <<container>>"), "{out}");
+        // Database collapses to a data store reached by a SQL edge.
+        assert!(out.contains("database \"Database\" as store0"), "{out}");
+        assert!(out.contains("backend --> store0 : SQL"), "{out}");
+        // Auth is a control marker on the client → server crossing.
+        assert!(out.contains("user --> backend : HTTPS · auth"), "{out}");
+        // single lane: no browser zone, no /_rpc crossing.
+        assert!(!out.contains("Browser · untrusted"), "{out}");
+        assert!(!out.contains("/_rpc"), "{out}");
         assert!(!out.contains("```"), "{out}");
-        assert!(!out.contains("interface \"/_rpc\""), "single lane has no rpc: {out}");
     }
 
     #[test]
-    fn components_puml_spa_has_lanes_and_rpc() {
+    fn components_puml_spa_has_zones_and_rpc() {
         let out = render_components(&graph(true), Format::Puml);
-        assert!(out.contains("package \"Client · wasm\""), "{out}");
-        assert!(out.contains("interface \"/_rpc\" as rpc"), "{out}");
-        assert!(out.contains("package \"Server · effects\""), "{out}");
-        assert!(out.contains("m_Api --> rpc"), "{out}");
-        assert!(out.contains("rpc --> cap_db"), "{out}");
+        // The two trust-boundary zones either side of the /_rpc crossing.
+        assert!(
+            out.contains("rectangle \"Browser · untrusted\" <<boundary>>"),
+            "{out}"
+        );
+        assert!(out.contains("as spa <<container>>"), "{out}");
+        assert!(
+            out.contains("rectangle \"Server · trusted\" <<boundary>>"),
+            "{out}"
+        );
+        assert!(out.contains("spa --> backend : /_rpc · auth"), "{out}");
+        assert!(out.contains("database \"Database\" as store0"), "{out}");
+        assert!(out.contains("backend --> store0 : SQL"), "{out}");
     }
 
     #[test]
@@ -2268,21 +3331,34 @@ mod tests {
     }
 
     #[test]
-    fn components_svg_is_wellformed_with_nodes_and_edges() {
+    fn components_svg_is_c4_with_trust_zone_and_container() {
         let out = render_components(&graph(false), Format::Svg);
         assert!(is_svg(&out), "{out}");
-        // 2 modules + 2 capabilities = 4 rounded rects at least; edges = Api→(db,auth) = 2.
-        assert!(count(&out, "<rect") >= 4, "expected node rects: {out}");
-        assert!(count(&out, "<line") >= 2, "expected module→cap edges: {out}");
-        assert!(out.contains(">Database<") || out.contains(">Database"), "{out}");
+        // A trust-boundary zone (dashed) and a C4 Backend container.
+        assert!(
+            out.contains("stroke-dasharray"),
+            "trust boundary is dashed: {out}"
+        );
+        assert!(
+            out.contains(">Server · trusted<"),
+            "trust boundary zone: {out}"
+        );
+        assert!(out.contains(">Backend<"), "C4 container: {out}");
+        assert!(out.contains(">Database<"), "data store: {out}");
+        // orthogonal edges are polylines / lines.
+        assert!(
+            count(&out, "<line") >= 1 || count(&out, "<polyline") >= 1,
+            "{out}"
+        );
     }
 
     #[test]
-    fn components_svg_spa_has_packages_and_rpc() {
+    fn components_svg_spa_has_zones_and_rpc() {
         let out = render_components(&graph(true), Format::Svg);
         assert!(is_svg(&out), "{out}");
-        assert!(out.contains(">Client · wasm<"), "{out}");
-        assert!(out.contains(">Server · effects<"), "{out}");
+        assert!(out.contains(">Browser · untrusted<"), "{out}");
+        assert!(out.contains(">Server · trusted<"), "{out}");
+        assert!(out.contains(">SPA<"), "{out}");
         assert!(out.contains(">/_rpc<"), "{out}");
     }
 
@@ -2300,10 +3376,22 @@ mod tests {
     #[test]
     fn family_mapping_covers_the_buckets_and_folds_the_rest() {
         assert_eq!(Capability::from_family("Db"), Some(Capability::Database));
-        assert_eq!(Capability::from_family("Http"), Some(Capability::ExternalHttp));
-        assert_eq!(Capability::from_family("System"), Some(Capability::EnvConfig));
-        assert_eq!(Capability::from_family("Time"), Some(Capability::Nondeterminism));
-        assert_eq!(Capability::from_family("Uuid"), Some(Capability::Nondeterminism));
+        assert_eq!(
+            Capability::from_family("Http"),
+            Some(Capability::ExternalHttp)
+        );
+        assert_eq!(
+            Capability::from_family("System"),
+            Some(Capability::EnvConfig)
+        );
+        assert_eq!(
+            Capability::from_family("Time"),
+            Some(Capability::Nondeterminism)
+        );
+        assert_eq!(
+            Capability::from_family("Uuid"),
+            Some(Capability::Nondeterminism)
+        );
         assert_eq!(Capability::from_family("Server"), None);
         assert_eq!(Capability::from_family("Native"), None);
     }
@@ -2346,30 +3434,54 @@ mod tests {
     #[test]
     fn wire_md_has_the_rpc_table() {
         let out = render_wire(&wire_report(), Format::Md);
-        assert!(out.contains("| Endpoint | Request (reads + args) | Response (writes) | Effects |"), "{out}");
-        assert!(out.contains("| POST /_rpc/SetRegion | {basket, region} + {region} | {basket, region} | — |"), "{out}");
-        assert!(out.contains("| POST /_rpc/SaveAll | whole model | whole model | — |"), "{out}");
+        assert!(
+            out.contains("| Endpoint | Request (reads + args) | Response (writes) | Effects |"),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "| POST /_rpc/SetRegion | {basket, region} + {region} | {basket, region} | — |"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("| POST /_rpc/SaveAll | whole model | whole model | — |"),
+            "{out}"
+        );
     }
 
     #[test]
-    fn wire_puml_is_a_sequence_per_endpoint() {
+    fn wire_puml_is_a_dfd_with_boundary_and_endpoints() {
         let out = render_wire(&wire_report(), Format::Puml);
         assert!(out.starts_with("@startuml"), "{out}");
-        assert!(out.contains("participant \"Client · wasm\" as C"), "{out}");
-        assert!(out.contains("== SetRegion =="), "{out}");
-        assert!(out.contains("C -> S : POST /_rpc/SetRegion"), "{out}");
-        assert!(out.contains("S --> C : writes {basket, region}"), "{out}");
+        // The two trust zones and the endpoint processes.
+        assert!(
+            out.contains("rectangle \"Client · untrusted\" <<boundary>>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("rectangle \"Server · trusted\" <<boundary>>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("rectangle \"POST /_rpc/SetRegion\" as ep0 <<endpoint>>"),
+            "{out}"
+        );
+        // per-endpoint request + response across the boundary.
+        assert!(out.contains("req {basket, region} + {region}"), "{out}");
+        assert!(out.contains("resp {basket, region}"), "{out}");
         assert!(!out.contains("```"), "{out}");
     }
 
     #[test]
-    fn wire_svg_is_a_sequence_with_two_lifelines() {
+    fn wire_svg_is_a_dfd_with_endpoints_section() {
         let out = render_wire(&wire_report(), Format::Svg);
         assert!(is_svg(&out), "{out}");
-        assert!(out.contains(">Client · wasm<"), "{out}");
-        assert!(out.contains(">Server<"), "{out}");
-        // one request + one response arrow per endpoint, plus two lifelines.
-        assert!(count(&out, "<line") >= 6, "expected lifelines + arrows: {out}");
+        assert!(out.contains(">Client · untrusted<"), "{out}");
+        assert!(out.contains(">Server · trusted<"), "{out}");
+        // The Endpoints section box + a per-endpoint row.
+        assert!(out.contains("Endpoints (/_rpc)"), "{out}");
+        assert!(out.contains("POST /_rpc/SetRegion"), "{out}");
     }
 
     // ---- wire (non-Spa HTTP endpoint map) ----
@@ -2381,8 +3493,16 @@ mod tests {
             target: Some("web".into()),
             endpoints: vec![],
             http_endpoints: vec![
-                HttpEndpoint { method: "GET".into(), path: "/".into(), handler: "handleHome".into() },
-                HttpEndpoint { method: "POST".into(), path: "/api/echo".into(), handler: "handleEcho".into() },
+                HttpEndpoint {
+                    method: "GET".into(),
+                    path: "/".into(),
+                    handler: "handleHome".into(),
+                },
+                HttpEndpoint {
+                    method: "POST".into(),
+                    path: "/api/echo".into(),
+                    handler: "handleEcho".into(),
+                },
             ],
             limited: false,
             notes: vec![],
@@ -2395,17 +3515,27 @@ mod tests {
         assert!(out.contains("| Method | Path | Handler |"), "{out}");
         assert!(out.contains("| GET | / | handleHome |"), "{out}");
         assert!(out.contains("| POST | /api/echo | handleEcho |"), "{out}");
-        assert!(!out.contains("| Endpoint |"), "no /_rpc table for an HTTP app: {out}");
+        assert!(
+            !out.contains("| Endpoint |"),
+            "no /_rpc table for an HTTP app: {out}"
+        );
     }
 
     #[test]
     fn wire_http_puml_and_svg() {
         let puml = render_wire(&http_wire_report(), Format::Puml);
-        assert!(puml.contains("C -> S : GET /"), "{puml}");
-        assert!(puml.contains("C -> S : POST /api/echo"), "{puml}");
+        assert!(
+            puml.contains("rectangle \"GET /\" as ep0 <<endpoint>>"),
+            "{puml}"
+        );
+        assert!(
+            puml.contains("rectangle \"POST /api/echo\" as ep1 <<endpoint>>"),
+            "{puml}"
+        );
         let svg = render_wire(&http_wire_report(), Format::Svg);
         assert!(is_svg(&svg), "{svg}");
-        assert!(svg.contains("GET /"), "{svg}");
+        assert!(svg.contains("Endpoints (HTTP)"), "{svg}");
+        assert!(svg.contains("/api/echo"), "{svg}");
     }
 
     #[test]
@@ -2420,7 +3550,10 @@ mod tests {
             notes: vec!["not a Sky.Spa wasm client".into()],
         };
         let out = render_wire(&r, Format::Md);
-        assert!(!out.contains("| Endpoint |") && !out.contains("| Method |"), "{out}");
+        assert!(
+            !out.contains("| Endpoint |") && !out.contains("| Method |"),
+            "{out}"
+        );
         assert!(out.contains("not a Sky.Spa wasm client"), "{out}");
     }
 
@@ -2431,9 +3564,24 @@ mod tests {
             project: "examples/demo".into(),
             is_spa: false,
             calls: vec![
-                TelemetryCall { module: "Main".into(), call: "Log.info".into(), event: "startup".into(), sink: Sink::Logs },
-                TelemetryCall { module: "Update".into(), call: "Analytics.track".into(), event: "<dynamic>".into(), sink: Sink::Analytics },
-                TelemetryCall { module: "Main".into(), call: "Analytics.setConsent".into(), event: "<dynamic>".into(), sink: Sink::Consent },
+                TelemetryCall {
+                    module: "Main".into(),
+                    call: "Log.info".into(),
+                    event: "startup".into(),
+                    sink: Sink::Logs,
+                },
+                TelemetryCall {
+                    module: "Update".into(),
+                    call: "Analytics.track".into(),
+                    event: "<dynamic>".into(),
+                    sink: Sink::Analytics,
+                },
+                TelemetryCall {
+                    module: "Main".into(),
+                    call: "Analytics.setConsent".into(),
+                    event: "<dynamic>".into(),
+                    sink: Sink::Consent,
+                },
             ],
             notes: vec!["a note".into()],
         }
@@ -2444,33 +3592,63 @@ mod tests {
         let out = render_telemetry(&telemetry_report(), Format::Md);
         assert!(out.contains("| Module | Call | Event | Sink |"), "{out}");
         assert!(out.contains("| Main | Log.info | startup | structured logs (console; OTel when OTEL_EXPORTER_OTLP_ENDPOINT set) |"), "{out}");
-        assert!(out.contains("| Update | Analytics.track | <dynamic> | analytics store (DB) |"), "{out}");
+        assert!(
+            out.contains("| Update | Analytics.track | <dynamic> | analytics store (DB) |"),
+            "{out}"
+        );
     }
 
     #[test]
-    fn telemetry_puml_draws_module_to_sink_edges() {
+    fn telemetry_puml_groups_internal_and_external_egress() {
         let out = render_telemetry(&telemetry_report(), Format::Puml);
         assert!(out.starts_with("@startuml"), "{out}");
+        // Sinks are grouped by egress destination.
+        assert!(out.contains("rectangle \"Internal\" <<boundary>>"), "{out}");
+        assert!(
+            out.contains("rectangle \"External egress\" <<boundary>>"),
+            "{out}"
+        );
+        assert!(out.contains("rectangle \"Consent\" <<boundary>>"), "{out}");
         assert!(out.contains("queue \"Logs\" as sink_logs"), "{out}");
-        assert!(out.contains("database \"Analytics DB\" as sink_analytics"), "{out}");
-        assert!(out.contains("card \"Consent\" as sink_consent"), "{out}");
-        assert!(out.contains("m_Main --> sink_logs : startup"), "{out}");
-        assert!(out.contains("m_Update --> sink_analytics : dynamic"), "{out}");
+        assert!(
+            out.contains("database \"Analytics DB\" as sink_analytics"),
+            "{out}"
+        );
+        // Edges are colour-coded per egress class.
+        assert!(
+            out.contains("m_Main -[#333333]-> sink_logs : startup"),
+            "{out}"
+        );
+        assert!(
+            out.contains("m_Update -[#7c3aed]-> sink_analytics : dynamic"),
+            "{out}"
+        );
     }
 
     #[test]
-    fn telemetry_svg_wellformed() {
+    fn telemetry_svg_groups_sinks() {
         let out = render_telemetry(&telemetry_report(), Format::Svg);
         assert!(is_svg(&out), "{out}");
-        // 2 modules + 3 sinks nodes, 3 edges (Main→Logs, Update→Analytics, Main→Consent).
-        assert!(count(&out, "<line") >= 3, "{out}");
+        // The internal + external egress grouping sections are present.
+        assert!(out.contains(">Internal<"), "{out}");
+        assert!(out.contains(">External egress<"), "{out}");
+        assert!(out.contains(">Consent<"), "{out}");
+        assert!(count(&out, "<polyline") >= 1, "{out}");
     }
 
     #[test]
     fn telemetry_empty_prints_the_no_sites_message() {
-        let r = TelemetryReport { project: "x".into(), is_spa: false, calls: vec![], notes: vec![] };
+        let r = TelemetryReport {
+            project: "x".into(),
+            is_spa: false,
+            calls: vec![],
+            notes: vec![],
+        };
         for f in [Format::Puml, Format::Md, Format::Svg] {
-            assert_eq!(render_telemetry(&r, f), "No telemetry, analytics, or logging call sites found.\n");
+            assert_eq!(
+                render_telemetry(&r, f),
+                "No telemetry, analytics, or logging call sites found.\n"
+            );
         }
     }
 
@@ -2482,14 +3660,35 @@ mod tests {
             is_spa: classified,
             target: Some("web:app".into()),
             pages: vec![
-                JourneyPage { name: "HomePage".into(), url: Some("/".into()) },
-                JourneyPage { name: "LoginPage".into(), url: None },
+                JourneyPage {
+                    name: "HomePage".into(),
+                    url: Some("/".into()),
+                },
+                JourneyPage {
+                    name: "LoginPage".into(),
+                    url: None,
+                },
             ],
             page_field: Some("currentPage".into()),
             actions: vec![
-                JourneyAction { msg: "Navigate".into(), server: if classified { Some(false) } else { None }, navigates_to: vec![], dynamic_nav: true },
-                JourneyAction { msg: "Refresh".into(), server: if classified { Some(true) } else { None }, navigates_to: vec![], dynamic_nav: false },
-                JourneyAction { msg: "UpvotePost".into(), server: if classified { Some(true) } else { None }, navigates_to: vec!["LoginPage".into()], dynamic_nav: false },
+                JourneyAction {
+                    msg: "Navigate".into(),
+                    server: if classified { Some(false) } else { None },
+                    navigates_to: vec![],
+                    dynamic_nav: true,
+                },
+                JourneyAction {
+                    msg: "Refresh".into(),
+                    server: if classified { Some(true) } else { None },
+                    navigates_to: vec![],
+                    dynamic_nav: false,
+                },
+                JourneyAction {
+                    msg: "UpvotePost".into(),
+                    server: if classified { Some(true) } else { None },
+                    navigates_to: vec!["LoginPage".into()],
+                    dynamic_nav: false,
+                },
             ],
             classified,
             notes: vec!["a note".into()],
@@ -2502,8 +3701,14 @@ mod tests {
         assert!(out.contains("## Pages"), "{out}");
         assert!(out.contains("| HomePage | / |"), "{out}");
         assert!(out.contains("| LoginPage | — |"), "{out}");
-        assert!(out.contains("| UpvotePost | server (POST /_rpc/UpvotePost) | LoginPage |"), "{out}");
-        assert!(out.contains("| Navigate | client | (dynamic page) |"), "{out}");
+        assert!(
+            out.contains("| UpvotePost | server (POST /_rpc/UpvotePost) | LoginPage |"),
+            "{out}"
+        );
+        assert!(
+            out.contains("| Navigate | client | (dynamic page) |"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -2511,17 +3716,88 @@ mod tests {
         let out = render_journey(&journey_report(true), Format::Puml);
         assert!(out.starts_with("@startuml"), "{out}");
         // page states with the URL folded in
-        assert!(out.contains("state \"HomePage\\n/\" as pg_HomePage"), "{out}");
+        assert!(
+            out.contains("state \"HomePage\\n/\" as pg_HomePage"),
+            "{out}"
+        );
         assert!(out.contains("state \"LoginPage\" as pg_LoginPage"), "{out}");
-        // an initial marker into the / page
+        // the dynamic pseudo-state + an initial marker into the / page
+        assert!(out.contains("as dyn_pg"), "{out}");
         assert!(out.contains("[*] --> pg_HomePage"), "{out}");
-        // a navigating transition, server-tagged
-        assert!(out.contains("pg_HomePage --> pg_LoginPage : UpvotePost [server]"), "{out}");
-        // a dynamic self transition
-        assert!(out.contains("pg_HomePage --> pg_HomePage : Navigate"), "{out}");
+        // a navigating transition, server-coloured (orange)
+        assert!(
+            out.contains("pg_HomePage -[#d9822b]-> pg_LoginPage : UpvotePost"),
+            "{out}"
+        );
+        // the dynamic transition, client-coloured (blue)
+        assert!(
+            out.contains("pg_HomePage -[#2b6cb0]-> dyn_pg : Navigate"),
+            "{out}"
+        );
         // a non-navigating action as an internal event
-        assert!(out.contains("pg_HomePage : Refresh"), "{out}");
+        assert!(out.contains("pg_HomePage : Refresh [server]"), "{out}");
         assert!(!out.contains("```"), "{out}");
+    }
+
+    #[test]
+    fn journey_collapses_parallel_edges_onto_one_labelled_edge() {
+        // Two Msgs both navigate to LoginPage: they MUST collapse onto ONE edge
+        // whose label lists BOTH (the overlap-disaster fix), never two parallel
+        // edges with stacked-on-top labels.
+        let r = JourneyReport {
+            project: "x".into(),
+            is_spa: true,
+            target: Some("web:app".into()),
+            pages: vec![
+                JourneyPage {
+                    name: "HomePage".into(),
+                    url: Some("/".into()),
+                },
+                JourneyPage {
+                    name: "LoginPage".into(),
+                    url: None,
+                },
+            ],
+            page_field: Some("page".into()),
+            actions: vec![
+                JourneyAction {
+                    msg: "UpvotePost".into(),
+                    server: Some(true),
+                    navigates_to: vec!["LoginPage".into()],
+                    dynamic_nav: false,
+                },
+                JourneyAction {
+                    msg: "DownvotePost".into(),
+                    server: Some(true),
+                    navigates_to: vec!["LoginPage".into()],
+                    dynamic_nav: false,
+                },
+            ],
+            classified: true,
+            notes: vec![],
+        };
+        // PlantUML: exactly ONE HomePage → LoginPage edge, both Msgs on its label.
+        let puml = render_journey(&r, Format::Puml);
+        assert_eq!(
+            puml.matches("pg_HomePage -[#d9822b]-> pg_LoginPage :")
+                .count(),
+            1,
+            "parallel edges must collapse to one:\n{puml}"
+        );
+        assert!(
+            puml.contains("DownvotePost\\nUpvotePost"),
+            "both Msgs on the one label:\n{puml}"
+        );
+
+        // SVG: both Msg labels appear, and on DISTINCT y (stacked, never on top
+        // of each other) — the structural no-overlap check.
+        let svg = render_journey(&r, Format::Svg);
+        let yu = text_y(&svg, "UpvotePost").expect("UpvotePost label");
+        let yd = text_y(&svg, "DownvotePost").expect("DownvotePost label");
+        assert!(
+            (yu - yd).abs() > 6.0,
+            "stacked labels must have distinct y: {yu} vs {yd}"
+        );
     }
 
     #[test]
@@ -2532,25 +3808,39 @@ mod tests {
         assert!(out.contains(">LoginPage<"), "{out}");
         assert!(out.contains(">(dynamic page)<"), "{out}");
         // the initial-page transition edge to LoginPage exists.
-        assert!(count(&out, "<line") >= 2 || count(&out, "<polyline") >= 1, "{out}");
+        assert!(
+            count(&out, "<line") >= 2 || count(&out, "<polyline") >= 1,
+            "{out}"
+        );
     }
 
     #[test]
     fn journey_live_marks_actions_as_sse() {
         let out = render_journey(&journey_report(false), Format::Md);
-        assert!(out.contains("| UpvotePost | server (SSE) | LoginPage |"), "{out}");
+        assert!(
+            out.contains("| UpvotePost | server (SSE) | LoginPage |"),
+            "{out}"
+        );
     }
 
     #[test]
     fn journey_empty_renders_a_placeholder_not_an_error() {
         let r = JourneyReport {
-            project: "x".into(), is_spa: false, target: None,
-            pages: vec![], page_field: None, actions: vec![], classified: false,
+            project: "x".into(),
+            is_spa: false,
+            target: None,
+            pages: vec![],
+            page_field: None,
+            actions: vec![],
+            classified: false,
             notes: vec!["nothing found".into()],
         };
         let puml = render_journey(&r, Format::Puml);
         assert!(puml.contains("No pages found"), "{puml}");
-        assert!(puml.starts_with("@startuml") && puml.trim_end().ends_with("@enduml"), "{puml}");
+        assert!(
+            puml.starts_with("@startuml") && puml.trim_end().ends_with("@enduml"),
+            "{puml}"
+        );
         let svg = render_journey(&r, Format::Svg);
         assert!(is_svg(&svg) && svg.contains("No pages found"), "{svg}");
         let md = render_journey(&r, Format::Md);
@@ -2676,27 +3966,31 @@ pub fn scaffold_mocks(
             walk_exprs(body, root, &mut |e| sites.push(e));
             for e in sites {
                 match &body.exprs[e] {
-                    Expr::Call(callee, args) => match http_def_name(&db, body, *callee).as_deref() {
-                        Some("get") => {
-                            direct.push(("GET".into(), args.first().and_then(|a| url_hint(body, *a))))
-                        }
-                        Some("post") => {
-                            direct.push(("POST".into(), args.first().and_then(|a| url_hint(body, *a))))
-                        }
-                        // `defaultRequest url` and `withUrl "url"` both carry the URL.
-                        Some("defaultRequest") | Some("withUrl") => {
-                            if let Some(u) = args.first().and_then(|a| url_hint(body, *a)) {
-                                builder_urls.push(u);
+                    Expr::Call(callee, args) => {
+                        match http_def_name(&db, body, *callee).as_deref() {
+                            Some("get") => direct.push((
+                                "GET".into(),
+                                args.first().and_then(|a| url_hint(body, *a)),
+                            )),
+                            Some("post") => direct.push((
+                                "POST".into(),
+                                args.first().and_then(|a| url_hint(body, *a)),
+                            )),
+                            // `defaultRequest url` and `withUrl "url"` both carry the URL.
+                            Some("defaultRequest") | Some("withUrl") => {
+                                if let Some(u) = args.first().and_then(|a| url_hint(body, *a)) {
+                                    builder_urls.push(u);
+                                }
                             }
-                        }
-                        Some("withMethod") => {
-                            if let Some(m) = args.first().and_then(|a| expr_str_lit(body, *a)) {
-                                builder_methods.push(m.to_uppercase());
+                            Some("withMethod") => {
+                                if let Some(m) = args.first().and_then(|a| expr_str_lit(body, *a)) {
+                                    builder_methods.push(m.to_uppercase());
+                                }
                             }
+                            Some("request") => saw_request = true,
+                            _ => {}
                         }
-                        Some("request") => saw_request = true,
-                        _ => {}
-                    },
+                    }
                     // `value |> f` — f is a bare Var here, not a Call.
                     Expr::Binop { op, lhs, rhs, .. } if op.as_str() == "|>" => {
                         match http_def_name(&db, body, *rhs).as_deref() {
@@ -2723,7 +4017,11 @@ pub fn scaffold_mocks(
                 if url.is_none() {
                     any_dynamic = true;
                 }
-                calls.insert(OutboundHttp { method, url, module: mname.clone() });
+                calls.insert(OutboundHttp {
+                    method,
+                    url,
+                    module: mname.clone(),
+                });
             }
             // Pair builder URLs with methods: positional when counts match, else
             // the single method applies to every URL (the common one-request-per-

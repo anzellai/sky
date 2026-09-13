@@ -46,12 +46,18 @@ fn metadata_service_is_single_lane_with_a_database_edge() {
 
     let out = render_components(&g, Format::Puml);
     assert!(out.starts_with("@startuml"), "{out}");
-    // the Database capability node (a distinct database shape)
-    assert!(out.contains("database \"Database\" as cap_db"), "{out}");
-    // at least one module → Database edge
-    assert!(out.contains("--> cap_db"), "{out}");
-    // single-lane: no RPC boundary
-    assert!(!out.contains("interface \"/_rpc\""), "{out}");
+    // C4: the server trust-boundary zone + the Backend container.
+    assert!(
+        out.contains("rectangle \"Server · trusted\" <<boundary>>"),
+        "{out}"
+    );
+    assert!(out.contains("as backend <<container>>"), "{out}");
+    // the Database collapses to a data store reached by a SQL edge.
+    assert!(out.contains("database \"Database\" as store0"), "{out}");
+    assert!(out.contains("backend --> store0 : SQL"), "{out}");
+    // single-lane: no browser zone, no /_rpc crossing.
+    assert!(!out.contains("Browser · untrusted"), "{out}");
+    assert!(!out.contains("/_rpc"), "{out}");
 
     // md format carries the module → capability table.
     let md = render_components(&g, Format::Md);
@@ -83,15 +89,25 @@ fn app_notes_as_a_spa_client_has_both_lanes_and_the_rpc_boundary() {
     );
 
     let out = render_components(&g, Format::Puml);
-    assert!(out.contains("package \"Client · wasm\""), "{out}");
-    assert!(out.contains("package \"Server · effects\""), "{out}");
-    assert!(out.contains("interface \"/_rpc\" as rpc"), "{out}");
-    assert!(out.contains("rpc --> cap_db"), "{out}");
-    // a client module reaches an effect and crosses /_rpc
-    assert!(out.contains("--> rpc"), "{out}");
+    assert!(
+        out.contains("rectangle \"Browser · untrusted\" <<boundary>>"),
+        "{out}"
+    );
+    assert!(out.contains("as spa <<container>>"), "{out}");
+    assert!(
+        out.contains("rectangle \"Server · trusted\" <<boundary>>"),
+        "{out}"
+    );
+    assert!(out.contains("database \"Database\" as store0"), "{out}");
+    assert!(out.contains("backend --> store0 : SQL"), "{out}");
+    // the client crosses /_rpc into the backend.
+    assert!(out.contains("spa --> backend : /_rpc"), "{out}");
 
-    // svg carries the two package lanes + the /_rpc node.
+    // svg carries the two trust zones + the /_rpc crossing.
     let svg = render_components(&g, Format::Svg);
     assert!(svg.trim_start().starts_with("<svg"), "{svg}");
-    assert!(svg.contains("Client · wasm") && svg.contains("/_rpc"), "{svg}");
+    assert!(
+        svg.contains("Browser · untrusted") && svg.contains("/_rpc"),
+        "{svg}"
+    );
 }

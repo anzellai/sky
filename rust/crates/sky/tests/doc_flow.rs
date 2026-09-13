@@ -277,12 +277,12 @@ fn doc_diagram_components_on_std_app_web_renders_lanes() {
         "sky doc --diagram components failed:\n{stdout}{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // Default format is now PlantUML: the two lanes are `package` boxes with an
-    // `interface "/_rpc"` between them.
+    // Default format is PlantUML: a C4 container view with the Browser and
+    // Server trust-boundary zones and the `/_rpc` crossing between them.
     assert!(stdout.starts_with("@startuml"), "not a PlantUML doc:\n{stdout}");
-    assert!(stdout.contains("package \"Client · wasm\""), "no Client lane:\n{stdout}");
-    assert!(stdout.contains("package \"Server · effects\""), "no Server lane:\n{stdout}");
-    assert!(stdout.contains("/_rpc"), "no /_rpc boundary:\n{stdout}");
+    assert!(stdout.contains("rectangle \"Browser · untrusted\" <<boundary>>"), "no Browser zone:\n{stdout}");
+    assert!(stdout.contains("rectangle \"Server · trusted\" <<boundary>>"), "no Server zone:\n{stdout}");
+    assert!(stdout.contains("/_rpc"), "no /_rpc crossing:\n{stdout}");
     assert!(
         !fixture.join(".skyapp").exists(),
         "staged `.skyapp` scratch dir was not cleaned up"
