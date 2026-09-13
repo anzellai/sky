@@ -297,6 +297,82 @@ which reads the same JSON catalogue and renders an interactive
 terminal view: ↑/↓ navigate, Enter expands the highlighted entry,
 `/` focuses the search box, Esc clears, Ctrl-C quits.
 
+#### `sky doc --diagram <kind> [--format mermaid|md]` (WIP)
+
+A read-only architecture diagram of the current project, emitted to
+stdout. Four kinds ship today — `components`, `wire`, `telemetry`, and
+`journey`:
+
+```bash
+sky doc --diagram components               # fenced ```mermaid flowchart
+sky doc --diagram components --format md   # mermaid + a module→capability table
+sky doc --diagram wire --target web:app    # the Sky.Spa /_rpc contract, as a table
+sky doc --diagram wire --format mermaid --target web:app   # as a sequence diagram
+sky doc --diagram telemetry                # the privacy/observability inventory, as a table
+sky doc --diagram telemetry --format mermaid   # module→sink flowchart
+sky doc --diagram journey                  # pages + annotated action inventory, as a flowchart
+sky doc --diagram journey --format md      # the page list + the action table
+sky doc --diagram journey --target web:app # client/server split per action (Sky.Spa)
+```
+
+`components` charts each `src/` module and the external capabilities
+it reaches — Database, External HTTP, Auth, File, Env/Config,
+Telemetry/Logs, Jobs, Realtime/SSE, and Time/Random/Uuid — as
+capability nodes with `Module --> Capability` edges. For a Sky.Spa
+app (a `web:app` / `mobile*` / `desktop:*` / `tablet:*` target, or an
+explicit `Std.Spa` use) it splits into a `Client` lane (the modules)
+and a `Server` lane (the capabilities), with the `/_rpc` boundary
+between them, matching the "any effect runs on the server" split.
+`--format` defaults to `mermaid`.
+
+`wire` charts the Sky.Spa auto-derived RPC contract — otherwise
+invisible to the author. For every SERVER `update` branch that becomes
+a `POST /_rpc/<Msg>` endpoint it shows the REQUEST (the Model fields
+the branch reads plus the Msg args, or "whole model") and the RESPONSE
+(the Model fields it writes, or "whole model"), so a missing read is
+visible at a glance. `--format` defaults to `md` (a table); `mermaid`
+emits a `sequenceDiagram` of the same endpoints. `--target` overrides
+the `sky.toml` `[app] target`. A non-Spa app (Sky.Live / Http / Cli, or
+a target that is not a wasm client) prints a short note explaining that
+`wire` describes the Sky.Spa RPC boundary — a Sky.Live app's "wire" is
+the SSE / session channel, not an RPC contract — and exits 0.
+
+`telemetry` charts the privacy / observability inventory — everything
+the app tracks or logs, and where it goes. It lists one row per
+telemetry / analytics / logging call site in the project's own modules:
+the module the call is in, the call (`Log.info`, `Analytics.track`,
+`Analytics.setConsent`), the event/message (its first string-literal
+argument, or `<dynamic>`), and the sink — structured logs (console;
+OTel when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), the analytics store
+(DB), or the per-session consent state. `--format` defaults to `md` (a
+table); `mermaid` draws a `module -->|event| sink` flowchart with the
+sinks as distinct nodes. Log and Analytics are effect kernels, so under
+a Sky.Spa split they run on the server, reached over `/_rpc`. An app
+with no such call sites prints a short note and exits 0.
+
+`journey` charts the user journey — the app's pages and what a user does
+on them. It lists the pages (the `Page` union the Model's page field uses,
+each with its URL when the app declares an `App.withRoutes` table) and an
+annotated action inventory: every `update` Msg, marked `client` or
+`server (POST /_rpc/<Msg>)` under a Sky.Spa target (reusing the same
+client/server split `wire` computes) or `server (SSE)` on a Sky.Live app,
+plus the page(s) each action navigates to (a branch that sets the page
+field to a page constructor; a run-time-chosen target shows as
+`(dynamic page)`). Per-page attribution is best-effort: actions are one
+inventory, and a navigation target is the page an action routes TO — the
+source page is not attributed, since an action can fire from any page.
+`--format` defaults to `mermaid` (a page/nav flowchart); `md` gives the
+page list + the action table. When the pages cannot be determined it prints
+a short note and exits 0.
+
+The `components`, `wire`, and `journey` kinds reuse the same analysis as
+the Sky.Spa auto-split, so the diagram cannot drift from what ships; no
+kind type-checks beyond the shared source load, lowers, `go build`s, or
+writes.
+
+The remaining kind — `callpath` — is planned and exits non-zero with a
+"not yet implemented" note today.
+
 ### `sky doctor [--fix] [--verbose]`
 
 Project + environment health checks. v0.15.48 shipped **15 checks**

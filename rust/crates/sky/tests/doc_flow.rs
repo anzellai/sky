@@ -209,3 +209,153 @@ fn doc_serve_answers_http_200() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `sky doc --diagram wire --target web:app` on an `App.app` (`Std.App`) app
+/// must chart the RPC contract, even though those branches exist only in the
+/// SYNTHESISED `Std.Spa` entry the build derives (not the raw `App.app` entry).
+/// The diagram stages that synthesised project the same way the build stages it
+/// and analyses THAT. Before the fix this printed the "inline-effect shape" note
+/// and an empty table. The fixture's `Save` branch runs a server effect
+/// (`System.getenv`), so it becomes `POST /_rpc/Save`.
+#[test]
+fn doc_diagram_wire_on_std_app_web_charts_rpc() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/diagram-app-web");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "wire", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram wire");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "sky doc --diagram wire failed:\n{stdout}{stderr}"
+    );
+    // At least one `/_rpc/` row — the proof the synthesis path was analysed. The
+    // raw `App.app` entry has no `Std.Spa` `main`, so without staging the
+    // synthesised project this table would be empty.
+    assert!(
+        stdout.contains("POST /_rpc/Save"),
+        "wire table missing the synthesised /_rpc/Save endpoint:\n{stdout}"
+    );
+    // The "inline-effect shape" fallback note must NOT appear — the branches
+    // were recovered.
+    assert!(
+        !stdout.contains("inline-effect shape"),
+        "wire diagram fell back to the Std.App inline-effect note:\n{stdout}"
+    );
+    // The display label names the user's project, not the staged scratch dir.
+    assert!(
+        !stdout.contains(".skyapp"),
+        "wire diagram leaked the staged scratch dir into its output:\n{stdout}"
+    );
+    // The staging scratch tree is cleaned up (no `.skyapp` residue in the
+    // committed fixture).
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged `.skyapp` scratch dir was not cleaned up"
+    );
+}
+
+/// `--diagram components --target web:app` on the same `Std.App` app must still
+/// render the Client / Server lanes over the `/_rpc` boundary.
+#[test]
+fn doc_diagram_components_on_std_app_web_renders_lanes() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/diagram-app-web");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "components", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram components");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "sky doc --diagram components failed:\n{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("subgraph Client"), "no Client lane:\n{stdout}");
+    assert!(stdout.contains("subgraph Server"), "no Server lane:\n{stdout}");
+    assert!(stdout.contains("/_rpc"), "no /_rpc boundary:\n{stdout}");
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged `.skyapp` scratch dir was not cleaned up"
+    );
+}
+
+/// `sky doc --diagram telemetry` on an app with no telemetry / analytics /
+/// logging call site is NOT an error: it prints the "no call sites" line and
+/// exits 0. The `diagram-app-web` fixture only reads env (`System.getenv`), so
+/// it has no Log / Analytics call. Also verifies the staging scratch tree is
+/// cleaned up on the telemetry arm (run under `--target web:app`).
+#[test]
+fn doc_diagram_telemetry_no_sites_exits_zero() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/diagram-app-web");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "telemetry", "--target", "web:app"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram telemetry");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "sky doc --diagram telemetry failed:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("No telemetry, analytics, or logging call sites found."),
+        "expected the no-sites message:\n{stdout}"
+    );
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged `.skyapp` scratch dir was not cleaned up"
+    );
+}
+
+/// `sky doc --diagram journey` on a real multi-page Sky.Live app (examples/
+/// 19-skyforum: a `Page` union `HomePage | PostPage Int | LoginPage`, a Model
+/// `currentPage : Page`, and an `update` that reroutes to `LoginPage` /
+/// `HomePage`). It must name at least two pages and at least one action, with no
+/// go build and no staging (the bare Live target does not synthesise a client).
+#[test]
+fn doc_diagram_journey_on_skyforum_lists_pages_and_actions() {
+    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/19-skyforum");
+    if !project.join("src/State.sky").exists() {
+        // The example is part of the repo; if a checkout omits it, skip loudly.
+        eprintln!("skipping: examples/19-skyforum not present at {project:?}");
+        return;
+    }
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "journey", "--format", "md"])
+        .current_dir(&project)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram journey");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "sky doc --diagram journey failed:\n{stdout}{stderr}"
+    );
+    // The page set (>= 2 pages), recovered from the `Page` union.
+    assert!(stdout.contains("## Pages"), "no Pages section:\n{stdout}");
+    assert!(stdout.contains("| HomePage |"), "missing HomePage:\n{stdout}");
+    assert!(stdout.contains("| LoginPage |"), "missing LoginPage:\n{stdout}");
+    // The action inventory (>= 1 action), and a recovered navigation target.
+    assert!(stdout.contains("## Actions"), "no Actions section:\n{stdout}");
+    assert!(stdout.contains("| Navigate |"), "missing Navigate action:\n{stdout}");
+    assert!(
+        stdout.contains("| UpvotePost | server (SSE) | LoginPage |"),
+        "UpvotePost should reroute to LoginPage over SSE (Live):\n{stdout}"
+    );
+    // A bare Live target never stages a client, so no `.skyapp` scratch tree.
+    assert!(
+        !project.join(".skyapp/diagram").exists(),
+        "journey left a staged `.skyapp/diagram` scratch dir"
+    );
+}
