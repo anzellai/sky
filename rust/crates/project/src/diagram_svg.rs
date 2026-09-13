@@ -262,6 +262,108 @@ impl Svg {
         self.text(x + 12.0, y + 18.0, label, "start", 12.0, "700", SUBTLE);
     }
 
+    /// A TRUST-BOUNDARY zone: a dashed bordered box with a header label, used to
+    /// enclose the untrusted (browser) and trusted (server) sides of a system in
+    /// a C4 / data-flow diagram. `accent` colours the border + header so the two
+    /// sides read apart. Nothing is filled, so inner containers stay legible.
+    pub fn zone(&mut self, x: f64, y: f64, w: f64, h: f64, label: &str, accent: &str) {
+        self.body.push_str(&format!(
+            "  <rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" height=\"{h:.1}\" rx=\"10\" \
+             fill=\"none\" stroke=\"{accent}\" stroke-width=\"1.3\" stroke-dasharray=\"6 4\"/>\n"
+        ));
+        self.text(x + 14.0, y + 19.0, label, "start", 11.5, "700", accent);
+        self.touch(x + w, y + h);
+    }
+
+    /// A C4 CONTAINER box: a filled rounded rectangle with a bold title, a small
+    /// «stereotype» line (e.g. «wasm client»), and an optional grey subtitle.
+    /// Reads as a deployable unit, distinct from a capability shape.
+    pub fn container(&mut self, x: f64, y: f64, w: f64, h: f64, fill: &str, title: &str, stereotype: &str, subtitle: Option<&str>) {
+        self.rect(x, y, w, h, 8.0, fill, STROKE, 1.5);
+        let cx = x + w / 2.0;
+        self.text(cx, y + 24.0, title, "middle", 13.0, "700", TEXT);
+        if !stereotype.is_empty() {
+            self.text(cx, y + 40.0, &format!("«{stereotype}»"), "middle", 10.5, "500", SUBTLE);
+        }
+        if let Some(sub) = subtitle {
+            if !sub.is_empty() {
+                for (i, l) in wrap(sub, ((w - 20.0) / (10.5 * 0.6)).max(1.0) as usize).iter().enumerate() {
+                    self.text(cx, y + 56.0 + i as f64 * 13.0, l, "middle", 10.0, "400", SUBTLE);
+                }
+            }
+        }
+    }
+
+    /// An actor (person) glyph with a label beneath — the external user in a C4
+    /// context/container diagram. Drawn centred on `cx`, head top at `y_top`.
+    pub fn actor(&mut self, cx: f64, y_top: f64, label: &str) {
+        let head_r = 10.0;
+        let hy = y_top + head_r;
+        self.body.push_str(&format!(
+            "  <circle cx=\"{cx:.1}\" cy=\"{hy:.1}\" r=\"{head_r:.1}\" fill=\"{FILL}\" stroke=\"{STROKE}\" stroke-width=\"1.5\"/>\n"
+        ));
+        let by = hy + head_r + 2.0;
+        // shoulders/body: a rounded trapezoid approximated by a path
+        self.body.push_str(&format!(
+            "  <path d=\"M {l:.1} {bb:.1} Q {cx:.1} {by:.1} {r:.1} {bb:.1}\" fill=\"none\" stroke=\"{STROKE}\" stroke-width=\"1.5\"/>\n",
+            l = cx - 16.0, r = cx + 16.0, bb = by + 20.0, by = by,
+        ));
+        self.text(cx, by + 36.0, label, "middle", 12.0, "600", TEXT);
+        self.touch(cx + 18.0, by + 40.0);
+    }
+
+    /// An orthogonal (right-angle) connector from `(x1,y1)` to `(x2,y2)`, routed
+    /// as H then V (or a straight line when already axis-aligned), with an
+    /// arrowhead on the end and an optional label on a white plate at the bend.
+    /// Orthogonal routing is what keeps an architecture diagram from becoming
+    /// diagonal spaghetti.
+    pub fn ortho(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, color: &str, label: Option<&str>) {
+        self.markers.insert(color.to_string());
+        let mid = Self::marker_id(color);
+        if (y1 - y2).abs() < 0.5 || (x1 - x2).abs() < 0.5 {
+            self.body.push_str(&format!(
+                "  <line x1=\"{x1:.1}\" y1=\"{y1:.1}\" x2=\"{x2:.1}\" y2=\"{y2:.1}\" \
+                 stroke=\"{color}\" stroke-width=\"1.5\" marker-end=\"url(#{mid})\"/>\n"
+            ));
+            if let Some(l) = label {
+                self.edge_label((x1 + x2) / 2.0, (y1 + y2) / 2.0, l, color);
+            }
+        } else {
+            // H to the mid-x, then V to the target row, then H into the target.
+            let mx = (x1 + x2) / 2.0;
+            let pts = [(x1, y1), (mx, y1), (mx, y2), (x2, y2)];
+            let s: Vec<String> = pts.iter().map(|(x, y)| format!("{x:.1},{y:.1}")).collect();
+            self.body.push_str(&format!(
+                "  <polyline points=\"{}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"1.5\" \
+                 marker-end=\"url(#{mid})\"/>\n",
+                s.join(" ")
+            ));
+            if let Some(l) = label {
+                self.edge_label(mx, (y1 + y2) / 2.0, l, color);
+            }
+        }
+        self.touch(x2, y2);
+    }
+
+    /// A legend box at `(x,y)`: a small bordered card listing `swatch → text`
+    /// rows, so a reader can decode the shapes/colours without prose.
+    pub fn legend(&mut self, x: f64, y: f64, rows: &[(String, String)]) {
+        if rows.is_empty() {
+            return;
+        }
+        let row_h = 18.0;
+        let w = 12.0 + rows.iter().map(|(_, t)| 26.0 + text_width(t, 10.5)).fold(0.0_f64, f64::max) + 12.0;
+        let h = 24.0 + rows.len() as f64 * row_h;
+        self.rect(x, y, w, h, 6.0, "#ffffff", PKG_STROKE, 1.0);
+        self.text(x + 10.0, y + 16.0, "Legend", "start", 10.5, "700", SUBTLE);
+        for (i, (color, text)) in rows.iter().enumerate() {
+            let ry = y + 24.0 + i as f64 * row_h;
+            self.rect(x + 10.0, ry + 3.0, 14.0, 9.0, 2.0, "#ffffff", color, 1.5);
+            self.text(x + 32.0, ry + 11.0, text, "start", 10.5, "500", TEXT);
+        }
+        self.touch(x + w, y + h);
+    }
+
     /// A plain text caption (grey, small) — read/write hints, notes on a lane.
     pub fn caption(&mut self, x: f64, y: f64, s: &str, anchor: &str) {
         self.text(x, y, s, anchor, 10.5, "400", SUBTLE);
