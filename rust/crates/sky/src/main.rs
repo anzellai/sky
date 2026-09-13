@@ -2711,6 +2711,15 @@ fn build_and_run_fuzz_harness(
             project::OfflineDbPlan::Postgres => {
                 cmd.env("SKY_EMBED_POSTGRES", "1");
                 cmd.env("SKY_DATA_DIR", harness_dir.join("pgdata"));
+                // Offline fuzz means "ignore any configured external DB, use an
+                // ephemeral one". A Postgres app often carries its DSN in a
+                // `.env` (DATABASE_URL=...), which the runtime auto-loads — and
+                // an embedded cluster PLUS a DSN is a refused conflict. Setting
+                // DATABASE_URL to empty here suppresses the `.env` value (dotenv
+                // loads with override=false, so an already-set var wins) and the
+                // conflict check skips an empty value, so embed provisions its
+                // own cluster and injects its own DSN.
+                cmd.env("DATABASE_URL", "");
             }
             project::OfflineDbPlan::Sqlite { db_path_env } => {
                 cmd.env(db_path_env, harness_dir.join("fuzz.db"));
