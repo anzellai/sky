@@ -2667,8 +2667,11 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     }
 
     // Run in TEST MODE. Deterministic clock/seed so a crash reproduces; an
-    // ephemeral embedded Postgres when the project declares a [database] and no
-    // DSN is set (so a DB app fuzzes offline).
+    // offline database when the project declares one (so a DB app fuzzes with no
+    // live server and no network). The engine decides how: a Postgres app gets
+    // an ephemeral embedded cluster; a SQLite app is already offline and just has
+    // its path redirected to a scratch file (forcing embedded Postgres onto a
+    // SQLite app is a conflict the runtime refuses — see `offline_db_plan`).
     let app = out_dir.join("sky-out").join(project::configured_bin_name(&project_dir));
     let mut cmd = std::process::Command::new(&app);
     cmd.current_dir(&project_dir);
@@ -2676,9 +2679,17 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     cmd.env("SKY_TEST_SEED", seed.to_string());
     cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
     let has_dsn = std::env::var_os("DATABASE_URL").is_some();
-    if !has_dsn && project_declares_database(&project_dir) {
-        cmd.env("SKY_EMBED_POSTGRES", "1");
-        cmd.env("SKY_DATA_DIR", out_dir.join("pgdata"));
+    if !has_dsn {
+        match project::offline_db_plan(&project_dir) {
+            project::OfflineDbPlan::Postgres => {
+                cmd.env("SKY_EMBED_POSTGRES", "1");
+                cmd.env("SKY_DATA_DIR", out_dir.join("pgdata"));
+            }
+            project::OfflineDbPlan::Sqlite { db_path_env } => {
+                cmd.env(db_path_env, out_dir.join("fuzz.db"));
+            }
+            project::OfflineDbPlan::None => {}
+        }
     }
     let status = cmd.status();
     match status {
@@ -2699,14 +2710,6 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-/// True when the project's `sky.toml` declares a `[database]` — the signal to
-/// provision an ephemeral embedded Postgres for a DB app being fuzzed offline.
-fn project_declares_database(project_dir: &Path) -> bool {
-    std::fs::read_to_string(project_dir.join("sky.toml"))
-        .map(|s| s.lines().map(str::trim).any(|l| l == "[database]" || l.starts_with("[database]")))
-        .unwrap_or(false)
 }
 
 fn cmd_spa_diff_fuzz(args: &[String]) -> ExitCode {

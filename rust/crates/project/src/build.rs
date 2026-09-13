@@ -1000,6 +1000,82 @@ pub fn migration_hint_for(project_dir: &Path) -> Option<String> {
     crate::config_migration::migration_hint(&cfg.present_runtime_config_keys)
 }
 
+/// How `sky test` / `sky fuzz` should give a project an OFFLINE database, so a
+/// scenario or a fuzz run needs no live server and no network.
+///
+/// The engine matters, and treating every `[database]` the same is a bug. A
+/// SQLite app is ALREADY offline — its DSN is a local file — so forcing an
+/// ephemeral embedded Postgres onto it is wrong twice over: the compiled
+/// `<PREFIX>_DB_PATH` and `SKY_EMBED_POSTGRES` are a conflict the runtime
+/// refuses (`rt.embeddedDSNConflict`, `runtime-go/rt/pg_embed.go`), so the app
+/// never boots and the run FAILS before doing any work. A SQLite app instead
+/// needs only its path pointed at a throwaway file, so the run is ephemeral and
+/// never touches the project's real database.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OfflineDbPlan {
+    /// No `[database]` — nothing to provision.
+    None,
+    /// SQLite (an explicit `sqlite` driver, or a file-shaped DSN): redirect the
+    /// DB to a scratch file. The field is the env-var NAME to set
+    /// (`<PREFIX>_DB_PATH`); set it BEFORE the app runs so it wins over the
+    /// compiled `rt.SetSkyDefault("DB_PATH", …)` default.
+    Sqlite { db_path_env: String },
+    /// Postgres (an explicit `postgres` driver, a `postgres://` DSN, or a bare
+    /// `[database]` whose DSN arrives at run time): provision an ephemeral
+    /// embedded Postgres in a scratch data dir (`SKY_EMBED_POSTGRES` +
+    /// `SKY_DATA_DIR`).
+    Postgres,
+}
+
+/// Classify how a project's `[database]` should be provisioned for an offline
+/// test / fuzz run. See [`OfflineDbPlan`]. Reads `sky.toml` only — no DB, no Go.
+pub fn offline_db_plan(project_dir: &Path) -> OfflineDbPlan {
+    let sky_toml = project_dir.join("sky.toml");
+    let Ok(text) = std::fs::read_to_string(&sky_toml) else {
+        return OfflineDbPlan::None;
+    };
+    // A `[database]` table with no recognised keys still DECLARES a database
+    // (the DSN can arrive at run time), so test for the section itself, not for
+    // a parsed key.
+    let declares = text
+        .lines()
+        .map(str::trim)
+        .any(|l| l == "[database]" || l.starts_with("[database]"));
+    if !declares {
+        return OfflineDbPlan::None;
+    }
+    let cfg = read_sky_toml_config(&sky_toml);
+    let prefix = cfg
+        .env_prefix
+        .as_deref()
+        .map(|p| p.trim().trim_end_matches('_'))
+        .filter(|p| !p.is_empty())
+        .unwrap_or("SKY");
+    let db_path_env = format!("{prefix}_DB_PATH");
+    // Decide the engine. An explicit `driver` wins; else infer from the DSN
+    // shape; else a bare `[database]` (DSN supplied at run time) is the ephemeral
+    // embedded Postgres, which is what the phase-3b proof (`dbdemo`) exercised.
+    let engine = match cfg.db_driver.as_deref() {
+        Some(d) => {
+            let d = d.trim().to_ascii_lowercase();
+            if matches!(d.as_str(), "postgres" | "postgresql" | "pgx") {
+                "pgx"
+            } else {
+                "sqlite"
+            }
+        }
+        None => match cfg.db_dsn.as_deref() {
+            Some(dsn) => driver_for_dsn(dsn),
+            None => "pgx",
+        },
+    };
+    if engine == "sqlite" {
+        OfflineDbPlan::Sqlite { db_path_env }
+    } else {
+        OfflineDbPlan::Postgres
+    }
+}
+
 pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
     let mut cfg = lower::LowerConfig::default();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -3118,5 +3194,111 @@ mod materialise_rt_tests {
         assert!(!dst.join("rt_test.go").exists(), "tests are stripped");
 
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod offline_db_plan_tests {
+    //! Regression for the `sky test` / `sky fuzz` offline-DB substrate.
+    //!
+    //! The bug this gates: the substrate forced `SKY_EMBED_POSTGRES` onto ANY
+    //! `[database]` project, including a SQLite one. A SQLite app carries a
+    //! compiled `<PREFIX>_DB_PATH`, and embed + a DSN is a conflict the runtime
+    //! REFUSES (`rt.embeddedDSNConflict`) — so a real DB-backed SQLite Live app
+    //! (e.g. `examples/12-skyvote`) never booted and the run FAILED before a
+    //! single Msg was folded. The engine must decide the plan.
+
+    use super::{offline_db_plan, OfflineDbPlan};
+    use std::path::PathBuf;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "sky-offlinedb-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn plan_for(tag: &str, sky_toml: &str) -> OfflineDbPlan {
+        let d = scratch(tag);
+        std::fs::write(d.join("sky.toml"), sky_toml).unwrap();
+        let p = offline_db_plan(&d);
+        let _ = std::fs::remove_dir_all(&d);
+        p
+    }
+
+    #[test]
+    fn sqlite_driver_redirects_the_path_not_embedded_postgres() {
+        // The exact 12-skyvote shape: `driver = "sqlite"`, no explicit path.
+        let p = plan_for(
+            "sqlite",
+            "name = \"skyvote\"\nversion = \"0.1.0\"\n\n[database]\ndriver = \"sqlite\"\n",
+        );
+        assert_eq!(
+            p,
+            OfflineDbPlan::Sqlite { db_path_env: "SKY_DB_PATH".to_string() },
+            "a SQLite app must have its path redirected, NOT be forced onto embedded Postgres"
+        );
+    }
+
+    #[test]
+    fn sqlite_via_file_path_dsn_with_no_explicit_driver_is_sqlite() {
+        let p = plan_for(
+            "sqlitepath",
+            "name = \"a\"\nversion = \"0.1.0\"\n\n[database]\npath = \"app.db\"\n",
+        );
+        assert_eq!(p, OfflineDbPlan::Sqlite { db_path_env: "SKY_DB_PATH".to_string() });
+    }
+
+    #[test]
+    fn postgres_driver_provisions_embedded_postgres() {
+        let p = plan_for(
+            "pg",
+            "name = \"a\"\nversion = \"0.1.0\"\n\n[database]\ndriver = \"postgres\"\n",
+        );
+        assert_eq!(p, OfflineDbPlan::Postgres);
+    }
+
+    #[test]
+    fn postgres_url_dsn_with_no_explicit_driver_is_postgres() {
+        let p = plan_for(
+            "pgurl",
+            "name = \"a\"\nversion = \"0.1.0\"\n\n[database]\nurl = \"postgres://localhost/db\"\n",
+        );
+        assert_eq!(p, OfflineDbPlan::Postgres);
+    }
+
+    #[test]
+    fn bare_database_section_defaults_to_embedded_postgres() {
+        // A `[database]` whose DSN arrives at run time (the phase-3b `dbdemo`
+        // shape) provisions the ephemeral embedded cluster.
+        let p = plan_for(
+            "bare",
+            "name = \"a\"\nversion = \"0.1.0\"\n\n[database]\nmaxOpenConns = 4\n",
+        );
+        assert_eq!(p, OfflineDbPlan::Postgres);
+    }
+
+    #[test]
+    fn no_database_section_is_none() {
+        let p = plan_for("nodb", "name = \"a\"\nversion = \"0.1.0\"\n");
+        assert_eq!(p, OfflineDbPlan::None);
+    }
+
+    #[test]
+    fn env_prefix_renames_the_sqlite_db_path_var() {
+        // `[env] prefix` re-namespaces every SKY_* read, so the redirect var
+        // must follow it or it seeds nothing the app reads.
+        let p = plan_for(
+            "prefix",
+            "name = \"a\"\nversion = \"0.1.0\"\n\n[env]\nprefix = \"FENCE\"\n\n[database]\ndriver = \"sqlite\"\n",
+        );
+        assert_eq!(p, OfflineDbPlan::Sqlite { db_path_env: "FENCE_DB_PATH".to_string() });
     }
 }

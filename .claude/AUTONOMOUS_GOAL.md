@@ -194,13 +194,27 @@ generator from the app's own Msg union, fold random Msg sequences from init()
 through update, assert no unclassified panic. Reachable by construction (a client
 can send any Msg). No hand-written oracle. Works on ANY TEA app (Spa or Live) —
 it only needs (Model, Msg, update) — and runs under the ephemeral-DB +
-determinism + mock-by-default substrate so a DB-backed Live app fuzzes offline.
-PROVEN: spa-derived-read (Spa) 5 ctors / 300 steps, no panic; 19-skyforum
-(Sky.Live, multi-module, DB-backed) 11 ctors incl. client Bump/UpvotePost/
-SubmitComment / 200 steps, no panic. THIS is the direct answer to "for all other
-possible sky apps either on live or spa, how does the automated tests go" — Spa
-gets the free differential oracle + this; Live gets this + the scenario
+determinism + mock-by-default substrate so a DB-backed app fuzzes offline.
+PROVEN: spa-derived-read (Spa, in-memory) 5 ctors / 300 steps, no panic;
+19-skyforum (Sky.Live, multi-module, in-memory) 11 ctors incl. client
+Bump/UpvotePost/SubmitComment / 200 steps, no panic; 12-skyvote (Sky.Live,
+SQLite [database]) fuzzes OFFLINE 100 steps, no panic — it drove real random
+sign-ins, all classified PermissionDenied. THIS is the direct answer to "for all
+other possible sky apps either on live or spa, how does the automated tests go" —
+Spa gets the free differential oracle + this; Live gets this + the scenario
 substrate. Diff-fuzz gate unaffected (10/10 branches); project crate 34 passed.
+
+OFFLINE-DB FIX (Judge-found, @HEAD): the substrate FORCED SKY_EMBED_POSTGRES onto
+ANY [database] project. A SQLite app carries a compiled <PREFIX>_DB_PATH, and
+embed + a DSN is a conflict the runtime REFUSES — so a real DB-backed SQLite Live
+app (12-skyvote) never booted and `sky fuzz` FAILED before folding a Msg. The
+Judge also caught my "19-skyforum DB-backed" claim as FALSE (skyforum is
+in-memory), so the offline-DB property was asserted, never demonstrated. FIXED
+holistically: project::offline_db_plan classifies by engine — Postgres app -> the
+ephemeral embedded cluster; SQLite app -> its path redirected to a scratch file
+(already offline). Applied to BOTH sky fuzz (main.rs) and sky test (testrunner),
+which shared the bug. GATED: 7 offline_db_plan unit tests + fuzz_verb_flow e2e (a
+SQLite DB app fuzzes offline PASS; a panicking update FAILs with DivisionByZero).
 
 FEATURE STATE (2026-09-13): JUDGE-VERIFIED COMPLETE (@7a4918aa) + Gap A (ephemeral
 DB) since closed + model fuzzer (@71df881b) closes the Live-app net. Mode A (differential fuzzer)

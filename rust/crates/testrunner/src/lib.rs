@@ -204,17 +204,28 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
                 }
             }
             // EPHEMERAL DB (auto-testing phase 3b): if the project declares a
-            // database but no DSN is provided, provision a throwaway EMBEDDED
-            // Postgres in the run's scratch dir — created, migrated by the app's
-            // own schema setup, and thrown away with the scratch dir at the end.
-            // So a scenario needs NO live Postgres. Skipped when a DSN IS given
-            // (the test targets that DB) — and SKY_EMBED_POSTGRES + a DSN is an
-            // error the runtime rejects, so the has_dsn guard is load-bearing.
-            // The temp data dir is allowed only because SKY_TEST_MODE is set (see
-            // rejectTempDataDir); a prod --embed app is unaffected.
-            if !has_dsn && project_declares_database(&project_dir) {
-                cmd.env("SKY_EMBED_POSTGRES", "1");
-                cmd.env("SKY_DATA_DIR", scratch.join("pgdata"));
+            // database but no DSN is provided, give it an OFFLINE database in the
+            // run's scratch dir, thrown away with the scratch dir at the end. The
+            // engine decides how (see `project::offline_db_plan`): a Postgres app
+            // gets a throwaway EMBEDDED cluster (created + migrated by the app's
+            // own schema setup); a SQLite app is already offline and just has its
+            // path redirected to a scratch file — forcing embedded Postgres onto a
+            // SQLite app is a conflict the runtime rejects, so branching on the
+            // engine is load-bearing. Skipped when a DSN IS given (the test
+            // targets that DB). The temp data dir is allowed only because
+            // SKY_TEST_MODE is set (see rejectTempDataDir); a prod --embed app is
+            // unaffected.
+            if !has_dsn {
+                match project::offline_db_plan(&project_dir) {
+                    project::OfflineDbPlan::Postgres => {
+                        cmd.env("SKY_EMBED_POSTGRES", "1");
+                        cmd.env("SKY_DATA_DIR", scratch.join("pgdata"));
+                    }
+                    project::OfflineDbPlan::Sqlite { db_path_env } => {
+                        cmd.env(db_path_env, scratch.join("test.db"));
+                    }
+                    project::OfflineDbPlan::None => {}
+                }
             }
         }
 
@@ -260,18 +271,6 @@ fn parse_dotenv(contents: &str) -> Vec<(String, String)> {
     out
 }
 
-/// True when the project's `sky.toml` declares a database (a `[database]`
-/// table) — the signal that a scenario needs a DB, so `sky test` should
-/// auto-provision an ephemeral embedded Postgres when no DSN is supplied.
-fn project_declares_database(project_dir: &Path) -> bool {
-    std::fs::read_to_string(project_dir.join("sky.toml"))
-        .map(|s| {
-            s.lines()
-                .map(str::trim)
-                .any(|l| l == "[database]" || l.starts_with("[database]"))
-        })
-        .unwrap_or(false)
-}
 
 /// A unique scratch directory under the OS temp dir for one `sky test` run.
 fn scratch_dir() -> std::path::PathBuf {
