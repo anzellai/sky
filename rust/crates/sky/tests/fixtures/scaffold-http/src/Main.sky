@@ -1,0 +1,35 @@
+module Main exposing (main)
+
+-- Fixture for `sky test --scaffold-mocks` / `project::diagram::scaffold_mocks`.
+-- Exercises the three shapes the outbound-HTTP walk must recover:
+--   1. a direct `Http.get "literal-url"`;
+--   2. a builder `Http.defaultRequest (base ++ "/path") |> withMethod "POST"
+--      |> request` — the URL is a `++` concat whose literal suffix is the
+--      host-independent match, and the method is a `withMethod` literal.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Http as Http
+
+
+apiBase : String
+apiBase =
+    "https://api.stripe.com/v1"
+
+
+fetchThing : Task Error Http.HttpResponse
+fetchThing =
+    Http.get "https://api.example.com/v1/things"
+
+
+charge : Task Error Http.HttpResponse
+charge =
+    Http.defaultRequest (apiBase ++ "/charges")
+        |> Http.withMethod "POST"
+        |> Http.withBody "amount=100"
+        |> Http.request
+
+
+main : Task Error ()
+main =
+    Task.andThen (\_ -> Task.map (\_ -> ()) charge) (Task.map (\_ -> ()) fetchThing)

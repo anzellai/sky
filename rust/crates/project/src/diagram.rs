@@ -2099,3 +2099,219 @@ mod tests {
         assert!(md.contains("nothing found"), "{md}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// `sky test --scaffold-mocks` — emit mock-fixture skeletons for the app's
+// outbound HTTP boundary, derived from the typed HIR (the same read-only load
+// the diagrams use). This is the "an AI tool can write the mocks" path from
+// docs/tooling/testing.md: the compiler knows which outbound calls the app
+// makes and to which URLs, so it can pre-fill `match.method` + `match.urlContains`
+// and leave only the response `body` to paste from a captured payload.
+// ---------------------------------------------------------------------------
+
+/// One outbound HTTP call site found in the project's OWN modules.
+#[derive(Clone, PartialEq, Eq, Debug, PartialOrd, Ord)]
+pub struct OutboundHttp {
+    /// The HTTP method (`GET`/`POST`/…), or empty when it is only known at run
+    /// time (a `request` built without a literal `withMethod`).
+    pub method: String,
+    /// The literal URL, when the call passes one as a string literal (or a
+    /// `withUrl "…"` in a `request` builder). `None` when the URL is computed.
+    pub url: Option<String>,
+    /// The project module the call site is in.
+    pub module: String,
+}
+
+/// The outbound-HTTP inventory for a project — pure data the `sky test
+/// --scaffold-mocks` writer consumes.
+pub struct MockScaffold {
+    /// The project path, relative to the repo root when possible.
+    pub project: String,
+    /// Distinct outbound calls, deduped and sorted.
+    pub calls: Vec<OutboundHttp>,
+    /// Non-fatal reader notes.
+    pub notes: Vec<String>,
+}
+
+/// If `callee` resolves to a `Sky.Core.Http` function, its name (`get`, `post`,
+/// `request`, `withUrl`, `withMethod`, …); else `None`.
+fn http_def_name(db: &dyn SkyDb, body: &Body, callee: ExprId) -> Option<String> {
+    if let Expr::Var(Res::Def(d)) = &body.exprs[callee] {
+        if let Some(loc) = db.def_loc(*d) {
+            if db.module_name(loc.module) == "Sky.Core.Http" {
+                return Some(loc.name.as_str().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// A `urlContains` hint for a URL expression: the LONGEST single string literal
+/// anywhere in its subtree. Any single literal is a real substring of the final
+/// URL, so `apiBase ++ "/checkout/sessions"` yields `/checkout/sessions` (a
+/// perfect host-independent match) and a fully-literal URL yields the whole
+/// string. `None` when the expression carries no literal (a fully computed URL).
+fn url_hint(body: &Body, e: ExprId) -> Option<String> {
+    let mut best: Option<String> = None;
+    walk_exprs(body, e, &mut |x| {
+        if let Expr::Str(s) = &body.exprs[x] {
+            let s = s.to_string();
+            if best.as_ref().map(|b| s.len() > b.len()).unwrap_or(true) {
+                best = Some(s);
+            }
+        }
+    });
+    best
+}
+
+/// The string literal an expression IS, or `None`.
+fn expr_str_lit(body: &Body, e: ExprId) -> Option<String> {
+    match &body.exprs[e] {
+        Expr::Str(s) => Some(s.to_string()),
+        _ => None,
+    }
+}
+
+/// Discover every outbound HTTP call the project's own modules make, with the
+/// method + literal URL where the HIR carries them. Read-only: loads the same
+/// source db the build assembles, resolves, and walks — never lowers, emits, or
+/// writes.
+pub fn scaffold_mocks(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+) -> Result<MockScaffold, String> {
+    let (db, _entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let project = project_dir
+        .strip_prefix(repo_root)
+        .unwrap_or(project_dir)
+        .to_string_lossy()
+        .to_string();
+
+    let mut calls: BTreeSet<OutboundHttp> = BTreeSet::new();
+    let mut any_dynamic = false;
+
+    for mid in &check_ids {
+        let mname = db.module_name(*mid).to_string();
+        let resolved = db.resolve(*mid);
+        for td in &resolved.top_defs {
+            let Some(body) = resolved.bodies.get(&td.def) else {
+                continue;
+            };
+            let Some(root) = body.root else {
+                continue;
+            };
+            // Collect per DEF: the `|>` pipeline keeps a function applied to its
+            // piped value as an `Expr::Binop { op: "|>", .. }`, NOT a `Call`, so a
+            // piped `builder |> Http.request` (how most real code is written) is
+            // not a Call node. `get`/`post` are matched in BOTH shapes (direct
+            // `Http.get "u"` and piped `"u" |> Http.get`); a `request`'s method +
+            // URL come from the `withMethod "…"` / `withUrl "…"` builder calls in
+            // the same body (those ARE Call nodes — the literal is their argument).
+            let mut direct: Vec<(String, Option<String>)> = Vec::new();
+            let mut builder_urls: Vec<String> = Vec::new();
+            let mut builder_methods: Vec<String> = Vec::new();
+            let mut saw_request = false;
+
+            let mut sites: Vec<ExprId> = Vec::new();
+            walk_exprs(body, root, &mut |e| sites.push(e));
+            for e in sites {
+                match &body.exprs[e] {
+                    Expr::Call(callee, args) => match http_def_name(&db, body, *callee).as_deref() {
+                        Some("get") => {
+                            direct.push(("GET".into(), args.first().and_then(|a| url_hint(body, *a))))
+                        }
+                        Some("post") => {
+                            direct.push(("POST".into(), args.first().and_then(|a| url_hint(body, *a))))
+                        }
+                        // `defaultRequest url` and `withUrl "url"` both carry the URL.
+                        Some("defaultRequest") | Some("withUrl") => {
+                            if let Some(u) = args.first().and_then(|a| url_hint(body, *a)) {
+                                builder_urls.push(u);
+                            }
+                        }
+                        Some("withMethod") => {
+                            if let Some(m) = args.first().and_then(|a| expr_str_lit(body, *a)) {
+                                builder_methods.push(m.to_uppercase());
+                            }
+                        }
+                        Some("request") => saw_request = true,
+                        _ => {}
+                    },
+                    // `value |> f` — f is a bare Var here, not a Call.
+                    Expr::Binop { op, lhs, rhs, .. } if op.as_str() == "|>" => {
+                        match http_def_name(&db, body, *rhs).as_deref() {
+                            Some("get") => direct.push(("GET".into(), url_hint(body, *lhs))),
+                            Some("post") => direct.push(("POST".into(), url_hint(body, *lhs))),
+                            Some("request") => saw_request = true,
+                            _ => {}
+                        }
+                    }
+                    // `f <| value`
+                    Expr::Binop { op, lhs, rhs, .. } if op.as_str() == "<|" => {
+                        match http_def_name(&db, body, *lhs).as_deref() {
+                            Some("get") => direct.push(("GET".into(), url_hint(body, *rhs))),
+                            Some("post") => direct.push(("POST".into(), url_hint(body, *rhs))),
+                            Some("request") => saw_request = true,
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            for (method, url) in direct {
+                if url.is_none() {
+                    any_dynamic = true;
+                }
+                calls.insert(OutboundHttp { method, url, module: mname.clone() });
+            }
+            // Pair builder URLs with methods: positional when counts match, else
+            // the single method applies to every URL (the common one-request-per-
+            // -function shape). A `request` with no literal URL is a dynamic call.
+            if builder_urls.is_empty() {
+                if saw_request {
+                    any_dynamic = true;
+                }
+            } else {
+                for (i, u) in builder_urls.iter().enumerate() {
+                    let method = builder_methods
+                        .get(i)
+                        .or_else(|| builder_methods.first())
+                        .cloned()
+                        .unwrap_or_default();
+                    calls.insert(OutboundHttp {
+                        method,
+                        url: Some(u.clone()),
+                        module: mname.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    let mut notes: Vec<String> = Vec::new();
+    if calls.is_empty() {
+        notes.push(
+            "No outbound HTTP calls found in the project's own modules. A mock \
+             fixture is only needed for calls the app makes to an external service."
+                .into(),
+        );
+    }
+    if any_dynamic {
+        notes.push(
+            "Some call URLs are computed at run time (not a string literal), so \
+             their `urlContains` is left blank for you to fill — a blank matches \
+             any URL, so narrow it. Run the tests once with no fixture to see the \
+             exact URL in the fail-closed error."
+                .into(),
+        );
+    }
+
+    Ok(MockScaffold {
+        project,
+        calls: calls.into_iter().collect(),
+        notes,
+    })
+}

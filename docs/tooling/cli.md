@@ -297,7 +297,7 @@ which reads the same JSON catalogue and renders an interactive
 terminal view: ↑/↓ navigate, Enter expands the highlighted entry,
 `/` focuses the search box, Esc clears, Ctrl-C quits.
 
-#### `sky doc --diagram <kind> [--format mermaid|md]` (WIP)
+#### `sky doc --diagram <kind> [--format mermaid|md]`
 
 A read-only architecture diagram of the current project, emitted to
 stdout. Four kinds ship today — `components`, `wire`, `telemetry`, and
@@ -447,6 +447,11 @@ Run a Sky test module. See [`testing.md`](testing.md). A project with a
 gets an ephemeral offline database, and `SKY_TEST_SEED` / `SKY_TEST_CLOCK_MS`
 make effects deterministic. The mock fixture shape and the multi-outcome patterns
 are in [`testing.md`](testing.md#test-mode-offline-effects-and-mock-by-default).
+
+`sky test --scaffold-mocks` writes mock-fixture skeletons for the app's outbound
+HTTP boundary (method + `urlContains` pre-filled from the typed IR; fill each
+`body` with a captured payload). It never overwrites an existing fixture. See
+[`testing.md`](testing.md#scaffolding-the-fixtures--sky-test---scaffold-mocks).
 
 ### `sky fuzz <file>`
 

@@ -293,18 +293,30 @@ results agree. A dropped read or a `Msg`-argument collision diverges the two
 paths and is caught mechanically, with no oracle and no real credentials. It is
 Sky.Spa-only, because the split is what it diffs against.
 
-## How to know what to write, and letting AI tools write it
+## Scaffolding the fixtures — `sky test --scaffold-mocks`
+
+You do not have to hand-write the fixtures. The compiler knows which outbound
+calls the app makes, and to which URLs, because that is in the typed IR. Run:
+
+```bash
+sky test --scaffold-mocks
+```
+
+It walks the project's own modules for outbound `Sky.Core.Http` calls and writes
+one skeleton per distinct call under `tests/mocks/`, with `match.method` and
+`match.urlContains` pre-filled. It recovers the URL from the shapes real code
+uses, not only a bare literal: a direct `Http.get "https://…"`, a piped
+`… |> Http.request` builder, and a `base ++ "/path"` concat (whose literal path
+suffix becomes a host-independent `urlContains`). It never overwrites an existing
+fixture, and a call whose URL is fully computed gets a blank `urlContains` for
+you to narrow.
+
+You fill one thing: the response `body`. Paste a captured real payload there. A
+captured payload is the most faithful body, because it proves the app's decoder
+handles the shape the provider actually sends, not only the shape the app models.
 
 The fixture schema above plus the self-documenting fail-closed error are enough
-to hand-write a mock. To write one you need one fact about the app: which
-outbound calls it makes, and to which URLs. That fact is in the typed IR — it is
-the same effect walk behind `sky doc --diagram wire`, which lists the app's
-outbound boundary. An AI tool (or, in future, a `sky` scaffold verb) can
-enumerate those calls and emit fixture skeletons with `match.method` and
-`match.urlContains` prefilled, leaving only the `body` to paste from a captured
-payload. A captured real payload is the most faithful body, because it proves the
-app's decoder handles the shape the provider actually sends, not only the shape
-the app models.
+to hand-write or adjust a mock by hand when you prefer.
 
 ## Regression discipline
 

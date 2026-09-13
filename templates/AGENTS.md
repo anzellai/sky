@@ -443,9 +443,10 @@ path runs for free). The shape:
 `method` and `urlContains` are optional (absent matches anything); first match
 wins in filename order; `body` is the response verbatim — paste a captured
 payload. For success/pending/failure on one URL, keep separate dirs and pick one
-with `SKY_TEST_MOCKS_DIR`. `sky fuzz src/Main.sky` folds random `Msg`s through
-`update` and asserts no unclassified panic. Full reference:
-`docs/tooling/testing.md`.
+with `SKY_TEST_MOCKS_DIR`. `sky test --scaffold-mocks` writes these skeletons for
+you (method + `urlContains` pre-filled from the app's outbound calls; fill the
+`body`). `sky fuzz src/Main.sky` folds random `Msg`s through `update` and asserts
+no unclassified panic. Full reference: `docs/tooling/testing.md`.
 
 **`sky check` is not a cheap tier.** It is `sky build` minus keeping the
 artifact: both invoke `go build` on the emitted Go. Do not design a "fast
