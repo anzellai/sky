@@ -3143,7 +3143,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// 162 -> 163: the new `stdlib.Std.Image` surface (backend image resize, covered
 /// by the `image` corpus battery — credited None -> Falsified). The ratchet still
 /// holds (140 covered >= Asserted).
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 163;
+///
+/// 163 -> 165: the auto-testing surfaces (`cli.fuzz`, credited None -> Falsified),
+/// landed alongside the `sky doc --diagram` work. 161 surfaces verified, 141
+/// covered — the ratchet still holds, `weaker` stays 0.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 165;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

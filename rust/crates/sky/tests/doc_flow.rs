@@ -325,11 +325,12 @@ fn doc_diagram_telemetry_no_sites_exits_zero() {
 #[test]
 fn doc_diagram_journey_on_skyforum_lists_pages_and_actions() {
     let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/19-skyforum");
-    if !project.join("src/State.sky").exists() {
-        // The example is part of the repo; if a checkout omits it, skip loudly.
-        eprintln!("skipping: examples/19-skyforum not present at {project:?}");
-        return;
-    }
+    // A committed example — a missing one is a real failure, not a skip (a silent
+    // skip here is exactly what the live-tests meta-gate forbids).
+    assert!(
+        project.join("src/State.sky").exists(),
+        "examples/19-skyforum is a committed example and must be present at {project:?}"
+    );
     let out = Command::new(SKY)
         .args(["doc", "--diagram", "journey", "--format", "md"])
         .current_dir(&project)

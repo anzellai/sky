@@ -82,6 +82,11 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
     ),
     ("SKY_DEV_BANNER", "startup-banner toggle; set by the launcher"),
     ("SKY_EMAIL_DRY_RUN", "test-harness switch; set by the runner"),
+    ("SKY_TEST_MODE", "auto-testing: activates offline mock-by-default HTTP; set by `sky test` / `sky fuzz`, not the app"),
+    ("SKY_TEST_SEED", "auto-testing: seeds Random/Uuid for reproducibility; set by the test runner"),
+    ("SKY_TEST_CLOCK_MS", "auto-testing: pins Time.now; set by the test runner"),
+    ("SKY_TEST_LOG_CAPTURE", "auto-testing: log-capture file a scenario reads back; set by the test runner"),
+    ("SKY_TEST_MOCKS_DIR", "auto-testing: outbound-HTTP fixture dir; set by the test runner"),
     ("SKY_GC_QUIET", "startup-report verbosity; set by the launcher"),
     (
         "SKY_HOME",

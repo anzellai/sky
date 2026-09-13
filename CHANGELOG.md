@@ -13,6 +13,57 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+## v0.24.4 — Automated testing + architecture diagrams (2026-09-13)
+
+Two additive feature families: a testing suite that derives its inputs from the
+app's own types and effects, and read-only architecture diagrams generated from
+the compiler's typed view of the program. No breaking changes; `sky upgrade` is
+safe from any v0.24.x.
+
+### Added
+
+- **`sky fuzz` — a model-based no-panic fuzzer for any TEA app (Sky.Live or
+  Sky.Spa).** It derives a `Msg` generator from the app's own `Msg` union, folds
+  random `Msg` sequences from `init ()` through the real `update`, and asserts no
+  unclassified panic. Every sequence is a valid input by construction (a client
+  can send any `Msg`, in any order), so there is no oracle to write and nothing
+  to seed. It runs offline under test mode, so a `[database]` app fuzzes against
+  a throwaway database. Exits non-zero on the first panicking sequence,
+  reproducible with `--seed`.
+- **`sky spa-diff-fuzz` — a differential split fuzzer for Sky.Spa (a free
+  oracle).** It runs each random `(Model, Msg)` directly and again through the
+  client/server split, and asserts the two agree. A dropped read-set /
+  write-set field or a `Msg`-argument collision diverges the two paths and is
+  caught mechanically, with no hand-written oracle and no real credentials.
+- **Test mode: mock-by-default outbound HTTP, deterministic effects, ephemeral
+  database.** A project with a `.env.test` file runs `sky test` in test mode:
+  every outbound HTTP request is intercepted (a `tests/mocks/*.json` fixture
+  answers it, an unmatched request fails closed, so the app's error path runs for
+  free), `SKY_TEST_SEED` / `SKY_TEST_CLOCK_MS` make `Random` / `Uuid` / `Time`
+  reproducible, a `[database]` app is given a throwaway offline database
+  (embedded Postgres, or a redirected SQLite file), and `SKY_TEST_LOG_CAPTURE`
+  captures the app's logs for a scenario to read back. A whole payment-webhook
+  scenario now runs offline and deterministically.
+- **`sky test --scaffold-mocks` — generate mock fixtures from the typed
+  boundary.** It walks the app's outbound `Http` calls and writes a fixture
+  skeleton per call under `tests/mocks/`, with the method and a host-independent
+  URL match pre-filled; you fill only the response `body`. It handles a direct
+  `Http.get`, a piped `request` builder, and a `base ++ "/path"` URL. It never
+  overwrites an existing fixture.
+- **`sky doc --diagram <kind>` — read-only architecture diagrams from the typed
+  IR.** Four kinds, each answering one question, each read from the resolved
+  program so they cannot drift: `components` (modules and the external
+  capabilities each reaches, with the Sky.Spa client/server lanes), `wire` (the
+  auto-derived RPC contract — request reads + args, response writes — so a
+  dropped field is visible at a glance), `telemetry` (a privacy inventory: every
+  tracking / logging call site and where it goes), and `journey` (pages plus an
+  annotated user-action inventory). Renders as Mermaid, or a table with
+  `--format md`; reuses the auto-split's own effect classification, so a diagram
+  and the split can never disagree.
+
+Full reference: [testing a Sky project](docs/tooling/testing.md) and the
+`sky doc --diagram` section of [the CLI reference](docs/tooling/cli.md).
+
 ## v0.24.3 — Sky.Spa: Msg-arg/Model-field collision + blocking hydration overlay (2026-09-12)
 
 A patch fixing two issues found running darraghstudio's basket in production. No
