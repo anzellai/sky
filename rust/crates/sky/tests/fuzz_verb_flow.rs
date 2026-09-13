@@ -186,3 +186,58 @@ fn a_panicking_update_fails_the_fuzz() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Run `sky fuzz src/Main.sky --target <t> --iters N`. Same as [`run_fuzz`] but
+/// carries the target that selects the app shape (and, for a Sky.Spa client
+/// target, adds the differential split oracle).
+fn run_fuzz_target(dir: &Path, iters: u32, target: &str) -> (i32, String) {
+    let out = Command::new(SKY)
+        .arg("fuzz")
+        .arg("src/Main.sky")
+        .arg("--target")
+        .arg(target)
+        .arg("--iters")
+        .arg(iters.to_string())
+        .current_dir(dir)
+        .env_remove("DATABASE_URL")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky fuzz --target");
+    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+    s.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code().unwrap_or(-1), s)
+}
+
+/// `--target web:app` routes into the differential split oracle. On a PURE-CLIENT
+/// Spa app (no server branch has an effect, so there is no `/_rpc` round-trip to
+/// diff) the oracle has nothing to prove. That is NOT a failure: the model net
+/// still ran and passed, so `sky fuzz` must exit 0 and NOTE that the oracle did
+/// not run. A regression guard — the oracle used to treat "no runnable harness"
+/// as a hard failure, which would spuriously fail a legitimate client-only app.
+#[test]
+fn spa_client_target_routes_into_the_oracle_and_no_op_is_not_a_failure() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let toml = "name = \"fuzzspatarget\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+         [source]\nroot = \"src\"\n";
+    let dir = project("spatarget", toml, CLEAN_APP);
+    let (code, out) = run_fuzz_target(&dir, 40, "web:app");
+
+    assert_eq!(
+        code, 0,
+        "a clean client-only Spa app must PASS under --target web:app; the split \
+         oracle having nothing to diff is not a failure. output:\n{out}"
+    );
+    assert!(
+        out.contains("model net PASS"),
+        "the model net must run and pass regardless of target; output:\n{out}"
+    );
+    assert!(
+        out.contains("split oracle"),
+        "--target web:app must route into the split oracle path (not report the \
+         target has no split); output:\n{out}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
