@@ -223,6 +223,20 @@ jobs:
           neovim: 'true'
           rust-cache-writer: 'true'
 
+      # Reclaim ~20 GB of preinstalled tooling this gate never uses. gate-core
+      # runs the whole codegen sweep in one job — coerce-floor EMITS every
+      # project and `build-run --all` BUILDS AND RUNS every example, which fills
+      # the go-build cache; the v0.24.4 publish aborted here at "only 2 GB free".
+      # Freeing the runner's dotnet/android/ghc trees (not the warm go/rust
+      # cache) gives the sweep headroom without slowing it down.
+      - name: Free disk space
+        run: |
+          set -x
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo docker image prune -af || true
+          df -h /
+
       - name: Workspace tests
         working-directory: rust
         env:
