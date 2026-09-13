@@ -215,6 +215,20 @@ ephemeral embedded cluster; SQLite app -> its path redirected to a scratch file
 (already offline). Applied to BOTH sky fuzz (main.rs) and sky test (testrunner),
 which shared the bug. GATED: 7 offline_db_plan unit tests + fuzz_verb_flow e2e (a
 SQLite DB app fuzzes offline PASS; a panicking update FAILs with DivisionByZero).
+JUDGE VERDICT (@fa1219af): CLAIM HOLDS — 12-skyvote (sqlite Live, 20 Msg ctors)
+fuzzes offline PASS with its real DB untouched; a sqlite Spa app fuzzes offline
+and a panicking update FAILs (fuzz_verb_flow 2/2); offline_db_plan classifies all
+branches (7/7) and is shared by sky test; spa-diff-fuzz stays 10/10. Both TEA
+shapes shown incl. DB-backed — no forbidden hedge in the PASS verdict.
+
+SIGNUP/VERIFY COVERAGE (user Q, demonstrated): the automatic net covers an
+account-creation + email-code verification surface. A signup/verify state machine
+(Anon -> AwaitingCode -> Verified; SubmitSignup/EnterCode/SubmitCode/Resend/
+Logout) fuzzed 500 steps, no panic — driving hostile OUT-OF-ORDER input (EnterCode
+before signup, SubmitCode while anon). The happy verified path is one authored
+scenario, same shape as the DS webhook (external token -> verified vs secret -> DB
+change, offline, deterministic); enablers all proven (seed determinism, ephemeral
+DB, log capture, mock-by-default). Real external delivery stays mocked by design.
 
 FEATURE STATE (2026-09-13): JUDGE-VERIFIED COMPLETE (@7a4918aa) + Gap A (ephemeral
 DB) since closed + model fuzzer (@71df881b) closes the Live-app net. Mode A (differential fuzzer)
