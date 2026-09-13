@@ -146,7 +146,16 @@ impl Svg {
              fill=\"{fill}\">{}</text>\n",
             escape(s)
         ));
-        self.touch(x, y);
+        // Touch the text's RIGHT edge (not just its anchor x), so a text-only
+        // diagram still sizes its canvas wide enough — otherwise left-anchored
+        // text overflows a canvas measured only from shape geometry.
+        let w = text_width(s, size);
+        let right = match anchor {
+            "middle" => x + w / 2.0,
+            "end" => x,
+            _ => x + w,
+        };
+        self.touch(right, y);
     }
 
     /// A box label: `lines` centred horizontally on `cx`, vertically centred in
@@ -627,11 +636,40 @@ impl Svg {
         self.database(x, y, w, h, FILL_ALT, accent, label);
     }
 
+    /// A datastore cylinder with a bold TITLE near the top and a list of small
+    /// item lines beneath it (e.g. the real table names inside a Database). The
+    /// caller sizes `h` to fit `lines`; use [`Svg::datastore`] when there is no
+    /// list.
+    pub fn datastore_list(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        title: &str,
+        lines: &[String],
+        accent: &str,
+    ) {
+        self.database(x, y, w, h, FILL_ALT, accent, "");
+        let cx = x + w / 2.0;
+        self.text(cx, y + 24.0, title, "middle", 12.0, "600", TEXT);
+        for (i, l) in lines.iter().enumerate() {
+            self.text(cx, y + 42.0 + i as f64 * 13.0, l, "middle", 9.5, "400", SUBTLE);
+        }
+    }
+
     /// Finish the document: header (width/height + viewBox), `<defs>` with one
     /// arrowhead marker per colour used, the title, the body, and the footer.
     pub fn render(&self) -> String {
         let pad = 24.0;
-        let w = self.max_x + pad * 2.0;
+        // Include the title's own width — it is drawn at the top-left outside the
+        // body group and never `touch`ed, so a wide title would otherwise clip.
+        let title_w = if self.title.is_empty() {
+            0.0
+        } else {
+            text_width(&self.title, 14.0)
+        };
+        let w = self.max_x.max(title_w) + pad * 2.0;
         let title_h = if self.title.is_empty() { 0.0 } else { 34.0 };
         let h = self.max_y + pad + title_h;
         let mut o = String::new();

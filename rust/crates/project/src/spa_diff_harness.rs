@@ -578,6 +578,7 @@ mod tests {
             io,
             msg_arg_tys: vec![],
             forces_effect: forces,
+            effect_families: vec![],
         }
     }
     fn report_with(branches: Vec<BranchVerdict>) -> SpaPartitionReport {

@@ -36,6 +36,32 @@ fn analyze() -> spa_partition::SpaPartitionReport {
 // ── Phase 1: classification ────────────────────────────────────────────────
 
 #[test]
+fn effect_families_are_populated_for_a_direct_kernel_branch() {
+    // `Reload`'s arm calls `File.readFile` directly — its BranchVerdict must carry
+    // the `File` effect family. `SyncCopy` batches `File` + a `Native` client
+    // effect, so its families include both. This is the structured effect data
+    // the `sky doc --diagram` journey/wire slices render per branch.
+    let r = analyze();
+    let reload = r.branches.iter().find(|b| b.msg == "Reload").expect("no Reload branch");
+    assert!(
+        reload.effect_families.iter().any(|f| f == "File"),
+        "Reload reaches File.readFile directly — effect_families must contain `File`; got {:?}",
+        reload.effect_families
+    );
+    let sync = r.branches.iter().find(|b| b.msg == "SyncCopy").expect("no SyncCopy branch");
+    assert!(
+        sync.effect_families.iter().any(|f| f == "File")
+            && sync.effect_families.iter().any(|f| f == "Native"),
+        "SyncCopy batches File + Native — effect_families must contain both; got {:?}",
+        sync.effect_families
+    );
+    // A branch that reaches no kernel directly has empty families.
+    if let Some(pure) = r.branches.iter().find(|b| !b.server && b.effect_families.is_empty()) {
+        assert!(pure.effect_families.is_empty());
+    }
+}
+
+#[test]
 fn reloaded_is_server_internal_and_reload_chains() {
     let r = analyze();
     assert!(

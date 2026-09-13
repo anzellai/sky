@@ -328,35 +328,52 @@ legend, and a canvas sized to its content — no diagonal spaghetti and no
 overlapping labels. Only the `md` format carries the detailed table and
 reader notes.
 
+The three architecture kinds are **target-aware**: the zones, crossing
+labels and sections change with the app shape derived from the resolved
+target — Sky.Spa (a wasm client + a server over `/_rpc`), Sky.Live (one
+trusted server serving SSR + one SSE channel per session), Sky.Tui /
+Sky.Cli (a single terminal binary, no network boundary), and
+Sky.Http.Server (an HTTP API). `--target` overrides the `sky.toml`
+`[app] target`.
+
 `components` is a **C4 container diagram**. It does not draw every
 module (that detail stays in the `md` table); it collapses the app to a
 handful of containers inside dashed **trust-boundary zones**, left →
 right: a `User` actor, a `Browser · untrusted` zone holding the `SPA`
-«wasm client» (for a Sky.Spa target — a `web:app` / `mobile*` /
-`desktop:*` / `tablet:*` target, or an explicit `Std.Spa` use), a
-`Server · trusted` zone holding the `Backend` «native» container with
-its data stores (Database, Files) and an audit-egress sink below it, and
-an `External` zone holding any External HTTP systems outside the
-boundary. Auth is a control marker on the client → server crossing; the
-remaining effect families (Env/Config, Jobs, Realtime, Time/Random/Uuid)
-fold into the Backend subtitle. A non-Spa app (Sky.Live / Http / Cli)
-drops the Browser zone and connects the actor straight to the Backend
-(`HTTPS + SSE` for Live).
+«wasm client» (Sky.Spa only), a `Server · trusted` zone holding the
+`Backend` «native» container with its data stores (Database, Files) and
+an audit-egress sink below it, and an `External` zone holding any
+External HTTP systems. The **Database container lists the app's real
+table names** — every `Std.Db.Schema.table` / `Std.Db.Store.fromCodec`
+name, capped at eight with a "+N more" line. For a Sky.Spa app the
+`/_rpc` crossing is labelled with the count of **effectful** actions that
+round-trip (`N effectful → /_rpc`), and a caption under the SPA states
+how many **pure** client actions stay in the wasm client. Auth is a
+control marker on the crossing; the remaining effect families
+(Env/Config, Jobs, Realtime, Time/Random/Uuid) fold into the Backend
+subtitle. A Sky.Live app drops the Browser zone and connects the actor
+(`User (browser)`) straight to the Backend over `HTTPS + SSE`; a terminal
+app draws a single `Process · local` zone with an `in-process` edge and
+no auth crossing; an HTTP app connects a `Client` over HTTPS.
 
 `wire` is a **data-flow diagram (DFD)**. The headline is the trust
-boundary: a `Client · untrusted` external entity and a `Server · trusted`
-process either side of a dashed boundary line, with a representative
-request / response crossing it. Below, an **Endpoints** section tables
-every crossing. For a Sky.Spa app the endpoints are the auto-derived RPC
-contract — every SERVER `update` branch that becomes a `POST /_rpc/<Msg>`
-endpoint, with its REQUEST (the Model fields the branch reads plus the
-Msg args, or "whole model") and its RESPONSE (the fields it writes), so
-a missing read is visible at a glance. For a non-Spa Sky.Http.Server /
-API-only app the section is the HTTP endpoint map — one row per
-registered route (method, path, handler), recovered from the resolved
-HIR (`Server.get`, `Server.post`, `Server.api`, …). `--target` overrides
-the `sky.toml` `[app] target`. An app with neither an `/_rpc` contract
-nor a discoverable route table prints one clear line.
+boundary: a client entity and a `Server · trusted` process either side
+of a dashed boundary line, with a representative request / response
+crossing labelled for the shape (`request · /_rpc` for Spa, an
+`interaction · SSE` / `patch · SSE` session channel for Live, `HTTP` for
+an API). For a Sky.Spa app the **RPC endpoints (/_rpc)** table lists
+every SERVER `update` branch that becomes a `POST /_rpc/<Msg>` endpoint,
+with its REQUEST (the Model fields it reads plus the Msg args, or "whole
+model"), its RESPONSE (the fields it writes), and the **effect families**
+it reaches — so a missing read is visible at a glance. Beside it, an
+**HTTP endpoints** section lists the raw `App.api` endpoints that sit
+outside `/_rpc` (an inbound Stripe webhook, say): each is drawn as an
+inbound external entity crossing the boundary to a CSRF-exempt endpoint.
+A Sky.Live app has no `/_rpc`; it shows its HTTP route table — page GET
+routes (`App.route` / `App.routeParam`) plus any raw `App.api` — and the
+SSE session channel as the browser↔server interaction. An HTTP app shows
+its whole `Sky.Http.Server` route map (method, path, handler, kind). A
+terminal app has no network boundary, so it prints one clear line.
 
 `telemetry` is a **data-egress inventory** — what behavioural data
 leaves the system, and to where. Modules sit on the left; the sinks on
@@ -376,16 +393,18 @@ the Model's page field uses, with its URL when the app declares an
 page (which carries the `[*]` entry). Parallel Msgs between the same two
 states are **collapsed onto one edge** whose label lists them, so labels
 never stack on top of each other; a self-navigation is one collapsed
-self-loop. Navigating Msgs are transitions, coloured orange when they
-round-trip as `POST /_rpc/<Msg>` under a Sky.Spa target and blue when
-they run client-side (reusing the same client/server split `wire`
-computes); a run-time-chosen target routes to a `(dynamic page)` state.
-Pages with no attributed transition and non-navigating internal events
-are listed in tidy inventory sections below the machine. Per-page
+self-loop; a run-time-chosen target routes to a `(dynamic page)` state.
+Below the machine, the non-navigating actions are split into two typed
+sections: **Effectful actions** (server-classified — they reach a side
+effect), each chip annotated with its effect families (`AddToBasket ·
+Db`), and **Pure actions** (client-only UI, no effect). The section
+labels are shape-aware: `Effectful (server · /_rpc)` for Spa,
+`server-side` for Live, `in-process` for a terminal app. A Cli app (a
+TEA loop with no `Page` union) drops the state machine and shows only the
+two action sections; an HTTP API prints one clear line. Per-page
 attribution is best-effort: a navigation target is the page an action
-routes TO, and the source page is not attributed, since an action can
-fire from any page (the `md` form carries that note). When no pages can
-be determined it prints one clear line, not a broken diagram.
+routes TO, not attributed to a source page (the `md` form carries that
+note).
 
 The `components`, `wire`, and `journey` kinds reuse the same analysis as
 the Sky.Spa auto-split, so the diagram cannot drift from what ships; no

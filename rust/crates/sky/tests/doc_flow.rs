@@ -356,18 +356,123 @@ fn doc_diagram_journey_on_skyforum_lists_pages_and_actions() {
     assert!(stdout.contains("## Pages"), "no Pages section:\n{stdout}");
     assert!(stdout.contains("| HomePage |"), "missing HomePage:\n{stdout}");
     assert!(stdout.contains("| LoginPage |"), "missing LoginPage:\n{stdout}");
-    // The action inventory (>= 1 action), and a recovered navigation target.
+    // The action inventory (>= 1 action), with the new typed columns, and a
+    // recovered navigation target.
     assert!(stdout.contains("## Actions"), "no Actions section:\n{stdout}");
-    assert!(stdout.contains("| Navigate |"), "missing Navigate action:\n{stdout}");
     assert!(
-        stdout.contains("| UpvotePost | server (SSE) | LoginPage |"),
-        "UpvotePost should reroute to LoginPage over SSE (Live):\n{stdout}"
+        stdout.contains("| Action | Kind | Effects | Navigates to |"),
+        "actions table must carry the Kind + Effects columns:\n{stdout}"
+    );
+    assert!(stdout.contains("| Navigate |"), "missing Navigate action:\n{stdout}");
+    // UpvotePost reroutes to LoginPage; the Live app has no /_rpc, so its Kind is
+    // effectful (server-side) or pure, never a `server (SSE)` string.
+    let upvote = stdout
+        .lines()
+        .find(|l| l.starts_with("| UpvotePost |"))
+        .unwrap_or_else(|| panic!("missing UpvotePost row:\n{stdout}"));
+    assert!(
+        upvote.contains("LoginPage") && !upvote.contains("/_rpc"),
+        "UpvotePost should reroute to LoginPage without a /_rpc round-trip (Live):\n{upvote}"
     );
     // A bare Live target never stages a client, so no `.skyapp` scratch tree.
     assert!(
         !project.join(".skyapp/diagram").exists(),
         "journey left a staged `.skyapp/diagram` scratch dir"
     );
+}
+
+/// `sky doc --diagram wire --target web:app` on a `Std.App` app that registers a
+/// raw `App.api` webhook must chart it in a dedicated **HTTP endpoints** section
+/// BESIDE the `/_rpc` contract, marked CSRF-exempt — the Stripe-webhook shape a
+/// plain `/_rpc` table used to miss.
+#[test]
+fn doc_diagram_wire_charts_the_app_api_webhook() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "wire", "--target", "web:app", "--format", "md"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram wire");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "wire failed:\n{stdout}{stderr}");
+    // The /_rpc contract is still charted (the effectful `Save` branch).
+    assert!(stdout.contains("POST /_rpc/Save"), "missing /_rpc/Save:\n{stdout}");
+    // The raw `App.api` webhook is charted in its own HTTP-endpoints section.
+    assert!(
+        stdout.contains("## HTTP endpoints (raw `App.api`, beside /_rpc)"),
+        "missing the HTTP endpoints section:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("| POST | /webhooks/stripe | Main.handleWebhook | raw api · CSRF-exempt |"),
+        "missing the CSRF-exempt webhook row:\n{stdout}"
+    );
+    assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
+}
+
+/// `sky doc --diagram journey --target web:app` on the same app must split the
+/// non-navigating actions into distinct **Effectful** and **Pure** sections
+/// (`Save` is effectful via `System.getenv`; `Inc` is pure).
+#[test]
+fn doc_diagram_journey_splits_effectful_and_pure() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
+    let md = Command::new(SKY)
+        .args(["doc", "--diagram", "journey", "--target", "web:app", "--format", "md"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram journey");
+    let stdout = String::from_utf8_lossy(&md.stdout);
+    assert!(md.status.success(), "journey failed:\n{stdout}");
+    assert!(stdout.contains("| Action | Kind | Effects | Navigates to |"), "{stdout}");
+    assert!(
+        stdout.contains("| Save | effectful (server · /_rpc) |"),
+        "Save must be effectful (server · /_rpc):\n{stdout}"
+    );
+    assert!(stdout.contains("| Inc | pure |"), "Inc must be pure:\n{stdout}");
+    // The SVG carries the two labelled sections.
+    let svg = Command::new(SKY)
+        .args(["doc", "--diagram", "journey", "--target", "web:app", "--format", "svg"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram journey svg");
+    let svg = String::from_utf8_lossy(&svg.stdout);
+    assert!(svg.contains("Effectful actions"), "no Effectful section:\n{svg}");
+    assert!(svg.contains("Pure actions"), "no Pure section:\n{svg}");
+    assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
+}
+
+/// `sky doc --diagram components --target web:app` on the same app must list the
+/// real `Std.Db` table name inside the Database container.
+#[test]
+fn doc_diagram_components_lists_db_table_names() {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
+    let md = Command::new(SKY)
+        .args(["doc", "--diagram", "components", "--target", "web:app", "--format", "md"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram components");
+    let stdout = String::from_utf8_lossy(&md.stdout);
+    assert!(md.status.success(), "components failed:\n{stdout}");
+    assert!(
+        stdout.contains("Database tables (1): widgets."),
+        "the Database container must list the real table name:\n{stdout}"
+    );
+    let svg = Command::new(SKY)
+        .args(["doc", "--diagram", "components", "--target", "web:app", "--format", "svg"])
+        .current_dir(&fixture)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram components svg");
+    let svg = String::from_utf8_lossy(&svg.stdout);
+    assert!(svg.contains(">widgets<"), "table name inside the Database store:\n{svg}");
+    assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
 }
 
 /// `--format mermaid` is retired: the CLI exits non-zero with a message naming
@@ -446,9 +551,15 @@ fn doc_diagram_wire_on_http_server_charts_endpoint_map() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "wire on http-server failed:\n{stdout}{stderr}");
-    assert!(stdout.contains("| Method | Path | Handler |"), "no endpoint map:\n{stdout}");
-    assert!(stdout.contains("| GET | / | handleHome |"), "missing GET / route:\n{stdout}");
-    assert!(stdout.contains("| POST | /api/echo | handleEcho |"), "missing POST route:\n{stdout}");
+    assert!(
+        stdout.contains("| Method | Path | Handler / page | Kind |"),
+        "no endpoint map:\n{stdout}"
+    );
+    assert!(stdout.contains("| GET | / | handleHome | http |"), "missing GET / route:\n{stdout}");
+    assert!(
+        stdout.contains("| POST | /api/echo | handleEcho | http |"),
+        "missing POST route:\n{stdout}"
+    );
     // It is not a Spa app, so there is no /_rpc table.
     assert!(!stdout.contains("| Endpoint |"), "an HTTP app has no /_rpc table:\n{stdout}");
 }

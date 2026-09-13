@@ -103,11 +103,25 @@ fn app_notes_as_a_spa_client_has_both_lanes_and_the_rpc_boundary() {
     // the client crosses /_rpc into the backend.
     assert!(out.contains("spa --> backend : /_rpc"), "{out}");
 
-    // svg carries the two trust zones + the /_rpc crossing.
+    // The Database container lists the app's real table names — `notes` is the
+    // `Store.fromCodec "notes"` table this app declares.
+    assert!(
+        g.tables.iter().any(|t| t == "notes"),
+        "expected the `notes` table; got {:?}",
+        g.tables
+    );
+    // A Spa app carries the effectful/pure action split for the /_rpc edge label.
+    assert!(
+        g.rpc_effectful.is_some() && g.rpc_pure.is_some(),
+        "a Spa app must carry the effectful/pure action counts"
+    );
+
+    // svg carries the two trust zones + the /_rpc crossing + the table name.
     let svg = render_components(&g, Format::Svg);
     assert!(svg.trim_start().starts_with("<svg"), "{svg}");
     assert!(
         svg.contains("Browser · untrusted") && svg.contains("/_rpc"),
         "{svg}"
     );
+    assert!(svg.contains(">notes<"), "table name listed in the Database store: {svg}");
 }

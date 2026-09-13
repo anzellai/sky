@@ -152,9 +152,9 @@ fn metadata_service_charts_its_http_endpoint_map() {
     );
 
     let md = render_wire(&r, Format::Md);
-    // The HTTP endpoint table, not the /_rpc table.
-    assert!(md.contains("| Method | Path | Handler |"), "{md}");
-    assert!(md.contains("| GET | / | handleRoot |"), "{md}");
+    // The HTTP endpoint table (now with a Kind column), not the /_rpc table.
+    assert!(md.contains("| Method | Path | Handler / page | Kind |"), "{md}");
+    assert!(md.contains("| GET | / | handleRoot | http |"), "{md}");
     assert!(
         !md.contains("| Endpoint |"),
         "no /_rpc table for an HTTP app:\n{md}"
@@ -165,5 +165,5 @@ fn metadata_service_charts_its_http_endpoint_map() {
     assert!(puml.contains("rectangle \"GET /\""), "{puml}");
     let svg = render_wire(&r, Format::Svg);
     assert!(svg.trim_start().starts_with("<svg"), "{svg}");
-    assert!(svg.contains("Endpoints (HTTP)"), "{svg}");
+    assert!(svg.contains("HTTP endpoints"), "{svg}");
 }

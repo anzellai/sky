@@ -627,6 +627,23 @@ fn fmt_set(items: &[String]) -> String {
     format!("{{{}}}", items.join(", "))
 }
 
+/// The effect FAMILIES a branch's refs directly reach, as sorted+deduped kernel
+/// module names (element 0 of every `server_kernels` / `client_kernels` entry:
+/// `"Db"`, `"Http"`, `"Auth"`, `"System"`, `"Time"`, `"Native"`, …). Empty for a
+/// pure branch. Populates [`BranchVerdict::effect_families`].
+fn refs_effect_families(acc: &Refs) -> Vec<String> {
+    let mut fams: Vec<String> = Vec::new();
+    for (m, _f, _class) in &acc.server_kernels {
+        fams.push(m.clone());
+    }
+    for (m, _f) in &acc.client_kernels {
+        fams.push(m.clone());
+    }
+    fams.sort();
+    fams.dedup();
+    fams
+}
+
 /// One `update` branch's verdict.
 pub struct BranchVerdict {
     pub msg: String,
@@ -653,6 +670,16 @@ pub struct BranchVerdict {
     /// server kernel) yet force NOTHING at update time (it returns a `Cmd` value
     /// the runtime runs later) — that branch IS phase-2 checkable.
     pub forces_effect: bool,
+    /// The effect FAMILIES this branch reaches — the kernel module names
+    /// (`"Db"`, `"Http"`, `"Auth"`, `"System"`, `"Time"`, `"Native"`, …),
+    /// sorted and deduped. Empty for a pure branch. This is the branch's
+    /// TRANSITIVE reach: the arm's own kernels ∪ the families of every def it
+    /// calls, so a branch that reaches `Db` only through a `Std.Db` wrapper
+    /// (a Sky-source def, not a raw kernel) still lists `Db`. It is the
+    /// structured shape `sky doc --diagram` renders per branch (the Pure /
+    /// Effectful journey split, the components buckets). Only diagram rendering
+    /// reads it; the split and the fuzzer never do.
+    pub effect_families: Vec<String>,
 }
 
 /// A server-tainted top-level binding (excluded from the client build).
@@ -1453,6 +1480,12 @@ struct DefNode {
     /// Direct server reason from this def's OWN body (kernel / FFI), if any.
     direct: Option<String>,
     callees: HashSet<DefId>,
+    /// The effect FAMILIES this def's OWN body reaches directly (`Db`, `Http`, …).
+    /// Seeds the transitive-families fixpoint that `BranchVerdict::effect_families`
+    /// reads — so a branch whose only kernel reach is through an `Std.*` wrapper
+    /// (e.g. `File.readFile`, a Sky-source def, not a raw kernel) still surfaces
+    /// its `File` family.
+    fams: Vec<String>,
     /// This def's OWN body forces an effect in a run position (`Task.run …` /
     /// `let _ = <task>`). Seeds the `forces_effect` fixpoint (parallel to
     /// `server`). An opaque / body-less def is conservatively `true` — it MIGHT
@@ -1472,12 +1505,29 @@ struct Graph {
     /// transitively. The phase-2 differential fuzzer's fence (see
     /// [`BranchVerdict::forces_effect`]).
     forces_effect: HashSet<DefId>,
+    /// Transitive effect families per def (its own ∪ every reachable callee's).
+    /// Only diagram rendering reads it (via [`Graph::families_for`]).
+    trans_fams: HashMap<DefId, Vec<String>>,
 }
 
 impl Graph {
     /// Does `d` — or any def it reaches — force a run-position effect?
     fn forces(&self, d: DefId) -> bool {
         self.forces_effect.contains(&d)
+    }
+
+    /// The effect families a branch reaches: its arm's OWN direct families ∪ the
+    /// transitive families of every def it calls. Sorted + deduped. This is the
+    /// data `BranchVerdict::effect_families` carries for the diagram.
+    fn families_for(&self, acc: &Refs) -> Vec<String> {
+        let mut set: std::collections::BTreeSet<String> =
+            refs_effect_families(acc).into_iter().collect();
+        for c in &acc.callees {
+            if let Some(f) = self.trans_fams.get(c) {
+                set.extend(f.iter().cloned());
+            }
+        }
+        set.into_iter().collect()
     }
 
     /// A human reason for why `d` is server-tainted.
@@ -1529,6 +1579,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
                 DefNode {
                     direct: Some("unresolvable definition (opaque -> conservative server)".into()),
                     callees: HashSet::new(),
+                    fams: Vec::new(),
                     // Opaque: might force. Fail the fence closed (never checkable).
                     forces: true,
                 },
@@ -1554,6 +1605,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
                 DefNode {
                     direct: None,
                     callees: HashSet::new(),
+                    fams: Vec::new(),
                     // A pure client leaf — no run-time force (see the taint note).
                     forces: false,
                 },
@@ -1568,6 +1620,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
                 DefNode {
                     direct: Some("no body found (opaque -> conservative server)".into()),
                     callees: HashSet::new(),
+                    fams: Vec::new(),
                     // Body-less: might force. Fail the fence closed.
                     forces: true,
                 },
@@ -1583,6 +1636,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
         }
         let direct = acc.direct_server_reason();
         let forces = acc.inline_force;
+        let fams = refs_effect_families(&acc);
         for c in &acc.callees {
             if seen.insert(*c) {
                 work.push(*c);
@@ -1594,6 +1648,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
                 direct,
                 callees: acc.callees,
                 forces,
+                fams,
             },
         );
     }
@@ -1666,11 +1721,40 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
         }
     }
 
+    // Transitive effect-families fixpoint (parallel to `server`): a def's families
+    // = its OWN direct families ∪ every callee's families. This is what lets a
+    // branch that calls `File.readFile` (a Sky-source wrapper, not a raw kernel)
+    // surface the `File` family. Only diagram rendering reads it; the split /
+    // fuzzer never do, so it cannot affect their behaviour.
+    let mut trans_fams: HashMap<DefId, Vec<String>> =
+        nodes.iter().map(|(d, n)| (*d, n.fams.clone())).collect();
+    loop {
+        let mut changed = false;
+        for (d, n) in &nodes {
+            let mut set: std::collections::BTreeSet<String> =
+                trans_fams.get(d).cloned().unwrap_or_default().into_iter().collect();
+            let before = set.len();
+            for c in &n.callees {
+                if let Some(cf) = trans_fams.get(c) {
+                    set.extend(cf.iter().cloned());
+                }
+            }
+            if set.len() != before {
+                trans_fams.insert(*d, set.into_iter().collect());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     Graph {
         nodes,
         server,
         root_reason,
         forces_effect,
+        trans_fams,
     }
 }
 
@@ -1873,6 +1957,7 @@ fn classify_case_arms(
                 io: Some(compute_branch_io(db, body, arms[i].body, arms[i].pat, model_local, src)),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
                 forces_effect: forces[i],
+                effect_families: graph.families_for(&f.refs),
             });
         } else if server[i] {
             out.push(BranchVerdict {
@@ -1882,6 +1967,7 @@ fn classify_case_arms(
                 io: Some(compute_branch_io(db, body, arms[i].body, arms[i].pat, model_local, src)),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
                 forces_effect: forces[i],
+                effect_families: graph.families_for(&f.refs),
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -1895,6 +1981,7 @@ fn classify_case_arms(
                 io: None,
                 msg_arg_tys: Vec::new(),
                 forces_effect: forces[i],
+                effect_families: graph.families_for(&f.refs),
             });
         }
     }
@@ -3898,6 +3985,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             msg_arg_tys: Vec::new(),
             // Whole-update path: io is None → never phase-2 checkable regardless.
             forces_effect: acc.inline_force,
+            effect_families: graph.families_for(acc),
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -3921,6 +4009,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             io: None,
             msg_arg_tys: Vec::new(),
             forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
+            effect_families: graph.families_for(acc),
         };
     }
     // Client — note a client effect if present.
@@ -3935,6 +4024,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         io: None,
         msg_arg_tys: Vec::new(),
         forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
+        effect_families: graph.families_for(acc),
     }
 }
 

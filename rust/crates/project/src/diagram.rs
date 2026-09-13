@@ -147,6 +147,18 @@ pub struct ComponentGraph {
     pub project: String,
     /// Draw the `Client` / `Server` lanes + the `/_rpc` boundary.
     pub is_spa: bool,
+    /// The derived app shape — drives the zones and the crossing labels.
+    pub shape: AppShape,
+    /// The `Std.Db` table names the app declares (sorted, deduped). Listed inside
+    /// the Database container, capped in the renderer.
+    pub tables: Vec<String>,
+    /// For a Spa app: the count of EFFECTFUL `update` actions (server branches
+    /// that round-trip as `POST /_rpc/<Msg>`). `None` for a non-Spa app or when
+    /// the partition could not be run.
+    pub rpc_effectful: Option<usize>,
+    /// For a Spa app: the count of PURE client actions (client branches that run
+    /// in the wasm client, no round-trip). `None` when unavailable.
+    pub rpc_pure: Option<usize>,
     /// Project modules, sorted by name. Every project module is a node, even one
     /// that touches nothing external (it then reads as an isolated node — itself
     /// useful information).
@@ -227,6 +239,57 @@ pub fn target_is_spa_client(target: &str) -> bool {
         || t.starts_with("mobile:")
         || t.starts_with("desktop:")
         || t.starts_with("tablet:")
+}
+
+/// The app SHAPE a diagram renders for — derived from the resolved `--target`
+/// plus two facts read from the source. The shape drives the target-aware
+/// labels/sections: a Spa app has a Browser/Server split over `/_rpc`, a Live app
+/// is one trusted server serving SSR + SSE, a terminal app is a single binary
+/// with no network boundary, an HTTP app is a client talking to an HTTP API.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AppShape {
+    /// A Sky.Spa wasm client + a server it reaches over `/_rpc`.
+    Spa,
+    /// A Sky.Live server-driven UI (SSR + one SSE channel per session).
+    Live,
+    /// A Sky.Tui full-screen terminal app.
+    Tui,
+    /// A Sky.Cli line-oriented / one-shot terminal app.
+    Cli,
+    /// A Sky.Http.Server HTTP/JSON API with no browser UI.
+    Http,
+}
+
+impl AppShape {
+    /// A terminal shape (Tui or Cli) — one binary, no network trust boundary.
+    pub fn is_terminal(self) -> bool {
+        matches!(self, AppShape::Tui | AppShape::Cli)
+    }
+}
+
+/// Derive the [`AppShape`] from the resolved target and two source facts:
+/// `has_app_ui` (the app declares a `Std.App` UI — routes / a page union),
+/// `has_http_routes` (it registers `Sky.Http.Server` routes). A client / terminal
+/// target decides the shape outright; with no such target a browser-facing app is
+/// Sky.Live and a route-only server with no UI is an HTTP API.
+pub fn app_shape(target: Option<&str>, has_app_ui: bool, has_http_routes: bool) -> AppShape {
+    if let Some(t) = target {
+        let t = t.trim();
+        if target_is_spa_client(t) {
+            return AppShape::Spa;
+        }
+        if t == "terminal:tui" {
+            return AppShape::Tui;
+        }
+        if t == "terminal:cli" || t == "terminal" {
+            return AppShape::Cli;
+        }
+    }
+    if has_http_routes && !has_app_ui {
+        AppShape::Http
+    } else {
+        AppShape::Live
+    }
 }
 
 /// Build the component graph for a project. Read-only.
@@ -349,6 +412,40 @@ pub fn analyze_components(
 
     let is_spa = spa_used || app_target.map(target_is_spa_client).unwrap_or(false);
 
+    // The app SHAPE — for the zones + crossing labels. Read the two shape facts
+    // (a `Std.App` UI, `Sky.Http.Server` routes) from the same loaded db.
+    let (_eps, has_app_ui, has_http_routes) = recover_endpoints(&db, &check_ids);
+    let shape = if is_spa {
+        AppShape::Spa
+    } else {
+        app_shape(app_target, has_app_ui, has_http_routes)
+    };
+
+    // The real table names inside the Database container. Declaring a table
+    // (`Std.Db.Schema.table` / `Std.Db.Store.fromCodec`) means the app models
+    // data through a database, so ensure the Database capability is present even
+    // when the store is only declared, not yet queried — otherwise the table
+    // names would have no container to sit in.
+    let tables = collect_db_tables(&db, &check_ids);
+    if !tables.is_empty() {
+        all_caps.insert(Capability::Database);
+    }
+
+    // For a Spa app: count effectful (server, → /_rpc) vs pure (client) actions,
+    // reusing the auto-split partition. Best-effort; `None` if it cannot run.
+    let (rpc_effectful, rpc_pure) = if shape == AppShape::Spa {
+        match crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
+            Ok(rep) => {
+                let eff = rep.branches.iter().filter(|b| b.server).count();
+                let pure = rep.branches.iter().filter(|b| !b.server).count();
+                (Some(eff), Some(pure))
+            }
+            Err(_) => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
     let mut notes: Vec<String> = Vec::new();
     if all_caps.contains(&Capability::Telemetry) {
         notes.push(
@@ -356,16 +453,34 @@ pub fn analyze_components(
                 .into(),
         );
     }
-    if is_spa {
-        notes.push(
+    match shape {
+        AppShape::Spa => notes.push(
             "Sky.Spa: every effect runs on the server; the client (wasm) reaches it over /_rpc."
                 .into(),
-        );
+        ),
+        AppShape::Live => notes.push(
+            "Sky.Live: one trusted server serves SSR + one SSE channel per session; every \
+             effect runs server-side."
+                .into(),
+        ),
+        AppShape::Tui | AppShape::Cli => notes.push(
+            "Terminal app: one local binary drives the effects directly; no network trust \
+             boundary."
+                .into(),
+        ),
+        AppShape::Http => notes.push(
+            "Sky.Http.Server: a client reaches the HTTP API; every effect runs server-side."
+                .into(),
+        ),
     }
 
     Ok(ComponentGraph {
         project,
         is_spa,
+        shape,
+        tables,
+        rpc_effectful,
+        rpc_pure,
         modules,
         capabilities: all_caps,
         notes,
@@ -530,14 +645,22 @@ fn render_components_puml(g: &ComponentGraph) -> String {
 fn render_components_md(g: &ComponentGraph) -> String {
     let mut o = String::new();
     o.push_str(&format!("# Components — {}\n\n", g.project));
-    o.push_str(&format!(
-        "App shape: {}\n\n",
-        if g.is_spa {
-            "Sky.Spa (client/server split over /_rpc)"
-        } else {
-            "single-process (Sky.Live / Http / Cli)"
-        }
-    ));
+    let shape_line = match g.shape {
+        AppShape::Spa => "Sky.Spa (wasm client + server over /_rpc)",
+        AppShape::Live => "Sky.Live (one trusted server, SSR + SSE)",
+        AppShape::Tui => "Sky.Tui (single terminal binary)",
+        AppShape::Cli => "Sky.Cli (single terminal binary)",
+        AppShape::Http => "Sky.Http.Server (HTTP API)",
+    };
+    o.push_str(&format!("App shape: {shape_line}\n\n"));
+    if let (Some(eff), Some(pure)) = (g.rpc_effectful, g.rpc_pure) {
+        o.push_str(&format!(
+            "Actions: {eff} effectful (round-trip as POST /_rpc/<Msg>) · {pure} pure (client wasm).\n\n"
+        ));
+    }
+    if !g.tables.is_empty() {
+        o.push_str(&format!("Database tables ({}): {}.\n\n", g.tables.len(), g.tables.join(", ")));
+    }
     o.push_str("| Module | Capabilities |\n|---|---|\n");
     for m in &g.modules {
         let caps = if m.caps.is_empty() {
@@ -595,7 +718,7 @@ fn render_components_svg(g: &ComponentGraph) -> String {
         56.0 + sub_lines as f64 * 13.0 + 12.0
     };
 
-    let store_w = 132.0;
+    let store_w = 148.0;
     let store_h = 50.0;
     let store_gap = 22.0;
     // egress rides the store row as its last item.
@@ -606,6 +729,24 @@ fn render_components_svg(g: &ComponentGraph) -> String {
         n_store_items as f64 * store_w + (n_store_items as f64 - 1.0) * store_gap
     };
     let store_vgap = 46.0;
+
+    // Real table names listed INSIDE the Database store: cap the visible list and
+    // fold the remainder into a "+N more" line.
+    let tables_cap = 8usize;
+    let table_lines: Vec<String> = {
+        let mut v: Vec<String> = g.tables.iter().take(tables_cap).cloned().collect();
+        if g.tables.len() > tables_cap {
+            v.push(format!("+{} more", g.tables.len() - tables_cap));
+        }
+        v
+    };
+    // The Database store grows to fit its table list; other stores stay base.
+    let db_store_h = if table_lines.is_empty() {
+        store_h
+    } else {
+        46.0 + table_lines.len() as f64 * 13.0 + 8.0
+    };
+    let store_row_h = store_h.max(db_store_h);
 
     let spa_w = 176.0;
     let spa_h = 62.0;
@@ -666,7 +807,7 @@ fn render_components_svg(g: &ComponentGraph) -> String {
     // Shared zone bottom, so the trust zones read as aligned columns.
     let mut zbottom = backend_y + backend_h;
     if n_store_items > 0 {
-        zbottom = zbottom.max(store_y + store_h);
+        zbottom = zbottom.max(store_y + store_row_h);
     }
     if g.is_spa {
         zbottom = zbottom.max(spa_y + spa_h);
@@ -688,12 +829,16 @@ fn render_components_svg(g: &ComponentGraph) -> String {
             d::BOUNDARY_UNTRUSTED,
         );
     }
+    let server_zone_label = match g.shape {
+        AppShape::Tui | AppShape::Cli => "Process · local",
+        _ => "Server · trusted",
+    };
     svg.zone(
         server_zone_x,
         ztop,
         server_block_w + 2.0 * zpad,
         zone_h,
-        "Server · trusted",
+        server_zone_label,
         d::BOUNDARY_TRUSTED,
     );
     if n_ext > 0 {
@@ -708,7 +853,12 @@ fn render_components_svg(g: &ComponentGraph) -> String {
     }
 
     // ---- actor ----
-    svg.actor(actor_cx, flow_y - 44.0, "User");
+    let actor_label = match g.shape {
+        AppShape::Tui | AppShape::Cli => "User (terminal)",
+        AppShape::Live => "User (browser)",
+        _ => "User",
+    };
+    svg.actor(actor_cx, flow_y - 44.0, actor_label);
 
     // ---- SPA container ----
     if g.is_spa {
@@ -726,14 +876,18 @@ fn render_components_svg(g: &ComponentGraph) -> String {
 
     // ---- Backend container ----
     let backend_cx = backend_x + backend_w / 2.0;
+    let (backend_title, backend_stereo) = match g.shape {
+        AppShape::Tui | AppShape::Cli => ("App", "single binary"),
+        _ => ("Backend", "native"),
+    };
     svg.container(
         backend_x,
         backend_y,
         backend_w,
         backend_h,
         d::FILL,
-        "Backend",
-        "native",
+        backend_title,
+        backend_stereo,
         if sub.is_empty() {
             None
         } else {
@@ -745,7 +899,11 @@ fn render_components_svg(g: &ComponentGraph) -> String {
     let mut store_centres: Vec<(f64, &'static str, bool)> = Vec::new(); // (cx, edge_label, is_egress)
     let mut sx = store_row_x;
     for (label, edge) in &c.stores {
-        svg.datastore(sx, store_y, store_w, store_h, label, d::STROKE);
+        if *label == "Database" && !table_lines.is_empty() {
+            svg.datastore_list(sx, store_y, store_w, db_store_h, "Database", &table_lines, d::STROKE);
+        } else {
+            svg.datastore(sx, store_y, store_w, store_h, label, d::STROKE);
+        }
         store_centres.push((sx + store_w / 2.0, edge, false));
         sx += store_w + store_gap;
     }
@@ -790,25 +948,41 @@ fn render_components_svg(g: &ComponentGraph) -> String {
             d::STROKE,
             Some("uses · HTTPS"),
         );
-        // SPA → Backend across the boundary — the /_rpc crossing.
+        // SPA → Backend across the boundary — the /_rpc crossing, labelled with
+        // the count of effectful actions that round-trip.
         let mx = (spa_x + spa_w + backend_x) / 2.0;
+        let rpc_label = match g.rpc_effectful {
+            Some(n) => format!("{n} effectful → /_rpc"),
+            None => "/_rpc".to_string(),
+        };
         svg.ortho(
             spa_x + spa_w,
             flow_y,
             backend_x,
             flow_y,
             d::SERVER_EDGE,
-            Some("/_rpc"),
+            Some(&rpc_label),
         );
+        // Pure client actions never leave the wasm client — a caption under the
+        // SPA container states how many.
+        if let Some(pure) = g.rpc_pure {
+            svg.caption(
+                spa_x + spa_w / 2.0,
+                spa_y + spa_h + 15.0,
+                &format!("{pure} pure client actions (wasm)"),
+                "middle",
+            );
+        }
         if c.auth {
             svg.lock(mx, flow_y + 12.0, d::SERVER_EDGE);
             svg.caption(mx + 10.0, flow_y + 20.0, "auth", "start");
         }
     } else {
-        let via = if g.capabilities.contains(&Capability::Realtime) {
-            "HTTPS + SSE"
-        } else {
-            "HTTPS"
+        let via = match g.shape {
+            AppShape::Tui | AppShape::Cli => "in-process",
+            AppShape::Live => "HTTPS + SSE",
+            _ if g.capabilities.contains(&Capability::Realtime) => "HTTPS + SSE",
+            _ => "HTTPS",
         };
         let mx = (actor_cx + 20.0 + backend_x) / 2.0;
         svg.ortho(
@@ -819,7 +993,9 @@ fn render_components_svg(g: &ComponentGraph) -> String {
             d::SERVER_EDGE,
             Some(via),
         );
-        if c.auth {
+        // A terminal app has no trust-boundary crossing to guard; only a
+        // networked shape shows the auth lock.
+        if c.auth && !g.shape.is_terminal() {
             svg.lock(mx, flow_y + 12.0, d::SERVER_EDGE);
             svg.caption(mx + 10.0, flow_y + 20.0, "auth", "start");
         }
@@ -870,10 +1046,13 @@ fn render_components_svg(g: &ComponentGraph) -> String {
     if c.egress.is_some() || n_ext > 0 {
         rows.push((d::EXTERNAL.into(), "egress / external system".into()));
     }
-    if g.is_spa {
-        rows.push((d::SERVER_EDGE.into(), "/_rpc server round-trip".into()));
-    } else {
-        rows.push((d::SERVER_EDGE.into(), "client → server request".into()));
+    match g.shape {
+        AppShape::Spa => rows.push((d::SERVER_EDGE.into(), "/_rpc server round-trip".into())),
+        AppShape::Live => rows.push((d::SERVER_EDGE.into(), "browser → server (HTTPS + SSE)".into())),
+        AppShape::Tui | AppShape::Cli => {
+            rows.push((d::SERVER_EDGE.into(), "in-process call".into()))
+        }
+        AppShape::Http => rows.push((d::SERVER_EDGE.into(), "client → server request".into())),
     }
     svg.legend(lx, zbottom + 18.0, &rows);
 
@@ -911,17 +1090,44 @@ pub struct WireEndpoint {
     pub effects: Option<String>,
 }
 
-/// One HTTP route a non-Spa server app registers (`Server.get "/path" handler`).
-/// This is the `wire` diagram's answer for a Sky.Http.Server / API-only app,
-/// which has no `/_rpc` contract but does have an HTTP endpoint map.
+/// What kind of HTTP endpoint a recovered route is. The distinction drives the
+/// `wire` diagram's sections and the CSRF note.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum EndpointKind {
+    /// A `Std.App` `route` / `routeParam` — a browser PAGE, served as `GET`.
+    PageRoute,
+    /// A `Std.App` `api` / `Sky.Http.Server.api` — a RAW HTTP endpoint, outside
+    /// the session/SSE contract and CSRF-exempt (an inbound webhook, a JSON API).
+    RawApi,
+    /// A `Sky.Http.Server.{get,post,put,delete,any}` route on an HTTP-server app.
+    HttpRoute,
+}
+
+impl EndpointKind {
+    /// A raw HTTP endpoint (`api`) is CSRF-exempt — it is reached by a third
+    /// party (a webhook sender, an API client), not the app's own session.
+    pub fn is_csrf_exempt(self) -> bool {
+        matches!(self, EndpointKind::RawApi)
+    }
+}
+
+/// One HTTP endpoint an app registers: a `Sky.Http.Server` route
+/// (`Server.get "/path" handler`), a `Std.App` page route (`App.route "/" Home`),
+/// or a `Std.App` raw endpoint (`App.api "POST /webhooks/stripe" handler`). The
+/// `wire` diagram lists these — the RPC-less answer for a Sky.Live / Http app,
+/// and, for a Spa app, the raw `App.api` endpoints that sit BESIDE `/_rpc`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct HttpEndpoint {
     /// The HTTP method (`GET`, `POST`, `PUT`, `DELETE`, `ANY`).
     pub method: String,
-    /// The route path (`/`, `/hello/:name`).
+    /// The route path (`/`, `/hello/:name`, `/webhooks/stripe`).
     pub path: String,
-    /// The handler function name, or `<inline>` for a lambda / non-def handler.
+    /// The handler function name (`Payments.handleWebhook`), or `<inline>` for a
+    /// lambda / non-def handler, or `<page>` for a `Std.App` page route (the page
+    /// constructor stands in for a handler the author never writes).
     pub handler: String,
+    /// The endpoint kind — page route, raw API, or HTTP-server route.
+    pub kind: EndpointKind,
 }
 
 /// The wire contract for a project — pure data the renderer consumes.
@@ -932,13 +1138,17 @@ pub struct WireReport {
     /// app has no `/_rpc` contract, but it may still have an HTTP endpoint map
     /// ([`WireReport::http_endpoints`]).
     pub is_spa: bool,
+    /// The derived app shape — drives the target-aware sections and labels.
+    pub shape: AppShape,
     /// The resolved `[app] target` (or the `--target` override), for the note.
     pub target: Option<String>,
     /// The RPC endpoints, sorted by Msg name for deterministic output.
     pub endpoints: Vec<WireEndpoint>,
-    /// For a non-Spa Sky.Http.Server / API-only app: the registered HTTP routes,
-    /// sorted for deterministic output. Empty for a Spa app or an app with no
-    /// discoverable route registration.
+    /// The registered HTTP endpoints — `Sky.Http.Server` routes, `Std.App` page
+    /// routes, and `Std.App` raw `api` endpoints. On a Spa app these are the raw
+    /// `api` endpoints that sit BESIDE `/_rpc` (an inbound webhook); on a Live app
+    /// they are the page routes + raw api; on an HTTP app the whole route map.
+    /// Sorted for deterministic output.
     pub http_endpoints: Vec<HttpEndpoint>,
     /// Set when the app IS a Spa client but no per-branch endpoints could be
     /// recovered (a `Std.App` inline-effect shape, or an `update` that is not a
@@ -999,31 +1209,64 @@ pub fn analyze_wire(
         .to_string();
     let is_spa = app_target.map(target_is_spa_client).unwrap_or(false);
 
+    // Recover the HTTP endpoint map + the two shape facts from the resolved HIR
+    // (one load). Best-effort: a load failure degrades to no endpoints, not an
+    // error — the report still explains what it has.
+    let (all_endpoints, has_app_ui, has_http_routes) =
+        match crate::build::load_source_db(repo_root, project_dir, entry_module) {
+            Ok((db, _e, ids)) => recover_endpoints(&db, &ids),
+            Err(_) => (Vec::new(), false, false),
+        };
+    let shape = app_shape(app_target, has_app_ui, has_http_routes);
+
     if !is_spa {
-        // A non-Spa app has no `/_rpc` contract. But a Sky.Http.Server / API-only
-        // app DOES have an HTTP endpoint map — recover it from the resolved HIR
-        // (`Server.get "/path" handler`, `Server.post`, …). If none is found the
-        // app has no client boundary at all, and we degrade to a single note.
-        let http_endpoints =
-            analyze_http_endpoints(repo_root, project_dir, entry_module).unwrap_or_default();
+        // A non-Spa app has no `/_rpc` contract. It may still have an HTTP endpoint
+        // map: a Sky.Live app's page routes + raw `App.api` endpoints, or a
+        // Sky.Http.Server app's whole route table.
+        let http_endpoints: Vec<HttpEndpoint> = match shape {
+            // A terminal app has NO network boundary — do not list routes.
+            AppShape::Tui | AppShape::Cli => Vec::new(),
+            _ => all_endpoints,
+        };
         let mut notes: Vec<String> = Vec::new();
-        if http_endpoints.is_empty() {
+        match shape {
+            AppShape::Live => {
+                notes.push(
+                    "Sky.Live has no `/_rpc` contract: the browser and server share one \
+                     persistent SSE channel per session, and every interaction round-trips over \
+                     it. The routes below are the HTTP surface — page GET routes and any raw \
+                     `App.api` endpoint."
+                        .to_string(),
+                );
+            }
+            AppShape::Http => {
+                notes.push(
+                    "HTTP endpoint map — every route this Sky.Http.Server app registers."
+                        .to_string(),
+                );
+            }
+            AppShape::Tui | AppShape::Cli => {
+                notes.push(
+                    "A terminal app has no network trust boundary: the user drives one local \
+                     binary directly. There is no client/server wire to chart."
+                        .to_string(),
+                );
+            }
+            AppShape::Spa => {}
+        }
+        if http_endpoints.is_empty() && !shape.is_terminal() {
             let tgt = app_target.unwrap_or("<none>");
             notes.push(format!(
-                "`wire` charts an app's client boundary. This project's target (`{tgt}`) is \
-                 not a Sky.Spa wasm client (no `/_rpc` contract) and no Sky.Http.Server route \
-                 registration was found, so there is no endpoint map to chart."
+                "No `Sky.Http.Server` / `Std.App` route registration was found for target \
+                 `{tgt}`, so there is no endpoint map to chart. Re-run with `--target web:app` \
+                 (or a `mobile:` / `desktop:` / `tablet:` client) to chart the Sky.Spa `/_rpc` \
+                 contract."
             ));
-            notes.push(
-                "Re-run with `--target web:app` (or a `mobile:` / `desktop:` / `tablet:` \
-                 client) to chart the Sky.Spa `/_rpc` contract, or add `Server.get`/`Server.post` \
-                 routes for an HTTP endpoint map."
-                    .to_string(),
-            );
         }
         return Ok(WireReport {
             project,
             is_spa: false,
+            shape,
             target: app_target.map(str::to_string),
             endpoints: Vec::new(),
             http_endpoints,
@@ -1050,14 +1293,28 @@ pub fn analyze_wire(
             .next()
             .unwrap_or(&b.msg)
             .to_string();
+        // The effect families the branch reaches (`Db`, `Http`, `Auth`, …), now
+        // surfaced by the partition report per branch.
+        let effects = if b.effect_families.is_empty() {
+            None
+        } else {
+            Some(b.effect_families.join(", "))
+        };
         endpoints.push(WireEndpoint {
             msg: ctor,
             request: wire_request(io),
             response: wire_response(io),
-            effects: None,
+            effects,
         });
     }
     endpoints.sort_by(|a, b| a.msg.cmp(&b.msg));
+
+    // Raw `App.api` endpoints sit BESIDE `/_rpc` — an inbound webhook, a JSON API
+    // reached by a third party, not the wasm client. List them as HTTP endpoints.
+    let http_endpoints: Vec<HttpEndpoint> = all_endpoints
+        .into_iter()
+        .filter(|e| e.kind == EndpointKind::RawApi)
+        .collect();
 
     let mut notes: Vec<String> = Vec::new();
     let mut limited = false;
@@ -1077,37 +1334,71 @@ pub fn analyze_wire(
             );
         }
     }
-    notes.push(
-        "Per-branch effects (Db / Http / …) are not surfaced by the partition report; \
-         see `sky doc --diagram components` for the app's capability buckets."
-            .to_string(),
-    );
+    if !http_endpoints.is_empty() {
+        notes.push(
+            "The `HTTP endpoints` are raw `App.api` routes: reached by a third party (a webhook \
+             sender, an API client), OUTSIDE the session/CSRF contract, and CSRF-exempt."
+                .to_string(),
+        );
+    }
 
     Ok(WireReport {
         project,
         is_spa: true,
+        shape: AppShape::Spa,
         target: app_target.map(str::to_string),
         endpoints,
-        http_endpoints: Vec::new(),
+        http_endpoints,
         limited,
         notes,
     })
 }
 
-/// Recover a non-Spa app's HTTP endpoint map from the resolved HIR: every
-/// `Sky.Http.Server.{get,post,put,delete,any,api}` call gives a method, a path
-/// (its string-literal first argument), and a handler (the second argument's def
-/// name, or `<inline>`). Read-only. Returns an empty vec for an app that
-/// registers no routes.
-fn analyze_http_endpoints(
-    repo_root: &Path,
-    project_dir: &Path,
-    entry_module: Option<&str>,
-) -> Result<Vec<HttpEndpoint>, String> {
-    let (db, _entry, check_ids) =
-        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+/// Split an `api "METHOD /path"` spec into `(METHOD, /path)`; a spec with no
+/// method word becomes `("ANY", spec)`.
+fn split_api_spec(spec: &str) -> (String, String) {
+    let mut it = spec.splitn(2, char::is_whitespace);
+    let first = it.next().unwrap_or("").to_string();
+    match it.next() {
+        Some(rest) if !rest.trim().is_empty() => (first.to_uppercase(), rest.trim().to_string()),
+        _ => ("ANY".to_string(), spec.to_string()),
+    }
+}
+
+/// The handler def named by call `args[idx]`. `qualify` prefixes the owning
+/// module (`Payments.handleWebhook`) — used for a raw `api` endpoint whose
+/// handler often lives in another module; a plain `Sky.Http.Server` route keeps
+/// the bare def name. `<inline>` for a lambda / non-def handler.
+fn handler_name(db: &dyn SkyDb, body: &Body, args: &[ExprId], idx: usize, qualify: bool) -> String {
+    args.get(idx)
+        .and_then(|a| match &body.exprs[*a] {
+            Expr::Var(Res::Def(hd)) => db.def_loc(*hd).map(|l| {
+                let m = db.module_name(l.module);
+                if qualify && !m.is_empty() {
+                    format!("{m}.{}", l.name.as_str())
+                } else {
+                    l.name.as_str().to_string()
+                }
+            }),
+            _ => None,
+        })
+        .unwrap_or_else(|| "<inline>".to_string())
+}
+
+/// Recover an app's HTTP endpoint map from the resolved HIR, over BOTH route
+/// registrars:
+///   * `Sky.Http.Server.{get,post,put,delete,any}` → an [`EndpointKind::HttpRoute`];
+///     `Sky.Http.Server.api "METHOD /path" h` → [`EndpointKind::RawApi`].
+///   * `Std.App.{route,routeParam} "/path" Page` → a [`EndpointKind::PageRoute`]
+///     (GET; the page constructor stands in for the handler);
+///     `Std.App.api "METHOD /path" h` → [`EndpointKind::RawApi`] (CSRF-exempt).
+/// Returns the endpoints plus two shape facts: `has_std_app_ui` (any `Std.App`
+/// route/api) and `has_http_routes` (any `Sky.Http.Server` route). Read-only.
+fn recover_endpoints(db: &dyn SkyDb, check_ids: &[ModuleId]) -> (Vec<HttpEndpoint>, bool, bool) {
     let mut out: BTreeSet<HttpEndpoint> = BTreeSet::new();
-    for mid in &check_ids {
+    let mut has_std_app_ui = false;
+    let mut has_http_routes = false;
+    for mid in check_ids {
         let resolved = db.resolve(*mid);
         for (_d, body) in &resolved.bodies {
             let Some(root) = body.root else { continue };
@@ -1121,19 +1412,8 @@ fn analyze_http_endpoints(
                     continue;
                 };
                 let Some(loc) = db.def_loc(*d) else { continue };
-                if db.module_name(loc.module) != "Sky.Http.Server" {
-                    continue;
-                }
+                let module = db.module_name(loc.module);
                 let fname = loc.name.as_str();
-                let verb = match fname {
-                    "get" => "GET",
-                    "post" => "POST",
-                    "put" => "PUT",
-                    "delete" => "DELETE",
-                    "any" => "ANY",
-                    "api" => "API",
-                    _ => continue,
-                };
                 if args.is_empty() {
                     continue;
                 }
@@ -1141,37 +1421,100 @@ fn analyze_http_endpoints(
                     continue;
                 };
                 let spec = spec.to_string();
-                let (method, path) = if verb == "API" {
-                    // `api "METHOD /path"` — split the method off the spec.
-                    let mut it = spec.splitn(2, char::is_whitespace);
-                    let first = it.next().unwrap_or("").to_string();
-                    match it.next() {
-                        Some(rest) if !rest.trim().is_empty() => {
-                            (first.to_uppercase(), rest.trim().to_string())
+                let (method, path, kind) = if module == "Sky.Http.Server" {
+                    has_http_routes = true;
+                    match fname {
+                        "get" => ("GET".to_string(), spec.clone(), EndpointKind::HttpRoute),
+                        "post" => ("POST".to_string(), spec.clone(), EndpointKind::HttpRoute),
+                        "put" => ("PUT".to_string(), spec.clone(), EndpointKind::HttpRoute),
+                        "delete" => ("DELETE".to_string(), spec.clone(), EndpointKind::HttpRoute),
+                        "any" => ("ANY".to_string(), spec.clone(), EndpointKind::HttpRoute),
+                        "api" => {
+                            let (m, p) = split_api_spec(&spec);
+                            (m, p, EndpointKind::RawApi)
                         }
-                        _ => ("ANY".to_string(), spec.clone()),
+                        _ => continue,
+                    }
+                } else if module == "Std.App" {
+                    match fname {
+                        "route" | "routeParam" => {
+                            has_std_app_ui = true;
+                            // A page route's "handler" slot is the page ctor.
+                            let page = match args.get(1).map(|a| &body.exprs[*a]) {
+                                Some(Expr::Var(Res::Ctor(cref))) => db
+                                    .def_loc(cref.def)
+                                    .map(|l| l.name.as_str().to_string())
+                                    .unwrap_or_else(|| "<page>".to_string()),
+                                _ => "<page>".to_string(),
+                            };
+                            out.insert(HttpEndpoint {
+                                method: "GET".to_string(),
+                                path: spec.clone(),
+                                handler: page,
+                                kind: EndpointKind::PageRoute,
+                            });
+                            continue;
+                        }
+                        "api" => {
+                            has_std_app_ui = true;
+                            let (m, p) = split_api_spec(&spec);
+                            (m, p, EndpointKind::RawApi)
+                        }
+                        _ => continue,
                     }
                 } else {
-                    (verb.to_string(), spec.clone())
+                    continue;
                 };
-                let handler = args
-                    .get(1)
-                    .and_then(|a| match &body.exprs[*a] {
-                        Expr::Var(Res::Def(hd)) => {
-                            db.def_loc(*hd).map(|l| l.name.as_str().to_string())
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| "<inline>".to_string());
+                // A raw `api` handler is often in another module — qualify it; a
+                // plain HTTP route keeps its bare def name (existing behaviour).
+                let handler = handler_name(db, body, args, 1, kind == EndpointKind::RawApi);
                 out.insert(HttpEndpoint {
                     method,
                     path,
                     handler,
+                    kind,
                 });
             }
         }
     }
-    Ok(out.into_iter().collect())
+    (out.into_iter().collect(), has_std_app_ui, has_http_routes)
+}
+
+/// Enumerate the `Std.Db` TABLE names an app declares — every
+/// `Std.Db.Schema.table "<name>" …` and `Std.Db.Store.fromCodec "<name>" …`
+/// whose first argument is a string literal. Sorted and deduped. (`Store.project`
+/// takes a `List Table`, not a name string, so it is not a source here.)
+/// Read-only.
+fn collect_db_tables(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Vec<String> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for mid in check_ids {
+        let resolved = db.resolve(*mid);
+        for (_d, body) in &resolved.bodies {
+            let Some(root) = body.root else { continue };
+            let mut ids: Vec<ExprId> = Vec::new();
+            walk_exprs(body, root, &mut |e| ids.push(e));
+            for e in ids {
+                let Expr::Call(callee, args) = &body.exprs[e] else {
+                    continue;
+                };
+                let Expr::Var(Res::Def(d)) = &body.exprs[*callee] else {
+                    continue;
+                };
+                let Some(loc) = db.def_loc(*d) else { continue };
+                let module = db.module_name(loc.module);
+                let fname = loc.name.as_str();
+                let is_table = (module == "Std.Db.Schema" && fname == "table")
+                    || (module == "Std.Db.Store" && fname == "fromCodec");
+                if !is_table {
+                    continue;
+                }
+                if let Some(Expr::Str(name)) = args.first().map(|a| &body.exprs[*a]) {
+                    out.insert(name.to_string());
+                }
+            }
+        }
+    }
+    out.into_iter().collect()
 }
 
 /// Render a wire report to the requested format. Pure function of `r`.
@@ -1180,6 +1523,29 @@ pub fn render_wire(r: &WireReport, format: Format) -> String {
         Format::Puml => render_wire_puml(r),
         Format::Md => render_wire_md(r),
         Format::Svg => render_wire_svg(r),
+    }
+}
+
+/// A one-line label for an [`EndpointKind`], for the md/svg endpoint tables.
+fn endpoint_kind_label(k: EndpointKind) -> &'static str {
+    match k {
+        EndpointKind::PageRoute => "page",
+        EndpointKind::RawApi => "raw api · CSRF-exempt",
+        EndpointKind::HttpRoute => "http",
+    }
+}
+
+/// Render the HTTP endpoint table (page routes + raw api + http routes) as md.
+fn wire_http_md(o: &mut String, eps: &[HttpEndpoint]) {
+    o.push_str("| Method | Path | Handler / page | Kind |\n|---|---|---|---|\n");
+    for e in eps {
+        o.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            md_cell(&e.method),
+            md_cell(&e.path),
+            md_cell(&e.handler),
+            endpoint_kind_label(e.kind),
+        ));
     }
 }
 
@@ -1192,6 +1558,7 @@ fn render_wire_md(r: &WireReport) -> String {
              `POST /_rpc/<Msg>` endpoint. The REQUEST is the Model fields the branch \
              reads plus the Msg args; the RESPONSE is the Model fields it writes.\n\n",
         );
+        o.push_str("## RPC endpoints (/_rpc)\n\n");
         o.push_str("| Endpoint | Request (reads + args) | Response (writes) | Effects |\n");
         o.push_str("|---|---|---|---|\n");
         for e in &r.endpoints {
@@ -1200,20 +1567,20 @@ fn render_wire_md(r: &WireReport) -> String {
                 md_cell(&e.msg),
                 md_cell(&e.request),
                 md_cell(&e.response),
-                e.effects.as_deref().unwrap_or("—")
+                md_cell(e.effects.as_deref().unwrap_or("—"))
             ));
+        }
+        if !r.http_endpoints.is_empty() {
+            o.push_str("\n## HTTP endpoints (raw `App.api`, beside /_rpc)\n\n");
+            wire_http_md(&mut o, &r.http_endpoints);
         }
     } else if !r.http_endpoints.is_empty() {
-        o.push_str("HTTP endpoint map — every route this server registers.\n\n");
-        o.push_str("| Method | Path | Handler |\n|---|---|---|\n");
-        for e in &r.http_endpoints {
-            o.push_str(&format!(
-                "| {} | {} | {} |\n",
-                md_cell(&e.method),
-                md_cell(&e.path),
-                md_cell(&e.handler)
-            ));
+        match r.shape {
+            AppShape::Live => o.push_str("HTTP route table (Sky.Live: page GET routes + raw api).\n\n"),
+            AppShape::Http => o.push_str("HTTP endpoint map — every route this server registers.\n\n"),
+            _ => o.push_str("HTTP endpoint map.\n\n"),
         }
+        wire_http_md(&mut o, &r.http_endpoints);
     }
     if !r.notes.is_empty() {
         o.push('\n');
@@ -1226,61 +1593,65 @@ fn render_wire_md(r: &WireReport) -> String {
 
 fn render_wire_puml(r: &WireReport) -> String {
     let mut o = puml_header(&format!("Wire (data-flow) — {}", r.project));
+    if r.shape.is_terminal() {
+        o.push_str("rectangle \"User (terminal)\" as U\n");
+        o.push_str("rectangle \"App (single binary)\" as A\n");
+        o.push_str("U --> A : local I/O (no network boundary)\n");
+        o.push_str(&puml_footer());
+        return o;
+    }
     let spa = r.is_spa && !r.endpoints.is_empty();
-    let http = !spa && !r.http_endpoints.is_empty();
-    if spa || http {
+    let have_http = !r.http_endpoints.is_empty();
+    if spa || have_http {
         // The two entities either side of the trust boundary.
         o.push_str("rectangle \"Client · untrusted\" <<boundary>> {\n");
         o.push_str("  actor \"Client\" as C\n");
         o.push_str("}\n");
         o.push_str("rectangle \"Server · trusted\" <<boundary>> {\n");
         o.push_str("  rectangle \"Server\\n«process»\" as S <<container>>\n");
-        // Endpoints listed as processes inside the server boundary.
-        if spa {
-            for (i, e) in r.endpoints.iter().enumerate() {
-                o.push_str(&format!(
-                    "  rectangle \"POST /_rpc/{}\" as ep{i} <<endpoint>>\n",
-                    e.msg
-                ));
-            }
-        } else {
-            for (i, e) in r.http_endpoints.iter().enumerate() {
-                o.push_str(&format!(
-                    "  rectangle \"{} {}\" as ep{i} <<endpoint>>\n",
-                    e.method, e.path
-                ));
-            }
+        // /_rpc endpoints (spa) as processes inside the server boundary.
+        for (i, e) in r.endpoints.iter().enumerate() {
+            o.push_str(&format!(
+                "  rectangle \"POST /_rpc/{}\" as ep{i} <<endpoint>>\n",
+                e.msg
+            ));
+        }
+        for (i, e) in r.http_endpoints.iter().enumerate() {
+            o.push_str(&format!(
+                "  rectangle \"{} {}\" as hep{i} <<endpoint>>\n",
+                e.method, e.path
+            ));
         }
         o.push_str("}\n");
-        // Each endpoint is one request in + one response out across the boundary.
-        if spa {
-            for (i, e) in r.endpoints.iter().enumerate() {
-                o.push_str(&format!(
-                    "C -[{}]-> ep{i} : req {}\n",
-                    diagram_svg::SERVER_EDGE,
-                    puml_msg_text(&e.request),
-                ));
-                o.push_str(&format!(
-                    "ep{i} -[{}]-> C : resp {}\n",
-                    diagram_svg::CLIENT_EDGE,
-                    puml_msg_text(&e.response),
-                ));
-            }
-        } else {
-            for (i, e) in r.http_endpoints.iter().enumerate() {
-                o.push_str(&format!(
-                    "C -[{}]-> ep{i} : request\n",
-                    diagram_svg::SERVER_EDGE
-                ));
-                o.push_str(&format!(
-                    "ep{i} -[{}]-> C : {}\n",
-                    diagram_svg::CLIENT_EDGE,
-                    puml_msg_text(&e.handler),
-                ));
-            }
+        // An external inbound entity for any raw `api` endpoint (a webhook sender).
+        if r.http_endpoints.iter().any(|e| e.kind == EndpointKind::RawApi) {
+            o.push_str("rectangle \"External\\n«webhook / API client»\" as X <<boundary>>\n");
+        }
+        // Each /_rpc endpoint is one request in + one response out.
+        for (i, e) in r.endpoints.iter().enumerate() {
+            o.push_str(&format!(
+                "C -[{}]-> ep{i} : req {}\n",
+                diagram_svg::SERVER_EDGE,
+                puml_msg_text(&e.request),
+            ));
+            o.push_str(&format!(
+                "ep{i} -[{}]-> C : resp {}\n",
+                diagram_svg::CLIENT_EDGE,
+                puml_msg_text(&e.response),
+            ));
+        }
+        for (i, e) in r.http_endpoints.iter().enumerate() {
+            let from = if e.kind == EndpointKind::RawApi { "X" } else { "C" };
+            o.push_str(&format!(
+                "{from} -[{}]-> hep{i} : {}\n",
+                diagram_svg::SERVER_EDGE,
+                puml_msg_text(&e.handler),
+            ));
         }
         let title = if spa {
-            "/_rpc contract"
+            "/_rpc contract + HTTP endpoints"
+        } else if r.shape == AppShape::Live {
+            "Sky.Live routes (SSE session channel)"
         } else {
             "HTTP endpoint map"
         };
@@ -1304,17 +1675,98 @@ fn puml_msg_text(s: &str) -> String {
     s.replace('\n', " ").replace('\r', " ").replace(':', " ")
 }
 
+/// One column of a wire table: a header, its left x, and the header colour.
+struct TCol {
+    title: String,
+    x: f64,
+    color: &'static str,
+}
+
+/// Draw a bordered table (package box + column headers + wrapped rows) at
+/// `(sec_x, sec_top)`, width `sec_w`. `rows` is row-major; each row carries one
+/// wrapped-line list per column (parallel to `cols`). Returns the table's bottom
+/// Y. A table never overflows a column: cells are pre-wrapped by the caller.
+fn draw_wire_table(
+    svg: &mut diagram_svg::Svg,
+    sec_x: f64,
+    sec_top: f64,
+    sec_w: f64,
+    title: &str,
+    cols: &[TCol],
+    rows: &[Vec<Vec<String>>],
+) -> f64 {
+    use diagram_svg as d;
+    let pad = 12.0;
+    let sec_hdr = 42.0;
+    let line_h = 15.0;
+    let row_pad = 10.0;
+    let row_heights: Vec<f64> = rows
+        .iter()
+        .map(|r| {
+            let n = r.iter().map(|c| c.len()).max().unwrap_or(1).max(1);
+            n as f64 * line_h + row_pad
+        })
+        .collect();
+    let body_h: f64 = row_heights.iter().sum::<f64>().max(line_h);
+    let sec_h = sec_hdr + body_h + pad;
+    svg.package(sec_x, sec_top, sec_w, sec_h, title);
+    let hdr_y = sec_top + sec_hdr - 4.0;
+    for c in cols {
+        svg.text(c.x, hdr_y, &c.title, "start", 10.5, "700", c.color);
+    }
+    let mut ry = hdr_y + 8.0;
+    for (row, rh) in rows.iter().zip(&row_heights) {
+        svg.rule(sec_x + pad - 4.0, ry, sec_x + sec_w - pad, ry, "#e2e5ea", false);
+        let base = ry + line_h;
+        for (ci, cell) in row.iter().enumerate() {
+            let cx = cols[ci].x;
+            let (size, weight) = if ci == 0 { (11.0, "600") } else { (10.5, "500") };
+            for (i, l) in cell.iter().enumerate() {
+                svg.text(cx, base + i as f64 * line_h, l, "start", size, weight, d::TEXT);
+            }
+        }
+        ry += rh;
+    }
+    sec_top + sec_h
+}
+
 /// A DATA-FLOW diagram (DFD). The headline is the trust boundary: a Client
 /// external entity (untrusted) and a Server process (trusted) either side of a
-/// dashed boundary line, with a representative request/response crossing it. An
-/// "Endpoints" section below is a neat table of every crossing and its per-row
-/// request / response fields — never a hairball of crossing arrows.
+/// dashed boundary line, with a representative request/response crossing it,
+/// labelled for the app shape (`/_rpc` for Spa, an SSE session channel for Live,
+/// HTTP for an API). Below it, one or two neat tables list every endpoint —
+/// never a hairball of crossing arrows. A terminal app has no boundary at all.
 fn render_wire_svg(r: &WireReport) -> String {
     use diagram_svg as d;
     let mut svg = d::Svg::new(&format!("Wire (data-flow) — {}", r.project));
+
+    // Terminal: no network boundary — say so in one clear line, never a broken
+    // diagram.
+    if r.shape.is_terminal() {
+        svg.text(
+            8.0,
+            26.0,
+            "A terminal app has no client/server wire.",
+            "start",
+            13.0,
+            "600",
+            d::TEXT,
+        );
+        svg.text(
+            8.0,
+            48.0,
+            "The user drives one local binary directly; there is no trust boundary to cross.",
+            "start",
+            11.0,
+            "400",
+            d::SUBTLE,
+        );
+        return svg.render();
+    }
+
     let spa = r.is_spa && !r.endpoints.is_empty();
-    let http = !spa && !r.http_endpoints.is_empty();
-    if !spa && !http {
+    let have_http = !r.http_endpoints.is_empty();
+    if !spa && !have_http {
         svg.text(
             8.0,
             20.0,
@@ -1338,20 +1790,30 @@ fn render_wire_svg(r: &WireReport) -> String {
 
     let client_zone_w = 150.0;
     let server_zone_w = 190.0;
-    let gap = 150.0;
+    let gap = 160.0;
     let client_zone_x = lx;
     let server_zone_x = client_zone_x + client_zone_w + gap;
     let boundary_x = client_zone_x + client_zone_w + gap / 2.0;
 
+    let client_label = if r.shape == AppShape::Live {
+        "Browser · untrusted"
+    } else {
+        "Client · untrusted"
+    };
     svg.zone(
         client_zone_x,
         ztop,
         client_zone_w,
         band_h,
-        "Client · untrusted",
+        client_label,
         d::BOUNDARY_UNTRUSTED,
     );
-    svg.actor(client_zone_x + client_zone_w / 2.0, flow_y - 30.0, "Client");
+    let client_glyph = if r.shape == AppShape::Live {
+        "Browser"
+    } else {
+        "Client"
+    };
+    svg.actor(client_zone_x + client_zone_w / 2.0, flow_y - 30.0, client_glyph);
     svg.zone(
         server_zone_x,
         ztop,
@@ -1362,6 +1824,11 @@ fn render_wire_svg(r: &WireReport) -> String {
     );
     let srv_x = server_zone_x + zpad;
     let srv_w = server_zone_w - 2.0 * zpad;
+    let srv_sub = match r.shape {
+        AppShape::Spa => "wasm reaches over /_rpc",
+        AppShape::Live => "SSR + one SSE per session",
+        _ => "HTTP process",
+    };
     svg.container(
         srv_x,
         flow_y - band_content_h / 2.0,
@@ -1370,19 +1837,12 @@ fn render_wire_svg(r: &WireReport) -> String {
         d::FILL,
         "Server",
         "process",
-        None,
+        Some(srv_sub),
     );
 
     // The trust boundary: a dashed vertical line the crossings must pass.
     let band_bottom = ztop + band_h;
-    svg.rule(
-        boundary_x,
-        ztop + 4.0,
-        boundary_x,
-        band_bottom - 16.0,
-        d::SUBTLE,
-        true,
-    );
+    svg.rule(boundary_x, ztop + 4.0, boundary_x, band_bottom - 16.0, d::SUBTLE, true);
     svg.text(
         boundary_x,
         band_bottom - 3.0,
@@ -1393,150 +1853,136 @@ fn render_wire_svg(r: &WireReport) -> String {
         d::SUBTLE,
     );
 
-    // Representative request/response crossing.
-    let cross = if spa { "/_rpc" } else { "HTTP" };
-    svg.ortho(
-        client_zone_x + client_zone_w / 2.0 + 20.0,
-        flow_y - 12.0,
-        srv_x,
-        flow_y - 12.0,
-        d::SERVER_EDGE,
-        Some(&format!("request · {cross}")),
-    );
-    svg.ortho(
-        srv_x,
-        flow_y + 14.0,
-        client_zone_x + client_zone_w / 2.0 + 20.0,
-        flow_y + 14.0,
-        d::CLIENT_EDGE,
-        Some("response"),
-    );
+    // Representative request/response crossing — labelled for the shape.
+    let (req_label, resp_label) = match r.shape {
+        AppShape::Spa => ("request · /_rpc".to_string(), "response".to_string()),
+        AppShape::Live => ("interaction · SSE".to_string(), "patch · SSE".to_string()),
+        _ => ("request · HTTP".to_string(), "response".to_string()),
+    };
+    let client_edge_x = client_zone_x + client_zone_w / 2.0 + 20.0;
+    svg.ortho(client_edge_x, flow_y - 12.0, srv_x, flow_y - 12.0, d::SERVER_EDGE, Some(&req_label));
+    svg.ortho(srv_x, flow_y + 14.0, client_edge_x, flow_y + 14.0, d::CLIENT_EDGE, Some(&resp_label));
 
-    // ---- Endpoints section: a table, one row per endpoint ----
     let sec_x = lx;
-    let sec_top = band_bottom + 26.0;
-    let sec_hdr = 44.0;
-    let pad = 12.0;
-    let wrap_chars = 30usize;
-
-    // Column geometry.
-    let (c1_title, c2_title, c3_title) = if spa {
-        (
-            "Endpoint (Msg)",
-            "Request (client → server)",
-            "Response (server → client)",
-        )
-    } else {
-        ("Method", "Path", "Handler")
-    };
-    let c1_x = sec_x + pad;
-    let c1_w = if spa { 190.0 } else { 90.0 };
-    let c2_x = c1_x + c1_w + 20.0;
-    let c2_w = if spa { 230.0 } else { 220.0 };
-    let c3_x = c2_x + c2_w + 20.0;
-    let c3_w = if spa { 200.0 } else { 200.0 };
-    let sec_w = c3_x + c3_w + pad - sec_x;
-
-    // Row model.
-    struct WRow {
-        c1: String,
-        c2: Vec<String>,
-        c3: Vec<String>,
-    }
+    let mut y = band_bottom + 28.0;
+    let wrap_chars = 28usize;
     let wrap_col = |s: &str, w: usize| d::wrap(s, w);
-    let rows: Vec<WRow> = if spa {
-        r.endpoints
-            .iter()
-            .map(|e| WRow {
-                c1: format!("POST /_rpc/{}", e.msg),
-                c2: wrap_col(&e.request, wrap_chars),
-                c3: wrap_col(&e.response, wrap_chars),
-            })
-            .collect()
-    } else {
-        r.http_endpoints
-            .iter()
-            .map(|e| WRow {
-                c1: e.method.clone(),
-                c2: wrap_col(&e.path, wrap_chars),
-                c3: wrap_col(&e.handler, wrap_chars),
-            })
-            .collect()
-    };
 
-    // Measure heights, then draw the section box, header, rows.
-    let line_h = 15.0;
-    let row_pad = 10.0;
-    let row_heights: Vec<f64> = rows
-        .iter()
-        .map(|r| {
-            let n = r.c2.len().max(r.c3.len()).max(1);
-            n as f64 * line_h + row_pad
-        })
-        .collect();
-    let body_h: f64 = row_heights.iter().sum();
-    let sec_h = sec_hdr + body_h + pad;
-
-    svg.package(
-        sec_x,
-        sec_top,
-        sec_w,
-        sec_h,
-        &format!("Endpoints ({})", if spa { "/_rpc" } else { "HTTP" }),
-    );
-    // Column headers.
-    let hdr_y = sec_top + sec_hdr + 2.0;
-    svg.text(c1_x, hdr_y, c1_title, "start", 10.5, "700", d::SUBTLE);
-    svg.text(c2_x, hdr_y, c2_title, "start", 10.5, "700", d::SERVER_EDGE);
-    svg.text(c3_x, hdr_y, c3_title, "start", 10.5, "700", d::CLIENT_EDGE);
-    // Rows.
-    let mut ry = hdr_y + 8.0;
-    for (row, rh) in rows.iter().zip(&row_heights) {
-        // separator rule above each row.
-        svg.rule(c1_x - 4.0, ry, sec_x + sec_w - pad, ry, "#e2e5ea", false);
-        let base = ry + line_h;
-        svg.text(c1_x, base, &row.c1, "start", 11.0, "600", d::TEXT);
-        for (i, l) in row.c2.iter().enumerate() {
-            svg.text(
-                c2_x,
-                base + i as f64 * line_h,
-                l,
-                "start",
-                10.5,
-                "500",
-                d::TEXT,
-            );
-        }
-        for (i, l) in row.c3.iter().enumerate() {
-            svg.text(
-                c3_x,
-                base + i as f64 * line_h,
-                l,
-                "start",
-                10.5,
-                "500",
-                d::TEXT,
-            );
-        }
-        ry += rh;
+    // ---- 1. RPC endpoints table (Spa) ----
+    if spa {
+        let pad = 12.0;
+        let c1_x = sec_x + pad;
+        let c1_w = 168.0;
+        let c2_x = c1_x + c1_w + 18.0;
+        let c2_w = 210.0;
+        let c3_x = c2_x + c2_w + 18.0;
+        let c3_w = 210.0;
+        let c4_x = c3_x + c3_w + 18.0;
+        let c4_w = 128.0;
+        let sec_w = c4_x + c4_w + pad - sec_x;
+        let cols = vec![
+            TCol { title: "Endpoint (Msg)".into(), x: c1_x, color: d::SUBTLE },
+            TCol { title: "Request (client → server)".into(), x: c2_x, color: d::SERVER_EDGE },
+            TCol { title: "Response (server → client)".into(), x: c3_x, color: d::CLIENT_EDGE },
+            TCol { title: "Effects".into(), x: c4_x, color: d::EXTERNAL },
+        ];
+        let rows: Vec<Vec<Vec<String>>> = r
+            .endpoints
+            .iter()
+            .map(|e| {
+                vec![
+                    wrap_col(&format!("POST /_rpc/{}", e.msg), 22),
+                    wrap_col(&e.request, wrap_chars),
+                    wrap_col(&e.response, wrap_chars),
+                    wrap_col(e.effects.as_deref().unwrap_or("—"), 16),
+                ]
+            })
+            .collect();
+        y = draw_wire_table(&mut svg, sec_x, y, sec_w, "RPC endpoints (/_rpc)", &cols, &rows) + 24.0;
     }
 
-    // Legend.
-    let rows_l = vec![
-        (
-            d::BOUNDARY_TRUSTED.to_string(),
-            "trust boundary (dashed)".to_string(),
-        ),
-        (
-            d::SERVER_EDGE.to_string(),
-            "request (client → server)".to_string(),
-        ),
-        (
-            d::CLIENT_EDGE.to_string(),
-            "response (server → client)".to_string(),
-        ),
+    // ---- 2. HTTP endpoints table ----
+    if have_http {
+        let pad = 12.0;
+        // For a Spa app the http endpoints are raw `api` (webhooks): draw an
+        // inbound EXTERNAL entity crossing the boundary to them. For Live/Http the
+        // table is the whole route map.
+        let raw_only = r.http_endpoints.iter().all(|e| e.kind == EndpointKind::RawApi);
+        let ext_h = if spa && raw_only { 92.0 } else { 0.0 };
+        let ext_w = 150.0;
+        let table_x = if ext_h > 0.0 { sec_x + ext_w + 96.0 } else { sec_x };
+
+        let c1_x = table_x + pad;
+        let c1_w = 72.0;
+        let c2_x = c1_x + c1_w + 16.0;
+        let c2_w = 214.0;
+        let c3_x = c2_x + c2_w + 16.0;
+        let c3_w = 214.0;
+        let c4_x = c3_x + c3_w + 16.0;
+        let c4_w = 150.0;
+        let sec_w = c4_x + c4_w + pad - table_x;
+        let cols = vec![
+            TCol { title: "Method".into(), x: c1_x, color: d::SERVER_EDGE },
+            TCol { title: "Path".into(), x: c2_x, color: d::SUBTLE },
+            TCol { title: "Handler / page".into(), x: c3_x, color: d::SUBTLE },
+            TCol { title: "Kind".into(), x: c4_x, color: d::EXTERNAL },
+        ];
+        let rows: Vec<Vec<Vec<String>>> = r
+            .http_endpoints
+            .iter()
+            .map(|e| {
+                vec![
+                    vec![e.method.clone()],
+                    wrap_col(&e.path, 26),
+                    wrap_col(&e.handler, 26),
+                    wrap_col(endpoint_kind_label(e.kind), 16),
+                ]
+            })
+            .collect();
+        let title = if spa {
+            "HTTP endpoints (raw api · CSRF-exempt)"
+        } else if r.shape == AppShape::Live {
+            "HTTP routes (pages + raw api)"
+        } else {
+            "HTTP endpoints"
+        };
+        let table_top = y;
+        let table_bottom = draw_wire_table(&mut svg, table_x, table_top, sec_w, title, &cols, &rows);
+
+        // The inbound external entity for a Spa app's raw webhooks.
+        if ext_h > 0.0 {
+            let ex_y = table_top + 6.0;
+            let ex_cy = ex_y + ext_h / 2.0;
+            svg.zone(sec_x, ex_y - 6.0, ext_w, ext_h + 12.0, "External · untrusted", d::EXTERNAL);
+            svg.container(
+                sec_x + 10.0,
+                ex_y + 8.0,
+                ext_w - 20.0,
+                ext_h - 24.0,
+                d::FILL,
+                "Webhook sender",
+                "external",
+                Some("e.g. Stripe"),
+            );
+            // A dashed boundary + one inbound arrow into the table.
+            let bx = sec_x + ext_w + 44.0;
+            svg.rule(bx, table_top, bx, table_bottom, d::SUBTLE, true);
+            svg.text(bx, table_bottom + 11.0, "trust boundary", "middle", 9.0, "600", d::SUBTLE);
+            svg.ortho(sec_x + ext_w, ex_cy, table_x, ex_cy, d::SERVER_EDGE, Some("inbound"));
+        }
+        y = table_bottom;
+    }
+
+    // ---- legend ----
+    let mut rows_l = vec![
+        (d::BOUNDARY_TRUSTED.to_string(), "trust boundary (dashed)".to_string()),
+        (d::SERVER_EDGE.to_string(), "request (client → server)".to_string()),
+        (d::CLIENT_EDGE.to_string(), "response (server → client)".to_string()),
     ];
-    svg.legend(sec_x, sec_top + sec_h + 18.0, &rows_l);
+    if have_http && r.http_endpoints.iter().any(|e| e.kind == EndpointKind::RawApi) {
+        rows_l.push((d::EXTERNAL.to_string(), "raw api · inbound external".to_string()));
+    }
+    svg.legend(sec_x, y + 18.0, &rows_l);
     svg.render()
 }
 
@@ -2218,6 +2664,15 @@ pub struct JourneyAction {
     /// The action sets the page field to a non-constant value (a Msg arg, a
     /// helper call) — it navigates, but the target is chosen at run time.
     pub dynamic_nav: bool,
+    /// The action reaches a side effect: `server == Some(true)` (a `/_rpc`
+    /// round-trip) OR its branch touches an effect family. `false` for a pure
+    /// client-only UI update. Populated from the auto-split partition when it can
+    /// run (any shape); defaults `false` when it cannot.
+    pub effectful: bool,
+    /// The effect families this action's branch reaches (`Db`, `Http`, `Auth`,
+    /// …), sorted + deduped. Empty for a pure action, or when the partition could
+    /// not run. Annotates the effectful chip (`AddToBasket · Db`).
+    pub effect_families: Vec<String>,
 }
 
 /// The user journey for a project — pure data the renderer consumes.
@@ -2226,6 +2681,8 @@ pub struct JourneyReport {
     pub project: String,
     /// True when the resolved target is a Sky.Spa wasm client — for the note.
     pub is_spa: bool,
+    /// The derived app shape — drives the section labels and the Cli/Http cases.
+    pub shape: AppShape,
     /// The resolved `[app] target` (or the `--target` override), for the note.
     pub target: Option<String>,
     /// The app's pages, sorted by name.
@@ -2398,6 +2855,9 @@ pub fn analyze_journey(
         .to_string_lossy()
         .to_string();
     let is_spa = app_target.map(target_is_spa_client).unwrap_or(false);
+    // Shape facts read from the resolved HIR (a `Std.App` UI, `Sky.Http.Server`
+    // routes) — the two inputs the shape derivation needs beyond the target.
+    let (_eps, has_app_ui, has_http_routes) = recover_endpoints(&db, &check_ids);
     // Only a user-declared union can be an app page. This excludes builtin /
     // stdlib unions (`Maybe`, `Result`, `List`) an `update` branch also assigns
     // (`session = Just …`) — and, defensively, keeps every `module_parse` /
@@ -2575,48 +3035,72 @@ pub fn analyze_journey(
             server: None,
             navigates_to: nav.into_iter().collect(),
             dynamic_nav: dynamic,
+            effectful: false,
+            effect_families: Vec::new(),
         });
     }
     actions.sort_by(|a, b| a.msg.cmp(&b.msg));
     actions.dedup_by(|a, b| a.msg == b.msg);
 
-    // ---- 6. client/server classification, reusing the Sky.Spa auto-split. ----
+    // ---- 6. effect + client/server classification, reusing the auto-split. ----
+    // The partition runs for ANY shape (it is a static analysis of `update`): it
+    // gives per-branch `server` + effect families, which drive the Pure/Effectful
+    // split. Only a Spa client carries the `/_rpc` client/server SPLIT, so
+    // `action.server` (the `/_rpc` round-trip flag) is set only when `is_spa`.
+    let shape = app_shape(app_target, has_app_ui, has_http_routes);
     let mut classified = false;
-    if is_spa {
-        if let Ok(report) = crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
-            let mut server_by_msg: HashMap<String, bool> = HashMap::new();
-            for b in &report.branches {
-                let ctor = b
-                    .msg
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or(&b.msg)
-                    .to_string();
-                server_by_msg.insert(ctor, b.server);
+    if let Ok(report) = crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
+        let mut server_by_msg: HashMap<String, bool> = HashMap::new();
+        let mut fams_by_msg: HashMap<String, Vec<String>> = HashMap::new();
+        for b in &report.branches {
+            let ctor = b
+                .msg
+                .split_whitespace()
+                .next()
+                .unwrap_or(&b.msg)
+                .to_string();
+            // A Msg with several arms is effectful if ANY arm is; union the families.
+            let e = server_by_msg.entry(ctor.clone()).or_insert(false);
+            *e = *e || b.server;
+            let f = fams_by_msg.entry(ctor).or_default();
+            f.extend(b.effect_families.iter().cloned());
+        }
+        for f in fams_by_msg.values_mut() {
+            f.sort();
+            f.dedup();
+        }
+        let effectful_of = |name: &str| -> bool {
+            server_by_msg.get(name).copied().unwrap_or(false)
+                || fams_by_msg.get(name).map(|f| !f.is_empty()).unwrap_or(false)
+        };
+        if actions.is_empty() {
+            // Our own branch scan found nothing (a lambda / delegating `update`);
+            // fall back to the auto-split's Msg inventory.
+            let mut names: Vec<String> = server_by_msg.keys().cloned().collect();
+            names.sort();
+            for n in names {
+                let server = if is_spa { server_by_msg.get(&n).copied() } else { None };
+                actions.push(JourneyAction {
+                    msg: n.clone(),
+                    server,
+                    navigates_to: Vec::new(),
+                    dynamic_nav: false,
+                    effectful: effectful_of(&n),
+                    effect_families: fams_by_msg.get(&n).cloned().unwrap_or_default(),
+                });
             }
-            if actions.is_empty() {
-                // Our own branch scan found nothing (a lambda / delegating
-                // `update`); fall back to the auto-split's Msg inventory.
-                let mut names: Vec<String> = server_by_msg.keys().cloned().collect();
-                names.sort();
-                for n in names {
-                    let server = server_by_msg.get(&n).copied();
-                    actions.push(JourneyAction {
-                        msg: n,
-                        server,
-                        navigates_to: Vec::new(),
-                        dynamic_nav: false,
-                    });
-                }
-            } else {
-                for a in &mut actions {
+        } else {
+            for a in &mut actions {
+                if is_spa {
                     if let Some(s) = server_by_msg.get(&a.msg) {
                         a.server = Some(*s);
                     }
                 }
+                a.effectful = effectful_of(&a.msg);
+                a.effect_families = fams_by_msg.get(&a.msg).cloned().unwrap_or_default();
             }
-            classified = true;
         }
+        classified = is_spa;
     }
 
     // ---- 7. notes. ----
@@ -2643,12 +3127,18 @@ pub fn analyze_journey(
                 .into(),
         );
     } else if !actions.is_empty() {
-        notes.push(
-            "This app is not built as a Sky.Spa wasm client, so there is no per-action \
-             client/server split: on Sky.Live every action round-trips to the server over \
-             the session's SSE channel."
-                .into(),
-        );
+        let msg = match shape {
+            AppShape::Tui | AppShape::Cli => {
+                "This is a terminal app: every action runs in-process. Effectful actions reach \
+                 a side effect; pure actions only update the model."
+            }
+            _ => {
+                "This app is not built as a Sky.Spa wasm client, so there is no per-action \
+                 client/server split: on Sky.Live every action round-trips to the server over \
+                 the session's SSE channel."
+            }
+        };
+        notes.push(msg.into());
     }
     if !api_endpoints.is_empty() {
         api_endpoints.sort();
@@ -2662,6 +3152,7 @@ pub fn analyze_journey(
     Ok(JourneyReport {
         project,
         is_spa,
+        shape,
         target: app_target.map(str::to_string),
         pages,
         page_field,
@@ -2703,6 +3194,86 @@ fn non_nav_actions(r: &JourneyReport) -> Vec<&JourneyAction> {
         .iter()
         .filter(|a| a.navigates_to.is_empty() && !a.dynamic_nav)
         .collect()
+}
+
+/// The chip label for an action in the Effectful/Pure inventory: the Msg name,
+/// annotated with its effect families when known (`AddToBasket · Db, Http`).
+fn action_chip_label(a: &JourneyAction) -> String {
+    if a.effect_families.is_empty() {
+        a.msg.clone()
+    } else {
+        format!("{} · {}", a.msg, a.effect_families.join(", "))
+    }
+}
+
+/// The heading for the Effectful section, worded for the shape: a Spa client
+/// round-trips over `/_rpc`; every other shape runs the effect server-side (Live)
+/// or in-process (terminal).
+fn effectful_section_label(shape: AppShape, n: usize) -> String {
+    let how = match shape {
+        AppShape::Spa => "server · /_rpc",
+        AppShape::Tui | AppShape::Cli => "in-process",
+        _ => "server-side",
+    };
+    format!("Effectful actions ({n}) — {how}, reach a side effect")
+}
+
+/// The heading for the Pure section, worded for the shape.
+fn pure_section_label(shape: AppShape, n: usize) -> String {
+    let how = match shape {
+        AppShape::Spa => "client-only UI (wasm), no effect",
+        _ => "model-only update, no effect",
+    };
+    format!("Pure actions ({n}) — {how}")
+}
+
+/// Draw the Effectful + Pure action inventory (two labelled chip sections) for
+/// `actions`, from `(x0, section_y)`, wrapping before `content_right`. Returns
+/// the bottom Y. Effectful chips carry their effect families; pure chips do not.
+fn journey_inventory_svg(
+    svg: &mut diagram_svg::Svg,
+    shape: AppShape,
+    actions: &[&JourneyAction],
+    x0: f64,
+    mut section_y: f64,
+    content_right: f64,
+) -> f64 {
+    use diagram_svg as d;
+    let effectful: Vec<&&JourneyAction> = actions.iter().filter(|a| a.effectful).collect();
+    let pure: Vec<&&JourneyAction> = actions.iter().filter(|a| !a.effectful).collect();
+    if !effectful.is_empty() {
+        let items: Vec<(String, &'static str, &'static str)> = effectful
+            .iter()
+            .map(|a| (action_chip_label(a), d::SERVER_EDGE, d::SERVER_EDGE))
+            .collect();
+        svg.text(
+            x0,
+            section_y,
+            &effectful_section_label(shape, effectful.len()),
+            "start",
+            12.0,
+            "700",
+            d::SUBTLE,
+        );
+        section_y = chip_grid(svg, &items, x0, section_y + 10.0, content_right) + 18.0;
+    }
+    if !pure.is_empty() {
+        let items: Vec<(String, &'static str, &'static str)> = pure
+            .iter()
+            .map(|a| (a.msg.clone(), d::CLIENT_EDGE, d::CLIENT_EDGE))
+            .collect();
+        svg.text(
+            x0,
+            section_y,
+            &pure_section_label(shape, pure.len()),
+            "start",
+            12.0,
+            "700",
+            d::SUBTLE,
+        );
+        section_y = chip_grid(svg, &items, x0, section_y + 10.0, content_right) + 16.0;
+    }
+    section_y
 }
 
 /// One collapsed transition: every Msg that shares the same `source → target`
@@ -2855,21 +3426,25 @@ fn render_journey_puml(r: &JourneyReport) -> String {
         ));
     }
 
-    // Non-navigating actions: internal events, grouped inside the initial state.
+    // Non-navigating actions: Effectful + Pure sections inside the initial state.
     let internal = non_nav_actions(r);
-    if !internal.is_empty() {
-        o.push_str(&format!("{init_id} : --- internal events ---\n"));
-        for a in &internal {
-            let tag = match a.server {
-                Some(true) => " [server]",
-                Some(false) => " [client]",
-                None => "",
+    let effectful: Vec<&&JourneyAction> = internal.iter().filter(|a| a.effectful).collect();
+    let pure: Vec<&&JourneyAction> = internal.iter().filter(|a| !a.effectful).collect();
+    if !effectful.is_empty() {
+        o.push_str(&format!("{init_id} : --- effectful actions ---\n"));
+        for a in &effectful {
+            let fams = if a.effect_families.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", a.effect_families.join(", "))
             };
-            o.push_str(&format!(
-                "{init_id} : {}{}\n",
-                short_edge_label(&a.msg),
-                tag
-            ));
+            o.push_str(&format!("{init_id} : {}{}\n", short_edge_label(&a.msg), fams));
+        }
+    }
+    if !pure.is_empty() {
+        o.push_str(&format!("{init_id} : --- pure actions ---\n"));
+        for a in &pure {
+            o.push_str(&format!("{init_id} : {}\n", short_edge_label(&a.msg)));
         }
     }
 
@@ -2917,6 +3492,60 @@ fn chip_grid(
 fn render_journey_svg(r: &JourneyReport) -> String {
     use diagram_svg as d;
     let mut svg = d::Svg::new(&format!("User journey (TEA state machine) — {}", r.project));
+
+    // Http: no pages, no TEA loop — one clear line, never a broken diagram.
+    if r.shape == AppShape::Http {
+        svg.text(
+            8.0,
+            26.0,
+            "An HTTP API has no user journey.",
+            "start",
+            13.0,
+            "600",
+            d::TEXT,
+        );
+        svg.text(
+            8.0,
+            48.0,
+            "There are no pages or a TEA loop; see `--diagram wire` for the endpoint map.",
+            "start",
+            11.0,
+            "400",
+            d::SUBTLE,
+        );
+        return svg.render();
+    }
+
+    // A TEA app with no Page union (a Cli, or a Tui with no routing) — no state
+    // machine, just the action inventory split into Effectful and Pure.
+    if r.pages.is_empty() {
+        if r.actions.is_empty() {
+            svg.node(8.0, 8.0, 200.0, NODE_H, d::FILL, d::STROKE, "No pages found", None);
+            return svg.render();
+        }
+        let all: Vec<&JourneyAction> = r.actions.iter().collect();
+        let head = match r.shape {
+            AppShape::Cli | AppShape::Tui => "Actions (no pages — terminal TEA loop)",
+            _ => "Actions (no pages found)",
+        };
+        svg.text(8.0, 24.0, head, "start", 13.0, "700", d::TEXT);
+        let y = journey_inventory_svg(&mut svg, r.shape, &all, 8.0, 46.0, 1100.0);
+        let eff_label = if r.shape.is_terminal() {
+            "effectful action (in-process)"
+        } else {
+            "effectful action (server-side)"
+        };
+        svg.legend(
+            8.0,
+            y + 6.0,
+            &[
+                (d::SERVER_EDGE.to_string(), eff_label.to_string()),
+                (d::CLIENT_EDGE.to_string(), "pure action (no effect)".to_string()),
+            ],
+        );
+        return svg.render();
+    }
+
     let Some(init) = initial_page(r) else {
         svg.node(
             8.0,
@@ -3116,43 +3745,28 @@ fn render_journey_svg(r: &JourneyReport) -> String {
         section_y = chip_grid(&mut svg, &other, col0_x, section_y + 10.0, content_right) + 20.0;
     }
 
-    // "Internal events" inventory: non-navigating Msgs, coloured by class.
+    // Non-navigating actions: split into Effectful (reach a side effect) and Pure
+    // (model-only) sections, each chip annotated with its effect families.
     let internal = non_nav_actions(r);
     if !internal.is_empty() {
-        let items: Vec<(String, &'static str, &'static str)> = internal
-            .iter()
-            .map(|a| {
-                let color = match a.server {
-                    Some(true) => d::SERVER_EDGE,
-                    Some(false) => d::CLIENT_EDGE,
-                    None => d::SUBTLE,
-                };
-                (short_edge_label(&a.msg), color, color)
-            })
-            .collect();
-        svg.text(
-            col0_x,
-            section_y,
-            &format!(
-                "Internal events ({}) — update the model, no navigation",
-                items.len()
-            ),
-            "start",
-            12.0,
-            "700",
-            d::SUBTLE,
-        );
-        section_y = chip_grid(&mut svg, &items, col0_x, section_y + 10.0, content_right) + 16.0;
+        section_y = journey_inventory_svg(&mut svg, r.shape, &internal, col0_x, section_y, content_right);
     }
 
     // Legend.
     let mut lrows: Vec<(String, String)> = Vec::new();
     if r.classified {
-        lrows.push((d::SERVER_EDGE.into(), "server round-trip (/_rpc)".into()));
-        lrows.push((d::CLIENT_EDGE.into(), "client action (wasm)".into()));
+        lrows.push((d::SERVER_EDGE.into(), "navigation → server (/_rpc)".into()));
+        lrows.push((d::CLIENT_EDGE.into(), "navigation (client / wasm)".into()));
     } else {
         lrows.push((d::STROKE.into(), "navigation (SSE round-trip)".into()));
     }
+    let eff_label = match r.shape {
+        AppShape::Spa => "effectful action (server · /_rpc)",
+        AppShape::Tui | AppShape::Cli => "effectful action (in-process)",
+        _ => "effectful action (server-side)",
+    };
+    lrows.push((d::SERVER_EDGE.into(), eff_label.into()));
+    lrows.push((d::CLIENT_EDGE.into(), "pure action (no effect)".into()));
     lrows.push((d::PKG_STROKE.into(), "run-time / other page".into()));
     svg.legend(col0_x, section_y + 6.0, &lrows);
 
@@ -3162,24 +3776,22 @@ fn render_journey_svg(r: &JourneyReport) -> String {
 fn render_journey_md(r: &JourneyReport) -> String {
     let mut o = String::new();
     o.push_str(&format!("# User journey — {}\n\n", r.project));
-    o.push_str(&format!(
-        "App shape: {}\n\n",
-        if r.classified {
-            "Sky.Spa (client/server split over /_rpc)"
-        } else {
-            "single-process (Sky.Live / Http)"
-        }
-    ));
+    let shape_line = match r.shape {
+        AppShape::Spa => "Sky.Spa (wasm client + server over /_rpc)",
+        AppShape::Live => "Sky.Live (one server, SSR + SSE)",
+        AppShape::Tui => "Sky.Tui (single terminal binary)",
+        AppShape::Cli => "Sky.Cli (single terminal binary)",
+        AppShape::Http => "Sky.Http.Server (HTTP API, no user journey)",
+    };
+    o.push_str(&format!("App shape: {shape_line}\n\n"));
     if r.pages.is_empty() && r.actions.is_empty() {
         for n in &r.notes {
             o.push_str(&format!("> {n}\n"));
         }
         return o;
     }
-    o.push_str("## Pages\n\n");
-    if r.pages.is_empty() {
-        o.push_str("_Pages could not be determined._\n\n");
-    } else {
+    if !r.pages.is_empty() {
+        o.push_str("## Pages\n\n");
         o.push_str("| Page | URL |\n|---|---|\n");
         for p in &r.pages {
             let url = p.url.as_deref().map(md_cell).unwrap_or_else(|| "—".into());
@@ -3189,16 +3801,24 @@ fn render_journey_md(r: &JourneyReport) -> String {
     }
     o.push_str("## Actions\n\n");
     o.push_str(
-        "Each user action (Msg): whether it runs in the browser or round-trips to the \
-         server, and the page(s) it navigates to.\n\n",
+        "Each user action (Msg): whether it is Effectful (reaches a side effect) or Pure, \
+         its effect families, and the page(s) it navigates to.\n\n",
     );
-    o.push_str("| Action | Runs | Navigates to |\n|---|---|---|\n");
+    o.push_str("| Action | Kind | Effects | Navigates to |\n|---|---|---|---|\n");
     for a in &r.actions {
-        let runs = match a.server {
-            Some(true) => format!("server (POST /_rpc/{})", a.msg),
-            Some(false) => "client".to_string(),
-            None if r.classified => "client".to_string(),
-            None => "server (SSE)".to_string(),
+        let kind = if a.effectful {
+            match r.shape {
+                AppShape::Spa => "effectful (server · /_rpc)".to_string(),
+                AppShape::Tui | AppShape::Cli => "effectful (in-process)".to_string(),
+                _ => "effectful (server-side)".to_string(),
+            }
+        } else {
+            "pure".to_string()
+        };
+        let effects = if a.effect_families.is_empty() {
+            "—".to_string()
+        } else {
+            a.effect_families.join(", ")
         };
         let mut nav = a.navigates_to.clone();
         if a.dynamic_nav {
@@ -3210,9 +3830,10 @@ fn render_journey_md(r: &JourneyReport) -> String {
             nav.join(", ")
         };
         o.push_str(&format!(
-            "| {} | {} | {} |\n",
+            "| {} | {} | {} | {} |\n",
             md_cell(&a.msg),
-            runs,
+            kind,
+            md_cell(&effects),
             md_cell(&nav_s)
         ));
     }
@@ -3228,12 +3849,25 @@ mod tests {
     use super::*;
 
     fn graph(is_spa: bool) -> ComponentGraph {
+        graph_with(is_spa, Vec::new(), None, None)
+    }
+
+    fn graph_with(
+        is_spa: bool,
+        tables: Vec<String>,
+        rpc_effectful: Option<usize>,
+        rpc_pure: Option<usize>,
+    ) -> ComponentGraph {
         let mut api = BTreeSet::new();
         api.insert(Capability::Database);
         api.insert(Capability::Auth);
         ComponentGraph {
             project: "examples/demo".into(),
             is_spa,
+            shape: if is_spa { AppShape::Spa } else { AppShape::Live },
+            tables,
+            rpc_effectful,
+            rpc_pure,
             modules: vec![
                 ModuleUse {
                     module: "Api".into(),
@@ -3363,6 +3997,41 @@ mod tests {
     }
 
     #[test]
+    fn components_svg_lists_db_tables_inside_the_database() {
+        let g = graph_with(false, vec!["users".into(), "orders".into()], None, None);
+        let out = render_components(&g, Format::Svg);
+        assert!(is_svg(&out), "{out}");
+        assert!(out.contains(">users<"), "table name inside Database store: {out}");
+        assert!(out.contains(">orders<"), "table name inside Database store: {out}");
+    }
+
+    #[test]
+    fn components_md_lists_db_tables() {
+        let g = graph_with(false, vec!["users".into(), "orders".into()], None, None);
+        let out = render_components(&g, Format::Md);
+        assert!(out.contains("Database tables (2): users, orders."), "{out}");
+    }
+
+    #[test]
+    fn components_svg_caps_db_tables_with_plus_n_more() {
+        let tables: Vec<String> = (0..12).map(|i| format!("t{i}")).collect();
+        let g = graph_with(false, tables, None, None);
+        let out = render_components(&g, Format::Svg);
+        assert!(out.contains(">+4 more<"), "over-cap folds into +N more: {out}");
+    }
+
+    #[test]
+    fn components_svg_spa_rpc_edge_counts_effectful_actions() {
+        let g = graph_with(true, Vec::new(), Some(3), Some(5));
+        let out = render_components(&g, Format::Svg);
+        assert!(out.contains(">3 effectful → /_rpc<"), "effectful count on /_rpc edge: {out}");
+        assert!(
+            out.contains(">5 pure client actions (wasm)<"),
+            "pure caption under SPA: {out}"
+        );
+    }
+
+    #[test]
     fn target_family_detection() {
         assert!(target_is_spa_client("web:app"));
         assert!(target_is_spa_client("mobile:ios"));
@@ -3410,13 +4079,14 @@ mod tests {
         WireReport {
             project: "examples/demo".into(),
             is_spa: true,
+            shape: AppShape::Spa,
             target: Some("web:app".into()),
             endpoints: vec![
                 WireEndpoint {
                     msg: "SetRegion".into(),
                     request: "{basket, region} + {region}".into(),
                     response: "{basket, region}".into(),
-                    effects: None,
+                    effects: Some("Db".into()),
                 },
                 WireEndpoint {
                     msg: "SaveAll".into(),
@@ -3431,16 +4101,29 @@ mod tests {
         }
     }
 
+    /// A Spa app with a raw `App.api` webhook beside `/_rpc`.
+    fn wire_report_with_webhook() -> WireReport {
+        let mut r = wire_report();
+        r.http_endpoints = vec![HttpEndpoint {
+            method: "POST".into(),
+            path: "/webhooks/stripe".into(),
+            handler: "Payments.handleWebhook".into(),
+            kind: EndpointKind::RawApi,
+        }];
+        r
+    }
+
     #[test]
     fn wire_md_has_the_rpc_table() {
         let out = render_wire(&wire_report(), Format::Md);
+        assert!(out.contains("## RPC endpoints (/_rpc)"), "{out}");
         assert!(
             out.contains("| Endpoint | Request (reads + args) | Response (writes) | Effects |"),
             "{out}"
         );
         assert!(
             out.contains(
-                "| POST /_rpc/SetRegion | {basket, region} + {region} | {basket, region} | — |"
+                "| POST /_rpc/SetRegion | {basket, region} + {region} | {basket, region} | Db |"
             ),
             "{out}"
         );
@@ -3448,6 +4131,26 @@ mod tests {
             out.contains("| POST /_rpc/SaveAll | whole model | whole model | — |"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn wire_md_lists_the_app_api_webhook_beside_rpc() {
+        let out = render_wire(&wire_report_with_webhook(), Format::Md);
+        assert!(out.contains("## HTTP endpoints (raw `App.api`, beside /_rpc)"), "{out}");
+        assert!(
+            out.contains("| POST | /webhooks/stripe | Payments.handleWebhook | raw api · CSRF-exempt |"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn wire_svg_draws_the_webhook_as_an_inbound_external_entity() {
+        let out = render_wire(&wire_report_with_webhook(), Format::Svg);
+        assert!(is_svg(&out), "{out}");
+        assert!(out.contains("HTTP endpoints (raw api · CSRF-exempt)"), "{out}");
+        assert!(out.contains(">Webhook sender<"), "inbound external entity: {out}");
+        assert!(out.contains("/webhooks/stripe"), "{out}");
+        assert!(out.contains(">inbound<"), "inbound crossing arrow label: {out}");
     }
 
     #[test]
@@ -3480,7 +4183,7 @@ mod tests {
         assert!(out.contains(">Client · untrusted<"), "{out}");
         assert!(out.contains(">Server · trusted<"), "{out}");
         // The Endpoints section box + a per-endpoint row.
-        assert!(out.contains("Endpoints (/_rpc)"), "{out}");
+        assert!(out.contains("RPC endpoints (/_rpc)"), "{out}");
         assert!(out.contains("POST /_rpc/SetRegion"), "{out}");
     }
 
@@ -3490,18 +4193,21 @@ mod tests {
         WireReport {
             project: "examples/demo".into(),
             is_spa: false,
-            target: Some("web".into()),
+            shape: AppShape::Http,
+            target: None,
             endpoints: vec![],
             http_endpoints: vec![
                 HttpEndpoint {
                     method: "GET".into(),
                     path: "/".into(),
                     handler: "handleHome".into(),
+                    kind: EndpointKind::HttpRoute,
                 },
                 HttpEndpoint {
                     method: "POST".into(),
                     path: "/api/echo".into(),
                     handler: "handleEcho".into(),
+                    kind: EndpointKind::HttpRoute,
                 },
             ],
             limited: false,
@@ -3512,9 +4218,9 @@ mod tests {
     #[test]
     fn wire_http_md_lists_the_endpoint_map() {
         let out = render_wire(&http_wire_report(), Format::Md);
-        assert!(out.contains("| Method | Path | Handler |"), "{out}");
-        assert!(out.contains("| GET | / | handleHome |"), "{out}");
-        assert!(out.contains("| POST | /api/echo | handleEcho |"), "{out}");
+        assert!(out.contains("| Method | Path | Handler / page | Kind |"), "{out}");
+        assert!(out.contains("| GET | / | handleHome | http |"), "{out}");
+        assert!(out.contains("| POST | /api/echo | handleEcho | http |"), "{out}");
         assert!(
             !out.contains("| Endpoint |"),
             "no /_rpc table for an HTTP app: {out}"
@@ -3525,17 +4231,73 @@ mod tests {
     fn wire_http_puml_and_svg() {
         let puml = render_wire(&http_wire_report(), Format::Puml);
         assert!(
-            puml.contains("rectangle \"GET /\" as ep0 <<endpoint>>"),
+            puml.contains("rectangle \"GET /\" as hep0 <<endpoint>>"),
             "{puml}"
         );
         assert!(
-            puml.contains("rectangle \"POST /api/echo\" as ep1 <<endpoint>>"),
+            puml.contains("rectangle \"POST /api/echo\" as hep1 <<endpoint>>"),
             "{puml}"
         );
         let svg = render_wire(&http_wire_report(), Format::Svg);
         assert!(is_svg(&svg), "{svg}");
-        assert!(svg.contains("Endpoints (HTTP)"), "{svg}");
+        assert!(svg.contains("HTTP endpoints"), "{svg}");
         assert!(svg.contains("/api/echo"), "{svg}");
+    }
+
+    /// A Sky.Live app: page GET routes + a raw api, no /_rpc table.
+    #[test]
+    fn wire_live_lists_page_routes_and_raw_api() {
+        let r = WireReport {
+            project: "examples/demo".into(),
+            is_spa: false,
+            shape: AppShape::Live,
+            target: Some("web".into()),
+            endpoints: vec![],
+            http_endpoints: vec![
+                HttpEndpoint {
+                    method: "GET".into(),
+                    path: "/".into(),
+                    handler: "HomePage".into(),
+                    kind: EndpointKind::PageRoute,
+                },
+                HttpEndpoint {
+                    method: "POST".into(),
+                    path: "/webhooks/stripe".into(),
+                    handler: "handleWebhook".into(),
+                    kind: EndpointKind::RawApi,
+                },
+            ],
+            limited: false,
+            notes: vec![],
+        };
+        let out = render_wire(&r, Format::Md);
+        assert!(out.contains("| GET | / | HomePage | page |"), "{out}");
+        assert!(
+            out.contains("| POST | /webhooks/stripe | handleWebhook | raw api · CSRF-exempt |"),
+            "{out}"
+        );
+        assert!(!out.contains("/_rpc"), "no /_rpc on a Live app: {out}");
+    }
+
+    /// A terminal app: no client boundary — one clear line, not a broken diagram.
+    #[test]
+    fn wire_terminal_is_a_single_line_not_a_diagram() {
+        let r = WireReport {
+            project: "examples/demo".into(),
+            is_spa: false,
+            shape: AppShape::Tui,
+            target: Some("terminal:tui".into()),
+            endpoints: vec![],
+            http_endpoints: vec![],
+            limited: false,
+            notes: vec![],
+        };
+        let svg = render_wire(&r, Format::Svg);
+        assert!(is_svg(&svg), "{svg}");
+        assert!(svg.contains("no client/server wire"), "{svg}");
+        // No DFD zones are drawn for a terminal app.
+        assert!(!svg.contains(">Server · trusted<"), "no boundary zone drawn: {svg}");
+        assert!(!svg.contains(">Client · untrusted<"), "no client zone drawn: {svg}");
     }
 
     #[test]
@@ -3543,6 +4305,7 @@ mod tests {
         let r = WireReport {
             project: "examples/demo".into(),
             is_spa: false,
+            shape: AppShape::Live,
             target: Some("web".into()),
             endpoints: vec![],
             http_endpoints: vec![],
@@ -3669,6 +4432,7 @@ mod tests {
                     url: None,
                 },
             ],
+            shape: if classified { AppShape::Spa } else { AppShape::Live },
             page_field: Some("currentPage".into()),
             actions: vec![
                 JourneyAction {
@@ -3676,18 +4440,24 @@ mod tests {
                     server: if classified { Some(false) } else { None },
                     navigates_to: vec![],
                     dynamic_nav: true,
+                    effectful: false,
+                    effect_families: vec![],
                 },
                 JourneyAction {
                     msg: "Refresh".into(),
                     server: if classified { Some(true) } else { None },
                     navigates_to: vec![],
                     dynamic_nav: false,
+                    effectful: true,
+                    effect_families: vec!["Http".into()],
                 },
                 JourneyAction {
                     msg: "UpvotePost".into(),
                     server: if classified { Some(true) } else { None },
                     navigates_to: vec!["LoginPage".into()],
                     dynamic_nav: false,
+                    effectful: true,
+                    effect_families: vec!["Db".into()],
                 },
             ],
             classified,
@@ -3701,12 +4471,13 @@ mod tests {
         assert!(out.contains("## Pages"), "{out}");
         assert!(out.contains("| HomePage | / |"), "{out}");
         assert!(out.contains("| LoginPage | — |"), "{out}");
+        assert!(out.contains("| Action | Kind | Effects | Navigates to |"), "{out}");
         assert!(
-            out.contains("| UpvotePost | server (POST /_rpc/UpvotePost) | LoginPage |"),
+            out.contains("| UpvotePost | effectful (server · /_rpc) | Db | LoginPage |"),
             "{out}"
         );
         assert!(
-            out.contains("| Navigate | client | (dynamic page) |"),
+            out.contains("| Navigate | pure | — | (dynamic page) |"),
             "{out}"
         );
     }
@@ -3734,8 +4505,9 @@ mod tests {
             out.contains("pg_HomePage -[#2b6cb0]-> dyn_pg : Navigate"),
             "{out}"
         );
-        // a non-navigating action as an internal event
-        assert!(out.contains("pg_HomePage : Refresh [server]"), "{out}");
+        // a non-navigating effectful action, annotated with its effect family
+        assert!(out.contains("pg_HomePage : --- effectful actions ---"), "{out}");
+        assert!(out.contains("pg_HomePage : Refresh [Http]"), "{out}");
         assert!(!out.contains("```"), "{out}");
     }
 
@@ -3747,6 +4519,7 @@ mod tests {
         let r = JourneyReport {
             project: "x".into(),
             is_spa: true,
+            shape: AppShape::Spa,
             target: Some("web:app".into()),
             pages: vec![
                 JourneyPage {
@@ -3765,12 +4538,16 @@ mod tests {
                     server: Some(true),
                     navigates_to: vec!["LoginPage".into()],
                     dynamic_nav: false,
+                    effectful: true,
+                    effect_families: vec!["Db".into()],
                 },
                 JourneyAction {
                     msg: "DownvotePost".into(),
                     server: Some(true),
                     navigates_to: vec!["LoginPage".into()],
                     dynamic_nav: false,
+                    effectful: true,
+                    effect_families: vec!["Db".into()],
                 },
             ],
             classified: true,
@@ -3815,12 +4592,51 @@ mod tests {
     }
 
     #[test]
-    fn journey_live_marks_actions_as_sse() {
+    fn journey_live_marks_actions_as_effectful_server_side() {
         let out = render_journey(&journey_report(false), Format::Md);
         assert!(
-            out.contains("| UpvotePost | server (SSE) | LoginPage |"),
+            out.contains("| UpvotePost | effectful (server-side) | Db | LoginPage |"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn journey_svg_splits_effectful_and_pure_sections() {
+        // Two non-navigating actions: one effectful (Db), one pure — the SVG must
+        // carry both labelled sections, with the effect family on the chip.
+        let r = JourneyReport {
+            project: "x".into(),
+            is_spa: true,
+            shape: AppShape::Spa,
+            target: Some("web:app".into()),
+            pages: vec![JourneyPage { name: "HomePage".into(), url: Some("/".into()) }],
+            page_field: Some("page".into()),
+            actions: vec![
+                JourneyAction {
+                    msg: "AddToBasket".into(),
+                    server: Some(true),
+                    navigates_to: vec![],
+                    dynamic_nav: false,
+                    effectful: true,
+                    effect_families: vec!["Db".into()],
+                },
+                JourneyAction {
+                    msg: "ToggleMenu".into(),
+                    server: Some(false),
+                    navigates_to: vec![],
+                    dynamic_nav: false,
+                    effectful: false,
+                    effect_families: vec![],
+                },
+            ],
+            classified: true,
+            notes: vec![],
+        };
+        let svg = render_journey(&r, Format::Svg);
+        assert!(svg.contains("Effectful actions (1)"), "effectful section: {svg}");
+        assert!(svg.contains("Pure actions (1)"), "pure section: {svg}");
+        assert!(svg.contains(">AddToBasket · Db<"), "effect family on chip: {svg}");
+        assert!(svg.contains(">ToggleMenu<"), "pure chip: {svg}");
     }
 
     #[test]
@@ -3828,6 +4644,7 @@ mod tests {
         let r = JourneyReport {
             project: "x".into(),
             is_spa: false,
+            shape: AppShape::Live,
             target: None,
             pages: vec![],
             page_field: None,
