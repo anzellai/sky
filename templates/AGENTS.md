@@ -406,7 +406,7 @@ sky run src/Main.sky         # build + run   (--profile for runtime CPU/mem/hang
 sky check src/Main.sky       # type-check + go build (keeps no binary — but DOES compile)
 sky verify                   # one-shot project gate: fmt + check + build + tests
 sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes a per-case JSON report)
-sky fuzz src/Main.sky        # model no-panic fuzzer: random Msgs → update (any TEA app), offline
+sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update; a Sky.Spa target adds the differential split oracle
 sky fmt src/Main.sky         # format (always run after editing .sky)
 sky doc <Module> | --list    # API docs (the source of truth for signatures)
 sky watch src/Main.sky       # rebuild + restart on save

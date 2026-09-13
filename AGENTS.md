@@ -380,9 +380,9 @@ sky watch src/Main.sky           # file-watch rebuild + restart
 sky verify                       # project pre-release gate: fmt + check + build + tests
 sky fmt src/Main.sky             # opinionated formatter (idempotent)
 sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per-case JSON report)
-sky fuzz src/Main.sky            # model no-panic fuzzer: random Msgs → update, any TEA app
-sky spa-diff-fuzz src/Main.sky   # Sky.Spa differential split oracle (free, catches read/write-set drops)
+sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update (any TEA app); a Sky.Spa target adds the differential split oracle
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
+sky doc --diagram <kind>         # architecture diagram: components (C4) | wire (DFD) | journey | telemetry; --format puml|md|svg, --out <path>
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
 sky db start | stop [--all] | ps [--all]                       # local PostgreSQL cluster
 sky db provision --embed                                       # fetch + pin a PostgreSQL bundle

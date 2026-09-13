@@ -20,10 +20,10 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 161 |
+| surfaces | 160 |
 | covered by the new corpus (>= Asserted) | 141 |
 | verdict `stronger` | 136 |
-| verdict `equal` | 25 |
+| verdict `equal` | 24 |
 | verdict `weaker` | 0 |
 | corpus units | 81 |
 | stdlib modules (denominator) | 94 |
@@ -45,7 +45,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.console-serve`
 - `cli.fmt`
 - `cli.lsp`
-- `cli.spa-diff-fuzz`
 - `cli.spa-partition`
 - `cli.upgrade-claude`
 - `cli.verify`
@@ -113,7 +112,6 @@ None.
 | `cli.migrate` | cli | None | Falsified | stronger |
 | `cli.remove` | cli | None | Falsified | stronger |
 | `cli.run` | cli | None | Falsified | stronger |
-| `cli.spa-diff-fuzz` | cli | None | None | equal |
 | `cli.spa-partition` | cli | None | None | equal |
 | `cli.spa-split` | cli | None | Falsified | stronger |
 | `cli.test` | cli | None | Falsified | stronger |

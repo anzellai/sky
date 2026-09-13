@@ -15,7 +15,9 @@
       "init",
       "migrate"
     ],
-    "documented_but_not_dispatched": [],
+    "documented_but_not_dispatched": [
+      "spa-diff-fuzz"
+    ],
     "verbs": [
       "add",
       "build",
@@ -35,7 +37,6 @@
       "migrate",
       "remove",
       "run",
-      "spa-diff-fuzz",
       "spa-partition",
       "spa-split",
       "test",
@@ -680,10 +681,10 @@
     "stdlib_entries": 1862,
     "stdlib_modules": 94,
     "surfaces_covered": 141,
-    "surfaces_covered_pct": 87.6,
-    "surfaces_equal": 25,
+    "surfaces_covered_pct": 88.1,
+    "surfaces_equal": 24,
     "surfaces_stronger": 136,
-    "surfaces_total": 161,
+    "surfaces_total": 160,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -1155,22 +1156,6 @@
       "description": "`sky run`",
       "id": "cli.run",
       "verdict": "stronger"
-    },
-    {
-      "category": "cli",
-      "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
-      },
-      "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
-      },
-      "description": "`sky spa-diff-fuzz`",
-      "id": "cli.spa-diff-fuzz",
-      "verdict": "equal"
     },
     {
       "category": "cli",
@@ -12049,14 +12034,13 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 15,
+      "count": 14,
       "surfaces": [
         "cli.config",
         "cli.console",
         "cli.console-serve",
         "cli.fmt",
         "cli.lsp",
-        "cli.spa-diff-fuzz",
         "cli.spa-partition",
         "cli.upgrade-claude",
         "cli.verify",

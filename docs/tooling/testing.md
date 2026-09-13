@@ -258,16 +258,17 @@ code and asserts the account is active. The only thing that stays mocked is a
 real message actually delivered by a third party — automated tests prove the
 app's handling of the flow, never a provider's delivery.
 
-## Property-based fuzzing
+## Property-based fuzzing — `sky fuzz [--target <t>]`
 
-Two fuzzers derive their inputs from the app's own types, so neither needs a
-hand-written oracle.
-
-### `sky fuzz <entry>` — the model no-panic net (any TEA app)
+One command derives its inputs from the app's own types, so it needs no
+hand-written oracle. It runs one or two nets, chosen by `--target`.
 
 ```bash
-sky fuzz src/Main.sky --iters 500 --seed 42
+sky fuzz src/Main.sky --iters 500 --seed 42          # model no-panic net
+sky fuzz src/Main.sky --target web:app --iters 500   # + the differential split oracle
 ```
+
+### The model no-panic net (always, any TEA app)
 
 `sky fuzz` derives a `Msg` generator from the app's own `Msg` union, folds random
 `Msg` sequences from `init ()` through the real `update`, and asserts no
@@ -280,18 +281,18 @@ offline database above, so a DB-backed app fuzzes offline. It exits `0` on PASS
 and non-zero on the first sequence that panics, reproducible with the same
 `--seed`.
 
-### `sky spa-diff-fuzz <entry>` — the differential split oracle (Sky.Spa)
+### The differential split oracle (Sky.Spa client targets)
 
-```bash
-sky spa-diff-fuzz src/Main.sky --iters 200
-```
-
-For a Sky.Spa app, this runs each random `(Model, Msg)` two ways — directly, and
-through the client/server split plumbing (build request from the read-set,
-reconstruct the server model, apply the write-set delta) — and asserts the two
-results agree. A dropped read or a `Msg`-argument collision diverges the two
-paths and is caught mechanically, with no oracle and no real credentials. It is
-Sky.Spa-only, because the split is what it diffs against.
+When `--target` selects a client/server split (a Sky.Spa wasm client: `web:app`,
+`mobile*`, `desktop:<os>`, `tablet:<os>`; the default is the project's
+`sky.toml [app] target`), `sky fuzz` ALSO runs each random `(Model, Msg)` two
+ways — directly, and through the client/server split plumbing (build the request
+from the read-set, reconstruct the server model, apply the write-set delta) — and
+asserts the two results agree. A dropped read or a `Msg`-argument collision
+diverges the two paths and is caught mechanically, with no oracle and no real
+credentials. A non-split target (or none) runs the model net alone; a `whole
+update` app with no resolvable `case msg of` skips the oracle with a note rather
+than failing. (This replaces the former `sky spa-diff-fuzz` verb.)
 
 ## Scaffolding the fixtures — `sky test --scaffold-mocks`
 

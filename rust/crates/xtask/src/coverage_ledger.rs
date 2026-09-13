@@ -2711,14 +2711,24 @@ fn baseline_surface_strengths(base: &Value) -> BTreeMap<String, u8> {
 /// `None` means there is no checked-in ledger at all — the bootstrap run. See
 /// [`ratchet`] for why that one case is treated differently from every later
 /// one.
-/// The per-shape app front-door surfaces that `Std.App` deprecates and composes
-/// (`stdlib.Std.Live` / `Tui` / `Cli` / `Webview` / `Spa`). Their `cover_new` is
-/// ALLOWED to fall as in-repo consumers migrate onto `Std.App`: holding a module
-/// we steer users away from to a NON-decreasing coverage ratchet is
-/// self-contradictory — the deprecation IS the decision to cover it less
-/// directly. Mirrors `project::doc::is_deprecated_front_door`, keyed on the
-/// ledger surface id. (`Std.Live.Console` / `Std.Live.Head` are sub-modules, not
-/// the front door, and stay ratcheted.)
+/// Front-door surfaces we deliberately stop covering directly, so their
+/// `cover_new` is ALLOWED to fall (or the surface to leave the tally entirely):
+/// holding a front door we steer users away from to a NON-decreasing coverage
+/// ratchet is self-contradictory — the deprecation IS the decision to cover it
+/// less directly.
+///
+/// Two kinds live here:
+/// * The per-shape app front doors that `Std.App` deprecates and composes
+///   (`stdlib.Std.Live` / `Tui` / `Cli` / `Webview` / `Spa`), as in-repo
+///   consumers migrate onto `Std.App`. Mirrors
+///   `project::doc::is_deprecated_front_door`. (`Std.Live.Console` /
+///   `Std.Live.Head` are sub-modules, not the front door, and stay ratcheted.)
+/// * `cli.spa-diff-fuzz` — the standalone differential-split-fuzzer verb,
+///   RETIRED into `sky fuzz --target web:app` (one fuzz command, target-driven).
+///   The verb front door is gone; the CAPABILITY it fronted is unchanged and
+///   still proven by the registered T2 `spa-diff-fuzz` gate (which calls
+///   `project::spa_split::generate_diff_fuzz` directly, not the CLI), so this is
+///   a front-door retirement, not a coverage loss.
 fn is_deprecated_front_door_surface(id: &str) -> bool {
     matches!(
         id,
@@ -2727,6 +2737,7 @@ fn is_deprecated_front_door_surface(id: &str) -> bool {
             | "stdlib.Std.Cli"
             | "stdlib.Std.Webview"
             | "stdlib.Std.Spa"
+            | "cli.spa-diff-fuzz"
     )
 }
 

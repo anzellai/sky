@@ -477,25 +477,25 @@ HTTP boundary (method + `urlContains` pre-filled from the typed IR; fill each
 
 ### `sky fuzz <file>`
 
-Model-based no-panic fuzzer for any TEA app (Spa or Live). Derives a `Msg`
-generator from the app's own `Msg` union, folds random `Msg` sequences from
-`init ()` through the real `update`, and asserts no unclassified panic. Runs
-offline under test mode.
+The unified app fuzzer for any TEA app (Spa or Live). It always runs the model
+no-panic net: derives a `Msg` generator from the app's own `Msg` union, folds
+random `Msg` sequences from `init ()` through the real `update`, and asserts no
+unclassified panic. Runs offline under test mode.
 
 ```bash
-sky fuzz src/Main.sky --iters 500 --seed 42
+sky fuzz src/Main.sky --iters 500 --seed 42          # model no-panic net
+sky fuzz src/Main.sky --target web:app --iters 500   # + the differential split oracle
 ```
 
-Exit `0` on PASS, non-zero on the first sequence that panics (reproducible with
-the same `--seed`). See
-[`testing.md`](testing.md#sky-fuzz-entry--the-model-no-panic-net-any-tea-app).
-
-### `sky spa-diff-fuzz <file>`
-
-Differential split fuzzer for a Sky.Spa app: runs each random `(Model, Msg)`
-directly and through the client/server split, and asserts the two agree — a free
-oracle that catches dropped read/write-set fields and `Msg`-argument collisions.
-See [`testing.md`](testing.md#sky-spa-diff-fuzz-entry--the-differential-split-oracle-skyspa).
+`--target` (default: the project's `sky.toml [app] target`) selects the app
+shape. When it is a Sky.Spa client target (`web:app`, `mobile*`, `desktop:<os>`,
+`tablet:<os>`) `sky fuzz` ALSO runs the differential split oracle: it runs each
+random `(Model, Msg)` directly and through the client/server split and asserts
+the two agree — a free oracle that catches dropped read/write-set fields and
+`Msg`-argument collisions. A non-split target (or none) runs the model net alone.
+This replaces the former `sky spa-diff-fuzz` verb. Exit `0` on PASS, non-zero on
+the first divergence or panic (reproducible with the same `--seed`). See
+[`testing.md`](testing.md#property-based-fuzzing--sky-fuzz---target-t).
 
 ## Configuration
 
