@@ -13,6 +13,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## Unreleased
 
+### Added
+
+- **`sky build` precompresses the Sky.Spa wasm client.** The dist bundle now
+  ships `main.<hash>.wasm.gz` (gzip -9) and, when the `brotli` tool is installed,
+  `main.<hash>.wasm.br` (brotli -11, ~27% smaller than gzip on wasm) — plus the
+  same for `wasm_exec.js`. A static host or `file_server { precompressed br gzip }`
+  serves the smallest variant the client accepts, with the raw file as the floor.
+  `brotli` is optional: absent, `sky build` warns once with an install hint and
+  falls back to gzip. The stale-bundle clean now also removes old `.br`/`.gz`.
+
 ## v0.24.4 — Automated testing + architecture diagrams (2026-09-13)
 
 Two additive feature families: a testing suite that derives its inputs from the

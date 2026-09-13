@@ -3390,12 +3390,17 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
     let hash = &db_provision::sha256_hex(&wasm_bytes)[..12];
     let wasm_name = format!("main.{hash}.wasm");
 
-    // Drop any previous wasm (hashed or the legacy `main.wasm`) so dist/ does not
-    // accumulate stale bundles across rebuilds.
+    // Drop any previous wasm (hashed or the legacy `main.wasm`) AND its
+    // precompressed variants so dist/ does not accumulate stale bundles across
+    // rebuilds. (A stale wasm left here is worse than clutter: the backend
+    // resolves the hashed wasm from dist at runtime, so an old file can be
+    // served in place of the fresh build.)
     if let Ok(rd) = std::fs::read_dir(dist) {
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
-            if n.starts_with("main.") && n.ends_with(".wasm") {
+            if n.starts_with("main.")
+                && (n.ends_with(".wasm") || n.ends_with(".wasm.br") || n.ends_with(".wasm.gz"))
+            {
                 let _ = std::fs::remove_file(e.path());
             }
         }
@@ -3409,7 +3414,52 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
         WASM_INDEX_HTML.replace("{{WASM}}", &wasm_name),
     )
     .map_err(|e| format!("write index.html: {e}"))?;
+
+    // Precompress the wasm + loader so a static host / Caddy can serve them with
+    // `precompressed br gzip` — brotli-11 is ~27% smaller than gzip on wasm. gzip
+    // is near-universal; brotli is optional (warned + skipped if the tool is
+    // absent, leaving the gzip fallback).
+    precompress_web_asset(&dist.join(&wasm_name));
+    precompress_web_asset(&dist.join("wasm_exec.js"));
     Ok(())
+}
+
+/// Precompress one dist asset into `<file>.gz` (gzip -9) and, when the `brotli`
+/// tool is installed, `<file>.br` (brotli -11). Both are content-negotiated by a
+/// `file_server { precompressed br gzip }`; the raw file remains for clients that
+/// accept neither. Missing tools are non-fatal: gzip is warned once, brotli is
+/// warned once with the install hint, and the build proceeds with whatever
+/// compression is available (down to raw).
+fn precompress_web_asset(file: &Path) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BROTLI_WARNED: AtomicBool = AtomicBool::new(false);
+    static GZIP_WARNED: AtomicBool = AtomicBool::new(false);
+    if !file.is_file() {
+        return;
+    }
+    // gzip (fallback tier) — keep the original (`-k`), force overwrite (`-f`).
+    let gz = std::process::Command::new("gzip")
+        .args(["-9", "-k", "-f"])
+        .arg(file)
+        .status();
+    if !matches!(gz, Ok(s) if s.success()) && !GZIP_WARNED.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "sky build: `gzip` not available — serving the wasm uncompressed. \
+             Install gzip (or let your host compress on the fly) for smaller transfers."
+        );
+    }
+    // brotli (best tier) — optional. Warn once with the install hint, fall back.
+    let br = std::process::Command::new("brotli")
+        .args(["-q", "11", "-k", "-f"])
+        .arg(file)
+        .status();
+    if !matches!(br, Ok(s) if s.success()) && !BROTLI_WARNED.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "sky build: `brotli` not found — the wasm client is served gzip-compressed \
+             (the fallback). Install `brotli` for a ~27% smaller download (Homebrew: \
+             `brew install brotli`; Debian/Ubuntu: `apt install brotli`)."
+        );
+    }
 }
 
 /// Generate a Sky.Webview desktop shell for the freshly-built client and build
