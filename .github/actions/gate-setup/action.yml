@@ -93,6 +93,15 @@ runs:
         echo "GOCACHE=${{ github.workspace }}/.gocache"     >> "$GITHUB_ENV"
         echo "GOMODCACHE=${{ github.workspace }}/.gomodcache" >> "$GITHUB_ENV"
 
+    # WARMTH: the primary key is per-family and per-go.sum, saved by this job at
+    # release time. But releases are infrequent, so the `go-release-*` namespace
+    # is almost always evicted (GitHub drops caches after 7 idle days / over the
+    # 10 GB budget) — a release used to start cache-COLD every time, which is the
+    # single biggest avoidable cost here. The per-commit rust-ci warms the
+    # `go-linux-*` family on EVERY push to main, so the release falls back to it:
+    # a release now inherits the Go BUILD cache main last produced. restore-keys
+    # are tried in order (most specific first), so a same-release warm entry
+    # still wins when one exists; `go-linux-` is the always-available floor.
     - name: Cache Go build + module cache (keep it WARM across releases)
       uses: actions/cache@v4
       with:
@@ -100,7 +109,9 @@ runs:
           ${{ github.workspace }}/.gocache
           ${{ github.workspace }}/.gomodcache
         key: go-release-${{ inputs.cache-key }}-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
-        restore-keys: go-release-${{ inputs.cache-key }}-
+        restore-keys: |
+          go-release-${{ inputs.cache-key }}-
+          go-linux-
 
     - uses: Swatinem/rust-cache@v2
       with:

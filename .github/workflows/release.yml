@@ -226,10 +226,9 @@ jobs:
   gate-core:
     runs-on: ubuntu-latest
     # Cache-warm: ~5 min compiler install + workspace tests + ~3 min corpus +
-    # coerce-floor + the T1 harness. `build-run --all` (was ~10-20 min here,
-    # cold behind the removed `go clean`) has moved to gate-buildrun, so this
-    # job is workspace tests + corpus + T1 only. 30 forces a re-shard (workspace
-    # tests → their own job, as rust-ci does) if a cold run approaches it.
+    # coerce-floor. `build-run --all` moved to gate-buildrun and the ~14-min T1
+    # harness moved to gate-t1, so this job is workspace tests + corpus +
+    # coerce-floor only — comfortably inside 30 min.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -283,10 +282,37 @@ jobs:
           echo "── xtask coerce-floor (SKY_LIVE_TESTS=skip: FFI-gitignored rows) ──"
           SKY_LIVE_TESTS=skip cargo run --release --locked -q -p xtask -- coerce-floor
 
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-t1 — the T1 gate harness, split out of gate-core so neither job overruns
+  # 30 min on a 4-vCPU runner (gate-core = workspace tests + corpus; gate-t1 =
+  # the ~14-min T1 harness). Coverage is identical to running it inside gate-core.
+  # It needs postgres + neovim because T1 includes the lsp gate and the
+  # postgres-arm gates. Not the rust-cache writer (gate-core writes it).
+  gate-t1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core
+          postgres: 'true'
+          neovim: 'true'
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo docker image prune -af || true
+          df -h /
       - name: Gate harness (T1) with proof requirement
         working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs
-
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -590,6 +616,7 @@ jobs:
     needs:
       - build
       - gate-core
+      - gate-t1
       - gate-buildrun
       - gate-t2-corpus
       - gate-t2-rest
