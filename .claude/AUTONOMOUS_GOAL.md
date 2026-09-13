@@ -186,8 +186,24 @@ so the declarative fixture (DONE) is the right tool there; type-derivation helps
 fuzzing arbitrary Codec-typed boundaries, which DS doesn't have. Judge scoped it
 as a deferral. Everything else in the design's 3 pillars + 2 modes is DONE.
 
+MODEL FUZZER (mode A for NON-Spa apps) — DONE (@71df881b). The differential
+split fuzzer needs a client/server split to diff, so it is Spa-only; Sky.Live
+apps had no automatic net, only the target-agnostic effect substrate for
+hand-authored scenario tests. `sky fuzz <entry>` closes it: derive a Msg
+generator from the app's own Msg union, fold random Msg sequences from init()
+through update, assert no unclassified panic. Reachable by construction (a client
+can send any Msg). No hand-written oracle. Works on ANY TEA app (Spa or Live) —
+it only needs (Model, Msg, update) — and runs under the ephemeral-DB +
+determinism + mock-by-default substrate so a DB-backed Live app fuzzes offline.
+PROVEN: spa-derived-read (Spa) 5 ctors / 300 steps, no panic; 19-skyforum
+(Sky.Live, multi-module, DB-backed) 11 ctors incl. client Bump/UpvotePost/
+SubmitComment / 200 steps, no panic. THIS is the direct answer to "for all other
+possible sky apps either on live or spa, how does the automated tests go" — Spa
+gets the free differential oracle + this; Live gets this + the scenario
+substrate. Diff-fuzz gate unaffected (10/10 branches); project crate 34 passed.
+
 FEATURE STATE (2026-09-13): JUDGE-VERIFIED COMPLETE (@7a4918aa) + Gap A (ephemeral
-DB) since closed. Mode A (differential fuzzer)
+DB) since closed + model fuzzer (@71df881b) closes the Live-app net. Mode A (differential fuzzer)
 Judge-verified + gated (3 fixtures/9 branches, 2 falsifiers). Mode B (scenario
 e2e) flagship proven (DS checkout webhook + finalize convergence, 7/7 offline).
 Effect substrate: determinism (3a) + mock-by-default (3c) + .env.test activation.
