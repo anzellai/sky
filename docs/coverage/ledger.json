@@ -15,9 +15,7 @@
       "init",
       "migrate"
     ],
-    "documented_but_not_dispatched": [
-      "spa-diff-fuzz"
-    ],
+    "documented_but_not_dispatched": [],
     "verbs": [
       "add",
       "build",
@@ -8477,6 +8475,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -13290,11 +13293,10 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 10,
+          "count": 9,
           "symbols": [
             "Cookie",
             "Handler",
-            "Response",
             "Route",
             "Server",
             "body",
@@ -14088,8 +14090,8 @@
           ]
         }
       },
-      "count": 707,
-      "pct_of_denominator": 38.0
+      "count": 706,
+      "pct_of_denominator": 37.9
     }
   },
   "units": [
@@ -14109,12 +14111,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 23,
+      "modules_imported": 24,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 108,
-      "refs_qualified": 103,
+      "refs_generous": 111,
+      "refs_qualified": 106,
       "role": "Layer2",
-      "sky_files": 97,
+      "sky_files": 98,
       "sky_toml_sections": []
     },
     {

@@ -225,6 +225,21 @@ runtime setting."""
 owner  = "anzel"
 commit = "pending-merge"
 
+[[config-surface-rise]]
+metric = "pre_binary_surfaces"
+from   = 14
+to     = 15
+reason = """the new key is `name`: `sky doc --diagram` reads `[project] name` (via \
+project::sky_toml_project_key) to TITLE the diagram by the app name rather than a \
+machine-local file path (a user request — a diagram is a shared artefact and a \
+path leaks a private layout). `name` is an already-accepted, universally-present \
+sky.toml key, and this is a READ-ONLY read in the `sky doc` TOOLING path, never \
+the app runtime — so it enlarges no runtime residual config surface (the §12 \
+risk-1 concern this metric guards). Falls back to the project directory basename, \
+then the path, when no name is set."""
+owner  = "anzel"
+commit = "e4681c1a"
+
 [[removal]]
 symbol = "Std.Ui.rowMarker"
 reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."

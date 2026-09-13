@@ -3147,7 +3147,12 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// 163 -> 165: the auto-testing surfaces (`cli.fuzz`, credited None -> Falsified),
 /// landed alongside the `sky doc --diagram` work. 161 surfaces verified, 141
 /// covered — the ratchet still holds, `weaker` stays 0.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 165;
+///
+/// 165 -> 164: `cli.spa-diff-fuzz` retired — the differential-fuzzer verb folded
+/// into `sky fuzz --target web:app` (one fuzz command). The surface is exempted
+/// as a deprecated front door (its capability + the T2 `spa-diff-fuzz` gate are
+/// unchanged), so it leaves the tally: 160 surfaces verified.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 164;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
