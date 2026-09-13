@@ -277,8 +277,11 @@ fn doc_diagram_components_on_std_app_web_renders_lanes() {
         "sky doc --diagram components failed:\n{stdout}{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(stdout.contains("subgraph Client"), "no Client lane:\n{stdout}");
-    assert!(stdout.contains("subgraph Server"), "no Server lane:\n{stdout}");
+    // Default format is now PlantUML: the two lanes are `package` boxes with an
+    // `interface "/_rpc"` between them.
+    assert!(stdout.starts_with("@startuml"), "not a PlantUML doc:\n{stdout}");
+    assert!(stdout.contains("package \"Client · wasm\""), "no Client lane:\n{stdout}");
+    assert!(stdout.contains("package \"Server · effects\""), "no Server lane:\n{stdout}");
     assert!(stdout.contains("/_rpc"), "no /_rpc boundary:\n{stdout}");
     assert!(
         !fixture.join(".skyapp").exists(),
@@ -359,4 +362,87 @@ fn doc_diagram_journey_on_skyforum_lists_pages_and_actions() {
         !project.join(".skyapp/diagram").exists(),
         "journey left a staged `.skyapp/diagram` scratch dir"
     );
+}
+
+/// `--format mermaid` is retired: the CLI exits non-zero with a message naming
+/// the shipped formats. No diagram is produced.
+#[test]
+fn doc_diagram_mermaid_format_is_retired() {
+    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/19-skyforum");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "components", "--format", "mermaid"])
+        .current_dir(&project)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram");
+    assert!(!out.status.success(), "retired format must exit non-zero");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("mermaid was retired") && stderr.contains("puml"),
+        "expected the retired-mermaid message:\n{stderr}"
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "no diagram should be printed");
+}
+
+/// `--format svg` produces a self-contained, well-formed SVG on stdout.
+#[test]
+fn doc_diagram_components_svg_is_wellformed() {
+    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/19-skyforum");
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "components", "--format", "svg"])
+        .current_dir(&project)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram components --format svg");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "svg render failed:\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.trim_start().starts_with("<svg"), "not an SVG:\n{}", &stdout[..stdout.len().min(200)]);
+    assert!(stdout.trim_end().ends_with("</svg>"), "SVG not closed");
+    assert!(stdout.contains("<rect"), "SVG has no nodes");
+}
+
+/// `--out <path>` writes the diagram to a file instead of stdout; stdout stays
+/// empty.
+#[test]
+fn doc_diagram_out_writes_a_file() {
+    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/19-skyforum");
+    let out_path = std::env::temp_dir().join(format!("sky-diagram-{}.puml", std::process::id()));
+    let _ = std::fs::remove_file(&out_path);
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "components", "--out"])
+        .arg(&out_path)
+        .current_dir(&project)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram components --out");
+    assert!(out.status.success(), "--out failed:\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "stdout must be empty with --out");
+    let written = std::fs::read_to_string(&out_path).expect("--out file exists");
+    assert!(written.starts_with("@startuml"), "file is not a PlantUML doc:\n{written}");
+    let _ = std::fs::remove_file(&out_path);
+}
+
+/// `wire` on an API-only Sky.Http.Server app (no Sky.Spa client) charts the HTTP
+/// endpoint map recovered from the resolved HIR: method + path + handler.
+#[test]
+fn doc_diagram_wire_on_http_server_charts_endpoint_map() {
+    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/15-http-server");
+    assert!(
+        project.join("src/Main.sky").exists(),
+        "examples/15-http-server is a committed example and must be present"
+    );
+    let out = Command::new(SKY)
+        .args(["doc", "--diagram", "wire", "--format", "md"])
+        .current_dir(&project)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --diagram wire");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "wire on http-server failed:\n{stdout}{stderr}");
+    assert!(stdout.contains("| Method | Path | Handler |"), "no endpoint map:\n{stdout}");
+    assert!(stdout.contains("| GET | / | handleHome |"), "missing GET / route:\n{stdout}");
+    assert!(stdout.contains("| POST | /api/echo | handleEcho |"), "missing POST route:\n{stdout}");
+    // It is not a Spa app, so there is no /_rpc table.
+    assert!(!stdout.contains("| Endpoint |"), "an HTTP app has no /_rpc table:\n{stdout}");
 }

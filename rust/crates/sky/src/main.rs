@@ -6198,9 +6198,9 @@ fn cmd_doc(args: &[String]) -> ExitCode {
 }
 
 /// `sky doc --diagram <kind>` — render a read-only architecture diagram of the
-/// current project to stdout. Only `components` is implemented; another kind
-/// prints the planned set and exits non-zero. `--format mermaid` (default)
-/// prints a fenced flowchart; `--format md` adds a Markdown legend + table.
+/// current project. `--format puml` (default) emits a raw PlantUML document,
+/// `md` a Markdown table, `svg` a self-contained SVG we draw ourselves.
+/// `--out <path>` writes to a file instead of stdout. Mermaid is retired.
 fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[String]) -> ExitCode {
     const PLANNED: &[&str] = &["components", "wire", "telemetry", "journey", "callpath"];
     if kind != "components" && kind != "wire" && kind != "telemetry" && kind != "journey" {
@@ -6212,20 +6212,22 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
         );
         return ExitCode::from(2);
     }
-    // `components` + `journey` read best as a flowchart (default `mermaid`);
-    // `wire` and `telemetry` read best as a table (default `md`). An explicit
-    // `--format` always wins.
-    let raw_format = flag_value(args, "--format");
-    let format = match raw_format.as_deref() {
-        Some("mermaid") => project::diagram::Format::Mermaid,
+    // `--format puml|md|svg`, defaulting to `puml` for every kind. Mermaid is
+    // retired. `--out <path>` writes to a file instead of stdout (all formats).
+    let format = match flag_value(args, "--format").as_deref() {
+        None | Some("puml") => project::diagram::Format::Puml,
         Some("md") => project::diagram::Format::Md,
-        None if kind == "wire" || kind == "telemetry" => project::diagram::Format::Md,
-        None => project::diagram::Format::Mermaid,
+        Some("svg") => project::diagram::Format::Svg,
+        Some("mermaid") => {
+            eprintln!("mermaid was retired; use --format puml (default), md, or svg");
+            return ExitCode::from(2);
+        }
         Some(other) => {
-            eprintln!("sky doc --format {other}: unknown format (use `mermaid` or `md`).");
+            eprintln!("sky doc --format {other}: unknown format (use `puml`, `md`, or `svg`).");
             return ExitCode::from(2);
         }
     };
+    let out_path = flag_value(args, "--out");
     // `--target` mirrors `sky build --target`: it decides the client/server split.
     // A CLI `--target` wins over the `sky.toml` `[app] target`, so an app whose
     // target is chosen at build time (e.g. `--target web:app` in CI, with no pin
@@ -6255,6 +6257,25 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             let _ = std::fs::remove_dir_all(dir);
         }
     };
+    // Emit the rendered diagram to `--out <path>` when given, else to stdout.
+    let emit = |s: String| -> ExitCode {
+        match &out_path {
+            Some(p) => match std::fs::write(p, &s) {
+                Ok(()) => {
+                    eprintln!("sky doc --diagram: wrote {} bytes to {p}", s.len());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("sky doc --diagram: could not write {p}: {e}");
+                    ExitCode::FAILURE
+                }
+            },
+            None => {
+                print!("{s}");
+                ExitCode::SUCCESS
+            }
+        }
+    };
 
     if kind == "wire" {
         let out = match project::diagram::analyze_wire(
@@ -6267,8 +6288,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             // boundary, and the report explains why there is nothing to chart.
             Ok(mut report) => {
                 report.project = project_label;
-                print!("{}", project::diagram::render_wire(&report, format));
-                ExitCode::SUCCESS
+                emit(project::diagram::render_wire(&report, format))
             }
             // If the synthesised project failed to load, fall back to the raw
             // project so a diagram is still produced (with the existing note).
@@ -6280,8 +6300,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
                     app_target.as_deref(),
                 ) {
                     Ok(report) => {
-                        print!("{}", project::diagram::render_wire(&report, format));
-                        ExitCode::SUCCESS
+                        emit(project::diagram::render_wire(&report, format))
                     }
                     Err(e) => {
                         eprintln!("sky doc --diagram wire: {e}");
@@ -6309,8 +6328,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             // carries the note and (when available) the action inventory.
             Ok(mut report) => {
                 report.project = project_label;
-                print!("{}", project::diagram::render_journey(&report, format));
-                ExitCode::SUCCESS
+                emit(project::diagram::render_journey(&report, format))
             }
             // If the synthesised project failed to load, fall back to the raw
             // project so a journey is still produced (pages + actions live in
@@ -6323,8 +6341,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
                     app_target.as_deref(),
                 ) {
                     Ok(report) => {
-                        print!("{}", project::diagram::render_journey(&report, format));
-                        ExitCode::SUCCESS
+                        emit(project::diagram::render_journey(&report, format))
                     }
                     Err(e) => {
                         eprintln!("sky doc --diagram journey: {e}");
@@ -6352,8 +6369,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             // `render_telemetry` prints the "no call sites" line and we exit 0.
             Ok(mut report) => {
                 report.project = project_label;
-                print!("{}", project::diagram::render_telemetry(&report, format));
-                ExitCode::SUCCESS
+                emit(project::diagram::render_telemetry(&report, format))
             }
             // If the synthesised project failed to load, fall back to the raw
             // project so an inventory is still produced (call sites live in the
@@ -6366,8 +6382,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
                     app_target.as_deref(),
                 ) {
                     Ok(report) => {
-                        print!("{}", project::diagram::render_telemetry(&report, format));
-                        ExitCode::SUCCESS
+                        emit(project::diagram::render_telemetry(&report, format))
                     }
                     Err(e) => {
                         eprintln!("sky doc --diagram telemetry: {e}");
@@ -6392,8 +6407,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
     ) {
         Ok(mut graph) => {
             graph.project = project_label;
-            print!("{}", project::diagram::render_components(&graph, format));
-            ExitCode::SUCCESS
+            emit(project::diagram::render_components(&graph, format))
         }
         Err(_) if staged.is_some() => {
             match project::diagram::analyze_components(
@@ -6403,8 +6417,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
                 app_target.as_deref(),
             ) {
                 Ok(graph) => {
-                    print!("{}", project::diagram::render_components(&graph, format));
-                    ExitCode::SUCCESS
+                    emit(project::diagram::render_components(&graph, format))
                 }
                 Err(e) => {
                     eprintln!("sky doc --diagram components: {e}");

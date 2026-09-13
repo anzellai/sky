@@ -44,19 +44,24 @@ fn metadata_service_is_single_lane_with_a_database_edge() {
     );
     assert!(!g.is_spa, "a plain Http service is not a Sky.Spa app");
 
-    let out = render_components(&g, Format::Mermaid);
-    assert!(out.contains("flowchart LR"), "{out}");
-    // the Database capability node (a distinct cylinder shape)
-    assert!(out.contains("cap_db[(\"Database\")]"), "{out}");
+    let out = render_components(&g, Format::Puml);
+    assert!(out.starts_with("@startuml"), "{out}");
+    // the Database capability node (a distinct database shape)
+    assert!(out.contains("database \"Database\" as cap_db"), "{out}");
     // at least one module → Database edge
     assert!(out.contains("--> cap_db"), "{out}");
     // single-lane: no RPC boundary
-    assert!(!out.contains("subgraph Client"), "{out}");
+    assert!(!out.contains("interface \"/_rpc\""), "{out}");
 
     // md format carries the module → capability table.
     let md = render_components(&g, Format::Md);
     assert!(md.contains("| Module | Capabilities |"), "{md}");
     assert!(md.contains("Database"), "{md}");
+
+    // svg format is a well-formed SVG.
+    let svg = render_components(&g, Format::Svg);
+    assert!(svg.trim_start().starts_with("<svg"), "{svg}");
+    assert!(svg.trim_end().ends_with("</svg>"), "{svg}");
 }
 
 #[test]
@@ -77,11 +82,16 @@ fn app_notes_as_a_spa_client_has_both_lanes_and_the_rpc_boundary() {
         g.capabilities.iter().map(|c| c.label()).collect::<Vec<_>>()
     );
 
-    let out = render_components(&g, Format::Mermaid);
-    assert!(out.contains("subgraph Client"), "{out}");
-    assert!(out.contains("subgraph Server"), "{out}");
-    assert!(out.contains("rpc{{\"/_rpc\"}}"), "{out}");
+    let out = render_components(&g, Format::Puml);
+    assert!(out.contains("package \"Client · wasm\""), "{out}");
+    assert!(out.contains("package \"Server · effects\""), "{out}");
+    assert!(out.contains("interface \"/_rpc\" as rpc"), "{out}");
     assert!(out.contains("rpc --> cap_db"), "{out}");
     // a client module reaches an effect and crosses /_rpc
     assert!(out.contains("--> rpc"), "{out}");
+
+    // svg carries the two package lanes + the /_rpc node.
+    let svg = render_components(&g, Format::Svg);
+    assert!(svg.trim_start().starts_with("<svg"), "{svg}");
+    assert!(svg.contains("Client · wasm") && svg.contains("/_rpc"), "{svg}");
 }

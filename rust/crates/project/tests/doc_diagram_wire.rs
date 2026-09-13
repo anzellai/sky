@@ -78,11 +78,16 @@ fn spa_app_has_rpc_endpoint_rows_with_request_and_response() {
         save.response
     );
 
-    // Mermaid form is a per-endpoint sequence diagram.
-    let mm = render_wire(&r, Format::Mermaid);
-    assert!(mm.contains("sequenceDiagram"), "{mm}");
-    assert!(mm.contains("Client->>Server: POST /_rpc/SaveNarrow"), "{mm}");
-    assert!(mm.contains("Server-->>Client:"), "{mm}");
+    // PlantUML form is a per-endpoint sequence diagram.
+    let puml = render_wire(&r, Format::Puml);
+    assert!(puml.starts_with("@startuml"), "{puml}");
+    assert!(puml.contains("== SaveNarrow =="), "{puml}");
+    assert!(puml.contains("C -> S : POST /_rpc/SaveNarrow"), "{puml}");
+    assert!(puml.contains("S --> C : writes"), "{puml}");
+
+    // SVG form is a well-formed sequence diagram.
+    let svg = render_wire(&r, Format::Svg);
+    assert!(svg.trim_start().starts_with("<svg") && svg.trim_end().ends_with("</svg>"), "{svg}");
 }
 
 #[test]
@@ -104,20 +109,39 @@ fn std_app_inline_effect_shape_degrades_gracefully_not_an_error() {
 }
 
 #[test]
-fn metadata_service_is_not_a_spa_client_prints_a_note_not_a_table() {
+fn metadata_service_charts_its_http_endpoint_map() {
     let root = repo_root();
     let dir = root.join("examples/65-metadata-service");
-    // No `--target`, no `[app] target` pin → a plain Sky.Http service.
+    // No `--target`, no `[app] target` pin → a plain Sky.Http service. It has no
+    // `/_rpc` contract, but it DOES register routes, so `wire` charts the HTTP
+    // endpoint map recovered from the resolved HIR.
     let r = analyze_wire(&root, &dir, None, None)
         .unwrap_or_else(|e| panic!("analyze_wire failed: {e}"));
 
     assert!(!r.is_spa, "a plain Http service is not a Sky.Spa client");
     assert!(r.endpoints.is_empty(), "a non-Spa app has no /_rpc endpoints");
+    assert!(
+        !r.http_endpoints.is_empty(),
+        "expected a Sky.Http.Server route map; got none"
+    );
+    // The `/` route with a bare-def handler resolves its name.
+    assert!(
+        r.http_endpoints
+            .iter()
+            .any(|e| e.method == "GET" && e.path == "/" && e.handler == "handleRoot"),
+        "expected GET / -> handleRoot; got {:?}",
+        r.http_endpoints
+    );
 
     let md = render_wire(&r, Format::Md);
-    // No RPC table for a non-Spa app.
-    assert!(!md.contains("| Endpoint |"), "{md}");
-    // The note explains what `wire` charts and how to see it.
-    assert!(md.contains("Sky.Spa"), "{md}");
-    assert!(md.contains("web:app"), "{md}");
+    // The HTTP endpoint table, not the /_rpc table.
+    assert!(md.contains("| Method | Path | Handler |"), "{md}");
+    assert!(md.contains("| GET | / | handleRoot |"), "{md}");
+    assert!(!md.contains("| Endpoint |"), "no /_rpc table for an HTTP app:\n{md}");
+
+    // PlantUML + SVG both render the map.
+    let puml = render_wire(&r, Format::Puml);
+    assert!(puml.contains("C -> S : GET /"), "{puml}");
+    let svg = render_wire(&r, Format::Svg);
+    assert!(svg.trim_start().starts_with("<svg"), "{svg}");
 }

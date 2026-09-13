@@ -23,6 +23,9 @@ pub mod config_migrate;
 /// of a Sky app (module nodes + capability buckets + edges, with the Sky.Spa
 /// client/server split). Reads the resolved HIR; never lowers, emits, or writes.
 pub mod diagram;
+/// Self-contained SVG drawing primitives for `sky doc --diagram --format svg`.
+/// We emit the SVG XML ourselves — no external tool. See the module docstring.
+pub mod diagram_svg;
 mod doc;
 mod driver;
 mod ffi_ops;

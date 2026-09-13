@@ -74,12 +74,16 @@ fn todo_cli_lists_its_log_call_sites_with_sinks() {
     // The server-side note is present.
     assert!(md.contains("effect kernels") && md.contains("/_rpc"), "{md}");
 
-    // The mermaid form draws a module → logs-sink edge.
-    let mm = render_telemetry(&r, Format::Mermaid);
-    assert!(mm.contains("flowchart LR"), "{mm}");
-    assert!(mm.contains("sink_logs[[\"Logs\"]]"), "{mm}");
-    assert!(mm.contains("m_Main -->|"), "{mm}");
-    assert!(mm.contains("| sink_logs"), "{mm}");
+    // The PlantUML form draws a module → logs-sink edge.
+    let puml = render_telemetry(&r, Format::Puml);
+    assert!(puml.starts_with("@startuml"), "{puml}");
+    assert!(puml.contains("queue \"Logs\" as sink_logs"), "{puml}");
+    assert!(puml.contains("m_Main --> sink_logs :"), "{puml}");
+
+    // The SVG form is well-formed.
+    let svg = render_telemetry(&r, Format::Svg);
+    assert!(svg.trim_start().starts_with("<svg") && svg.trim_end().ends_with("</svg>"), "{svg}");
+    assert!(svg.contains("Logs"), "{svg}");
 }
 
 #[test]
