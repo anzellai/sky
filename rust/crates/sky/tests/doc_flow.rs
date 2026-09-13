@@ -283,6 +283,12 @@ fn doc_diagram_components_on_std_app_web_renders_lanes() {
     assert!(stdout.contains("rectangle \"Browser · untrusted\" <<boundary>>"), "no Browser zone:\n{stdout}");
     assert!(stdout.contains("rectangle \"Server · trusted\" <<boundary>>"), "no Server zone:\n{stdout}");
     assert!(stdout.contains("/_rpc"), "no /_rpc crossing:\n{stdout}");
+    // The title names the app (`sky.toml` `name`), not a machine-local file path:
+    // a diagram is a shared artefact, and a path is noise (and leaks a layout).
+    assert!(
+        stdout.contains("— diagram-app-web-fixture") && !stdout.contains(&*fixture.to_string_lossy()),
+        "diagram title should use the sky.toml app name, not a file path:\n{stdout}"
+    );
     assert!(
         !fixture.join(".skyapp").exists(),
         "staged `.skyapp` scratch dir was not cleaned up"

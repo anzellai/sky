@@ -6254,11 +6254,23 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
         Some((dir, entry_mod)) => (dir.as_path(), entry_mod.clone()),
         None => (project_dir, None),
     };
-    let project_label = project_dir
+    // Title the diagram by the APP NAME (`sky.toml` top-level `name`), not a file
+    // path — a diagram is an artefact a reader shares, and a machine-local path is
+    // noise (and leaks a private layout). Fall back to the project directory's
+    // basename, then to the path, when no name is set.
+    let dir_base = project_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("app");
+    let path_label = project_dir
         .strip_prefix(repo_root)
         .unwrap_or(project_dir)
         .to_string_lossy()
         .to_string();
+    let project_label = {
+        let name = project::sky_toml_project_key(project_dir, "name", dir_base);
+        if name.is_empty() { path_label } else { name }
+    };
     // Best-effort clean of the staged scratch tree (a unique system-temp dir)
     // once the report is rendered. Nothing under the project is touched.
     let cleanup = |staged: &Option<(PathBuf, Option<String>)>| {
