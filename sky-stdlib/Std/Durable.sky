@@ -19,6 +19,8 @@ module Std.Durable exposing
     , awaitSignal
     , isSuspend
     , compact
+    , saveSnapshot
+    , loadSnapshot
     )
 
 {-| `Std.Durable` — durable, resumable workflows over `Std.Db` (Postgres or
@@ -255,6 +257,14 @@ setup db =
                     ("CREATE TABLE IF NOT EXISTS _sky_durable_signals ("
                         ++ "run_id TEXT NOT NULL, name TEXT NOT NULL, payload TEXT NOT NULL, "
                         ++ "created_at BIGINT NOT NULL, PRIMARY KEY (run_id, name))"
+                    )
+            )
+        |> Task.andThen
+            (\_ ->
+                Db.execRaw db
+                    ("CREATE TABLE IF NOT EXISTS _sky_durable_snapshot ("
+                        ++ "run_id TEXT PRIMARY KEY, seq BIGINT NOT NULL, model_json TEXT NOT NULL, "
+                        ++ "updated_at BIGINT NOT NULL)"
                     )
             )
         |> Task.map (\_ -> ())
@@ -764,4 +774,59 @@ compact db retentionMs =
                                 [ SqlInt cutoff ]
                                 |> Task.map (\_ -> journalDeleted)
                         )
+            )
+
+
+-- ---------------------------------------------------------------------------
+-- Model snapshots (v2) — durable TEA substrate
+-- ---------------------------------------------------------------------------
+
+
+{-| Persist a snapshot of a value (typically a TEA `Model`) for `runId`, keyed by
+a monotonic `seq`. WRITE-IF-NEWER: a stale write (lower `seq`) is a no-op, so two
+concurrent effects racing to snapshot cannot regress the state. The value is
+serialised with `Std.Codec` (`Codec.toJson`) — so a durable Model must be a plain
+data value with a `Codec`, no function fields (the same rule Elm's ports impose).
+
+This is the pure-Sky Model-snapshot primitive behind durable TEA replay: on a
+restart, `loadSnapshot` restores the last Model directly, so state resumes without
+re-folding the whole message history.
+-}
+saveSnapshot : Db -> String -> Codec a -> Int -> a -> Task Error ()
+saveSnapshot db runId codec seq model =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("INSERT INTO _sky_durable_snapshot (run_id, seq, model_json, updated_at) "
+                        ++ "VALUES (?, ?, ?, ?) "
+                        ++ "ON CONFLICT (run_id) DO UPDATE SET "
+                        ++ "seq = excluded.seq, model_json = excluded.model_json, updated_at = excluded.updated_at "
+                        ++ "WHERE excluded.seq > _sky_durable_snapshot.seq"
+                    )
+                    [ SqlString runId, SqlInt seq, SqlString (Codec.toJson codec model), SqlInt now ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+{-| Load the last snapshot for `runId`, decoded with `codec`. `Nothing` if the run
+has no snapshot (a fresh run — start from your `init` Model) or the stored JSON
+does not decode under `codec` (a Model shape change without a migration).
+-}
+loadSnapshot : Db -> String -> Codec a -> Task Error (Maybe a)
+loadSnapshot db runId codec =
+    Db.query db "SELECT model_json FROM _sky_durable_snapshot WHERE run_id = ?" [ SqlString runId ]
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        case Codec.fromJson codec (dictGet "model_json" row) of
+                            Ok m ->
+                                Just m
+
+                            Err _ ->
+                                Nothing
+
+                    Nothing ->
+                        Nothing
             )

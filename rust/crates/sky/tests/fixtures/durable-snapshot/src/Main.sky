@@ -1,0 +1,99 @@
+module Main exposing (main)
+
+{-| Fixture: `Durable.saveSnapshot` / `loadSnapshot` — the pure-Sky model-snapshot
+substrate for durable TEA replay (the "save and restore state" primitive). A model
+is serialised with `Std.Codec`, persisted, then restored from the database as a
+new process would after a restart. Also proves WRITE-IF-NEWER: a stale (lower seq)
+snapshot cannot regress the state.
+
+    save {count=3} @seq3  ->  loadSnapshot restores {count=3}
+    continue to {count=5} @seq5
+    a stale save {count=99} @seq2 is IGNORED  ->  loadSnapshot still {count=5}
+
+Expected stdout (asserted by `durable_snapshot_flow.rs`):
+
+    snapshot restored=3 final=5 stale_ignored=5
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db)
+import Std.Codec as Codec exposing (Codec)
+import Std.Durable as Durable
+
+
+type alias Model =
+    { count : Int, label : String }
+
+
+modelCodec : Codec Model
+modelCodec =
+    Codec.auto { count = 0, label = "" }
+
+
+-- an ordinary pure TEA-style update
+tick : Model -> Model
+tick m =
+    { m | count = m.count + 1 }
+
+
+orDefault : Maybe Model -> Model
+orDefault maybe =
+    case maybe of
+        Just m ->
+            m
+
+        Nothing ->
+            { count = -1, label = "?" }
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Durable.setup db
+                    -- Phase 1: three updates, snapshot each (seq 1,2,3).
+                    |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 1 { count = 1, label = "a" })
+                    |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 2 { count = 2, label = "a" })
+                    |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 3 { count = 3, label = "a" })
+                    -- Simulate a restart: restore the model from the database.
+                    |> Task.andThen (\_ -> Durable.loadSnapshot db "app" modelCodec)
+                    |> Task.andThen
+                        (\restoredMaybe ->
+                            let
+                                restored =
+                                    orDefault restoredMaybe
+
+                                -- continue from the restored model: two more ticks
+                                m4 =
+                                    tick restored
+
+                                m5 =
+                                    tick m4
+                            in
+                            Durable.saveSnapshot db "app" modelCodec 4 m4
+                                |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 5 m5)
+                                -- a STALE write (lower seq) must be ignored
+                                |> Task.andThen (\_ -> Durable.saveSnapshot db "app" modelCodec 2 { count = 99, label = "stale" })
+                                |> Task.andThen (\_ -> Durable.loadSnapshot db "app" modelCodec)
+                                |> Task.andThen
+                                    (\finalMaybe ->
+                                        let
+                                            final =
+                                                orDefault finalMaybe
+                                        in
+                                        println
+                                            ("snapshot restored="
+                                                ++ String.fromInt restored.count
+                                                ++ " final="
+                                                ++ String.fromInt final.count
+                                                ++ " stale_ignored="
+                                                ++ String.fromInt final.count
+                                            )
+                                    )
+                        )
+            )
