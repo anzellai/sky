@@ -1,0 +1,80 @@
+module Std.Ai.Agent exposing
+    ( Input
+    , Output
+    , oneShot
+    , inputCodec
+    , outputCodec
+    )
+
+{-| `Std.Ai.Agent` — an agent run as a `Std.Durable` workflow. The model call is a
+journalled `Durable.step`, so it is EXACTLY-ONCE: if the run crashes and resumes
+after the call, the recorded answer is replayed and the (paid) model is not called
+again. This is the point of running an agent on `Std.Durable` — an expensive,
+non-idempotent LLM call becomes durable and replay-safe.
+
+`oneShot` is the minimal shape: a fixed system prompt plus the caller's messages,
+one journalled model call, the answer and its token usage out. A tool-calling loop
+(each model call and each tool call its own journalled step) is the next
+increment; the durable substrate is the same.
+
+    agentDef =
+        Agent.oneShot "assistant" (Provider.openai key "gpt-4o-mini") "You are terse."
+
+    -- start + drive it like any durable workflow:
+    Durable.start db agentDef "chat-42" { messages = [ Provider.user "Hi" ] }
+    Durable.poll db [ Durable.erase agentDef ]
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.Codec as Codec exposing (Codec)
+import Std.Durable as Durable exposing (Ctx)
+import Std.Ai.Provider as Provider exposing (Provider, Message)
+
+
+type alias Input =
+    { messages : List Message }
+
+
+type alias Output =
+    { answer : String, usage : Provider.Usage }
+
+
+inputCodec : Codec Input
+inputCodec =
+    Codec.auto { messages = [ { role = "", content = "" } ] }
+
+
+outputCodec : Codec Output
+outputCodec =
+    Codec.auto
+        { answer = ""
+        , usage = { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+        }
+
+
+responseCodec : Codec Provider.ChatResponse
+responseCodec =
+    Codec.auto
+        { content = ""
+        , usage = { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+        }
+
+
+{-| A one-shot durable agent: prepend `systemPrompt`, call `provider` once inside
+a journalled step, return the answer and usage. Register it under `name`, then
+`Durable.start` / `Durable.poll` it like any workflow.
+-}
+oneShot : String -> Provider -> String -> Durable.WorkflowDef Input Output
+oneShot name provider systemPrompt =
+    Durable.register name inputCodec outputCodec (body provider systemPrompt)
+
+
+body : Provider -> String -> Ctx -> Input -> Task Error Output
+body provider systemPrompt ctx input =
+    Durable.step ctx
+        responseCodec
+        "llm"
+        (Provider.chat provider (Provider.system systemPrompt :: input.messages))
+        |> Task.map (\r -> { answer = r.content, usage = r.usage })

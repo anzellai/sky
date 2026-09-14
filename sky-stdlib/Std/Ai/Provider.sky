@@ -1,0 +1,263 @@
+module Std.Ai.Provider exposing
+    ( Provider
+    , openai
+    , compatible
+    , Message
+    , user
+    , system
+    , assistant
+    , Usage
+    , ChatResponse
+    , chat
+    , PriceBook
+    , priceBook
+    , freePriceBook
+    , cost
+    )
+
+{-| `Std.Ai.Provider` — a swappable LLM chat backend over `Sky.Core.Http`. The
+first adapter is OpenAI-compatible, which is one wire format for hosted OpenAI,
+vLLM, llama.cpp, and most gateways, so `compatible` reaches a local model with no
+new code. A `Provider` is a value, so a router (a `Provider` that dispatches to
+others) drops in anywhere one does.
+
+Every `chat` returns the assistant text AND a typed `Usage` (token counts), and
+`cost` prices that usage in `Std.Money` from a versioned `PriceBook` — exact,
+never a float, so per-task and per-tenant cost roll-ups are honest.
+
+    provider = Provider.openai (Secret.fromEnv "OPENAI_API_KEY") "gpt-4o-mini"
+
+    Provider.chat provider [ Provider.system "You are terse.", Provider.user "Hi" ]
+        |> Task.map (\r -> ( r.content, Provider.cost book r.usage ))
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Secret as Secret exposing (Secret)
+import Sky.Core.Http as Http
+import Std.Codec as Codec exposing (Codec)
+import Std.Money as Money exposing (Money)
+import Std.Decimal as Decimal
+
+
+-- ---------------------------------------------------------------------------
+-- Provider
+-- ---------------------------------------------------------------------------
+
+
+type Provider
+    = Provider { endpoint : String, apiKey : Secret, model : String }
+
+
+{-| The hosted OpenAI chat-completions endpoint. -}
+openai : Secret -> String -> Provider
+openai apiKey model =
+    Provider
+        { endpoint = "https://api.openai.com/v1/chat/completions"
+        , apiKey = apiKey
+        , model = model
+        }
+
+
+{-| Any OpenAI-compatible endpoint — a gateway, vLLM, or a local llama.cpp server
+(`http://localhost:8080/v1/chat/completions`). Same wire format, so no new code.
+-}
+compatible : String -> Secret -> String -> Provider
+compatible endpoint apiKey model =
+    Provider { endpoint = endpoint, apiKey = apiKey, model = model }
+
+
+-- ---------------------------------------------------------------------------
+-- Messages
+-- ---------------------------------------------------------------------------
+
+
+type alias Message =
+    { role : String, content : String }
+
+
+user : String -> Message
+user content =
+    { role = "user", content = content }
+
+
+system : String -> Message
+system content =
+    { role = "system", content = content }
+
+
+assistant : String -> Message
+assistant content =
+    { role = "assistant", content = content }
+
+
+-- ---------------------------------------------------------------------------
+-- Response + usage
+-- ---------------------------------------------------------------------------
+
+
+type alias Usage =
+    { promptTokens : Int, completionTokens : Int, totalTokens : Int }
+
+
+type alias ChatResponse =
+    { content : String, usage : Usage }
+
+
+-- ---------------------------------------------------------------------------
+-- chat
+-- ---------------------------------------------------------------------------
+
+
+type alias Request =
+    { model : String, messages : List Message }
+
+
+requestCodec : Codec Request
+requestCodec =
+    Codec.auto { model = "", messages = [ { role = "", content = "" } ] }
+
+
+-- The OpenAI response subset we read. A lenient decoder ignores the other fields
+-- (id / object / created / finish_reason / …).
+
+
+type alias RawMessage =
+    { content : String }
+
+
+type alias RawChoice =
+    { message : RawMessage }
+
+
+type alias RawUsage =
+    { prompt_tokens : Int, completion_tokens : Int, total_tokens : Int }
+
+
+type alias RawResponse =
+    { choices : List RawChoice, usage : RawUsage }
+
+
+responseCodec : Codec RawResponse
+responseCodec =
+    Codec.auto
+        { choices = [ { message = { content = "" } } ]
+        , usage = { prompt_tokens = 0, completion_tokens = 0, total_tokens = 0 }
+        }
+
+
+{-| Send a chat and get the assistant text plus token usage. Fails with a
+classified `Error` on a non-2xx response, naming the status and body.
+-}
+chat : Provider -> List Message -> Task Error ChatResponse
+chat (Provider p) messages =
+    let
+        body =
+            Codec.toJson requestCodec { model = p.model, messages = messages }
+
+        req =
+            Http.defaultRequest p.endpoint
+    in
+    { req | method = "POST" }
+        |> Http.withBearer p.apiKey
+        |> Http.withHeader "Content-Type" "application/json"
+        |> Http.withBody body
+        |> Http.request
+        |> Task.andThen
+            (\resp ->
+                if resp.status >= 200 && resp.status < 300 then
+                    case Codec.fromJson responseCodec resp.body of
+                        Ok raw ->
+                            Task.succeed (extract raw)
+
+                        Err e ->
+                            Task.fail e
+
+                else
+                    Task.fail
+                        (Error.unexpected
+                            ("chat failed: HTTP " ++ String.fromInt resp.status ++ " — " ++ resp.body)
+                        )
+            )
+
+
+extract : RawResponse -> ChatResponse
+extract raw =
+    { content =
+        case List.head raw.choices of
+            Just ch ->
+                ch.message.content
+
+            Nothing ->
+                ""
+    , usage =
+        { promptTokens = raw.usage.prompt_tokens
+        , completionTokens = raw.usage.completion_tokens
+        , totalTokens = raw.usage.total_tokens
+        }
+    }
+
+
+-- ---------------------------------------------------------------------------
+-- Cost
+-- ---------------------------------------------------------------------------
+
+
+{-| Per-1000-token input/output rates for a model, in a currency. Versioned data
+so a historical trace prices with the rates that applied then.
+-}
+type alias PriceBook =
+    { inputPer1k : Money, outputPer1k : Money }
+
+
+{-| Build a price book from decimal-string rates (e.g. "0.00015" per 1k input
+tokens). Returns an error if a rate does not parse.
+-}
+priceBook : Money.Currency -> String -> String -> Result Error PriceBook
+priceBook currency inputRate outputRate =
+    case Money.fromString currency inputRate of
+        Err e ->
+            Err e
+
+        Ok inp ->
+            case Money.fromString currency outputRate of
+                Err e ->
+                    Err e
+
+                Ok out ->
+                    Ok { inputPer1k = inp, outputPer1k = out }
+
+
+{-| A zero-cost book, for a local model or a test. -}
+freePriceBook : Money.Currency -> PriceBook
+freePriceBook currency =
+    { inputPer1k = Money.zero currency, outputPer1k = Money.zero currency }
+
+
+{-| The money cost of a usage under a price book: tokens/1000 × the per-1k rate,
+input and output summed, in `Std.Money` (exact decimal, never a float).
+-}
+cost : PriceBook -> Usage -> Money
+cost book usage =
+    Money.add
+        (per1k usage.promptTokens book.inputPer1k)
+        (per1k usage.completionTokens book.outputPer1k)
+
+
+per1k : Int -> Money -> Money
+per1k tokens rate =
+    let
+        frac =
+            case Decimal.div (Decimal.fromInt tokens) (Decimal.fromInt 1000) of
+                Ok d ->
+                    d
+
+                Err _ ->
+                    Decimal.zero
+    in
+    Money.mul frac rate

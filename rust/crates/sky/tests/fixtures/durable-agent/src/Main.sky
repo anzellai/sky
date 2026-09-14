@@ -1,0 +1,81 @@
+module Main exposing (main)
+
+{-| Fixture: an `Std.Ai` agent running as a `Std.Durable` workflow, driven fully
+offline. Under test mode the LLM HTTP call is answered by `tests/mocks/00-chat.json`
+(content "MOCKED-ANSWER"), so no network and no credentials are needed.
+
+The agent's model call is a journalled `Durable.step`, so one `poll` runs it and
+completes the workflow. Expected stdout (asserted by `durable_agent_flow.rs`):
+
+    agent answer=MOCKED-ANSWER status=done
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Secret as Secret
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Durable as Durable
+import Std.Ai.Provider as Provider
+import Std.Ai.Agent as Agent
+
+
+provider : Provider.Provider
+provider =
+    Provider.openai (Secret.fromString "test-key") "gpt-4o-mini"
+
+
+agentDef : Durable.WorkflowDef Agent.Input Agent.Output
+agentDef =
+    Agent.oneShot "assistant" provider "You are terse."
+
+
+readOutput : Db -> String -> Task Error ( String, String )
+readOutput db id =
+    Db.query db "SELECT output, status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        ( dictGet "output" row, dictGet "status" row )
+
+                    Nothing ->
+                        ( "", "?" )
+            )
+
+
+dictGet : String -> Dict String String -> String
+dictGet key row =
+    case Dict.get key row of
+        Just v ->
+            v
+
+        Nothing ->
+            ""
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Durable.setup db
+                    |> Task.andThen (\_ -> Durable.start db agentDef "chat-1" { messages = [ Provider.user "Hi" ] })
+                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase agentDef ])
+                    |> Task.andThen (\_ -> readOutput db "chat-1")
+                    |> Task.andThen
+                        (\( output, status ) ->
+                            let
+                                answer =
+                                    if String.contains "MOCKED-ANSWER" output then
+                                        "MOCKED-ANSWER"
+
+                                    else
+                                        output
+                            in
+                            println ("agent answer=" ++ answer ++ " status=" ++ status)
+                        )
+            )
