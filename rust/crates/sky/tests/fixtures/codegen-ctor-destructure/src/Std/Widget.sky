@@ -1,0 +1,30 @@
+module Std.Widget exposing (W, mk, labels)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+
+
+type W
+    = W { label : String }
+
+
+mk : String -> W
+mk s =
+    W { label = s }
+
+
+-- Regression: a NAMED let-binding lambda whose param destructures a single-ctor
+-- union, under List.map, in a NON-sealed-prefix module (Std.* => Go prefix Std_,
+-- excluded by should_seal_prefix). Before the lower.rs bind_param fix, the param
+-- erased to Go `any` and pattern_test emitted `.Fields` on `any` -> `sky check`
+-- clean but `go build` failed (`_t0.Fields undefined`). MUST live in a Std.*
+-- module: a Main-module union is sealed (typed variant struct) and would pass
+-- even unfixed (a false green). This is the minimal form of the Std.Ai.Tool bug.
+labels : List W -> String
+labels xs =
+    let
+        one (W w) =
+            w.label
+    in
+    String.join "," (List.map one xs)

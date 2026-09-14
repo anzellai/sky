@@ -2481,14 +2481,31 @@ impl<'a> Ctx<'a> {
                 // condition is discarded — a function param is an irrefutable
                 // (single-constructor / tuple / record) binding.
                 let n = self.fresh_temp();
-                let ty = sig_ty.map(|t| self.goty(t)).unwrap_or(GoTy::Any);
                 // An unannotated destructured param (a tuple pattern on a
                 // `let`-bound local fn) arrives with Go type `any` when the fn is
                 // passed through a HOF that erases the callback to
                 // `func(any,any)any` (foldl/foldr). `pattern_test` self-heals an
                 // `any` tuple subject reflectively (via `rt.TupleField`, see the
                 // `Pattern::Tuple` arm) — #170 — so no subject coercion is needed
-                // here; passing the raw `any` subject is correct.
+                // there; passing the raw `any` subject is correct for tuples.
+                //
+                // A CTOR-destructured param has no such self-heal: `lower_local_fn`
+                // calls `bind_param(_, None)` for a `let`-bound helper, so an
+                // unannotated `one (Tool t) = …` erases the param to `any`, and
+                // `pattern_test` then reads `.Fields` off `any` for a
+                // non-sealed-prefix ADT (`Std_`/`Sky_Core_`/`Sky_Http_`) — which
+                // type-checks but fails `go build` (`_t0.Fields undefined`). When
+                // the signature gives no concrete type, reconstruct the ctor's
+                // nominal Go type (`rt.SkyADT`, `pattern_nominal_ty`) so the param
+                // carries it. Restricted to a *Named* (ADT) result: tuples keep
+                // `any` (the #170 reflective path), records stay as-is.
+                let ty = match sig_ty.map(|t| self.goty(t)) {
+                    Some(t) if t != GoTy::Any => t,
+                    _ => match self.pattern_nominal_ty(&self.body.pats[p].clone()) {
+                        Some(named @ GoTy::Named(..)) => named,
+                        _ => GoTy::Any,
+                    },
+                };
                 let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
                 let (_cond, binds) = self.pattern_test(&subj, &ty, p);
                 (n, ty, binds)

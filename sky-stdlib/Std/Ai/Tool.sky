@@ -61,21 +61,12 @@ error if no tool has that name. Used by the agent loop; rarely called directly.
 -}
 run : List Tool -> String -> String -> Task Error String
 run tools nm args =
-    -- NB: use the `name` accessor in the lambda, not a `\(Tool t) ->` destructure
-    -- — an inline lambda that pattern-matches a single-ctor union in its param
-    -- position mis-compiles under List.filter/map (the param erases to `any` and
-    -- the emitted Go accesses `.Fields` on it). See [[std_ai_tool_lambda_erasure]].
-    case List.filter (\t -> name t == nm) tools of
-        first :: _ ->
-            exec first args
+    case List.filter (\(Tool t) -> t.name == nm) tools of
+        (Tool t) :: _ ->
+            t.exec args
 
         [] ->
             Task.fail (Error.notFound |> Error.withMessage ("no tool named " ++ nm))
-
-
-exec : Tool -> String -> Task Error String
-exec (Tool t) args =
-    t.exec args
 
 
 {-| The tool-use instructions appended to the agent's system prompt: the tool
@@ -85,8 +76,8 @@ concern; `tools` order is preserved), so it is stable across a durable replay.
 instructions : List Tool -> String
 instructions tools =
     let
-        one t =
-            "- " ++ name t ++ ": " ++ describe t
+        one (Tool t) =
+            "- " ++ t.name ++ ": " ++ t.description
 
         listed =
             List.map one tools |> String.join "\n"

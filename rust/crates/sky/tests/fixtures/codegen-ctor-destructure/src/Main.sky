@@ -1,0 +1,9 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Std.Widget as Widget
+
+
+main =
+    println (Widget.labels [ Widget.mk "a", Widget.mk "b" ])
