@@ -618,6 +618,18 @@
           "apps:relay"
         ]
       },
+      "Std.Ai.Agent": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
+      "Std.Ai.Provider": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Bundle": {
         "path": "examples/64-app-native",
         "units": [
@@ -682,13 +694,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1877,
-    "stdlib_modules": 95,
-    "surfaces_covered": 142,
-    "surfaces_covered_pct": 88.2,
+    "stdlib_entries": 1896,
+    "stdlib_modules": 97,
+    "surfaces_covered": 144,
+    "surfaces_covered_pct": 88.3,
     "surfaces_equal": 24,
-    "surfaces_stronger": 137,
-    "surfaces_total": 161,
+    "surfaces_stronger": 139,
+    "surfaces_total": 163,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -4993,6 +5005,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
@@ -6954,6 +6971,50 @@
       },
       "description": "the Sky.Test public API",
       "id": "stdlib.Sky.Test",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Ai.Agent public API",
+      "id": "stdlib.Std.Ai.Agent",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Ai.Provider public API",
+      "id": "stdlib.Std.Ai.Provider",
       "verdict": "stronger"
     },
     {
@@ -12054,7 +12115,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 10.5
+      "pct_of_denominator": 10.3
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12360,6 +12421,29 @@
             "run",
             "summarise",
             "writeJsonReport"
+          ]
+        },
+        "Std.Ai.Agent": {
+          "count": 2,
+          "symbols": [
+            "inputCodec",
+            "outputCodec"
+          ]
+        },
+        "Std.Ai.Provider": {
+          "count": 11,
+          "symbols": [
+            "ChatResponse",
+            "Message",
+            "PriceBook",
+            "Usage",
+            "assistant",
+            "chat",
+            "compatible",
+            "cost",
+            "freePriceBook",
+            "priceBook",
+            "system"
           ]
         },
         "Std.Analytics": {
@@ -13065,8 +13149,8 @@
           ]
         }
       },
-      "count": 629,
-      "pct_of_denominator": 33.5
+      "count": 642,
+      "pct_of_denominator": 33.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13360,6 +13444,29 @@
             "run",
             "summarise",
             "writeJsonReport"
+          ]
+        },
+        "Std.Ai.Agent": {
+          "count": 2,
+          "symbols": [
+            "inputCodec",
+            "outputCodec"
+          ]
+        },
+        "Std.Ai.Provider": {
+          "count": 11,
+          "symbols": [
+            "ChatResponse",
+            "Message",
+            "PriceBook",
+            "Usage",
+            "assistant",
+            "chat",
+            "compatible",
+            "cost",
+            "freePriceBook",
+            "priceBook",
+            "system"
           ]
         },
         "Std.Analytics": {
@@ -14137,8 +14244,8 @@
           ]
         }
       },
-      "count": 711,
-      "pct_of_denominator": 37.9
+      "count": 724,
+      "pct_of_denominator": 38.2
     }
   },
   "units": [
@@ -14158,12 +14265,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 25,
+      "modules_imported": 28,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 128,
-      "refs_qualified": 121,
+      "refs_generous": 135,
+      "refs_qualified": 128,
       "role": "Layer2",
-      "sky_files": 99,
+      "sky_files": 100,
       "sky_toml_sections": []
     },
     {
