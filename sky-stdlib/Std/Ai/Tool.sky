@@ -1,0 +1,98 @@
+module Std.Ai.Tool exposing
+    ( Tool
+    , tool
+    , name
+    , describe
+    , run
+    , instructions
+    )
+
+{-| `Std.Ai.Tool` — a named capability the agent can call. A `Tool` carries a
+stable name, a description the model reads, and an executor `arguments -> result`
+(both strings on the wire; the executor parses/serialises as it likes). The v1
+loop uses a prompt-based protocol: the model is told the tools and asked to reply
+with `{"tool":"<name>","args":"<input>"}` to call one, or `{"answer":"<final>"}`
+when done. Native OpenAI function-calling (a `tools` array + `tool_calls`) is a
+follow-up on the same `Tool` type.
+
+    weather =
+        Tool.tool "weather" "Get the weather for a city (args: the city name)"
+            (\city -> WeatherApi.lookup city)
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+
+
+type Tool
+    = Tool
+        { name : String
+        , description : String
+        , exec : String -> Task Error String
+        }
+
+
+{-| Define a tool: a stable `name`, a `description` the model reads, and an
+executor `arguments -> Task Error result`. Arguments and result are strings on the
+wire (parse a typed input inside the executor with a `Codec` as you wish).
+-}
+tool : String -> String -> (String -> Task Error String) -> Tool
+tool nm description exec =
+    Tool { name = nm, description = description, exec = exec }
+
+
+{-| A tool's name. -}
+name : Tool -> String
+name (Tool t) =
+    t.name
+
+
+{-| A tool's description. -}
+describe : Tool -> String
+describe (Tool t) =
+    t.description
+
+
+{-| Run the tool named `nm` from `tools` with `args`. Fails with a classified
+error if no tool has that name. Used by the agent loop; rarely called directly.
+-}
+run : List Tool -> String -> String -> Task Error String
+run tools nm args =
+    -- NB: use the `name` accessor in the lambda, not a `\(Tool t) ->` destructure
+    -- — an inline lambda that pattern-matches a single-ctor union in its param
+    -- position mis-compiles under List.filter/map (the param erases to `any` and
+    -- the emitted Go accesses `.Fields` on it). See [[std_ai_tool_lambda_erasure]].
+    case List.filter (\t -> name t == nm) tools of
+        first :: _ ->
+            exec first args
+
+        [] ->
+            Task.fail (Error.notFound |> Error.withMessage ("no tool named " ++ nm))
+
+
+exec : Tool -> String -> Task Error String
+exec (Tool t) args =
+    t.exec args
+
+
+{-| The tool-use instructions appended to the agent's system prompt: the tool
+list and the JSON reply protocol. Deterministic (sorted iteration is the caller's
+concern; `tools` order is preserved), so it is stable across a durable replay.
+-}
+instructions : List Tool -> String
+instructions tools =
+    let
+        one t =
+            "- " ++ name t ++ ": " ++ describe t
+
+        listed =
+            List.map one tools |> String.join "\n"
+    in
+    "You can use these tools:\n"
+        ++ listed
+        ++ "\n\nTo use a tool, reply with ONLY a JSON object: "
+        ++ "{\"tool\": \"<name>\", \"args\": \"<input string>\"}. "
+        ++ "When you have the final answer, reply with ONLY: {\"answer\": \"<final answer>\"}."

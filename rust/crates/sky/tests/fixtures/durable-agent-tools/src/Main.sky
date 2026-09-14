@@ -1,0 +1,127 @@
+module Main exposing (main)
+
+{-| Fixture: a durable TOOL-CALLING agent, driven offline. The mock always makes
+the model reply `{"tool":"record","args":"hello-from-model"}`, so the agent calls
+the `record` tool (which inserts a row) as a journalled `Durable.step`, then hits
+the 1-turn limit and completes. Expected stdout (asserted by
+`durable_agent_tools_flow.rs`):
+
+    tools records=1 status=done
+
+`records=1` proves the tool ran through the loop; `status=done` proves the durable
+run completed.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Secret as Secret
+import Sky.Core.Result exposing (Result(..))
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Durable as Durable
+import Std.Ai.Provider as Provider
+import Std.Ai.Tool as Tool exposing (Tool)
+import Std.Ai.Agent as Agent
+
+
+-- One shared connection (CAF), used by both `main` and the tool executor.
+db : Result Error Db
+db =
+    Task.run (Db.connect ())
+
+
+provider : Provider.Provider
+provider =
+    Provider.openai (Secret.fromString "test-key") "gpt-4o-mini"
+
+
+recordTool : Tool
+recordTool =
+    Tool.tool "record" "records the given text (args: the text)" recordExec
+
+
+recordExec : String -> Task Error String
+recordExec args =
+    case db of
+        Ok conn ->
+            Db.exec conn "INSERT INTO records (v) VALUES (?)" [ SqlString args ]
+                |> Task.map (\_ -> "recorded: " ++ args)
+
+        Err e ->
+            Task.fail e
+
+
+agentDef : Durable.WorkflowDef Agent.Input Agent.ToolOutput
+agentDef =
+    Agent.toolLoop "agent" provider "You are an agent." [ recordTool ] 1
+
+
+countAndStatus : Db -> String -> Task Error ( Int, String )
+countAndStatus conn id =
+    Db.query conn "SELECT COUNT(*) AS n FROM records" []
+        |> Task.andThen
+            (\rows ->
+                Db.query conn "SELECT status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+                    |> Task.map
+                        (\statusRows ->
+                            ( intOf "n" (List.head rows)
+                            , strOf "status" (List.head statusRows)
+                            )
+                        )
+            )
+
+
+intOf : String -> Maybe (Dict String String) -> Int
+intOf key row =
+    case row of
+        Just r ->
+            case Dict.get key r of
+                Just v ->
+                    case String.toInt v of
+                        Just n ->
+                            n
+
+                        Nothing ->
+                            -1
+
+                Nothing ->
+                    -1
+
+        Nothing ->
+            -1
+
+
+strOf : String -> Maybe (Dict String String) -> String
+strOf key row =
+    case row of
+        Just r ->
+            case Dict.get key r of
+                Just v ->
+                    v
+
+                Nothing ->
+                    "?"
+
+        Nothing ->
+            "?"
+
+
+main : Task Error ()
+main =
+    case db of
+        Err _ ->
+            println "db error"
+
+        Ok conn ->
+            Db.execRaw conn "CREATE TABLE IF NOT EXISTS records (v TEXT)"
+                |> Task.andThen (\_ -> Durable.setup conn)
+                |> Task.andThen (\_ -> Durable.start conn agentDef "run-1" { messages = [ Provider.user "do it" ] })
+                |> Task.andThen (\_ -> Durable.poll conn [ Durable.erase agentDef ])
+                |> Task.andThen (\_ -> countAndStatus conn "run-1")
+                |> Task.andThen
+                    (\( cnt, status ) ->
+                        println ("tools records=" ++ String.fromInt cnt ++ " status=" ++ status)
+                    )

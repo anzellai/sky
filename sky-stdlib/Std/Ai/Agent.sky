@@ -2,6 +2,8 @@ module Std.Ai.Agent exposing
     ( Input
     , Output
     , oneShot
+    , ToolOutput
+    , toolLoop
     , inputCodec
     , outputCodec
     )
@@ -28,9 +30,13 @@ increment; the durable substrate is the same.
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Result exposing (Result(..))
 import Std.Codec as Codec exposing (Codec)
 import Std.Durable as Durable exposing (Ctx)
 import Std.Ai.Provider as Provider exposing (Provider, Message)
+import Std.Ai.Tool as Tool exposing (Tool)
 
 
 type alias Input =
@@ -78,3 +84,107 @@ body provider systemPrompt ctx input =
         "llm"
         (Provider.chat provider (Provider.system systemPrompt :: input.messages))
         |> Task.map (\r -> { answer = r.content, usage = r.usage })
+
+
+-- ---------------------------------------------------------------------------
+-- Tool-calling loop
+-- ---------------------------------------------------------------------------
+
+
+type alias ToolOutput =
+    { answer : String }
+
+
+toolOutputCodec : Codec ToolOutput
+toolOutputCodec =
+    Codec.auto { answer = "" }
+
+
+{-| A tool-calling agent as a durable workflow. The model is told the `tools` and
+asked to reply with the JSON protocol (`{"tool":…}` / `{"answer":…}`); the loop
+calls a requested tool, feeds the result back, and repeats up to `maxTurns`. Every
+model turn and every tool call is a journalled `Durable.step`, so the run resumes
+without repeating a model call or a tool it already ran. Between-turn state (the
+message list) is rebuilt deterministically from the journalled steps, so replay is
+exact.
+-}
+toolLoop : String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input ToolOutput
+toolLoop name provider systemPrompt tools maxTurns =
+    Durable.register name
+        inputCodec
+        toolOutputCodec
+        (\ctx input ->
+            loop provider tools maxTurns ctx 0 (Provider.system (systemPrompt ++ "\n\n" ++ Tool.instructions tools) :: input.messages)
+        )
+
+
+loop : Provider -> List Tool -> Int -> Ctx -> Int -> List Message -> Task Error ToolOutput
+loop provider tools maxTurns ctx turn messages =
+    if turn >= maxTurns then
+        Task.succeed { answer = "(reached the turn limit without a final answer)" }
+
+    else
+        Durable.step ctx responseCodec ("turn:" ++ String.fromInt turn) (Provider.chat provider messages)
+            |> Task.andThen
+                (\resp ->
+                    case parseAction resp.content of
+                        Answer a ->
+                            Task.succeed { answer = a }
+
+                        Plain a ->
+                            Task.succeed { answer = a }
+
+                        UseTool toolName args ->
+                            Durable.step ctx Codec.string ("tool:" ++ String.fromInt turn) (Tool.run tools toolName args)
+                                |> Task.andThen
+                                    (\result ->
+                                        loop provider tools maxTurns ctx (turn + 1)
+                                            (messages
+                                                ++ [ Provider.assistant resp.content
+                                                   , Provider.user ("Tool " ++ toolName ++ " returned: " ++ result)
+                                                   ]
+                                            )
+                                    )
+                )
+
+
+type Action
+    = Answer String
+    | UseTool String String
+    | Plain String
+
+
+type alias Parsed =
+    { tool : Maybe String, args : Maybe String, answer : Maybe String }
+
+
+parsedCodec : Codec Parsed
+parsedCodec =
+    Codec.auto { tool = Just "", args = Just "", answer = Just "" }
+
+
+parseAction : String -> Action
+parseAction content =
+    case Codec.fromJson parsedCodec content of
+        Ok p ->
+            case p.answer of
+                Just a ->
+                    Answer a
+
+                Nothing ->
+                    case p.tool of
+                        Just t ->
+                            UseTool t
+                                (case p.args of
+                                    Just x ->
+                                        x
+
+                                    Nothing ->
+                                        ""
+                                )
+
+                        Nothing ->
+                            Plain content
+
+        Err _ ->
+            Plain content
