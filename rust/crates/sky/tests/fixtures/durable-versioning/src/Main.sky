@@ -1,0 +1,106 @@
+module Main exposing (main)
+
+{-| Fixture: worker versioning (v2). A run is stamped with its workflow version at
+`start`. When it is resumed and only a DIFFERENT version of that workflow is in
+the poll list, `pollWith` applies the `VersionPolicy`:
+
+  * `FailSafe`   — the run is marked `failed` (version mismatch).
+  * `PinToStart` — the run is left `waiting` for a worker running its own version.
+
+Each run is a v1 workflow that suspends at `sleep 0` (so it is mid-flight and
+immediately re-claimable), then it is polled with only a v2 def.
+
+Expected stdout (asserted by `durable_versioning_flow.rs`):
+
+    versioning failsafe=failed pintostart=waiting
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Codec as Codec exposing (Codec)
+import Std.Durable as Durable exposing (Ctx)
+
+
+strCodec : Codec String
+strCodec =
+    Codec.string
+
+
+-- v1: runs a step, then suspends at `sleep 0` (immediately re-claimable).
+v1 : Durable.WorkflowDef String String
+v1 =
+    Durable.registerVersioned "wf" "1" strCodec strCodec v1Body
+
+
+v1Body : Ctx -> String -> Task Error String
+v1Body ctx input =
+    Durable.step ctx strCodec "s1" (Task.succeed "x")
+        |> Task.andThen (\_ -> Durable.sleep ctx "nap" 0)
+        |> Task.andThen (\_ -> Task.succeed "done")
+
+
+-- v2: same name, different version. Never actually advances a v1-stamped run.
+v2 : Durable.WorkflowDef String String
+v2 =
+    Durable.registerVersioned "wf" "2" strCodec strCodec (\_ _ -> Task.succeed "v2")
+
+
+dictGet : String -> Dict String String -> String
+dictGet key row =
+    case Dict.get key row of
+        Just v ->
+            v
+
+        Nothing ->
+            ""
+
+
+statusOf : Db -> String -> Task Error String
+statusOf db id =
+    Db.query db "SELECT status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        dictGet "status" row
+
+                    Nothing ->
+                        "?"
+            )
+
+
+-- Start a v1 run and poll it (with the v1 def) so it suspends at `sleep 0`.
+startAndSuspend : Db -> String -> Task Error ()
+startAndSuspend db id =
+    Durable.start db v1 id "go"
+        |> Task.andThen (\_ -> Durable.poll db [ Durable.erase v1 ])
+        |> Task.map (\_ -> ())
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Durable.setup db
+                    -- FailSafe scenario
+                    |> Task.andThen (\_ -> startAndSuspend db "r-fail")
+                    |> Task.andThen (\_ -> Durable.pollWith db Durable.FailSafe [ Durable.erase v2 ])
+                    |> Task.andThen (\_ -> statusOf db "r-fail")
+                    |> Task.andThen
+                        (\failStatus ->
+                            -- PinToStart scenario
+                            startAndSuspend db "r-pin"
+                                |> Task.andThen (\_ -> Durable.pollWith db Durable.PinToStart [ Durable.erase v2 ])
+                                |> Task.andThen (\_ -> statusOf db "r-pin")
+                                |> Task.andThen
+                                    (\pinStatus ->
+                                        println ("versioning failsafe=" ++ failStatus ++ " pintostart=" ++ pinStatus)
+                                    )
+                        )
+            )

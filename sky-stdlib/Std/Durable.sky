@@ -3,6 +3,7 @@ module Std.Durable exposing
     , WorkflowDef
     , RegisteredWorkflow
     , register
+    , registerVersioned
     , erase
     , conn
     , runId
@@ -10,6 +11,8 @@ module Std.Durable exposing
     , start
     , signal
     , poll
+    , VersionPolicy(..)
+    , pollWith
     , step
     , stepValue
     , sleep
@@ -90,6 +93,7 @@ encode), and its type-erased runner. Build it with `register`.
 type WorkflowDef i o
     = WorkflowDef
         { name : String
+        , version : String
         , inputCodec : Codec i
         , erased : RegisteredWorkflow
         }
@@ -101,6 +105,7 @@ a heterogeneous list of them and dispatch by name. Get it with `erase`.
 type RegisteredWorkflow
     = RegisteredWorkflow
         { name : String
+        , version : String
         , run : Ctx -> String -> Task Error String
         }
 
@@ -153,12 +158,25 @@ body `Ctx -> input -> Task Error output`. The result is a typed handle for
 -}
 register : String -> Codec i -> Codec o -> (Ctx -> i -> Task Error o) -> WorkflowDef i o
 register name inputCodec outputCodec body =
+    registerVersioned name "1" inputCodec outputCodec body
+
+
+{-| Register a workflow at an explicit VERSION. A run is stamped with the def's
+version at `start`; on resume, `poll` reconciles the run's stamped version against
+the registered defs (see `pollWith`). Use it to run two versions of the same
+workflow side by side while in-flight runs drain on the old code. `register` is
+`registerVersioned name "1"`.
+-}
+registerVersioned : String -> String -> Codec i -> Codec o -> (Ctx -> i -> Task Error o) -> WorkflowDef i o
+registerVersioned name version inputCodec outputCodec body =
     WorkflowDef
         { name = name
+        , version = version
         , inputCodec = inputCodec
         , erased =
             RegisteredWorkflow
                 { name = name
+                , version = version
                 , run =
                     \ctx inputJson ->
                         case Codec.fromJson inputCodec inputJson of
@@ -208,11 +226,21 @@ setup : Db -> Task Error ()
 setup db =
     Db.execRaw db
         ("CREATE TABLE IF NOT EXISTS _sky_durable_runs ("
-            ++ "id TEXT PRIMARY KEY, workflow TEXT NOT NULL, status TEXT NOT NULL, "
+            ++ "id TEXT PRIMARY KEY, workflow TEXT NOT NULL, version TEXT NOT NULL DEFAULT '', "
+            ++ "status TEXT NOT NULL, "
             ++ "input TEXT NOT NULL, output TEXT, attempts INTEGER NOT NULL DEFAULT 0, "
             ++ "wake_at BIGINT NOT NULL, waiting_signal TEXT, last_error TEXT NOT NULL DEFAULT '', "
             ++ "claimed_at BIGINT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL)"
         )
+        |> Task.andThen
+            (\_ ->
+                -- Idempotent migration: a table created before workflow versioning
+                -- lacks the `version` column. ADD COLUMN it; a duplicate-column
+                -- error (new table, or a re-run) is swallowed, so setup stays
+                -- idempotent on both fresh and existing databases.
+                Db.execRaw db "ALTER TABLE _sky_durable_runs ADD COLUMN version TEXT NOT NULL DEFAULT ''"
+                    |> Task.onError (\_ -> Task.succeed 0)
+            )
         |> Task.andThen
             (\_ ->
                 Db.execRaw db
@@ -247,12 +275,13 @@ start db (WorkflowDef d) id input =
             (\now ->
                 Db.exec db
                     ("INSERT INTO _sky_durable_runs "
-                        ++ "(id, workflow, status, input, attempts, wake_at, last_error, created_at, updated_at) "
-                        ++ "VALUES (?, ?, 'running', ?, 0, ?, '', ?, ?) "
+                        ++ "(id, workflow, version, status, input, attempts, wake_at, last_error, created_at, updated_at) "
+                        ++ "VALUES (?, ?, ?, 'running', ?, 0, ?, '', ?, ?) "
                         ++ "ON CONFLICT (id) DO NOTHING"
                     )
                     [ SqlString id
                     , SqlString d.name
+                    , SqlString d.version
                     , SqlString (Codec.toJson d.inputCodec input)
                     , SqlInt now
                     , SqlInt now
@@ -467,7 +496,7 @@ setWaitingSignal db runId name =
 
 
 type alias ClaimRow =
-    { id : String, workflow : String, input : String }
+    { id : String, workflow : String, version : String, input : String }
 
 
 dictGet : String -> Dict String String -> String
@@ -488,6 +517,32 @@ more instances; each claims independently.
 -}
 poll : Db -> List RegisteredWorkflow -> Task Error Bool
 poll db defs =
+    pollWith db FailSafe defs
+
+
+{-| How `poll` reconciles a claimed run whose stamped version has no matching
+registered definition (the run was started under a workflow version that is no
+longer in this worker's `poll` list):
+
+  - `FailSafe` — mark the run `failed` with a version-mismatch error. The default
+    (`poll`): a run must have code to advance it, and silently stalling is worse
+    than a visible failure you can act on.
+  - `PinToStart` — leave the run alone (release its lease) so a worker still
+    running the run's original version can claim it. Use it during a rolling
+    deploy where old and new workers coexist: register both versions
+    (`registerVersioned`) on the workers that have the old code.
+
+A run whose registered version DOES match, and a legacy run stamped with no
+version (started before versioning), always advance normally.
+-}
+type VersionPolicy
+    = FailSafe
+    | PinToStart
+
+
+{-| `poll` with an explicit `VersionPolicy`. `poll = pollWith FailSafe`. -}
+pollWith : Db -> VersionPolicy -> List RegisteredWorkflow -> Task Error Bool
+pollWith db policy defs =
     Time.now ()
         |> Task.andThen
             (\now ->
@@ -499,7 +554,7 @@ poll db defs =
                                     Task.succeed False
 
                                 Just row ->
-                                    advance db defs row
+                                    advance db policy defs row
                                         |> Task.map (\_ -> True)
                         )
             )
@@ -511,7 +566,7 @@ poll db defs =
 claim : Db -> Int -> Task Error (Maybe ClaimRow)
 claim db now =
     Db.query db
-        ("SELECT id, workflow, input FROM _sky_durable_runs "
+        ("SELECT id, workflow, version, input FROM _sky_durable_runs "
             ++ "WHERE status IN ('running', 'waiting') AND wake_at <= ? "
             ++ "AND (claimed_at IS NULL OR claimed_at < ?) "
             ++ "ORDER BY wake_at ASC LIMIT 1"
@@ -540,6 +595,7 @@ claim db now =
                                         Just
                                             { id = rowId
                                             , workflow = dictGet "workflow" row
+                                            , version = dictGet "version" row
                                             , input = dictGet "input" row
                                             }
 
@@ -549,12 +605,9 @@ claim db now =
             )
 
 
-advance : Db -> List RegisteredWorkflow -> ClaimRow -> Task Error ()
-advance db defs row =
-    case findDef row.workflow defs of
-        Nothing ->
-            markDead db row.id ("no registered workflow named " ++ row.workflow)
-
+advance : Db -> VersionPolicy -> List RegisteredWorkflow -> ClaimRow -> Task Error ()
+advance db policy defs row =
+    case findDef row.workflow row.version defs of
         Just (RegisteredWorkflow def) ->
             def.run (Ctx { db = db, runId = row.id }) row.input
                 |> Task.andThen (\output -> markDone db row.id output)
@@ -567,11 +620,38 @@ advance db defs row =
                             markFailed db row.id (Error.toString err)
                     )
 
+        Nothing ->
+            if anyNamed row.workflow defs then
+                -- The workflow name is registered, but not at this run's version.
+                case policy of
+                    FailSafe ->
+                        markFailed db row.id
+                            ("version mismatch: run version '" ++ row.version ++ "' of workflow '" ++ row.workflow ++ "' has no registered definition")
 
-findDef : String -> List RegisteredWorkflow -> Maybe RegisteredWorkflow
-findDef name defs =
-    List.filter (\(RegisteredWorkflow d) -> d.name == name) defs
+                    PinToStart ->
+                        -- Park it (status 'waiting', lease released) for a worker
+                        -- running the run's own version to claim and advance.
+                        parkForVersion db row.id
+
+            else
+                markDead db row.id ("no registered workflow named " ++ row.workflow)
+
+
+-- Find a def matching `name` AND `version`. A legacy run stamped with an empty
+-- version (started before versioning) matches by name only, for back-compat.
+findDef : String -> String -> List RegisteredWorkflow -> Maybe RegisteredWorkflow
+findDef name version defs =
+    List.filter
+        (\(RegisteredWorkflow d) -> d.name == name && (version == "" || d.version == version))
+        defs
         |> List.head
+
+
+anyNamed : String -> List RegisteredWorkflow -> Bool
+anyNamed name defs =
+    List.filter (\(RegisteredWorkflow d) -> d.name == name) defs
+        |> List.isEmpty
+        |> not
 
 
 markDone : Db -> String -> String -> Task Error ()
@@ -597,6 +677,21 @@ releaseLease db runId =
             (\now ->
                 Db.exec db
                     "UPDATE _sky_durable_runs SET claimed_at = NULL, updated_at = ? WHERE id = ?"
+                    [ SqlInt now, SqlString runId ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- Park a claimed run back to 'waiting' with its lease released (PinToStart): it
+-- was not advanced or failed, so a worker running its own version can claim it.
+-- `claim` had flipped it to 'running'; this restores the parked status.
+parkForVersion : Db -> String -> Task Error ()
+parkForVersion db runId =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    "UPDATE _sky_durable_runs SET status = 'waiting', claimed_at = NULL, updated_at = ? WHERE id = ?"
                     [ SqlInt now, SqlString runId ]
                     |> Task.map (\_ -> ())
             )
