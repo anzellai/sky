@@ -1,0 +1,69 @@
+module Main exposing (main)
+
+{-| Fixture: `Std.Ai.Memory.Pg` stores three passages with 3-dim embeddings and
+recalls them, against a REAL PostgreSQL + pgvector (the embedded bundle ships
+pgvector). It proves two claims:
+
+  1. `search` (pure vector) returns the nearest passage: a query near a's vector
+     [0.9,0.1,0.1] recalls "a" first.
+  2. `hybridSearch` lets a keyword override the vector: the SAME query, plus the
+     keyword "banana" (only in b's text) with a high weight, recalls "b" first.
+
+Embeddings:
+    a -> [1,0,0]  "apples are red"
+    b -> [0,1,0]  "bananas are yellow"
+    c -> [0,0,1]  "cherries are dark"
+
+Expected stdout (asserted by `ai_memory_pg_flow.rs`):
+
+    memory search=a hybrid=b
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db)
+import Std.Ai.Memory.Pg as Memory
+
+
+table : String
+table =
+    "agent_mem"
+
+
+seed : Db -> Task Error ()
+seed db =
+    Memory.remember db table { key = "a", text = "apples are red", embedding = [ 1.0, 0.0, 0.0 ] }
+        |> Task.andThen (\_ -> Memory.remember db table { key = "b", text = "bananas are yellow", embedding = [ 0.0, 1.0, 0.0 ] })
+        |> Task.andThen (\_ -> Memory.remember db table { key = "c", text = "cherries are dark", embedding = [ 0.0, 0.0, 1.0 ] })
+
+
+topKey : List Memory.Hit -> String
+topKey hits =
+    case List.head hits of
+        Just h ->
+            h.key
+
+        Nothing ->
+            "?"
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Memory.setup db table 3
+                    |> Task.andThen (\_ -> seed db)
+                    |> Task.andThen (\_ -> Memory.search db table [ 0.9, 0.1, 0.1 ] 3)
+                    |> Task.andThen
+                        (\vhits ->
+                            Memory.hybridSearch db table [ 0.9, 0.1, 0.1 ] "banana" 1.5 3
+                                |> Task.andThen
+                                    (\hhits ->
+                                        println ("memory search=" ++ topKey vhits ++ " hybrid=" ++ topKey hhits)
+                                    )
+                        )
+            )

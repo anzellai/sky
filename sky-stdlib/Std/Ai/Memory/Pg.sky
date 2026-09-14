@@ -1,0 +1,206 @@
+module Std.Ai.Memory.Pg exposing
+    ( Entry
+    , Hit
+    , setup
+    , remember
+    , forget
+    , search
+    , hybridSearch
+    , vectorLiteral
+    )
+
+{-| `Std.Ai.Memory.Pg` — long-term agent memory backed by PostgreSQL + pgvector.
+An agent stores text with its embedding vector and later recalls the passages
+closest to a query. Two recall modes:
+
+  - `search` — pure vector nearest-neighbour by cosine distance (pgvector `<=>`).
+  - `hybridSearch` — vector distance blended with a keyword score, so an exact
+    term match is not lost to a merely-close embedding.
+
+The embedding is supplied by the caller (any embedding model), so this module
+owns storage and ranking, not the model. It is PostgreSQL-only by design — the
+`.Pg` suffix says so — and uses pgvector, which ships in the embedded bundle.
+
+    Memory.setup db "agent_mem" 1536
+    Memory.remember db "agent_mem" { key = "n1", text = "the vault code is 4231", embedding = vec }
+    Memory.search db "agent_mem" queryVec 5     -- the 5 closest passages
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Std.Db as Db exposing (Db, SqlValue(..))
+
+
+{-| A passage to remember: a stable key (upsert overwrites the same key), the
+text, and its embedding vector. -}
+type alias Entry =
+    { key : String, text : String, embedding : List Float }
+
+
+{-| A recalled passage with its score. `distance` is the cosine distance
+(0 = identical direction, 2 = opposite); `score` is `1 - distance`, so higher is
+closer, which is the convenient ordering for a caller.
+-}
+type alias Hit =
+    { key : String, text : String, distance : Float, score : Float }
+
+
+{-| Create the memory table and the pgvector extension if absent. `table` is the
+memory namespace (one agent, one tenant); `dims` is the embedding dimension of
+the model you use (e.g. 1536 for text-embedding-3-small). Idempotent.
+-}
+setup : Db -> String -> Int -> Task Error ()
+setup db table dims =
+    Db.execRaw db "CREATE EXTENSION IF NOT EXISTS vector"
+        |> Task.andThen
+            (\_ ->
+                Db.execRaw db
+                    ("CREATE TABLE IF NOT EXISTS "
+                        ++ ident table
+                        ++ " (key TEXT PRIMARY KEY, text TEXT NOT NULL, "
+                        ++ "embedding vector("
+                        ++ String.fromInt dims
+                        ++ ") NOT NULL)"
+                    )
+            )
+        |> Task.map (\_ -> ())
+
+
+{-| Store (or overwrite) a passage by key. The embedding is written as a pgvector
+literal; it is built from numbers, so it is not a text-injection surface.
+-}
+remember : Db -> String -> Entry -> Task Error ()
+remember db table entry =
+    Db.exec db
+        ("INSERT INTO "
+            ++ ident table
+            ++ " (key, text, embedding) VALUES (?, ?, '"
+            ++ vectorLiteral entry.embedding
+            ++ "'::vector) "
+            ++ "ON CONFLICT (key) DO UPDATE SET text = EXCLUDED.text, embedding = EXCLUDED.embedding"
+        )
+        [ SqlString entry.key, SqlString entry.text ]
+        |> Task.map (\_ -> ())
+
+
+{-| Remove a passage by key. -}
+forget : Db -> String -> String -> Task Error ()
+forget db table key =
+    Db.exec db ("DELETE FROM " ++ ident table ++ " WHERE key = ?") [ SqlString key ]
+        |> Task.map (\_ -> ())
+
+
+{-| The `limit` passages closest to `query` by cosine distance, nearest first. -}
+search : Db -> String -> List Float -> Int -> Task Error (List Hit)
+search db table query limit =
+    Db.query db
+        ("SELECT key, text, (embedding <=> '"
+            ++ vectorLiteral query
+            ++ "'::vector) AS distance FROM "
+            ++ ident table
+            ++ " ORDER BY distance ASC LIMIT "
+            ++ String.fromInt (clampLimit limit)
+        )
+        emptyParams
+        |> Task.map (List.map toHit)
+
+
+{-| Blend vector distance with a keyword score. A row scores by
+`(1 - distance) + keywordWeight` when its text contains `keyword`, so an exact
+term match is not lost to a merely-close embedding. Results come back highest
+combined score first.
+-}
+hybridSearch : Db -> String -> List Float -> String -> Float -> Int -> Task Error (List Hit)
+hybridSearch db table query keyword keywordWeight limit =
+    Db.query db
+        ("SELECT key, text, (embedding <=> '"
+            ++ vectorLiteral query
+            ++ "'::vector) AS distance, "
+            ++ "(CASE WHEN text ILIKE ? THEN "
+            ++ floatLiteral keywordWeight
+            ++ " ELSE 0 END) AS kw FROM "
+            ++ ident table
+            ++ " ORDER BY ((1 - (embedding <=> '"
+            ++ vectorLiteral query
+            ++ "'::vector)) + (CASE WHEN text ILIKE ? THEN "
+            ++ floatLiteral keywordWeight
+            ++ " ELSE 0 END)) DESC LIMIT "
+            ++ String.fromInt (clampLimit limit)
+        )
+        [ SqlString ("%" ++ keyword ++ "%"), SqlString ("%" ++ keyword ++ "%") ]
+        |> Task.map (List.map toHit)
+
+
+-- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
+
+
+{-| Serialise an embedding to a pgvector text literal, e.g. `[0.1,-0.2,0.3]`. -}
+vectorLiteral : List Float -> String
+vectorLiteral xs =
+    "[" ++ String.join "," (List.map floatLiteral xs) ++ "]"
+
+
+floatLiteral : Float -> String
+floatLiteral x =
+    String.fromFloat x
+
+
+toHit : Dict String String -> Hit
+toHit row =
+    let
+        d =
+            floatCol "distance" row
+    in
+    { key = strCol "key" row
+    , text = strCol "text" row
+    , distance = d
+    , score = 1.0 - d
+    }
+
+
+strCol : String -> Dict String String -> String
+strCol key row =
+    case Dict.get key row of
+        Just v ->
+            v
+
+        Nothing ->
+            ""
+
+
+floatCol : String -> Dict String String -> Float
+floatCol key row =
+    case String.toFloat (strCol key row) of
+        Just f ->
+            f
+
+        Nothing ->
+            0.0
+
+
+clampLimit : Int -> Int
+clampLimit n =
+    if n < 1 then
+        1
+
+    else
+        n
+
+
+emptyParams : List SqlValue
+emptyParams =
+    []
+
+
+{-| Quote a table identifier so a namespace with mixed case or a keyword is safe.
+Any embedded double-quote is doubled, so this is not an injection surface.
+-}
+ident : String -> String
+ident name =
+    "\"" ++ String.replace "\"" "\"\"" name ++ "\""
