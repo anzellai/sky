@@ -3152,7 +3152,17 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// into `sky fuzz --target web:app` (one fuzz command). The surface is exempted
 /// as a deprecated front door (its capability + the T2 `spa-diff-fuzz` gate are
 /// unchanged), so it leaves the tally: 160 surfaces verified.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 164;
+///
+/// 164 -> 171: the durable-execution + LLM/agentic stdlib landed seven new
+/// modules — `stdlib.Std.Durable` and `stdlib.Std.Ai.{Provider,Agent,Tool,Policy,
+/// Trace,Memory.Pg}` — each one a surface (`surfaces_total` 160 -> 167), so
+/// `surfaces.len() + 4` is now 171. The ratchet still holds (`weaker` stays 0):
+/// every new surface is effect-shaped and registered-gate-uncovered by design
+/// (see the `DARK_MODULE_CEILING` 67 -> 74 note in `corpus/stdlib.rs`), covered
+/// instead by the Layer-2 integration tests `rust/crates/sky/tests/*_flow.rs`
+/// (durable / durable_agent / durable_agent_tools / ai_policy_router / ai_trace /
+/// ai_memory_pg / slack_agent) and the `examples/66-slack-agent` capstone.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 171;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

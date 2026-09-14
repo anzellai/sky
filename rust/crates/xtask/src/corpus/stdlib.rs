@@ -655,7 +655,39 @@ pub const ASSERTED_MODULES: &[&str] = &[
 ///     `check_std_app`) and the migrated example sweep, not here.
 ///   * `Sky.Core.Secret`, added in the same window, is NOT dark — its
 ///     `reveal ∘ fromString` boundary is a pure value assertion (`secret_battery`).
-pub const DARK_MODULE_CEILING: usize = 67;
+///
+/// Raised 67 → 74 (2026-09-14) for `Std.Durable` + the six `Std.Ai.*` modules —
+/// the durable-execution and LLM/agentic substrate. Every one is EFFECT-shaped:
+/// its reason to exist is a `Task Error a` boundary, not a pure value the
+/// Family-S value corpus can generate and print. Each is proven instead by a
+/// dedicated Layer-2 integration test (`rust/crates/sky/tests/*_flow.rs`), which
+/// asserts the property that actually matters — exactly-once resume, a firewall
+/// decision, an exact cost total, nearest-neighbour recall — far more than a
+/// value snippet could:
+///   * `Std.Durable` — the workflow engine. `register`/`start`/`poll`/`step`/
+///     `sleep`/`signal` are all `Task`-returning; `conn`/`runId`/`isSuspend` are
+///     internal accessors over an opaque `Ctx` a corpus cannot construct. Its
+///     exactly-once step-journalling is proven by `durable_flow.rs`
+///     ("poll1 charges=1 / poll2 charges=1 status=done").
+///   * `Std.Ai.Provider` — a chat backend over `Sky.Core.Http`; `chat` is the
+///     `Task`. Proven by `ai_policy_router_flow.rs` (router dispatch) and the
+///     durable-agent flows (the model call as a journalled step).
+///   * `Std.Ai.Agent` — `oneShot`/`toolLoop` build opaque `WorkflowDef`s run as
+///     durable workflows. Proven by `durable_agent_flow.rs` +
+///     `durable_agent_tools_flow.rs`.
+///   * `Std.Ai.Tool` — the tool protocol; `run`/`exec` are `Task`. Proven by
+///     `durable_agent_tools_flow.rs` ("tools records=1 status=done").
+///   * `Std.Ai.Policy` — the action firewall; `gate` is `Task Error (Outcome a)`.
+///     Its decision logic is proven by `ai_policy_router_flow.rs` ("policy-allow:
+///     ran:ok" / "policy-high: pending" — the High-risk effect did NOT run).
+///   * `Std.Ai.Trace` — the token+cost ledger; `setup`/`record`/`totalCost` are
+///     `Task` over `Std.Db`. The exact-decimal cost roll-up is proven by
+///     `ai_trace_flow.rs` ("total=1.05", summed over `Std.Decimal`, never float).
+///   * `Std.Ai.Memory.Pg` — pgvector storage; `search`/`hybridSearch` are `Task`.
+///     Proven against a REAL cluster by `ai_memory_pg_flow.rs` ("search=a
+///     hybrid=b"). The whole stack is exercised end-to-end by the
+///     `examples/66-slack-agent` capstone via `slack_agent_flow.rs`.
+pub const DARK_MODULE_CEILING: usize = 74;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
