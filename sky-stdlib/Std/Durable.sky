@@ -1,0 +1,597 @@
+module Std.Durable exposing
+    ( Ctx
+    , WorkflowDef
+    , RegisteredWorkflow
+    , register
+    , erase
+    , setup
+    , start
+    , signal
+    , poll
+    , step
+    , stepValue
+    , sleep
+    , awaitSignal
+    , isSuspend
+    )
+
+{-| `Std.Durable` — durable, resumable workflows over `Std.Db` (Postgres or
+SQLite). A workflow is an ordinary `Task` that marks its side-effecting
+boundaries with `step`; each step's result is journalled, so on a restart the
+workflow re-runs from the top and a completed step returns its recorded value
+instead of re-executing. `sleep` and `awaitSignal` suspend the run passively — a
+run blocked on a timer or a human approval holds no process; a worker `poll`
+claims it again when it is due. It is a general server primitive (checkout /
+payment sagas, order fulfilment, onboarding, approvals), not AI-specific.
+
+Design + guarantees: `docs/design/durable-execution.md`.
+
+## The determinism contract
+
+The body re-runs from the top on every resume, so code BETWEEN steps must be
+deterministic: no `Time.now` / `Uuid` / `Random` / direct I/O outside a `step`
+(use `stepValue` to journal a fresh id or timestamp). Every effect goes in a
+`step`, whose result is journalled and replayed.
+
+## Sketch
+
+    checkout : Durable.Ctx -> Input -> Task Error OrderId
+    checkout ctx input =
+        Durable.step ctx reserveCodec "reserve" (Inventory.reserve input.items)
+            |> Task.andThen (\r ->
+                Durable.step ctx chargeCodec "charge" (Payments.charge input.card)
+                |> Task.andThen (\c ->
+                    Durable.awaitSignal ctx settledCodec "payment.settled"
+                    |> Task.andThen (\s ->
+                        Durable.step ctx orderCodec "finalise" (Orders.finalise r c s))))
+
+    -- once, at startup:
+    Durable.setup db
+
+    -- start an instance (idempotent on the id):
+    Durable.start db checkoutDef "cart-42" input
+
+    -- in a worker tick (Sub.every / a Cli loop):
+    Durable.poll db [ Durable.erase checkoutDef ]
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error(..))
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Time as Time
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Result exposing (Result(..))
+import Std.Codec as Codec exposing (Codec)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Db.Store as Store
+
+
+-- ---------------------------------------------------------------------------
+-- Types
+-- ---------------------------------------------------------------------------
+
+
+{-| The execution context threaded through a workflow body: the shared database
+handle and the run's id. Every `step` / `sleep` / `awaitSignal` takes it.
+-}
+type Ctx
+    = Ctx { db : Db, runId : String }
+
+
+{-| A typed, registered workflow: its name, the input codec (so `start` can
+encode), and its type-erased runner. Build it with `register`.
+-}
+type WorkflowDef i o
+    = WorkflowDef
+        { name : String
+        , inputCodec : Codec i
+        , erased : RegisteredWorkflow
+        }
+
+
+{-| A workflow with its input/output types erased to JSON, so the runner can hold
+a heterogeneous list of them and dispatch by name. Get it with `erase`.
+-}
+type RegisteredWorkflow
+    = RegisteredWorkflow
+        { name : String
+        , run : Ctx -> String -> Task Error String
+        }
+
+
+-- The lease visibility timeout: a run claimed longer ago than this is reclaimed
+-- by a peer (its worker is presumed dead). 30 minutes, matching Std.Jobs.
+leaseMs : Int
+leaseMs =
+    30 * 60 * 1000
+
+
+-- Far-future wake, for a run parked on an awaitSignal (woken by `signal`, not a
+-- timer). ~Year 5000 in ms.
+farFuture : Int
+farFuture =
+    95617584000000
+
+
+-- The suspend sentinel. `sleep` / `awaitSignal` fail with this to unwind the body
+-- when their wake condition is not met; the runner recognises it (`isSuspend`)
+-- and treats it as a suspension, not a failure.
+suspendMarker : String
+suspendMarker =
+    "\u{0001}sky.durable.suspend\u{0001}"
+
+
+suspendError : Error
+suspendError =
+    Error.unexpected suspendMarker
+
+
+{-| Is this error the durable suspend sentinel (as opposed to a real failure)?
+The runner uses it; user code rarely needs it.
+-}
+isSuspend : Error -> Bool
+isSuspend err =
+    case err of
+        Error _ info ->
+            info.message == suspendMarker
+
+
+-- ---------------------------------------------------------------------------
+-- Registration
+-- ---------------------------------------------------------------------------
+
+
+{-| Register a workflow: a stable `name`, the input and output codecs, and the
+body `Ctx -> input -> Task Error output`. The result is a typed handle for
+`start`; pass `erase` of it to `poll`.
+-}
+register : String -> Codec i -> Codec o -> (Ctx -> i -> Task Error o) -> WorkflowDef i o
+register name inputCodec outputCodec body =
+    WorkflowDef
+        { name = name
+        , inputCodec = inputCodec
+        , erased =
+            RegisteredWorkflow
+                { name = name
+                , run =
+                    \ctx inputJson ->
+                        case Codec.fromJson inputCodec inputJson of
+                            Ok input ->
+                                body ctx input
+                                    |> Task.map (\output -> Codec.toJson outputCodec output)
+
+                            Err e ->
+                                Task.fail e
+                }
+        }
+
+
+{-| The type-erased form of a workflow, for the runner's `poll` list. -}
+erase : WorkflowDef i o -> RegisteredWorkflow
+erase (WorkflowDef d) =
+    d.erased
+
+
+-- ---------------------------------------------------------------------------
+-- Schema
+-- ---------------------------------------------------------------------------
+
+
+{-| Create the durable tables if they do not exist. Idempotent; call once at
+startup. Works on Postgres and SQLite (times are epoch-ms integers, so no
+timestamp-type marshalling).
+-}
+setup : Db -> Task Error ()
+setup db =
+    Db.execRaw db
+        ("CREATE TABLE IF NOT EXISTS _sky_durable_runs ("
+            ++ "id TEXT PRIMARY KEY, workflow TEXT NOT NULL, status TEXT NOT NULL, "
+            ++ "input TEXT NOT NULL, output TEXT, attempts INTEGER NOT NULL DEFAULT 0, "
+            ++ "wake_at BIGINT NOT NULL, waiting_signal TEXT, last_error TEXT NOT NULL DEFAULT '', "
+            ++ "claimed_at BIGINT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL)"
+        )
+        |> Task.andThen
+            (\_ ->
+                Db.execRaw db
+                    ("CREATE TABLE IF NOT EXISTS _sky_durable_journal ("
+                        ++ "run_id TEXT NOT NULL, step_id TEXT NOT NULL, result TEXT NOT NULL, "
+                        ++ "created_at BIGINT NOT NULL, PRIMARY KEY (run_id, step_id))"
+                    )
+            )
+        |> Task.andThen
+            (\_ ->
+                Db.execRaw db
+                    ("CREATE TABLE IF NOT EXISTS _sky_durable_signals ("
+                        ++ "run_id TEXT NOT NULL, name TEXT NOT NULL, payload TEXT NOT NULL, "
+                        ++ "created_at BIGINT NOT NULL, PRIMARY KEY (run_id, name))"
+                    )
+            )
+        |> Task.map (\_ -> ())
+
+
+-- ---------------------------------------------------------------------------
+-- Start + signal
+-- ---------------------------------------------------------------------------
+
+
+{-| Start a workflow instance, keyed by `id` (the caller's idempotency key). A
+second `start` with the same id is a no-op — the existing run is untouched.
+-}
+start : Db -> WorkflowDef i o -> String -> i -> Task Error ()
+start db (WorkflowDef d) id input =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("INSERT INTO _sky_durable_runs "
+                        ++ "(id, workflow, status, input, attempts, wake_at, last_error, created_at, updated_at) "
+                        ++ "VALUES (?, ?, 'running', ?, 0, ?, '', ?, ?) "
+                        ++ "ON CONFLICT (id) DO NOTHING"
+                    )
+                    [ SqlString id
+                    , SqlString d.name
+                    , SqlString (Codec.toJson d.inputCodec input)
+                    , SqlInt now
+                    , SqlInt now
+                    , SqlInt now
+                    ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+{-| Deliver a named signal to a run, waking an `awaitSignal` that is blocked on
+it. Idempotent per (run, name). The run becomes claimable immediately.
+-}
+signal : Db -> String -> String -> Codec a -> a -> Task Error ()
+signal db runId name codec payload =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("INSERT INTO _sky_durable_signals (run_id, name, payload, created_at) "
+                        ++ "VALUES (?, ?, ?, ?) ON CONFLICT (run_id, name) DO NOTHING"
+                    )
+                    [ SqlString runId, SqlString name, SqlString (Codec.toJson codec payload), SqlInt now ]
+                    |> Task.andThen
+                        (\_ ->
+                            Db.exec db
+                                ("UPDATE _sky_durable_runs SET wake_at = ?, waiting_signal = NULL, updated_at = ? "
+                                    ++ "WHERE id = ?"
+                                )
+                                [ SqlInt now, SqlInt now, SqlString runId ]
+                        )
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- ---------------------------------------------------------------------------
+-- Workflow-body primitives
+-- ---------------------------------------------------------------------------
+
+
+-- One-column row shapes for typed reads.
+
+
+type alias ResultRow =
+    { result : String }
+
+
+resultRowCodec : Codec ResultRow
+resultRowCodec =
+    Codec.auto { result = "" }
+
+
+type alias PayloadRow =
+    { payload : String }
+
+
+payloadRowCodec : Codec PayloadRow
+payloadRowCodec =
+    Codec.auto { payload = "" }
+
+
+-- Read a journalled step result, if present.
+readJournal : Db -> String -> String -> Task Error (Maybe String)
+readJournal db runId stepId =
+    Store.selectRaw db
+        resultRowCodec
+        "SELECT result FROM _sky_durable_journal WHERE run_id = ? AND step_id = ?"
+        [ SqlString runId, SqlString stepId ]
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        Just row.result
+
+                    Nothing ->
+                        Nothing
+            )
+
+
+-- Write a journalled step result. `ON CONFLICT DO NOTHING` keeps it write-once,
+-- so a re-run that raced never overwrites a recorded result.
+writeJournal : Db -> String -> String -> String -> Task Error ()
+writeJournal db runId stepId json =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("INSERT INTO _sky_durable_journal (run_id, step_id, result, created_at) "
+                        ++ "VALUES (?, ?, ?, ?) ON CONFLICT (run_id, step_id) DO NOTHING"
+                    )
+                    [ SqlString runId, SqlString stepId, SqlString json, SqlInt now ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+{-| Run a side-effecting `task` as a durable step, journalled under `stepId`. On
+the first execution the task runs and its result is recorded; on a resume the
+recorded result is returned and the task does NOT run again. `stepId` must be
+stable and unique within the workflow body.
+-}
+step : Ctx -> Codec a -> String -> Task Error a -> Task Error a
+step (Ctx c) codec stepId task =
+    readJournal c.db c.runId stepId
+        |> Task.andThen
+            (\maybe ->
+                case maybe of
+                    Just json ->
+                        Task.fromResult (Codec.fromJson codec json)
+
+                    Nothing ->
+                        task
+                            |> Task.andThen
+                                (\result ->
+                                    writeJournal c.db c.runId stepId (Codec.toJson codec result)
+                                        |> Task.map (\_ -> result)
+                                )
+            )
+
+
+{-| Journal a fresh, nondeterministic PURE value (a uuid, a timestamp) so it is
+stable across resumes. `thunk` is evaluated once, its result recorded; a resume
+returns the recorded value. Use this instead of calling `Uuid.v4` / `Time.now`
+directly between steps.
+-}
+stepValue : Ctx -> Codec a -> String -> (() -> a) -> Task Error a
+stepValue ctx codec stepId thunk =
+    step ctx codec stepId (Task.lazy thunk)
+
+
+{-| Suspend the run for `ms` from now, passively. On the first hit it records the
+wake time and suspends (the run holds no process); when the timer is due a worker
+`poll` resumes the body and this returns `()`. `sleepId` must be stable.
+-}
+sleep : Ctx -> String -> Int -> Task Error ()
+sleep (Ctx c) sleepId ms =
+    let
+        key =
+            "__sleep:" ++ sleepId
+    in
+    readJournal c.db c.runId key
+        |> Task.andThen
+            (\maybe ->
+                case maybe of
+                    Just _ ->
+                        Task.succeed ()
+
+                    Nothing ->
+                        Time.now ()
+                            |> Task.andThen
+                                (\now ->
+                                    let
+                                        wake =
+                                            now + ms
+                                    in
+                                    writeJournal c.db c.runId key (String.fromInt wake)
+                                        |> Task.andThen (\_ -> setWake c.db c.runId wake)
+                                        |> Task.andThen (\_ -> Task.fail suspendError)
+                                )
+            )
+
+
+{-| Suspend the run until a signal named `name` is delivered (by `signal`), then
+return its decoded payload. A run parked here holds no process and no timer; it
+wakes only when the signal arrives.
+-}
+awaitSignal : Ctx -> Codec a -> String -> Task Error a
+awaitSignal (Ctx c) codec name =
+    Store.selectRaw c.db
+        payloadRowCodec
+        "SELECT payload FROM _sky_durable_signals WHERE run_id = ? AND name = ?"
+        [ SqlString c.runId, SqlString name ]
+        |> Task.andThen
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        Task.fromResult (Codec.fromJson codec row.payload)
+
+                    Nothing ->
+                        setWaitingSignal c.db c.runId name
+                            |> Task.andThen (\_ -> Task.fail suspendError)
+            )
+
+
+setWake : Db -> String -> Int -> Task Error ()
+setWake db runId wake =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    "UPDATE _sky_durable_runs SET wake_at = ?, updated_at = ? WHERE id = ?"
+                    [ SqlInt wake, SqlInt now, SqlString runId ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+setWaitingSignal : Db -> String -> String -> Task Error ()
+setWaitingSignal db runId name =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("UPDATE _sky_durable_runs SET status = 'waiting', waiting_signal = ?, wake_at = ?, "
+                        ++ "updated_at = ? WHERE id = ?"
+                    )
+                    [ SqlString name, SqlInt farFuture, SqlInt now, SqlString runId ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- ---------------------------------------------------------------------------
+-- The runner
+-- ---------------------------------------------------------------------------
+
+
+type alias ClaimRow =
+    { id : String, workflow : String, input : String }
+
+
+claimRowCodec : Codec ClaimRow
+claimRowCodec =
+    Codec.auto { id = "", workflow = "", input = "" }
+
+
+{-| Claim one due run and advance it until it suspends or completes. Returns
+`True` if it did work (so a poll loop drains, re-firing until `False`), `False`
+if there was nothing due. Mount it on a tick (a `Sub.every` in a Sky.Live /
+`Std.App` app, or a loop in a `Sky.Cli` daemon). Horizontal scale is free: run
+more instances; each claims independently.
+-}
+poll : Db -> List RegisteredWorkflow -> Task Error Bool
+poll db defs =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                claim db now
+                    |> Task.andThen
+                        (\maybe ->
+                            case maybe of
+                                Nothing ->
+                                    Task.succeed False
+
+                                Just row ->
+                                    advance db defs row
+                                        |> Task.map (\_ -> True)
+                        )
+            )
+
+
+-- Optimistic, dialect-portable claim: pick the oldest-due candidate, then take it
+-- with a guarded atomic UPDATE. If the UPDATE hits 0 rows a peer won it — return
+-- nothing this tick. Correct under concurrency without `FOR UPDATE SKIP LOCKED`.
+claim : Db -> Int -> Task Error (Maybe ClaimRow)
+claim db now =
+    Store.selectRaw db
+        claimRowCodec
+        ("SELECT id, workflow, input FROM _sky_durable_runs "
+            ++ "WHERE status IN ('running', 'waiting') AND wake_at <= ? "
+            ++ "AND (claimed_at IS NULL OR claimed_at < ?) "
+            ++ "ORDER BY wake_at ASC LIMIT 1"
+        )
+        [ SqlInt now, SqlInt (now - leaseMs) ]
+        |> Task.andThen
+            (\rows ->
+                case List.head rows of
+                    Nothing ->
+                        Task.succeed Nothing
+
+                    Just row ->
+                        Db.exec db
+                            ("UPDATE _sky_durable_runs SET claimed_at = ?, status = 'running', "
+                                ++ "attempts = attempts + 1, updated_at = ? "
+                                ++ "WHERE id = ? AND (claimed_at IS NULL OR claimed_at < ?)"
+                            )
+                            [ SqlInt now, SqlInt now, SqlString row.id, SqlInt (now - leaseMs) ]
+                            |> Task.map
+                                (\affected ->
+                                    if affected == 1 then
+                                        Just row
+
+                                    else
+                                        Nothing
+                                )
+            )
+
+
+advance : Db -> List RegisteredWorkflow -> ClaimRow -> Task Error ()
+advance db defs row =
+    case findDef row.workflow defs of
+        Nothing ->
+            markDead db row.id ("no registered workflow named " ++ row.workflow)
+
+        Just (RegisteredWorkflow def) ->
+            def.run (Ctx { db = db, runId = row.id }) row.input
+                |> Task.andThen (\output -> markDone db row.id output)
+                |> Task.onError
+                    (\err ->
+                        if isSuspend err then
+                            releaseLease db row.id
+
+                        else
+                            markFailed db row.id (Error.toString err)
+                    )
+
+
+findDef : String -> List RegisteredWorkflow -> Maybe RegisteredWorkflow
+findDef name defs =
+    List.filter (\(RegisteredWorkflow d) -> d.name == name) defs
+        |> List.head
+
+
+markDone : Db -> String -> String -> Task Error ()
+markDone db runId output =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("UPDATE _sky_durable_runs SET status = 'done', output = ?, claimed_at = NULL, "
+                        ++ "updated_at = ? WHERE id = ?"
+                    )
+                    [ SqlString output, SqlInt now, SqlString runId ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- Release the lease on a suspended run (it stays 'running'/'waiting'; its wake_at
+-- was set by sleep/awaitSignal), so a worker can reclaim it when it is due.
+releaseLease : Db -> String -> Task Error ()
+releaseLease db runId =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    "UPDATE _sky_durable_runs SET claimed_at = NULL, updated_at = ? WHERE id = ?"
+                    [ SqlInt now, SqlString runId ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+markFailed : Db -> String -> String -> Task Error ()
+markFailed db runId msg =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("UPDATE _sky_durable_runs SET status = 'failed', last_error = ?, claimed_at = NULL, "
+                        ++ "updated_at = ? WHERE id = ?"
+                    )
+                    [ SqlString msg, SqlInt now, SqlString runId ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+markDead : Db -> String -> String -> Task Error ()
+markDead db runId msg =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("UPDATE _sky_durable_runs SET status = 'dead', last_error = ?, claimed_at = NULL, "
+                        ++ "updated_at = ? WHERE id = ?"
+                    )
+                    [ SqlString msg, SqlInt now, SqlString runId ]
+                    |> Task.map (\_ -> ())
+            )
