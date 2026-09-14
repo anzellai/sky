@@ -1,0 +1,379 @@
+module Main exposing (main)
+
+{-| slack-agent — a 24/7 Slack bot that answers an @mention with an LLM agent run
+as a DURABLE workflow, then replies in-thread.
+
+The flow, and why each piece is here:
+
+  1. Slack posts an `app_mention` event to `POST /slack/events`. The handler
+     starts a `Std.Durable` workflow keyed by the message, then acks 200 at once
+     (Slack requires a reply within 3 seconds). The real work is asynchronous.
+
+  2. A background poller drains due workflows. Each run:
+       a. calls the LLM once, as a journalled `Durable.step` — so a crash-and-
+          resume never pays for the same model call twice (exactly-once);
+       b. posts the reply to Slack, BEHIND the `Std.Ai.Policy` firewall — the
+          model never authorises a side effect; a pure policy does;
+       c. records the token + cost trace (`Std.Ai.Trace`) keyed by the run id.
+
+  3. Because the workflow is durable, a restart mid-run resumes from the last
+     journalled step. The bot can be redeployed without dropping in-flight work.
+
+Configuration (environment):
+  OPENAI_API_KEY   the model key (any OpenAI-compatible endpoint works)
+  SLACK_BOT_TOKEN  the bot token used to post replies (xoxb-…)
+
+It ships on SQLite so it boots with no external setup. `GET /healthz` is a
+DB-free liveness check.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Secret as Secret exposing (Secret)
+import Sky.Core.Http as Http
+import Sky.Core.Time as Time
+import Sky.Http.Server as Server exposing (Request, Response, Handler)
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db)
+import Std.Codec as Codec exposing (Codec)
+import Std.Money as Money
+import Std.Durable as Durable exposing (Ctx)
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Policy as Policy
+import Std.Ai.Trace as Trace
+
+
+-- ─── Configuration ───────────────────────────────────────────────
+
+
+botPort : Int
+botPort =
+    8188
+
+
+systemPrompt : String
+systemPrompt =
+    "You are a helpful teammate in a Slack workspace. Answer in one short paragraph."
+
+
+modelName : String
+modelName =
+    "gpt-4o-mini"
+
+
+provider : Provider
+provider =
+    Provider.openai (Secret.fromEnv "OPENAI_API_KEY") modelName
+
+
+slackToken : Secret
+slackToken =
+    Secret.fromEnv "SLACK_BOT_TOKEN"
+
+
+{-| The price book the run's cost is measured against. Rates are per 1000 tokens.
+A local model would use `Provider.freePriceBook`.
+-}
+priceBook : Provider.PriceBook
+priceBook =
+    case Provider.priceBook Money.USD "0.00015" "0.00060" of
+        Ok b ->
+            b
+
+        Err _ ->
+            Provider.freePriceBook Money.USD
+
+
+{-| The action firewall. Posting a reply is `Low` risk, so it runs unattended;
+anything the model might later propose above `Low` (say, running a command) would
+be held for human approval instead of executed. The LLM is never the boundary.
+-}
+firewall : Policy.Action -> Policy.Decision
+firewall act =
+    Policy.requireApprovalAbove Policy.Low act
+
+
+-- ─── The durable reply workflow ──────────────────────────────────
+
+
+type alias Mention =
+    { text : String, channel : String, threadTs : String }
+
+
+type alias Reply =
+    { reply : String, posted : String }
+
+
+mentionCodec : Codec Mention
+mentionCodec =
+    Codec.auto { text = "", channel = "", threadTs = "" }
+
+
+replyCodec : Codec Reply
+replyCodec =
+    Codec.auto { reply = "", posted = "" }
+
+
+chatCodec : Codec Provider.ChatResponse
+chatCodec =
+    Codec.auto
+        { content = ""
+        , usage = { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+        }
+
+
+botDef : Durable.WorkflowDef Mention Reply
+botDef =
+    Durable.register "slack-reply" mentionCodec replyCodec botBody
+
+
+botBody : Ctx -> Mention -> Task Error Reply
+botBody ctx mention =
+    -- Step 1: the model call. Journalled, so a resume replays the answer and
+    -- never re-bills the model.
+    Durable.step ctx
+        chatCodec
+        "llm"
+        (Provider.chat provider
+            [ Provider.system systemPrompt, Provider.user mention.text ]
+        )
+        |> Task.andThen
+            (\resp ->
+                let
+                    answer =
+                        resp.content
+
+                    -- Step 2: the outbound Slack post, through the firewall.
+                    postAction =
+                        Policy.action "slack.post" mention.channel Policy.Low
+                in
+                Durable.step ctx
+                    Codec.string
+                    "reply"
+                    (Policy.gate firewall
+                        postAction
+                        (postMessage mention.channel mention.threadTs answer)
+                        |> Task.map outcomeSummary
+                    )
+                    |> Task.andThen
+                        (\posted ->
+                            -- Step 3: record the token + cost trace for this run.
+                            Durable.step ctx
+                                Codec.string
+                                "trace"
+                                (Trace.record (Durable.conn ctx)
+                                    (Trace.forResponse (Durable.runId ctx) modelName priceBook resp)
+                                    |> Task.map (\_ -> "ok")
+                                )
+                                |> Task.map (\_ -> { reply = answer, posted = posted })
+                        )
+            )
+
+
+outcomeSummary : Policy.Outcome String -> String
+outcomeSummary outcome =
+    case outcome of
+        Policy.Ran ts ->
+            "posted:" ++ ts
+
+        Policy.Denied reason ->
+            "denied:" ++ reason
+
+        Policy.Pending reason ->
+            "pending:" ++ reason
+
+
+-- ─── Slack client ────────────────────────────────────────────────
+
+
+type alias PostRequest =
+    { channel : String, thread_ts : String, text : String }
+
+
+postReqCodec : Codec PostRequest
+postReqCodec =
+    Codec.auto { channel = "", thread_ts = "", text = "" }
+
+
+{-| Post `text` to `channel`, threaded under `threadTs`, via Slack
+`chat.postMessage`. Returns the new message `ts` on success. -}
+postMessage : String -> String -> String -> Task Error String
+postMessage channel threadTs text =
+    let
+        payload =
+            Codec.toJson postReqCodec { channel = channel, thread_ts = threadTs, text = text }
+
+        req =
+            Http.defaultRequest "https://slack.com/api/chat.postMessage"
+    in
+    { req | method = "POST" }
+        |> Http.withBearer slackToken
+        |> Http.withHeader "Content-Type" "application/json"
+        |> Http.withBody payload
+        |> Http.request
+        |> Task.andThen
+            (\resp ->
+                if resp.status >= 200 && resp.status < 300 then
+                    Task.succeed (readTs resp.body)
+
+                else
+                    Task.fail
+                        (Error.unexpected
+                            ("slack post failed: HTTP " ++ String.fromInt resp.status ++ " — " ++ resp.body)
+                        )
+            )
+
+
+type alias PostResult =
+    { ok : Bool, ts : String }
+
+
+postResultCodec : Codec PostResult
+postResultCodec =
+    Codec.auto { ok = False, ts = "" }
+
+
+readTs : String -> String
+readTs body =
+    case Codec.fromJson postResultCodec body of
+        Ok r ->
+            r.ts
+
+        Err _ ->
+            ""
+
+
+-- ─── The webhook ─────────────────────────────────────────────────
+
+
+{-| Slack's setup handshake body: `{ "type": "url_verification", "challenge": … }`.
+We decode only `challenge`; its presence identifies the handshake. -}
+type alias Challenge =
+    { challenge : String }
+
+
+challengeCodec : Codec Challenge
+challengeCodec =
+    Codec.auto { challenge = "" }
+
+
+{-| An `event_callback` body. We read the inner event's text, channel, and ts.
+The bot subscribes to `app_mention` only, so every event that arrives is one. -}
+type alias Envelope =
+    { event : Event }
+
+
+type alias Event =
+    { text : String, channel : String, ts : String }
+
+
+envelopeCodec : Codec Envelope
+envelopeCodec =
+    Codec.auto { event = { text = "", channel = "", ts = "" } }
+
+
+handleEvents : Db -> Handler
+handleEvents db req =
+    let
+        raw =
+            Server.body req
+    in
+    case Codec.fromJson challengeCodec raw of
+        Ok c ->
+            -- The setup handshake: echo the challenge back verbatim.
+            if String.length c.challenge > 0 then
+                Task.succeed (Server.text c.challenge)
+
+            else
+                startFromEnvelope db raw
+
+        Err _ ->
+            startFromEnvelope db raw
+
+
+startFromEnvelope : Db -> String -> Task Error Response
+startFromEnvelope db raw =
+    case Codec.fromJson envelopeCodec raw of
+        Ok env ->
+            let
+                mention =
+                    { text = env.event.text
+                    , channel = env.event.channel
+                    , threadTs = env.event.ts
+                    }
+
+                -- One workflow per message: the ts is unique per channel, so a
+                -- Slack retry of the same event re-starts the same run id, which
+                -- Durable treats as already-known (idempotent).
+                key =
+                    "slack:" ++ env.event.channel ++ ":" ++ env.event.ts
+            in
+            Durable.start db botDef key mention
+                |> Task.map (\_ -> Server.json "{\"ok\":true}")
+                |> Task.onError (\_ -> Task.succeed (Server.json "{\"ok\":true}"))
+
+        Err _ ->
+            -- Not a shape we handle. Ack anyway so Slack does not retry forever.
+            Task.succeed (Server.json "{\"ok\":true}")
+
+
+handleHealth : Handler
+handleHealth _ =
+    Task.succeed (Server.json "{\"status\":\"ok\"}")
+
+
+-- ─── The background poller ───────────────────────────────────────
+
+
+{-| Drain due workflows forever. `poll` returns True while it did work, so we
+loop tight while there is a backlog and sleep 1s when idle. This runs in parallel
+with the HTTP server (see `main`).
+-}
+poller : Db -> Task Error ()
+poller db =
+    Durable.poll db [ Durable.erase botDef ]
+        |> Task.andThen
+            (\didWork ->
+                if didWork then
+                    poller db
+
+                else
+                    Time.sleep 1000
+                        |> Task.andThen (\_ -> poller db)
+            )
+
+
+-- ─── Boot ────────────────────────────────────────────────────────
+
+
+startServer : Db -> Task Error ()
+startServer db =
+    let
+        _ =
+            println ("slack-agent: listening on :" ++ String.fromInt botPort)
+    in
+    Server.listen botPort
+        [ Server.get "/healthz" handleHealth
+        , Server.post "/slack/events" (handleEvents db)
+        ]
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Durable.setup db
+                    |> Task.andThen (\_ -> Trace.setup db)
+                    |> Task.andThen
+                        (\_ ->
+                            -- Server and poller run as parallel goroutines; both
+                            -- return `Task Error ()`, and neither returns in
+                            -- normal operation.
+                            Task.parallel [ poller db, startServer db ]
+                                |> Task.map (\_ -> ())
+                        )
+            )

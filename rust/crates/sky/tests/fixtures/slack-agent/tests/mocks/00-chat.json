@@ -1,0 +1,5 @@
+{
+  "match": { "method": "POST", "urlContains": "/v1/chat/completions" },
+  "status": 200,
+  "body": "{\"id\":\"cmpl-1\",\"object\":\"chat.completion\",\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"MOCKED-REPLY\"}}],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":1000,\"total_tokens\":2000}}"
+}

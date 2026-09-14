@@ -1,0 +1,5 @@
+{
+  "match": { "method": "POST", "urlContains": "/chat.postMessage" },
+  "status": 200,
+  "body": "{\"ok\":true,\"ts\":\"1700000000.000100\",\"channel\":\"C123\"}"
+}

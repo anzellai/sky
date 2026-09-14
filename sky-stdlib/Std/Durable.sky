@@ -5,6 +5,7 @@ module Std.Durable exposing
     , register
     , erase
     , conn
+    , runId
     , setup
     , start
     , signal
@@ -183,6 +184,14 @@ workflow body does not need to thread a connection separately): e.g.
 conn : Ctx -> Db
 conn (Ctx c) =
     c.db
+
+
+{-| The id of the run this workflow body is executing under — the key passed to
+`start`. Use it to key per-run records (a cost trace, an audit row) to the run.
+-}
+runId : Ctx -> String
+runId (Ctx c) =
+    c.runId
 
 
 -- ---------------------------------------------------------------------------

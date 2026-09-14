@@ -1,0 +1,24 @@
+name = "slack-agent"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+# A 24/7 Slack agent bot. Mention the bot in a channel and it runs an LLM agent
+# as a DURABLE workflow, then replies in-thread — the work survives a restart and
+# each expensive model call runs exactly once.
+#
+# The whole Std.Ai + Std.Durable stack in one app:
+#   * Sky.Http.Server        — receives Slack Events API webhooks
+#   * Std.Durable            — the reply is a resumable, exactly-once workflow
+#   * Std.Ai.Provider        — the LLM call (OpenAI-compatible, so local models work)
+#   * Std.Ai.Policy          — the outbound Slack post goes through the firewall
+#   * Std.Ai.Trace           — per-run token + cost capture
+#
+# It SHIPS on SQLite so it boots anywhere (incl. the CI build-run gate, which
+# starts the bare `./app` with no cluster). Std.Db is dialect-safe, so the same
+# code runs on embedded PostgreSQL in production with `embedded = true`.
+[database]
+driver = "sqlite"
+path = "slack-agent.db"
