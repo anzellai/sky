@@ -698,7 +698,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1929,
+    "stdlib_entries": 1935,
     "stdlib_modules": 101,
     "surfaces_covered": 148,
     "surfaces_covered_pct": 88.6,
@@ -12700,11 +12700,16 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 5,
+          "count": 10,
           "symbols": [
             "Message",
+            "ToolCall",
+            "ToolResponse",
+            "ToolSpec",
+            "Turn",
             "Usage",
             "assistant",
+            "chatTools",
             "compatible",
             "cost"
           ]
@@ -13427,8 +13432,8 @@
           ]
         }
       },
-      "count": 644,
-      "pct_of_denominator": 33.4
+      "count": 649,
+      "pct_of_denominator": 33.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13745,19 +13750,23 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 5,
+          "count": 10,
           "symbols": [
             "Message",
+            "ToolCall",
+            "ToolResponse",
+            "ToolSpec",
+            "Turn",
             "Usage",
             "assistant",
+            "chatTools",
             "compatible",
             "cost"
           ]
         },
         "Std.Ai.Tool": {
-          "count": 5,
+          "count": 4,
           "symbols": [
-            "Tool",
             "describe",
             "instructions",
             "name",
@@ -14545,8 +14554,8 @@
           ]
         }
       },
-      "count": 727,
-      "pct_of_denominator": 37.7
+      "count": 731,
+      "pct_of_denominator": 37.8
     }
   },
   "units": [
@@ -14568,10 +14577,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 33,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 169,
-      "refs_qualified": 160,
+      "refs_generous": 170,
+      "refs_qualified": 162,
       "role": "Layer2",
-      "sky_files": 105,
+      "sky_files": 106,
       "sky_toml_sections": []
     },
     {
