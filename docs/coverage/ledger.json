@@ -698,7 +698,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1935,
+    "stdlib_entries": 1939,
     "stdlib_modules": 101,
     "surfaces_covered": 148,
     "surfaces_covered_pct": 88.6,
@@ -12989,8 +12989,8 @@
           "count": 4,
           "symbols": [
             "RegisteredWorkflow",
+            "VersionPolicy",
             "isSuspend",
-            "sleep",
             "stepValue"
           ]
         },
@@ -14052,8 +14052,8 @@
           "symbols": [
             "Ctx",
             "RegisteredWorkflow",
+            "VersionPolicy",
             "isSuspend",
-            "sleep",
             "stepValue"
           ]
         },
@@ -14555,7 +14555,7 @@
         }
       },
       "count": 731,
-      "pct_of_denominator": 37.8
+      "pct_of_denominator": 37.7
     }
   },
   "units": [
@@ -14577,10 +14577,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 33,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 170,
-      "refs_qualified": 162,
+      "refs_generous": 174,
+      "refs_qualified": 166,
       "role": "Layer2",
-      "sky_files": 106,
+      "sky_files": 110,
       "sky_toml_sections": []
     },
     {
