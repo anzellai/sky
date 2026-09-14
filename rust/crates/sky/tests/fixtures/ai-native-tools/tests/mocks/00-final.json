@@ -1,0 +1,5 @@
+{
+  "match": { "method": "POST", "urlContains": "/v1/chat/completions", "bodyContains": "tool_call_id" },
+  "status": 200,
+  "body": "{\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"FINAL: the code is 4231\"}}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":8,\"total_tokens\":28}}"
+}

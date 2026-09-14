@@ -34,6 +34,12 @@ import (
 type httpMockMatch struct {
 	Method      string `json:"method"`
 	URLContains string `json:"urlContains"`
+	// BodyContains, when set, requires the request body to contain this
+	// substring. It lets one URL answer differently across a multi-turn flow
+	// (e.g. an LLM tool loop: the follow-up request carries the tool result, so
+	// a bodyContains fixture answers turn 2 and a plain fixture answers turn 1).
+	// List the more specific (bodyContains) fixture first; first match wins.
+	BodyContains string `json:"bodyContains"`
 }
 
 // httpMockFixture is one declarative mock, loaded from a JSON file.
@@ -95,8 +101,20 @@ func (t *testHttpTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 	loadHttpMocks()
 	url := req.URL.String()
+	// Read the body once (consumed here; in test mode we never call base), so a
+	// fixture can discriminate on bodyContains across a multi-turn flow.
+	var reqBody string
+	if req.Body != nil {
+		if b, err := io.ReadAll(req.Body); err == nil {
+			reqBody = string(b)
+		}
+		_ = req.Body.Close()
+	}
 	for _, f := range httpMocks {
 		if f.Match.Method != "" && !strings.EqualFold(f.Match.Method, req.Method) {
+			continue
+		}
+		if f.Match.BodyContains != "" && !strings.Contains(reqBody, f.Match.BodyContains) {
 			continue
 		}
 		if f.Match.URLContains == "" || strings.Contains(url, f.Match.URLContains) {

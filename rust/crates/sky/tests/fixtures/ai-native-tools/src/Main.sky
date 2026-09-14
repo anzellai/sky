@@ -1,0 +1,101 @@
+module Main exposing (main)
+
+{-| Fixture: `Agent.nativeToolLoop` — the OpenAI NATIVE function-calling loop,
+driven fully offline. Under test mode:
+  * turn 1 (tests/mocks/01-toolcall.json) — the model returns a `tool_calls`
+    request for `lookup`;
+  * the loop runs `lookup` (a journalled durable step) and feeds the result back
+    as a `tool` message;
+  * turn 2 (tests/mocks/00-final.json, matched by bodyContains "tool_call_id" —
+    the follow-up request carries the tool result) — the model returns the final
+    answer.
+
+Expected stdout (asserted by `ai_native_tools_flow.rs`):
+
+    native answer=FINAL: the code is 4231 status=done
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Secret as Secret
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Codec as Codec exposing (Codec)
+import Std.Durable as Durable
+import Std.Ai.Provider as Provider
+import Std.Ai.Agent as Agent
+import Std.Ai.Tool as Tool
+
+
+provider : Provider.Provider
+provider =
+    Provider.openai (Secret.fromEnv "OPENAI_API_KEY") "gpt-4o-mini"
+
+
+lookup : Tool.Tool
+lookup =
+    Tool.tool "lookup" "look a value up by query" (\_ -> Task.succeed "the code is 4231")
+
+
+agentDef : Durable.WorkflowDef Agent.Input Agent.ToolOutput
+agentDef =
+    Agent.nativeToolLoop "assistant" provider "You are terse. Use tools when needed." [ lookup ] 5
+
+
+answerCodec : Codec Agent.ToolOutput
+answerCodec =
+    Codec.auto { answer = "" }
+
+
+dictGet : String -> Dict String String -> String
+dictGet key row =
+    case Dict.get key row of
+        Just v ->
+            v
+
+        Nothing ->
+            ""
+
+
+readOutput : Db -> String -> Task Error ( String, String )
+readOutput db id =
+    Db.query db "SELECT output, status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        ( decodeAnswer (dictGet "output" row), dictGet "status" row )
+
+                    Nothing ->
+                        ( "", "?" )
+            )
+
+
+decodeAnswer : String -> String
+decodeAnswer json =
+    case Codec.fromJson answerCodec json of
+        Ok o ->
+            o.answer
+
+        Err _ ->
+            json
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Durable.setup db
+                    |> Task.andThen (\_ -> Durable.start db agentDef "native-1" { messages = [ Provider.user "what is the code?" ] })
+                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase agentDef ])
+                    |> Task.andThen (\_ -> readOutput db "native-1")
+                    |> Task.andThen
+                        (\( answer, status ) ->
+                            println ("native answer=" ++ answer ++ " status=" ++ status)
+                        )
+            )

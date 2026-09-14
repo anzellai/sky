@@ -4,6 +4,7 @@ module Std.Ai.Agent exposing
     , oneShot
     , ToolOutput
     , toolLoop
+    , nativeToolLoop
     , inputCodec
     , outputCodec
     )
@@ -31,6 +32,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.Error exposing (Error)
 import Sky.Core.String as String
+import Sky.Core.List as List
 import Sky.Core.Maybe exposing (Maybe(..))
 import Sky.Core.Result exposing (Result(..))
 import Std.Codec as Codec exposing (Codec)
@@ -188,3 +190,83 @@ parseAction content =
 
         Err _ ->
             Plain content
+
+
+-- ---------------------------------------------------------------------------
+-- Native tool-calling loop (OpenAI function-calling)
+-- ---------------------------------------------------------------------------
+
+
+toolRespCodec : Codec Provider.ToolResponse
+toolRespCodec =
+    Codec.auto
+        { content = ""
+        , toolCalls = [ { id = "", name = "", arguments = "" } ]
+        , usage = { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+        }
+
+
+{-| Like `toolLoop`, but uses the provider's NATIVE function-calling API
+(`Provider.chatTools`) instead of the prompt-based JSON protocol: the model
+returns real `tool_calls`, the loop runs each requested tool and feeds the result
+back as a `tool` message, and repeats up to `maxTurns`. Every model turn and every
+tool call is a journalled `Durable.step`, so a resumed run never repeats one.
+Tools are advertised by name + description; the model fills in free-form JSON
+arguments passed to the tool's `exec`.
+-}
+nativeToolLoop : String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input ToolOutput
+nativeToolLoop name provider systemPrompt tools maxTurns =
+    Durable.register name
+        inputCodec
+        toolOutputCodec
+        (\ctx input ->
+            nativeLoop provider tools maxTurns ctx 0
+                (Provider.Say (Provider.system systemPrompt) :: List.map Provider.Say input.messages)
+        )
+
+
+toolSpecsOf : List Tool -> List Provider.ToolSpec
+toolSpecsOf tools =
+    List.map (\t -> { name = Tool.name t, description = Tool.describe t }) tools
+
+
+nativeLoop : Provider -> List Tool -> Int -> Ctx -> Int -> List Provider.Turn -> Task Error ToolOutput
+nativeLoop provider tools maxTurns ctx turn turns =
+    if turn >= maxTurns then
+        Task.succeed { answer = "(reached the turn limit without a final answer)" }
+
+    else
+        Durable.step ctx toolRespCodec ("turn:" ++ String.fromInt turn) (Provider.chatTools provider turns (toolSpecsOf tools))
+            |> Task.andThen
+                (\resp ->
+                    if List.isEmpty resp.toolCalls then
+                        Task.succeed { answer = resp.content }
+
+                    else
+                        runCalls tools ctx turn 0 resp.toolCalls
+                            |> Task.andThen
+                                (\returned ->
+                                    nativeLoop provider tools maxTurns ctx (turn + 1)
+                                        (turns ++ (Provider.Called resp.toolCalls :: returned))
+                                )
+                )
+
+
+-- Run each requested tool call as its own journalled step, in order, and collect
+-- the results as `Returned` turns keyed to their call id.
+runCalls : List Tool -> Ctx -> Int -> Int -> List Provider.ToolCall -> Task Error (List Provider.Turn)
+runCalls tools ctx turn idx calls =
+    case calls of
+        [] ->
+            Task.succeed []
+
+        call :: rest ->
+            Durable.step ctx
+                Codec.string
+                ("tool:" ++ String.fromInt turn ++ ":" ++ String.fromInt idx)
+                (Tool.run tools call.name call.arguments)
+                |> Task.andThen
+                    (\result ->
+                        runCalls tools ctx turn (idx + 1) rest
+                            |> Task.map (\more -> Provider.Returned call result :: more)
+                    )

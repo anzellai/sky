@@ -14,6 +14,11 @@ module Std.Ai.Provider exposing
     , priceBook
     , freePriceBook
     , cost
+    , ToolSpec
+    , ToolCall
+    , ToolResponse
+    , Turn(..)
+    , chatTools
     )
 
 {-| `Std.Ai.Provider` — a swappable LLM chat backend over `Sky.Core.Http`. The
@@ -41,6 +46,8 @@ import Sky.Core.Result exposing (Result(..))
 import Sky.Core.Maybe exposing (Maybe(..))
 import Sky.Core.Secret as Secret exposing (Secret)
 import Sky.Core.Http as Http
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
 import Std.Codec as Codec exposing (Codec)
 import Std.Money as Money exposing (Money)
 import Std.Decimal as Decimal
@@ -232,6 +239,208 @@ extract raw =
         , totalTokens = raw.usage.total_tokens
         }
     }
+
+
+-- ---------------------------------------------------------------------------
+-- Native function-calling (OpenAI tools API)
+-- ---------------------------------------------------------------------------
+
+
+{-| A tool the model may call, declared by name + description. Arguments are
+free-form JSON the model fills in and the tool parses (matching
+`Std.Ai.Tool`'s `exec : String -> Task Error String`). A typed, Codec-derived
+parameter schema is a later increment; v1 advertises a permissive object schema.
+-}
+type alias ToolSpec =
+    { name : String, description : String }
+
+
+{-| A tool call the model requested: the provider-assigned `id` (echoed back with
+the result), the tool `name`, and its `arguments` as a JSON string. -}
+type alias ToolCall =
+    { id : String, name : String, arguments : String }
+
+
+{-| A response from `chatTools`: the assistant text (empty when it only called
+tools), the tool calls it requested (empty when it answered), and token usage. -}
+type alias ToolResponse =
+    { content : String, toolCalls : List ToolCall, usage : Usage }
+
+
+{-| One entry in a tool-calling conversation. `Say` is a plain message; `Called`
+echoes the assistant's tool-call request back into history; `Returned` carries a
+tool result keyed to the call id. A native tool loop builds `[Say sys, Say user]`,
+then appends `Called …` + one `Returned …` per executed tool, and repeats.
+-}
+type Turn
+    = Say Message
+    | Called (List ToolCall)
+    | Returned ToolCall String
+
+
+{-| Like `chat`, but advertises `tools` and returns any `tool_calls` the model
+requested. Uses the OpenAI native function-calling wire format. Drive the loop
+with `Std.Ai.Agent.nativeToolLoop`.
+-}
+chatTools : Provider -> List Turn -> List ToolSpec -> Task Error ToolResponse
+chatTools provider turns tools =
+    case provider of
+        Routed select ->
+            chatTools (select (turnMessages turns)) turns tools
+
+        Backend p ->
+            chatToolsBackend p turns tools
+
+
+-- The router policy is a `List Message -> Provider`; project the turns to plain
+-- messages so a router can inspect them the same way it inspects a `chat` call.
+turnMessages : List Turn -> List Message
+turnMessages turns =
+    List.filterMap
+        (\turn ->
+            case turn of
+                Say m ->
+                    Just m
+
+                Called _ ->
+                    Nothing
+
+                Returned _ content ->
+                    Just { role = "tool", content = content }
+        )
+        turns
+
+
+chatToolsBackend : Direct -> List Turn -> List ToolSpec -> Task Error ToolResponse
+chatToolsBackend p turns tools =
+    let
+        body =
+            JsonE.encode 0 (requestValue p.model turns tools)
+
+        req =
+            Http.defaultRequest p.endpoint
+    in
+    { req | method = "POST" }
+        |> Http.withBearer p.apiKey
+        |> Http.withHeader "Content-Type" "application/json"
+        |> Http.withBody body
+        |> Http.request
+        |> Task.andThen
+            (\resp ->
+                if resp.status >= 200 && resp.status < 300 then
+                    case JsonD.decodeString toolResponseDecoder resp.body of
+                        Ok r ->
+                            Task.succeed r
+
+                        Err e ->
+                            Task.fail e
+
+                else
+                    Task.fail
+                        (Error.unexpected
+                            ("chatTools failed: HTTP " ++ String.fromInt resp.status ++ " — " ++ resp.body)
+                        )
+            )
+
+
+requestValue model turns tools =
+    JsonE.object
+        (( "model", JsonE.string model )
+            :: ( "messages", JsonE.list turnValue turns )
+            :: (if List.isEmpty tools then
+                    []
+
+                else
+                    [ ( "tools", JsonE.list toolSpecValue tools ) ]
+               )
+        )
+
+
+turnValue turn =
+    case turn of
+        Say m ->
+            JsonE.object
+                [ ( "role", JsonE.string m.role )
+                , ( "content", JsonE.string m.content )
+                ]
+
+        Called calls ->
+            JsonE.object
+                [ ( "role", JsonE.string "assistant" )
+                , ( "content", JsonE.null )
+                , ( "tool_calls", JsonE.list toolCallValue calls )
+                ]
+
+        Returned call content ->
+            JsonE.object
+                [ ( "role", JsonE.string "tool" )
+                , ( "tool_call_id", JsonE.string call.id )
+                , ( "content", JsonE.string content )
+                ]
+
+
+toolCallValue call =
+    JsonE.object
+        [ ( "id", JsonE.string call.id )
+        , ( "type", JsonE.string "function" )
+        , ( "function"
+          , JsonE.object
+                [ ( "name", JsonE.string call.name )
+                , ( "arguments", JsonE.string call.arguments )
+                ]
+          )
+        ]
+
+
+toolSpecValue spec =
+    JsonE.object
+        [ ( "type", JsonE.string "function" )
+        , ( "function"
+          , JsonE.object
+                [ ( "name", JsonE.string spec.name )
+                , ( "description", JsonE.string spec.description )
+                , ( "parameters"
+                  , JsonE.object [ ( "type", JsonE.string "object" ) ]
+                  )
+                ]
+          )
+        ]
+
+
+toolResponseDecoder =
+    JsonD.map3
+        (\content calls usage -> { content = content, toolCalls = calls, usage = usage })
+        (JsonD.oneOf
+            [ JsonD.field "choices" (JsonD.index 0 (JsonD.field "message" (JsonD.field "content" JsonD.string)))
+            , JsonD.succeed ""
+            ]
+        )
+        (JsonD.oneOf
+            [ JsonD.field "choices" (JsonD.index 0 (JsonD.field "message" (JsonD.field "tool_calls" (JsonD.list toolCallDecoder))))
+            , JsonD.succeed []
+            ]
+        )
+        (JsonD.field "usage" usageDecoder)
+
+
+toolCallDecoder =
+    JsonD.map2
+        (\id fn -> { id = id, name = fn.name, arguments = fn.arguments })
+        (JsonD.oneOf [ JsonD.field "id" JsonD.string, JsonD.succeed "" ])
+        (JsonD.field "function"
+            (JsonD.map2 (\n a -> { name = n, arguments = a })
+                (JsonD.field "name" JsonD.string)
+                (JsonD.oneOf [ JsonD.field "arguments" JsonD.string, JsonD.succeed "" ])
+            )
+        )
+
+
+usageDecoder =
+    JsonD.map3
+        (\p c t -> { promptTokens = p, completionTokens = c, totalTokens = t })
+        (JsonD.oneOf [ JsonD.field "prompt_tokens" JsonD.int, JsonD.succeed 0 ])
+        (JsonD.oneOf [ JsonD.field "completion_tokens" JsonD.int, JsonD.succeed 0 ])
+        (JsonD.oneOf [ JsonD.field "total_tokens" JsonD.int, JsonD.succeed 0 ])
 
 
 -- ---------------------------------------------------------------------------

@@ -1,0 +1,5 @@
+{
+  "match": { "method": "POST", "urlContains": "/v1/chat/completions" },
+  "status": 200,
+  "body": "{\"choices\":[{\"index\":0,\"finish_reason\":\"tool_calls\",\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"vault\\\"}\"}}]}}],\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":5,\"total_tokens\":20}}"
+}
