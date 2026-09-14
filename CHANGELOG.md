@@ -11,9 +11,53 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## Unreleased
+## v0.25.0 — Durable workflows + the `Std.Ai` LLM/agentic layer (2026-09-14)
+
+Adds two new stdlib layers and their end-to-end capstone. `sky upgrade` is safe
+from any v0.24.x — nothing existing changed.
 
 ### Added
+
+- **`Std.Durable` — durable, resumable workflows.** A multi-step process that must
+  survive a restart (checkout / payment sagas, order fulfilment, onboarding,
+  approvals). Mark side-effect boundaries with `Durable.step`; each step's result
+  is journalled, so a resumed run replays completed steps instead of re-running
+  them. `Durable.sleep` / `awaitSignal` suspend passively (a waiting run holds no
+  process); a worker `Durable.poll` claims and advances due runs. Pure Sky over
+  `Std.Db` (Postgres or SQLite), exactly-once proven. See
+  `docs/design/durable-execution.md`.
+
+- **`Std.Ai` — the LLM / agentic layer.** Built on `Std.Durable`:
+  - **`Std.Ai.Provider`** — a swappable chat backend over `Sky.Core.Http`:
+    `openai` and `compatible` (any OpenAI-compatible endpoint — a gateway, vLLM,
+    or a local llama.cpp), a `router` that picks a backend per call by a pure
+    policy (and composes), typed `Message` / `Usage` / `ChatResponse`, and `cost`
+    pricing a usage in `Std.Money`.
+  - **`Std.Ai.Agent`** — `oneShot` and `toolLoop` run an agent as a durable
+    workflow, so every model call and tool call is a journalled step and is
+    EXACTLY-ONCE across a resume (a crashed run never re-bills the model).
+  - **`Std.Ai.Tool`** — the prompt-based tool protocol.
+  - **`Std.Ai.Policy`** — the action firewall: the model proposes a typed
+    `Action`, a pure `Policy` returns a `Decision`, and only `Allow` runs the
+    effect. The LLM is never the authorisation boundary; `NeedsApproval` pairs
+    with `Durable.awaitSignal` for human approval.
+  - **`Std.Ai.Trace`** — per-run token + cost ledger, priced in `Std.Money` as an
+    exact decimal (never a float) and summed over `Std.Decimal`, rolled up per run.
+  - **`Std.Ai.Memory.Pg`** — long-term memory on PostgreSQL + pgvector (ships in
+    the embedded bundle): `search` (vector nearest-neighbour by cosine distance)
+    and `hybridSearch` (vector blended with a keyword score).
+  - Every model and integration boundary is `Sky.Core.Http`, so the whole layer
+    is testable offline with the mock-by-default test mode. See
+    `docs/design/std-ai.md`.
+
+- **`Durable.runId : Ctx -> String`** — a workflow can key per-run records (a cost
+  trace, an audit row) to its own run id.
+
+- **`examples/66-slack-agent`** — the capstone: a 24/7 Slack bot that answers an
+  @mention with an LLM agent run as a durable workflow, then replies in-thread.
+  One app wires the whole stack — durable exactly-once model call, the outbound
+  Slack post behind the `Std.Ai.Policy` firewall, and a `Std.Ai.Trace` cost
+  record. Ships on SQLite, runs on embedded PostgreSQL in production unchanged.
 
 - **`sky build` precompresses the Sky.Spa wasm client.** The dist bundle now
   ships `main.<hash>.wasm.gz` (gzip -9) and, when the `brotli` tool is installed,
