@@ -1,0 +1,10 @@
+name = "ai-trace"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[database]
+driver = "sqlite"
+path = "trace.db"

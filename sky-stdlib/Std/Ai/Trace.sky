@@ -1,0 +1,158 @@
+module Std.Ai.Trace exposing
+    ( Trace
+    , forResponse
+    , setup
+    , record
+    , totalCost
+    , spanCount
+    )
+
+{-| `Std.Ai.Trace` — the trajectory + cost ledger. Every model call records a row:
+which run it belongs to, the model, the token counts, and the cost priced in
+`Std.Money` (stored as an exact decimal string, never a float). The rows roll up
+per run, which is what a per-job cost figure actually needs, and they are the
+audit record of what the agent did.
+
+    trace = Trace.forResponse "chat-42" "gpt-4o-mini" book response
+    Trace.record db trace
+
+    Trace.totalCost db "chat-42"   -- the run's cost, summed exactly, as a decimal string
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Time as Time
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Money as Money
+import Std.Decimal as Decimal
+import Std.Ai.Provider as Provider
+
+
+{-| One recorded model call. `costMinor` is the cost as an exact decimal string
+(from `Std.Money`), `currency` its ISO code — a float would corrupt a cost total.
+-}
+type alias Trace =
+    { runId : String
+    , model : String
+    , promptTokens : Int
+    , completionTokens : Int
+    , costMinor : String
+    , currency : String
+    , output : String
+    }
+
+
+{-| Build a trace row from a chat response and a price book: the token counts come
+from the response's usage, the cost from `Provider.cost`, the output is the
+assistant text.
+-}
+forResponse : String -> String -> Provider.PriceBook -> Provider.ChatResponse -> Trace
+forResponse runId model book response =
+    let
+        money =
+            Provider.cost book response.usage
+    in
+    { runId = runId
+    , model = model
+    , promptTokens = response.usage.promptTokens
+    , completionTokens = response.usage.completionTokens
+    , costMinor = Decimal.toString (Money.amount money)
+    , currency = Money.currencyCode (Money.currency money)
+    , output = response.content
+    }
+
+
+{-| Create the trace table if absent. Idempotent. -}
+setup : Db -> Task Error ()
+setup db =
+    Db.execRaw db
+        ("CREATE TABLE IF NOT EXISTS _sky_ai_traces ("
+            ++ "run_id TEXT NOT NULL, model TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, "
+            ++ "completion_tokens INTEGER NOT NULL, cost_minor TEXT NOT NULL, currency TEXT NOT NULL, "
+            ++ "output TEXT NOT NULL, created_at BIGINT NOT NULL)"
+        )
+        |> Task.map (\_ -> ())
+
+
+{-| Append a trace row. -}
+record : Db -> Trace -> Task Error ()
+record db t =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("INSERT INTO _sky_ai_traces "
+                        ++ "(run_id, model, prompt_tokens, completion_tokens, cost_minor, currency, output, created_at) "
+                        ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                    )
+                    [ SqlString t.runId
+                    , SqlString t.model
+                    , SqlInt t.promptTokens
+                    , SqlInt t.completionTokens
+                    , SqlString t.costMinor
+                    , SqlString t.currency
+                    , SqlString t.output
+                    , SqlInt now
+                    ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+{-| The total cost of a run, summed EXACTLY across its model calls, as a decimal
+string. The per-call costs are stored as exact decimal strings, so the sum is done
+in Sky over `Std.Decimal`, never via a float `SUM` in SQL (a float would corrupt
+the total — the whole reason cost lives in `Std.Money`). Returns "0" for a run with
+no traces.
+-}
+totalCost : Db -> String -> Task Error String
+totalCost db runId =
+    Db.query db "SELECT cost_minor FROM _sky_ai_traces WHERE run_id = ?" [ SqlString runId ]
+        |> Task.map
+            (\rows ->
+                Decimal.toString (List.foldl addCost Decimal.zero rows)
+            )
+
+
+addCost : Dict String String -> Decimal -> Decimal
+addCost row acc =
+    case Decimal.fromString (dictGet "cost_minor" row) of
+        Ok d ->
+            Decimal.add acc d
+
+        Err _ ->
+            acc
+
+
+{-| How many model calls a run recorded. -}
+spanCount : Db -> String -> Task Error Int
+spanCount db runId =
+    Db.query db "SELECT COUNT(*) AS n FROM _sky_ai_traces WHERE run_id = ?" [ SqlString runId ]
+        |> Task.map (\rows -> intCol "n" (List.head rows))
+
+
+dictGet : String -> Dict String String -> String
+dictGet key row =
+    case Dict.get key row of
+        Just v ->
+            v
+
+        Nothing ->
+            ""
+
+
+intCol : String -> Maybe (Dict String String) -> Int
+intCol key row =
+    case row of
+        Just r ->
+            case String.toInt (dictGet key r) of
+                Just n ->
+                    n
+
+                Nothing ->
+                    0
+
+        Nothing ->
+            0

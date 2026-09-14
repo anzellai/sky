@@ -1,0 +1,66 @@
+module Main exposing (main)
+
+{-| Fixture: `Std.Ai.Trace` prices two model calls and rolls the cost up per run.
+No network — the responses are built directly with known token usage, so the cost
+is deterministic and the sum is checked exactly.
+
+Price book: input 0.15 / 1k tokens, output 0.60 / 1k tokens (USD).
+
+    call 1: 1000 prompt + 1000 completion -> 1*0.15 + 1*0.60 = 0.75
+    call 2: 2000 prompt +    0 completion -> 2*0.15 + 0      = 0.30
+    run total                                                = 1.05
+
+Expected stdout (asserted by `ai_trace_flow.rs`):
+
+    trace spans=2 total=1.05
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db)
+import Std.Money as Money
+import Std.Ai.Provider as Provider
+import Std.Ai.Trace as Trace
+
+
+book : Provider.PriceBook
+book =
+    case Provider.priceBook Money.USD "0.15" "0.60" of
+        Ok b ->
+            b
+
+        Err _ ->
+            Provider.freePriceBook Money.USD
+
+
+response : Int -> Int -> Provider.ChatResponse
+response prompt completion =
+    { content = "answer"
+    , usage =
+        { promptTokens = prompt
+        , completionTokens = completion
+        , totalTokens = prompt + completion
+        }
+    }
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Trace.setup db
+                    |> Task.andThen (\_ -> Trace.record db (Trace.forResponse "run-1" "gpt-4o-mini" book (response 1000 1000)))
+                    |> Task.andThen (\_ -> Trace.record db (Trace.forResponse "run-1" "gpt-4o-mini" book (response 2000 0)))
+                    |> Task.andThen (\_ -> Trace.spanCount db "run-1")
+                    |> Task.andThen
+                        (\spans ->
+                            Trace.totalCost db "run-1"
+                                |> Task.andThen
+                                    (\total ->
+                                        println ("trace spans=" ++ String.fromInt spans ++ " total=" ++ total)
+                                    )
+                        )
+            )
