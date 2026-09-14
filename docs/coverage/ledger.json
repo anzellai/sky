@@ -636,6 +636,12 @@
           "apps:relay"
         ]
       },
+      "Std.Durable": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Jobs": {
         "path": "apps/dispatch",
         "units": [
@@ -676,13 +682,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1862,
-    "stdlib_modules": 94,
-    "surfaces_covered": 141,
-    "surfaces_covered_pct": 88.1,
+    "stdlib_entries": 1877,
+    "stdlib_modules": 95,
+    "surfaces_covered": 142,
+    "surfaces_covered_pct": 88.2,
     "surfaces_equal": 24,
-    "surfaces_stronger": 136,
-    "surfaces_total": 160,
+    "surfaces_stronger": 137,
+    "surfaces_total": 161,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -8712,6 +8718,28 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Durable public API",
+      "id": "stdlib.Std.Durable",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -12026,7 +12054,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 10.6
+      "pct_of_denominator": 10.5
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12590,6 +12618,15 @@
             "toStringFixed"
           ]
         },
+        "Std.Durable": {
+          "count": 4,
+          "symbols": [
+            "RegisteredWorkflow",
+            "isSuspend",
+            "sleep",
+            "stepValue"
+          ]
+        },
         "Std.Html": {
           "count": 39,
           "symbols": [
@@ -13028,8 +13065,8 @@
           ]
         }
       },
-      "count": 625,
-      "pct_of_denominator": 33.6
+      "count": 629,
+      "pct_of_denominator": 33.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13593,6 +13630,16 @@
             "toStringFixed"
           ]
         },
+        "Std.Durable": {
+          "count": 5,
+          "symbols": [
+            "Ctx",
+            "RegisteredWorkflow",
+            "isSuspend",
+            "sleep",
+            "stepValue"
+          ]
+        },
         "Std.Html": {
           "count": 78,
           "symbols": [
@@ -14090,7 +14137,7 @@
           ]
         }
       },
-      "count": 706,
+      "count": 711,
       "pct_of_denominator": 37.9
     }
   },
@@ -14111,12 +14158,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 24,
+      "modules_imported": 25,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 111,
-      "refs_qualified": 106,
+      "refs_generous": 128,
+      "refs_qualified": 121,
       "role": "Layer2",
-      "sky_files": 98,
+      "sky_files": 99,
       "sky_toml_sections": []
     },
     {

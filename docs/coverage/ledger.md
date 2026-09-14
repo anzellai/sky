@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 160 |
-| covered by the new corpus (>= Asserted) | 141 |
-| verdict `stronger` | 136 |
+| surfaces | 161 |
+| covered by the new corpus (>= Asserted) | 142 |
+| verdict `stronger` | 137 |
 | verdict `equal` | 24 |
 | verdict `weaker` | 0 |
 | corpus units | 81 |
-| stdlib modules (denominator) | 94 |
-| stdlib entries (denominator) | 1862 |
+| stdlib modules (denominator) | 95 |
+| stdlib entries (denominator) | 1877 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 10 | 10.6% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 706 | 37.9% |
-| symbols unreferenced under the generous rule | 625 | 33.6% |
+| stdlib modules imported by nothing | 10 | 10.5% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 711 | 37.9% |
+| symbols unreferenced under the generous rule | 629 | 33.5% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -62,7 +62,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 19 |
-| stdlib modules owned by exactly one unit of any role | 15 |
+| stdlib modules owned by exactly one unit of any role | 16 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -215,6 +215,7 @@ None.
 | `stdlib.Std.Db.Store` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db.Table` | stdlib | None | None | equal |
 | `stdlib.Std.Decimal` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Durable` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Email` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
