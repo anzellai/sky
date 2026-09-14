@@ -642,6 +642,12 @@
           "apps:cli-verbs"
         ]
       },
+      "Std.Ai.Trace": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Bundle": {
         "path": "examples/64-app-native",
         "units": [
@@ -706,13 +712,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1914,
-    "stdlib_modules": 99,
-    "surfaces_covered": 146,
-    "surfaces_covered_pct": 88.5,
+    "stdlib_entries": 1920,
+    "stdlib_modules": 100,
+    "surfaces_covered": 147,
+    "surfaces_covered_pct": 88.6,
     "surfaces_equal": 24,
-    "surfaces_stronger": 141,
-    "surfaces_total": 165,
+    "surfaces_stronger": 142,
+    "surfaces_total": 166,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -7076,6 +7082,28 @@
     {
       "category": "stdlib",
       "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Ai.Trace public API",
+      "id": "stdlib.Std.Ai.Trace",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
         "class": "Runs",
         "evidence": [
           {
@@ -10100,6 +10128,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
             "strength": 4
@@ -12171,7 +12204,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 10.1
+      "pct_of_denominator": 10.0
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12496,17 +12529,13 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 10,
+          "count": 6,
           "symbols": [
-            "ChatResponse",
             "Message",
-            "PriceBook",
             "Usage",
             "assistant",
             "compatible",
             "cost",
-            "freePriceBook",
-            "priceBook",
             "system"
           ]
         },
@@ -12517,6 +12546,12 @@
             "instructions",
             "name",
             "run"
+          ]
+        },
+        "Std.Ai.Trace": {
+          "count": 1,
+          "symbols": [
+            "Trace"
           ]
         },
         "Std.Analytics": {
@@ -13222,8 +13257,8 @@
           ]
         }
       },
-      "count": 649,
-      "pct_of_denominator": 33.9
+      "count": 646,
+      "pct_of_denominator": 33.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13537,17 +13572,13 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 10,
+          "count": 6,
           "symbols": [
-            "ChatResponse",
             "Message",
-            "PriceBook",
             "Usage",
             "assistant",
             "compatible",
             "cost",
-            "freePriceBook",
-            "priceBook",
             "system"
           ]
         },
@@ -13559,6 +13590,12 @@
             "instructions",
             "name",
             "run"
+          ]
+        },
+        "Std.Ai.Trace": {
+          "count": 1,
+          "symbols": [
+            "Trace"
           ]
         },
         "Std.Analytics": {
@@ -14336,8 +14373,8 @@
           ]
         }
       },
-      "count": 733,
-      "pct_of_denominator": 38.3
+      "count": 730,
+      "pct_of_denominator": 38.0
     }
   },
   "units": [
@@ -14357,12 +14394,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 30,
+      "modules_imported": 32,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 147,
-      "refs_qualified": 138,
+      "refs_generous": 156,
+      "refs_qualified": 147,
       "role": "Layer2",
-      "sky_files": 102,
+      "sky_files": 103,
       "sky_toml_sections": []
     },
     {
