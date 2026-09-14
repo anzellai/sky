@@ -624,6 +624,12 @@
           "apps:cli-verbs"
         ]
       },
+      "Std.Ai.Policy": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Ai.Provider": {
         "path": "rust/crates/sky/tests",
         "units": [
@@ -700,13 +706,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1904,
-    "stdlib_modules": 98,
-    "surfaces_covered": 145,
-    "surfaces_covered_pct": 88.4,
+    "stdlib_entries": 1914,
+    "stdlib_modules": 99,
+    "surfaces_covered": 146,
+    "surfaces_covered_pct": 88.5,
     "surfaces_equal": 24,
-    "surfaces_stronger": 140,
-    "surfaces_total": 164,
+    "surfaces_stronger": 141,
+    "surfaces_total": 165,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -7019,6 +7025,28 @@
         "evidence": [],
         "strength": 0
       },
+      "description": "the Std.Ai.Policy public API",
+      "id": "stdlib.Std.Ai.Policy",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
       "description": "the Std.Ai.Provider public API",
       "id": "stdlib.Std.Ai.Provider",
       "verdict": "stronger"
@@ -12143,7 +12171,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 10.2
+      "pct_of_denominator": 10.1
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12458,15 +12486,23 @@
             "outputCodec"
           ]
         },
+        "Std.Ai.Policy": {
+          "count": 4,
+          "symbols": [
+            "Action",
+            "Decision",
+            "Risk",
+            "denyAll"
+          ]
+        },
         "Std.Ai.Provider": {
-          "count": 11,
+          "count": 10,
           "symbols": [
             "ChatResponse",
             "Message",
             "PriceBook",
             "Usage",
             "assistant",
-            "chat",
             "compatible",
             "cost",
             "freePriceBook",
@@ -13186,7 +13222,7 @@
           ]
         }
       },
-      "count": 646,
+      "count": 649,
       "pct_of_denominator": 33.9
     },
     "symbols_unreferenced_strict": {
@@ -13490,15 +13526,24 @@
             "outputCodec"
           ]
         },
+        "Std.Ai.Policy": {
+          "count": 5,
+          "symbols": [
+            "Action",
+            "Decision",
+            "Outcome",
+            "Risk",
+            "denyAll"
+          ]
+        },
         "Std.Ai.Provider": {
-          "count": 11,
+          "count": 10,
           "symbols": [
             "ChatResponse",
             "Message",
             "PriceBook",
             "Usage",
             "assistant",
-            "chat",
             "compatible",
             "cost",
             "freePriceBook",
@@ -14291,7 +14336,7 @@
           ]
         }
       },
-      "count": 729,
+      "count": 733,
       "pct_of_denominator": 38.3
     }
   },
@@ -14312,12 +14357,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 29,
+      "modules_imported": 30,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 140,
-      "refs_qualified": 132,
+      "refs_generous": 147,
+      "refs_qualified": 138,
       "role": "Layer2",
-      "sky_files": 101,
+      "sky_files": 102,
       "sky_toml_sections": []
     },
     {

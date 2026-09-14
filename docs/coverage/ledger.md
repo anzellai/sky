@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 164 |
-| covered by the new corpus (>= Asserted) | 145 |
-| verdict `stronger` | 140 |
+| surfaces | 165 |
+| covered by the new corpus (>= Asserted) | 146 |
+| verdict `stronger` | 141 |
 | verdict `equal` | 24 |
 | verdict `weaker` | 0 |
 | corpus units | 81 |
-| stdlib modules (denominator) | 98 |
-| stdlib entries (denominator) | 1904 |
+| stdlib modules (denominator) | 99 |
+| stdlib entries (denominator) | 1914 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 10 | 10.2% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 729 | 38.3% |
-| symbols unreferenced under the generous rule | 646 | 33.9% |
+| stdlib modules imported by nothing | 10 | 10.1% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 733 | 38.3% |
+| symbols unreferenced under the generous rule | 649 | 33.9% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -62,7 +62,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 19 |
-| stdlib modules owned by exactly one unit of any role | 19 |
+| stdlib modules owned by exactly one unit of any role | 20 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -197,6 +197,7 @@ None.
 | `stdlib.Sky.Http.Server.WebSocket` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Agent` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Policy` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Provider` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Tool` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Runs | equal |
