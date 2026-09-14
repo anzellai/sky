@@ -2,6 +2,7 @@ module Std.Ai.Provider exposing
     ( Provider
     , openai
     , compatible
+    , router
     , Message
     , user
     , system
@@ -50,14 +51,19 @@ import Std.Decimal as Decimal
 -- ---------------------------------------------------------------------------
 
 
+type alias Direct =
+    { endpoint : String, apiKey : Secret, model : String }
+
+
 type Provider
-    = Provider { endpoint : String, apiKey : Secret, model : String }
+    = Backend Direct
+    | Routed (List Message -> Provider)
 
 
 {-| The hosted OpenAI chat-completions endpoint. -}
 openai : Secret -> String -> Provider
 openai apiKey model =
-    Provider
+    Backend
         { endpoint = "https://api.openai.com/v1/chat/completions"
         , apiKey = apiKey
         , model = model
@@ -69,7 +75,22 @@ openai apiKey model =
 -}
 compatible : String -> Secret -> String -> Provider
 compatible endpoint apiKey model =
-    Provider { endpoint = endpoint, apiKey = apiKey, model = model }
+    Backend { endpoint = endpoint, apiKey = apiKey, model = model }
+
+
+{-| A multi-provider ROUTER: a `Provider` that, per call, picks a concrete backend
+by a deterministic policy over the messages (task shape, sensitivity, length). It
+is itself a `Provider`, so it drops in anywhere one does, and it composes (a route
+may return another router). Start with rules; the route decision is a pure
+function you can log and later learn from outcomes.
+
+    Provider.router
+        (\messages ->
+            if sensitive messages then localModel else Provider.openai key "gpt-4o-mini")
+-}
+router : (List Message -> Provider) -> Provider
+router select =
+    Routed select
 
 
 -- ---------------------------------------------------------------------------
@@ -155,7 +176,17 @@ responseCodec =
 classified `Error` on a non-2xx response, naming the status and body.
 -}
 chat : Provider -> List Message -> Task Error ChatResponse
-chat (Provider p) messages =
+chat provider messages =
+    case provider of
+        Routed select ->
+            chat (select messages) messages
+
+        Backend p ->
+            chatBackend p messages
+
+
+chatBackend : Direct -> List Message -> Task Error ChatResponse
+chatBackend p messages =
     let
         body =
             Codec.toJson requestCodec { model = p.model, messages = messages }

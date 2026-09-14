@@ -1,0 +1,5 @@
+{
+  "match": { "method": "POST", "urlContains": "/v1/chat/completions" },
+  "status": 200,
+  "body": "{\"choices\":[{\"message\":{\"content\":\"MOCKED-ANSWER\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}"
+}

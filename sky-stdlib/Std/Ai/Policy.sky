@@ -1,0 +1,117 @@
+module Std.Ai.Policy exposing
+    ( Risk(..)
+    , Action
+    , action
+    , Decision(..)
+    , Outcome(..)
+    , gate
+    , allowAll
+    , denyAll
+    , requireApprovalAbove
+    )
+
+{-| `Std.Ai.Policy` — the Action Firewall. The model NEVER authorises a real-world
+action. It proposes a typed `Action`; a `Policy` (a pure function the compiler
+checks) returns a `Decision`; and only `Allow` unlocks the effect. So "the LLM is
+never the authorisation boundary" holds by construction, not by convention. A
+`NeedsApproval` decision is a suspension point — pair it with `Durable.awaitSignal`
+so a human approval resumes the workflow.
+
+    firewall : Policy.Action -> Policy.Decision
+    firewall act =
+        Policy.requireApprovalAbove Policy.Low act
+
+    Policy.gate firewall (Policy.action "refund" oid Policy.High) (Payments.refund oid)
+        -- => Pending "..."  (a High-risk action; the effect did NOT run)
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+
+
+type Risk
+    = Low
+    | Medium
+    | High
+
+
+riskLevel : Risk -> Int
+riskLevel risk =
+    case risk of
+        Low ->
+            0
+
+        Medium ->
+            1
+
+        High ->
+            2
+
+
+{-| A proposed action: a stable capability name, its arguments, and a risk tag. -}
+type alias Action =
+    { name : String, args : String, risk : Risk }
+
+
+action : String -> String -> Risk -> Action
+action name args risk =
+    { name = name, args = args, risk = risk }
+
+
+{-| The firewall's verdict on an action. A `Policy` is a pure
+`Action -> Decision`. -}
+type Decision
+    = Allow
+    | Deny String
+    | NeedsApproval String
+
+
+{-| What actually happened at the gate: the effect ran (`Ran`), was refused
+(`Denied`), or is held for approval (`Pending`). -}
+type Outcome a
+    = Ran a
+    | Denied String
+    | Pending String
+
+
+{-| Gate an effect behind a policy. Only `Allow` runs `effect`; `Deny` and
+`NeedsApproval` short-circuit WITHOUT running it, returning the reason. The effect
+is a `Task`, so this is where the typed authorisation boundary meets the typed
+effect boundary.
+-}
+gate : (Action -> Decision) -> Action -> Task Error a -> Task Error (Outcome a)
+gate policy act effect =
+    case policy act of
+        Allow ->
+            effect |> Task.map Ran
+
+        Deny reason ->
+            Task.succeed (Denied reason)
+
+        NeedsApproval reason ->
+            Task.succeed (Pending reason)
+
+
+{-| A policy that allows everything. For a trusted internal tool, or a test. -}
+allowAll : Action -> Decision
+allowAll _ =
+    Allow
+
+
+{-| A policy that refuses everything with a fixed reason. -}
+denyAll : String -> Action -> Decision
+denyAll reason _ =
+    Deny reason
+
+
+{-| Allow actions at or below `threshold` risk; require human approval above it.
+`requireApprovalAbove Low` means only `Low`-risk actions run unattended.
+-}
+requireApprovalAbove : Risk -> Action -> Decision
+requireApprovalAbove threshold act =
+    if riskLevel act.risk <= riskLevel threshold then
+        Allow
+
+    else
+        NeedsApproval ("action \"" ++ act.name ++ "\" needs approval (risk above the threshold)")
