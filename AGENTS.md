@@ -329,6 +329,7 @@ for UX/DX/security/scalability, not by accident.
 | **Money / decimals** | `Std.Money` on `Std.Decimal`. **Never** raw `Float` for currency. |
 | **Errors** | `Result Error a` / `Task Error a`. **Never** `String` as an error type. |
 | **Concurrency** | `Cmd.batch` / `Task.parallel`; **`Task.parallelN limit tasks`** for bounded fan-out under load (`parallel` is unbounded — a goroutine/connection storm at scale); in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
+| **Durable workflows** | **`Std.Durable`** for a multi-step process that must survive a restart (checkout / payment sagas, order fulfilment, onboarding, approvals). Mark side-effect boundaries with `Durable.step`; each step's result is journalled, so a resumed run replays completed steps instead of re-running them. `Durable.sleep` / `awaitSignal` suspend passively (a waiting run holds no process); a worker `Durable.poll` claims + advances due runs. Postgres or SQLite; the code between steps must be deterministic. See `docs/design/durable-execution.md`. |
 | **Observability** | `Std.Log` structured logs; the dev console auto-mounts at `/_sky/console`; `OTEL_EXPORTER_OTLP_ENDPOINT` for an external collector. Telemetry **storage** is tunable via `Sky.Config.withTelemetry*` builders (or `SKY_TELEMETRY_*` env, which overrides them): counter/histogram coalescing windows to cut DB rows, and `withTelemetryDbCapacity` for the hourly size-report "near full" flag. See `docs/observability.md` + `sky doc Sky.Config`. |
 | **Sky.Live navigation** | Every internal link is `sky-nav` (one persistent SSE per session). Bare `<a href>` only to deliberately leave the app. |
 | **Password forms** | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record; never per-keystroke `onInput` on a password field. |
@@ -651,6 +652,7 @@ before assuming a limitation still holds.
 | Sky.Tui / Sky.Webview | `docs/skytui/`, `docs/skywebview/` |
 | `Std.Auth` | `docs/skyauth/overview.md` |
 | `Std.Db` / Codec / Store / migrations | `docs/skydb/overview.md` |
+| Durable workflows — `Std.Durable` | `docs/design/durable-execution.md` |
 | CLI + LSP | `docs/tooling/cli.md`, `docs/tooling/lsp.md` |
 | Testing: `sky test`, test mode + mocks, `sky fuzz` | `docs/tooling/testing.md` |
 | `sky.toml` + env vars | `docs/sky-toml.md` |
