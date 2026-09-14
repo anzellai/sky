@@ -630,6 +630,12 @@
           "apps:cli-verbs"
         ]
       },
+      "Std.Ai.Tool": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Bundle": {
         "path": "examples/64-app-native",
         "units": [
@@ -694,13 +700,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1896,
-    "stdlib_modules": 97,
-    "surfaces_covered": 144,
-    "surfaces_covered_pct": 88.3,
+    "stdlib_entries": 1904,
+    "stdlib_modules": 98,
+    "surfaces_covered": 145,
+    "surfaces_covered_pct": 88.4,
     "surfaces_equal": 24,
-    "surfaces_stronger": 139,
-    "surfaces_total": 163,
+    "surfaces_stronger": 140,
+    "surfaces_total": 164,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -7020,6 +7026,28 @@
     {
       "category": "stdlib",
       "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Ai.Tool public API",
+      "id": "stdlib.Std.Ai.Tool",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
         "class": "Runs",
         "evidence": [
           {
@@ -12115,7 +12143,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 10.3
+      "pct_of_denominator": 10.2
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12444,6 +12472,15 @@
             "freePriceBook",
             "priceBook",
             "system"
+          ]
+        },
+        "Std.Ai.Tool": {
+          "count": 4,
+          "symbols": [
+            "describe",
+            "instructions",
+            "name",
+            "run"
           ]
         },
         "Std.Analytics": {
@@ -13149,7 +13186,7 @@
           ]
         }
       },
-      "count": 642,
+      "count": 646,
       "pct_of_denominator": 33.9
     },
     "symbols_unreferenced_strict": {
@@ -13467,6 +13504,16 @@
             "freePriceBook",
             "priceBook",
             "system"
+          ]
+        },
+        "Std.Ai.Tool": {
+          "count": 5,
+          "symbols": [
+            "Tool",
+            "describe",
+            "instructions",
+            "name",
+            "run"
           ]
         },
         "Std.Analytics": {
@@ -14244,8 +14291,8 @@
           ]
         }
       },
-      "count": 724,
-      "pct_of_denominator": 38.2
+      "count": 729,
+      "pct_of_denominator": 38.3
     }
   },
   "units": [
@@ -14265,12 +14312,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 28,
+      "modules_imported": 29,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 135,
-      "refs_qualified": 128,
+      "refs_generous": 140,
+      "refs_qualified": 132,
       "role": "Layer2",
-      "sky_files": 100,
+      "sky_files": 101,
       "sky_toml_sections": []
     },
     {
