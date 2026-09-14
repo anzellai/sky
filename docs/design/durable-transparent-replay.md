@@ -1,10 +1,18 @@
 # Transparent Msg-replay for `Std.Durable` — an epic, not a patch
 
-> Status: SCOPED, NOT STARTED. This is the v2 item from
-> [`durable-execution.md`](durable-execution.md) that is *not* bounded. Worker
-> versioning and history compaction shipped as pure-Sky additions; transparent
-> replay needs new Go runtime kernels and touches every TEA loop, so it is written
-> up here and left for an explicit decision rather than attempted in passing.
+> Status: RE-SCOPED and PARTLY SHIPPED. An expert review (2026-09-14) refuted the
+> "needs a runtime kernel" premise below: the load-bearing piece — snapshotting the
+> Model — is pure Sky via `Std.Codec`, and that substrate now ships as
+> `Durable.saveSnapshot` / `loadSnapshot` (proven: a model round-trips through the
+> database as a restart would, write-if-newer holds). What remains is the ergonomic
+> auto-wrapper `Durable.app` (snapshot each update, `Durable.perform` for
+> exactly-once effects, restore in `init`); its only real friction is `Std.App`'s
+> SYNCHRONOUS `init` (`seed -> (model, Cmd msg)`), which cannot itself run the async
+> restore — so the restore is wired as a first tick or a seed the host loads. That
+> is a bounded stdlib feature, NOT the kernel epic the rest of this doc feared. The
+> only genuinely kernel-bound part is FULLY annotation-free effect capture, which is
+> optional (the `Durable.perform` wrapper delivers the same guarantee). The original
+> analysis is kept below for the record.
 
 ## What it would be
 
