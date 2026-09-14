@@ -1,0 +1,124 @@
+module Main exposing (main)
+
+{-| Fixture: `Durable.compact` collapses a terminal run's journal while keeping
+its summary (output + final status). A one-step workflow runs to `done` (so its
+journal has a row), then `compact db 0` removes that journal row; the run row and
+its output survive.
+
+Expected stdout (asserted by `durable_compaction_flow.rs`):
+
+    compact before=1 after=0 removed=1 status=done output=ok
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Codec as Codec exposing (Codec)
+import Std.Durable as Durable exposing (Ctx)
+
+
+strCodec : Codec String
+strCodec =
+    Codec.string
+
+
+wfDef : Durable.WorkflowDef String String
+wfDef =
+    Durable.register "compact-wf" strCodec strCodec wfBody
+
+
+wfBody : Ctx -> String -> Task Error String
+wfBody ctx input =
+    Durable.step ctx strCodec "s1" (Task.succeed ("ok"))
+
+
+dictGet : String -> Dict String String -> String
+dictGet key row =
+    case Dict.get key row of
+        Just v ->
+            v
+
+        Nothing ->
+            ""
+
+
+intOf : String -> Int
+intOf s =
+    case String.toInt s of
+        Just n ->
+            n
+
+        Nothing ->
+            -1
+
+
+journalCount : Db -> String -> Task Error Int
+journalCount db id =
+    Db.query db "SELECT COUNT(*) AS n FROM _sky_durable_journal WHERE run_id = ?" [ SqlString id ]
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        intOf (dictGet "n" row)
+
+                    Nothing ->
+                        0
+            )
+
+
+runInfo : Db -> String -> Task Error ( String, String )
+runInfo db id =
+    Db.query db "SELECT status, output FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        ( dictGet "status" row, dictGet "output" row )
+
+                    Nothing ->
+                        ( "?", "?" )
+            )
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Durable.setup db
+                    |> Task.andThen (\_ -> Durable.start db wfDef "c-1" "go")
+                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase wfDef ])
+                    |> Task.andThen (\_ -> journalCount db "c-1")
+                    |> Task.andThen
+                        (\before ->
+                            Durable.compact db 0
+                                |> Task.andThen
+                                    (\removed ->
+                                        journalCount db "c-1"
+                                            |> Task.andThen
+                                                (\after ->
+                                                    runInfo db "c-1"
+                                                        |> Task.andThen
+                                                            (\( status, output ) ->
+                                                                println
+                                                                    ("compact before="
+                                                                        ++ String.fromInt before
+                                                                        ++ " after="
+                                                                        ++ String.fromInt after
+                                                                        ++ " removed="
+                                                                        ++ String.fromInt removed
+                                                                        ++ " status="
+                                                                        ++ status
+                                                                        ++ " output="
+                                                                        ++ output
+                                                                    )
+                                                            )
+                                                )
+                                    )
+                        )
+            )

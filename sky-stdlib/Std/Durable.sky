@@ -15,6 +15,7 @@ module Std.Durable exposing
     , sleep
     , awaitSignal
     , isSuspend
+    , compact
     )
 
 {-| `Std.Durable` — durable, resumable workflows over `Std.Db` (Postgres or
@@ -626,4 +627,46 @@ markDead db runId msg =
                     )
                     [ SqlString msg, SqlInt now, SqlString runId ]
                     |> Task.map (\_ -> ())
+            )
+
+
+-- ---------------------------------------------------------------------------
+-- History compaction (v2)
+-- ---------------------------------------------------------------------------
+
+
+{-| Delete the journal + signal rows of TERMINAL runs (`done` / `dead` /
+`failed`) whose `updated_at` is older than `retentionMs` ago, and return how many
+journal rows were removed. The run row itself is kept — its `output` is the
+retained summary — so a compacted run is still visible with its final status and
+result; only its per-step history is collapsed.
+
+SAFE by construction: it never touches a `running` or `waiting` run, because a
+waiting run's journal IS its resume state (what `step` replays). Call it on a
+timer (a `Sub.every` tick, or a cron) to keep an append-heavy `_sky_durable_journal`
+bounded. `compact db 0` collapses every terminal run immediately.
+-}
+compact : Db -> Int -> Task Error Int
+compact db retentionMs =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                let
+                    cutoff =
+                        now - retentionMs
+
+                    terminalOlderThan =
+                        " IN (SELECT id FROM _sky_durable_runs "
+                            ++ "WHERE status IN ('done', 'dead', 'failed') AND updated_at <= ?)"
+                in
+                Db.exec db
+                    ("DELETE FROM _sky_durable_journal WHERE run_id" ++ terminalOlderThan)
+                    [ SqlInt cutoff ]
+                    |> Task.andThen
+                        (\journalDeleted ->
+                            Db.exec db
+                                ("DELETE FROM _sky_durable_signals WHERE run_id" ++ terminalOlderThan)
+                                [ SqlInt cutoff ]
+                                |> Task.map (\_ -> journalDeleted)
+                        )
             )
