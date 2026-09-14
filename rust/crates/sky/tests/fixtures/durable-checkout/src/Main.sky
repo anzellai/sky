@@ -1,0 +1,128 @@
+module Main exposing (main)
+
+{-| Fixture: proves the `Std.Durable` guarantees observably.
+
+The workflow's `charge` step INSERTs one row into a `charges` side table. The run
+suspends at `awaitSignal`, then resumes after the signal. On resume the `charge`
+step is REPLAYED from the journal, so it must NOT insert a second row.
+
+Expected stdout (asserted by `durable_flow.rs`):
+
+    poll1 charges=1
+    poll2 charges=1 status=done
+
+`charges=1` after the resume is the exactly-once proof; `status=done` is the
+completion proof.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Db.Store as Store
+import Std.Codec as Codec exposing (Codec)
+import Std.Durable as Durable exposing (Ctx)
+
+
+type alias Input =
+    { id : String }
+
+
+type alias Output =
+    { result : String }
+
+
+inputCodec : Codec Input
+inputCodec =
+    Codec.auto { id = "" }
+
+
+outputCodec : Codec Output
+outputCodec =
+    Codec.auto { result = "" }
+
+
+workflow : Ctx -> Input -> Task Error Output
+workflow ctx input =
+    Durable.step ctx Codec.int "charge" (charge (Durable.conn ctx) input.id)
+        |> Task.andThen
+            (\_ ->
+                Durable.awaitSignal ctx Codec.string "settle"
+                    |> Task.andThen
+                        (\_ ->
+                            Durable.step ctx Codec.string "finalise" (Task.succeed "ok")
+                                |> Task.map (\r -> { result = r })
+                        )
+            )
+
+
+charge : Db -> String -> Task Error Int
+charge db id =
+    Db.exec db "INSERT INTO charges (id) VALUES (?)" [ SqlString id ]
+
+
+workflowDef : Durable.WorkflowDef Input Output
+workflowDef =
+    Durable.register "checkout" inputCodec outputCodec workflow
+
+
+type alias CountRow =
+    { n : Int }
+
+
+countCharges : Db -> Task Error Int
+countCharges db =
+    Store.selectRaw db (Codec.auto { n = 0 }) "SELECT COUNT(*) AS n FROM charges" []
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        row.n
+
+                    Nothing ->
+                        0
+            )
+
+
+type alias StatusRow =
+    { status : String }
+
+
+readStatus : Db -> String -> Task Error String
+readStatus db id =
+    Store.selectRaw db (Codec.auto { status = "" }) "SELECT status FROM _sky_durable_runs WHERE id = ?" [ SqlString id ]
+        |> Task.map
+            (\rows ->
+                case List.head rows of
+                    Just row ->
+                        row.status
+
+                    Nothing ->
+                        "?"
+            )
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen
+            (\db ->
+                Db.execRaw db "CREATE TABLE IF NOT EXISTS charges (id TEXT)"
+                    |> Task.andThen (\_ -> Durable.setup db)
+                    |> Task.andThen (\_ -> Durable.start db workflowDef "run-1" { id = "run-1" })
+                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase workflowDef ])
+                    |> Task.andThen (\_ -> countCharges db)
+                    |> Task.andThen (\c1 -> println ("poll1 charges=" ++ String.fromInt c1))
+                    |> Task.andThen (\_ -> Durable.signal db "run-1" "settle" Codec.string "go")
+                    |> Task.andThen (\_ -> Durable.poll db [ Durable.erase workflowDef ])
+                    |> Task.andThen (\_ -> countCharges db)
+                    |> Task.andThen
+                        (\c2 ->
+                            readStatus db "run-1"
+                                |> Task.andThen
+                                    (\st -> println ("poll2 charges=" ++ String.fromInt c2 ++ " status=" ++ st))
+                        )
+            )

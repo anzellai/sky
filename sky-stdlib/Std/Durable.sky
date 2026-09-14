@@ -4,6 +4,7 @@ module Std.Durable exposing
     , RegisteredWorkflow
     , register
     , erase
+    , conn
     , setup
     , start
     , signal
@@ -61,6 +62,7 @@ import Sky.Core.Error as Error exposing (Error(..))
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Time as Time
+import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.Maybe exposing (Maybe(..))
 import Sky.Core.Result exposing (Result(..))
 import Std.Codec as Codec exposing (Codec)
@@ -172,6 +174,15 @@ register name inputCodec outputCodec body =
 erase : WorkflowDef i o -> RegisteredWorkflow
 erase (WorkflowDef d) =
     d.erased
+
+
+{-| The database handle for this run, for a `step`'s own DB effects (so a
+workflow body does not need to thread a connection separately): e.g.
+`Durable.step ctx codec "charge" (chargeCard (Durable.conn ctx) …)`.
+-}
+conn : Ctx -> Db
+conn (Ctx c) =
+    c.db
 
 
 -- ---------------------------------------------------------------------------
@@ -449,9 +460,14 @@ type alias ClaimRow =
     { id : String, workflow : String, input : String }
 
 
-claimRowCodec : Codec ClaimRow
-claimRowCodec =
-    Codec.auto { id = "", workflow = "", input = "" }
+dictGet : String -> Dict String String -> String
+dictGet key row =
+    case Dict.get key row of
+        Just v ->
+            v
+
+        Nothing ->
+            ""
 
 
 {-| Claim one due run and advance it until it suspends or completes. Returns
@@ -484,8 +500,7 @@ poll db defs =
 -- nothing this tick. Correct under concurrency without `FOR UPDATE SKIP LOCKED`.
 claim : Db -> Int -> Task Error (Maybe ClaimRow)
 claim db now =
-    Store.selectRaw db
-        claimRowCodec
+    Db.query db
         ("SELECT id, workflow, input FROM _sky_durable_runs "
             ++ "WHERE status IN ('running', 'waiting') AND wake_at <= ? "
             ++ "AND (claimed_at IS NULL OR claimed_at < ?) "
@@ -499,16 +514,24 @@ claim db now =
                         Task.succeed Nothing
 
                     Just row ->
+                        let
+                            rowId =
+                                dictGet "id" row
+                        in
                         Db.exec db
                             ("UPDATE _sky_durable_runs SET claimed_at = ?, status = 'running', "
                                 ++ "attempts = attempts + 1, updated_at = ? "
                                 ++ "WHERE id = ? AND (claimed_at IS NULL OR claimed_at < ?)"
                             )
-                            [ SqlInt now, SqlInt now, SqlString row.id, SqlInt (now - leaseMs) ]
+                            [ SqlInt now, SqlInt now, SqlString rowId, SqlInt (now - leaseMs) ]
                             |> Task.map
                                 (\affected ->
                                     if affected == 1 then
-                                        Just row
+                                        Just
+                                            { id = rowId
+                                            , workflow = dictGet "workflow" row
+                                            , input = dictGet "input" row
+                                            }
 
                                     else
                                         Nothing
