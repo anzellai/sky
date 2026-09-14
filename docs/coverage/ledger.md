@@ -25,17 +25,17 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `stronger` | 143 |
 | verdict `equal` | 24 |
 | verdict `weaker` | 0 |
-| corpus units | 81 |
+| corpus units | 82 |
 | stdlib modules (denominator) | 101 |
-| stdlib entries (denominator) | 1928 |
+| stdlib entries (denominator) | 1929 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 10 | 9.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 733 | 38.0% |
-| symbols unreferenced under the generous rule | 649 | 33.7% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 727 | 37.7% |
+| symbols unreferenced under the generous rule | 644 | 33.4% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -61,8 +61,8 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 19 |
-| stdlib modules owned by exactly one unit of any role | 22 |
+| stdlib modules owned by exactly one `examples/*` | 23 |
+| stdlib modules owned by exactly one unit of any role | 18 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -198,10 +198,10 @@ None.
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Agent` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Memory.Pg` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Ai.Policy` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Ai.Provider` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Policy` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Ai.Provider` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ai.Tool` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Ai.Trace` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Trace` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Runs | equal |
 | `stdlib.Std.App` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
@@ -221,7 +221,7 @@ None.
 | `stdlib.Std.Db.Store` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db.Table` | stdlib | None | None | equal |
 | `stdlib.Std.Decimal` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Durable` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Durable` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Email` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |

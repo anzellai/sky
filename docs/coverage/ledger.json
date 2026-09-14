@@ -48,17 +48,17 @@
   "config": {
     "_note": "counted over distinct paths: apps/ledger backs two member rows and must not have its sections counted twice.",
     "database_drivers": {
-      "sqlite": 13
+      "sqlite": 14
     },
-    "paths_with_sky_toml": 56,
+    "paths_with_sky_toml": 57,
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
       "[app]": 4,
-      "[database]": 13,
+      "[database]": 14,
       "[dependencies]": 1,
       "[live]": 2,
-      "[source]": 52
+      "[source]": 53
     }
   },
   "gates": {
@@ -560,9 +560,13 @@
       "Sky.Core.Regex": "examples/35-composite-generics",
       "Sky.Http.RateLimit": "examples/36-composite-server",
       "Sky.Http.Server.WebSocket": "examples/33-websocket-echo",
+      "Std.Ai.Policy": "examples/66-slack-agent",
+      "Std.Ai.Provider": "examples/66-slack-agent",
+      "Std.Ai.Trace": "examples/66-slack-agent",
       "Std.Bundle": "examples/64-app-native",
       "Std.Cache": "examples/36-composite-server",
       "Std.Csv": "examples/36-composite-server",
+      "Std.Durable": "examples/66-slack-agent",
       "Std.Live": "examples/19-skyforum",
       "Std.Native": "examples/64-app-native",
       "Std.PubSub": "examples/36-composite-server",
@@ -630,25 +634,7 @@
           "apps:cli-verbs"
         ]
       },
-      "Std.Ai.Policy": {
-        "path": "rust/crates/sky/tests",
-        "units": [
-          "apps:cli-verbs"
-        ]
-      },
-      "Std.Ai.Provider": {
-        "path": "rust/crates/sky/tests",
-        "units": [
-          "apps:cli-verbs"
-        ]
-      },
       "Std.Ai.Tool": {
-        "path": "rust/crates/sky/tests",
-        "units": [
-          "apps:cli-verbs"
-        ]
-      },
-      "Std.Ai.Trace": {
         "path": "rust/crates/sky/tests",
         "units": [
           "apps:cli-verbs"
@@ -670,12 +656,6 @@
         "path": "apps/relay",
         "units": [
           "apps:relay"
-        ]
-      },
-      "Std.Durable": {
-        "path": "rust/crates/sky/tests",
-        "units": [
-          "apps:cli-verbs"
         ]
       },
       "Std.Jobs": {
@@ -718,7 +698,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1928,
+    "stdlib_entries": 1929,
     "stdlib_modules": 101,
     "surfaces_covered": 148,
     "surfaces_covered_pct": 88.6,
@@ -728,12 +708,12 @@
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
-      "Example": 62,
+      "Example": 63,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 81
+    "units_total": 82
   },
   "surfaces": [
     {
@@ -3369,6 +3349,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -3520,6 +3505,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
@@ -3627,6 +3617,11 @@
             "by": "examples/51-kernel-variadic-arity (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
@@ -3661,6 +3656,11 @@
           },
           {
             "by": "examples/51-kernel-variadic-arity (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           }
@@ -4921,6 +4921,11 @@
             "strength": 3
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Core (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -5007,6 +5012,11 @@
             "strength": 3
           },
           {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
@@ -5049,6 +5059,11 @@
             "strength": 3
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -5068,6 +5083,11 @@
             "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
           },
           {
             "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
@@ -5375,6 +5395,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -5642,6 +5667,11 @@
           },
           {
             "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -6086,6 +6116,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -6257,6 +6292,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/simple (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
@@ -6354,6 +6394,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -6406,6 +6451,11 @@
           },
           {
             "by": "examples/63-app-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -6656,6 +6706,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -6698,6 +6753,11 @@
           },
           {
             "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -7050,14 +7110,25 @@
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 2
       },
       "description": "the Std.Ai.Policy public API",
       "id": "stdlib.Std.Ai.Policy",
@@ -7072,14 +7143,25 @@
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 2
       },
       "description": "the Std.Ai.Provider public API",
       "id": "stdlib.Std.Ai.Provider",
@@ -7116,14 +7198,25 @@
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 2
       },
       "description": "the Std.Ai.Trace public API",
       "id": "stdlib.Std.Ai.Trace",
@@ -8049,6 +8142,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -8121,6 +8219,11 @@
           },
           {
             "by": "examples/63-app-chat (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -8438,6 +8541,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -8515,6 +8623,11 @@
           },
           {
             "by": "examples/65-metadata-service (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -8894,14 +9007,25 @@
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Runs",
+        "evidence": [
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          }
+        ],
+        "strength": 2
       },
       "description": "the Std.Durable public API",
       "id": "stdlib.Std.Durable",
@@ -9876,6 +10000,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -10097,6 +10226,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/simple (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
@@ -10181,6 +10315,11 @@
             "strength": 2
           },
           {
+            "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -10203,6 +10342,11 @@
           },
           {
             "by": "examples/52-blog-analytics (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -12426,12 +12570,6 @@
             "map5"
           ]
         },
-        "Sky.Core.Secret": {
-          "count": 1,
-          "symbols": [
-            "fromEnv"
-          ]
-        },
         "Sky.Core.String": {
           "count": 9,
           "symbols": [
@@ -12510,12 +12648,11 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "Cookie",
             "Route",
             "Server",
-            "body",
             "delete",
             "put",
             "static",
@@ -12556,23 +12693,20 @@
           ]
         },
         "Std.Ai.Policy": {
-          "count": 4,
+          "count": 2,
           "symbols": [
-            "Action",
-            "Decision",
             "Risk",
             "denyAll"
           ]
         },
         "Std.Ai.Provider": {
-          "count": 6,
+          "count": 5,
           "symbols": [
             "Message",
             "Usage",
             "assistant",
             "compatible",
-            "cost",
-            "system"
+            "cost"
           ]
         },
         "Std.Ai.Tool": {
@@ -13293,8 +13427,8 @@
           ]
         }
       },
-      "count": 649,
-      "pct_of_denominator": 33.7
+      "count": 644,
+      "pct_of_denominator": 33.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13473,10 +13607,9 @@
           ]
         },
         "Sky.Core.Secret": {
-          "count": 2,
+          "count": 1,
           "symbols": [
-            "Secret",
-            "fromEnv"
+            "Secret"
           ]
         },
         "Sky.Core.String": {
@@ -13558,13 +13691,12 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 9,
+          "count": 8,
           "symbols": [
             "Cookie",
             "Handler",
             "Route",
             "Server",
-            "body",
             "delete",
             "put",
             "static",
@@ -13606,24 +13738,20 @@
           ]
         },
         "Std.Ai.Policy": {
-          "count": 5,
+          "count": 2,
           "symbols": [
-            "Action",
-            "Decision",
-            "Outcome",
             "Risk",
             "denyAll"
           ]
         },
         "Std.Ai.Provider": {
-          "count": 6,
+          "count": 5,
           "symbols": [
             "Message",
             "Usage",
             "assistant",
             "compatible",
-            "cost",
-            "system"
+            "cost"
           ]
         },
         "Std.Ai.Tool": {
@@ -14417,8 +14545,8 @@
           ]
         }
       },
-      "count": 733,
-      "pct_of_denominator": 38.0
+      "count": 727,
+      "pct_of_denominator": 37.7
     }
   },
   "units": [
@@ -14440,10 +14568,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 33,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 161,
-      "refs_qualified": 152,
+      "refs_generous": 169,
+      "refs_qualified": 160,
       "role": "Layer2",
-      "sky_files": 104,
+      "sky_files": 105,
       "sky_toml_sections": []
     },
     {
@@ -15413,6 +15541,23 @@
       "path": "examples/65-metadata-service",
       "refs_generous": 33,
       "refs_qualified": 27,
+      "role": "Example",
+      "sky_files": 1,
+      "sky_toml_sections": [
+        "[database]",
+        "[source]"
+      ]
+    },
+    {
+      "db_drivers": [
+        "sqlite"
+      ],
+      "gate": null,
+      "id": "examples/66-slack-agent",
+      "modules_imported": 16,
+      "path": "examples/66-slack-agent",
+      "refs_generous": 62,
+      "refs_qualified": 53,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
