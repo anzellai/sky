@@ -190,9 +190,20 @@ awaitSignal : Ctx -> Codec a -> String -> Task Error a               -- passive,
 ## The v1 / v2 boundary
 
 - **v1 (this doc):** explicit `step` boundaries, single worker version, Postgres.
-- **v2:** (a) transparent replay — fold the app's own `Msg` history through
-  `update`, replaying journalled effect results, so a Sky.Live/Spa TEA app is
-  durable with no explicit `step` (leveraging the mock/replay seam that already
-  powers `sky test` / `sky fuzz`); (b) worker versioning + migration for in-flight
-  runs across a deploy; (c) history compaction (continue-as-new); (d) the
-  eval-replay pipeline reusing the same journal.
+- **v2 — shipped:**
+  - **worker versioning + migration** — a run is stamped with its workflow version
+    at `start`; `registerVersioned` / `pollWith` reconcile a resumed run's version
+    against the registered defs (`FailSafe` fails a mismatch, `PinToStart` parks it
+    for a worker on the old version — the rolling-deploy case). A `Migrate` policy
+    (rewrite a run's version/journal in place) is the remaining follow-up.
+  - **history compaction** — `Durable.compact db retentionMs` collapses the journal
+    of terminal runs while keeping each run's summary (output + status). The
+    continue-as-new form (deleting the run rows themselves) builds on it.
+- **v2 — an epic, not shipped:** **transparent replay** — fold the app's own `Msg`
+  history through `update`, replaying journalled effect results, so a Sky.Live/Spa
+  TEA app is durable with no explicit `step`. This is NOT a stdlib patch: it needs
+  new Go runtime kernels (an effect-journal seam in the `Cmd` dispatcher, a Model
+  snapshot kernel) and touches every TEA loop. Scoped in
+  [`durable-transparent-replay.md`](durable-transparent-replay.md); left for an
+  explicit decision.
+- **v2 — later:** the eval-replay pipeline reusing the same journal.

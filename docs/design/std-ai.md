@@ -65,9 +65,15 @@ Durable.poll db [ Durable.erase agent ]
 A `Tool` is a name, a description, and an `exec : String -> Task Error String`.
 The loop tells the model the available tools and asks it to reply with a small
 JSON protocol (`{"tool":…,"args":…}` or `{"answer":…}`); the loop runs the
-requested tool as a durable step and feeds the result back. (Native OpenAI
-function-calling, `Provider.chatTools`, is the next increment; the prompt-based
-protocol is the portable floor that works on any OpenAI-compatible endpoint.)
+requested tool as a durable step and feeds the result back. The prompt-based
+protocol is the portable floor that works on any OpenAI-compatible endpoint.
+
+**Native function-calling** is also available: `Provider.chatTools` sends the
+OpenAI `tools` request and returns the model's real `tool_calls`, and
+`Agent.nativeToolLoop` drives it as a durable workflow (each turn and each tool
+call a journalled step). Tools are advertised by name + description and receive
+free-form JSON arguments; a typed, `Codec`-derived parameter schema is the
+remaining increment.
 
 ## `Std.Ai.Policy` — the action firewall
 
