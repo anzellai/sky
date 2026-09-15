@@ -678,7 +678,11 @@ fn render_components_puml(g: &ComponentGraph) -> String {
 
 fn render_components_md(g: &ComponentGraph) -> String {
     let mut o = String::new();
-    o.push_str(&format!("# Components — {}\n\n", g.project));
+    o.push_str(&format!(
+        "# System architecture (C4 containers) — {} · generated {}\n\n",
+        g.project,
+        today_utc()
+    ));
     let shape_line = match g.shape {
         AppShape::Spa => "Sky.Spa (wasm client + server over /_rpc)",
         AppShape::Live => "Sky.Live (one trusted server, SSR + SSE)",
@@ -687,14 +691,44 @@ fn render_components_md(g: &ComponentGraph) -> String {
         AppShape::Http => "Sky.Http.Server (HTTP API)",
     };
     o.push_str(&format!("App shape: {shape_line}\n\n"));
-    if let (Some(eff), Some(pure)) = (g.rpc_effectful, g.rpc_pure) {
+
+    // ---- the C4 CONTAINER view (the headline; modules are an appendix) ----
+    o.push_str("## Containers\n\n");
+    o.push_str("| Container | Trust zone | Technology | Responsibility |\n|---|---|---|---|\n");
+    let has_split = matches!(g.shape, AppShape::Spa);
+    if has_split {
+        let pure = g.rpc_pure.unwrap_or(0);
+        let eff = g.rpc_effectful.unwrap_or(0);
         o.push_str(&format!(
-            "Actions: {eff} effectful (round-trip as POST /_rpc/<Msg>) · {pure} pure (client wasm).\n\n"
+            "| Browser client | Untrusted (client) | wasm (Sky.Spa) | Renders the UI; {pure} pure client action(s); reaches the server over `/_rpc`. |\n"
+        ));
+        o.push_str(&format!(
+            "| Application server | Trusted (server) | native Go (Sky.Spa SSR) | Serves `/_rpc`; runs EVERY effect; {eff} effectful action(s). |\n"
+        ));
+    } else {
+        o.push_str(&format!(
+            "| Application server | Trusted (server) | native Go ({shape_line}) | Runs the UI and every effect in one process. |\n"
         ));
     }
     if !g.tables.is_empty() {
-        o.push_str(&format!("Database tables ({}): {}.\n\n", g.tables.len(), g.tables.join(", ")));
+        o.push_str(&format!(
+            "| Data store | Trusted (server) | SQL | Persists {} table(s) (see below). |\n",
+            g.tables.len()
+        ));
     }
+    o.push_str("| External HTTP APIs | Untrusted (third-party) | HTTPS | Payments / OAuth / mail etc. — see `sub-processors.md` for the named register. |\n\n");
+
+    if !g.tables.is_empty() {
+        o.push_str(&format!(
+            "### Data store — {} table(s)\n\n{}\n\n",
+            g.tables.len(),
+            g.tables.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", ")
+        ));
+    }
+
+    // ---- appendix: the module → capability detail (C4 "code" level) ----
+    o.push_str("## Appendix — modules\n\n");
+    o.push_str("_Source modules and the capability families each reaches (the C4 code level; the containers above are what an auditor reads first)._\n\n");
     o.push_str("| Module | Capabilities |\n|---|---|\n");
     for m in &g.modules {
         let caps = if m.caps.is_empty() {
@@ -3924,13 +3958,51 @@ pub struct Classification {
     pub reasons: Vec<String>,
 }
 
-/// One named external system the app calls out to — the sub-processor overlay.
-/// `host` is the literal host from an `Http` call URL (`api.stripe.com`);
-/// `purpose` is a short human label (`Payments (Stripe)`).
+/// The role an external system plays for the app — decides whether it is a data
+/// SUB-PROCESSOR (a third party the app sends/receives application data to/from,
+/// an audit concern) or merely EMBEDDED third-party content (a CDN / video embed,
+/// no app-data flow). Conservative: an unknown host is `Api`, kept as a
+/// sub-processor (safer for an audit than silently dropping it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ExtRole {
+    Payments,
+    OAuth,
+    Email,
+    Llm,
+    Messaging,
+    Api,
+    Cdn,
+    Dynamic,
+}
+
+impl ExtRole {
+    /// A data sub-processor (ISO A.15): the app flows application data to/from it.
+    /// `Cdn` (embedded content / static assets) is NOT — it is third-party content.
+    pub fn is_subprocessor(self) -> bool {
+        !matches!(self, ExtRole::Cdn)
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            ExtRole::Payments => "Payments",
+            ExtRole::OAuth => "OAuth / IdP",
+            ExtRole::Email => "Email",
+            ExtRole::Llm => "LLM",
+            ExtRole::Messaging => "Messaging",
+            ExtRole::Api => "API",
+            ExtRole::Cdn => "CDN / embed",
+            ExtRole::Dynamic => "Dynamic egress",
+        }
+    }
+}
+
+/// One named external system the app calls out to. `host` is the literal host from
+/// an `Http` call URL (`api.stripe.com`); `purpose` is a short human label
+/// (`Payments (Stripe)`); `role` decides sub-processor vs embedded content.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExternalSystem {
     pub host: String,
     pub purpose: String,
+    pub role: ExtRole,
 }
 
 /// The behaviour graph for a project, with the compliance overlays. Wraps the
@@ -3954,9 +4026,14 @@ pub struct FlowReport {
     /// Msg → the named external hosts its branch reaches (`AddToBasket` →
     /// `api.stripe.com`). Drives the per-edge host label + the SVG external lane.
     pub action_externals: HashMap<String, Vec<String>>,
-    /// Every named external system the app calls (deduped, sorted) — the
-    /// sub-processor list (ISO A.15) + the SVG external lane.
+    /// Every named external system the app calls (deduped, sorted), with its role.
+    /// Split at render into sub-processors (ISO A.15) and embedded content by
+    /// [`ExtRole::is_subprocessor`]. The SVG external lane draws these.
     pub external_systems: Vec<ExternalSystem>,
+    /// Hosts recognised as the app's OWN domain (from `CNAME` / `sky.toml`) and so
+    /// excluded from the sub-processor list — recorded here so the exclusion is
+    /// auditable ("filtered as self-referential: sky-lang.org").
+    pub self_ref_hosts: Vec<String>,
     /// The app's data store, when it uses one (`PostgreSQL`, `SQLite`, or the
     /// generic `App database`). `None` when the app touches no `Db` effect.
     pub data_store: Option<String>,
@@ -4204,6 +4281,84 @@ fn host_purpose(host: &str) -> String {
     format!("External service ({host})")
 }
 
+/// The role of a known host — decides sub-processor vs embedded content. A host
+/// not recognised as a CDN / content host is `Api` (kept as a sub-processor).
+fn host_role(host: &str) -> ExtRole {
+    let h = host.to_ascii_lowercase();
+    // Content / CDN / embed hosts — third-party CONTENT, not a data sub-processor.
+    const CDN: &[&str] = &[
+        "youtube.com", "youtu.be", "ytimg.com", "vimeo.com",
+        "fonts.googleapis.com", "fonts.gstatic.com", "gstatic.com",
+        "githubusercontent.com", "github.io", "gravatar.com",
+        "jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com", "jquery.com",
+    ];
+    if CDN.iter().any(|n| h.contains(n)) {
+        return ExtRole::Cdn;
+    }
+    const PAYMENTS: &[&str] = &["stripe.com", "paypal.com", "braintree", "adyen.com"];
+    if PAYMENTS.iter().any(|n| h.contains(n)) {
+        return ExtRole::Payments;
+    }
+    // OAuth / IdP — github/google are ALSO general APIs, but in a Sky app they are
+    // reached through Std.Auth OAuth, so IdP is the audit-relevant role.
+    const OAUTH: &[&str] = &["accounts.google.com", "github.com", "auth0.com", "okta.com", "login.microsoftonline.com"];
+    if OAUTH.iter().any(|n| h.contains(n)) {
+        return ExtRole::OAuth;
+    }
+    const EMAIL: &[&str] = &["sendgrid", "mailgun", "postmark", "resend.com", "smtp", "mailchimp", "mandrill", "ses.amazonaws"];
+    if EMAIL.iter().any(|n| h.contains(n)) {
+        return ExtRole::Email;
+    }
+    const LLM: &[&str] = &["openai.com", "anthropic.com", "cohere", "mistral.ai"];
+    if LLM.iter().any(|n| h.contains(n)) {
+        return ExtRole::Llm;
+    }
+    const MSG: &[&str] = &["slack.com", "twilio.com", "discord.com", "telegram.org"];
+    if MSG.iter().any(|n| h.contains(n)) {
+        return ExtRole::Messaging;
+    }
+    ExtRole::Api
+}
+
+/// The app's OWN domain(s), so calls to itself are not listed as sub-processors.
+/// Sources: a `CNAME` file at the project root (GitHub-Pages / static-host
+/// convention) and any `host`/`domain` value in `sky.toml`. Lower-cased; each
+/// entry matches itself and its subdomains. Conservative: only these explicit
+/// declarations count, never a guess.
+fn own_domains(project_dir: &Path) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Ok(c) = std::fs::read_to_string(project_dir.join("CNAME")) {
+        for line in c.lines() {
+            let d = line.trim().trim_end_matches('.').to_ascii_lowercase();
+            if !d.is_empty() && d.contains('.') {
+                out.push(d);
+            }
+        }
+    }
+    if let Ok(toml) = std::fs::read_to_string(project_dir.join("sky.toml")) {
+        for line in toml.lines() {
+            let t = line.trim();
+            for key in ["domain", "host", "hostname"] {
+                if let Some(v) = t.strip_prefix(key) {
+                    let v = v.trim().trim_start_matches('=').trim().trim_matches('"').to_ascii_lowercase();
+                    if v.contains('.') && !v.contains('/') {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// True when `host` is (or is a subdomain of) one of the app's own domains.
+fn is_self_ref(host: &str, own: &[String]) -> bool {
+    let h = host.to_ascii_lowercase();
+    own.iter().any(|d| h == *d || h.ends_with(&format!(".{d}")))
+}
+
 /// Walk a def body (transitively through project callees) collecting the literal
 /// hosts of every `Sky.Core.Http` call it reaches. Bounded like [`view_msgs_in`].
 /// A non-literal URL target (`Http.get someVar`) contributes the marker host
@@ -4379,16 +4534,30 @@ pub fn analyze_flow(
             }
         }
     }
+    // Own-domain hosts (the app calling itself) are not sub-processors — filter
+    // them, but record what was filtered so the exclusion is auditable.
+    let own = own_domains(project_dir);
+    let mut self_ref_hosts: Vec<String> = Vec::new();
     let external_systems: Vec<ExternalSystem> = all_hosts
         .into_iter()
-        .map(|h| {
+        .filter_map(|h| {
             if h == "*dynamic*" {
-                ExternalSystem { host: "(dynamic endpoint)".into(), purpose: "Runtime-chosen HTTP target".into() }
-            } else {
-                ExternalSystem { purpose: host_purpose(&h), host: h }
+                return Some(ExternalSystem {
+                    host: "(dynamic endpoint)".into(),
+                    purpose: "Runtime-chosen HTTP target".into(),
+                    role: ExtRole::Dynamic,
+                });
             }
+            if is_self_ref(&h, &own) {
+                self_ref_hosts.push(h);
+                return None;
+            }
+            let role = host_role(&h);
+            Some(ExternalSystem { purpose: host_purpose(&h), host: h, role })
         })
         .collect();
+    self_ref_hosts.sort();
+    self_ref_hosts.dedup();
     drop(db);
 
     // Data classification, per action, from the auto-split branch analysis: the
@@ -4485,6 +4654,7 @@ pub fn analyze_flow(
         classifications,
         action_externals,
         external_systems,
+        self_ref_hosts,
         data_store,
         chrome_actions,
     })
@@ -4510,7 +4680,7 @@ fn actions_on_page<'a>(r: &'a FlowReport, page: &str) -> Vec<&'a JourneyAction> 
 
 /// Today's date as `YYYY-MM-DD` (UTC), for the generated-on stamp. No chrono dep:
 /// a civil-date computation from the Unix epoch day count.
-fn today_utc() -> String {
+pub fn today_utc() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -4580,6 +4750,129 @@ fn flow_action_line(r: &FlowReport, a: &JourneyAction) -> String {
         _ => String::new(),
     };
     format!("`{}`{}{}{}{}{}", a.msg, lane, eff, nav_s, cont, conf)
+}
+
+/// The external-systems Markdown: a sub-processor table (data flows — ISO A.15 /
+/// SOC2 supplier evidence) and, separately, any embedded third-party content
+/// (CDN / video — NOT a data processor), plus a note on hosts filtered as the
+/// app's own domain. Shared by the journey md and the audit bundle's
+/// `sub-processors.md`.
+fn subprocessors_section(r: &FlowReport) -> String {
+    let mut o = String::new();
+    let subs: Vec<&ExternalSystem> =
+        r.external_systems.iter().filter(|e| e.role.is_subprocessor()).collect();
+    let embeds: Vec<&ExternalSystem> =
+        r.external_systems.iter().filter(|e| !e.role.is_subprocessor()).collect();
+    if !subs.is_empty() {
+        o.push_str("## External systems (data sub-processors)\n\n");
+        o.push_str("_Third parties the app sends or receives application data to/from (ISO 27001 A.15 / SOC2 supplier evidence)._\n\n");
+        o.push_str("| Host | Role | Purpose |\n|---|---|---|\n");
+        for e in &subs {
+            o.push_str(&format!("| `{}` | {} | {} |\n", e.host, e.role.label(), e.purpose));
+        }
+        o.push('\n');
+    }
+    if !embeds.is_empty() {
+        o.push_str("## Embedded third-party content\n\n");
+        o.push_str("_Static / embedded content (CDN, fonts, video). NOT a data sub-processor — no application data flows to it._\n\n");
+        o.push_str("| Host | Purpose |\n|---|---|\n");
+        for e in &embeds {
+            o.push_str(&format!("| `{}` | {} |\n", e.host, e.purpose));
+        }
+        o.push('\n');
+    }
+    if !r.self_ref_hosts.is_empty() {
+        o.push_str(&format!(
+            "_Excluded as the app's own domain (not a sub-processor): {}._\n\n",
+            r.self_ref_hosts.iter().map(|h| format!("`{h}`")).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    o
+}
+
+/// The data-inventory Markdown (ISO 27001 A.8 asset inventory): the app's data
+/// store and the confidential field classes it holds, each with the reason. A
+/// store-level inventory (per-table recovery is not attempted); the confidential
+/// field list is the audit-relevant part.
+fn data_inventory_section(r: &FlowReport) -> String {
+    let mut o = String::new();
+    o.push_str("## Data inventory\n\n");
+    o.push_str("_Data at rest and its classification (ISO 27001 A.8)._\n\n");
+    match &r.data_store {
+        Some(store) => o.push_str(&format!("**Store:** {store}\n\n")),
+        None => {
+            o.push_str("_No persistent data store detected (the app reaches no `Db` effect)._\n\n");
+            return o;
+        }
+    }
+    // Distinct confidential reasons across every classified action — the classes
+    // of sensitive data the app handles (and therefore may persist).
+    let mut classes: Vec<String> = r
+        .classifications
+        .values()
+        .flat_map(|c| c.reasons.iter().cloned())
+        .collect();
+    classes.sort();
+    classes.dedup();
+    if classes.is_empty() {
+        o.push_str("No `Secret`, `Std.Auth` session, or PII-classified fields were detected in the app's actions.\n\n");
+    } else {
+        o.push_str("| Data class | Classification |\n|---|---|\n");
+        for c in &classes {
+            o.push_str(&format!("| {c} | 🔒 Confidential |\n"));
+        }
+        o.push('\n');
+    }
+    o
+}
+
+/// Re-apply the own-domain (self-referential host) filter using the REAL project
+/// directory. `analyze_flow` runs over the Spa-synthesised staged dir, which has
+/// no `CNAME` / `sky.toml`, so its own-domain list is empty; the caller (which
+/// holds the real project path) calls this to move the app's own hosts out of the
+/// sub-processor list. Idempotent.
+pub fn filter_self_ref(r: &mut FlowReport, project_dir: &Path) {
+    let own = own_domains(project_dir);
+    if own.is_empty() {
+        return;
+    }
+    let mut kept: Vec<ExternalSystem> = Vec::new();
+    for e in r.external_systems.drain(..) {
+        if e.role != ExtRole::Dynamic && is_self_ref(&e.host, &own) {
+            r.self_ref_hosts.push(e.host);
+        } else {
+            kept.push(e);
+        }
+    }
+    r.external_systems = kept;
+    r.self_ref_hosts.sort();
+    r.self_ref_hosts.dedup();
+}
+
+/// Standalone sub-processor register for the audit bundle (ISO A.15 / SOC2).
+pub fn render_subprocessors(r: &FlowReport) -> String {
+    let body = subprocessors_section(r);
+    let body = if body.trim().is_empty() {
+        "_No external systems were detected in this app's HTTP call sites._\n".to_string()
+    } else {
+        body
+    };
+    format!(
+        "# Sub-processors & external systems — {} · generated {}\n\n{}",
+        r.journey.project,
+        today_utc(),
+        body
+    )
+}
+
+/// Standalone data-inventory register for the audit bundle (ISO A.8).
+pub fn render_data_inventory(r: &FlowReport) -> String {
+    format!(
+        "# Data inventory — {} · generated {}\n\n{}",
+        r.journey.project,
+        today_utc(),
+        data_inventory_section(r)
+    )
 }
 
 /// Render the behaviour graph to the requested format.
@@ -4732,14 +5025,7 @@ fn render_flow_md(r: &FlowReport) -> String {
     if let Some(store) = &r.data_store {
         o.push_str(&format!("**Data store:** {store}\n\n"));
     }
-    if !r.external_systems.is_empty() {
-        o.push_str("## External systems (sub-processors)\n\n");
-        o.push_str("| Host | Purpose |\n|---|---|\n");
-        for e in &r.external_systems {
-            o.push_str(&format!("| `{}` | {} |\n", e.host, e.purpose));
-        }
-        o.push('\n');
-    }
+    o.push_str(&subprocessors_section(r));
     // ---- global chrome (actions on every page) ----
     if !r.chrome_actions.is_empty() {
         o.push_str("## Global (available on every page)\n\n");
@@ -5102,7 +5388,13 @@ mod tests {
     fn components_md_lists_db_tables() {
         let g = graph_with(false, vec!["users".into(), "orders".into()], None, None);
         let out = render_components(&g, Format::Md);
-        assert!(out.contains("Database tables (2): users, orders."), "{out}");
+        // The C4 container-led md lists the data store's tables in the data-store
+        // section (a container row + the table list), and keeps the module detail
+        // in the appendix.
+        assert!(out.contains("### Data store — 2 table(s)"), "data-store heading:\n{out}");
+        assert!(out.contains("`users`") && out.contains("`orders`"), "table names:\n{out}");
+        assert!(out.contains("## Containers"), "C4 container view leads:\n{out}");
+        assert!(out.contains("## Appendix — modules"), "module table demoted to appendix:\n{out}");
     }
 
     #[test]
@@ -5780,6 +6072,7 @@ mod tests {
             classifications: HashMap::new(),
             action_externals: HashMap::new(),
             external_systems: Vec::new(),
+            self_ref_hosts: Vec::new(),
             data_store: None,
             chrome_actions: Vec::new(),
         }
@@ -5827,6 +6120,7 @@ mod tests {
         r.external_systems = vec![ExternalSystem {
             host: "api.stripe.com".into(),
             purpose: "Payments (Stripe)".into(),
+            role: ExtRole::Payments,
         }];
         r.classifications.insert(
             "UpvotePost".into(),
@@ -5847,6 +6141,7 @@ mod tests {
         r.external_systems = vec![ExternalSystem {
             host: "api.stripe.com".into(),
             purpose: "Payments (Stripe)".into(),
+            role: ExtRole::Payments,
         }];
         let svg = render_flow_svg(&r);
         assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"), "{svg}");
@@ -5855,6 +6150,62 @@ mod tests {
         }
         assert!(svg.contains("api.stripe.com") && svg.contains("PostgreSQL"), "nodes missing:\n{svg}");
         assert!(svg.contains("trust boundary"), "boundary missing:\n{svg}");
+    }
+
+    #[test]
+    fn host_role_splits_subprocessor_from_embed() {
+        // Data flows → sub-processors; content/CDN → embedded, NOT a sub-processor.
+        assert_eq!(host_role("api.stripe.com"), ExtRole::Payments);
+        assert_eq!(host_role("github.com"), ExtRole::OAuth);
+        assert_eq!(host_role("api.sendgrid.com"), ExtRole::Email);
+        assert_eq!(host_role("api.example.org"), ExtRole::Api); // unknown → API (kept)
+        assert!(host_role("api.stripe.com").is_subprocessor());
+        assert!(host_role("www.youtube.com").is_subprocessor() == false); // embed
+        assert!(host_role("anzellai.github.io").is_subprocessor() == false); // pages host
+        assert!(host_role("fonts.googleapis.com").is_subprocessor() == false);
+    }
+
+    #[test]
+    fn is_self_ref_matches_domain_and_subdomains() {
+        let own = vec!["sky-lang.org".to_string()];
+        assert!(is_self_ref("sky-lang.org", &own));
+        assert!(is_self_ref("www.sky-lang.org", &own));
+        assert!(!is_self_ref("github.com", &own));
+        assert!(!is_self_ref("notsky-lang.org", &own)); // not a subdomain
+    }
+
+    #[test]
+    fn subprocessors_section_splits_and_notes_selfref() {
+        let mut r = flow_report(true);
+        r.external_systems = vec![
+            ExternalSystem { host: "api.stripe.com".into(), purpose: "Payments (Stripe)".into(), role: ExtRole::Payments },
+            ExternalSystem { host: "www.youtube.com".into(), purpose: "External service (www.youtube.com)".into(), role: ExtRole::Cdn },
+        ];
+        r.self_ref_hosts = vec!["sky-lang.org".into()];
+        let md = subprocessors_section(&r);
+        assert!(md.contains("data sub-processors") && md.contains("api.stripe.com"), "subproc table:\n{md}");
+        assert!(md.contains("Embedded third-party content") && md.contains("www.youtube.com"), "embed table:\n{md}");
+        // The embed host must not appear in the sub-processor table region.
+        let subproc_region = &md[..md.find("Embedded").unwrap_or(md.len())];
+        assert!(!subproc_region.contains("youtube"), "youtube leaked into sub-processors:\n{md}");
+        assert!(md.contains("Excluded as the app's own domain") && md.contains("sky-lang.org"), "self-ref note:\n{md}");
+    }
+
+    #[test]
+    fn filter_self_ref_moves_own_host_out() {
+        let mut r = flow_report(true);
+        r.external_systems = vec![
+            ExternalSystem { host: "github.com".into(), purpose: "OAuth / API (GitHub)".into(), role: ExtRole::OAuth },
+            ExternalSystem { host: "sky-lang.org".into(), purpose: "External service".into(), role: ExtRole::Api },
+        ];
+        let dir = std::env::temp_dir().join(format!("sky-selfref-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("CNAME"), "sky-lang.org\n").unwrap();
+        filter_self_ref(&mut r, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(r.external_systems.iter().any(|e| e.host == "github.com"), "github kept");
+        assert!(!r.external_systems.iter().any(|e| e.host == "sky-lang.org"), "own host removed");
+        assert!(r.self_ref_hosts.contains(&"sky-lang.org".to_string()), "own host recorded");
     }
 
     #[test]

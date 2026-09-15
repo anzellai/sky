@@ -6228,9 +6228,10 @@ Usage:
 Diagram kinds:
   journey      the behaviour graph: each page, the actions its view can dispatch,
                their effects/RPC, the page they navigate to, and async continuations
-  components   modules and the capability families each one reaches
+  components   C4 system architecture: containers, trust zones, protocols
   wire         /_rpc + raw HTTP endpoints, with request/response shapes
   telemetry    the metrics/log/trace surface the app emits
+  audit        the whole submittable SOC2/ISO pack to a folder (needs --out <dir>)
 
 Formats: puml (default, PlantUML) · md (Markdown tables) · svg (self-contained).
 --out writes to a file instead of stdout. --target mirrors `sky build --target`
@@ -6244,12 +6245,17 @@ Formats: puml (default, PlantUML) · md (Markdown tables) · svg (self-contained
 /// `md` a Markdown table, `svg` a self-contained SVG we draw ourselves.
 /// `--out <path>` writes to a file instead of stdout. Mermaid is retired.
 fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[String]) -> ExitCode {
-    const PLANNED: &[&str] = &["journey", "components", "wire", "telemetry", "callpath"];
-    if kind != "components" && kind != "wire" && kind != "telemetry" && kind != "journey" {
+    const PLANNED: &[&str] = &["journey", "components", "wire", "telemetry", "audit", "callpath"];
+    if kind != "components"
+        && kind != "wire"
+        && kind != "telemetry"
+        && kind != "journey"
+        && kind != "audit"
+    {
         eprintln!(
             "sky doc --diagram {kind}: not yet implemented.\n\
              Planned diagram kinds: {}.\n\
-             Available in this release: `journey`, `components`, `wire`, `telemetry`.",
+             Available in this release: `journey`, `components`, `wire`, `telemetry`, `audit`.",
             PLANNED.join(", ")
         );
         return ExitCode::from(2);
@@ -6331,6 +6337,31 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
         }
     };
 
+    // `audit` — the whole submittable suite to a folder (one command → hand it to
+    // an auditor). Requires `--out <dir>`. Writes each diagram as SVG + md, the two
+    // evidence registers, and an index.md mapping each file to a SOC2/ISO control.
+    if kind == "audit" {
+        let dir = match &out_path {
+            Some(p) => PathBuf::from(p),
+            None => {
+                eprintln!("sky doc --diagram audit requires --out <dir> (the audit-pack folder).");
+                cleanup(&staged);
+                return ExitCode::from(2);
+            }
+        };
+        let out = write_audit_bundle(
+            &dir,
+            repo_root,
+            project_dir,
+            analysis_dir,
+            analysis_entry.as_deref(),
+            app_target.as_deref(),
+            &project_label,
+        );
+        cleanup(&staged);
+        return out;
+    }
+
     if kind == "wire" {
         let out = match project::diagram::analyze_wire(
             repo_root,
@@ -6384,6 +6415,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             // carries the note and (when available) the action inventory.
             Ok(mut report) => {
                 report.journey.project = project_label;
+                project::diagram::filter_self_ref(&mut report, project_dir);
                 emit(project::diagram::render_flow(&report, format))
             }
             // If the synthesised project failed to load, fall back to the raw
@@ -6486,6 +6518,125 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
     };
     cleanup(&staged);
     out
+}
+
+/// Write the full audit pack (`sky doc --diagram audit --out <dir>`): every
+/// diagram as SVG + Markdown, the sub-processor and data-inventory registers, and
+/// an `index.md` mapping each file to a SOC2 / ISO 27001 control. One folder a
+/// user hands an auditor.
+#[allow(clippy::too_many_arguments)]
+fn write_audit_bundle(
+    dir: &Path,
+    repo_root: &Path,
+    project_dir: &Path,
+    analysis_dir: &Path,
+    analysis_entry: Option<&str>,
+    app_target: Option<&str>,
+    label: &str,
+) -> ExitCode {
+    use project::diagram::{self as dg, Format};
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("sky doc --diagram audit: cannot create {}: {e}", dir.display());
+        return ExitCode::FAILURE;
+    }
+    let mut written: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let put = |name: &str, body: String, written: &mut Vec<String>, errors: &mut Vec<String>| {
+        match std::fs::write(dir.join(name), &body) {
+            Ok(()) => written.push(name.to_string()),
+            Err(e) => errors.push(format!("{name}: {e}")),
+        }
+    };
+    // Each analysis: try the staged (Spa-synthesised) dir, fall back to the raw
+    // project so a diagram is still produced.
+    // ---- journey (behaviour + data-flow) + the evidence registers ----
+    let flow = dg::analyze_flow(repo_root, analysis_dir, analysis_entry, app_target)
+        .or_else(|_| dg::analyze_flow(repo_root, project_dir, None, app_target));
+    match flow {
+        Ok(mut f) => {
+            f.journey.project = label.to_string();
+            dg::filter_self_ref(&mut f, project_dir);
+            put("journey.svg", dg::render_flow(&f, Format::Svg), &mut written, &mut errors);
+            put("journey.md", dg::render_flow(&f, Format::Md), &mut written, &mut errors);
+            put("sub-processors.md", dg::render_subprocessors(&f), &mut written, &mut errors);
+            put("data-inventory.md", dg::render_data_inventory(&f), &mut written, &mut errors);
+        }
+        Err(e) => errors.push(format!("journey: {e}")),
+    }
+    // ---- components (C4 system architecture) ----
+    match dg::analyze_components(repo_root, analysis_dir, analysis_entry, app_target)
+        .or_else(|_| dg::analyze_components(repo_root, project_dir, None, app_target))
+    {
+        Ok(mut c) => {
+            c.project = label.to_string();
+            put("components.svg", dg::render_components(&c, Format::Svg), &mut written, &mut errors);
+            put("components.md", dg::render_components(&c, Format::Md), &mut written, &mut errors);
+        }
+        Err(e) => errors.push(format!("components: {e}")),
+    }
+    // ---- wire (API + auth call-paths) ----
+    match dg::analyze_wire(repo_root, analysis_dir, analysis_entry, app_target)
+        .or_else(|_| dg::analyze_wire(repo_root, project_dir, None, app_target))
+    {
+        Ok(mut w) => {
+            w.project = label.to_string();
+            put("wire.md", dg::render_wire(&w, Format::Md), &mut written, &mut errors);
+        }
+        Err(e) => errors.push(format!("wire: {e}")),
+    }
+    // ---- telemetry (audit-logging surface) ----
+    match dg::analyze_telemetry(repo_root, analysis_dir, analysis_entry, app_target)
+        .or_else(|_| dg::analyze_telemetry(repo_root, project_dir, None, app_target))
+    {
+        Ok(mut t) => {
+            t.project = label.to_string();
+            put("telemetry.md", dg::render_telemetry(&t, Format::Md), &mut written, &mut errors);
+        }
+        Err(e) => errors.push(format!("telemetry: {e}")),
+    }
+    // ---- index.md — the auditor's table of contents + control mapping ----
+    let index = audit_index_md(label, &dg::today_utc(), &written);
+    put("index.md", index, &mut written, &mut errors);
+
+    for e in &errors {
+        eprintln!("sky doc --diagram audit: {e}");
+    }
+    eprintln!(
+        "sky doc --diagram audit: wrote {} file(s) to {}",
+        written.len(),
+        dir.display()
+    );
+    if written.is_empty() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// The audit-pack `index.md`: title, generation date, and the file → SOC2/ISO
+/// control mapping (from docs/design/audit-grade-diagrams.md).
+fn audit_index_md(label: &str, date: &str, written: &[String]) -> String {
+    let rows: &[(&str, &str, &str)] = &[
+        ("journey.svg / journey.md", "Behaviour & data-flow diagram (trust-boundary swimlanes; confidential flows marked)", "SOC2 CC3, CC6 · ISO A.8, A.13"),
+        ("components.svg / components.md", "System architecture (C4 containers, trust zones, protocols)", "SOC2 system description · ISO A.14"),
+        ("wire.md", "API & authentication call-paths (endpoints, CSRF, request/response shapes)", "SOC2 CC6, CC7 · ISO A.9, A.14"),
+        ("telemetry.md", "Audit-logging & monitoring surface", "SOC2 CC7 · ISO A.12.4"),
+        ("data-inventory.md", "Data inventory & classification (Secret / auth / PII at rest)", "ISO A.8"),
+        ("sub-processors.md", "Sub-processors & external systems register", "SOC2 supplier controls · ISO A.15"),
+    ];
+    let mut o = String::new();
+    o.push_str(&format!("# Audit pack — {label}\n\n"));
+    o.push_str(&format!("_Generated {date} by `sky doc --diagram audit`. Every artefact is derived statically from the app's source — the pure, total TEA `update` makes the behaviour completely enumerable._\n\n"));
+    o.push_str("| File | Artefact | Maps to |\n|---|---|---|\n");
+    for (file, artefact, control) in rows {
+        // Only list a row whose primary file was actually written.
+        let primary = file.split(" / ").next().unwrap_or(file);
+        if written.iter().any(|w| w == primary) {
+            o.push_str(&format!("| `{file}` | {artefact} | {control} |\n"));
+        }
+    }
+    o.push_str("\n> These diagrams reflect the code as of generation. Regenerate on each release so the evidence tracks the system.\n");
+    o
 }
 
 /// `sky doc --serve` renders a static doc-site from the project's stdlib and
