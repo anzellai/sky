@@ -87,6 +87,16 @@ fn run_binary(app: &Path, cwd: &Path, lines: &str) -> String {
 }
 
 #[test]
+// T1 tier-budget: this does a full `go build` of the fixture plus two binary
+// runs (~16s), enough to tip the per-commit `test-sky` shard over its 990s T1
+// ceiling (the same reason `ai_memory_pg_flow` was moved off it at v0.25.0).
+// Raising the ceiling is forbidden, so it runs NIGHTLY via `cargo test -p sky --
+// --ignored` (nightly-sweep.yml). Per-commit durable coverage stays: the
+// snapshot SUBSTRATE is proven behaviourally by `durable_snapshot_flow.rs` and
+// the App wiring by the `durable_tea_app_check.rs` compile guard, both per-commit
+// and both sharing the `durable_tea.go` path this test exercises end to end.
+// Remove `#[ignore]` to re-arm per-commit only alongside a matching T1 budget cut.
+#[ignore = "heavy go-build+run e2e leg; runs nightly (--ignored). Per-commit legs: durable_snapshot_flow.rs + durable_tea_app_check.rs"]
 fn durable_cli_model_survives_a_restart_with_zero_annotation() {
     if !required(Need::Go, have_go()) {
         return;
