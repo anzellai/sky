@@ -4988,6 +4988,23 @@ fn render_flow_svg(r: &FlowReport) -> String {
     let lane_w = width - left * 2.0;
     let confidential_n = j.actions.iter().filter(|a| r.classifications.get(&a.msg).map(|c| c.confidential).unwrap_or(false)).count();
 
+    // Lane + trust-boundary labels differ by app shape: a Sky.Spa client is a wasm
+    // app reaching the server over `/_rpc`; a Sky.Live client is a plain browser
+    // (server-rendered HTML) reaching the server over an SSE event channel. Only
+    // Spa/Live reach here (the early return handled Http/Cli/Tui).
+    let (client_lane, server_lane, boundary_label) = match j.shape {
+        AppShape::Live => (
+            "① Browser — pages the user sees",
+            "② Server (SSR + SSE) — every effect runs here",
+            "— — — trust boundary: HTTPS / SSE events — — —",
+        ),
+        _ => (
+            "① Browser client (wasm) — pages the user sees",
+            "② Server (/_rpc) — every effect runs here",
+            "— — — trust boundary: HTTPS / _rpc — — —",
+        ),
+    };
+
     // ---- Lane 1: Browser client (wasm) — page nodes in wrapped rows. ----
     let mut y = 60.0;
     let pn_w = 150.0_f64;
@@ -4997,7 +5014,7 @@ fn render_flow_svg(r: &FlowReport) -> String {
     let pages: Vec<&JourneyPage> = j.pages.iter().collect();
     let rows = if pages.is_empty() { 1 } else { (pages.len() + per_row - 1) / per_row };
     let lane1_h = 30.0 + rows as f64 * (pn_h + gap);
-    svg.zone(left, y, lane_w, lane1_h, "① Browser client (wasm) — pages the user sees", d::CLIENT_EDGE);
+    svg.zone(left, y, lane_w, lane1_h, client_lane, d::CLIENT_EDGE);
     let mut server_anchor_x = left + lane_w / 2.0;
     if pages.is_empty() {
         svg.node(left + 20.0, y + 30.0, pn_w, pn_h, d::FILL, d::CLIENT_EDGE, "(single view)", None);
@@ -5018,7 +5035,7 @@ fn render_flow_svg(r: &FlowReport) -> String {
     let sv_h = 56.0_f64;
     let lane2_h = 30.0 + sv_h + 14.0;
     let boundary_y = y - 24.0;
-    svg.zone(left, y, lane_w, lane2_h, "② Server (/_rpc) — every effect runs here", d::SERVER_EDGE);
+    svg.zone(left, y, lane_w, lane2_h, server_lane, d::SERVER_EDGE);
     let sv_x = left + lane_w / 2.0 - sv_w / 2.0;
     let sv_y = y + 30.0;
     let srv_sub = match j.shape {
@@ -5037,7 +5054,7 @@ fn render_flow_svg(r: &FlowReport) -> String {
     let cross_color = if confidential_n > 0 { CONF } else { d::CLIENT_EDGE };
     svg.edge(sv_cx, sv_y, server_anchor_x, boundary_y + 4.0, cross_color, Some(&act_label));
     // the trust boundary line
-    svg.text(left, boundary_y, "— — — trust boundary: HTTPS / _rpc — — —", "start", 10.5, "600", d::BOUNDARY_UNTRUSTED);
+    svg.text(left, boundary_y, boundary_label, "start", 10.5, "600", d::BOUNDARY_UNTRUSTED);
     y += lane2_h + 46.0;
 
     // ---- Lane 3: Data store ----
@@ -5094,13 +5111,20 @@ fn render_flow_md(r: &FlowReport) -> String {
         AppShape::Http => "Sky.Http.Server (HTTP API, no user journey)",
     };
     o.push_str(&format!("App shape: {shape_line}\n\n"));
-    o.push_str(
+    // On a Sky.Spa app each action is classified `/_rpc` (server round-trip) vs
+    // client; a Sky.Live app has no `/_rpc` boundary — every action reaches the
+    // one server over the SSE event channel — so there is no per-action lane chip.
+    let lane_clause = match j.shape {
+        AppShape::Live => "its effect families",
+        _ => "its lane (`/_rpc` vs client), effect families",
+    };
+    o.push_str(&format!(
         "The interaction graph: each page is a state the user sees; each action is \
-         an edge out of the page whose view can trigger it, labelled with its lane \
-         (`/_rpc` vs client), effect families, the page it navigates to (**bold**), \
-         its async continuation (⇢ _Msg_), and a 🔒 marker when the flow carries \
-         confidential data (a `Secret`, a `Std.Auth` session, or PII).\n\n",
-    );
+         an edge out of the page whose view can trigger it, labelled with {lane_clause}, \
+         the page it navigates to (**bold**), its async continuation (⇢ _Msg_), and a 🔒 \
+         marker when the flow carries confidential data (a `Secret`, a `Std.Auth` \
+         session, or PII).\n\n",
+    ));
     // ---- overlays: data store + external systems (sub-processors) ----
     if let Some(store) = &r.data_store {
         o.push_str(&format!("**Data store:** {store}\n\n"));
