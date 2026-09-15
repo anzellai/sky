@@ -199,11 +199,21 @@ awaitSignal : Ctx -> Codec a -> String -> Task Error a               -- passive,
   - **history compaction** — `Durable.compact db retentionMs` collapses the journal
     of terminal runs while keeping each run's summary (output + status). The
     continue-as-new form (deleting the run rows themselves) builds on it.
-- **v2 — an epic, not shipped:** **transparent replay** — fold the app's own `Msg`
-  history through `update`, replaying journalled effect results, so a Sky.Live/Spa
-  TEA app is durable with no explicit `step`. This is NOT a stdlib patch: it needs
-  new Go runtime kernels (an effect-journal seam in the `Cmd` dispatcher, a Model
-  snapshot kernel) and touches every TEA loop. Scoped in
-  [`durable-transparent-replay.md`](durable-transparent-replay.md); left for an
-  explicit decision.
+- **v2 — durable TEA replay — shipped (restore-on-first-tick), pure Sky:**
+  - **model snapshot** — `Durable.saveSnapshot` / `saveSnapshotAuto` / `loadSnapshot`
+    serialise a Model with `Std.Codec` to `_sky_durable_snapshot` and restore it as a
+    restart would; write-if-newer by `seq`. No kernel (the earlier "snapshot kernel"
+    premise was refuted — see [`durable-transparent-replay.md`](durable-transparent-replay.md)).
+  - **TEA wiring** — a durable `Std.App` app adds one `Msg` variant and wires
+    `Durable.restoreCmd` (init loads the snapshot, model swaps in on tick one),
+    `Durable.snapshotCmd` (update persists the new model), `Durable.applyRestore`.
+    `Std.App`'s `init` stays synchronous; restore is a first tick, not a framework
+    change.
+  - The model must be a plain data value with a `Codec` (no function fields) — the
+    same rule Elm's ports impose.
+- **v2 — the one optional kernel:** FULLY annotation-free capture (durability for an
+  effect written as a plain `Cmd.perform`) still needs a runtime hook in the `Cmd`
+  dispatcher; it is optional, since `Durable.perform`/`snapshotCmd` give the same
+  guarantee with one annotation. Scoped in
+  [`durable-transparent-replay.md`](durable-transparent-replay.md).
 - **v2 — later:** the eval-replay pipeline reusing the same journal.
