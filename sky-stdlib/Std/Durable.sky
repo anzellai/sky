@@ -20,7 +20,12 @@ module Std.Durable exposing
     , isSuspend
     , compact
     , saveSnapshot
+    , saveSnapshotAuto
     , loadSnapshot
+    , SnapshotEvent(..)
+    , restoreCmd
+    , snapshotCmd
+    , applyRestore
     )
 
 {-| `Std.Durable` — durable, resumable workflows over `Std.Db` (Postgres or
@@ -73,6 +78,7 @@ import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.Maybe exposing (Maybe(..))
 import Sky.Core.Result exposing (Result(..))
 import Std.Codec as Codec exposing (Codec)
+import Std.Cmd as Cmd
 import Std.Db as Db exposing (Db, SqlValue(..))
 import Std.Db.Store as Store
 
@@ -830,3 +836,96 @@ loadSnapshot db runId codec =
                     Nothing ->
                         Nothing
             )
+
+
+{-| Like `saveSnapshot`, but the caller does not manage the `seq` — it is
+auto-incremented in the write (the current row's `seq` + 1). Correct for a
+serialised TEA loop, where one Msg is processed at a time so snapshots do not
+overlap. This is what `snapshotCmd` uses.
+-}
+saveSnapshotAuto : Db -> String -> Codec a -> a -> Task Error ()
+saveSnapshotAuto db runId codec model =
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                Db.exec db
+                    ("INSERT INTO _sky_durable_snapshot (run_id, seq, model_json, updated_at) "
+                        ++ "VALUES (?, COALESCE((SELECT seq FROM _sky_durable_snapshot WHERE run_id = ?), 0) + 1, ?, ?) "
+                        ++ "ON CONFLICT (run_id) DO UPDATE SET "
+                        ++ "seq = _sky_durable_snapshot.seq + 1, model_json = excluded.model_json, updated_at = excluded.updated_at"
+                    )
+                    [ SqlString runId, SqlString runId, SqlString (Codec.toJson codec model), SqlInt now ]
+                    |> Task.map (\_ -> ())
+            )
+
+
+-- ---------------------------------------------------------------------------
+-- Durable TEA (v2) — restore-on-first-tick wiring for a Std.App / Sky.Live app
+-- ---------------------------------------------------------------------------
+
+
+{-| The event a durable TEA app routes through one added `Msg` variant. `Restored`
+carries the model loaded at startup (`Nothing` for a fresh run); `Persisted`
+acknowledges a snapshot write. -}
+type SnapshotEvent model
+    = Restored (Maybe model)
+    | Persisted
+
+
+{-| A `Cmd` for the app's `init` that loads the last snapshot and delivers it as
+`Restored`. Wire it into `init` alongside your own initial `Cmd`; the model starts
+from your `init` value and is swapped to the restored one on the first tick
+(`applyRestore`). This is the restore-on-first-tick model — it needs no change to
+`Std.App`'s synchronous `init`.
+
+    init seed =
+        let ( m, c ) = myInit seed
+        in ( m, Cmd.batch [ c, Durable.restoreCmd db "session-1" modelCodec Durable ] )
+-}
+restoreCmd : Db -> String -> Codec model -> (SnapshotEvent model -> msg) -> Cmd msg
+restoreCmd db runId codec toMsg =
+    Cmd.perform (loadSnapshot db runId codec)
+        (\res ->
+            toMsg
+                (Restored
+                    (case res of
+                        Ok mm ->
+                            mm
+
+                        Err _ ->
+                            Nothing
+                    )
+                )
+        )
+
+
+{-| A `Cmd` for the app's `update` that snapshots the new model after a real
+update, delivering `Persisted`. Add it to the `Cmd` your `update` returns.
+
+    update msg model =
+        case msg of
+            Durable ev ->
+                ( Durable.applyRestore ev model, Cmd.none )
+
+            _ ->
+                let ( m2, c ) = myUpdate msg model
+                in ( m2, Cmd.batch [ c, Durable.snapshotCmd db "session-1" modelCodec Durable m2 ] )
+-}
+snapshotCmd : Db -> String -> Codec model -> (SnapshotEvent model -> msg) -> model -> Cmd msg
+snapshotCmd db runId codec toMsg model =
+    Cmd.perform (saveSnapshotAuto db runId codec model) (\_ -> toMsg Persisted)
+
+
+{-| Apply a `SnapshotEvent` in `update`: `Restored (Just m)` swaps in the restored
+model; everything else keeps the current model. -}
+applyRestore : SnapshotEvent model -> model -> model
+applyRestore ev model =
+    case ev of
+        Restored (Just m) ->
+            m
+
+        Restored Nothing ->
+            model
+
+        Persisted ->
+            model

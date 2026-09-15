@@ -1,0 +1,75 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Std.Ui as Ui exposing (Element)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Db as Db exposing (Db)
+import Std.Codec as Codec exposing (Codec)
+import Std.Durable as Durable
+
+
+type alias Model =
+    { count : Int }
+
+
+modelCodec : Codec Model
+modelCodec =
+    Codec.auto { count = 0 }
+
+
+type Msg
+    = Increment
+    | Durable (Durable.SnapshotEvent Model)
+
+
+runId : String
+runId =
+    "counter-session"
+
+
+init : Db -> () -> ( Model, Cmd Msg )
+init db _ =
+    ( { count = 0 }
+    , Durable.restoreCmd db runId modelCodec Durable
+    )
+
+
+update : Db -> Msg -> Model -> ( Model, Cmd Msg )
+update db msg model =
+    case msg of
+        Increment ->
+            let
+                m2 =
+                    { model | count = model.count + 1 }
+            in
+            ( m2, Durable.snapshotCmd db runId modelCodec Durable m2 )
+
+        Durable ev ->
+            ( Durable.applyRestore ev model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column []
+        [ Ui.text ("count: " ++ String.fromInt model.count) ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+mkApp db =
+    App.app { init = init db, update = update db, view = view, subscriptions = subscriptions }
+        |> App.withNotFound (view { count = 0 })
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen (\db -> Durable.setup db |> Task.andThen (\_ -> App.run (mkApp db)))
