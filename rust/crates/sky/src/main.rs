@@ -6226,9 +6226,8 @@ Usage:
                                 render an architecture diagram of this project
 
 Diagram kinds:
-  flow         the behaviour graph: pages, the actions each page's view can
-               dispatch, their effects/RPC, navigation, and async continuations
-               (replaces `journey`, which is now an alias for it)
+  journey      the behaviour graph: each page, the actions its view can dispatch,
+               their effects/RPC, the page they navigate to, and async continuations
   components   modules and the capability families each one reaches
   wire         /_rpc + raw HTTP endpoints, with request/response shapes
   telemetry    the metrics/log/trace surface the app emits
@@ -6245,17 +6244,12 @@ Formats: puml (default, PlantUML) · md (Markdown tables) · svg (self-contained
 /// `md` a Markdown table, `svg` a self-contained SVG we draw ourselves.
 /// `--out <path>` writes to a file instead of stdout. Mermaid is retired.
 fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[String]) -> ExitCode {
-    const PLANNED: &[&str] = &["flow", "components", "wire", "telemetry", "callpath"];
-    if kind != "components"
-        && kind != "wire"
-        && kind != "telemetry"
-        && kind != "flow"
-        && kind != "journey"
-    {
+    const PLANNED: &[&str] = &["journey", "components", "wire", "telemetry", "callpath"];
+    if kind != "components" && kind != "wire" && kind != "telemetry" && kind != "journey" {
         eprintln!(
             "sky doc --diagram {kind}: not yet implemented.\n\
              Planned diagram kinds: {}.\n\
-             Available in this release: `flow`, `components`, `wire`, `telemetry`.",
+             Available in this release: `journey`, `components`, `wire`, `telemetry`.",
             PLANNED.join(", ")
         );
         return ExitCode::from(2);
@@ -6377,12 +6371,9 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
         return out;
     }
 
-    // `flow` is the behaviour graph. `journey` is the old name — it is now an
-    // alias that renders the same flow diagram, with a one-line note to stderr.
-    if kind == "flow" || kind == "journey" {
-        if kind == "journey" {
-            eprintln!("note: `journey` is now `flow` (the behaviour graph); rendering `flow`.");
-        }
+    // `journey` is the behaviour graph: pages as states, actions as the edges out
+    // of the page whose view dispatches them (built by analyze_flow/render_flow).
+    if kind == "journey" {
         let out = match project::diagram::analyze_flow(
             repo_root,
             analysis_dir,
@@ -6407,13 +6398,13 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
                 ) {
                     Ok(report) => emit(project::diagram::render_flow(&report, format)),
                     Err(e) => {
-                        eprintln!("sky doc --diagram flow: {e}");
+                        eprintln!("sky doc --diagram journey: {e}");
                         ExitCode::FAILURE
                     }
                 }
             }
             Err(e) => {
-                eprintln!("sky doc --diagram flow: {e}");
+                eprintln!("sky doc --diagram journey: {e}");
                 ExitCode::FAILURE
             }
         };
@@ -9859,7 +9850,7 @@ fn print_help() {
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
          \x20 fuzz  <file> [--target <t>]  no-panic model fuzz of update; --target web:app etc. adds the differential split oracle\n\
-         \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (flow|components|wire|telemetry)\n\
+         \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (journey|components|wire|telemetry)\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );
