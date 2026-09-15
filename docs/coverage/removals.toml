@@ -240,6 +240,20 @@ then the path, when no name is set."""
 owner  = "anzel"
 commit = "e4681c1a"
 
+[[config-surface-rise]]
+metric = "pre_binary_surfaces"
+from   = 15
+to     = 16
+reason = """the new key is `version`: `sky doc --api openapi` reads `[project] \
+version` (via project::sky_toml_project_key, the same reader as the `name` rise \
+above) for the generated spec's `info.version`, so the OpenAPI document carries the \
+app's real version; falls back to `0.0.0`. `version` is an already-accepted, \
+universally-present sky.toml key, and this is a READ-ONLY read in the `sky doc` \
+TOOLING path, never the app runtime — so it enlarges no runtime residual config \
+surface (the §12 risk-1 concern this metric guards)."""
+owner  = "anzel"
+commit = "3bf1fa17"
+
 [[removal]]
 symbol = "Std.Ui.rowMarker"
 reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
