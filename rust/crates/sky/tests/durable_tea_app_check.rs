@@ -56,6 +56,12 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[test]
+// T1 tier-budget: a `sky check` (go build) of the fixture on the per-commit
+// test-sky tier, which sits at ~96% of its 990s ceiling. Runs NIGHTLY via
+// `cargo test -p sky -- --ignored`. The App.withDurable compile path stays
+// covered PER-COMMIT by examples/67-durable-counter, which the build-corpus job
+// go-builds every push. Remove #[ignore] only with a matching T1 budget cut.
+#[ignore = "heavy go-build leg; runs nightly (--ignored). Per-commit compile: examples/67-durable-counter in build-corpus"]
 fn durable_tea_wiring_type_checks_and_go_builds() {
     if !required(Need::Go, have_go()) {
         return;

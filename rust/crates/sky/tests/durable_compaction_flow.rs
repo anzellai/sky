@@ -55,6 +55,12 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[test]
+// T1 tier-budget: a go-build + run of the fixture on the per-commit test-sky
+// tier, which sits at ~96% of its 990s ceiling. Runs NIGHTLY via
+// `cargo test -p sky -- --ignored`. Per-commit durable behaviour stays covered by
+// the pre-existing v1 durable_flow.rs. Remove #[ignore] only with a matching T1
+// budget cut.
+#[ignore = "heavy go-build+run e2e leg; runs nightly (--ignored)"]
 fn compact_collapses_terminal_journal_and_keeps_the_summary() {
     if !required(Need::Go, have_go()) {
         return;

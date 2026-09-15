@@ -58,6 +58,12 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[test]
+// T1 tier-budget: a go-build + run of the fixture (~30-60s cold) on the
+// per-commit test-sky tier, which sits at ~96% of its 990s ceiling. Runs NIGHTLY
+// via `cargo test -p sky -- --ignored`; the native function-calling code still
+// type-checks and builds per-commit through the stdlib. Remove #[ignore] only
+// with a matching T1 budget cut.
+#[ignore = "heavy go-build+run e2e leg; runs nightly (--ignored)"]
 fn native_tool_loop_round_trips_offline() {
     if !required(Need::Go, have_go()) {
         return;

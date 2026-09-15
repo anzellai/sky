@@ -57,6 +57,12 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[test]
+// T1 tier-budget: a go-build + run of the fixture on the per-commit test-sky
+// tier, which sits at ~96% of its 990s ceiling. Runs NIGHTLY via
+// `cargo test -p sky -- --ignored`. The App wiring that consumes this substrate
+// is still guarded per-commit by durable_tea_app_check.rs (compile). Remove
+// #[ignore] only with a matching T1 budget cut.
+#[ignore = "heavy go-build+run e2e leg; runs nightly (--ignored)"]
 fn model_snapshot_round_trips_and_write_if_newer_holds() {
     if !required(Need::Go, have_go()) {
         return;
