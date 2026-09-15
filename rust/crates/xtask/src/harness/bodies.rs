@@ -37,7 +37,7 @@ use std::process::Command;
 /// **187 since 2026-08-24**: the v0.22.0 Sky.Spa release added examples
 /// `61-app-kanban`, `62-app-notes`, `63-app-chat` and `64-app-native` (+9 `.sky`
 /// files across their `src/`); all still reprint byte-exact with zero ERROR nodes.
-pub const ROUNDTRIP_EXPECTED: u64 = 189;  // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky)
+pub const ROUNDTRIP_EXPECTED: u64 = 190;  // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo)
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -755,7 +755,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 140;  // +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone)
+pub const SHARED_WORLD_EXPECTED: u64 = 141;  // +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator

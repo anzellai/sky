@@ -67,22 +67,6 @@
 # closed adapters the golden still reserved slack for, and that slack is now
 # gone. The `narrow` fall is a decrease in SITE count and is not a speedup
 # measurement — nothing here weights a site by how often it runs.
-#
-# ── Recorded transition, 2026-09-15 — zero-annotation durable TEA field ──
-# `feat(stdlib): App.withDurable` adds one field, `durable : DurableWiring model`,
-# to the `Std.App` `App` record (the home for the model-parameterised restore /
-# persist closures; it cannot live in the model-agnostic BaseConfig / Config).
-# Every App-record generic-erase adapter therefore coerces one more field
-# (`rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable)`), and `noDurableWiring`
-# constructs one — the going per-field rate that Guard / Head / OnKey / OnNavigate
-# already pay. `narrow` rises by +4 to +9 on each App-based project, PROPORTIONAL
-# to that project's record-adapter count (a bare Cli app has 4 sites; a composite
-# multi-backend app has 9); non-App projects are unchanged. Verified category-2
-# (intentional source change, doc 14 §1): every delta sits in a function inlined
-# from the changed Std.App source — none in an untouched function — so this is NOT
-# the forbidden corpus-wide bless that masks a compiler regression (v0.22 lesson).
-# The disabled path (`enabled = False`) is never dispatched at run time; the cost
-# is the record field's presence, not its use.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -143,6 +127,7 @@
 64-app-native	adapter=0	dispatch=0	narrow=342
 65-metadata-service	adapter=0	dispatch=0	narrow=41
 66-slack-agent	adapter=0	dispatch=0	narrow=160
+67-durable-counter	adapter=0	dispatch=0	narrow=82
 apps/dispatch	adapter=0	dispatch=0	narrow=465
 apps/fieldbook	adapter=0	dispatch=0	narrow=695
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2

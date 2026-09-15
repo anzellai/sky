@@ -48,17 +48,17 @@
   "config": {
     "_note": "counted over distinct paths: apps/ledger backs two member rows and must not have its sections counted twice.",
     "database_drivers": {
-      "sqlite": 14
+      "sqlite": 15
     },
-    "paths_with_sky_toml": 57,
+    "paths_with_sky_toml": 58,
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
-      "[app]": 4,
-      "[database]": 14,
+      "[app]": 5,
+      "[database]": 15,
       "[dependencies]": 1,
       "[live]": 2,
-      "[source]": 53
+      "[source]": 54
     }
   },
   "gates": {
@@ -708,12 +708,12 @@
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
-      "Example": 63,
+      "Example": 64,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 82
+    "units_total": 83
   },
   "surfaces": [
     {
@@ -3354,6 +3354,11 @@
             "strength": 2
           },
           {
+            "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -3506,6 +3511,11 @@
           },
           {
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/67-durable-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -5400,6 +5410,11 @@
             "strength": 2
           },
           {
+            "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -5672,6 +5687,11 @@
           },
           {
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/67-durable-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -6121,6 +6141,11 @@
             "strength": 2
           },
           {
+            "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -6293,6 +6318,11 @@
           },
           {
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/67-durable-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -7434,6 +7464,11 @@
             "by": "examples/64-app-native (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
           }
         ],
         "strength": 4
@@ -7573,6 +7608,11 @@
           },
           {
             "by": "examples/64-app-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/67-durable-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           }
@@ -7909,6 +7949,11 @@
             "strength": 2
           },
           {
+            "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Live (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -8045,6 +8090,11 @@
             "strength": 2
           },
           {
+            "by": "examples/67-durable-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Live — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
@@ -8147,6 +8197,11 @@
             "strength": 2
           },
           {
+            "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -8224,6 +8279,11 @@
           },
           {
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/67-durable-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -8546,6 +8606,11 @@
             "strength": 2
           },
           {
+            "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -8628,6 +8693,11 @@
           },
           {
             "by": "examples/66-slack-agent (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/67-durable-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -10626,6 +10696,11 @@
             "strength": 2
           },
           {
+            "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
             "by": "tests/Live (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -10763,6 +10838,11 @@
           },
           {
             "by": "examples/64-app-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
+            "class": "Runs",
+            "strength": 2
+          },
+          {
+            "by": "examples/67-durable-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
           },
@@ -12754,14 +12834,13 @@
           ]
         },
         "Std.App": {
-          "count": 20,
+          "count": 18,
           "symbols": [
             "BaseConfig",
             "Config",
             "DesktopOpts",
             "DurableWiring",
             "MobileOpts",
-            "NoFallback",
             "TabletOpts",
             "TerminalOpts",
             "WebOpts",
@@ -12774,7 +12853,6 @@
             "tabletDefaults",
             "terminalDefaults",
             "withBase",
-            "withDurable",
             "withRpcError"
           ]
         },
@@ -13438,8 +13516,8 @@
           ]
         }
       },
-      "count": 655,
-      "pct_of_denominator": 33.6
+      "count": 653,
+      "pct_of_denominator": 33.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13810,7 +13888,7 @@
           ]
         },
         "Std.App": {
-          "count": 21,
+          "count": 19,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -13818,7 +13896,6 @@
             "DurableWiring",
             "HasFallback",
             "MobileOpts",
-            "NoFallback",
             "TabletOpts",
             "TerminalOpts",
             "WebOpts",
@@ -13831,7 +13908,6 @@
             "tabletDefaults",
             "terminalDefaults",
             "withBase",
-            "withDurable",
             "withRpcError"
           ]
         },
@@ -14566,8 +14642,8 @@
           ]
         }
       },
-      "count": 737,
-      "pct_of_denominator": 37.8
+      "count": 735,
+      "pct_of_denominator": 37.7
     }
   },
   "units": [
@@ -15582,6 +15658,24 @@
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
+        "[database]",
+        "[source]"
+      ]
+    },
+    {
+      "db_drivers": [
+        "sqlite"
+      ],
+      "gate": null,
+      "id": "examples/67-durable-counter",
+      "modules_imported": 8,
+      "path": "examples/67-durable-counter",
+      "refs_generous": 14,
+      "refs_qualified": 12,
+      "role": "Example",
+      "sky_files": 1,
+      "sky_toml_sections": [
+        "[app]",
         "[database]",
         "[source]"
       ]

@@ -1,0 +1,16 @@
+name = "durable-counter"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[app]
+# App.cli renders a String view — terminal-only. Persist the backend so a bare
+# `sky build` / `sky run` targets the CLI (an explicit --target still wins).
+target = "terminal:cli"
+
+[database]
+# A single sqlite file holds the durable model snapshot. Tier-1 default.
+driver = "sqlite"
+path = "counter.db"

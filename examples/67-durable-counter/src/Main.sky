@@ -1,0 +1,69 @@
+module Main exposing (main)
+
+-- Zero-annotation durability with `App.withDurable`.
+--
+-- This is an ordinary `App.cli` counter: the `Model`, `Msg`, `init`, `update`
+-- and `view` know nothing about persistence. The ONE line that makes the app
+-- durable is `App.withDurable db modelCodec` in `mkApp`. The runtime restores
+-- the model when the program starts and snapshots it after every update, so the
+-- count survives a restart with no change to the TEA core.
+--
+-- Try it:
+--     sky run src/Main.sky        # type Enter a few times, then Ctrl-D
+--     sky run src/Main.sky        # starts again from the count you left
+--
+-- The model must be `Codec`-serialisable data (no function fields). The same
+-- `App.withDurable` works unchanged on web (`--target web`, keyed by the session
+-- id) and terminal:tui. An in-flight effect is at-most-once across a crash — use
+-- a `Std.Durable` step (`Durable.step`) when an effect must run exactly once.
+-- See docs/skyapp/overview.md.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Db as Db exposing (Db)
+import Std.Codec as Codec exposing (Codec)
+
+
+type alias Model =
+    { count : Int }
+
+
+modelCodec : Codec Model
+modelCodec =
+    Codec.auto { count = 0 }
+
+
+type Msg
+    = Bump
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ model =
+    ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> String
+view model =
+    "count: " ++ String.fromInt model.count ++ " (press Enter to bump, Ctrl-D to quit)\n"
+
+
+mkApp : Db -> App.App App.NoFallback () () Model Msg ()
+mkApp db =
+    App.cli { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+        |> App.withInput (\_ -> Bump)
+        |> App.withDurable db modelCodec
+
+
+main : Task Error ()
+main =
+    Db.connect () |> Task.andThen (\db -> App.run (mkApp db))

@@ -281,6 +281,13 @@ declare -a EXAMPLES=(
     # Panicked with `reflect: struct{OrderId} as struct{ProductId;Qty}`
     # before the lower_lambda full-record-return fix.
     "53-record-update-map:cli"
+    # 67 — zero-annotation durable TEA (App.withDurable). A Cli counter whose
+    # model / msg / update carry NO persistence; the one App.withDurable line
+    # snapshots the model to sqlite after each update and restores it on start.
+    # Run headless the stdin reader hits EOF and the loop exits Ok(0) after the
+    # first render (a build + clean-exit assertion; the restart behaviour is
+    # proven behaviourally by rust/crates/sky/tests/durable_tea_cli_flow.rs).
+    "67-durable-counter:cli"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

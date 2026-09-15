@@ -233,7 +233,9 @@ guarantees the state up to the last completed `update`; an effect in flight at t
 moment of a crash is at-most-once. For an effect that must run exactly once across
 a resume (a payment, an outbound message), drive it through a `Std.Durable`
 step-journalled workflow (`Durable.step`) rather than a bare `Cmd.perform`. See
-`docs/design/durable-execution.md`.
+`docs/design/durable-execution.md`. A runnable demonstration is
+`examples/67-durable-counter` (a Cli counter that keeps its count across restarts
+through the one `App.withDurable` line).
 
 ## View adapter
 
