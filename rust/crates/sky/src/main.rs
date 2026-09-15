@@ -6226,9 +6226,11 @@ Usage:
                                 render an architecture diagram of this project
 
 Diagram kinds:
+  flow         the behaviour graph: pages, the actions each page's view can
+               dispatch, their effects/RPC, navigation, and async continuations
+               (replaces `journey`, which is now an alias for it)
   components   modules and the capability families each one reaches
   wire         /_rpc + raw HTTP endpoints, with request/response shapes
-  journey      pages, URLs, and each user action (effectful vs pure)
   telemetry    the metrics/log/trace surface the app emits
 
 Formats: puml (default, PlantUML) · md (Markdown tables) · svg (self-contained).
@@ -6243,12 +6245,17 @@ Formats: puml (default, PlantUML) · md (Markdown tables) · svg (self-contained
 /// `md` a Markdown table, `svg` a self-contained SVG we draw ourselves.
 /// `--out <path>` writes to a file instead of stdout. Mermaid is retired.
 fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[String]) -> ExitCode {
-    const PLANNED: &[&str] = &["components", "wire", "telemetry", "journey", "callpath"];
-    if kind != "components" && kind != "wire" && kind != "telemetry" && kind != "journey" {
+    const PLANNED: &[&str] = &["flow", "components", "wire", "telemetry", "callpath"];
+    if kind != "components"
+        && kind != "wire"
+        && kind != "telemetry"
+        && kind != "flow"
+        && kind != "journey"
+    {
         eprintln!(
             "sky doc --diagram {kind}: not yet implemented.\n\
              Planned diagram kinds: {}.\n\
-             Available in this release: `components`, `wire`, `telemetry`, `journey`.",
+             Available in this release: `flow`, `components`, `wire`, `telemetry`.",
             PLANNED.join(", ")
         );
         return ExitCode::from(2);
@@ -6370,8 +6377,13 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
         return out;
     }
 
-    if kind == "journey" {
-        let out = match project::diagram::analyze_journey(
+    // `flow` is the behaviour graph. `journey` is the old name — it is now an
+    // alias that renders the same flow diagram, with a one-line note to stderr.
+    if kind == "flow" || kind == "journey" {
+        if kind == "journey" {
+            eprintln!("note: `journey` is now `flow` (the behaviour graph); rendering `flow`.");
+        }
+        let out = match project::diagram::analyze_flow(
             repo_root,
             analysis_dir,
             analysis_entry.as_deref(),
@@ -6380,30 +6392,28 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
             // An app with no discernible pages is not an error: the report
             // carries the note and (when available) the action inventory.
             Ok(mut report) => {
-                report.project = project_label;
-                emit(project::diagram::render_journey(&report, format))
+                report.journey.project = project_label;
+                emit(project::diagram::render_flow(&report, format))
             }
             // If the synthesised project failed to load, fall back to the raw
-            // project so a journey is still produced (pages + actions live in
-            // the user's own modules either way; classification degrades).
+            // project so a graph is still produced (pages + actions live in the
+            // user's own modules either way; classification degrades).
             Err(_) if staged.is_some() => {
-                match project::diagram::analyze_journey(
+                match project::diagram::analyze_flow(
                     repo_root,
                     project_dir,
                     None,
                     app_target.as_deref(),
                 ) {
-                    Ok(report) => {
-                        emit(project::diagram::render_journey(&report, format))
-                    }
+                    Ok(report) => emit(project::diagram::render_flow(&report, format)),
                     Err(e) => {
-                        eprintln!("sky doc --diagram journey: {e}");
+                        eprintln!("sky doc --diagram flow: {e}");
                         ExitCode::FAILURE
                     }
                 }
             }
             Err(e) => {
-                eprintln!("sky doc --diagram journey: {e}");
+                eprintln!("sky doc --diagram flow: {e}");
                 ExitCode::FAILURE
             }
         };
@@ -9849,7 +9859,7 @@ fn print_help() {
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
          \x20 fuzz  <file> [--target <t>]  no-panic model fuzz of update; --target web:app etc. adds the differential split oracle\n\
-         \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (components|wire|journey|telemetry)\n\
+         \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (flow|components|wire|telemetry)\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );

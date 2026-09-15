@@ -3906,6 +3906,451 @@ fn render_journey_md(r: &JourneyReport) -> String {
     o
 }
 
+// ============================================================================
+// flow — the behaviour graph (slice 1). A grounded interaction graph: the
+// journey's pages + actions, PLUS which Msgs each page's VIEW can dispatch (so
+// an action is an edge OUT of the page the user is on, not the whole inventory),
+// PLUS the async CONTINUATION each effectful action's command dispatches. This
+// replaces `journey`. Compliance overlays (Secret classification, named external
+// systems) are slice 2.
+// ============================================================================
+
+/// The behaviour graph for a project. Wraps the [`JourneyReport`] with the two
+/// grounding edge-classes only `flow` adds.
+pub struct FlowReport {
+    /// The base journey (pages, actions, nav targets, effect classification).
+    pub journey: JourneyReport,
+    /// Page constructor name → the Msg constructor names its view can dispatch.
+    /// Empty for a page whose view could not be attributed; see `grounded`.
+    pub page_actions: HashMap<String, Vec<String>>,
+    /// Msg → the follow-up Msg(s) its `Cmd.perform` result dispatches — the async
+    /// continuation edges (`LoadPosts ⇢ GotPosts`). From the Sky.Spa auto-split.
+    pub continuations: HashMap<String, Vec<String>>,
+    /// True when at least one page's view was attributed (per-page grounding is
+    /// real). False → every action is shown on every page (documented fallback).
+    pub grounded: bool,
+}
+
+/// The Msg union DefId — the union `update`'s dispatch `case` matches on. Its
+/// constructors are the app's user actions; a value of one of them in a view is
+/// a handler the user can trigger.
+fn msg_union_of_update(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Option<DefId> {
+    for mid in check_ids {
+        let resolved = db.resolve(*mid);
+        let Some(td) = resolved.top_defs.iter().find(|t| t.name.as_str() == "update") else {
+            continue;
+        };
+        let Some(body) = resolved.bodies.get(&td.def) else { continue };
+        let Some(case_e) = find_dispatch_case(body) else { continue };
+        let Expr::Case { branches, .. } = &body.exprs[case_e] else { continue };
+        for br in branches {
+            if let Pattern::Ctor { ctor: Some(c), .. } = &body.pats[br.pat] {
+                return Some(c.type_);
+            }
+        }
+    }
+    None
+}
+
+/// Collect every Msg-union constructor name in a single expression `e` of `body`,
+/// and the project defs the expression references (returned for a transitive
+/// follow). Used per body by [`view_msgs_in`].
+fn collect_msgs_and_refs(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    msg_union: DefId,
+    project_modules: &HashSet<ModuleId>,
+    out: &mut BTreeSet<String>,
+    refs: &mut Vec<DefId>,
+) {
+    let mut ids: Vec<ExprId> = Vec::new();
+    walk_exprs(body, e, &mut |x| ids.push(x));
+    for x in &ids {
+        if let Some((cn, u)) = value_ctor(db, body, *x) {
+            if u == msg_union {
+                out.insert(cn);
+            }
+        }
+        if let Expr::Var(Res::Def(d)) = &body.exprs[*x] {
+            if db.def_loc(*d).map(|l| project_modules.contains(&l.module)).unwrap_or(false) {
+                refs.push(*d);
+            }
+        }
+    }
+}
+
+/// Collect every Msg-union constructor reachable from `e` in `body`, TRANSITIVELY
+/// through the project defs it calls — so a page arm that calls `viewHome model`,
+/// which calls `postForm`, which builds a `Ui.button [ onPress = Just Publish ]`,
+/// still attributes `Publish` to that page. Bounded by a visited set (a def is
+/// walked once) and a hard node cap, so a cyclic or huge view cannot loop or blow
+/// up. Real views nest several helper calls deep, hence the transitive walk.
+fn view_msgs_in(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    msg_union: DefId,
+    project_modules: &HashSet<ModuleId>,
+    out: &mut BTreeSet<String>,
+    _follow_defs: bool,
+) {
+    const CAP: usize = 4000;
+    let mut queue: Vec<DefId> = Vec::new();
+    // Msgs + project-def refs directly in the arm expression.
+    let Some(root) = body.root else { return };
+    let _ = root;
+    collect_msgs_and_refs(db, body, e, msg_union, project_modules, out, &mut queue);
+    let mut seen: HashSet<DefId> = HashSet::new();
+    while let Some(d) = queue.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        if seen.len() > CAP {
+            break;
+        }
+        let Some(loc) = db.def_loc(d) else { continue };
+        let resolved = db.resolve(loc.module);
+        let Some(dbody) = resolved.bodies.get(&d) else { continue };
+        let Some(droot) = dbody.root else { continue };
+        collect_msgs_and_refs(db, dbody, droot, msg_union, project_modules, out, &mut queue);
+    }
+}
+
+/// Attribute Msgs to the page whose view dispatches them. Finds the top `view`
+/// def; if it dispatches on the page field (`case model.page of Home -> …`),
+/// each arm's page constructor gets the Msgs its arm body (and the view helpers
+/// it calls) can dispatch. Returns `(page → msgs, grounded)`; `grounded` is false
+/// when no page-dispatching view was found (then the caller falls back to the
+/// whole inventory on every page).
+fn analyze_view_msgs(
+    db: &dyn SkyDb,
+    check_ids: &[ModuleId],
+    msg_union: Option<DefId>,
+    page_names: &HashSet<String>,
+) -> (HashMap<String, Vec<String>>, bool) {
+    let out: HashMap<String, Vec<String>> = HashMap::new();
+    let Some(msg_union) = msg_union else { return (out, false) };
+    if page_names.is_empty() {
+        return (out, false);
+    }
+    let project_modules: HashSet<ModuleId> = check_ids.iter().copied().collect();
+    // Find the page-dispatch `case`: the one whose arm constructors best match the
+    // page-name set, ANYWHERE in the project (it is usually in a `pageBody` /
+    // `viewPage` helper, not `view` itself). Require >= 2 matching arms so a
+    // coincidental one-arm match is not mistaken for the router.
+    let mut best: Option<(usize, ModuleId, DefId, ExprId)> = None;
+    for mid in check_ids {
+        let resolved = db.resolve(*mid);
+        for (d, body) in &resolved.bodies {
+            let Some(root) = body.root else { continue };
+            let mut cases: Vec<ExprId> = Vec::new();
+            walk_exprs(body, root, &mut |e| {
+                if matches!(body.exprs[e], Expr::Case { .. }) {
+                    cases.push(e);
+                }
+            });
+            for ce in cases {
+                let Expr::Case { branches, .. } = &body.exprs[ce] else { continue };
+                let n = branches
+                    .iter()
+                    .filter(|br| {
+                        pattern_ctor_name(body, br.pat)
+                            .map(|nm| page_names.contains(&nm))
+                            .unwrap_or(false)
+                    })
+                    .count();
+                if n >= 2 && best.map(|(bn, ..)| n > bn).unwrap_or(true) {
+                    best = Some((n, *mid, *d, ce));
+                }
+            }
+        }
+    }
+    let Some((_, mid, def, case_e)) = best else { return (out, false) };
+    // Re-resolve the winning module + walk each page arm for the Msgs its view
+    // (and the view helpers it calls) can dispatch.
+    let resolved = db.resolve(mid);
+    let Some(body) = resolved.bodies.get(&def) else { return (out, false) };
+    let Expr::Case { branches, .. } = &body.exprs[case_e] else { return (out, false) };
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let mut grounded = false;
+    for br in branches {
+        let Some(page) = pattern_ctor_name(body, br.pat) else { continue };
+        if !page_names.contains(&page) {
+            continue;
+        }
+        let mut msgs: BTreeSet<String> = BTreeSet::new();
+        view_msgs_in(db, body, br.body, msg_union, &project_modules, &mut msgs, true);
+        if !msgs.is_empty() {
+            grounded = true;
+        }
+        out.entry(page).or_default().extend(msgs);
+    }
+    if grounded {
+        for v in out.values_mut() {
+            v.sort();
+            v.dedup();
+        }
+        return (out, true);
+    }
+    (HashMap::new(), false)
+}
+
+/// Analyse a project's behaviour graph. Reuses [`analyze_journey`] for the base,
+/// then adds view→Msg grounding and command-continuation edges.
+pub fn analyze_flow(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    app_target: Option<&str>,
+) -> Result<FlowReport, String> {
+    let journey = analyze_journey(repo_root, project_dir, entry_module, app_target)?;
+    // View→Msg grounding (its own resolve pass; a diagram is not a hot path).
+    let (db, _entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let msg_union = msg_union_of_update(&db, &check_ids);
+    let page_names: HashSet<String> = journey.pages.iter().map(|p| p.name.clone()).collect();
+    let (page_actions, grounded) = analyze_view_msgs(&db, &check_ids, msg_union, &page_names);
+    // Continuation edges: for each `update` arm, the follow-up Msg(s) its returned
+    // `Cmd.perform task ToMsg` dispatches (`LoadPosts ⇢ GotPosts`). The general
+    // extractor reports every resolvable ToMsg, not the narrow auto-split subset.
+    let mut continuations: HashMap<String, Vec<String>> = HashMap::new();
+    for mid in &check_ids {
+        let resolved = db.resolve(*mid);
+        let Some(td) = resolved.top_defs.iter().find(|t| t.name.as_str() == "update") else {
+            continue;
+        };
+        let Some(body) = resolved.bodies.get(&td.def) else { continue };
+        let Some(case_e) = find_dispatch_case(body) else { break };
+        if let Expr::Case { branches, .. } = &body.exprs[case_e] {
+            for br in branches {
+                let Some(msg) = pattern_ctor_name(body, br.pat) else { continue };
+                let conts = crate::spa_partition::arm_continuation_msgs(&db, body, br.body);
+                if !conts.is_empty() {
+                    let e = continuations.entry(msg).or_default();
+                    e.extend(conts);
+                    e.sort();
+                    e.dedup();
+                }
+            }
+        }
+        break;
+    }
+    drop(db);
+    Ok(FlowReport {
+        journey,
+        page_actions,
+        continuations,
+        grounded,
+    })
+}
+
+/// The actions available on `page`: the grounded set from the view when we have
+/// it, else the whole action inventory (fallback). Returns references into
+/// `r.journey.actions`, ordered as the inventory is.
+fn actions_on_page<'a>(r: &'a FlowReport, page: &str) -> Vec<&'a JourneyAction> {
+    if r.grounded {
+        let allowed = r.page_actions.get(page);
+        r.journey
+            .actions
+            .iter()
+            .filter(|a| allowed.map(|s| s.contains(&a.msg)).unwrap_or(false))
+            .collect()
+    } else {
+        r.journey.actions.iter().collect()
+    }
+}
+
+/// One line describing an action edge: the Msg, its lane (server/_rpc vs client),
+/// effect families, navigation target, and async continuation.
+fn flow_action_line(r: &FlowReport, a: &JourneyAction) -> String {
+    let lane = match a.server {
+        Some(true) => " `POST /_rpc`".to_string(),
+        Some(false) => " client".to_string(),
+        None => String::new(),
+    };
+    let eff = if a.effect_families.is_empty() {
+        if a.effectful { " · effect".to_string() } else { String::new() }
+    } else {
+        format!(" · {}", a.effect_families.join(", "))
+    };
+    let mut nav: Vec<String> = a.navigates_to.clone();
+    if a.dynamic_nav {
+        nav.push("(dynamic)".to_string());
+    }
+    let nav_s = if nav.is_empty() {
+        String::new()
+    } else {
+        format!(" → **{}**", nav.join(", "))
+    };
+    let cont = match r.continuations.get(&a.msg) {
+        Some(cs) if !cs.is_empty() => format!(" ⇢ _{}_", cs.join(", ")),
+        _ => String::new(),
+    };
+    format!("`{}`{}{}{}{}", a.msg, lane, eff, nav_s, cont)
+}
+
+/// Render the behaviour graph to the requested format.
+pub fn render_flow(r: &FlowReport, format: Format) -> String {
+    match format {
+        Format::Md => render_flow_md(r),
+        Format::Puml => render_flow_puml(r),
+        // The SVG page state machine is shared with the journey renderer for
+        // slice 1; per-page view grounding in the SVG is a slice-2 polish.
+        Format::Svg => render_journey_svg(&r.journey),
+    }
+}
+
+fn render_flow_md(r: &FlowReport) -> String {
+    let j = &r.journey;
+    let mut o = String::new();
+    o.push_str(&format!("# Behaviour — {}\n\n", j.project));
+    let shape_line = match j.shape {
+        AppShape::Spa => "Sky.Spa (wasm client + server over /_rpc)",
+        AppShape::Live => "Sky.Live (one server, SSR + SSE)",
+        AppShape::Tui => "Sky.Tui (single terminal binary)",
+        AppShape::Cli => "Sky.Cli (single terminal binary)",
+        AppShape::Http => "Sky.Http.Server (HTTP API, no user journey)",
+    };
+    o.push_str(&format!("App shape: {shape_line}\n\n"));
+    o.push_str(
+        "The interaction graph: each page is a state the user sees; each action is \
+         an edge out of the page whose view can trigger it, labelled with its lane \
+         (`/_rpc` vs client), effect families, the page it navigates to (**bold**), \
+         and its async continuation (⇢ _Msg_).\n\n",
+    );
+    if j.pages.is_empty() && j.actions.is_empty() {
+        for n in &j.notes {
+            o.push_str(&format!("> {n}\n"));
+        }
+        return o;
+    }
+    // Pages first, initial page first.
+    let init = initial_page(j);
+    let mut order: Vec<usize> = (0..j.pages.len()).collect();
+    if let Some(i) = init {
+        order.sort_by_key(|&k| if k == i { 0 } else { 1 });
+    }
+    for &idx in &order {
+        let p = &j.pages[idx];
+        let is_init = Some(idx) == init;
+        let url = p.url.as_deref().map(|u| format!(" · `{u}`")).unwrap_or_default();
+        let star = if is_init { " (initial)" } else { "" };
+        o.push_str(&format!("## {}{}{}\n\n", p.name, url, star));
+        let acts = actions_on_page(r, &p.name);
+        if acts.is_empty() {
+            o.push_str("_No actions dispatched from this page's view._\n\n");
+            continue;
+        }
+        for a in acts {
+            o.push_str(&format!("- {}\n", flow_action_line(r, a)));
+        }
+        o.push('\n');
+    }
+    // Pages could not be found: fall back to the inventory as a flat list.
+    if j.pages.is_empty() {
+        o.push_str("## Actions\n\n");
+        for a in &j.actions {
+            o.push_str(&format!("- {}\n", flow_action_line(r, a)));
+        }
+        o.push('\n');
+    }
+    if !r.grounded && !j.pages.is_empty() {
+        o.push_str(
+            "> View→action attribution is not available for this app (its `view` does not \
+             dispatch on the page field), so every action is listed on every page. The \
+             navigation, effect, lane and continuation edges are still exact.\n",
+        );
+    }
+    // The journey's "one inventory / per-page attribution is best-effort" note is
+    // wrong for `flow` when we DID attribute per page — drop it; keep the rest.
+    for n in &j.notes {
+        if r.grounded && (n.contains("one inventory") || n.contains("per-page attribution")) {
+            continue;
+        }
+        o.push_str(&format!("> {n}\n"));
+    }
+    o
+}
+
+fn render_flow_puml(r: &FlowReport) -> String {
+    let j = &r.journey;
+    let mut o = String::new();
+    o.push_str("@startuml\n");
+    o.push_str(&format!("title Behaviour — {}\n", j.project));
+    o.push_str("hide empty description\n");
+    if j.pages.is_empty() {
+        // No pages: emit the actions as a note, matching the journey fallback.
+        o.push_str("state Actions\n");
+        for a in &j.actions {
+            o.push_str(&format!("Actions : {}\n", flow_action_line_plain(r, a)));
+        }
+        o.push_str("@enduml\n");
+        return o;
+    }
+    let init = initial_page(j);
+    for (idx, p) in j.pages.iter().enumerate() {
+        let id = page_node_id(&p.name);
+        o.push_str(&format!("state \"{}\" as {}\n", p.name, id));
+        if Some(idx) == init {
+            o.push_str(&format!("[*] --> {id}\n"));
+        }
+    }
+    // One transition per action that navigates, sourced from the page(s) whose
+    // view dispatches it (grounded), else from the initial page.
+    for a in &j.actions {
+        if a.navigates_to.is_empty() && !a.dynamic_nav {
+            continue;
+        }
+        let sources = flow_sources(r, &a.msg, init.map(|i| j.pages[i].name.clone()));
+        let arrow = match a.server {
+            Some(true) => format!("-[{}]->", diagram_svg::SERVER_EDGE),
+            Some(false) => format!("-[{}]->", diagram_svg::CLIENT_EDGE),
+            None => "-->".to_string(),
+        };
+        for src in &sources {
+            for t in &a.navigates_to {
+                o.push_str(&format!(
+                    "{} {} {} : {}\n",
+                    page_node_id(src),
+                    arrow,
+                    page_node_id(t),
+                    short_edge_label(&a.msg)
+                ));
+            }
+            if a.dynamic_nav {
+                o.push_str(&format!("{} --> [*] : {} (dynamic)\n", page_node_id(src), short_edge_label(&a.msg)));
+            }
+        }
+    }
+    o.push_str("@enduml\n");
+    o
+}
+
+/// The plain (no-markdown) form of [`flow_action_line`] for the puml note fallback.
+fn flow_action_line_plain(r: &FlowReport, a: &JourneyAction) -> String {
+    let s = flow_action_line(r, a);
+    s.replace(['`', '*', '_'], "")
+}
+
+/// The page(s) an action is sourced from: the grounded views that dispatch it,
+/// else the given fallback page.
+fn flow_sources(r: &FlowReport, msg: &str, fallback: Option<String>) -> Vec<String> {
+    if r.grounded {
+        let mut v: Vec<String> = r
+            .page_actions
+            .iter()
+            .filter(|(_, msgs)| msgs.iter().any(|m| m == msg))
+            .map(|(p, _)| p.clone())
+            .collect();
+        v.sort();
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    fallback.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4754,6 +5199,71 @@ mod tests {
         assert!(is_svg(&svg) && svg.contains("No pages found"), "{svg}");
         let md = render_journey(&r, Format::Md);
         assert!(md.contains("nothing found"), "{md}");
+    }
+
+    fn flow_report(grounded: bool) -> FlowReport {
+        let journey = journey_report(true);
+        let mut page_actions: HashMap<String, Vec<String>> = HashMap::new();
+        let mut continuations: HashMap<String, Vec<String>> = HashMap::new();
+        if grounded {
+            // HomePage's view can dispatch Refresh; LoginPage's view UpvotePost.
+            page_actions.insert("HomePage".into(), vec!["Refresh".into()]);
+            page_actions.insert("LoginPage".into(), vec!["UpvotePost".into()]);
+        }
+        // Refresh fires a Cmd whose result dispatches Loaded.
+        continuations.insert("Refresh".into(), vec!["Loaded".into()]);
+        FlowReport {
+            journey,
+            page_actions,
+            continuations,
+            grounded,
+        }
+    }
+
+    #[test]
+    fn flow_md_attributes_actions_per_page_when_grounded() {
+        let r = flow_report(true);
+        let md = render_flow_md(&r);
+        // Grounded: HomePage lists ONLY Refresh (with its continuation), not
+        // UpvotePost — which is attributed to LoginPage.
+        let home = md.split("## LoginPage").next().unwrap();
+        assert!(home.contains("`Refresh`"), "home section:\n{home}");
+        assert!(
+            home.contains("⇢ _Loaded_"),
+            "continuation edge missing:\n{home}"
+        );
+        assert!(
+            !home.contains("`UpvotePost`"),
+            "UpvotePost must not appear on HomePage when grounded:\n{home}"
+        );
+        // The wrong journey inventory note is suppressed when grounded.
+        assert!(
+            !md.contains("per-page attribution is best-effort"),
+            "stale journey note leaked:\n{md}"
+        );
+    }
+
+    #[test]
+    fn flow_md_falls_back_to_full_inventory_when_not_grounded() {
+        let r = flow_report(false);
+        let md = render_flow_md(&r);
+        let home = md.split("## LoginPage").next().unwrap();
+        // Not grounded: every action shows on every page (the documented fallback).
+        assert!(home.contains("`Refresh`") && home.contains("`UpvotePost`"), "{home}");
+        assert!(md.contains("attribution is not available"), "{md}");
+    }
+
+    #[test]
+    fn flow_puml_is_a_state_machine_with_a_navigation_edge() {
+        let r = flow_report(true);
+        let puml = render_flow_puml(&r);
+        assert!(
+            puml.starts_with("@startuml") && puml.trim_end().ends_with("@enduml"),
+            "{puml}"
+        );
+        // UpvotePost navigates HomePage/LoginPage -> LoginPage (a real transition).
+        assert!(puml.contains("UpvotePost"), "{puml}");
+        assert!(puml.contains(&page_node_id("LoginPage")), "{puml}");
     }
 }
 

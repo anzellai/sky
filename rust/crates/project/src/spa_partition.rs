@@ -2099,6 +2099,31 @@ fn resolve_cmd_leaves(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut Vec<CmdL
     resolve_cmd_leaves_rec(db, body, e, out, 0, &mut visited);
 }
 
+/// The follow-up Msg constructor names an `update` arm's returned command
+/// dispatches — every `Cmd.perform task ToMsg` reachable from the arm's tail
+/// pair (through `let` / `if` / `case` / guard-wrapper / `Cmd.batch`). This is
+/// the GENERAL continuation edge for the behaviour graph (`--diagram flow`), not
+/// the narrow pattern-2 `client_result` subset: it reports every resolvable
+/// `ToMsg` regardless of whether the branch is auto-split-chainable. Sorted +
+/// deduped; empty for a branch with no resolvable continuation.
+pub(crate) fn arm_continuation_msgs(db: &dyn SkyDb, body: &Body, arm_body: ExprId) -> Vec<String> {
+    let mut cmd_exprs: Vec<ExprId> = Vec::new();
+    collect_guarded_tail_cmd_exprs(body, arm_body, &mut cmd_exprs);
+    let mut out: Vec<String> = Vec::new();
+    for ce in cmd_exprs {
+        let mut leaves: Vec<CmdLeaf> = Vec::new();
+        resolve_cmd_leaves(db, body, ce, &mut leaves);
+        for leaf in leaves {
+            if let CmdLeaf::Perform { to_msg: Some(m), .. } = leaf {
+                out.push(m);
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The recursion ceiling for command resolution through helper defs (a chain of
 /// `Cmd`-returning helpers). Deeper than this falls back to `Unresolvable`.
 const CMD_RESOLVE_DEPTH: usize = 12;
