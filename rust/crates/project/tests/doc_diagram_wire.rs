@@ -52,13 +52,28 @@ fn spa_app_has_rpc_endpoint_rows_with_request_and_response() {
     );
 
     let md = render_wire(&r, Format::Md);
-    // The header row names the four columns.
+    // The header row names the five columns: `wire` is now the API + call-paths
+    // artefact, so `Access` (CSRF/auth) and `Call-path` (ordered effect → store)
+    // sit alongside the request/response shapes.
     assert!(
-        md.contains("| Endpoint | Request (reads + args) | Response (writes) | Effects |"),
+        md.contains(
+            "| Endpoint | Access | Request (reads + args) | Response (writes) | Call-path |"
+        ),
         "{md}"
     );
     // At least one `/_rpc/` endpoint row is rendered.
     assert!(md.contains("| POST /_rpc/"), "{md}");
+    // The SaveNarrow row carries an Access cell (CSRF-scoped) and a Call-path cell
+    // naming the effect → store trace — the call-path content folded in from the
+    // retired `callpath` kind.
+    assert!(
+        md.contains("| POST /_rpc/SaveNarrow | CSRF |"),
+        "expected an Access=CSRF cell on the SaveNarrow row: {md}"
+    );
+    assert!(
+        md.contains("File → filesystem"),
+        "expected the ordered effect → store call-path on an endpoint row: {md}"
+    );
     // `SaveNarrow` narrows its write-set to `{log, n, tag}` (excluding `extra`) —
     // the RESPONSE column proves the diagram surfaces the derived contract, not
     // an over-approximation.
