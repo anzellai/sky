@@ -352,24 +352,19 @@ fn doc_diagram_journey_on_skyforum_lists_pages_and_actions() {
         out.status.success(),
         "sky doc --diagram journey failed:\n{stdout}{stderr}"
     );
-    // The page set (>= 2 pages), recovered from the `Page` union.
-    assert!(stdout.contains("## Pages"), "no Pages section:\n{stdout}");
-    assert!(stdout.contains("| HomePage |"), "missing HomePage:\n{stdout}");
-    assert!(stdout.contains("| LoginPage |"), "missing LoginPage:\n{stdout}");
-    // The action inventory (>= 1 action), with the new typed columns, and a
-    // recovered navigation target.
-    assert!(stdout.contains("## Actions"), "no Actions section:\n{stdout}");
-    assert!(
-        stdout.contains("| Action | Kind | Effects | Navigates to |"),
-        "actions table must carry the Kind + Effects columns:\n{stdout}"
-    );
-    assert!(stdout.contains("| Navigate |"), "missing Navigate action:\n{stdout}");
-    // UpvotePost reroutes to LoginPage; the Live app has no /_rpc, so its Kind is
-    // effectful (server-side) or pure, never a `server (SSE)` string.
+    // The page set (>= 2 pages), recovered from the `Page` union — the behaviour
+    // graph renders one `## <Page>` section per page, not a `## Pages` table.
+    assert!(stdout.contains("## HomePage"), "missing HomePage section:\n{stdout}");
+    assert!(stdout.contains("## LoginPage"), "missing LoginPage section:\n{stdout}");
+    // At least one action, with a recovered navigation target. Actions are the
+    // per-page edges now (`- `Navigate` → **…**`), not a `## Actions` table.
+    assert!(stdout.contains("`Navigate`"), "missing Navigate action:\n{stdout}");
+    // UpvotePost reroutes to LoginPage; the Live app has no /_rpc round-trip, so
+    // its edge names the target page but carries no `/_rpc` lane chip.
     let upvote = stdout
         .lines()
-        .find(|l| l.starts_with("| UpvotePost |"))
-        .unwrap_or_else(|| panic!("missing UpvotePost row:\n{stdout}"));
+        .find(|l| l.contains("`UpvotePost`"))
+        .unwrap_or_else(|| panic!("missing UpvotePost action:\n{stdout}"));
     assert!(
         upvote.contains("LoginPage") && !upvote.contains("/_rpc"),
         "UpvotePost should reroute to LoginPage without a /_rpc round-trip (Live):\n{upvote}"
@@ -442,13 +437,23 @@ fn doc_diagram_journey_splits_effectful_and_pure() {
         .expect("spawn sky doc --diagram journey");
     let stdout = String::from_utf8_lossy(&md.stdout);
     assert!(md.status.success(), "journey failed:\n{stdout}");
-    assert!(stdout.contains("| Action | Kind | Effects | Navigates to |"), "{stdout}");
+    // The behaviour graph labels each action inline: an effectful action carries
+    // its lane (`/_rpc`) + effect families; a pure action reads `client`.
+    let save = stdout
+        .lines()
+        .find(|l| l.contains("`Save`"))
+        .unwrap_or_else(|| panic!("missing Save action:\n{stdout}"));
     assert!(
-        stdout.contains("| Save | effectful (server · /_rpc) |"),
-        "Save must be effectful (server · /_rpc):\n{stdout}"
+        save.contains("POST /_rpc") && save.contains("System"),
+        "Save must be effectful (server · /_rpc · System):\n{save}"
     );
-    assert!(stdout.contains("| Inc | pure |"), "Inc must be pure:\n{stdout}");
-    // The SVG carries the two labelled sections.
+    let inc = stdout
+        .lines()
+        .find(|l| l.contains("`Inc`"))
+        .unwrap_or_else(|| panic!("missing Inc action:\n{stdout}"));
+    assert!(inc.contains("client"), "Inc must be a pure client action:\n{inc}");
+    // The SVG is the trust-boundary swimlane DFD: client + server lanes and the
+    // aggregated action flow crossing the boundary.
     let svg = Command::new(SKY)
         .args(["doc", "--diagram", "journey", "--target", "web:app", "--format", "svg"])
         .current_dir(&fixture)
@@ -456,9 +461,10 @@ fn doc_diagram_journey_splits_effectful_and_pure() {
         .output()
         .expect("spawn sky doc --diagram journey svg");
     let svg = String::from_utf8_lossy(&svg.stdout);
-    assert!(svg.contains("Effectful actions"), "no Effectful section:\n{svg}");
-    assert!(svg.contains("Pure actions"), "no Pure section:\n{svg}");
-    // Default puml carries the same split as two floating notes.
+    assert!(svg.contains("Browser client (wasm)"), "no client lane:\n{svg}");
+    assert!(svg.contains("Server (/_rpc)"), "no server lane:\n{svg}");
+    assert!(svg.contains("user actions"), "no aggregated action flow:\n{svg}");
+    // Default puml is a state diagram (pages as states).
     let puml = Command::new(SKY)
         .args(["doc", "--diagram", "journey", "--target", "web:app"])
         .current_dir(&fixture)
@@ -466,9 +472,8 @@ fn doc_diagram_journey_splits_effectful_and_pure() {
         .output()
         .expect("spawn sky doc --diagram journey puml");
     let puml = String::from_utf8_lossy(&puml.stdout);
-    assert!(puml.contains("note as effectful_note"), "no Effectful note in puml:\n{puml}");
-    assert!(puml.contains("<b>Effectful actions"), "no Effectful heading in puml:\n{puml}");
-    assert!(puml.contains("note as pure_note"), "no Pure note in puml:\n{puml}");
+    assert!(puml.contains("@startuml"), "not a puml doc:\n{puml}");
+    assert!(puml.contains("state \"HomePage\""), "no HomePage state:\n{puml}");
     assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
 }
 
@@ -487,8 +492,8 @@ fn doc_diagram_components_lists_db_table_names() {
     let stdout = String::from_utf8_lossy(&md.stdout);
     assert!(md.status.success(), "components failed:\n{stdout}");
     assert!(
-        stdout.contains("Database tables (1): widgets."),
-        "the Database container must list the real table name:\n{stdout}"
+        stdout.contains("`widgets`") && stdout.contains("1 table(s)"),
+        "the Data store container must list the real table name:\n{stdout}"
     );
     let svg = Command::new(SKY)
         .args(["doc", "--diagram", "components", "--target", "web:app", "--format", "svg"])
