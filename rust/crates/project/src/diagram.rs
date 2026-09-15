@@ -3915,8 +3915,27 @@ fn render_journey_md(r: &JourneyReport) -> String {
 // systems) are slice 2.
 // ============================================================================
 
-/// The behaviour graph for a project. Wraps the [`JourneyReport`] with the two
-/// grounding edge-classes only `flow` adds.
+/// A data-classification verdict for one action — the compliance overlay. An
+/// auditor needs the REASON, not just the flag, so `reasons` names each cause
+/// (`Secret arg \`apiKey\``, `Auth session`, `PII field \`email\``).
+#[derive(Clone, Debug, Default)]
+pub struct Classification {
+    pub confidential: bool,
+    pub reasons: Vec<String>,
+}
+
+/// One named external system the app calls out to — the sub-processor overlay.
+/// `host` is the literal host from an `Http` call URL (`api.stripe.com`);
+/// `purpose` is a short human label (`Payments (Stripe)`).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExternalSystem {
+    pub host: String,
+    pub purpose: String,
+}
+
+/// The behaviour graph for a project, with the compliance overlays. Wraps the
+/// [`JourneyReport`] with the grounding edges (`flow`) plus the trust-boundary,
+/// data-classification, and named-external-system overlays (audit grade).
 pub struct FlowReport {
     /// The base journey (pages, actions, nav targets, effect classification).
     pub journey: JourneyReport,
@@ -3929,6 +3948,22 @@ pub struct FlowReport {
     /// True when at least one page's view was attributed (per-page grounding is
     /// real). False → every action is shown on every page (documented fallback).
     pub grounded: bool,
+    /// Msg → its data classification (confidential + why). The overlay an auditor
+    /// scores: which flows carry a `Secret`, a `Std.Auth` session, or PII.
+    pub classifications: HashMap<String, Classification>,
+    /// Msg → the named external hosts its branch reaches (`AddToBasket` →
+    /// `api.stripe.com`). Drives the per-edge host label + the SVG external lane.
+    pub action_externals: HashMap<String, Vec<String>>,
+    /// Every named external system the app calls (deduped, sorted) — the
+    /// sub-processor list (ISO A.15) + the SVG external lane.
+    pub external_systems: Vec<ExternalSystem>,
+    /// The app's data store, when it uses one (`PostgreSQL`, `SQLite`, or the
+    /// generic `App database`). `None` when the app touches no `Db` effect.
+    pub data_store: Option<String>,
+    /// The global-chrome actions: Msgs dispatchable from EVERY page (shared nav /
+    /// layout). Rendered once, not under every page. Empty when not grounded or
+    /// there are < 2 pages.
+    pub chrome_actions: Vec<String>,
 }
 
 /// The Msg union DefId — the union `update`'s dispatch `case` matches on. Its
@@ -4096,6 +4131,167 @@ fn analyze_view_msgs(
     (HashMap::new(), false)
 }
 
+/// Conservative PII name heuristic: does a field / arg name look like personal
+/// data? Case-insensitive substring match against a fixed list. Used for the
+/// data-classification overlay (an auditor wants PII flows flagged). A false
+/// positive is safe (over-marking is fine for compliance); the reason names the
+/// field so a reviewer can confirm.
+fn pii_reason(name: &str) -> Option<&'static str> {
+    let n = name.to_ascii_lowercase();
+    const PII: &[&str] = &[
+        "email", "firstname", "lastname", "fullname", "surname", "address",
+        "phone", "mobile", "postcode", "zipcode", "card", "cardnumber", "cvv",
+        "iban", "sortcode", "ssn", "passport", "dob", "dateofbirth", "password",
+        "secret", "token", "apikey", "creditcard",
+    ];
+    // `name`/`addr` are matched as whole-ish words to avoid `filename`/`address`
+    // double-count noise; the list above already covers the compound forms.
+    if PII.iter().any(|p| n.contains(p)) {
+        return Some("PII");
+    }
+    if n == "name" || n == "addr" {
+        return Some("PII");
+    }
+    None
+}
+
+/// Is a rendered type name the opaque `Secret`? `render_ty_name` tail-normalises
+/// a folded nominal, so a `Sky.Core.Secret.Secret` field surfaces as `Secret`.
+fn is_secret_ty(ty_name: &str) -> bool {
+    ty_name.rsplit('.').next() == Some("Secret") || ty_name == "Secret"
+}
+
+/// The host of a URL literal (`https://api.stripe.com/v1/...` → `api.stripe.com`).
+/// Best-effort: strips the scheme, takes up to the first `/`, `?`, or `:`. Returns
+/// `None` for a non-URL string (so a stray literal is not mistaken for a host).
+fn url_host(s: &str) -> Option<String> {
+    let rest = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://"))?;
+    let host: String = rest
+        .chars()
+        .take_while(|&c| c != '/' && c != '?' && c != ':' && c != ' ')
+        .collect();
+    if host.is_empty() || !host.contains('.') {
+        return None;
+    }
+    Some(host)
+}
+
+/// A short human purpose for a known host, for the sub-processor list.
+fn host_purpose(host: &str) -> String {
+    let h = host.to_ascii_lowercase();
+    let known: &[(&str, &str)] = &[
+        ("stripe.com", "Payments (Stripe)"),
+        ("github.com", "OAuth / API (GitHub)"),
+        ("githubusercontent.com", "GitHub assets"),
+        ("google.com", "OAuth / API (Google)"),
+        ("googleapis.com", "Google APIs"),
+        ("sendgrid", "Email (SendGrid)"),
+        ("mailgun", "Email (Mailgun)"),
+        ("postmark", "Email (Postmark)"),
+        ("resend.com", "Email (Resend)"),
+        ("openai.com", "LLM (OpenAI)"),
+        ("anthropic.com", "LLM (Anthropic)"),
+        ("slack.com", "Messaging (Slack)"),
+        ("twilio.com", "SMS (Twilio)"),
+        ("cloudflare.com", "CDN / edge (Cloudflare)"),
+        ("amazonaws.com", "AWS"),
+    ];
+    for (needle, label) in known {
+        if h.contains(needle) {
+            return (*label).to_string();
+        }
+    }
+    format!("External service ({host})")
+}
+
+/// Walk a def body (transitively through project callees) collecting the literal
+/// hosts of every `Sky.Core.Http` call it reaches. Bounded like [`view_msgs_in`].
+/// A non-literal URL target (`Http.get someVar`) contributes the marker host
+/// `*dynamic*` so a dynamic egress is never silently dropped.
+fn http_hosts_in(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    project_modules: &HashSet<ModuleId>,
+    out: &mut BTreeSet<String>,
+) {
+    const CAP: usize = 4000;
+    let mut queue: Vec<DefId> = Vec::new();
+    let mut seen: HashSet<DefId> = HashSet::new();
+    let mut visit = |db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>, queue: &mut Vec<DefId>| {
+        let mut ids: Vec<ExprId> = Vec::new();
+        walk_exprs(body, e, &mut |x| ids.push(x));
+        for x in &ids {
+            if let Expr::Call(callee, args) = &body.exprs[*x] {
+                if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
+                    let is_http = db
+                        .def_loc(*d)
+                        .map(|l| db.module_name(l.module) == "Sky.Core.Http")
+                        .unwrap_or(false);
+                    if is_http {
+                        let mut got = false;
+                        for a in args {
+                            if let Expr::Str(s) = &body.exprs[*a] {
+                                if let Some(h) = url_host(s) {
+                                    out.insert(h);
+                                    got = true;
+                                }
+                            }
+                        }
+                        if !got {
+                            // an Http call whose URL is not a literal here
+                            out.insert("*dynamic*".to_string());
+                        }
+                    }
+                }
+            }
+            if let Expr::Var(Res::Def(d)) = &body.exprs[*x] {
+                if db.def_loc(*d).map(|l| project_modules.contains(&l.module)).unwrap_or(false) {
+                    queue.push(*d);
+                }
+            }
+        }
+    };
+    visit(db, body, e, out, &mut queue);
+    while let Some(d) = queue.pop() {
+        if !seen.insert(d) || seen.len() > CAP {
+            if seen.len() > CAP { break; }
+            continue;
+        }
+        let Some(loc) = db.def_loc(d) else { continue };
+        let resolved = db.resolve(loc.module);
+        let Some(dbody) = resolved.bodies.get(&d) else { continue };
+        let Some(droot) = dbody.root else { continue };
+        visit(db, dbody, droot, out, &mut queue);
+    }
+}
+
+/// Read the `[database] driver` from the project's `sky.toml`, mapping it to a
+/// display name for the data-store node. `None` when unset.
+fn data_store_name(project_dir: &Path) -> Option<String> {
+    let toml = std::fs::read_to_string(project_dir.join("sky.toml")).ok()?;
+    let mut in_db = false;
+    for line in toml.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_db = t.starts_with("[database]");
+            continue;
+        }
+        if in_db {
+            if let Some(v) = t.strip_prefix("driver") {
+                let v = v.trim().trim_start_matches('=').trim().trim_matches('"').to_ascii_lowercase();
+                return match v.as_str() {
+                    "postgres" | "postgresql" | "pg" => Some("PostgreSQL".to_string()),
+                    "sqlite" | "sqlite3" => Some("SQLite".to_string()),
+                    other if !other.is_empty() => Some(other.to_string()),
+                    _ => None,
+                };
+            }
+        }
+    }
+    None
+}
+
 /// Analyse a project's behaviour graph. Reuses [`analyze_journey`] for the base,
 /// then adds view→Msg grounding and command-continuation edges.
 pub fn analyze_flow(
@@ -4136,12 +4332,161 @@ pub fn analyze_flow(
         }
         break;
     }
+    // ---- compliance overlays -------------------------------------------------
+    let project_modules: HashSet<ModuleId> = check_ids.iter().copied().collect();
+    // Named external systems, per action (transitive HTTP hosts) + the app-wide
+    // deduped set (the sub-processor list).
+    let mut action_externals: HashMap<String, Vec<String>> = HashMap::new();
+    let mut all_hosts: BTreeSet<String> = BTreeSet::new();
+    for mid in &check_ids {
+        let resolved = db.resolve(*mid);
+        let Some(td) = resolved.top_defs.iter().find(|t| t.name.as_str() == "update") else {
+            continue;
+        };
+        let Some(body) = resolved.bodies.get(&td.def) else { continue };
+        let Some(case_e) = find_dispatch_case(body) else { break };
+        if let Expr::Case { branches, .. } = &body.exprs[case_e] {
+            for br in branches {
+                let Some(msg) = pattern_ctor_name(body, br.pat) else { continue };
+                let mut hosts: BTreeSet<String> = BTreeSet::new();
+                http_hosts_in(&db, body, br.body, &project_modules, &mut hosts);
+                if !hosts.is_empty() {
+                    all_hosts.extend(hosts.iter().cloned());
+                    action_externals.insert(msg, hosts.into_iter().collect());
+                }
+            }
+        }
+        break;
+    }
+    // Supplement: a host is often a config CONSTANT (`stripeBase =
+    // "https://api.stripe.com"`), not the literal at the `Http.get` call — so an
+    // Http call site sees only a variable and we recorded `*dynamic*`. Scan every
+    // project def body for URL string literals and add their hosts, so the
+    // sub-processor list is complete. (App-wide only; not attributed per action.)
+    for mid in &check_ids {
+        let resolved = db.resolve(*mid);
+        for td in &resolved.top_defs {
+            let Some(body) = resolved.bodies.get(&td.def) else { continue };
+            let Some(root) = body.root else { continue };
+            let mut ids: Vec<ExprId> = Vec::new();
+            walk_exprs(body, root, &mut |x| ids.push(x));
+            for x in &ids {
+                if let Expr::Str(s) = &body.exprs[*x] {
+                    if let Some(h) = url_host(s) {
+                        all_hosts.insert(h);
+                    }
+                }
+            }
+        }
+    }
+    let external_systems: Vec<ExternalSystem> = all_hosts
+        .into_iter()
+        .map(|h| {
+            if h == "*dynamic*" {
+                ExternalSystem { host: "(dynamic endpoint)".into(), purpose: "Runtime-chosen HTTP target".into() }
+            } else {
+                ExternalSystem { purpose: host_purpose(&h), host: h }
+            }
+        })
+        .collect();
     drop(db);
+
+    // Data classification, per action, from the auto-split branch analysis: the
+    // Model's Secret/PII fields, the action's Secret/PII msg args, and the Auth
+    // effect family. Fail-open (no report → no classification, never a crash).
+    let mut classifications: HashMap<String, Classification> = HashMap::new();
+    // Auth-family actions are confidential (they carry a session / token) — seed
+    // from the journey actions, whose effect families are what the report shows.
+    for a in &journey.actions {
+        if a.effect_families.iter().any(|e| e == "Auth") {
+            classifications
+                .entry(a.msg.clone())
+                .or_default()
+                .reasons
+                .push("Auth session / token".to_string());
+        }
+    }
+    if let Ok(rep) = crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
+        // Sensitive Model fields: Secret-typed or PII-named.
+        let mut sensitive_field: HashMap<String, String> = HashMap::new();
+        for f in &rep.model_fields {
+            if is_secret_ty(&f.ty_name) {
+                sensitive_field.insert(f.name.clone(), format!("Secret field `{}`", f.name));
+            } else if pii_reason(&f.name).is_some() {
+                sensitive_field.insert(f.name.clone(), format!("PII field `{}`", f.name));
+            }
+        }
+        for b in &rep.branches {
+            let mut reasons: Vec<String> = Vec::new();
+            if b.effect_families.iter().any(|e| e == "Auth") {
+                reasons.push("Auth session / token".to_string());
+            }
+            for a in &b.msg_arg_tys {
+                if is_secret_ty(&a.ty_name) {
+                    reasons.push(format!("Secret arg `{}`", a.name));
+                } else if pii_reason(&a.name).is_some() {
+                    reasons.push(format!("PII arg `{}`", a.name));
+                }
+            }
+            if let Some(io) = &b.io {
+                for f in io.read_fields.iter().chain(io.write_fields.iter()) {
+                    if let Some(r) = sensitive_field.get(f) {
+                        reasons.push(r.clone());
+                    }
+                }
+            }
+            if !reasons.is_empty() {
+                classifications.entry(b.msg.clone()).or_default().reasons.extend(reasons);
+            }
+        }
+    }
+    // Normalise: sort/dedup reasons and set the confidential flag.
+    for c in classifications.values_mut() {
+        c.reasons.sort();
+        c.reasons.dedup();
+        c.confidential = !c.reasons.is_empty();
+    }
+    classifications.retain(|_, c| c.confidential);
+
+    // Data store node: present when any action reaches the `Db` family, or when
+    // sky.toml declares a database driver.
+    let uses_db = journey.actions.iter().any(|a| a.effect_families.iter().any(|e| e == "Db"));
+    let data_store = if uses_db {
+        Some(data_store_name(project_dir).unwrap_or_else(|| "App database".to_string()))
+    } else {
+        data_store_name(project_dir)
+    };
+
+    // Global-chrome split: a Msg dispatchable from EVERY page is shared chrome.
+    let chrome_actions: Vec<String> = if grounded && page_actions.len() >= 2 {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for msgs in page_actions.values() {
+            for m in msgs {
+                *counts.entry(m.clone()).or_default() += 1;
+            }
+        }
+        let n = page_actions.len();
+        let mut c: Vec<String> = counts
+            .into_iter()
+            .filter(|(_, k)| *k == n)
+            .map(|(m, _)| m)
+            .collect();
+        c.sort();
+        c
+    } else {
+        Vec::new()
+    };
+
     Ok(FlowReport {
         journey,
         page_actions,
         continuations,
         grounded,
+        classifications,
+        action_externals,
+        external_systems,
+        data_store,
+        chrome_actions,
     })
 }
 
@@ -4155,10 +4500,34 @@ fn actions_on_page<'a>(r: &'a FlowReport, page: &str) -> Vec<&'a JourneyAction> 
             .actions
             .iter()
             .filter(|a| allowed.map(|s| s.contains(&a.msg)).unwrap_or(false))
+            // Global chrome is rendered once in its own section, not per page.
+            .filter(|a| !r.chrome_actions.contains(&a.msg))
             .collect()
     } else {
         r.journey.actions.iter().collect()
     }
+}
+
+/// Today's date as `YYYY-MM-DD` (UTC), for the generated-on stamp. No chrono dep:
+/// a civil-date computation from the Unix epoch day count.
+fn today_utc() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = (secs / 86_400) as i64;
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 /// One line describing an action edge: the Msg, its lane (server/_rpc vs client),
@@ -4169,10 +4538,29 @@ fn flow_action_line(r: &FlowReport, a: &JourneyAction) -> String {
         Some(false) => " client".to_string(),
         None => String::new(),
     };
+    // Effect families, with the named external host spliced in where the branch
+    // reaches HTTP (`Http → api.stripe.com`).
+    let hosts = r.action_externals.get(&a.msg);
     let eff = if a.effect_families.is_empty() {
         if a.effectful { " · effect".to_string() } else { String::new() }
     } else {
-        format!(" · {}", a.effect_families.join(", "))
+        let fams: Vec<String> = a
+            .effect_families
+            .iter()
+            .map(|f| {
+                if f == "Http" {
+                    if let Some(hs) = hosts {
+                        let named: Vec<&str> =
+                            hs.iter().filter(|h| *h != "*dynamic*").map(|s| s.as_str()).collect();
+                        if !named.is_empty() {
+                            return format!("Http → {}", named.join(", "));
+                        }
+                    }
+                }
+                f.clone()
+            })
+            .collect();
+        format!(" · {}", fams.join(", "))
     };
     let mut nav: Vec<String> = a.navigates_to.clone();
     if a.dynamic_nav {
@@ -4187,7 +4575,11 @@ fn flow_action_line(r: &FlowReport, a: &JourneyAction) -> String {
         Some(cs) if !cs.is_empty() => format!(" ⇢ _{}_", cs.join(", ")),
         _ => String::new(),
     };
-    format!("`{}`{}{}{}{}", a.msg, lane, eff, nav_s, cont)
+    let conf = match r.classifications.get(&a.msg) {
+        Some(c) if c.confidential => format!("  🔒 **CONFIDENTIAL** ({})", c.reasons.join("; ")),
+        _ => String::new(),
+    };
+    format!("`{}`{}{}{}{}{}", a.msg, lane, eff, nav_s, cont, conf)
 }
 
 /// Render the behaviour graph to the requested format.
@@ -4195,16 +4587,132 @@ pub fn render_flow(r: &FlowReport, format: Format) -> String {
     match format {
         Format::Md => render_flow_md(r),
         Format::Puml => render_flow_puml(r),
-        // The SVG page state machine is shared with the journey renderer for
-        // slice 1; per-page view grounding in the SVG is a slice-2 polish.
-        Format::Svg => render_journey_svg(&r.journey),
+        Format::Svg => render_flow_svg(r),
     }
+}
+
+/// The submittable artefact: a trust-boundary swimlane data-flow diagram. Four
+/// lanes (Browser client · /_rpc server · Data store · External systems) with the
+/// data flows between them; confidential flows are drawn red with a lock. This is
+/// the picture a user hands a SOC2 / ISO 27001 auditor.
+fn render_flow_svg(r: &FlowReport) -> String {
+    use diagram_svg as d;
+    let j = &r.journey;
+    const CONF: &str = "#dc2626"; // confidential flow (red)
+    let title = format!("{} — behaviour & data flow · generated {}", j.project, today_utc());
+    let mut svg = d::Svg::new(&title);
+
+    // Non-web shapes have no client/server split — one honest line, not a broken
+    // swimlane. (Cli/Tui/Http still get the md + puml behaviour views.)
+    if matches!(j.shape, AppShape::Http | AppShape::Cli | AppShape::Tui) {
+        svg.text(16.0, 30.0, &title, "start", 13.0, "700", d::TEXT);
+        svg.text(16.0, 54.0, "This app has no browser trust boundary; see the Markdown behaviour view and `--diagram wire`.", "start", 11.5, "400", d::SUBTLE);
+        return svg.render();
+    }
+
+    let left = 24.0_f64;
+    let width = 940.0_f64;
+    let lane_w = width - left * 2.0;
+    let confidential_n = j.actions.iter().filter(|a| r.classifications.get(&a.msg).map(|c| c.confidential).unwrap_or(false)).count();
+
+    // ---- Lane 1: Browser client (wasm) — page nodes in wrapped rows. ----
+    let mut y = 60.0;
+    let pn_w = 150.0_f64;
+    let pn_h = 42.0_f64;
+    let gap = 16.0_f64;
+    let per_row = ((lane_w - 20.0) / (pn_w + gap)).floor().max(1.0) as usize;
+    let pages: Vec<&JourneyPage> = j.pages.iter().collect();
+    let rows = if pages.is_empty() { 1 } else { (pages.len() + per_row - 1) / per_row };
+    let lane1_h = 30.0 + rows as f64 * (pn_h + gap);
+    svg.zone(left, y, lane_w, lane1_h, "① Browser client (wasm) — pages the user sees", d::CLIENT_EDGE);
+    let mut server_anchor_x = left + lane_w / 2.0;
+    if pages.is_empty() {
+        svg.node(left + 20.0, y + 30.0, pn_w, pn_h, d::FILL, d::CLIENT_EDGE, "(single view)", None);
+    } else {
+        for (i, p) in pages.iter().enumerate() {
+            let col = i % per_row;
+            let row = i / per_row;
+            let nx = left + 20.0 + col as f64 * (pn_w + gap);
+            let ny = y + 30.0 + row as f64 * (pn_h + gap);
+            svg.node(nx, ny, pn_w, pn_h, d::FILL, d::CLIENT_EDGE, &p.name, p.url.as_deref());
+        }
+    }
+    server_anchor_x = server_anchor_x.max(left + lane_w / 2.0);
+    y += lane1_h + 46.0;
+
+    // ---- Lane 2: /_rpc server ----
+    let sv_w = 300.0_f64;
+    let sv_h = 56.0_f64;
+    let lane2_h = 30.0 + sv_h + 14.0;
+    let boundary_y = y - 24.0;
+    svg.zone(left, y, lane_w, lane2_h, "② Server (/_rpc) — every effect runs here", d::SERVER_EDGE);
+    let sv_x = left + lane_w / 2.0 - sv_w / 2.0;
+    let sv_y = y + 30.0;
+    let srv_sub = match j.shape {
+        AppShape::Spa => "Sky.Spa SSR backend",
+        AppShape::Live => "Sky.Live server (SSR + SSE)",
+        _ => "server",
+    };
+    svg.node(sv_x, sv_y, sv_w, sv_h, d::FILL_ALT, d::SERVER_EDGE, "Application server", Some(srv_sub));
+    let sv_cx = sv_x + sv_w / 2.0;
+    // client → server: the aggregated user-action flow (the trust-boundary cross).
+    let act_label = if confidential_n > 0 {
+        format!("{} user actions · {} confidential 🔒", j.actions.len(), confidential_n)
+    } else {
+        format!("{} user actions", j.actions.len())
+    };
+    let cross_color = if confidential_n > 0 { CONF } else { d::CLIENT_EDGE };
+    svg.edge(sv_cx, sv_y, server_anchor_x, boundary_y + 4.0, cross_color, Some(&act_label));
+    // the trust boundary line
+    svg.text(left, boundary_y, "— — — trust boundary: HTTPS / _rpc — — —", "start", 10.5, "600", d::BOUNDARY_UNTRUSTED);
+    y += lane2_h + 46.0;
+
+    // ---- Lane 3: Data store ----
+    if let Some(store) = &r.data_store {
+        let lane3_h = 30.0 + 52.0 + 12.0;
+        svg.zone(left, y, lane_w, lane3_h, "③ Data store", d::BOUNDARY_TRUSTED);
+        let db_w = 220.0_f64;
+        let db_x = left + lane_w / 2.0 - db_w / 2.0;
+        let db_y = y + 30.0;
+        svg.database(db_x, db_y, db_w, 52.0, d::FILL, d::BOUNDARY_TRUSTED, store);
+        let db_conf = j.actions.iter().any(|a| a.effect_families.iter().any(|e| e == "Db") && r.classifications.get(&a.msg).map(|c| c.confidential).unwrap_or(false));
+        let ecol = if db_conf { CONF } else { d::SERVER_EDGE };
+        svg.edge(db_x + db_w / 2.0, db_y, sv_cx, sv_y + sv_h, ecol, Some(if db_conf { "reads/writes 🔒" } else { "reads/writes" }));
+        y += lane3_h + 46.0;
+    }
+
+    // ---- Lane 4: External systems (sub-processors) ----
+    if !r.external_systems.is_empty() {
+        let ex_w = 190.0_f64;
+        let ex_h = 46.0_f64;
+        let per = ((lane_w - 20.0) / (ex_w + gap)).floor().max(1.0) as usize;
+        let erows = (r.external_systems.len() + per - 1) / per;
+        let lane4_h = 30.0 + erows as f64 * (ex_h + gap);
+        svg.zone(left, y, lane_w, lane4_h, "④ External systems (sub-processors)", d::EXTERNAL);
+        for (i, e) in r.external_systems.iter().enumerate() {
+            let col = i % per;
+            let row = i / per;
+            let nx = left + 20.0 + col as f64 * (ex_w + gap);
+            let ny = y + 30.0 + row as f64 * (ex_h + gap);
+            svg.node(nx, ny, ex_w, ex_h, d::FILL, d::EXTERNAL, &e.host, Some(&e.purpose));
+            svg.edge(nx + ex_w / 2.0, ny, sv_cx, sv_y + sv_h, d::EXTERNAL, None);
+        }
+        y += lane4_h + 46.0;
+    }
+
+    // ---- Legend ----
+    svg.text(left, y, "Legend:", "start", 11.5, "700", d::TEXT);
+    svg.text(left + 62.0, y, "blue = user action across the trust boundary", "start", 10.5, "400", d::CLIENT_EDGE);
+    svg.text(left + 62.0, y + 16.0, "red 🔒 = confidential flow (Secret / Std.Auth session / PII)", "start", 10.5, "400", CONF);
+    svg.text(left + 62.0, y + 32.0, "green = data store · purple = external sub-processor", "start", 10.5, "400", d::EXTERNAL);
+    let _ = width;
+    svg.render()
 }
 
 fn render_flow_md(r: &FlowReport) -> String {
     let j = &r.journey;
     let mut o = String::new();
-    o.push_str(&format!("# Behaviour — {}\n\n", j.project));
+    o.push_str(&format!("# Behaviour & data flow — {} · generated {}\n\n", j.project, today_utc()));
     let shape_line = match j.shape {
         AppShape::Spa => "Sky.Spa (wasm client + server over /_rpc)",
         AppShape::Live => "Sky.Live (one server, SSR + SSE)",
@@ -4217,50 +4725,88 @@ fn render_flow_md(r: &FlowReport) -> String {
         "The interaction graph: each page is a state the user sees; each action is \
          an edge out of the page whose view can trigger it, labelled with its lane \
          (`/_rpc` vs client), effect families, the page it navigates to (**bold**), \
-         and its async continuation (⇢ _Msg_).\n\n",
+         its async continuation (⇢ _Msg_), and a 🔒 marker when the flow carries \
+         confidential data (a `Secret`, a `Std.Auth` session, or PII).\n\n",
     );
+    // ---- overlays: data store + external systems (sub-processors) ----
+    if let Some(store) = &r.data_store {
+        o.push_str(&format!("**Data store:** {store}\n\n"));
+    }
+    if !r.external_systems.is_empty() {
+        o.push_str("## External systems (sub-processors)\n\n");
+        o.push_str("| Host | Purpose |\n|---|---|\n");
+        for e in &r.external_systems {
+            o.push_str(&format!("| `{}` | {} |\n", e.host, e.purpose));
+        }
+        o.push('\n');
+    }
+    // ---- global chrome (actions on every page) ----
+    if !r.chrome_actions.is_empty() {
+        o.push_str("## Global (available on every page)\n\n");
+        o.push_str("_Shared navigation / layout actions, dispatchable from any page._\n\n");
+        for a in j.actions.iter().filter(|a| r.chrome_actions.contains(&a.msg)) {
+            o.push_str(&format!("- {}\n", flow_action_line(r, a)));
+        }
+        o.push('\n');
+    }
     if j.pages.is_empty() && j.actions.is_empty() {
         for n in &j.notes {
             o.push_str(&format!("> {n}\n"));
         }
         return o;
     }
-    // Pages first, initial page first.
     let init = initial_page(j);
-    let mut order: Vec<usize> = (0..j.pages.len()).collect();
-    if let Some(i) = init {
-        order.sort_by_key(|&k| if k == i { 0 } else { 1 });
-    }
-    for &idx in &order {
-        let p = &j.pages[idx];
-        let is_init = Some(idx) == init;
-        let url = p.url.as_deref().map(|u| format!(" · `{u}`")).unwrap_or_default();
-        let star = if is_init { " (initial)" } else { "" };
-        o.push_str(&format!("## {}{}{}\n\n", p.name, url, star));
-        let acts = actions_on_page(r, &p.name);
-        if acts.is_empty() {
-            o.push_str("_No actions dispatched from this page's view._\n\n");
-            continue;
+    if r.grounded && !j.pages.is_empty() {
+        // Per-page grounding: each page lists only the actions its view dispatches.
+        let mut order: Vec<usize> = (0..j.pages.len()).collect();
+        if let Some(i) = init {
+            order.sort_by_key(|&k| if k == i { 0 } else { 1 });
         }
-        for a in acts {
-            o.push_str(&format!("- {}\n", flow_action_line(r, a)));
+        for &idx in &order {
+            let p = &j.pages[idx];
+            let is_init = Some(idx) == init;
+            let url = p.url.as_deref().map(|u| format!(" · `{u}`")).unwrap_or_default();
+            let star = if is_init { " (initial)" } else { "" };
+            o.push_str(&format!("## {}{}{}\n\n", p.name, url, star));
+            let acts = actions_on_page(r, &p.name);
+            if acts.is_empty() {
+                o.push_str("_No page-specific actions (see Global above)._\n\n");
+                continue;
+            }
+            for a in acts {
+                o.push_str(&format!("- {}\n", flow_action_line(r, a)));
+            }
+            o.push('\n');
         }
-        o.push('\n');
-    }
-    // Pages could not be found: fall back to the inventory as a flat list.
-    if j.pages.is_empty() {
+    } else {
+        // Ungrounded (the `view` does not dispatch on the page field) OR no pages:
+        // list the pages once, then the full action set ONCE — never repeated per
+        // page. The navigation / effect / lane / continuation / classification
+        // edges are all still exact; only the page→action attribution is absent.
+        if !j.pages.is_empty() {
+            o.push_str("## Pages\n\n");
+            for p in &j.pages {
+                let url = p.url.as_deref().map(|u| format!(" · `{u}`")).unwrap_or_default();
+                let star = if Some(p.name.clone()) == init.map(|i| j.pages[i].name.clone()) {
+                    " (initial)"
+                } else {
+                    ""
+                };
+                o.push_str(&format!("- **{}**{}{}\n", p.name, url, star));
+            }
+            o.push('\n');
+            o.push_str(
+                "> Actions are listed once below rather than per page: this app's `view` does \
+                 not dispatch on the page field, so the compiler cannot attribute an action to a \
+                 specific page. Every other edge (navigation, effect, lane, external system, \
+                 continuation, classification) is exact.\n\n",
+            );
+        }
         o.push_str("## Actions\n\n");
         for a in &j.actions {
             o.push_str(&format!("- {}\n", flow_action_line(r, a)));
         }
         o.push('\n');
-    }
-    if !r.grounded && !j.pages.is_empty() {
-        o.push_str(
-            "> View→action attribution is not available for this app (its `view` does not \
-             dispatch on the page field), so every action is listed on every page. The \
-             navigation, effect, lane and continuation edges are still exact.\n",
-        );
     }
     // The journey's "one inventory / per-page attribution is best-effort" note is
     // wrong for `flow` when we DID attribute per page — drop it; keep the rest.
@@ -4322,6 +4868,20 @@ fn render_flow_puml(r: &FlowReport) -> String {
                 o.push_str(&format!("{} --> [*] : {} (dynamic)\n", page_node_id(src), short_edge_label(&a.msg)));
             }
         }
+    }
+    // Overlay legend: external sub-processors + the data store, as a floating note.
+    if !r.external_systems.is_empty() || r.data_store.is_some() {
+        o.push_str("note as N1\n");
+        if let Some(store) = &r.data_store {
+            o.push_str(&format!("Data store: {store}\n"));
+        }
+        if !r.external_systems.is_empty() {
+            o.push_str("External systems (sub-processors):\n");
+            for e in &r.external_systems {
+                o.push_str(&format!("  - {} ({})\n", e.host, e.purpose));
+            }
+        }
+        o.push_str("end note\n");
     }
     o.push_str("@enduml\n");
     o
@@ -5217,6 +5777,11 @@ mod tests {
             page_actions,
             continuations,
             grounded,
+            classifications: HashMap::new(),
+            action_externals: HashMap::new(),
+            external_systems: Vec::new(),
+            data_store: None,
+            chrome_actions: Vec::new(),
         }
     }
 
@@ -5244,13 +5809,63 @@ mod tests {
     }
 
     #[test]
-    fn flow_md_falls_back_to_full_inventory_when_not_grounded() {
+    fn flow_md_lists_actions_once_when_not_grounded() {
         let r = flow_report(false);
         let md = render_flow_md(&r);
-        let home = md.split("## LoginPage").next().unwrap();
-        // Not grounded: every action shows on every page (the documented fallback).
-        assert!(home.contains("`Refresh`") && home.contains("`UpvotePost`"), "{home}");
-        assert!(md.contains("attribution is not available"), "{md}");
+        // Not grounded: a single "## Pages" list + a single "## Actions" section —
+        // NOT actions repeated under every page. Each action appears exactly once.
+        assert!(md.contains("## Pages"), "{md}");
+        assert!(md.contains("## Actions"), "{md}");
+        assert_eq!(md.matches("`UpvotePost`").count(), 1, "action must appear once:\n{md}");
+        assert!(md.contains("does not dispatch on the page field"), "{md}");
+    }
+
+    #[test]
+    fn flow_md_overlays_classification_external_and_store() {
+        let mut r = flow_report(true);
+        r.data_store = Some("PostgreSQL".into());
+        r.external_systems = vec![ExternalSystem {
+            host: "api.stripe.com".into(),
+            purpose: "Payments (Stripe)".into(),
+        }];
+        r.classifications.insert(
+            "UpvotePost".into(),
+            Classification { confidential: true, reasons: vec!["Auth session / token".into()] },
+        );
+        let md = render_flow_md(&r);
+        assert!(md.contains("**Data store:** PostgreSQL"), "store overlay:\n{md}");
+        assert!(md.contains("api.stripe.com") && md.contains("Payments (Stripe)"), "external overlay:\n{md}");
+        assert!(md.contains("🔒 **CONFIDENTIAL** (Auth session / token)"), "classification overlay:\n{md}");
+        // Title carries the generated-on date stamp.
+        assert!(md.contains("· generated 20"), "date stamp missing:\n{md}");
+    }
+
+    #[test]
+    fn flow_svg_is_a_swimlane_dfd() {
+        let mut r = flow_report(true);
+        r.data_store = Some("PostgreSQL".into());
+        r.external_systems = vec![ExternalSystem {
+            host: "api.stripe.com".into(),
+            purpose: "Payments (Stripe)".into(),
+        }];
+        let svg = render_flow_svg(&r);
+        assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"), "{svg}");
+        for lane in ["Browser client", "Server (/_rpc)", "Data store", "External systems"] {
+            assert!(svg.contains(lane), "lane `{lane}` missing:\n{svg}");
+        }
+        assert!(svg.contains("api.stripe.com") && svg.contains("PostgreSQL"), "nodes missing:\n{svg}");
+        assert!(svg.contains("trust boundary"), "boundary missing:\n{svg}");
+    }
+
+    #[test]
+    fn overlay_helpers_classify_and_name() {
+        assert!(is_secret_ty("Secret") && is_secret_ty("Sky.Core.Secret.Secret"));
+        assert!(!is_secret_ty("String"));
+        assert!(pii_reason("customerEmail").is_some() && pii_reason("cardNumber").is_some());
+        assert!(pii_reason("count").is_none());
+        assert_eq!(url_host("https://api.stripe.com/v1/charges").as_deref(), Some("api.stripe.com"));
+        assert_eq!(url_host("not a url"), None);
+        assert_eq!(host_purpose("api.stripe.com"), "Payments (Stripe)");
     }
 
     #[test]
