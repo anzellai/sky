@@ -74,7 +74,16 @@ const FFI_BUILD_ONLY: &[&str] = &["11-fyne-stopwatch"];
 /// wall-clock and network states). Verified as RUN "no-panic" instead of "match"
 /// — the build proves codegen, the run proves it doesn't crash; the exact output
 /// can't be pinned. (02-go-stdlib: `Time.now |> Time.timeString` + `Http.get`.)
-const NONDETERMINISTIC_OUTPUT: &[&str] = &["02-go-stdlib"];
+// CLI examples whose stdout is NOT a pure function of their source, so a
+// committed stdout golden cannot pin them: 02-go-stdlib runs live `Time.now` +
+// network calls; 67-durable-counter is durable (`App.withDurable`) — its output
+// depends on the model snapshot persisted in its sqlite db, so the same source
+// prints a different count depending on prior runs. Both still build + run (the
+// gate verifies no-panic); their runtime behaviour is pinned elsewhere
+// (67 by the behavioural restart test `durable_tea_cli_flow.rs`). A durable
+// example also cannot get an ORACLE-verified golden — the frozen legacy compiler
+// has no `App.withDurable` — which is a second, independent reason it is here.
+const NONDETERMINISTIC_OUTPUT: &[&str] = &["02-go-stdlib", "67-durable-counter"];
 
 /// Hand-authored multi-project splits — an example that is NOT a single project
 /// under a top-level `src/` but several sibling projects (a `Spa.app` client, a
