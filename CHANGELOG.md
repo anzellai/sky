@@ -11,6 +11,44 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.2 — Audit-grade diagrams + `sky doc --api openapi` (2026-09-16)
+
+A patch over v0.25.1. Everything is additive — new `sky doc` tooling only, no
+language or stdlib change — and `sky upgrade` is safe from any v0.25.x / v0.24.x.
+
+### Added
+
+- **Audit-grade architecture diagrams — `sky doc --diagram`.** Because a Sky app
+  is `update : Msg -> Model -> (Model, Cmd Msg)` — pure, total, and exhaustively
+  matched — the whole behaviour is statically decidable, so the diagrams are
+  complete and provable, not hand-drawn approximations. Every artefact is a real,
+  submittable SOC2 / ISO 27001 document:
+  - **`journey`** — the behaviour graph as a trust-boundary swimlane data-flow
+    diagram: each page, the actions its view can dispatch, their effects and
+    `/_rpc` (or SSE) lane, navigation, and async continuations. Confidential flows
+    (carrying a `Secret`, a `Std.Auth` session, or a PII-named field) are marked;
+    named external systems (real hosts) become the sub-processor list.
+  - **`components`** — a C4 container / system-architecture diagram: browser
+    client, application server, data store (with its real tables), and each
+    external system, in trust zones with their protocols.
+  - **`wire`** — API + authentication call-paths: every `/_rpc` and raw HTTP
+    endpoint with its access requirement (CSRF-exempt flagged), request/response
+    shapes, and the ordered effect → store trace.
+  - **`telemetry`** — the audit-logging & monitoring surface.
+  - **`audit`** — `sky doc --diagram audit --out <dir>` writes the whole pack
+    (every diagram as SVG + Markdown, plus a data-inventory and a sub-processor
+    register, and a control-mapped `index.md`) in one command.
+  - Formats: `--format svg` (self-contained, the submittable artefact), `md`, or
+    `puml`. Each diagram maps to a named SOC2 CC / ISO Annex A control.
+
+- **`sky doc --api openapi` — a generated OpenAPI 3.1 spec.** The app's HTTP API,
+  derived statically from the typed source with no annotations: the declared
+  routes plus the `/_rpc` operations (tagged `rpc`; `--no-rpc` for declared routes
+  only), typed request/response schemas (Sky types → JSON Schema), and the CSRF
+  security scheme. `--format yaml|json`, `--out <path>`. It imports cleanly into
+  Swagger UI / an API gateway (validated with `@redocly/cli`). `--api proto` /
+  `grpc` / `asyncapi` are planned — the flag shape reserves them.
+
 ## v0.25.1 — Durability completion + native function-calling (2026-09-15)
 
 A patch over v0.25.0. Everything is additive — nothing existing changed, and
