@@ -698,7 +698,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1946,
+    "stdlib_entries": 1952,
     "stdlib_modules": 101,
     "surfaces_covered": 148,
     "surfaces_covered_pct": 88.6,
@@ -12754,11 +12754,12 @@
           ]
         },
         "Std.App": {
-          "count": 18,
+          "count": 20,
           "symbols": [
             "BaseConfig",
             "Config",
             "DesktopOpts",
+            "DurableWiring",
             "MobileOpts",
             "NoFallback",
             "TabletOpts",
@@ -12773,6 +12774,7 @@
             "tabletDefaults",
             "terminalDefaults",
             "withBase",
+            "withDurable",
             "withRpcError"
           ]
         },
@@ -12797,12 +12799,13 @@
           ]
         },
         "Std.Cli": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "AppConfig",
             "config",
             "program",
             "readPassword",
+            "withDurable",
             "withOnLine"
           ]
         },
@@ -13117,7 +13120,7 @@
           ]
         },
         "Std.Live": {
-          "count": 23,
+          "count": 24,
           "symbols": [
             "AppConfig",
             "Route",
@@ -13128,6 +13131,7 @@
             "withAnalyticsIdentify",
             "withAuthSliding",
             "withConsoleAuth",
+            "withDurable",
             "withGuard",
             "withHead",
             "withIdleEvict",
@@ -13213,7 +13217,7 @@
           ]
         },
         "Std.Tui": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "app",
@@ -13221,6 +13225,7 @@
             "program",
             "withCanvasHeight",
             "withCanvasWidth",
+            "withDurable",
             "withGuard",
             "withOnKey"
           ]
@@ -13433,8 +13438,8 @@
           ]
         }
       },
-      "count": 650,
-      "pct_of_denominator": 33.4
+      "count": 655,
+      "pct_of_denominator": 33.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13805,11 +13810,12 @@
           ]
         },
         "Std.App": {
-          "count": 19,
+          "count": 21,
           "symbols": [
             "BaseConfig",
             "Config",
             "DesktopOpts",
+            "DurableWiring",
             "HasFallback",
             "MobileOpts",
             "NoFallback",
@@ -13825,6 +13831,7 @@
             "tabletDefaults",
             "terminalDefaults",
             "withBase",
+            "withDurable",
             "withRpcError"
           ]
         },
@@ -13850,12 +13857,13 @@
           ]
         },
         "Std.Cli": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "AppConfig",
             "config",
             "program",
             "readPassword",
+            "withDurable",
             "withOnLine"
           ]
         },
@@ -14235,7 +14243,7 @@
           ]
         },
         "Std.Live": {
-          "count": 26,
+          "count": 27,
           "symbols": [
             "AppConfig",
             "Route",
@@ -14249,6 +14257,7 @@
             "withAnalyticsIdentify",
             "withAuthSliding",
             "withConsoleAuth",
+            "withDurable",
             "withGuard",
             "withHead",
             "withIdleEvict",
@@ -14335,7 +14344,7 @@
           ]
         },
         "Std.Tui": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "AppConfig",
             "app",
@@ -14343,6 +14352,7 @@
             "program",
             "withCanvasHeight",
             "withCanvasWidth",
+            "withDurable",
             "withGuard",
             "withOnKey"
           ]
@@ -14556,8 +14566,8 @@
           ]
         }
       },
-      "count": 732,
-      "pct_of_denominator": 37.6
+      "count": 737,
+      "pct_of_denominator": 37.8
     }
   },
   "units": [
@@ -14579,10 +14589,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 33,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 180,
-      "refs_qualified": 172,
+      "refs_generous": 182,
+      "refs_qualified": 174,
       "role": "Layer2",
-      "sky_files": 112,
+      "sky_files": 113,
       "sky_toml_sections": []
     },
     {

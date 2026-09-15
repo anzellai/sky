@@ -11,7 +11,55 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.25.0 — Durable workflows + the `Std.Ai` LLM/agentic layer (2026-09-14)
+## v0.25.1 — Durability completion + native function-calling (2026-09-15)
+
+A patch over v0.25.0. Everything is additive — nothing existing changed, and
+`sky upgrade` is safe from any v0.25.0 / v0.24.x.
+
+### Added
+
+- **Zero-annotation durable apps — `App.withDurable`.** Make any `Std.App` app
+  durable with one builder line and NO change to `model` / `msg` / `update`:
+
+  ```elm
+  App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+      |> App.withNotFound NotFound
+      |> App.withDurable db modelCodec
+  ```
+
+  The backend loop restores the Model on start and snapshots it after each
+  update, so the state up to the last completed `update` survives a restart. On
+  web (Sky.Live) the snapshot is keyed by the session id, so a Model survives a
+  process restart even on the default in-process memory session store (as long as
+  the `sky_sid` cookie survives). On the terminal backends (`App.cli` / `App.tui`)
+  it is keyed by a run id — use `App.withDurableId "<id>" db modelCodec` to key or
+  share runs. The Model must be `Codec`-serialisable data (no function fields). An
+  in-flight effect is at-most-once; use `Durable.step` when an effect needs
+  exactly-once. See `docs/skyapp/overview.md`.
+
+- **`Std.Durable` v2.**
+  - **History compaction** — `Durable.compact db retentionMs` collapses terminal
+    runs' journals while keeping their summary, bounding table growth.
+  - **Worker versioning** — `registerVersioned` stamps a run's version at `start`,
+    and `pollWith` reconciles a resumed run against the registered defs
+    (`FailSafe` / `PinToStart`) for rolling deploys.
+  - **Model snapshot substrate** — `Durable.saveSnapshot` / `loadSnapshot`, the
+    pure-Sky layer `App.withDurable` is built on.
+
+- **Native OpenAI function-calling — `Provider.chatTools`.** A native
+  function-calling turn (a `tools` request parameter and `tool_calls` in the
+  response), alongside the existing prompt-based `Std.Ai.Tool` protocol.
+  `Agent.nativeToolLoop` runs the native tool loop as a durable workflow, so each
+  model call and tool call stays a journalled, exactly-once step.
+
+### Fixed
+
+- **Codegen: a ctor-destructured lambda parameter is now typed from its pattern.**
+  A named let-binding lambda that destructured a single-constructor union
+  parameter under `List.map` (in a non-sealed-prefix module) erased the parameter
+  to `any` and emitted a field access on `any` — it type-checked but failed
+  `go build`. The parameter is now typed from its pattern when the signature is
+  absent, and the `Std.Ai.Tool` accessor workaround is removed.
 
 Adds two new stdlib layers and their end-to-end capstone. `sky upgrade` is safe
 from any v0.24.x — nothing existing changed.

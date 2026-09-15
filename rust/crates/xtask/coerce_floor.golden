@@ -67,6 +67,22 @@
 # closed adapters the golden still reserved slack for, and that slack is now
 # gone. The `narrow` fall is a decrease in SITE count and is not a speedup
 # measurement — nothing here weights a site by how often it runs.
+#
+# ── Recorded transition, 2026-09-15 — zero-annotation durable TEA field ──
+# `feat(stdlib): App.withDurable` adds one field, `durable : DurableWiring model`,
+# to the `Std.App` `App` record (the home for the model-parameterised restore /
+# persist closures; it cannot live in the model-agnostic BaseConfig / Config).
+# Every App-record generic-erase adapter therefore coerces one more field
+# (`rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable)`), and `noDurableWiring`
+# constructs one — the going per-field rate that Guard / Head / OnKey / OnNavigate
+# already pay. `narrow` rises by +4 to +9 on each App-based project, PROPORTIONAL
+# to that project's record-adapter count (a bare Cli app has 4 sites; a composite
+# multi-backend app has 9); non-App projects are unchanged. Verified category-2
+# (intentional source change, doc 14 §1): every delta sits in a function inlined
+# from the changed Std.App source — none in an untouched function — so this is NOT
+# the forbidden corpus-wide bless that masks a compiler regression (v0.22 lesson).
+# The disabled path (`enabled = False`) is never dispatched at run time; the cost
+# is the record field's presence, not its use.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -76,35 +92,35 @@
 06-json	adapter=0	dispatch=0	narrow=79
 07-todo-cli	adapter=0	dispatch=0	narrow=177
 08-notes-app	adapter=0	dispatch=0	narrow=462
-09-live-counter	adapter=0	dispatch=0	narrow=127
-10-live-component	adapter=0	dispatch=0	narrow=130
-12-skyvote	adapter=0	dispatch=0	narrow=496
-13-skyshop	adapter=0	dispatch=0	narrow=1472
+09-live-counter	adapter=0	dispatch=0	narrow=133
+10-live-component	adapter=0	dispatch=0	narrow=136
+12-skyvote	adapter=0	dispatch=0	narrow=502
+13-skyshop	adapter=0	dispatch=0	narrow=1479
 14-task-demo	adapter=0	dispatch=0	narrow=10
 15-http-server	adapter=0	dispatch=0	narrow=19
-16-skychess	adapter=0	dispatch=0	narrow=604
-17-skymon	adapter=0	dispatch=0	narrow=560
-18-job-queue	adapter=0	dispatch=0	narrow=233
-19-skyforum	adapter=0	dispatch=0	narrow=131
-20-cli-counter	adapter=0	dispatch=0	narrow=45
-21-tui-stopwatch	adapter=0	dispatch=0	narrow=52
-22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=58
-23-tui-todo	adapter=0	dispatch=0	narrow=76
-24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=80
-25-sky-console	adapter=0	dispatch=0	narrow=84
-26-ui-showcase	adapter=0	dispatch=0	narrow=345
-27-multi-session-chat	adapter=0	dispatch=0	narrow=226
-28-streaming-chat	adapter=0	dispatch=0	narrow=91
-29-webview-threejs-spike	adapter=0	dispatch=0	narrow=53
+16-skychess	adapter=0	dispatch=0	narrow=610
+17-skymon	adapter=0	dispatch=0	narrow=566
+18-job-queue	adapter=0	dispatch=0	narrow=239
+19-skyforum	adapter=0	dispatch=0	narrow=136
+20-cli-counter	adapter=0	dispatch=0	narrow=49
+21-tui-stopwatch	adapter=0	dispatch=0	narrow=56
+22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=62
+23-tui-todo	adapter=0	dispatch=0	narrow=80
+24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=86
+25-sky-console	adapter=0	dispatch=0	narrow=90
+26-ui-showcase	adapter=0	dispatch=0	narrow=350
+27-multi-session-chat	adapter=0	dispatch=0	narrow=232
+28-streaming-chat	adapter=0	dispatch=0	narrow=97
+29-webview-threejs-spike	adapter=0	dispatch=0	narrow=58
 30-sse-server-demo	adapter=0	dispatch=0	narrow=17
-31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=66
+31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=71
 32-sse-relay	adapter=0	dispatch=0	narrow=21
 33-websocket-echo	adapter=0	dispatch=0	narrow=6
-34-multi-tier-console	adapter=0	dispatch=0	narrow=70
+34-multi-tier-console	adapter=0	dispatch=0	narrow=76
 35-composite-generics	adapter=0	dispatch=0	narrow=162
 36-composite-server	adapter=0	dispatch=0	narrow=320
-37-composite-live-shop	adapter=0	dispatch=0	narrow=405
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=308
+37-composite-live-shop	adapter=0	dispatch=0	narrow=412
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=317
 40-generic-adt-field	adapter=0	dispatch=0	narrow=5
 41-nested-curry	adapter=0	dispatch=0	narrow=7
 42-poly-record	adapter=0	dispatch=0	narrow=3
@@ -117,27 +133,27 @@
 49-xmodule-adt	adapter=0	dispatch=0	narrow=2
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=2
-52-blog-analytics	adapter=0	dispatch=0	narrow=461
+52-blog-analytics	adapter=0	dispatch=0	narrow=467
 53-record-update-map	adapter=0	dispatch=0	narrow=25
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=5
 55-store-partial-update	adapter=0	dispatch=0	narrow=135
-61-app-kanban	adapter=0	dispatch=0	narrow=261
-62-app-notes	adapter=0	dispatch=0	narrow=442
-63-app-chat	adapter=0	dispatch=0	narrow=443
-64-app-native	adapter=0	dispatch=0	narrow=338
+61-app-kanban	adapter=0	dispatch=0	narrow=265
+62-app-notes	adapter=0	dispatch=0	narrow=446
+63-app-chat	adapter=0	dispatch=0	narrow=447
+64-app-native	adapter=0	dispatch=0	narrow=342
 65-metadata-service	adapter=0	dispatch=0	narrow=41
 66-slack-agent	adapter=0	dispatch=0	narrow=160
-apps/dispatch	adapter=0	dispatch=0	narrow=458
-apps/fieldbook	adapter=0	dispatch=0	narrow=686
+apps/dispatch	adapter=0	dispatch=0	narrow=465
+apps/fieldbook	adapter=0	dispatch=0	narrow=695
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
-apps/ledger	adapter=0	dispatch=0	narrow=560
+apps/ledger	adapter=0	dispatch=0	narrow=567
 apps/relay	adapter=0	dispatch=0	narrow=244
-examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=73
-examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=72
+examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=79
+examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=78
 examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=272
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=227
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/console	adapter=0	dispatch=0	narrow=332
-sky-bundled/doc	adapter=0	dispatch=0	narrow=61
+sky-bundled/console	adapter=0	dispatch=0	narrow=335
+sky-bundled/doc	adapter=0	dispatch=0	narrow=65
 test_pkg	adapter=0	dispatch=0	narrow=1
