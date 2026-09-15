@@ -384,7 +384,8 @@ sky fmt src/Main.sky             # opinionated formatter (idempotent)
 sky test tests/MyTest.sky        # Sky.Test runner (SKY_TEST_JSON=<path> → per-case JSON report)
 sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update (any TEA app); a Sky.Spa target adds the differential split oracle
 sky doc <Module>                 # stdlib docs (--serve / --tui / --list / --export <dir>)
-sky doc --diagram <kind>         # audit-grade diagram: journey (behaviour+DFD) | components (C4) | wire (API) | telemetry | audit (whole SOC2/ISO pack → --out <dir>); --format puml|md|svg
+sky doc --diagram <kind>         # audit-grade diagram: journey (behaviour+DFD) | components (C4) | wire (API & call-paths) | telemetry | audit (whole SOC2/ISO pack → --out <dir>); --format puml|md|svg
+sky doc --api openapi            # OpenAPI 3.1 spec of the app's HTTP API, generated from the typed source; --format yaml|json, --no-rpc for declared routes only (proto/grpc/asyncapi planned)
 sky db init | migrate --gen | migrate | seed | status | push   # file-based migrations
 sky db start | stop [--all] | ps [--all]                       # local PostgreSQL cluster
 sky db provision --embed                                       # fetch + pin a PostgreSQL bundle

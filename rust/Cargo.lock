@@ -883,6 +883,8 @@ dependencies = [
  "hir",
  "lower",
  "pulldown-cmark",
+ "serde_json",
+ "serde_yaml",
  "skydb",
  "syntax",
  "ty",

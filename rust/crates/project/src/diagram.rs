@@ -1152,10 +1152,32 @@ pub struct WireEndpoint {
     pub request: String,
     /// The response payload: write-set fields, or "whole model".
     pub response: String,
-    /// Effects the branch runs (Db / Http / …). `None` for v1 — the partition
-    /// report does not surface per-branch effect families cheaply, and this
-    /// slice does not invent a new analysis (see `--diagram components`).
+    /// Effects the branch runs (Db / Http / …), joined for display. `None` for a
+    /// pure branch.
     pub effects: Option<String>,
+    /// The effect families this branch reaches, structured — the call-path trace
+    /// (`Db`, `Http`, `Auth`, `Email`, `File`, …). Empty for a pure branch.
+    pub effect_families: Vec<String>,
+    /// The Model fields the branch READS (the request Model-field inputs). Empty
+    /// when it reads the whole model or reads nothing.
+    pub read_fields: Vec<String>,
+    /// The Model fields the branch WRITES (the response Model-field outputs).
+    pub write_fields: Vec<String>,
+    /// True when the request is the whole model (no field-level request schema).
+    pub reads_whole_model: bool,
+    /// True when the response is the whole model.
+    pub writes_whole_model: bool,
+    /// The Msg args this endpoint binds, with their types — the extra request
+    /// inputs beside the read-set. Parallel to the request's `+ {args}`.
+    pub msg_arg_tys: Vec<crate::spa_partition::ModelFieldTy>,
+}
+
+impl WireEndpoint {
+    /// Whether this endpoint's call-path reaches an auth check (`Std.Auth`
+    /// session / token verification) — a confidential, access-controlled path.
+    pub fn touches_auth(&self) -> bool {
+        self.effect_families.iter().any(|f| f == "Auth")
+    }
 }
 
 /// What kind of HTTP endpoint a recovered route is. The distinction drives the
@@ -1222,6 +1244,12 @@ pub struct WireReport {
     /// recovered (a `Std.App` inline-effect shape, or an `update` that is not a
     /// resolvable `case msg of`). The renderer prints what it has plus a note.
     pub limited: bool,
+    /// The typed Model fields (`name`, `ty_name`) — the raw material the OpenAPI
+    /// generator resolves each endpoint's request/response fields against.
+    pub model_fields: Vec<crate::spa_partition::ModelFieldTy>,
+    /// The app's data store display name (`PostgreSQL` / `SQLite`), from
+    /// `sky.toml [database] driver` — the `Db`-effect target in the call-path.
+    pub data_store: Option<String>,
     /// Non-fatal reader notes.
     pub notes: Vec<String>,
 }
@@ -1339,6 +1367,8 @@ pub fn analyze_wire(
             endpoints: Vec::new(),
             http_endpoints,
             limited: false,
+            model_fields: Vec::new(),
+            data_store: data_store_name(project_dir),
             notes,
         });
     }
@@ -1373,6 +1403,12 @@ pub fn analyze_wire(
             request: wire_request(io),
             response: wire_response(io),
             effects,
+            effect_families: b.effect_families.clone(),
+            read_fields: io.read_fields.clone(),
+            write_fields: io.write_fields.clone(),
+            reads_whole_model: io.reads_whole_model,
+            writes_whole_model: io.writes_whole_model,
+            msg_arg_tys: b.msg_arg_tys.clone(),
         });
     }
     endpoints.sort_by(|a, b| a.msg.cmp(&b.msg));
@@ -1418,6 +1454,8 @@ pub fn analyze_wire(
         endpoints,
         http_endpoints,
         limited,
+        model_fields: report.model_fields.clone(),
+        data_store: data_store_name(project_dir),
         notes,
     })
 }
@@ -1617,29 +1655,71 @@ fn wire_http_md(o: &mut String, eps: &[HttpEndpoint]) {
     }
 }
 
+/// Map an endpoint's effect families to their concrete call-path targets — the
+/// audit-relevant "what this endpoint reaches": `Db → PostgreSQL`, `Http →
+/// external`, `Auth → session`. Non-target families (Log/System/Time/Uuid) are
+/// listed plainly. Empty → "—" (a pure branch).
+fn wire_callpath(fams: &[String], store: Option<&str>) -> String {
+    if fams.is_empty() {
+        return "—".to_string();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for f in fams {
+        let mapped = match f.as_str() {
+            "Db" => format!("Db → {}", store.unwrap_or("database")),
+            "Http" => "Http → external".to_string(),
+            "Auth" => "Auth → session/token".to_string(),
+            "Email" => "Email → mail service".to_string(),
+            "File" => "File → filesystem".to_string(),
+            other => other.to_string(),
+        };
+        parts.push(mapped);
+    }
+    parts.join(" · ")
+}
+
+/// The access requirement for an RPC endpoint: the double-submit CSRF token is
+/// always required (it is inside the session contract), and a `🔒 auth` marker
+/// when the call-path verifies a `Std.Auth` session.
+fn wire_rpc_access(e: &WireEndpoint) -> String {
+    if e.touches_auth() {
+        "CSRF + 🔒 auth".to_string()
+    } else {
+        "CSRF".to_string()
+    }
+}
+
 fn render_wire_md(r: &WireReport) -> String {
     let mut o = String::new();
-    o.push_str(&format!("# Wire — {}\n\n", r.project));
+    o.push_str(&format!("# Wire — API & call-paths — {}\n\n", r.project));
+    if let Some(store) = &r.data_store {
+        o.push_str(&format!("**Data store:** {store}\n\n"));
+    }
     if r.is_spa && !r.endpoints.is_empty() {
         o.push_str(
             "The Sky.Spa auto-split turns every SERVER `update` branch into a \
              `POST /_rpc/<Msg>` endpoint. The REQUEST is the Model fields the branch \
-             reads plus the Msg args; the RESPONSE is the Model fields it writes.\n\n",
+             reads plus the Msg args; the RESPONSE is the Model fields it writes. \
+             **Access** is the endpoint's auth requirement; **Call-path** is the effect \
+             families it reaches and their targets.\n\n",
         );
         o.push_str("## RPC endpoints (/_rpc)\n\n");
-        o.push_str("| Endpoint | Request (reads + args) | Response (writes) | Effects |\n");
-        o.push_str("|---|---|---|---|\n");
+        o.push_str("| Endpoint | Access | Request (reads + args) | Response (writes) | Call-path |\n");
+        o.push_str("|---|---|---|---|---|\n");
+        let store = r.data_store.as_deref();
         for e in &r.endpoints {
             o.push_str(&format!(
-                "| POST /_rpc/{} | {} | {} | {} |\n",
+                "| POST /_rpc/{} | {} | {} | {} | {} |\n",
                 md_cell(&e.msg),
+                md_cell(&wire_rpc_access(e)),
                 md_cell(&e.request),
                 md_cell(&e.response),
-                md_cell(e.effects.as_deref().unwrap_or("—"))
+                md_cell(&wire_callpath(&e.effect_families, store)),
             ));
         }
         if !r.http_endpoints.is_empty() {
             o.push_str("\n## HTTP endpoints (raw `App.api`, beside /_rpc)\n\n");
+            o.push_str("> ⚠ These are CSRF-exempt — reached by a third party (webhook / API client), outside the session contract. Verify each authenticates its caller.\n\n");
             wire_http_md(&mut o, &r.http_endpoints);
         }
     } else if !r.http_endpoints.is_empty() {
@@ -5472,16 +5552,30 @@ mod tests {
                     request: "{basket, region} + {region}".into(),
                     response: "{basket, region}".into(),
                     effects: Some("Db".into()),
+                    effect_families: vec!["Db".into()],
+                    read_fields: vec!["basket".into(), "region".into()],
+                    write_fields: vec!["basket".into(), "region".into()],
+                    reads_whole_model: false,
+                    writes_whole_model: false,
+                    msg_arg_tys: vec![],
                 },
                 WireEndpoint {
                     msg: "SaveAll".into(),
                     request: "whole model".into(),
                     response: "whole model".into(),
                     effects: None,
+                    effect_families: vec![],
+                    read_fields: vec![],
+                    write_fields: vec![],
+                    reads_whole_model: true,
+                    writes_whole_model: true,
+                    msg_arg_tys: vec![],
                 },
             ],
             http_endpoints: vec![],
             limited: false,
+            model_fields: vec![],
+            data_store: Some("PostgreSQL".into()),
             notes: vec!["a note".into()],
         }
     }
@@ -5503,17 +5597,17 @@ mod tests {
         let out = render_wire(&wire_report(), Format::Md);
         assert!(out.contains("## RPC endpoints (/_rpc)"), "{out}");
         assert!(
-            out.contains("| Endpoint | Request (reads + args) | Response (writes) | Effects |"),
+            out.contains("| Endpoint | Access | Request (reads + args) | Response (writes) | Call-path |"),
             "{out}"
         );
         assert!(
             out.contains(
-                "| POST /_rpc/SetRegion | {basket, region} + {region} | {basket, region} | Db |"
+                "| POST /_rpc/SetRegion | CSRF | {basket, region} + {region} | {basket, region} | Db → PostgreSQL |"
             ),
             "{out}"
         );
         assert!(
-            out.contains("| POST /_rpc/SaveAll | whole model | whole model | — |"),
+            out.contains("| POST /_rpc/SaveAll | CSRF | whole model | whole model | — |"),
             "{out}"
         );
     }
@@ -5598,6 +5692,8 @@ mod tests {
                 },
             ],
             limited: false,
+            model_fields: vec![],
+            data_store: None,
             notes: vec![],
         }
     }
@@ -5655,6 +5751,8 @@ mod tests {
                 },
             ],
             limited: false,
+            model_fields: vec![],
+            data_store: None,
             notes: vec![],
         };
         let out = render_wire(&r, Format::Md);
@@ -5677,6 +5775,8 @@ mod tests {
             endpoints: vec![],
             http_endpoints: vec![],
             limited: false,
+            model_fields: vec![],
+            data_store: None,
             notes: vec![],
         };
         let svg = render_wire(&r, Format::Svg);
@@ -5697,6 +5797,8 @@ mod tests {
             endpoints: vec![],
             http_endpoints: vec![],
             limited: false,
+            model_fields: vec![],
+            data_store: None,
             notes: vec!["not a Sky.Spa wasm client".into()],
         };
         let out = render_wire(&r, Format::Md);

@@ -29,6 +29,9 @@ pub mod diagram_svg;
 mod doc;
 mod driver;
 mod ffi_ops;
+/// `sky doc --api openapi` — a valid OpenAPI 3.1 spec generated statically from
+/// the app's typed source, reusing the `diagram::wire` analysis.
+pub mod openapi;
 /// `sky spa-partition` — read-only Sky.Spa client/server partition analysis
 /// (Phase 1 of the auto-split; no codegen). See the module docstring.
 pub mod spa_partition;

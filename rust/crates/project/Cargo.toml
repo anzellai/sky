@@ -8,6 +8,8 @@ workspace = true
 
 [dependencies]
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+serde_json.workspace = true
+serde_yaml = "0.9"
 skydb = { path = "../skydb" }
 lower = { path = "../lower" }
 hir = { path = "../hir" }

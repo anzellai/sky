@@ -6190,6 +6190,12 @@ fn cmd_doc(args: &[String]) -> ExitCode {
         return cmd_doc_diagram(&repo_root, &project_dir, &kind, args);
     }
 
+    // `sky doc --api <format>` — a machine-readable API contract. `openapi` ships
+    // now; `proto`/`grpc`/`asyncapi` are the reserved future formats.
+    if let Some(api_kind) = flag_value(args, "--api") {
+        return cmd_doc_api(&repo_root, &project_dir, &api_kind, args);
+    }
+
     if list {
         println!("{}", project::list_modules(&repo_root, &project_dir));
         return ExitCode::SUCCESS;
@@ -6229,15 +6235,116 @@ Diagram kinds:
   journey      the behaviour graph: each page, the actions its view can dispatch,
                their effects/RPC, the page they navigate to, and async continuations
   components   C4 system architecture: containers, trust zones, protocols
-  wire         /_rpc + raw HTTP endpoints, with request/response shapes
+  wire         API & call-paths: /_rpc + HTTP endpoints, access/auth, request/
+               response shapes, and the effect→store trace per endpoint
   telemetry    the metrics/log/trace surface the app emits
   audit        the whole submittable SOC2/ISO pack to a folder (needs --out <dir>)
 
 Formats: puml (default, PlantUML) · md (Markdown tables) · svg (self-contained).
 --out writes to a file instead of stdout. --target mirrors `sky build --target`
 (decides the client/server split for a Sky.Spa app).
+
+  sky doc --api <format> [--format yaml|json] [--out <path>] [--target <t>] [--no-rpc]
+                                a machine-readable API contract, generated from the
+                                typed source
+API formats:
+  openapi      an OpenAPI 3.1 spec of the app's HTTP API (declared routes +
+               the /_rpc transport, tagged `rpc`; --no-rpc for routes only).
+               proto / grpc / asyncapi are planned.
 "
     .to_string()
+}
+
+/// `sky doc --api <format>` — a machine-readable API contract generated from the
+/// typed source. `openapi` ships (OpenAPI 3.1, `--format yaml|json`); `proto` /
+/// `grpc` / `asyncapi` are reserved. `--out <path>` writes to a file; `--target`
+/// picks the client/server split; `--no-rpc` excludes the `/_rpc/<Msg>` operations.
+fn cmd_doc_api(repo_root: &Path, project_dir: &Path, api_kind: &str, args: &[String]) -> ExitCode {
+    const AVAILABLE: &[&str] = &["openapi"];
+    const PLANNED: &[&str] = &["proto", "grpc", "asyncapi"];
+    if api_kind != "openapi" {
+        if PLANNED.contains(&api_kind) {
+            eprintln!(
+                "sky doc --api {api_kind}: not yet implemented (planned).\n\
+                 Available now: {}.",
+                AVAILABLE.join(", ")
+            );
+        } else {
+            eprintln!(
+                "sky doc --api {api_kind}: unknown API format.\n\
+                 Available: {}. Planned: {}.",
+                AVAILABLE.join(", "),
+                PLANNED.join(", ")
+            );
+        }
+        return ExitCode::from(2);
+    }
+    let format = match flag_value(args, "--format").as_deref() {
+        None | Some("yaml") | Some("yml") => project::openapi::ApiFormat::Yaml,
+        Some("json") => project::openapi::ApiFormat::Json,
+        Some(other) => {
+            eprintln!("sky doc --api openapi --format {other}: use `yaml` (default) or `json`.");
+            return ExitCode::from(2);
+        }
+    };
+    let include_rpc = !args.iter().any(|a| a == "--no-rpc");
+    let out_path = flag_value(args, "--out");
+    let app_target = flag_value(args, "--target").or_else(|| sky_toml_app_target(project_dir));
+
+    // Stage the synthesised Sky.Spa project so `/_rpc` is visible, exactly as the
+    // diagram path does; analyse the raw project otherwise.
+    let staged = stage_diagram_spa(project_dir, app_target.as_deref());
+    let (analysis_dir, analysis_entry): (&Path, Option<String>) = match &staged {
+        Some((dir, entry_mod)) => (dir.as_path(), entry_mod.clone()),
+        None => (project_dir, None),
+    };
+    let dir_base = project_dir.file_name().and_then(|s| s.to_str()).unwrap_or("app");
+    let app_name = {
+        let n = project::sky_toml_project_key(project_dir, "name", dir_base);
+        if n.is_empty() { dir_base.to_string() } else { n }
+    };
+    let version = project::sky_toml_project_key(project_dir, "version", "0.0.0");
+    let cleanup = |staged: &Option<(PathBuf, Option<String>)>| {
+        if let Some((dir, _)) = staged {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    };
+
+    let out = match project::diagram::analyze_wire(
+        repo_root,
+        analysis_dir,
+        analysis_entry.as_deref(),
+        app_target.as_deref(),
+    ) {
+        Ok(report) => match project::openapi::render(&report, &app_name, &version, include_rpc, format) {
+            Ok(spec) => match &out_path {
+                Some(p) => match std::fs::write(p, &spec) {
+                    Ok(()) => {
+                        eprintln!("sky doc --api openapi: wrote {} bytes to {p}", spec.len());
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("sky doc --api openapi: could not write {p}: {e}");
+                        ExitCode::FAILURE
+                    }
+                },
+                None => {
+                    print!("{spec}");
+                    ExitCode::SUCCESS
+                }
+            },
+            Err(e) => {
+                eprintln!("sky doc --api openapi: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Err(e) => {
+            eprintln!("sky doc --api openapi: {e}");
+            ExitCode::FAILURE
+        }
+    };
+    cleanup(&staged);
+    out
 }
 
 /// `sky doc --diagram <kind>` — render a read-only architecture diagram of the
@@ -6245,7 +6352,7 @@ Formats: puml (default, PlantUML) · md (Markdown tables) · svg (self-contained
 /// `md` a Markdown table, `svg` a self-contained SVG we draw ourselves.
 /// `--out <path>` writes to a file instead of stdout. Mermaid is retired.
 fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[String]) -> ExitCode {
-    const PLANNED: &[&str] = &["journey", "components", "wire", "telemetry", "audit", "callpath"];
+    const PLANNED: &[&str] = &["journey", "components", "wire", "telemetry", "audit"];
     if kind != "components"
         && kind != "wire"
         && kind != "telemetry"
@@ -10001,7 +10108,8 @@ fn print_help() {
          \x20 spa-partition <file>  infer Sky.Spa client/server update split (read-only)\n\
          \x20 spa-split <file> --out <dir> [--build|--target <t>] [--broker <url>]  auto-split: generate (+build) the wasm frontend + native backend\n\
          \x20 fuzz  <file> [--target <t>]  no-panic model fuzz of update; --target web:app etc. adds the differential split oracle\n\
-         \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (journey|components|wire|telemetry)\n\
+         \x20 doc   --diagram <kind> [--format puml|md|svg] [--out <path>]  architecture diagram (journey|components|wire|telemetry|audit)\n\
+         \x20 doc   --api <format> [--format yaml|json] [--out <path>]  machine-readable API contract (openapi; proto/grpc/asyncapi planned)\n\
          \x20 version          print the version\n\n\
          DEFERRED (bring-up): upgrade"
     );
