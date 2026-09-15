@@ -462,7 +462,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 189,
+      "expected_assertions": 190,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
@@ -473,7 +473,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 140,
+      "expected_assertions": 141,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
