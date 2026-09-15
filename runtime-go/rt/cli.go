@@ -60,6 +60,7 @@ func cliProgramRun(cfg any) any {
 	viewFn := Field(cfg, "View")
 	onLineFn := Field(cfg, "OnLine")
 	subsFn := Field(cfg, "Subscriptions")
+	dur := durableCtxOf(Field(cfg, "Durable"))
 	if initFn == nil || updateFn == nil || viewFn == nil || onLineFn == nil {
 		return Err[any, any](ErrInvalidInput(
 			"Cli.program: cfg must define init / update / view / onLine"))
@@ -105,6 +106,8 @@ func cliProgramRun(cfg any) any {
 	// Initial state — call init () and fire startup cmd if any.
 	initRes := SkyCall(initFn, struct{}{})
 	model := tupleFirst(initRes)
+	// Durable: restore the persisted model (if any) before the first render.
+	model = dur.bootFixed(model)
 	if cmd := tupleSecond(initRes); cmd != nil {
 		cliRunCmd(cmd, msgCh)
 	}
@@ -128,7 +131,7 @@ func cliProgramRun(cfg any) any {
 	for {
 		select {
 		case msg := <-msgCh:
-			model = cliApplyUpdate(updateFn, msg, model, msgCh)
+			model = cliApplyUpdate(updateFn, msg, model, msgCh, dur)
 			subMgr.update(subsFn, model)
 			cliPrintView(viewFn, model)
 			continue
@@ -136,7 +139,7 @@ func cliProgramRun(cfg any) any {
 		}
 		select {
 		case msg := <-msgCh:
-			model = cliApplyUpdate(updateFn, msg, model, msgCh)
+			model = cliApplyUpdate(updateFn, msg, model, msgCh, dur)
 			subMgr.update(subsFn, model)
 			cliPrintView(viewFn, model)
 		case <-doneCh:
@@ -150,12 +153,14 @@ func cliProgramRun(cfg any) any {
 // cliApplyUpdate calls update(msg, model), runs any resulting cmd,
 // and returns the new model. update is expected to be a curried
 // 2-arg Sky function returning a tuple (newModel, cmd).
-func cliApplyUpdate(updateFn, msg, model any, msgCh chan<- any) any {
+func cliApplyUpdate(updateFn, msg, model any, msgCh chan<- any, dur *durableCtx) any {
 	res := SkyCall(updateFn, msg, model)
 	newModel := tupleFirst(res)
 	if cmd := tupleSecond(res); cmd != nil {
 		cliRunCmd(cmd, msgCh)
 	}
+	// Durable: snapshot the new model after each update (fire-and-forget).
+	dur.persistFixed(newModel)
 	return newModel
 }
 

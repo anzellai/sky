@@ -36,3 +36,7 @@ func cliCfgSet(cfg any, key string, val any) any {
 
 // Cli_withOnLine — `onLine : String -> msg` stdin-line handler.
 func Cli_withOnLine(fn, cfg any) any { return cliCfgSet(cfg, "OnLine", fn) }
+
+// Cli_withDurable — the durable wiring record (restore/persist/setup/runId);
+// Cli_program restores the model at start and snapshots it after each update.
+func Cli_withDurable(d, cfg any) any { return cliCfgSet(cfg, "Durable", d) }

@@ -44,6 +44,10 @@ func tuiCfgSet(cfg any, key string, val any) any {
 // Tui_withOnKey — `onKey : KeyEvent -> msg` raw key-event handler.
 func Tui_withOnKey(fn, cfg any) any { return tuiCfgSet(cfg, "OnKey", fn) }
 
+// Tui_withDurable — the durable wiring record (Std.App.withDurable); Tui_program
+// restores the model at start (fixed run id) and snapshots it after each update.
+func Tui_withDurable(d, cfg any) any { return tuiCfgSet(cfg, "Durable", d) }
+
 // Tui_withGuard — `guard : msg -> model -> Result Error ()` per-Msg gate.
 func Tui_withGuard(fn, cfg any) any { return tuiCfgSet(cfg, "Guard", fn) }
 

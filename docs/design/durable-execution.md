@@ -5,6 +5,16 @@
 > process that must survive a restart). It is NOT AI-specific; an agent run is
 > just one kind of durable workflow, and `Std.Ai.Agent` is built on top of it.
 
+> **Two levels of durability.** `Std.Durable` (this doc) makes a multi-step EFFECT
+> workflow exactly-once and resumable — the right tool when a step must not re-run
+> (a charge, an outbound message). For the simpler property "an app's MODEL should
+> survive a restart", `Std.App` offers a zero-annotation layer:
+> `App.withDurable db modelCodec` snapshots the TEA Model after each update and
+> restores it on start, with no change to `model` / `msg` / `update`. It is built on
+> the same `Durable.saveSnapshot` / `loadSnapshot` substrate. See
+> `docs/skyapp/overview.md`. The Model snapshot is at-most-once for an in-flight
+> effect; reach for `Durable.step` when an effect needs the exactly-once guarantee.
+
 ## The problem
 
 A workflow runs across many steps and, sometimes, hours or days — a checkout that

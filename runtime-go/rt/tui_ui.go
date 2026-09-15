@@ -214,7 +214,7 @@ func tuiApplyUpdate(guardFn, updateFn, msg, model any, msgCh chan<- any) any {
 	// each keypress→update is one interaction. DB / Http / File
 	// kernels called inside `update` nest under it.
 	return WithMsgSpan(msgDisplayName(msg), func() any {
-		return cliApplyUpdate(updateFn, msg, model, msgCh)
+		return cliApplyUpdate(updateFn, msg, model, msgCh, nil)
 	})
 }
 

@@ -352,7 +352,7 @@ func webviewAppRun(cfg any) any {
 				if !ok {
 					return
 				}
-				newModel := cliApplyUpdate(updateFn, msg, model, msgCh)
+				newModel := cliApplyUpdate(updateFn, msg, model, msgCh, nil)
 				model = newModel
 				subMgr.update(subsFn, model)
 

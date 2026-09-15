@@ -1,18 +1,29 @@
 # Transparent Msg-replay for `Std.Durable` — an epic, not a patch
 
-> Status: RE-SCOPED and PARTLY SHIPPED. An expert review (2026-09-14) refuted the
-> "needs a runtime kernel" premise below: the load-bearing piece — snapshotting the
-> Model — is pure Sky via `Std.Codec`, and that substrate now ships as
-> `Durable.saveSnapshot` / `loadSnapshot` (proven: a model round-trips through the
-> database as a restart would, write-if-newer holds). What remains is the ergonomic
-> auto-wrapper `Durable.app` (snapshot each update, `Durable.perform` for
-> exactly-once effects, restore in `init`); its only real friction is `Std.App`'s
-> SYNCHRONOUS `init` (`seed -> (model, Cmd msg)`), which cannot itself run the async
-> restore — so the restore is wired as a first tick or a seed the host loads. That
-> is a bounded stdlib feature, NOT the kernel epic the rest of this doc feared. The
-> only genuinely kernel-bound part is FULLY annotation-free effect capture, which is
-> optional (the `Durable.perform` wrapper delivers the same guarantee). The original
-> analysis is kept below for the record.
+> Status: RE-SCOPED and SHIPPED (zero-annotation Model durability). An expert review
+> (2026-09-14) refuted the "needs a runtime kernel" premise below: the load-bearing
+> piece — snapshotting the Model — is pure Sky via `Std.Codec`, and that substrate
+> ships as `Durable.saveSnapshot` / `loadSnapshot` (proven: a model round-trips
+> through the database as a restart would, write-if-newer holds).
+>
+> The ergonomic auto-wrapper now ships too, as **`App.withDurable db modelCodec`**
+> (and `App.withDurableId` for an explicit run id). It makes any `Std.App` app
+> durable with NO change to `model` / `msg` / `update`: the backend loop restores
+> the Model on start and snapshots it after each update. The `init`-is-synchronous
+> friction is handled in the runtime, not the source — the loop calls the async
+> restore itself, between `init` and the first render, so the author writes an
+> ordinary TEA app. Covered across the backends: Cli (`durable_tea_cli_flow.rs`,
+> per-commit, runs the binary twice against one sqlite db), Live
+> (`durable_tea_live_flow.rs`, an HTTP process-restart handoff on a memory session
+> store) and Tui (shares the Cli loop path). See `docs/skyapp/overview.md` for the
+> user-facing surface.
+>
+> Two things remain optional and are NOT shipped here: FULLY annotation-free effect
+> capture (the `Durable.perform` wrapper already delivers the same exactly-once
+> guarantee where an effect must not re-run), and transparent Msg-by-Msg replay
+> (the unbounded fold analysed below). The Model-snapshot layer supersedes the need
+> for Msg replay for the "survive a restart" property. The original analysis is kept
+> below for the record.
 
 ## What it would be
 

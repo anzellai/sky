@@ -199,6 +199,42 @@ App.app { init = init, update = update, view = view, subscriptions = subscriptio
 loud-log floor stands. Web (Sky.Live) and terminal targets have no RPC boundary
 and ignore the hook — there a failed task surfaces through its own `ToMsg`.
 
+## Surviving a restart — `App.withDurable`
+
+Add durability to any `App.app` app with **one line** and NO change to `model` /
+`msg` / `update`:
+
+```elm
+mkApp db =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound NotFound
+        |> App.withDurable db modelCodec
+```
+
+`withDurable : Db -> Codec model -> App … -> App …`. The backend loop restores the
+Model on start and snapshots it to the database after each update. So the state up
+to the last completed `update` survives a process restart:
+
+- **Web (Sky.Live):** the snapshot is keyed by the session id. With the default
+  in-process memory session store, a restart normally loses the session; the
+  durable snapshot restores it on the next mount as long as the `sky_sid` cookie
+  survives. (A shared session store — postgres / redis — already carries the Model
+  across replicas; `withDurable` is the layer that also covers a memory store.)
+- **Terminal (`App.cli` / `App.tui`):** the snapshot is keyed by a fixed run id
+  (`"default"`), so a re-launched program picks up where it stopped. Use
+  `App.withDurableId "<id>" db modelCodec` to key several runs separately, or to
+  share one durable state between two runs that use the same id + database.
+
+The Model must be `Codec`-serialisable data (no function fields — the same rule as
+an Elm port). Build the codec with `Codec.auto <blank model>`.
+
+Durability of the Model is separate from exactly-once EFFECTS. The snapshot
+guarantees the state up to the last completed `update`; an effect in flight at the
+moment of a crash is at-most-once. For an effect that must run exactly once across
+a resume (a payment, an outbound message), drive it through a `Std.Durable`
+step-journalled workflow (`Durable.step`) rather than a bare `Cmd.perform`. See
+`docs/design/durable-execution.md`.
+
 ## View adapter
 
 You write one `view : model -> Element msg`. `Std.App` adapts it per backend:

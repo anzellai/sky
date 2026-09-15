@@ -35,6 +35,7 @@ module Std.Tui exposing
     , config
     , withOnKey
     , withGuard
+    , withDurable
     , withCanvasWidth
     , withCanvasHeight
     )
@@ -79,6 +80,14 @@ program =
 withOnKey : (key -> msg) -> AppConfig model msg -> AppConfig model msg
 withOnKey =
     Ffi.kernel "Tui_withOnKey"
+
+
+-- | Attach durable wiring (from `Std.App.withDurable`); the runtime restores the
+-- model at start (fixed run id) and snapshots it after each update. Polymorphic
+-- in the wiring record so this module does not depend on `Std.App`.
+withDurable : durable -> AppConfig model msg -> AppConfig model msg
+withDurable =
+    Ffi.kernel "Tui_withDurable"
 
 
 -- | Attach a per-Msg guard — `guard msg model` returns `Err` to reject the

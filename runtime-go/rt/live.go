@@ -1011,6 +1011,11 @@ type liveApp struct {
 	// session's page-views (incl. the first render) carry the user with no manual
 	// `identify` call. nil → no auto-identity (byte-identical to before).
 	analyticsIdentify any
+	// durable — optional zero-annotation durability wiring (Std.App.withDurable).
+	// nil when the app is not durable (byte-identical to before). When set, the
+	// live loop restores the session model on first mount (keyed by the session
+	// id) and snapshots it after each update. See durable_tea.go.
+	durable           *durableCtx
 	api               []apiRoute    // REST-style custom handlers alongside Live pages
 	staticDir         string        // Serves files from this directory under /static/…
 	staticURL         string        // URL mount prefix (default "/static")
@@ -1869,6 +1874,7 @@ func liveAppRun(cfg any) any {
 		onNavigate:         Field(cfg, "OnNavigate"),
 		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
 		analyticsIdentify:  analyticsIdentifyFromCfg(cfg),
+		durable:            durableCtxOf(Field(cfg, "Durable")),
 		locker:             newSessionLocker(),
 		msgTags:            make(map[string]int),
 		bannerCfg:          resolveBannerStrings(loadLiveBannerConfig(), cfg),
@@ -2428,6 +2434,13 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		res := sky_call(app.init, req)
 		model = tupleFirst(res)
 		cmd = tupleSecond(res)
+		// Zero-annotation durability (Std.App.withDurable): this is a FRESH
+		// session (the session store had no live model for this sid). Restore the
+		// last snapshot for this session id, so a model survives a process
+		// restart / memory-store eviction whenever the sid cookie survives. A
+		// no-op (returns init's model) when the app is not durable or no snapshot
+		// exists. Runs before applyRoute so the current URL's page still wins.
+		model = app.durable.boot(sid, model)
 		// Register model types for gob encoding so DB-backed
 		// session stores can decode them on future Get calls.
 		gobRegisterAll(model)
@@ -3368,6 +3381,10 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 		func() any { return sky_call2(app.update, msg, sess.model) })
 	msgLogCtx.TraceID = msgTraceID
 	sess.model = tupleFirst(result)
+	// Zero-annotation durability: snapshot the new model for this session id
+	// after each update (fire-and-forget; write-if-newer, so a lost race cannot
+	// regress the stored state). A no-op when the app is not durable.
+	app.durable.persist(sess.sid, sess.model)
 	cmd := tupleSecond(result)
 	finalCmd = cmd
 	sess.handlers = map[string]any{}

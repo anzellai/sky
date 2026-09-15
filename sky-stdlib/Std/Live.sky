@@ -48,6 +48,7 @@ module Std.Live exposing
     , withAnalytics
     , withAnalyticsIdentify
     , withStatus
+    , withDurable
     , withAuthSliding
     , withRevocation
     , bindSessionUser
@@ -283,6 +284,15 @@ withStatus : { reconnecting : String
 } -> AppConfig model msg -> AppConfig model msg
 withStatus =
     Ffi.kernel "Live_withStatus"
+
+
+-- | Attach durable wiring (from `Std.App.withDurable`); the live loop restores
+-- the session model on first mount (keyed by the session id) and snapshots it
+-- after each update. Polymorphic in the wiring record so this module does not
+-- depend on `Std.App`.
+withDurable : durable -> AppConfig model msg -> AppConfig model msg
+withDurable =
+    Ffi.kernel "Live_withDurable"
 
 
 -- | Opt into SLIDING (rolling) auth tokens — the middleware re-issues a

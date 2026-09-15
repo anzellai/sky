@@ -1,0 +1,54 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Db as Db exposing (Db)
+import Std.Codec as Codec exposing (Codec)
+
+
+-- Zero-annotation durable counter. `App.withDurableId` makes the app durable
+-- with NO change to model / msg / update: the runtime restores the model on
+-- start and snapshots it after each update. Run the binary twice against the
+-- same sqlite db and the count carries over.
+type alias Model =
+    { count : Int }
+
+
+modelCodec : Codec Model
+modelCodec =
+    Codec.auto { count = 0 }
+
+
+type Msg
+    = Bump
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ model =
+    ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> String
+view model =
+    "count: " ++ String.fromInt model.count ++ "\n"
+
+
+mkApp db =
+    App.cli { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+        |> App.withInput (\_ -> Bump)
+        |> App.withDurableId "t" db modelCodec
+
+
+main : Task Error ()
+main =
+    Db.connect () |> Task.andThen (\db -> App.run (mkApp db))

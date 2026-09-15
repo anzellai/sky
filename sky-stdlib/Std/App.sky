@@ -64,6 +64,9 @@ module Std.App exposing
     , withOnNavigate
     , withRequest
     , withRpcError
+    , withDurable
+    , withDurableId
+    , DurableWiring
     , baseDefaults
     , webDefaults
     , tabletDefaults
@@ -90,6 +93,9 @@ import Sky.Ffi as Ffi
 import Sky.Http.Server as Server
 import Std.Cli as Cli
 import Std.Cmd as Cmd
+import Std.Codec as Codec exposing (Codec)
+import Std.Db as Db exposing (Db)
+import Std.Durable as Durable
 import Std.Html as Html exposing (Html)
 import Std.Live as Live
 import Std.Spa as Spa
@@ -352,7 +358,35 @@ type App fallback seed page model msg key
 , onNavigate : Maybe (page -> msg)
 , onRequest : Maybe (Request -> model -> ( model, Cmd msg ))
 , rpcError : Maybe (Error -> msg)
+, durable : DurableWiring model
 }
+
+
+-- | The durability wiring carried to the backend loop by `withDurable`. The
+-- runtime calls `restore` at session/app start (swapping in the loaded model via
+-- `applyRestore`) and `persist` after each update. Built from the shipped
+-- `Std.Durable` snapshot primitives, so the model just needs a `Codec`. `enabled`
+-- gates it — a non-durable app carries a no-op wiring (avoids a `Maybe` of a
+-- parameterised record, which the codegen does not lower cleanly).
+type alias DurableWiring model =
+    { enabled : Bool
+    , setup : Task Error ()
+    , restore : String -> Task Error (Maybe model)
+    , persist : String -> model -> Task Error ()
+    , applyRestore : Result Error (Maybe model) -> model -> model
+    , runId : String
+    }
+
+
+noDurableWiring : DurableWiring model
+noDurableWiring =
+    { enabled = False
+    , setup = Task.succeed ()
+    , restore = \_ -> Task.succeed Nothing
+    , persist = \_ _ -> Task.succeed ()
+    , applyRestore = \_ m -> m
+    , runId = ""
+    }
 
 
 -- | Describe an app from the shared TEA core. Routing, config, and function
@@ -380,6 +414,7 @@ app cfg =
         , onNavigate = Nothing
         , onRequest = Nothing
         , rpcError = Nothing
+        , durable = noDurableWiring
         }
 
 
@@ -411,6 +446,7 @@ web cfg =
         , onNavigate = Nothing
         , onRequest = Nothing
         , rpcError = Nothing
+        , durable = noDurableWiring
         }
 
 
@@ -441,6 +477,7 @@ cli cfg =
         , onNavigate = Nothing
         , onRequest = Nothing
         , rpcError = Nothing
+        , durable = noDurableWiring
         }
 
 
@@ -473,6 +510,7 @@ tui cfg =
         , onNavigate = Nothing
         , onRequest = Nothing
         , rpcError = Nothing
+        , durable = noDurableWiring
         }
 
 
@@ -487,6 +525,53 @@ withRoutes routes (App a) =
 withNotFound : page -> App fallback seed page model msg key -> App HasFallback seed page model msg key
 withNotFound page_ (App a) =
     App { a | notFound = Just page_ }
+
+
+{-| Make the app DURABLE with zero changes to `model` / `msg` / `update`: the
+runtime restores the Model when a session/app starts and snapshots it after every
+update. The Model must have a `Codec` (it is serialised to the database), so it
+must be plain data — no function fields. On Sky.Live each browser session is its
+own durable run (keyed by the session id); on Sky.Cli / Sky.Tui use `withDurableId`
+to set a fixed run id (this defaults it to `"default"`).
+
+    App.app { init, update, view, subscriptions }
+        |> App.withNotFound (view initModel)
+        |> App.withDurable db modelCodec
+
+The guarantee is state-level: the Model up to the last completed update survives a
+restart. An effect still in flight at crash time is at-most-once — for exactly-once
+effects use a `Std.Durable` step-journalled workflow (`Durable.step`).
+-}
+withDurable : Db -> Codec model -> App fallback seed page model msg key -> App fallback seed page model msg key
+withDurable dbHandle codec appVal =
+    withDurableId "default" dbHandle codec appVal
+
+
+{-| `withDurable` with an explicit run id (for the terminal backends, which have
+no session). Two apps sharing a run id + database share durable state. -}
+withDurableId : String -> Db -> Codec model -> App fallback seed page model msg key -> App fallback seed page model msg key
+withDurableId rid dbHandle codec (App a) =
+    App
+        { a
+            | durable =
+                { enabled = True
+                , setup = Durable.setup dbHandle
+                , restore = \r -> Durable.loadSnapshot dbHandle r codec
+                , persist = \r m -> Durable.saveSnapshotAuto dbHandle r codec m
+                , applyRestore = applyRestoreDefault
+                , runId = rid
+                }
+        }
+
+
+applyRestoreDefault : Result Error (Maybe model) -> model -> model
+applyRestoreDefault res initModel =
+    case res of
+        Ok (Just m) ->
+            m
+
+        _ ->
+            initModel
 
 
 -- | Set the desktop window title + initial size (desktop targets). Shorthand
@@ -971,8 +1056,13 @@ runLiveBoot_ (App a) =
 
                         Nothing ->
                             withGuard_
+                withDur_ =
+                    if a.durable.enabled then
+                        Live.withDurable a.durable withNav_
+                    else
+                        withNav_
             in
-                Live.app withNav_
+                Live.app withDur_
 
         Nothing ->
             Task.fail
@@ -1063,8 +1153,13 @@ runTuiBoot_ (App a) =
 
                         Nothing ->
                             withKey_
+                withDur_ =
+                    if a.durable.enabled then
+                        Tui.withDurable a.durable withGuard_
+                    else
+                        withGuard_
             in
-                Tui.app withGuard_
+                Tui.app withDur_
 
         ViewString v ->
             -- App.tui: a hand-authored String view, drawn full-screen by
@@ -1096,8 +1191,13 @@ runTuiBoot_ (App a) =
 
                         Nothing ->
                             withKey_
+                withDur_ =
+                    if a.durable.enabled then
+                        Tui.withDurable a.durable withGuard_
+                    else
+                        withGuard_
             in
-                Tui.program withGuard_
+                Tui.program withDur_
 
         ViewHtml _ ->
             Task.fail
@@ -1135,8 +1235,14 @@ runCliBoot_ (App a) =
 
                         Nothing ->
                             base
+
+                withDur =
+                    if a.durable.enabled then
+                        Cli.withDurable a.durable withLine
+                    else
+                        withLine
             in
-                Cli.program withLine
+                Cli.program withDur
 
         ViewString v ->
             -- App.cli: a hand-authored String view, printed verbatim (what
@@ -1157,8 +1263,14 @@ runCliBoot_ (App a) =
 
                         Nothing ->
                             base
+
+                withDur =
+                    if a.durable.enabled then
+                        Cli.withDurable a.durable withLine
+                    else
+                        withLine
             in
-                Cli.program withLine
+                Cli.program withDur
 
         ViewHtml _ ->
             Task.fail

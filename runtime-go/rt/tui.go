@@ -119,6 +119,7 @@ func tuiProgramRun(cfg any) any {
 	viewFn := Field(cfg, "View")
 	onKeyFn := Field(cfg, "OnKey")
 	subsFn := Field(cfg, "Subscriptions")
+	dur := durableCtxOf(Field(cfg, "Durable"))
 	if initFn == nil || updateFn == nil || viewFn == nil || onKeyFn == nil {
 		return Err[any, any](ErrInvalidInput(
 			"Tui.program: cfg must define init / update / view / onKey"))
@@ -172,6 +173,8 @@ func tuiProgramRun(cfg any) any {
 	// Initial state.
 	initRes := SkyCall(initFn, struct{}{})
 	model := tupleFirst(initRes)
+	// Durable: restore the persisted model (if any) before the first render.
+	model = dur.bootFixed(model)
 	if cmd := tupleSecond(initRes); cmd != nil {
 		cliRunCmd(cmd, msgCh)
 	}
@@ -184,7 +187,7 @@ func tuiProgramRun(cfg any) any {
 	for {
 		select {
 		case msg := <-msgCh:
-			model = cliApplyUpdate(updateFn, msg, model, msgCh)
+			model = cliApplyUpdate(updateFn, msg, model, msgCh, dur)
 			subMgr.update(subsFn, model)
 			tuiRender(viewFn, model)
 			continue
@@ -192,7 +195,7 @@ func tuiProgramRun(cfg any) any {
 		}
 		select {
 		case msg := <-msgCh:
-			model = cliApplyUpdate(updateFn, msg, model, msgCh)
+			model = cliApplyUpdate(updateFn, msg, model, msgCh, dur)
 			subMgr.update(subsFn, model)
 			tuiRender(viewFn, model)
 		case <-doneCh:

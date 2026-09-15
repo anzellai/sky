@@ -140,6 +140,13 @@ func Live_withAnalyticsIdentify(f, cfg any) any {
 // connection-banner string overrides (invariant 4).
 func Live_withStatus(status, cfg any) any { return liveCfgSet(cfg, "Status", status) }
 
+// Live_withDurable — the durable wiring record (Std.App.withDurable). The live
+// loop restores the session model on first mount (keyed by the session id) and
+// snapshots it after each update. Polymorphic in the wiring record so Std.Cli /
+// Std.Live do not depend on Std.App (invariant 4: the record is stored verbatim
+// under "Durable" and read via durableCtxOf in liveAppRun).
+func Live_withDurable(d, cfg any) any { return liveCfgSet(cfg, "Durable", d) }
+
 // Live_withAuthSliding — opt into rolling JWT re-issue (invariant 4: the record
 // — including its `revokedCheck : Maybe (String -> Task Error Bool)` closure —
 // is stored verbatim under "AuthSliding" and parsed by SetAuthSlidingConfig in

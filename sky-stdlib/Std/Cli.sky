@@ -25,7 +25,7 @@
 --         )
 --         |> Task.run
 -- ```
-module Std.Cli exposing (AppConfig, program, config, withOnLine, readPassword)
+module Std.Cli exposing (AppConfig, program, config, withOnLine, withDurable, readPassword)
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
@@ -58,6 +58,14 @@ program =
 withOnLine : (String -> msg) -> AppConfig model msg -> AppConfig model msg
 withOnLine =
     Ffi.kernel "Cli_withOnLine"
+
+
+-- | Attach durable wiring (from `Std.App.withDurable`); the runtime restores the
+-- model at start and snapshots it after each update. Polymorphic in the wiring
+-- record so this module does not depend on `Std.App`.
+withDurable : durable -> AppConfig model msg -> AppConfig model msg
+withDurable =
+    Ffi.kernel "Cli_withDurable"
 
 
 -- | Read one line from stdin with terminal echo disabled (passwords never
