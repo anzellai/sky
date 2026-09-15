@@ -6099,6 +6099,10 @@ main =
 /// `--serve` / `--tui` are deferred (they spawn a bundled Sky app the bring-up
 /// doesn't materialise).
 fn cmd_doc(args: &[String]) -> ExitCode {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{}", doc_help_text());
+        return ExitCode::SUCCESS;
+    }
     let serve = args.iter().any(|a| a == "--serve");
     let tui = args.iter().any(|a| a == "--tui");
     if serve && tui {
@@ -6191,7 +6195,7 @@ fn cmd_doc(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let Some(module) = target else {
-        eprintln!("usage: sky doc <Module>   |   sky doc --list");
+        eprint!("{}", doc_help_text());
         return ExitCode::from(2);
     };
     match project::render_module(&repo_root, &project_dir, &module) {
@@ -6204,6 +6208,34 @@ fn cmd_doc(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The full `sky doc` help, shared by `sky doc --help` and the no-target usage
+/// fallback. Kept in lock-step with the top-level `sky --help` doc lines.
+fn doc_help_text() -> String {
+    "\
+sky doc — API reference and read-only architecture diagrams for a project.
+
+Usage:
+  sky doc <Module>              print a module's exported bindings + signatures
+  sky doc --list                list every module in scope
+  sky doc --serve [--port N]    browse the docs over HTTP (default port 8030)
+  sky doc --tui                 browse the docs in a terminal UI
+  sky doc --export <dir>        write the static HTML doc-site to <dir>
+  sky doc --diagram <kind> [--format puml|md|svg] [--out <path>] [--target <t>]
+                                render an architecture diagram of this project
+
+Diagram kinds:
+  components   modules and the capability families each one reaches
+  wire         /_rpc + raw HTTP endpoints, with request/response shapes
+  journey      pages, URLs, and each user action (effectful vs pure)
+  telemetry    the metrics/log/trace surface the app emits
+
+Formats: puml (default, PlantUML) · md (Markdown tables) · svg (self-contained).
+--out writes to a file instead of stdout. --target mirrors `sky build --target`
+(decides the client/server split for a Sky.Spa app).
+"
+    .to_string()
 }
 
 /// `sky doc --diagram <kind>` — render a read-only architecture diagram of the
