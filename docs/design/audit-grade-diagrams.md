@@ -68,3 +68,25 @@ view-emitted action, with dead actions and unreachable states falling out for fr
    external audit tooling) + the two evidence tables.
 
 Every renderer reads the ONE behaviour graph, so the artefacts stay consistent.
+
+## Locked decisions (2026-09-15)
+
+The bar: a user runs one command and submits the output to a SOC2 / ISO 27001
+auditor unchanged. So:
+
+- **Global-chrome split.** An action reachable from EVERY page is global chrome
+  (nav / shared layout), listed once in a "Global actions" section; page-unique
+  actions sit under their page. This fixes the shared-layout over-attribution and
+  reads as "on this page a user can …".
+- **The submittable artefact is the SVG, drawn as a trust-boundary swimlane DFD.**
+  Lanes: Browser client (wasm) · `/_rpc` server · Data stores · External systems.
+  Data-flow arrows cross the lanes; confidential flows are marked; a legend and an
+  `app-name · generated <date>` title are always present. Markdown stays the
+  detailed per-page evidence list; PlantUML mirrors the SVG.
+- **Overlays are always on** (no flag): trust boundaries, data classification
+  (a flow is CONFIDENTIAL when it carries a `Secret`, a `Std.Auth` session/cookie,
+  or a PII-named field), and named external systems (real hosts from the HTTP call
+  literals, which also produce the sub-processor list).
+- **One audit bundle.** `sky doc --diagram audit --out <dir>` writes the whole
+  suite (every diagram as SVG + md, plus the data-inventory and sub-processor
+  tables) so a user hands an auditor a folder, not four commands.
