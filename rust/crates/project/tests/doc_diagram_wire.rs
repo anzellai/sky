@@ -57,7 +57,7 @@ fn spa_app_has_rpc_endpoint_rows_with_request_and_response() {
     // sit alongside the request/response shapes.
     assert!(
         md.contains(
-            "| Endpoint | Access | Request (reads + args) | Response (writes) | Call-path |"
+            "| Endpoint | Access | Request (fields + args) | Response (writes) | Call-path |"
         ),
         "{md}"
     );

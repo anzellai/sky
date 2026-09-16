@@ -1,0 +1,79 @@
+module Main exposing (main)
+
+-- Soundness fixture for Sky.Spa auto-split bug #1 (request under-carries a
+-- preserved field). A server `/_rpc/<Msg>` RESPONSE is the per-Msg UNION of
+-- every field any internal branch writes; the REQUEST must carry `reads union
+-- writes`, not the reads alone. A field written on one branch but merely
+-- PRESERVED (through `{ model | ... }`) on the executed branch is in the
+-- response but, without the fix, is NOT in the request -- so the server rebuilds
+-- it as the empty-Model default and returns that, clobbering the client value.
+--
+-- `Act` reads `counter` (the guard `model.counter > 5`). The then-arm WRITES
+-- `note`; the else-arm bumps `counter` and PRESERVES `note`. Both arms are
+-- effectful (a `File.writeFile`), so `Act` splits to a `POST /_rpc/Act` whose
+-- response write-set is `{counter, note}`. The request must therefore carry
+-- `note` too. The e2e test POSTs a non-default `note` and asserts it survives
+-- the round-trip on the executed else-path.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { counter : Int
+    , note : String
+    }
+
+type Msg
+    = Act
+    | Done (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { counter = 0, note = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Act ->
+            if model.counter > 5 then
+                ( { model | note = "big" }
+                , Cmd.perform (File.writeFile "data/act.txt" "big") Done
+                )
+
+            else
+                ( { model | counter = model.counter + 1 }
+                , Cmd.perform (File.writeFile "data/act.txt" "bump") Done
+                )
+
+        Done _ ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column [] [ Ui.text model.note ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+
+
+main : Task Error ()
+main =
+    App.run app

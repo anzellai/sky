@@ -1163,6 +1163,11 @@ pub struct WireEndpoint {
     pub read_fields: Vec<String>,
     /// The Model fields the branch WRITES (the response Model-field outputs).
     pub write_fields: Vec<String>,
+    /// The written fields assigned fresh on EVERY response leaf (server-produced:
+    /// a constant, a Msg arg, an effect result). These are NOT in the request —
+    /// the server reproduces them. A written field NOT here is preserved from the
+    /// client model on some path and DOES ride the request (soundness bug #1).
+    pub always_written: Vec<String>,
     /// True when the request is the whole model (no field-level request schema).
     pub reads_whole_model: bool,
     /// True when the response is the whole model.
@@ -1255,13 +1260,22 @@ pub struct WireReport {
 }
 
 /// Render the request shape of a branch from its public [`crate::spa_partition::BranchIo`]
-/// fields — the read-set (or the whole model) plus the Msg args.
+/// fields — the request field-set (or the whole model) plus the Msg args.
+///
+/// The request field-set is `reads ∪ writes`, not the reads alone. A field an
+/// internal branch preserves through `{ model | ... }` must travel in the
+/// request, or the server rebuilds it as the empty-model default and clobbers
+/// the client value. So the diagram charts `request_fields()` /
+/// `request_whole_model()`, which is the true wire the split emits.
 fn wire_request(io: &crate::spa_partition::BranchIo) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if io.reads_whole_model {
+    if io.request_whole_model() {
         parts.push("whole model".to_string());
-    } else if !io.read_fields.is_empty() {
-        parts.push(fmt_fields(&io.read_fields));
+    } else {
+        let req_fields = io.request_fields();
+        if !req_fields.is_empty() {
+            parts.push(fmt_fields(&req_fields));
+        }
     }
     if !io.msg_args.is_empty() {
         parts.push(fmt_fields(&io.msg_args));
@@ -1406,6 +1420,7 @@ pub fn analyze_wire(
             effect_families: b.effect_families.clone(),
             read_fields: io.read_fields.clone(),
             write_fields: io.write_fields.clone(),
+            always_written: io.always_written.clone(),
             reads_whole_model: io.reads_whole_model,
             writes_whole_model: io.writes_whole_model,
             msg_arg_tys: b.msg_arg_tys.clone(),
@@ -1704,7 +1719,7 @@ fn render_wire_md(r: &WireReport) -> String {
              families it reaches and their targets.\n\n",
         );
         o.push_str("## RPC endpoints (/_rpc)\n\n");
-        o.push_str("| Endpoint | Access | Request (reads + args) | Response (writes) | Call-path |\n");
+        o.push_str("| Endpoint | Access | Request (fields + args) | Response (writes) | Call-path |\n");
         o.push_str("|---|---|---|---|---|\n");
         let store = r.data_store.as_deref();
         for e in &r.endpoints {
@@ -5579,6 +5594,7 @@ mod tests {
                     effect_families: vec!["Db".into()],
                     read_fields: vec!["basket".into(), "region".into()],
                     write_fields: vec!["basket".into(), "region".into()],
+                    always_written: vec![],
                     reads_whole_model: false,
                     writes_whole_model: false,
                     msg_arg_tys: vec![],
@@ -5591,6 +5607,7 @@ mod tests {
                     effect_families: vec![],
                     read_fields: vec![],
                     write_fields: vec![],
+                    always_written: vec![],
                     reads_whole_model: true,
                     writes_whole_model: true,
                     msg_arg_tys: vec![],
@@ -5621,7 +5638,7 @@ mod tests {
         let out = render_wire(&wire_report(), Format::Md);
         assert!(out.contains("## RPC endpoints (/_rpc)"), "{out}");
         assert!(
-            out.contains("| Endpoint | Access | Request (reads + args) | Response (writes) | Call-path |"),
+            out.contains("| Endpoint | Access | Request (fields + args) | Response (writes) | Call-path |"),
             "{out}"
         );
         assert!(

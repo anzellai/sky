@@ -2620,6 +2620,124 @@ fn spa_guard_is_enforced_server_side_on_rpc() {
     );
 }
 
+fn spa_writeset_roundtrip_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-writeset-roundtrip")
+}
+
+/// Soundness regression for Sky.Spa auto-split bug #1 — the RPC request must
+/// carry `reads union writes`, not the reads alone.
+///
+/// `Act` reads `counter` and writes `note` on the then-arm; the else-arm bumps
+/// `counter` and PRESERVES `note`. The per-Msg response write-set is the union
+/// `{counter, note}`. Before the fix the request carried only the read-set
+/// `{counter}`, so a `note` the client held was NOT sent, the server rebuilt it
+/// as the empty-Model default `""`, and the executed else-path returned that —
+/// silently clobbering the client value.
+///
+/// This asserts BOTH legs: the generated wire shape (the shared `ActReq` and the
+/// backend reconstruct both carry `note`, always-run) AND, Go-gated, the real
+/// round-trip — POST a non-default `note`, and it must survive on the executed
+/// else-path. A shape-only test is exactly what let this ship, so the e2e leg is
+/// the one that matters.
+#[test]
+fn spa_split_request_carries_a_preserved_write_field_round_trip() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_writeset_roundtrip_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-writeset-roundtrip fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // ── Always-run wire-shape leg. ──
+    let shared = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/shared/Shared.sky"))
+        .expect("generated shared module must exist");
+    // The request type carries the PRESERVED write field `note`, not the read
+    // `counter` alone. `Codec.field "note"` inside the request codec BODY (from
+    // `actReqCodec =` to its `buildObject`) is the wire proof — sliced tightly so
+    // it cannot match the response codec's own `note` field.
+    let req_codec_body = shared
+        .split_once("actReqCodec =")
+        .and_then(|(_, rest)| rest.split_once("buildObject"))
+        .map(|(body, _)| body)
+        .unwrap_or("");
+    assert!(
+        req_codec_body.contains("Codec.field \"note\""),
+        "bug #1: the request codec must carry the preserved write field `note` (read union write):\n{shared}"
+    );
+
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    // The server reconstruct threads `note` FROM THE REQUEST (`p.note`), not from
+    // an empty-Model default.
+    assert!(
+        backend.contains("note = p.note"),
+        "bug #1: the backend must reconstruct `note` from the request payload, not default it:\n{backend}"
+    );
+
+    let frontend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .expect("generated frontend entry must exist");
+    assert!(
+        frontend.contains("note = model.note"),
+        "bug #1: the client must send its own `note` in the request:\n{frontend}"
+    );
+
+    // ── Go-gated e2e: the preserved field survives the real round-trip. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "bug #1: --target web:app must build end-to-end:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+
+    let port = 8977u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-writeset-roundtrip backend");
+    let ready = wait_for_spa_backend(&log_path, 80);
+    if !ready {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-writeset-roundtrip backend never reported listening on :{port}");
+    }
+    // `counter=3` takes the else-path (3 > 5 is false): bump `counter` to 4 and
+    // PRESERVE `note`. The client sends a non-default `note`, which must ride the
+    // request and return unchanged. On the pre-fix code the response held
+    // `"note":""` (rebuilt default).
+    let posted = curl_post_status_body(port, "/_rpc/Act", r#"{"counter":3,"note":"keep"}"#);
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let (code, body) = posted.expect("POST /_rpc/Act should return");
+    assert_eq!(code, 200, "bug #1: a valid /_rpc/Act must return 200; body {body:?}");
+    assert!(
+        body.contains("\"note\":\"keep\""),
+        "bug #1: the preserved `note` must survive the round-trip (not the empty default), was {body:?}"
+    );
+    assert!(
+        body.contains("\"counter\":4"),
+        "bug #1: the else-path must have bumped counter to 4, was {body:?}"
+    );
+}
+
 fn spa_deeplink_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-deeplink")
 }
@@ -4083,10 +4201,14 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     }
 
     // (a) forged session, NO cookie → the admin effect must NOT run.
+    // `note` rides the request because `SaveAdmin` PRESERVES it on the
+    // non-admin / no-session paths (`( model, … )`): without it the server would
+    // rebuild `note` as the empty-Model default and clobber the client's value
+    // (soundness bug #1). The forged `session` is still overridden server-side.
     let forged = curl_post_full(
         port,
         "/_rpc/SaveAdmin",
-        r#"{"session":{"userId":"x","role":"admin"},"content":"pwned"}"#,
+        r#"{"session":{"userId":"x","role":"admin"},"content":"pwned","note":"keep"}"#,
         None,
     );
     let admin_after_forge =
@@ -4099,7 +4221,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
         curl_post_full(
             port,
             "/_rpc/SaveAdmin",
-            r#"{"session":null,"content":"legit"}"#,
+            r#"{"session":null,"content":"legit","note":"keep"}"#,
             Some(c),
         )
     });

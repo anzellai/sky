@@ -515,6 +515,7 @@ mod tests {
             msg_args: vec!["scale".to_string()],
             writes_whole_model: true,
             write_fields: vec![],
+            always_written: vec![],
         };
         let checkable = vec![CheckableBranch {
             ctor: "SetScaleArg".to_string(),
@@ -552,6 +553,7 @@ mod tests {
             msg_args: vec![],
             writes_whole_model: false,
             write_fields: vec!["count".to_string()],
+            always_written: vec![],
         };
         let checkable = vec![CheckableBranch {
             ctor: "Inc".to_string(),
@@ -608,6 +610,7 @@ mod tests {
             msg_args: args.iter().map(|s| s.to_string()).collect(),
             writes_whole_model: false,
             write_fields: vec!["a".into()],
+            always_written: vec![],
         }
     }
 

@@ -1,0 +1,5 @@
+[project]
+name = "spa-writeset-roundtrip"
+
+[app]
+target = "web:app"

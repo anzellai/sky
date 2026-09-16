@@ -593,16 +593,30 @@ pub struct BranchIo {
     /// Model fields written via `{ model | f = … }` in tail position (sorted,
     /// deduped). Ignored for the response shape when `writes_whole_model` is set.
     pub write_fields: Vec<String>,
+    /// Model fields the branch assigns a FRESH value (a constant, a Msg arg, or a
+    /// server-computed effect result) on EVERY response-producing leaf — the
+    /// intersection of the per-leaf assigned sets. Such a field is never
+    /// preserved from the client model, so the server reproduces it itself and it
+    /// need NOT ride the request. A field in `write_fields` but NOT here is
+    /// written on some leaves and PRESERVED (`{ model | … }` keeps it) on others,
+    /// so its client value must be sent (see [`request_fields`], soundness bug
+    /// #1). Empty (send every written field, the sound over-approximation) when a
+    /// leaf shape could not be modelled. Meaningful only when
+    /// `writes_whole_model` is false.
+    pub always_written: Vec<String>,
 }
 
 impl BranchIo {
-    /// The RPC request shape (`in: …`) — read-set fields ∪ Msg args.
+    /// The RPC request shape (`in: …`) — the true wire request, `read ∪ write`
+    /// fields ∪ Msg args (see [`request_fields`]); a preserved-and-returned field
+    /// rides the request so the server does not default it.
     fn render_in(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
-        if self.reads_whole_model {
+        let req_fields = self.request_fields();
+        if self.request_whole_model() {
             parts.push("<whole model>".to_string());
-        } else if !self.read_fields.is_empty() {
-            parts.push(fmt_set(&self.read_fields));
+        } else if !req_fields.is_empty() {
+            parts.push(fmt_set(&req_fields));
         }
         if !self.msg_args.is_empty() {
             parts.push(fmt_set(&self.msg_args));
@@ -620,6 +634,38 @@ impl BranchIo {
         } else {
             fmt_set(&self.write_fields)
         }
+    }
+
+    /// Whether the request carries the whole model. This tracks the READ side
+    /// only: an opaque `model` use forces every field into the request. A
+    /// whole-model RESPONSE does NOT by itself force a whole-model request — a
+    /// fresh-record response (`writes_whole_model` via a `{ a = model.x, b = "" }`
+    /// rebuild) assigns every field server-side, echoing only the model fields it
+    /// explicitly READS (which are in `read_fields`), so those reads suffice.
+    pub fn request_whole_model(&self) -> bool {
+        self.reads_whole_model
+    }
+
+    /// The request field set: `read_fields ∪ (write_fields − always_written)`
+    /// (sorted, deduped). A response field the executed path PRESERVES from the
+    /// client model (in `write_fields`, not in `always_written`) must ride the
+    /// request, or the server rebuilds it as the model DEFAULT and ships that
+    /// back, clobbering the client's value (soundness bug #1, silent data loss).
+    /// A field assigned fresh on every leaf (`always_written` — a constant, a Msg
+    /// arg, or a server-computed effect result) is reproduced server-side and is
+    /// left out, so the client never has to send a value it does not own (a
+    /// file-loaded list, a chain result). Only meaningful when
+    /// [`request_whole_model`] is false.
+    pub fn request_fields(&self) -> Vec<String> {
+        let mut v = self.read_fields.clone();
+        for f in &self.write_fields {
+            if !self.always_written.contains(f) && !v.contains(f) {
+                v.push(f.clone());
+            }
+        }
+        v.sort();
+        v.dedup();
+        v
     }
 }
 
@@ -2782,6 +2828,8 @@ fn compute_server_chaining(
         // server-internal continuation arm). Widen to whole model on any opaque
         // use — never narrow (soundness): a dropped write is a correctness bug.
         let mut io = BranchIo::default();
+        // Per-arm `always_written`, kept for the terminal-leaf intersection below.
+        let mut arm_always: HashMap<usize, Vec<String>> = HashMap::new();
         for &j in &reachable_arms {
             let arm_io = compute_branch_io(db, body, arms[j].body, arms[j].pat, model_local, &src);
             io.reads_whole_model |= arm_io.reads_whole_model;
@@ -2791,14 +2839,44 @@ fn compute_server_chaining(
                     io.read_fields.push(f);
                 }
             }
-            for f in arm_io.write_fields {
-                if !io.write_fields.contains(&f) {
-                    io.write_fields.push(f);
+            for f in &arm_io.write_fields {
+                if !io.write_fields.contains(f) {
+                    io.write_fields.push(f.clone());
                 }
             }
+            arm_always.insert(j, arm_io.always_written);
         }
         io.read_fields.sort();
         io.write_fields.sort();
+        // `always_written` for the chain = fields assigned fresh on EVERY TERMINAL
+        // response leaf. The response is produced by the terminal continuation(s)
+        // (a ctor with no further clean continuation), NOT by the head (whose
+        // writes are intermediate, overwritten by the continuation it triggers).
+        // Intersect the terminal arms' own `always_written`. A field assigned on
+        // every terminal leaf (a chain's server-computed result) is reproduced
+        // server-side and stays out of the request; a field written on one
+        // terminal but preserved on another must ride it (bug #1 in a chain).
+        let terminal_arms: Vec<usize> = reachable_arms
+            .iter()
+            .copied()
+            .filter(|&j| match arm_ctor_key(body, arms[j].pat) {
+                Some(ctor) => info.get(&ctor).map(|mi| mi.clean_conts.is_empty()).unwrap_or(true),
+                None => true,
+            })
+            .collect();
+        io.always_written = if io.writes_whole_model || terminal_arms.is_empty() {
+            Vec::new()
+        } else {
+            let mut acc: Option<BTreeSet<String>> = None;
+            for j in &terminal_arms {
+                let s: BTreeSet<String> = arm_always.get(j).cloned().unwrap_or_default().into_iter().collect();
+                acc = Some(match acc {
+                    None => s,
+                    Some(a) => a.intersection(&s).cloned().collect(),
+                });
+            }
+            acc.unwrap_or_default().into_iter().collect()
+        };
         io_updates.insert(bn.clone(), io);
     }
 
@@ -2816,6 +2894,7 @@ fn compute_server_chaining(
                 existing.writes_whole_model = io.writes_whole_model;
                 existing.read_fields = io.read_fields.clone();
                 existing.write_fields = io.write_fields.clone();
+                existing.always_written = io.always_written.clone();
             }
         }
     }
@@ -2994,12 +3073,23 @@ fn compute_branch_io(
         writes_whole = true;
     }
 
+    // The request needs a written field only when it is PRESERVED from the client
+    // model on some leaf (bug #1). A field assigned fresh on every leaf is
+    // reproduced server-side, so leave it out. Moot when the response is the whole
+    // model (write_fields unused) or the model param is unknown.
+    let always_written = if writes_whole || model_local.is_none() {
+        Vec::new()
+    } else {
+        always_written_of(db, body, arm_body, model_local, &let_locals)
+    };
+
     BranchIo {
         reads_whole_model: reads_whole,
         read_fields: read_fields.into_iter().collect(),
         msg_args: msg_arg_names(body, pat, src),
         writes_whole_model: writes_whole,
         write_fields: write_fields.into_iter().collect(),
+        always_written,
     }
 }
 
@@ -3337,6 +3427,109 @@ fn collect_writes_tail(
         // The arm did not evaluate to a recognizable `(model', cmd)` tuple — be
         // conservative (send the whole model).
         _ => *writes_whole = true,
+    }
+}
+
+/// Collect the per-leaf ASSIGNED field-sets of an arm tail — one `BTreeSet` per
+/// terminal model-producing leaf (each `if`/`case` branch is a separate leaf).
+/// Their INTERSECTION is the arm's `always_written` (fields assigned fresh on
+/// EVERY leaf, never preserved from the client model).
+///
+/// Deliberately narrower than [`collect_writes_tail`]: it models only the clean
+/// structural shapes (a bare-model preserve, a field-preserving `Update`, and
+/// the `let`/`if`/`case`/by-name scaffolding around them). Any leaf it cannot
+/// prove is a field-preserving transform (a fresh record, an opaque producer, a
+/// helper delegate, a guard-wrapper) returns `None`, and the caller then treats
+/// `always_written` as EMPTY — every written field rides the request, the sound
+/// over-approximation. This never contradicts `collect_writes_tail`: a shape
+/// that sets `writes_whole_model` there makes `always_written` unused here.
+fn collect_write_leaves(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    model_local: Option<LocalId>,
+    let_locals: &HashMap<LocalId, ExprId>,
+    depth: usize,
+) -> Option<Vec<BTreeSet<String>>> {
+    if depth > IO_DELEGATE_DEPTH {
+        return None;
+    }
+    match &body.exprs[e] {
+        Expr::Tuple(xs) if xs.len() == 2 => {
+            let m = xs[0];
+            // Bare `( model, cmd )` — preserves every field, assigns none.
+            if is_model_var(body, m, model_local) {
+                return Some(vec![BTreeSet::new()]);
+            }
+            // A field-preserving `{ model | … }` (directly or through a chain of
+            // preserving helpers) — the leaf assigns exactly those keys.
+            model_write_shape(db, body, m, model_local, let_locals, depth).map(|fields| vec![fields])
+        }
+        Expr::Let { defs, body: b } => {
+            let mut ls = let_locals.clone();
+            add_let_locals(defs, &mut ls);
+            collect_write_leaves(db, body, *b, model_local, &ls, depth)
+        }
+        Expr::If { arms, els } => {
+            let mut out = Vec::new();
+            for (_, t) in arms {
+                out.extend(collect_write_leaves(db, body, *t, model_local, let_locals, depth)?);
+            }
+            out.extend(collect_write_leaves(db, body, *els, model_local, let_locals, depth)?);
+            Some(out)
+        }
+        Expr::Case { branches, .. } => {
+            let mut out = Vec::new();
+            for br in branches {
+                out.extend(collect_write_leaves(db, body, br.body, model_local, let_locals, depth)?);
+            }
+            Some(out)
+        }
+        // A let-bound `(model', cmd)` returned by name — resolve and analyse it.
+        // Chasing a name can cycle, so this step spends depth.
+        Expr::Var(Res::Local(l)) => match let_locals.get(l) {
+            Some(bound) => collect_write_leaves(db, body, *bound, model_local, let_locals, depth + 1),
+            None => None,
+        },
+        // Guard-wrapper tail `GUARD model (\_ -> CONT)` — the ONLY model-write
+        // response comes from the AUTHORISED continuation (the deny path answers
+        // 403, never a model write-set), so the response leaves are the lambda
+        // body's. This is what lets a guard-wrapped server write (a File result,
+        // an optimistic `busy = True`) be recognised as server-produced and kept
+        // out of the request.
+        Expr::Call(callee, args) => {
+            if let Some(gw) = detect_guard_wrapper(db, body, *callee, args, model_local) {
+                collect_write_leaves(db, body, gw.lambda_body, model_local, let_locals, depth)
+            } else {
+                None
+            }
+        }
+        // Anything else (a delegate call, an opaque producer) is not modelled —
+        // give up so `always_written` is empty (send every field, sound).
+        _ => None,
+    }
+}
+
+/// The `always_written` intersection for an arm: the fields assigned fresh on
+/// EVERY response leaf. Empty when the leaves could not all be modelled (sound
+/// over-approximation — every written field then rides the request).
+fn always_written_of(
+    db: &dyn SkyDb,
+    body: &Body,
+    arm_body: ExprId,
+    model_local: Option<LocalId>,
+    let_locals: &HashMap<LocalId, ExprId>,
+) -> Vec<String> {
+    match collect_write_leaves(db, body, arm_body, model_local, let_locals, 0) {
+        Some(leaves) if !leaves.is_empty() => {
+            let mut it = leaves.into_iter();
+            let mut acc = it.next().unwrap();
+            for s in it {
+                acc = acc.intersection(&s).cloned().collect();
+            }
+            acc.into_iter().collect()
+        }
+        _ => Vec::new(),
     }
 }
 

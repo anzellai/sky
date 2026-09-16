@@ -157,16 +157,28 @@ fn build(report: &WireReport, app_name: &str, version: &str, include_rpc: bool) 
     })
 }
 
-/// The request schema for an RPC endpoint: an object of the Model fields it reads
-/// (with their types) plus the Msg args, or the whole Model when it reads it all.
+/// The request schema for an RPC endpoint: an object of the Model fields the wire
+/// request carries — `read ∪ write` (a preserved-and-returned field rides the
+/// request so the server does not default it) — plus the Msg args, or the whole
+/// Model when it reads/writes it all.
 fn request_schema(e: &WireEndpoint, model: &[ModelFieldTy]) -> Value {
     let mut props = Map::new();
     for a in &e.msg_arg_tys {
         props.insert(a.name.clone(), ty_to_schema(&a.ty_name));
     }
-    if e.reads_whole_model {
-        // The branch reads the whole Model; the request still carries the Msg
-        // args on top of it.
+    // `read ∪ (write − always_written)`, matching the split's actual request
+    // (BranchIo::request_fields): a preserved-and-returned field rides the request,
+    // but a field the server assigns fresh on every leaf (always_written) does not.
+    let mut req_fields = e.read_fields.clone();
+    for f in &e.write_fields {
+        if !e.always_written.contains(f) && !req_fields.contains(f) {
+            req_fields.push(f.clone());
+        }
+    }
+    req_fields.sort();
+    if e.reads_whole_model || e.writes_whole_model {
+        // The branch reads/writes the whole Model; the request still carries the
+        // Msg args on top of it.
         let mut obj = Map::new();
         obj.insert("type".into(), json!("object"));
         obj.insert(
@@ -178,7 +190,7 @@ fn request_schema(e: &WireEndpoint, model: &[ModelFieldTy]) -> Value {
         }
         return Value::Object(obj);
     }
-    for f in &e.read_fields {
+    for f in &req_fields {
         props.insert(f.clone(), field_schema(f, model));
     }
     if props.is_empty() {
@@ -333,5 +345,54 @@ mod tests {
     fn operation_id_is_sane() {
         assert_eq!(operation_id("GET", "/admin/login"), "get_admin_login");
         assert_eq!(operation_id("POST", "/webhooks/stripe"), "post_webhooks_stripe");
+    }
+
+    /// Soundness (bug #1): a field an internal branch WRITES but does not READ
+    /// still rides the request, so the server does not rebuild it as the
+    /// empty-Model default. The request schema is `read ∪ write`, matching the
+    /// split's own `BranchIo::request_fields`. A read-only request schema is
+    /// exactly what let a preserved field get clobbered on the wire.
+    #[test]
+    fn request_schema_carries_a_write_only_preserved_field() {
+        let model = vec![
+            ModelFieldTy {
+                name: "counter".into(),
+                ty_name: "Int".into(),
+                codec: Some("Codec.int".into()),
+                ty: None,
+            },
+            ModelFieldTy {
+                name: "note".into(),
+                ty_name: "String".into(),
+                codec: Some("Codec.string".into()),
+                ty: None,
+            },
+        ];
+        // A branch that reads `counter` and writes `note` (the else-arm bumps
+        // `counter`, the then-arm sets `note`; the response is the union).
+        let e = WireEndpoint {
+            msg: "Act".into(),
+            request: "{counter}".into(),
+            response: "{counter, note}".into(),
+            effects: Some("Log".into()),
+            effect_families: vec![],
+            read_fields: vec!["counter".into()],
+            write_fields: vec!["counter".into(), "note".into()],
+            // `counter` is assigned fresh on the counter++ leaf but `note` is
+            // preserved there, and vice-versa on the note leaf, so neither is in
+            // `always_written` — both preserved fields ride the request.
+            always_written: vec![],
+            reads_whole_model: false,
+            writes_whole_model: false,
+            msg_arg_tys: vec![],
+        };
+        let schema = request_schema(&e, &model);
+        let props = schema["properties"].as_object().expect("request has properties");
+        assert!(props.contains_key("counter"), "read field carried");
+        assert!(
+            props.contains_key("note"),
+            "write-only preserved field MUST ride the request: {schema}"
+        );
+        assert_eq!(props["note"]["type"], json!("string"));
     }
 }

@@ -781,10 +781,15 @@ fn msg_arg_wire_name(arg: &str, collides_with_model_field: bool) -> String {
 /// Session / withRequest / guard overrides are layered on by the caller — they
 /// are trust plumbing, not wire plumbing, so they stay out of the shared emit.
 pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> String {
-    if io.reads_whole_model && io.msg_args.is_empty() {
+    // The request carries `read ∪ write` (see `BranchIo::request_fields`): a field
+    // the response returns but the executed path only PRESERVES must be sent so
+    // the server binds its real value here rather than `init ()`'s default.
+    let whole = io.request_whole_model();
+    let req_fields = io.request_fields();
+    if whole && io.msg_args.is_empty() {
         // Req IS the whole model.
         "                m =\n                    p\n".to_string()
-    } else if io.reads_whole_model {
+    } else if whole {
         // Whole model PLUS Msg-arg fields — `p` carries the Msg args too
         // (build_wire appends them), so `p` is WIDER than `Model`. Select the
         // model fields back out into a `Model` record; the Msg args are read
@@ -798,11 +803,10 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
             })
             .collect::<String>();
         format!("                m =\n                    {{ {sets} }}\n")
-    } else if io.read_fields.is_empty() {
+    } else if req_fields.is_empty() {
         "                ( base, _ ) =\n                    init ()\n\n                m =\n                    base\n".to_string()
     } else {
-        let sets = io
-            .read_fields
+        let sets = req_fields
             .iter()
             .enumerate()
             .map(|(i, f)| {
@@ -831,9 +835,13 @@ pub(crate) fn emit_build_req(
     // `model` has no such field, so the decode fails with "record is missing
     // field(s): <arg>". Build the explicit record covering every model field PLUS
     // each Msg arg.
-    if io.reads_whole_model && io.msg_args.is_empty() {
+    // What the client SENDS is the inverse of `emit_reconstruct`'s request set:
+    // `read ∪ write` (see `BranchIo::request_fields`), so a preserved-and-returned
+    // field reaches the server instead of defaulting.
+    let whole = io.request_whole_model();
+    if whole && io.msg_args.is_empty() {
         model_param.to_string()
-    } else if io.reads_whole_model {
+    } else if whole {
         let mut parts: Vec<String> = model_field_names
             .iter()
             .map(|f| format!("{f} = {model_param}.{f}"))
@@ -853,7 +861,7 @@ pub(crate) fn emit_build_req(
         }
     } else {
         let mut parts: Vec<String> = io
-            .read_fields
+            .request_fields()
             .iter()
             .map(|f| format!("{f} = {model_param}.{f}"))
             .collect();
@@ -956,12 +964,16 @@ fn build_wire(
     // args — the task's own inputs).
     client_result: Option<&ClientResultInfo>,
 ) -> Result<Wire, String> {
-    // Request = read-set (or whole model) + Msg args. Dedup by name (a Msg arg
-    // shadowing a model field would otherwise emit a duplicate record field).
-    let mut req: Vec<ModelFieldTy> = if io.reads_whole_model {
+    // Request = `read ∪ write` (or whole model) + Msg args — see
+    // `BranchIo::request_fields`: a field the response returns but the executed
+    // path only preserves must be sent, else the server rebuilds it as the model
+    // default (silent data loss). Must match `emit_build_req`/`emit_reconstruct`
+    // exactly (they are inverses). Dedup by name (a Msg arg shadowing a model
+    // field would otherwise emit a duplicate record field).
+    let mut req: Vec<ModelFieldTy> = if io.request_whole_model() {
         model_fields.to_vec()
     } else {
-        io.read_fields
+        io.request_fields()
             .iter()
             .map(|f| lookup_field(model_fields, f))
             .collect()
@@ -6134,6 +6146,7 @@ mod fix7_tests {
                 msg_args: vec![],
                 writes_whole_model: false,
                 write_fields: vec![],
+                always_written: vec![],
             },
         )];
         gen_frontend_update(
