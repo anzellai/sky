@@ -1071,7 +1071,7 @@ fn stage_diagram_spa(
     }
     // Only an `App.web`/`App.app` (`Std.App`) entry is synthesizable into a Spa
     // entry; anything else returns None here.
-    let synthesized = synthesize_spa_source(&entry_src)?;
+    let synthesized = synthesize_spa_source(&entry_src, true)?;
     // Stage into a UNIQUE system-temp dir, NOT `<project>/.skyapp` — the diagram
     // is read-only w.r.t. the project, and a per-invocation dir means two
     // concurrent `sky doc --diagram` runs (or a diagram run beside a build) never
@@ -2004,14 +2004,17 @@ fn let_block_bound_names(block: &str) -> Vec<String> {
 /// `main` bindings, and add a `Spa.app` `main` that references those functions
 /// DIRECTLY (so the unchanged auto-split can partition `update`). `view` is
 /// wrapped in `Ui.layout []`. `None` if the app isn't in the standard form.
-fn synthesize_spa_source(src: &str) -> Option<String> {
+fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
     let fields = extract_app_fields(src)?;
     let app_name = app_binding_name(src)?;
     // BUG-2: never drop a `App.with…` builder step silently. The synthesis
     // carries only `withRoutes` + `withNotFound` into the client entry; warn,
     // by name, about every other step so a user's `withHead` (SEO) /
     // `withRequest` hooks are known not to have crossed to the wasm client.
-    if !fields.dropped_builders.is_empty() {
+    // `quiet` suppresses the warning when the synthesis is run only to ANALYSE
+    // the app (a read-only `sky doc --diagram` / `--api` staging), not to build
+    // it — a doc command should not print build warnings.
+    if !quiet && !fields.dropped_builders.is_empty() {
         eprintln!(
             "sky build --target <spa>: warning: {n} `App.with…` builder step(s) were NOT carried \
              into the synthesised client entry: {list}.\n  \
@@ -2310,7 +2313,7 @@ fn build_std_app(
     // EXISTING, UNCHANGED auto-split can partition `update` — then split + build.
     if kind == StdAppBuild::Spa {
         let entry_src = std::fs::read_to_string(entry_file).unwrap_or_default();
-        let synthesized = match synthesize_spa_source(&entry_src) {
+        let synthesized = match synthesize_spa_source(&entry_src, false) {
             Some(s) => s,
             None => {
                 eprintln!(
@@ -2830,7 +2833,7 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     // entry already a `Spa.app` (synthesis returns None) is fuzzed as-is.
     let entry_src = std::fs::read_to_string(file).unwrap_or_default();
     let (fuzz_repo, fuzz_project, fuzz_entry): (PathBuf, PathBuf, Option<String>) =
-        match synthesize_spa_source(&entry_src) {
+        match synthesize_spa_source(&entry_src, false) {
             Some(synth) => {
                 let staging = project_dir.join(".skyapp").join("difffuzz-synth");
                 let src_to = match stage_std_app_derived(&project_dir, &staging) {

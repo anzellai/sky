@@ -1891,6 +1891,25 @@ main =
         "Fix 5: `App.withGuard` is now carried (enforced server-side) and must NOT be in the dropped list `{dropped_list}`:\n{log}"
     );
 
+    // A `sky doc` command runs the SAME synthesis only to ANALYSE the app (it
+    // stages the Spa split read-only), so it must NOT print the build-time
+    // dropped-builder warning — a doc/spec generator is not a build. Same
+    // fixture (it drops `withOnKey`), via the diagram staging path.
+    let doc = Command::new(SKY)
+        .args(["doc", "--diagram", "journey", "--target", "web:app", "--format", "md"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky doc --diagram journey");
+    let doc_log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&doc.stdout),
+        String::from_utf8_lossy(&doc.stderr)
+    );
+    assert!(
+        !doc_log.contains("NOT carried") && !doc_log.contains("not carried"),
+        "a read-only `sky doc --diagram` must NOT emit the Spa-build dropped-builder warning:\n{doc_log}"
+    );
+
     let _ = std::fs::remove_dir_all(&proj);
 }
 
