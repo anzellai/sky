@@ -2633,21 +2633,66 @@ fn inject_harness_imports(src: &str, existing: &[ImportInfo], required: &[String
         return src.to_string();
     }
     let block = to_add.join("\n");
-    // Insert after the last `import ` line at column 0, else after the first line
-    // (the module header).
+    // Insert after the last `import ` statement, else after the first line (the
+    // module header). The last import may carry a bracket-balanced MULTI-LINE
+    // `exposing (\n a,\n b\n)` list; inserting after only its first physical line
+    // would drop the new import INTO that list and break it (bug #3). So skip to
+    // the end of the whole import statement, past its exposing paren span.
     let insert_at = src
         .match_indices("\nimport ")
         .last()
-        .map(|(i, _)| {
-            // End of that import line.
-            let after = i + 1;
-            src[after..].find('\n').map(|nl| after + nl).unwrap_or(src.len())
-        })
+        .map(|(i, _)| import_stmt_end(src, i + 1))
         .or_else(|| src.find('\n'));
     match insert_at {
         Some(pos) => format!("{}\n{block}{}", &src[..pos], &src[pos..]),
         None => format!("{src}\n{block}\n"),
     }
+}
+
+/// The byte offset of the end of the import statement that starts at
+/// `import_start` (the `i` of `import …`) — the newline that closes its LAST
+/// physical line. An import's only multi-line shape is a bracket-balanced
+/// `exposing ( … )` list, so balance that paren span (it may cross newlines) and
+/// return the newline after its close; an import with no `exposing` ends at its
+/// first newline. Used by [`inject_harness_imports`] so a new import lands AFTER
+/// a multi-line `exposing` list, never inside it (bug #3).
+fn import_stmt_end(src: &str, import_start: usize) -> usize {
+    let first_nl = src[import_start..]
+        .find('\n')
+        .map(|n| import_start + n)
+        .unwrap_or(src.len());
+    let rest = &src[import_start..];
+    // Only an `exposing` clause opened on this statement can extend it past its
+    // first line. `exposing` appears only in an import header, and this is the
+    // LAST import, so a match here belongs to this statement.
+    let Some(exp_rel) = rest.find("exposing") else {
+        return first_nl;
+    };
+    let after_exp = import_start + exp_rel + "exposing".len();
+    let Some(open_rel) = src[after_exp..].find('(') else {
+        return first_nl;
+    };
+    let open = after_exp + open_rel;
+    let bytes = src.as_bytes();
+    let mut depth = 0i32;
+    let mut i = open;
+    while i < src.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // `i` is the matching close paren (or end of source on an unbalanced list —
+    // then the whole tail is the statement, which the caller appends after).
+    let close = i.min(src.len());
+    src[close..].find('\n').map(|n| close + n).unwrap_or(src.len())
 }
 
 /// Every string-literal argument of a `Bundle.<func>` call in `src`, matched on
@@ -6028,6 +6073,51 @@ fn nth_arrow_segment(anno: &str, n: usize) -> Option<String> {
 #[cfg(test)]
 mod fix7_tests {
     use super::*;
+
+    // Bug #3: injecting `import Shared …` after a copied module whose LAST import
+    // carries a bracket-balanced MULTI-LINE `exposing ( … )` list must land the new
+    // import AFTER the whole list, never inside it. The old injector inserted after
+    // the first physical line of the last import, splitting the list and breaking it.
+    #[test]
+    fn inject_harness_imports_lands_after_a_multiline_exposing_list() {
+        let src = "module Domain exposing (..)\n\
+                   import Sky.Core.Prelude exposing (..)\n\
+                   import Sky.Core.List as List\n\
+                   import Data.Todo\n    exposing\n        ( Todo\n        , newTodo\n        )\n\n\n\
+                   greet x =\n    x\n";
+        let existing = vec![
+            ImportInfo { module_path: "Sky.Core.Prelude".into(), text: String::new() },
+            ImportInfo { module_path: "Sky.Core.List".into(), text: String::new() },
+            ImportInfo { module_path: "Data.Todo".into(), text: String::new() },
+        ];
+        let out = inject_harness_imports(&src, &existing, &["import Shared exposing (..)".to_string()]);
+        // The multi-line exposing list stays intact and contiguous.
+        assert!(
+            out.contains("        ( Todo\n        , newTodo\n        )"),
+            "the multi-line exposing list must not be split:\n{out}"
+        );
+        // The injected import sits AFTER the closing paren of that list, before the
+        // first declaration, not inside the list.
+        let inject_at = out.find("import Shared exposing (..)").expect("import injected");
+        let list_close = out.find("        )").expect("list close present");
+        let greet_at = out.find("greet x").expect("decl present");
+        assert!(
+            list_close < inject_at && inject_at < greet_at,
+            "the injected import must sit after the exposing list and before the decls:\n{out}"
+        );
+    }
+
+    // A single-line last import (the common case) is unaffected: the injected
+    // import still lands on the next line.
+    #[test]
+    fn inject_harness_imports_single_line_last_import_unchanged() {
+        let src = "module Domain exposing (..)\n\
+                   import Sky.Core.List as List\n\n\
+                   greet x =\n    x\n";
+        let existing = vec![ImportInfo { module_path: "Sky.Core.List".into(), text: String::new() }];
+        let out = inject_harness_imports(&src, &existing, &["import Shared exposing (..)".to_string()]);
+        assert!(out.contains("import Sky.Core.List as List\nimport Shared exposing (..)"), "{out}");
+    }
 
     // `model_type_name` derives the Model type for `spaModelBlank_ : <Model>` from
     // the `view`/`update` annotation. It used to take the FIRST `->` segment of
