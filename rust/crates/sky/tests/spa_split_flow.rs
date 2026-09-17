@@ -2624,6 +2624,87 @@ fn spa_writeset_roundtrip_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-writeset-roundtrip")
 }
 
+fn spa_sibling_rpcerror_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-sibling-rpcerror")
+}
+
+/// Bug #4 (all three layers): an App.app app whose TEA `update` lives in a
+/// SIBLING module, whose `Save` arm calls a server kernel DIRECTLY, with
+/// `App.withRpcError` declared.
+///
+///   * #4c — the sibling `update` module is routed for per-binding regeneration
+///     even though it holds no tainted PROJECT binding (its `Save` arm calls
+///     `File.writeFile` directly). Without it the module is classified pure and
+///     copied verbatim, leaking `File.` into the wasm client and never adding the
+///     `AppliedSave` RPC arm.
+///   * #4b — the regenerated sibling `update`'s `AppliedSave (Err e)` arm routes
+///     the failure through `spaRpcError_`; the synthesis puts that binding in the
+///     entry, which the sibling cannot import (cycle), so the handler is copied
+///     into the sibling frontend module.
+///
+/// Before the fix `sky build --target web:app` failed to compile the client
+/// ("case does not cover AppliedSave", then "Undefined name: spaRpcError_").
+#[test]
+fn web_app_sibling_update_with_rpc_error_builds() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_sibling_rpcerror_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the sibling-rpcerror fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The sibling `Logic` module is REGENERATED in the frontend (bug #4c): its
+    // `Save` arm becomes an RPC and the `AppliedSave` fold arm is present.
+    let front_logic = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Logic.sky"))
+        .expect("the regenerated frontend Logic module must exist");
+    assert!(
+        front_logic.contains("Spa.postJson") && front_logic.contains("/_rpc/Save"),
+        "bug #4c: the sibling `update`'s Save arm must become an RPC in the frontend:\n{front_logic}"
+    );
+    assert!(
+        front_logic.contains("AppliedSave"),
+        "bug #4c: the frontend sibling `update` must carry the AppliedSave fold arm:\n{front_logic}"
+    );
+    // The withRpcError handler is copied INTO the sibling so `spaRpcError_`
+    // resolves there (bug #4b).
+    assert!(
+        front_logic.contains("spaRpcError_") && front_logic.contains("onRpcError"),
+        "bug #4b: the withRpcError handler must be copied into the sibling frontend:\n{front_logic}"
+    );
+    assert!(
+        front_logic.contains("update (spaRpcError_ e)"),
+        "bug #4b: the sibling Err arm must route through spaRpcError_:\n{front_logic}"
+    );
+    // SECURITY: the server kernel must NOT leak into the wasm frontend.
+    let front_tree = concat_sky_tree(&proj.join(".skyapp/web-app/.split/frontend"));
+    assert!(
+        !front_tree.contains("File."),
+        "SECURITY: the server `File` kernel must not reach the wasm frontend:\n{front_tree}"
+    );
+
+    // Go-gated: the whole thing builds end to end.
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "bug #4: --target web:app must build a sibling-update + withRpcError app end-to-end:\n{log}"
+    );
+    let app_bin = proj.join(".skyapp/web-app/.split/backend/sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 /// Soundness regression for Sky.Spa auto-split bug #1 — the RPC request must
 /// carry `reads union writes`, not the reads alone.
 ///

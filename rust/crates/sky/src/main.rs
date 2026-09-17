@@ -2004,6 +2004,112 @@ fn let_block_bound_names(block: &str) -> Vec<String> {
 /// `main` bindings, and add a `Spa.app` `main` that references those functions
 /// DIRECTLY (so the unchanged auto-split can partition `update`). `view` is
 /// wrapped in `Ui.layout []`. `None` if the app isn't in the standard form.
+/// Add `name` to the `exposing (…)` list of the `import` that binds `prefix` (its
+/// module tail or its `as` alias), so a previously-qualified `prefix.name` can be
+/// written BARE. Returns true when `name` is now in bare scope (added, already
+/// present, or the import is `exposing (..)`). Only rewrites a SINGLE-LINE import
+/// exposing list; a multi-line list (or no matching import) returns false and the
+/// caller keeps the qualified form.
+fn add_name_to_import_exposing(out: &mut String, prefix: &str, name: &str) -> bool {
+    let lines: Vec<String> = out.lines().map(|l| l.to_string()).collect();
+    for (idx, line) in lines.iter().enumerate() {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix("import ") else {
+            continue;
+        };
+        let words: Vec<&str> = rest.split_whitespace().collect();
+        let module = words.first().copied().unwrap_or("");
+        let alias = words
+            .iter()
+            .position(|w| *w == "as")
+            .and_then(|i| words.get(i + 1))
+            .copied();
+        let binds = module == prefix
+            || module.rsplit('.').next() == Some(prefix)
+            || alias == Some(prefix);
+        if !binds {
+            continue;
+        }
+        let new_line = if let Some(exp_at) = line.find("exposing") {
+            // Locate the exposing list's own parens (balanced), so a variant
+            // `Msg(..)` inside the list is not mistaken for a whole-module
+            // `exposing (..)`.
+            let Some(open_rel) = line[exp_at..].find('(') else {
+                return false;
+            };
+            let open = exp_at + open_rel;
+            let bytes = line.as_bytes();
+            let mut depth = 0i32;
+            let mut close = None;
+            for i in open..line.len() {
+                match bytes[i] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close) = close else {
+                return false; // multi-line exposing list — leave qualified
+            };
+            let inner = line[open + 1..close].trim();
+            if inner == ".." {
+                return true; // whole-module expose → `name` already bare
+            }
+            let already = inner
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .any(|w| w == name);
+            if already {
+                return true;
+            }
+            format!("{}, {}{}", &line[..close], name, &line[close..])
+        } else {
+            format!("{} exposing ({})", line.trim_end(), name)
+        };
+        let mut rebuilt = String::new();
+        for (i, l) in lines.iter().enumerate() {
+            rebuilt.push_str(if i == idx { &new_line } else { l });
+            rebuilt.push('\n');
+        }
+        *out = rebuilt;
+        return true;
+    }
+    false
+}
+
+/// A `Spa.config` field value the split's generated backend/frontend reference
+/// BARE (`init ()`, `update Msg m`). When the app defines it in a SIBLING module,
+/// the extracted value is QUALIFIED (`Domain.update`), so bare references in the
+/// generated code do not resolve (bug #4). Bring the name into bare scope via the
+/// sibling's import and return the bare name for `Spa.config`; a non-qualified or
+/// non-identifier value is returned unchanged. This mirrors the multi-module
+/// Sky.Spa shape the split already supports (a sibling `update` imported bare and
+/// regenerated in its own module).
+fn debare_sibling_config_ref(out: &mut String, value: &str) -> String {
+    let Some((module_path, name)) = value.rsplit_once('.') else {
+        return value.to_string();
+    };
+    let is_ident = |s: &str, dots_ok: bool| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || (dots_ok && c == '.'))
+    };
+    if !is_ident(name, false) || !is_ident(module_path, true) {
+        return value.to_string(); // a call / lambda / accessor — leave it alone
+    }
+    let prefix = module_path.rsplit('.').next().unwrap_or(module_path);
+    if add_name_to_import_exposing(out, prefix, name) {
+        name.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
     let fields = extract_app_fields(src)?;
     let app_name = app_binding_name(src)?;
@@ -2214,6 +2320,14 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
     } else {
         format!("Ui.layout [] ({view} model_)", view = fields.view)
     };
+    // Bug #4: the split's generated code references `init` / `update` BARE. When
+    // they live in a sibling module the extracted value is qualified
+    // (`Domain.update`), so expose the name from its import and use the bare form
+    // here. `subscriptions` is carried the same way for safety; `view` is always
+    // the local `spaView_`.
+    let init_ref = debare_sibling_config_ref(&mut out, &fields.init);
+    let update_ref = debare_sibling_config_ref(&mut out, &fields.update);
+    let subscriptions_ref = debare_sibling_config_ref(&mut out, &fields.subscriptions);
     out.push_str(&format!(
         "\n\n-- GENERATED by `sky build --target <spa>`: a Sky.Spa entry synthesised\n\
          -- from the Std.App value, fed to the existing auto-split.\n\
@@ -2244,9 +2358,9 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
         on_navigate_binding = on_navigate_binding,
         on_request_binding = on_request_binding,
         guard_binding = guard_binding,
-        init = fields.init,
-        update = fields.update,
-        subscriptions = fields.subscriptions,
+        init = init_ref,
+        update = update_ref,
+        subscriptions = subscriptions_ref,
         routes_line = routes_line,
         not_found_line = not_found_line,
         head_line = head_line,
@@ -2394,6 +2508,14 @@ fn build_std_app(
                     return ExitCode::SUCCESS;
                 }
                 println!("== running ({}) ==", tgt.canonical());
+                // Bug #6: the generated backend runs from `backend/` (it serves
+                // `../frontend/dist` by a RELATIVE path), so the project's own
+                // cwd-relative runtime inputs — `.env` (dotenv auto-loads it from
+                // cwd) and a `public/` asset dir — are absent there. Stage them
+                // into the backend run dir so `sky run --target web:app` behaves
+                // like `sky run` from the project root. Copies only, never
+                // overwriting a file the split already staged.
+                stage_project_runtime_into_backend(project_dir, &od.join("backend"));
                 let mut proc = Command::new(&backend);
                 // The generated backend serves `../frontend/dist` RELATIVE to its
                 // own dir, so run it from there.
@@ -10118,9 +10240,114 @@ fn print_help() {
     );
 }
 
+/// Bug #6: copy the project's cwd-relative runtime inputs into the split backend
+/// run dir, so `sky run --target web:app` (which runs the backend from
+/// `backend/`, because it serves `../frontend/dist` by a relative path) still
+/// finds them. Copies `.env` (dotenv auto-loads it from cwd) and a `public/`
+/// asset dir. Best-effort: a missing source is skipped, and an existing target
+/// (one the split already staged) is never overwritten. Failures are warned, not
+/// fatal — the app may simply not use them.
+fn stage_project_runtime_into_backend(project_dir: &std::path::Path, backend_dir: &std::path::Path) {
+    let env_src = project_dir.join(".env");
+    let env_dst = backend_dir.join(".env");
+    if env_src.is_file() && !env_dst.exists() {
+        if let Err(e) = std::fs::copy(&env_src, &env_dst) {
+            eprintln!("sky run: warning: could not stage .env into the backend run dir: {e}");
+        }
+    }
+    let pub_src = project_dir.join("public");
+    let pub_dst = backend_dir.join("public");
+    if pub_src.is_dir() && !pub_dst.exists() {
+        if let Err(e) = copy_dir_recursive(&pub_src, &pub_dst) {
+            eprintln!("sky run: warning: could not stage public/ into the backend run dir: {e}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Bug #4a: a qualified `Spa.config` field value from a SIBLING module
+    // (`Domain.update`) must become BARE (the split's generated code references it
+    // bare) and be added to the sibling's import exposing list.
+    #[test]
+    fn debare_sibling_config_ref_exposes_and_bares_a_qualified_value() {
+        let mut src = "module Main exposing (main)\n\
+                       import Domain exposing (Model, Msg(..))\n\
+                       import Std.App as App\n"
+            .to_string();
+        let bare = debare_sibling_config_ref(&mut src, "Domain.update");
+        assert_eq!(bare, "update");
+        assert!(
+            src.contains("import Domain exposing (Model, Msg(..), update)"),
+            "the name must be added to Domain's exposing list:\n{src}"
+        );
+    }
+
+    // A `Msg(..)` variant-expose must NOT be mistaken for a whole-module
+    // `exposing (..)`: the name is still added.
+    #[test]
+    fn debare_sibling_config_ref_not_fooled_by_variant_expose() {
+        let mut src = "import Data.Domain exposing (Msg(..))\n".to_string();
+        let bare = debare_sibling_config_ref(&mut src, "Data.Domain.init");
+        assert_eq!(bare, "init");
+        assert!(src.contains("exposing (Msg(..), init)"), "{src}");
+    }
+
+    // A whole-module `exposing (..)` already has the name bare — leave it.
+    #[test]
+    fn debare_sibling_config_ref_leaves_whole_expose() {
+        let mut src = "import Domain exposing (..)\n".to_string();
+        let bare = debare_sibling_config_ref(&mut src, "Domain.update");
+        assert_eq!(bare, "update");
+        assert_eq!(src, "import Domain exposing (..)\n");
+    }
+
+    // A non-qualified value (the common entry-local `init`) is returned unchanged
+    // and touches no import.
+    #[test]
+    fn debare_sibling_config_ref_ignores_bare_value() {
+        let mut src = "import Domain exposing (Model)\n".to_string();
+        let bare = debare_sibling_config_ref(&mut src, "init");
+        assert_eq!(bare, "init");
+        assert_eq!(src, "import Domain exposing (Model)\n");
+    }
+
+    // Bug #6: `sky run --target web:app` runs the backend from `backend/`, so the
+    // project's cwd-relative `.env` + `public/` must be staged there. Never
+    // overwrite a target the split already staged.
+    #[test]
+    fn stage_project_runtime_into_backend_copies_env_and_public() {
+        let base = std::env::temp_dir().join(format!(
+            "sky-stage6-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let proj = base.join("proj");
+        let backend = base.join("backend");
+        std::fs::create_dir_all(proj.join("public")).unwrap();
+        std::fs::create_dir_all(&backend).unwrap();
+        std::fs::write(proj.join(".env"), "TOKEN=abc\n").unwrap();
+        std::fs::write(proj.join("public/index.html"), "<h1>hi</h1>").unwrap();
+
+        stage_project_runtime_into_backend(&proj, &backend);
+        assert_eq!(std::fs::read_to_string(backend.join(".env")).unwrap(), "TOKEN=abc\n");
+        assert_eq!(
+            std::fs::read_to_string(backend.join("public/index.html")).unwrap(),
+            "<h1>hi</h1>"
+        );
+
+        // A `.env` the split already staged is NOT clobbered.
+        std::fs::write(backend.join(".env"), "STAGED=1\n").unwrap();
+        stage_project_runtime_into_backend(&proj, &backend);
+        assert_eq!(std::fs::read_to_string(backend.join(".env")).unwrap(), "STAGED=1\n");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     // Gap #5: a multi-line builder-arg lambda with a `--` line comment must NOT
     // fold the comment onto the joined line, where it comments out the code

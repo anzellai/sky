@@ -1504,6 +1504,23 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             })
     };
 
+    // GAP-1c (bug #4c): the sibling module that declares `update` must be routed
+    // for per-binding regeneration even when it holds NO tainted PROJECT binding —
+    // its `update`'s server arm can call a server KERNEL (`File.writeFile`,
+    // `Db.query`) DIRECTLY, which the project-binding-only `module_has_tainted`
+    // does not flag, so it would be classified PURE and copied verbatim (the
+    // server effect then leaks into the wasm frontend and `update` is never
+    // regenerated → "case does not cover Applied<Msg>"). Move it into the tainted
+    // set so the subset finalisation below regenerates it and keeps its full body
+    // backend-only. Only `update_module` needs this — a standalone `msg_module`
+    // (Msg co-located with wire types, update elsewhere) is already served by the
+    // pure-inject branch and must stay there so its co-located types survive.
+    if !server.is_empty() && update_module != entry {
+        if let Some(pos) = pure_sibling_mods.iter().position(|m| *m == update_module) {
+            tainted_mods.push(pure_sibling_mods.remove(pos));
+        }
+    }
+
     // ---- finalise the per-binding routing (GAP-1 / GAP-2 / §17) ----
     // A tainted module emits a frontend SUBSET when the frontend reaches one of
     // its pure defs, OR it declares `update` (regenerated there — GAP-1), OR it
@@ -2273,6 +2290,17 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &model_field_names,
                 &client_result_map,
             )?;
+            // Bug #4b: a regenerated SIBLING `update` references `spaRpcError_`,
+            // which the synthesis placed in the ENTRY. The sibling cannot import
+            // the entry (cycle), so copy the handler decls into this module.
+            let subset = if regen_here && has_rpc_error {
+                match extract_rpc_error_decls(&file, &src) {
+                    Some(decls) => format!("{subset}{decls}"),
+                    None => subset,
+                }
+            } else {
+                subset
+            };
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
         }
     }
@@ -2647,6 +2675,46 @@ fn inject_harness_imports(src: &str, existing: &[ImportInfo], required: &[String
         Some(pos) => format!("{}\n{block}{}", &src[..pos], &src[pos..]),
         None => format!("{src}\n{block}\n"),
     }
+}
+
+/// Extract the synthesised `spaRpcError_` binding AND the `withRpcError` handler
+/// it names (`spaRpcError_ = (onRpcError)` → also `onRpcError`), as source text
+/// ready to append to another frontend module. Used for bug #4b: when `update`
+/// lives in a SIBLING module, its regenerated `Applied<Msg> (Err e)` arm calls
+/// `spaRpcError_`, but the synthesis put that binding in the ENTRY, which the
+/// sibling cannot import (the entry imports the sibling for `update` — a cycle).
+/// Copying the (pure `Error -> Msg`) handler into the sibling keeps it
+/// self-contained; the handler's own references (the `Msg` constructors) resolve
+/// through the sibling's existing `Msg` import. `None` when the app declares no
+/// `withRpcError` (no `spaRpcError_` binding).
+fn extract_rpc_error_decls(entry_tree: &SourceFile, entry_src: &str) -> Option<String> {
+    let mut spa_text: Option<String> = None;
+    let mut handler_name: Option<String> = None;
+    for d in entry_tree.decls() {
+        if decl_name(&d).as_deref() == Some("spaRpcError_") && is_value_decl(&d) {
+            let t = slice(entry_src, d.syntax());
+            // The body is `(onRpcError)` — recover the referenced identifier.
+            handler_name = t.split_once('=').map(|(_, rhs)| {
+                rhs.trim()
+                    .trim_matches(|c: char| c == '(' || c == ')' || c.is_whitespace())
+                    .to_string()
+            });
+            spa_text = Some(t.to_string());
+        }
+    }
+    let spa_text = spa_text?;
+    let mut out = String::from("\n\n-- bug #4b: the withRpcError handler, copied so the sibling `update` resolves it.\n");
+    if let Some(h) = handler_name.filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
+        for d in entry_tree.decls() {
+            if decl_name(&d).as_deref() == Some(h.as_str()) {
+                out.push_str(slice(entry_src, d.syntax()).trim_end());
+                out.push_str("\n\n\n");
+            }
+        }
+    }
+    out.push_str(spa_text.trim_end());
+    out.push('\n');
+    Some(out)
 }
 
 /// The byte offset of the end of the import statement that starts at

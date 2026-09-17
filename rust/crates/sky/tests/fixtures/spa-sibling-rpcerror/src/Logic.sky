@@ -1,0 +1,29 @@
+module Logic exposing (update)
+
+-- The TEA `update` lives in a SIBLING module (not the entry) and its `Save` arm
+-- calls a server kernel (`File.writeFile`) DIRECTLY, with no tainted project
+-- binding. The auto-split must still (a) route this module for per-binding
+-- regeneration (bug #4c — it would otherwise be classified pure and copied
+-- verbatim, leaking `File` into the wasm client), and (b) resolve `spaRpcError_`
+-- in the regenerated sibling update (bug #4b — the handler is synthesised into
+-- the entry, which the sibling cannot import).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Types exposing (Model, Msg(..))
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Save ->
+            ( model
+            , Cmd.perform (File.writeFile "data/note.txt" model.note) Saved
+            )
+
+        Saved _ ->
+            ( { model | note = "saved" }, Cmd.none )
+
+        GotError e ->
+            ( { model | error = e }, Cmd.none )

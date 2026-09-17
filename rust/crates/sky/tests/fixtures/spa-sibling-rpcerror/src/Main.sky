@@ -1,0 +1,43 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Types exposing (Model, Msg(..))
+import Logic exposing (update)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { note = "", error = "" }, Cmd.none )
+
+
+onRpcError : Error -> Msg
+onRpcError _ =
+    GotError "rpc failed"
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column [] [ Ui.text model.note, Ui.text model.error ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRpcError onRpcError
+
+
+main : Task Error ()
+main =
+    App.run app

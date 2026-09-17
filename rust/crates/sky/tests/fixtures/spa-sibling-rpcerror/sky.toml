@@ -1,0 +1,5 @@
+[project]
+name = "spa-sibling-rpcerror"
+
+[app]
+target = "web:app"
