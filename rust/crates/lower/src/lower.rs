@@ -1519,9 +1519,16 @@ fn collect_types(
                         if is_open_row {
                             continue;
                         }
+                        // Expand field types in the DECLARING module's view, so a
+                        // bare field-type name (`messages : List Message`) resolves
+                        // to THIS module's own `Message` alias, not a same-named
+                        // stdlib alias sitting in the bare first-writer-wins table
+                        // (e.g. `Std.Ai.Provider.Message` when Std.Ai is in the
+                        // compile set) — the silent `{author,body}` → `{role,content}`
+                        // substitution that mislabels the emitted Go struct field.
                         let fields: Vec<(String, Ty)> = ty::record_alias_fields(a.syntax())
                             .into_iter()
-                            .map(|(n, t)| (n, world.expand_ty(&t)))
+                            .map(|(n, t)| (n, world.expand_ty_in_module(&t, &mname)))
                             .collect();
                         let go_name = format!("{prefix}_{tname}_R");
                         // The alias's DISTINCT non-`"any"` type-param vars, in

@@ -573,7 +573,7 @@ impl World {
                         };
                         let Some(t) = a.ty() else { continue };
                         let raw = resolve_type_names(db, m, &t, world.type_keys());
-                        let expanded = world.expand(&raw, 0, &protect);
+                        let expanded = world.expand(&raw, 0, &protect, None);
                         let scheme = Scheme::generalize(expanded);
                         let def = intern_value(db, m, &name);
                         world.value_sigs.insert(def, scheme.clone());
@@ -596,7 +596,7 @@ impl World {
                                 .ty()
                                 .map(|t| resolve_type_names(db, m, &t, world.type_keys()))
                                 .unwrap_or(Ty::Error);
-                            let expanded = world.expand(&raw, 0, &protect);
+                            let expanded = world.expand(&raw, 0, &protect, None);
                             let scheme = record_ctor_scheme(&expanded);
                             let def = intern_value(db, m, &name);
                             world.value_sigs.entry(def).or_insert(scheme.clone());
@@ -1213,7 +1213,7 @@ impl World {
             };
             let arg_tys: Vec<Ty> = child_types(var.syntax())
                 .iter()
-                .map(|t| self.expand(&resolve_type_names(db, m, t, self.type_keys()), 0, protect))
+                .map(|t| self.expand(&resolve_type_names(db, m, t, self.type_keys()), 0, protect, None))
                 .collect();
             let ty = arg_tys
                 .into_iter()
@@ -1279,7 +1279,22 @@ impl World {
         // last-writer-wins `aliases` fallback IS needed to expand e.g. a bare
         // `Point` field to its tuple. No union-protection here — behaviour is
         // byte-identical to before the #164-follow-up fix.
-        self.expand(ty, 0, &HashSet::new())
+        self.expand(ty, 0, &HashSet::new(), None)
+    }
+
+    /// Module-aware `expand_ty` for the lowering DECL path. A bare field-type
+    /// name is first resolved against the DECLARING module's own alias
+    /// (`alias_by_mod["{cur_mod}.{name}"]`) before the bare last-writer-wins
+    /// `aliases` fallback. Without this a record-alias field annotated with a
+    /// bare `Message` expands through the bare table — where the stdlib
+    /// `Std.Ai.Provider.Message` (loaded first) sits under the same key — so a
+    /// project's OWN `Message` field silently lowers to the stdlib record's shape
+    /// (`{role,content}` → `Std_Ai_Provider_Message_R`) whenever that stdlib type
+    /// is in the compile set. A module's own type shadows any same-named import,
+    /// so `{cur_mod}.{name}` first is the correct resolution; the bare fallback
+    /// still covers an imported-unqualified alias (`Store.x : () -> InsightsSummary`).
+    pub fn expand_ty_in_module(&self, ty: &Ty, cur_mod: &str) -> Ty {
+        self.expand(ty, 0, &HashSet::new(), Some(cur_mod))
     }
 
     /// Expand a type transparently through the alias table (record/function
@@ -1297,7 +1312,7 @@ impl World {
     /// import and resolves only through this global table). A module-qualified
     /// `alias_by_mod` key (from `resolve_type_names`) is never affected. On the
     /// lowering path (`expand_ty`) `protect` is empty — behaviour is unchanged.
-    fn expand(&self, ty: &Ty, depth: u32, protect: &HashSet<String>) -> Ty {
+    fn expand(&self, ty: &Ty, depth: u32, protect: &HashSet<String>, cur_mod: Option<&str>) -> Ty {
         if depth > 40 {
             return ty.clone();
         }
@@ -1305,43 +1320,60 @@ impl World {
             Ty::App(name, args) => {
                 let args: Vec<Ty> = args
                     .iter()
-                    .map(|a| self.expand(a, depth + 1, protect))
+                    .map(|a| self.expand(a, depth + 1, protect, cur_mod))
                     .collect();
+                // When a declaring module is known (the lowering DECL path via
+                // `expand_ty_in_module`), a BARE name resolves against THAT
+                // module's own alias first (`"{cur_mod}.{name}"`), so a project's
+                // own `Message` field is not hijacked by a same-named stdlib alias
+                // in the bare table. A qualified name (already carrying a `.`) is
+                // left for the `alias_by_mod` lookup below.
+                let own_module_hit = match cur_mod {
+                    Some(cm) if !name.as_str().contains('.') => {
+                        self.alias_by_mod.get(&format!("{cm}.{}", name.as_str()))
+                    }
+                    _ => None,
+                };
                 // A module-qualified key (`"<module>.<name>"`, produced only by
                 // `resolve_type_names` for a reference HIR resolved to an alias)
                 // always hits `alias_by_mod` — the #164-correct table. The bare
                 // `aliases` fallback is consulted for every other name EXCEPT one
                 // that this module sees as a union (`protect`), so a bare union
                 // name can't be hijacked by a foreign alias of the same name.
-                let hit = self.alias_by_mod.get(name.as_str()).or_else(|| {
-                    if protect.contains(name.as_str()) {
-                        None
-                    } else {
-                        self.aliases.get(name.as_str())
-                    }
-                });
+                let hit = own_module_hit
+                    .or_else(|| self.alias_by_mod.get(name.as_str()))
+                    .or_else(|| {
+                        if protect.contains(name.as_str()) {
+                            None
+                        } else {
+                            self.aliases.get(name.as_str())
+                        }
+                    });
                 if let Some(def) = hit {
                     let mut sub: HashMap<String, Ty> = HashMap::new();
                     for (p, arg) in def.params.iter().zip(args.iter()) {
                         sub.insert(p.clone(), arg.clone());
                     }
                     let substituted = substitute(&def.body, &sub);
-                    return self.expand(&substituted, depth + 1, protect);
+                    // The alias body was resolved through `resolve_type_names` at
+                    // registration, so its inner names are already module-qualified
+                    // (or intentionally bare) — do not re-apply `cur_mod` to it.
+                    return self.expand(&substituted, depth + 1, protect, None);
                 }
                 Ty::App(name.clone(), args)
             }
             Ty::Fun(a, b) => Ty::Fun(
-                Box::new(self.expand(a, depth + 1, protect)),
-                Box::new(self.expand(b, depth + 1, protect)),
+                Box::new(self.expand(a, depth + 1, protect, cur_mod)),
+                Box::new(self.expand(b, depth + 1, protect, cur_mod)),
             ),
             Ty::Tuple(xs) => Ty::Tuple(
                 xs.iter()
-                    .map(|x| self.expand(x, depth + 1, protect))
+                    .map(|x| self.expand(x, depth + 1, protect, cur_mod))
                     .collect(),
             ),
             Ty::Record(fs, ext) => Ty::Record(
                 fs.iter()
-                    .map(|(n, t)| (n.clone(), self.expand(t, depth + 1, protect)))
+                    .map(|(n, t)| (n.clone(), self.expand(t, depth + 1, protect, cur_mod)))
                     .collect(),
                 ext.clone(),
             ),

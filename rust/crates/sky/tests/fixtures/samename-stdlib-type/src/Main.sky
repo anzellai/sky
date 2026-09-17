@@ -1,0 +1,87 @@
+module Main exposing (main)
+
+-- Regression: a PROJECT type alias whose name shares its tail with a stdlib type
+-- that is in the compile set (here `Message`, same tail as
+-- `Std.Ai.Provider.Message`, which every Std.App build pulls in transitively and
+-- which this app never imports). The project's own `Message = { author, body }`
+-- must win — the emitted Go Model field must be `[]Main_Message_R`, not the
+-- stdlib `[]Std_Ai_Provider_Message_R` (`{ role, content }`). Before the fix, the
+-- bare first-writer-wins alias table (stdlib loaded first) silently substituted
+-- the stdlib record's shape into this field, mislabelling the emitted struct.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Page
+    = Home
+
+type alias Message =
+    { author : String
+    , body : String
+    }
+
+type alias Model =
+    { page : Page
+    , draft : String
+    , messages : List Message
+    }
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home
+      , draft = ""
+      , messages = [ { author = "ada", body = "hello" } ]
+      }
+    , Cmd.none
+    )
+
+type Msg
+    = Send
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Send ->
+            ( { model | messages =
+                  model.messages ++ [ { author = "me", body = model.draft } ]
+              , draft = ""
+              }
+            , Cmd.none
+            )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        (Ui.text ("count " ++ String.fromInt (List.length model.messages))
+            :: List.map
+                   (\m -> Ui.text (m.author ++ ": " ++ m.body))
+                   model.messages)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" Home ]
+        |> App.withNotFound Home
+
+
+main : Task Error ()
+main =
+    App.run app
