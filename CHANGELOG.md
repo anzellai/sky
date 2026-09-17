@@ -11,6 +11,51 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.3 — Sky.Spa auto-split soundness + a type-resolution fix (2026-09-17)
+
+A patch over v0.25.2. It closes two soundness bugs (a silent data loss and a
+mislabelled type) plus three auto-split ergonomics, all found building a real
+app. `sky upgrade` is safe from any v0.25.x / v0.24.x — no language or stdlib API
+change.
+
+### Fixed
+
+- **Sky.Spa RPC request now carries preserved-and-returned model fields
+  (soundness).** A server `/_rpc/<Msg>` response is the union of every field any
+  internal branch writes, but the request carried only the fields read. A field
+  written on one branch and merely preserved (`{ model | … }`) on the branch that
+  ran was in the response yet not the request, so the server rebuilt it as the
+  empty-model default and shipped that back — silently clobbering the client's
+  value. The request set is now `read ∪ (write − always-written)`: a preserved
+  field rides the request; a field the server assigns fresh on every path (a file
+  read, a chain result, an optimistic flag) stays out. The OpenAPI spec and the
+  `wire` diagram match the corrected request.
+- **A project type no longer loses to a same-named stdlib type in the emitted Go
+  (soundness).** A record-alias field annotated with a bare type name whose tail
+  matched a stdlib type in the compile set — e.g. your own
+  `type alias Message = { author, body }` versus `Std.Ai.Provider.Message`, which
+  every `Std.App` build pulls in transitively and you never import — was silently
+  lowered to the stdlib record's shape, mislabelling the struct and serialising
+  the wrong JSON keys. A module's own type now shadows a same-named import, as it
+  should.
+- **Sky.Spa auto-split: `update` in a sibling module with `App.withRpcError` now
+  builds.** A sibling `update` (qualified in `App.app`, or whose server arm calls
+  a kernel directly) is carried into the client split, and its failed-RPC handler
+  resolves in the regenerated sibling.
+- **Sky.Spa auto-split: a multi-line `exposing ( … )` list no longer breaks the
+  generated `import Shared`** — the import lands after the whole statement, not
+  inside the list.
+- **`sky run --target web:app` now finds the project's `.env` and `public/`.** The
+  split backend runs from its own directory; the project's cwd-relative runtime
+  inputs are staged there before launch.
+
+### Tooling
+
+- **`scripts/spa-hydration-verify.mjs`** — an end-to-end WASM hydration harness
+  that runs the compiled Sky.Spa client in headless Chromium and checks the
+  server-rendered model survives client hydration (the leg unit tests cannot
+  cover).
+
 ## v0.25.2 — Audit-grade diagrams + `sky doc --api openapi` (2026-09-16)
 
 A patch over v0.25.1. Everything is additive — new `sky doc` tooling only, no

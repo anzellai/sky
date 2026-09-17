@@ -12834,7 +12834,7 @@
           ]
         },
         "Std.App": {
-          "count": 18,
+          "count": 17,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -12852,8 +12852,7 @@
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
-            "withBase",
-            "withRpcError"
+            "withBase"
           ]
         },
         "Std.Bundle": {
@@ -13516,8 +13515,8 @@
           ]
         }
       },
-      "count": 653,
-      "pct_of_denominator": 33.5
+      "count": 652,
+      "pct_of_denominator": 33.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13888,7 +13887,7 @@
           ]
         },
         "Std.App": {
-          "count": 19,
+          "count": 18,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -13907,8 +13906,7 @@
             "spaRoute",
             "tabletDefaults",
             "terminalDefaults",
-            "withBase",
-            "withRpcError"
+            "withBase"
           ]
         },
         "Std.Bundle": {
@@ -14642,8 +14640,8 @@
           ]
         }
       },
-      "count": 735,
-      "pct_of_denominator": 37.7
+      "count": 734,
+      "pct_of_denominator": 37.6
     }
   },
   "units": [
@@ -14665,10 +14663,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 33,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 182,
-      "refs_qualified": 174,
+      "refs_generous": 183,
+      "refs_qualified": 175,
       "role": "Layer2",
-      "sky_files": 113,
+      "sky_files": 119,
       "sky_toml_sections": []
     },
     {
