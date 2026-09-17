@@ -61,6 +61,18 @@ attempt under pressure.
    mandate is live, I reconstruct it from the user's most recent
    goal-setting message — using their words, not mine.
 
+   **Private context stays out of the commit.** `.claude/AUTONOMOUS_GOAL.md`
+   is COMMITTED, so it MUST NOT name anything private — a private app
+   name, a private path, a secret, a sensitive constraint. Any such
+   context goes ONLY in `.claude/AUTONOMOUS_GOAL.private.md`, which is
+   gitignored (the `*.private.md` rule) and never committed. At entry I
+   ALSO read `.claude/AUTONOMOUS_GOAL.private.md` if it exists (and
+   ignore it silently if it does not) and treat its content as part of
+   the live goal context. So the private file gives the effect —
+   durable across compactions and new sessions — without the exposure.
+   Before writing to the committed goal file, I check it names nothing
+   private; a private name belongs in the `.private.md` companion.
+
 2. **I cannot declare "done".** Only an independent adversarial
    **Judge agent** spawned with a fresh context, given the verbatim
    goal, and verifying the ACTUAL claim (not a narrower lens I
@@ -95,7 +107,8 @@ attempt under pressure.
 ```
 iter_entry:
   1. Read .claude/AUTONOMOUS_GOAL.md (create from user's words if
-     missing AND mandate is live)
+     missing AND mandate is live), PLUS .claude/AUTONOMOUS_GOAL.private.md
+     if it exists (gitignored private context; ignore silently if absent)
   2. Quote the goal verbatim in a 1-line restate (drift gate)
   3. Spawn Judge agent (fresh context, see template below) — pass
      the verbatim goal + current branch SHA + read access to repo

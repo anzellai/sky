@@ -175,3 +175,6 @@ docs/skyspa/spike/wasm_exec.js
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json
+
+# Private, session-local autonomous context (never committed) — see CLAUDE.md §0
+*.private.md
