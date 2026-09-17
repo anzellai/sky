@@ -38,6 +38,37 @@ doc sync) — which apply to every agent — and add the loop/session mechanics 
 are specific to Claude Code's tools (`/loop`, Judge/Architect agents, the
 `Workflow` tool, `ScheduleWakeup`, `Monitor`, the file-based memory).
 
+### Private context — the `.private.md` convention (INVIOLABLE)
+
+**No private context ever enters a commit.** A private app name, a private
+path, a client name, a secret, an internal URL, a sensitive constraint — none of
+it belongs in any file this repo tracks (a committed doc, a goal file, a fixture,
+a test, a comment, a commit message). Yet the context must not be LOST: I still
+need it across compactions and new sessions.
+
+The convention that gives both — durable context, zero public exposure — is a
+gitignored `*.private.md` companion:
+
+- Any private context that would otherwise land in a committed file goes instead
+  into a sibling `<name>.private.md` file (e.g. `.claude/AUTONOMOUS_GOAL.private.md`,
+  `docs/DEPLOY.private.md`). The `*.private.md` rule in `.gitignore` keeps every
+  such file out of every commit while it stays on disk for continuity.
+- When I read a committed file that has a `.private.md` companion, I read the
+  companion too and treat its content as part of the context. If the companion
+  does not exist, I ignore it silently.
+- The committed file stays SAFE to share: before writing to it I check it names
+  nothing private, and I move any private detail into the `.private.md` companion.
+- This applies to ALL private context, not only autonomous mandates. The
+  autonomous-goal machinery in §0 is one application of this rule.
+- It governs the tracked repo, not the file-based memory (which already lives
+  outside the repo under the user's home). The same instinct still holds there —
+  keep the durable note, keep private specifics where they will not be shared.
+
+This is a hard rule: when in doubt whether something is private, treat it as
+private and put it in a `.private.md` companion. Removing a private name from a
+commit AFTER the fact needs a history rewrite (a destructive git action) — far
+better to never commit it.
+
 ### 0. Goal fidelity in autonomous loops — INVIOLABLE
 
 When the user gives an autonomous mandate (`/loop AUTONOMOUS until
@@ -61,17 +92,12 @@ attempt under pressure.
    mandate is live, I reconstruct it from the user's most recent
    goal-setting message — using their words, not mine.
 
-   **Private context stays out of the commit.** `.claude/AUTONOMOUS_GOAL.md`
-   is COMMITTED, so it MUST NOT name anything private — a private app
-   name, a private path, a secret, a sensitive constraint. Any such
-   context goes ONLY in `.claude/AUTONOMOUS_GOAL.private.md`, which is
-   gitignored (the `*.private.md` rule) and never committed. At entry I
-   ALSO read `.claude/AUTONOMOUS_GOAL.private.md` if it exists (and
-   ignore it silently if it does not) and treat its content as part of
-   the live goal context. So the private file gives the effect —
-   durable across compactions and new sessions — without the exposure.
-   Before writing to the committed goal file, I check it names nothing
-   private; a private name belongs in the `.private.md` companion.
+   **Private context stays out of the commit** (per the `.private.md`
+   convention above). `.claude/AUTONOMOUS_GOAL.md` is COMMITTED, so it
+   MUST NOT name anything private; any private context goes ONLY in the
+   gitignored `.claude/AUTONOMOUS_GOAL.private.md`. At entry I ALSO read
+   that companion if it exists (ignoring it silently otherwise) and treat
+   it as part of the live goal context.
 
 2. **I cannot declare "done".** Only an independent adversarial
    **Judge agent** spawned with a fresh context, given the verbatim
