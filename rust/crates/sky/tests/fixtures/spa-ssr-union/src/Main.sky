@@ -1,0 +1,123 @@
+module Main exposing (main)
+
+-- Sky.Spa SSR CLIENT-LEG fixture — a DATA-CARRYING UNION model field
+-- (`status : Status`). The DB-backed `init` settles `status = Ready <n>`
+-- server-side, so the split strips init's command and emits the
+-- `spaModelBlank_` client decoder (`Codec.fromJson (Codec.auto spaModelBlank_)`).
+--
+-- The client decoder must decode the union field from the SSR embed
+-- (`{"tag":"Ready","v0":3}`), which needs BOTH: the emitted frontend Model to
+-- pin `status` to the nominal `Main_Status` (not an erased `any`), AND the
+-- frontend Go to REGISTER `Main_Status`'s variants (so `BuildAdtFromWire` can
+-- reconstruct them). If either is missing the boot path silently falls back to
+-- `init` (`status = Loading`) — an SSR/client hydration divergence with no error.
+-- This is the union sibling of `spa-ssr-nested-record`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.System as System
+import Std.Db as Db
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+db : Db.Db
+db =
+    case Task.run (Db.open "sqlite" (System.getenvOr "SSR_DB_PATH" "app.db")) of
+
+        Ok c ->
+            c
+
+        Err _ ->
+            System.exit 1
+
+type Page
+    = Home
+    | BlogIndex
+
+type Status
+    = Loading
+    | Ready Int
+    | Failed String
+
+type alias Model =
+    { page : Page
+    , status : Status
+    , items : List String
+    }
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home, status = Loading, items = [] }
+    , Cmd.perform (Db.query db "SELECT title FROM posts ORDER BY id" []) GotRows
+    )
+
+type Msg
+    = GotRows (Result Error (List (Dict String String)))
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        GotRows (Ok rows) ->
+            let
+                titles =
+                    List.map
+                        (\r -> Maybe.withDefault "" (Dict.get "title" r))
+                        rows
+            in
+                ( { model | items = titles
+                  , status = Ready (List.length titles)
+                  }
+                , Cmd.none
+                )
+
+        GotRows (Err _) ->
+            ( { model | status = Failed "query failed" }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    let
+        badge =
+            case model.status of
+
+                Loading ->
+                    "loading"
+
+                Ready n ->
+                    "ready:" ++ String.fromInt n
+
+                Failed msg ->
+                    "failed:" ++ msg
+    in
+        Ui.column
+            []
+            (Ui.text ("status " ++ badge)
+                :: List.map (\i -> Ui.text i) model.items)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" Home, App.route "/blog" BlogIndex ]
+        |> App.withNotFound Home
+
+
+main =
+    App.run app

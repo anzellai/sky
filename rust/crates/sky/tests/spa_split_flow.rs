@@ -3305,6 +3305,76 @@ fn ssr_nested_record_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-nested-record")
 }
 
+fn ssr_union_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-union")
+}
+
+/// SSR hydration of a DATA-CARRYING UNION model field (the union sibling of
+/// `spa_ssr_nested_record_...`). For the client `Codec.auto` to decode the union
+/// from the SSR embed (`{"tag":"Ready","v0":3}`), the emitted frontend Go must
+/// BOTH pin the field to the nominal `Main_Status` (not an erased `any`) AND
+/// register `Main_Status`'s variants (so `BuildAdtFromWire` can reconstruct
+/// them). This guards the union hydration path against a silent reset-to-init.
+#[test]
+fn spa_ssr_union_field_pins_and_registers_variants_so_hydration_is_lossless() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_union_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the SSR union fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Always-run: the decoder derives from an annotated `spaModelBlank_` binding.
+    let frontend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
+    let frontend_code = strip_line_comments(&frontend);
+    assert!(
+        frontend_code.contains("spaModelBlank_ :")
+            && frontend_code.contains("Codec.fromJson (Codec.auto spaModelBlank_)"),
+        "SSR union: the decoder must derive `Codec.auto` from the annotated blank:\n{frontend}"
+    );
+
+    // Go-gated: the emitted frontend Go must pin the union field to the nominal
+    // `Main_Status` AND register its variants (the two things the union decode
+    // needs).
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "SSR union: --target web:app must build end-to-end:\n{log}"
+    );
+    let fe_go = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
+    )
+    .unwrap_or_default();
+    if !fe_go.is_empty() {
+        assert!(
+            fe_go.contains("Status Main_Status"),
+            "SSR union: the emitted frontend model must pin `status` to the nominal \
+             `Main_Status` union, not an erased `any`:\n(model struct not found as expected)"
+        );
+        assert!(
+            fe_go.contains("RegisterAdtVariant(\"main.Main_Status\", \"Ready\""),
+            "SSR union: the frontend Go must register the union's data-carrying \
+             variants so `BuildAdtFromWire` can reconstruct them on decode; a \
+             missing registration is a silent hydration reset"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 fn ssr_sibling_db_init_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-sibling-db-init")
 }
