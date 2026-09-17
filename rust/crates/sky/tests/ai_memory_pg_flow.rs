@@ -118,9 +118,16 @@ fn memory_recalls_by_vector_and_hybrid() {
         return;
     }
     let dir = stage_fixture();
+    // This fixture is `[database] embedded = true`, so it must start its own
+    // embedded cluster (the bundle ships pgvector). The nightly CI runner sets an
+    // ambient `DATABASE_URL` for its service Postgres, and Sky refuses to run when
+    // BOTH an embedded cluster and an explicit DSN are configured ("Sky will not
+    // choose between them"). Clear it so the embedded fixture uses its own cluster
+    // — the sanctioned "use the cluster: unset DATABASE_URL" resolution.
     let out = Command::new(SKY)
         .args(["run", "src/Main.sky"])
         .current_dir(&dir)
+        .env_remove("DATABASE_URL")
         .stdin(std::process::Stdio::null())
         .output()
         .expect("spawn sky run");
