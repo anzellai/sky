@@ -1321,13 +1321,18 @@ runLiveWindow (App a) =
     let
         d = findDesktop a.configs
     in
-        Task.map
-            (\_ -> ())
-            (Task.parallel
-                [ runLive (App a)
-                , openLiveWindow_
-                      { title = d.title, size = ( d.width, d.height ) }
-                ])
+        -- The Live server runs on a SPAWNED goroutine; the webview opens on THIS
+        -- (the caller's) goroutine. On macOS the native webview must be created on
+        -- the process main thread, and the app's `main` runs this task on that
+        -- thread — so the window MUST stay on the caller, not a child goroutine.
+        -- `Task.parallel [server, window]` put BOTH on child goroutines, so
+        -- `webview.New` faulted during cgo. `Task.spawn` keeps the caller free.
+        Task.andThen
+            (\_ ->
+                openLiveWindow_
+                    { title = d.title, size = ( d.width, d.height ) }
+            )
+            (Task.spawn (runLive (App a)))
 
 
 openLiveWindow_ : { title : String

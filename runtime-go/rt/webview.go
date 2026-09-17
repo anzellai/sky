@@ -67,12 +67,26 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	webview "github.com/webview/webview_go"
 )
+
+// On macOS the native webview (WKWebView) MUST be created and driven on the
+// process main thread. Go does not keep the main goroutine on the main OS thread
+// by itself: after the first blocking call in `main` (embedded Postgres startup,
+// a sleep, any I/O) the scheduler is free to migrate it to a worker thread, and
+// then `webview.New` faults during cgo ("signal arrived during cgo execution").
+// This `init` runs on the main goroutine before `main`, so locking here pins the
+// main goroutine to thread 0 for the life of the process, and the webview always
+// lands on the main thread. The file is built only under `cgo && darwin` (the
+// stub carries the inverse tag), so no pure-Go build is affected.
+func init() {
+	runtime.LockOSThread()
+}
 
 // Webview_app is the Task-shaped entry point. Calling it returns a
 // thunk; Task.run forces it and the loop blocks until the user closes

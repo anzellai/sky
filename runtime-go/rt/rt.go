@@ -6795,6 +6795,28 @@ func Task_parallel(tasks any) any {
 	}
 }
 
+// Task_spawn runs `t` on a background goroutine and returns Ok(unit) at once —
+// fire-and-forget. The spawned task's result and any error are discarded, so use
+// it only for a long-running background task (a server loop, a job poller) that
+// must run ALONGSIDE the caller while the caller keeps its OWN goroutine.
+//
+// The desktop runner is exactly this case: on macOS the native webview MUST be
+// created on the process main thread (`webview.New` faults on any other), so the
+// server has to run on a spawned goroutine while the main goroutine goes on to
+// open the window. `Task_parallel` cannot express that — it runs every branch on
+// a child goroutine and blocks the caller — which is why the webview used to
+// fault. A panic inside the spawned task is recovered so a background failure
+// never aborts the process; it surfaces through the task's own logging.
+func Task_spawn(t any) any {
+	return func() any {
+		go func() {
+			defer func() { _ = recover() }()
+			_ = SkyCall(t)
+		}()
+		return Ok[any, any](struct{}{})
+	}
+}
+
 // Task_parallelN: like Task_parallel, but runs at most `limit` tasks
 // concurrently (a semaphore-bounded fan-out) and STOPS launching further tasks
 // once the first error is observed. Same result contract as Task_parallel:

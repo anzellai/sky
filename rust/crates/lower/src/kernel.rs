@@ -267,6 +267,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Task", "perform", "rt.AnyTaskRun"),
     ("Task", "sequence", "rt.Task_sequence"),
     ("Task", "parallel", "rt.Task_parallel"),
+    ("Task", "spawn", "rt.Task_spawn"),
     ("Task", "lazy", "rt.Task_lazy"),
     ("Task", "run", "rt.AnyTaskRun"),
     ("Task", "fromResult", "rt.Task_fromResult"),
