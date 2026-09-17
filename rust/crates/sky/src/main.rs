@@ -3683,11 +3683,16 @@ const DESKTOP_SHELL_MAIN: &str = r#"module Main exposing (main)
 -- build serves, talking to the SAME stateless backend over the SAME typed
 -- shared-codec boundary. One client, one server; only the window is native.
 --
--- Start the backend first (serving the dist/ bundle on PORT, default 8951),
--- then run this binary.
+-- It waits for the backend to answer before opening the window. Otherwise, on a
+-- backend with a slow boot (embedded PostgreSQL takes ~20s), the webview loaded a
+-- dead port and rendered blank with no retry. The poll makes the window open only
+-- once there is something to render.
 
 import Std.Webview as Webview
 import Sky.Core.System as System
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
 
 
 main : Task Error ()
@@ -3699,11 +3704,29 @@ main =
         appUrl =
             "http://127.0.0.1:" ++ port ++ "/"
     in
-    Webview.url appUrl
-        (Webview.defaultWindow
-            |> Webview.withTitle "{{TITLE}}"
-            |> Webview.withSize 480 760
+    Task.andThen
+        (\_ ->
+            Webview.url appUrl
+                (Webview.defaultWindow
+                    |> Webview.withTitle "{{TITLE}}"
+                    |> Webview.withSize 480 760
+                )
         )
+        (waitForBackend appUrl 200)
+
+
+-- Poll the backend until it answers (any HTTP response), backing off 250ms, then
+-- give up after `attempts` and open anyway so a dead backend still shows the
+-- webview's own error rather than hanging.
+waitForBackend : String -> Int -> Task Error ()
+waitForBackend url attempts =
+    if attempts <= 0 then
+        Task.succeed ()
+
+    else
+        Task.onError
+            (\_ -> Task.andThen (\_ -> waitForBackend url (attempts - 1)) (Time.sleep 250))
+            (Task.map (\_ -> ()) (Http.get url))
 "#;
 
 /// Lowercase-alnum sanitisation for a Java/Android package segment; empty →
