@@ -2516,19 +2516,62 @@ fn build_std_app(
                 // like `sky run` from the project root. Copies only, never
                 // overwriting a file the split already staged.
                 stage_project_runtime_into_backend(project_dir, &od.join("backend"));
-                let mut proc = Command::new(&backend);
-                // The generated backend serves `../frontend/dist` RELATIVE to its
-                // own dir, so run it from there.
-                proc.current_dir(od.join("backend"));
-                if embed {
-                    proc.arg("--embed");
-                }
-                match proc.status() {
-                    Ok(s) if s.success() => ExitCode::SUCCESS,
-                    Ok(_) => ExitCode::FAILURE,
-                    Err(e) => {
-                        eprintln!("sky run: launch {}: {e}", backend.display());
-                        ExitCode::FAILURE
+                // A `desktop:<os>` target opens a NATIVE WINDOW. `sky run` must be
+                // ONE command: start the backend in the background, then launch the
+                // webview shell (which waits for the backend to answer, then opens
+                // the window and blocks until it is closed). Closing the window
+                // stops the whole app. `web:app` / `tablet` have no shell — run the
+                // backend in the foreground so the user opens it in a browser.
+                let desktop_shell = od
+                    .join("frontend")
+                    .join("sky-out")
+                    .join("desktop")
+                    .join("app");
+                if fe_target == "desktop" && desktop_shell.exists() {
+                    println!("== opening the desktop window ==");
+                    let mut backend_cmd = Command::new(&backend);
+                    backend_cmd.current_dir(od.join("backend"));
+                    if embed {
+                        backend_cmd.arg("--embed");
+                    }
+                    match backend_cmd.spawn() {
+                        Ok(mut backend_child) => {
+                            let shell_status = Command::new(&desktop_shell).status();
+                            // Window closed (or the shell failed) — stop the backend.
+                            let _ = backend_child.kill();
+                            let _ = backend_child.wait();
+                            match shell_status {
+                                Ok(s) if s.success() => ExitCode::SUCCESS,
+                                Ok(_) => ExitCode::FAILURE,
+                                Err(e) => {
+                                    eprintln!(
+                                        "sky run: open the desktop window {}: {e}",
+                                        desktop_shell.display()
+                                    );
+                                    ExitCode::FAILURE
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("sky run: launch backend {}: {e}", backend.display());
+                            ExitCode::FAILURE
+                        }
+                    }
+                } else {
+                    let mut proc = Command::new(&backend);
+                    // The generated backend serves `../frontend/dist` RELATIVE to
+                    // its own dir, so run it from there.
+                    proc.current_dir(od.join("backend"));
+                    if embed {
+                        proc.arg("--embed");
+                    }
+                    match proc.status() {
+                        Ok(s) if s.success() => ExitCode::SUCCESS,
+                        Ok(_) => ExitCode::FAILURE,
+                        Err(e) => {
+                            eprintln!("sky run: launch {}: {e}", backend.display());
+                            ExitCode::FAILURE
+                        }
                     }
                 }
             }
