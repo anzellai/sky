@@ -11,6 +11,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.5 — Sky.Spa carries App.api routes past a cons `::` (2026-09-18)
+
+A patch over v0.25.4. `sky upgrade` is safe from any v0.25.x — no language or
+stdlib change.
+
+### Fixed
+
+- **`App.api` routes are carried to the SPA backend when `withRoutes` prepends a
+  page route with cons (`::`).** `App.withRoutes (App.route "/" Home :: apiRoutes)`
+  — the idiomatic way to put one page route in front of a list of `App.api`
+  endpoints — left the whole cons expression as one client-side operand, so the
+  auto-split dropped the api routes and never mounted them: the same-port JSON API
+  returned the SSR page instead of your handler. The route partitioner now
+  normalises a top-level cons chain (`head :: tail`) into `[ head ] ++ tail`
+  before splitting, so a `::`-written `withRoutes` mounts its `App.api` endpoints
+  on the backend exactly like a `++`-written one. A Sky.Spa app's `App.api` JSON
+  API now serves on the same port as the UI and the RPC.
+
 ## v0.25.4 — Native desktop apps work end to end (2026-09-18)
 
 A patch over v0.25.3. `sky run --target desktop` (Sky.Live in a native window)
