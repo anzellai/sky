@@ -1,5 +1,5 @@
 -- | Std.Ui.Events — re-exports of event helpers (onClick / onSubmit / onInput) for `Std.Ui`.
-module Std.Ui.Events exposing (onClick, onSubmit, onInput)
+module Std.Ui.Events exposing (onClick, onSubmit, onInput, onEnter)
 
 -- Std.Ui.Events — re-exports of the event helpers that live on
 -- Std.Ui itself, grouped here for users who prefer importing
@@ -48,3 +48,10 @@ onSubmit m =
 onInput : (String -> msg) -> Ui.Attribute msg
 onInput cb =
     Ui.onInput cb
+
+
+-- | Fire a Msg on a plain Enter (no Shift); Shift-Enter inserts a newline.
+-- See Std.Ui.onEnter. The chat-composer pattern for send-on-Enter.
+onEnter : msg -> Ui.Attribute msg
+onEnter m =
+    Ui.onEnter m

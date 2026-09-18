@@ -6699,6 +6699,31 @@ function __skyBindEvents(root) {
   for (var i = 0; i < events.length; i++) {
     __skyBindOne(root, events[i]);
   }
+  __skyBindEnter(root);
+}
+
+// Synthetic "enter" event (Ui.onEnter): the DOM has no "enter" event, so bind
+// a keydown listener on [sky-enter] and fire the bound Msg only on a plain
+// Enter (no Shift), calling preventDefault so a <textarea> does not also insert
+// a newline for the sending keystroke. Shift-Enter is left untouched, so it
+// inserts a newline as normal. The Msg carries no args (the client already
+// filtered to Enter), so it dispatches as a bare Msg.
+function __skyBindEnter(root) {
+  var nodes = root.querySelectorAll("[sky-enter]");
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (el["__sky_enter"]) continue;
+    el["__sky_enter"] = true;
+    el.addEventListener("keydown", function(ev) {
+      if (ev.key !== "Enter" || ev.shiftKey) return;
+      var target = ev.currentTarget;
+      var msgName = target.getAttribute("sky-enter");
+      var hid     = target.getAttribute("data-sky-hid");
+      if (!msgName && !hid) return;
+      ev.preventDefault();
+      __skySend(msgName, [], hid);
+    });
+  }
 }
 
 function __skyRunEvals(root) {

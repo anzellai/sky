@@ -120,6 +120,20 @@ onKeyDown handler =
     EventAttr (OnString "keydown" handler)
 
 
+-- | Fire a Msg when the user presses Enter WITHOUT Shift. Shift-Enter is
+-- left alone, so it inserts a newline in a multi-line input as normal. The
+-- client also calls preventDefault on the plain Enter, so a `<textarea>` does
+-- not insert a newline for the keystroke that sends. This is the chat-composer
+-- pattern: `Ui.multiline [ Ui.onInput DraftChanged, Ui.onEnter Send ]`.
+--
+-- It is a bare-Msg event (like onClick): the key is not carried, because the
+-- client already filtered to Enter. The clients bind it as a keydown listener
+-- (the DOM has no "enter" event) and dispatch only on Enter && !shiftKey.
+onEnter : msg -> Attribute msg
+onEnter msg =
+    EventAttr (OnMsg "enter" msg)
+
+
 onKeyUp : (String -> msg) -> Attribute msg
 onKeyUp handler =
     EventAttr (OnString "keyup" handler)

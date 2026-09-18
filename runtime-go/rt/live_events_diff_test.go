@@ -66,6 +66,39 @@ func TestDiffNodes_EventAdded_EmitsAttrPatch(t *testing.T) {
 	}
 }
 
+// Ui.onEnter lowers to a synthetic "enter" event (OnMsg "enter" msg). It must
+// render as a sky-enter attribute + its data-sky-hid, exactly like any other
+// event, so the client's keydown-based enter binder (live.go __skyBindEnter /
+// dom_render_wasm.go bindNodeEvents / webview.go) can find and wire it.
+func TestDiffNodes_EnterEvent_EmitsSkyEnterAttr(t *testing.T) {
+	old := VNode{
+		Kind:   "element",
+		Tag:    "textarea",
+		SkyID:  "r.0#textarea",
+		Attrs:  map[string]string{"class": "composer"},
+		Events: map[string]any{},
+	}
+	new_ := VNode{
+		Kind:   "element",
+		Tag:    "textarea",
+		SkyID:  "r.0#textarea",
+		Attrs:  map[string]string{"class": "composer"},
+		Events: map[string]any{"enter": SkyADT{SkyName: "Send"}},
+	}
+
+	patches := diffTrees(&old, &new_, nil)
+	p := findAttrPatch(patches, "r.0#textarea")
+	if p == nil {
+		t.Fatalf("expected attr patch on r.0#textarea, got: %+v", patches)
+	}
+	if p.Attrs["sky-enter"] != "Send" {
+		t.Fatalf("expected sky-enter=Send, got: %v", p.Attrs)
+	}
+	if p.Attrs["data-sky-hid"] != "r.0#textarea.enter" {
+		t.Fatalf("expected data-sky-hid=r.0#textarea.enter, got: %v", p.Attrs)
+	}
+}
+
 func TestDiffNodes_EventRemoved_EmitsClear(t *testing.T) {
 	old := VNode{
 		Kind:   "element",

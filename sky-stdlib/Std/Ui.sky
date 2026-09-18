@@ -108,6 +108,7 @@ module Std.Ui exposing
     , onMouseOver
     , onMouseOut
     , onKeyDown
+    , onEnter
     , onFile
     , onImage
     , fileMaxSize
@@ -998,6 +999,15 @@ onMouseOut msg =
 onKeyDown : msg -> Attribute msg
 onKeyDown msg =
     AttrEvent (Event.onKeyDown msg)
+
+
+-- Fire a Msg on a plain Enter (no Shift); Shift-Enter inserts a newline.
+-- The client preventDefaults the sending keystroke, so a multi-line input
+-- does not also insert a newline. The chat-composer default: wire it on the
+-- same input as `onInput`, so Enter sends and Shift-Enter adds a line.
+onEnter : msg -> Attribute msg
+onEnter msg =
+    AttrEvent (Event.onEnter msg)
 
 
 -- File-input change handler. Wire this on `<input type="file">`

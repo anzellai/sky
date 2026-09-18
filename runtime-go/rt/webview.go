@@ -784,6 +784,25 @@ const webviewSharedJS = `
         n.addEventListener(ev, makeHandler(ev));
       }
     }
+    // Synthetic "enter" event (Ui.onEnter): the DOM has no "enter" event, so
+    // bind keydown on [sky-enter] and fire the bound Msg only on a plain Enter
+    // (no Shift), calling preventDefault so a <textarea> does not also insert a
+    // newline for the sending keystroke. Shift-Enter is left alone for a newline.
+    var enterNodes = root.querySelectorAll("[sky-enter]");
+    for (var qi = 0; qi < enterNodes.length; qi++) {
+      var en = enterNodes[qi];
+      var ekey = __skyBoundSentinel + "_enter";
+      if (en[ekey]) continue;
+      en[ekey] = true;
+      en.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter" || e.shiftKey) return;
+        var hid = e.currentTarget.getAttribute("data-sky-hid");
+        if (!hid) return;
+        e.preventDefault();
+        try { window.__skyDispatch(hid, []); }
+        catch (err) { __skyWarn("__skyDispatch failed: " + err); }
+      });
+    }
   }
 
   function makeHandler(ev) {

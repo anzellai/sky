@@ -261,6 +261,29 @@ func bindNodeEvents(n js.Value, el VNode) {
 			n.Call("addEventListener", "change", f)
 			continue
 		}
+		// Synthetic "enter" event (Ui.onEnter). The DOM has no "enter" event, so
+		// bind keydown and fire only on a plain Enter (no Shift), then
+		// preventDefault so a <textarea> does not also insert a newline for the
+		// sending keystroke. Shift-Enter is left untouched, so it inserts a
+		// newline as normal. Sky.Live does the same in its client JS. The handler
+		// is a bare Msg (no payload), so dispatch it with an empty string.
+		if evt == "enter" {
+			h := handler
+			f := js.FuncOf(func(this js.Value, args []js.Value) any {
+				if len(args) > 0 && args[0].Truthy() {
+					ev := args[0]
+					if ev.Get("key").String() != "Enter" || ev.Get("shiftKey").Truthy() {
+						return nil
+					}
+					ev.Call("preventDefault")
+				}
+				dispatchEvent(h, "")
+				return nil
+			})
+			spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
+			n.Call("addEventListener", "keydown", f)
+			continue
+		}
 		if strings.HasPrefix(evt, "sky-") {
 			continue
 		}
