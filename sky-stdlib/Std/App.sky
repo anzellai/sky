@@ -1354,19 +1354,32 @@ openLiveWindow_ port window =
         (waitForServer_ port 200)
 
 
--- | Poll `http://localhost:port/` until it answers (any HTTP response means the
--- server is up), backing off 250ms between tries. Gives up after `attempts` and
--- navigates anyway, so a genuinely dead server still opens a window (which then
--- shows the browser's own error) rather than hanging forever.
+-- | Poll `http://localhost:port/` until it answers with a SUCCESS status (2xx or
+-- 3xx), backing off 250ms between tries. A 4xx/5xx (e.g. the frontend bundle is
+-- not staged yet, so `/` is a transient 404) is treated as "not ready" and
+-- retried, so the window never opens onto a transient error page. Gives up after
+-- `attempts` and navigates anyway, so a genuinely dead server still opens a
+-- window (which then shows the browser's own error) rather than hanging forever.
 waitForServer_ : Int -> Int -> Task Error ()
 waitForServer_ port attempts =
     if attempts <= 0 then
         Task.succeed ()
 
     else
-        Task.onError
-            (\_ -> Task.andThen (\_ -> waitForServer_ port (attempts - 1)) (Time.sleep 250))
-            (Task.map (\_ -> ()) (Http.get ("http://localhost:" ++ String.fromInt port ++ "/")))
+        let
+            retry =
+                Task.andThen (\_ -> waitForServer_ port (attempts - 1)) (Time.sleep 250)
+        in
+        Http.get ("http://localhost:" ++ String.fromInt port ++ "/")
+            |> Task.andThen
+                (\resp ->
+                    if resp.status >= 200 && resp.status < 400 then
+                        Task.succeed ()
+
+                    else
+                        retry
+                )
+            |> Task.onError (\_ -> retry)
 
 
 -- ─── Element → text (best-effort, for terminal:cli) ───

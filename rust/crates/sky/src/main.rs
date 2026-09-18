@@ -3715,18 +3715,31 @@ main =
         (waitForBackend appUrl 200)
 
 
--- Poll the backend until it answers (any HTTP response), backing off 250ms, then
--- give up after `attempts` and open anyway so a dead backend still shows the
--- webview's own error rather than hanging.
+-- Poll the backend until it answers with a SUCCESS status (2xx/3xx), backing off
+-- 250ms. A 4xx/5xx (e.g. the frontend bundle is not staged yet, so `/` is a
+-- transient 404) is treated as not-ready and retried, so the window never opens
+-- onto a transient error page. Give up after `attempts` and open anyway so a dead
+-- backend still shows the webview's own error rather than hanging.
 waitForBackend : String -> Int -> Task Error ()
 waitForBackend url attempts =
     if attempts <= 0 then
         Task.succeed ()
 
     else
-        Task.onError
-            (\_ -> Task.andThen (\_ -> waitForBackend url (attempts - 1)) (Time.sleep 250))
-            (Task.map (\_ -> ()) (Http.get url))
+        let
+            retry =
+                Task.andThen (\_ -> waitForBackend url (attempts - 1)) (Time.sleep 250)
+        in
+        Http.get url
+            |> Task.andThen
+                (\resp ->
+                    if resp.status >= 200 && resp.status < 400 then
+                        Task.succeed ()
+
+                    else
+                        retry
+                )
+            |> Task.onError (\_ -> retry)
 "#;
 
 /// Lowercase-alnum sanitisation for a Java/Android package segment; empty →
