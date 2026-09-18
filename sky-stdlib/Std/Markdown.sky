@@ -634,7 +634,7 @@ renderBlock b =
                 [ Ui.width Ui.fill
                 , Ui.paddingXY 12 10
                 , Ui.htmlAttribute "style"
-                    "background:#101116;border:1px solid #2A2A33;border-radius:8px;overflow-x:auto;white-space:pre"
+                    "background:#101116;color:#e6e6ec;border:1px solid #2A2A33;border-radius:8px;overflow-x:auto;white-space:pre"
                 , Font.family "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
                 , Font.size 13
                 ]
@@ -970,7 +970,7 @@ renderSpan span =
             Ui.el
                 [ Font.family "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
                 , Ui.htmlAttribute "style"
-                    "background:#1c1c23;padding:1px 5px;border-radius:3px"
+                    "background:#1c1c23;color:#e6e6ec;padding:1px 5px;border-radius:3px"
                 ]
                 (Ui.text text)
 
