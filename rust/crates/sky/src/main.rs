@@ -1776,6 +1776,11 @@ fn strip_line_comment_run(s: &str) -> String {
 fn partition_routes(routes_arg: &str, src: &str) -> (String, Option<String>) {
     let api_bindings = api_route_binding_names(src);
     let stripped = strip_outer_parens(routes_arg);
+    // Normalise a cons chain into `++` of singletons so `withRoutes` written
+    // `App.route "/" Home :: apiRoutes` (idiomatic prepend) partitions the same as
+    // `[ App.route "/" Home ] ++ apiRoutes` — otherwise the whole `::` expression
+    // is one opaque operand that stays client-side and the api routes are dropped.
+    let stripped = normalize_cons_to_concat(&stripped);
     let operands = split_top_level(&stripped, "++");
     let mut client_parts: Vec<String> = Vec::new();
     let mut api_parts: Vec<String> = Vec::new();
@@ -1815,6 +1820,25 @@ fn partition_routes(routes_arg: &str, src: &str) -> (String, Option<String>) {
         Some(api_parts.join(" ++ "))
     };
     (client_expr, api_expr)
+}
+
+/// Normalise a top-level cons chain into `++` of singleton lists, so the `++`
+/// partition in [`partition_routes`] handles a `withRoutes` argument written with
+/// `::`: `a :: b :: tail` → `[ a ] ++ [ b ] ++ tail`. `::` inside a nested list or
+/// parens is not top-level and is left alone; no top-level `::` → unchanged.
+fn normalize_cons_to_concat(expr: &str) -> String {
+    let parts = split_top_level(expr, "::");
+    if parts.len() <= 1 {
+        return expr.to_string();
+    }
+    // The last operand is the list tail; the earlier ones are single elements.
+    let (tail, heads) = parts.split_last().expect("len > 1");
+    let mut out: Vec<String> = heads
+        .iter()
+        .map(|h| format!("[ {} ]", h.trim()))
+        .collect();
+    out.push(tail.trim().to_string());
+    out.join(" ++ ")
 }
 
 /// Remove a top-level binding (its signature + definition) named `name` from a
@@ -10362,6 +10386,40 @@ mod tests {
             src.contains("import Domain exposing (Model, Msg(..), update)"),
             "the name must be added to Domain's exposing list:\n{src}"
         );
+    }
+
+    // GAP-1 / `::` support: a `withRoutes` that PREPENDS a page route to an
+    // `App.api` binding with cons (`App.route "/" Home :: apiRoutes`) must send the
+    // api binding to the backend mount, not leave the whole cons expression
+    // client-side (which dropped the api routes → no same-port JSON API).
+    #[test]
+    fn partition_routes_handles_cons_of_page_route_and_api_binding() {
+        let src = "apiRoutes =\n    [ App.api \"/health\" h ]\n";
+        let (client, api) = partition_routes("(App.route \"/\" Home :: apiRoutes)", src);
+        assert!(
+            client.contains("App.route \"/\" Home"),
+            "the page route stays client-side: {client}"
+        );
+        assert!(
+            !client.contains("apiRoutes"),
+            "the server-tainted api binding must NOT reach the client: {client}"
+        );
+        assert_eq!(
+            api.as_deref(),
+            Some("apiRoutes"),
+            "the api binding must mount on the backend: {api:?}"
+        );
+    }
+
+    #[test]
+    fn normalize_cons_to_concat_expands_a_top_level_chain() {
+        assert_eq!(
+            normalize_cons_to_concat("a :: b :: rest"),
+            "[ a ] ++ [ b ] ++ rest"
+        );
+        // No top-level cons — unchanged (a plain list, or a `++` expression).
+        assert_eq!(normalize_cons_to_concat("[ x, y ]"), "[ x, y ]");
+        assert_eq!(normalize_cons_to_concat("as ++ bs"), "as ++ bs");
     }
 
     // A `Msg(..)` variant-expose must NOT be mistaken for a whole-module
