@@ -469,14 +469,25 @@ func (sh *streamHandle) deliver(ev streamEvent) bool {
 // from skyHttpClient by `Timeout: 0` — the whole-request deadline
 // would cap a long-lived stream (LLM completions routinely run 30s+).
 // The header-stage timeout is enforced separately on the Transport.
-var streamHttpClient = newStreamHttpClient()
+// Built ONCE on first use, not at package init, so a SKY_HTTP_STREAM_HEADER_TIMEOUT
+// from a late-loaded .env is honoured (mirrors skyHTTPClientOnce) and the env-init
+// audit stays satisfied.
+var streamHTTPClientOnce = sync.OnceValue(newStreamHttpClient)
+
+func streamHTTPClient() *http.Client { return streamHTTPClientOnce() }
 
 func newStreamHttpClient() *http.Client {
 	return &http.Client{
 		Timeout: 0, // NO whole-request timeout — body may stream for minutes
 		Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			ResponseHeaderTimeout: streamHeaderTimeout,
+			Proxy: http.ProxyFromEnvironment,
+			// SKY_HTTP_STREAM_HEADER_TIMEOUT overrides the time allowed for the
+			// initial transaction (connect + first response header). The 30s
+			// default is too short for a slow local LLM whose first token waits
+			// on a cold model load; raise it (e.g. "180s") for such backends.
+			// Matches the SKY_HTTP_CLIENT_TIMEOUT / SKY_HTTP_READ_HEADER_TIMEOUT
+			// env pattern.
+			ResponseHeaderTimeout: httpEnvTimeout("SKY_HTTP_STREAM_HEADER_TIMEOUT", streamHeaderTimeout),
 			// DisableKeepAlives: prevents the chunked-transfer EOF
 			// from being deferred to keep-alive idle timeout. Without
 			// this, Go's http.Transport may hold the body Reader
@@ -544,7 +555,7 @@ func HttpStream_open(reqArg any) any {
 		req = req.WithContext(CurrentTraceContext())
 		InjectTraceHeaders(req)
 
-		resp, err := streamHttpClient.Do(req)
+		resp, err := streamHTTPClient().Do(req)
 		if err != nil {
 			return Err[any, any](ErrNetwork("http.stream.open do: " + err.Error()))
 		}

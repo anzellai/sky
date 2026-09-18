@@ -302,7 +302,7 @@ func TestCloseAllStreams_GoroutineLeak(t *testing.T) {
 	}
 	for i := 0; i < N; i++ {
 		req, _ := http.NewRequest("GET", srv.URL, nil)
-		resp, err := streamHttpClient.Do(req)
+		resp, err := streamHTTPClient().Do(req)
 		if err != nil {
 			t.Fatalf("setup #%d: %v", i, err)
 		}
@@ -350,7 +350,7 @@ func TestStreamHandle_DeliverOrder(t *testing.T) {
 	defer srv.Close()
 
 	req, _ := http.NewRequest("GET", srv.URL, nil)
-	resp, err := streamHttpClient.Do(req)
+	resp, err := streamHTTPClient().Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestApplyStreamSubsDiff_PickUpMidStream(t *testing.T) {
 	}
 
 	req, _ := http.NewRequest("GET", srv.URL, nil)
-	resp, err := streamHttpClient.Do(req)
+	resp, err := streamHTTPClient().Do(req)
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
