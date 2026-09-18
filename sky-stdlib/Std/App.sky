@@ -1320,23 +1320,66 @@ runLiveWindow : App HasFallback () page model msg key -> Task Error ()
 runLiveWindow (App a) =
     let
         d = findDesktop a.configs
+        w = findWeb a.configs
     in
-        Task.map
-            (\_ -> ())
-            (Task.parallel
-                [ runLive (App a)
-                , openLiveWindow_
-                      { title = d.title, size = ( d.width, d.height ) }
-                ])
+        -- The Live server runs on a SPAWNED goroutine; the webview opens on THIS
+        -- (the caller's) goroutine. On macOS the native webview must be created on
+        -- the process main thread, and the app's `main` runs this task on that
+        -- thread — so the window MUST stay on the caller, not a child goroutine.
+        -- `Task.parallel [server, window]` put BOTH on child goroutines, so
+        -- `webview.New` faulted during cgo. `Task.spawn` keeps the caller free.
+        --
+        -- The window navigates to the SAME port the Live server binds (`findWeb`),
+        -- not a hardcoded one — otherwise the webview loads an empty page on the
+        -- wrong port and the window renders blank.
+        Task.andThen
+            (\_ ->
+                openLiveWindow_
+                    w.port
+                    { title = d.title, size = ( d.width, d.height ) }
+            )
+            (Task.spawn (runLive (App a)))
 
 
-openLiveWindow_ : { title : String
+openLiveWindow_ : Int -> { title : String
 , size : ( Int, Int )
 } -> Task Error ()
-openLiveWindow_ window =
+openLiveWindow_ port window =
+    -- Wait until the Live server actually answers before opening the window. A
+    -- fixed delay was wrong: an app with a slow boot (embedded PostgreSQL takes
+    -- ~20s) is not listening yet, so the webview loaded a dead port and rendered
+    -- blank with no retry. Poll the port, then navigate once it responds.
     Task.andThen
-        (\_ -> Webview.url "http://localhost:8000" window)
-        (Time.sleep 800)
+        (\_ -> Webview.url ("http://localhost:" ++ String.fromInt port) window)
+        (waitForServer_ port 200)
+
+
+-- | Poll `http://localhost:port/` until it answers with a SUCCESS status (2xx or
+-- 3xx), backing off 250ms between tries. A 4xx/5xx (e.g. the frontend bundle is
+-- not staged yet, so `/` is a transient 404) is treated as "not ready" and
+-- retried, so the window never opens onto a transient error page. Gives up after
+-- `attempts` and navigates anyway, so a genuinely dead server still opens a
+-- window (which then shows the browser's own error) rather than hanging forever.
+waitForServer_ : Int -> Int -> Task Error ()
+waitForServer_ port attempts =
+    if attempts <= 0 then
+        Task.succeed ()
+
+    else
+        let
+            retry =
+                Task.andThen (\_ -> waitForServer_ port (attempts - 1)) (Time.sleep 250)
+        in
+        Http.get ("http://localhost:" ++ String.fromInt port ++ "/")
+            |> Task.andThen
+                (\resp ->
+                    if resp.status >= 200 && resp.status < 400 then
+                        Task.succeed ()
+
+                    else
+                        retry
+                )
+            |> Task.onError (\_ -> retry)
 
 
 -- ─── Element → text (best-effort, for terminal:cli) ───

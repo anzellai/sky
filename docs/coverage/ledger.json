@@ -698,7 +698,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1952,
+    "stdlib_entries": 1953,
     "stdlib_modules": 101,
     "surfaces_covered": 148,
     "surfaces_covered_pct": 88.6,
@@ -12678,7 +12678,7 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 11,
+          "count": 12,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
@@ -12690,7 +12690,8 @@
             "map5",
             "mapError",
             "parallelN",
-            "retryAlways"
+            "retryAlways",
+            "spawn"
           ]
         },
         "Sky.Core.Time": {
@@ -13515,7 +13516,7 @@
           ]
         }
       },
-      "count": 652,
+      "count": 653,
       "pct_of_denominator": 33.4
     },
     "symbols_unreferenced_strict": {
@@ -13728,7 +13729,7 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 11,
+          "count": 12,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
@@ -13740,7 +13741,8 @@
             "map5",
             "mapError",
             "parallelN",
-            "retryAlways"
+            "retryAlways",
+            "spawn"
           ]
         },
         "Sky.Core.Time": {
@@ -14640,7 +14642,7 @@
           ]
         }
       },
-      "count": 734,
+      "count": 735,
       "pct_of_denominator": 37.6
     }
   },

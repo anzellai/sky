@@ -24,6 +24,7 @@ module Sky.Core.Task exposing
     , sequence
     , parallel
     , parallelN
+    , spawn
     , lazy
     , ShouldRetry(..)
     , RetryPolicy
@@ -143,6 +144,18 @@ parallel =
 parallelN : Int -> List (Task e a) -> Task e (List a)
 parallelN =
     Ffi.kernel "Task_parallelN"
+
+
+-- | Run a task on a background goroutine and return AT ONCE — fire-and-forget.
+-- The task's result and any error are discarded, so reach for this only to start
+-- a long-running background task (a server loop, a poller) that must run
+-- ALONGSIDE the caller while the caller keeps running on its OWN thread. Unlike
+-- `parallel`, which runs every task on a child goroutine and blocks until all
+-- finish, `spawn` leaves the caller's goroutine free. When you need the result
+-- back, use `parallel` / `parallelN`.
+spawn : Task e a -> Task e ()
+spawn =
+    Ffi.kernel "Task_spawn"
 
 
 -- ─── Deferred computation ──────────────────────────────────────────

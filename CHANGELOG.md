@@ -11,6 +11,42 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.4 — Native desktop apps work end to end (2026-09-18)
+
+A patch over v0.25.3. `sky run --target desktop` (Sky.Live in a native window)
+and `sky run --target desktop:mac` (a Sky.Spa native app) now open a window that
+renders your app. Before this, desktop had never worked end to end: the window
+crashed on macOS, and past the crash it rendered blank or never opened at all.
+`sky upgrade` is safe from any v0.25.x — no language change; one new stdlib
+function (`Task.spawn`).
+
+### Fixed
+
+- **The desktop window no longer crashes on macOS.** `--target desktop` created
+  the system webview off the main thread (it ran under `Task.parallel`), so
+  `webview.New` faulted during cgo ("signal arrived during cgo execution"). The
+  Live server now runs on a spawned goroutine and the webview opens on the main
+  goroutine, and the process main goroutine is pinned to the main OS thread — so
+  the window opens whether or not the app uses embedded PostgreSQL (whose startup
+  used to migrate the main goroutine off thread 0 before the window opened).
+- **The desktop window renders your app, not a blank page.** It navigated to a
+  hardcoded `localhost:8000` after a fixed 800ms delay; it now navigates to the
+  Live server's configured port and waits until the server answers with a success
+  status, so a slow boot (embedded PostgreSQL) no longer shows a blank window.
+- **`sky run --target desktop:mac` opens the window in one command.** It built the
+  native shell but ran only the backend, so no window ever opened. It now starts
+  the backend and opens the window together, and closing the window stops the
+  app. `web:app` / `tablet` still run the backend in the foreground for browser
+  access.
+
+### Added
+
+- **`Task.spawn : Task e a -> Task e ()`** — run a task on a background goroutine,
+  fire-and-forget (its result and errors are discarded). For a long-running
+  background task (a server loop, a poller) that must run alongside the caller
+  while the caller keeps its own thread. For a result you need back, use
+  `Task.parallel` / `parallelN`.
+
 ## v0.25.3 — Sky.Spa auto-split soundness + a type-resolution fix (2026-09-17)
 
 A patch over v0.25.2. It closes two soundness bugs (a silent data loss and a

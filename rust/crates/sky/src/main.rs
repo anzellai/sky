@@ -2516,19 +2516,62 @@ fn build_std_app(
                 // like `sky run` from the project root. Copies only, never
                 // overwriting a file the split already staged.
                 stage_project_runtime_into_backend(project_dir, &od.join("backend"));
-                let mut proc = Command::new(&backend);
-                // The generated backend serves `../frontend/dist` RELATIVE to its
-                // own dir, so run it from there.
-                proc.current_dir(od.join("backend"));
-                if embed {
-                    proc.arg("--embed");
-                }
-                match proc.status() {
-                    Ok(s) if s.success() => ExitCode::SUCCESS,
-                    Ok(_) => ExitCode::FAILURE,
-                    Err(e) => {
-                        eprintln!("sky run: launch {}: {e}", backend.display());
-                        ExitCode::FAILURE
+                // A `desktop:<os>` target opens a NATIVE WINDOW. `sky run` must be
+                // ONE command: start the backend in the background, then launch the
+                // webview shell (which waits for the backend to answer, then opens
+                // the window and blocks until it is closed). Closing the window
+                // stops the whole app. `web:app` / `tablet` have no shell — run the
+                // backend in the foreground so the user opens it in a browser.
+                let desktop_shell = od
+                    .join("frontend")
+                    .join("sky-out")
+                    .join("desktop")
+                    .join("app");
+                if fe_target == "desktop" && desktop_shell.exists() {
+                    println!("== opening the desktop window ==");
+                    let mut backend_cmd = Command::new(&backend);
+                    backend_cmd.current_dir(od.join("backend"));
+                    if embed {
+                        backend_cmd.arg("--embed");
+                    }
+                    match backend_cmd.spawn() {
+                        Ok(mut backend_child) => {
+                            let shell_status = Command::new(&desktop_shell).status();
+                            // Window closed (or the shell failed) — stop the backend.
+                            let _ = backend_child.kill();
+                            let _ = backend_child.wait();
+                            match shell_status {
+                                Ok(s) if s.success() => ExitCode::SUCCESS,
+                                Ok(_) => ExitCode::FAILURE,
+                                Err(e) => {
+                                    eprintln!(
+                                        "sky run: open the desktop window {}: {e}",
+                                        desktop_shell.display()
+                                    );
+                                    ExitCode::FAILURE
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("sky run: launch backend {}: {e}", backend.display());
+                            ExitCode::FAILURE
+                        }
+                    }
+                } else {
+                    let mut proc = Command::new(&backend);
+                    // The generated backend serves `../frontend/dist` RELATIVE to
+                    // its own dir, so run it from there.
+                    proc.current_dir(od.join("backend"));
+                    if embed {
+                        proc.arg("--embed");
+                    }
+                    match proc.status() {
+                        Ok(s) if s.success() => ExitCode::SUCCESS,
+                        Ok(_) => ExitCode::FAILURE,
+                        Err(e) => {
+                            eprintln!("sky run: launch {}: {e}", backend.display());
+                            ExitCode::FAILURE
+                        }
                     }
                 }
             }
@@ -3683,11 +3726,16 @@ const DESKTOP_SHELL_MAIN: &str = r#"module Main exposing (main)
 -- build serves, talking to the SAME stateless backend over the SAME typed
 -- shared-codec boundary. One client, one server; only the window is native.
 --
--- Start the backend first (serving the dist/ bundle on PORT, default 8951),
--- then run this binary.
+-- It waits for the backend to answer before opening the window. Otherwise, on a
+-- backend with a slow boot (embedded PostgreSQL takes ~20s), the webview loaded a
+-- dead port and rendered blank with no retry. The poll makes the window open only
+-- once there is something to render.
 
 import Std.Webview as Webview
 import Sky.Core.System as System
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
 
 
 main : Task Error ()
@@ -3699,11 +3747,42 @@ main =
         appUrl =
             "http://127.0.0.1:" ++ port ++ "/"
     in
-    Webview.url appUrl
-        (Webview.defaultWindow
-            |> Webview.withTitle "{{TITLE}}"
-            |> Webview.withSize 480 760
+    Task.andThen
+        (\_ ->
+            Webview.url appUrl
+                (Webview.defaultWindow
+                    |> Webview.withTitle "{{TITLE}}"
+                    |> Webview.withSize 480 760
+                )
         )
+        (waitForBackend appUrl 200)
+
+
+-- Poll the backend until it answers with a SUCCESS status (2xx/3xx), backing off
+-- 250ms. A 4xx/5xx (e.g. the frontend bundle is not staged yet, so `/` is a
+-- transient 404) is treated as not-ready and retried, so the window never opens
+-- onto a transient error page. Give up after `attempts` and open anyway so a dead
+-- backend still shows the webview's own error rather than hanging.
+waitForBackend : String -> Int -> Task Error ()
+waitForBackend url attempts =
+    if attempts <= 0 then
+        Task.succeed ()
+
+    else
+        let
+            retry =
+                Task.andThen (\_ -> waitForBackend url (attempts - 1)) (Time.sleep 250)
+        in
+        Http.get url
+            |> Task.andThen
+                (\resp ->
+                    if resp.status >= 200 && resp.status < 400 then
+                        Task.succeed ()
+
+                    else
+                        retry
+                )
+            |> Task.onError (\_ -> retry)
 "#;
 
 /// Lowercase-alnum sanitisation for a Java/Android package segment; empty →
