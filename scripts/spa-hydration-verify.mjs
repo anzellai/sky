@@ -45,6 +45,14 @@ const URLPATH = arg("--url", "/");
 const EXPECT = arg("--expect", "");
 const DBSPEC = arg("--db", "");
 const PORT = Number(arg("--port", "8996"));
+// --restore-patch '<json>': the localStorage-restore first-paint test. After the
+// first load, read the client-persisted model (`sky:spa:model`), merge this JSON
+// patch over it, write it back, and RELOAD. The reloaded page SSR-renders the
+// (unchanged) seed, so the client must hydrate that seed render and then patch to
+// the restored model — the exact bug the two-step first paint fixes. `--expect`
+// is then asserted on the POST-RELOAD view, and a "hydrate skipped" warning is a
+// FAIL (a fallback rebuild would mask the bug, not exercise the fix).
+const RESTORE_PATCH = arg("--restore-patch", "");
 const BACKEND_DIR = dirname(dirname(BACKEND)); // .../backend (app is backend/sky-out/app)
 
 // Optional: seed a sqlite DB in the backend run dir before boot.
@@ -90,20 +98,51 @@ try {
   await page.goto(`http://127.0.0.1:${PORT}${URLPATH}`, { waitUntil: "networkidle" });
   const ssrText = (await page.locator("#app").innerText()).replace(/\s+/g, " ").trim();
   await page.waitForTimeout(1500); // let the wasm boot + hydrate
-  const afterText = (await page.locator("#app").innerText()).replace(/\s+/g, " ").trim();
+  let afterText = (await page.locator("#app").innerText()).replace(/\s+/g, " ").trim();
+
+  // localStorage-restore first-paint test: seed a DIFFERENT persisted model, then
+  // reload so the client must hydrate the SSR seed render and patch to the restore.
+  if (RESTORE_PATCH) {
+    const merged = await page.evaluate((patch) => {
+      const KEY = "sky:spa:model";
+      let cur = {};
+      try {
+        cur = JSON.parse(localStorage.getItem(KEY) || "{}");
+      } catch {}
+      const next = { ...cur, ...JSON.parse(patch) };
+      localStorage.setItem(KEY, JSON.stringify(next));
+      return JSON.stringify(next);
+    }, RESTORE_PATCH);
+    console.log("RESTORE_MODEL=" + JSON.stringify(merged));
+    consoleMsgs.length = 0; // only care about the reload's console
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForTimeout(1500);
+    afterText = (await page.locator("#app").innerText()).replace(/\s+/g, " ").trim();
+  }
   await browser.close();
 
   const decodeErr = consoleMsgs.find((m) => m.includes("failed to decode"));
+  const hydrateSkipped = consoleMsgs.find((m) => m.includes("hydrate skipped"));
   console.log("SSR_TEXT=" + JSON.stringify(ssrText));
   console.log("AFTER_TEXT=" + JSON.stringify(afterText));
   console.log("DECODE_ERROR=" + (decodeErr ? JSON.stringify(decodeErr) : "none"));
+  if (RESTORE_PATCH) {
+    console.log("HYDRATE_SKIPPED=" + (hydrateSkipped ? JSON.stringify(hydrateSkipped) : "none"));
+  }
 
   if (decodeErr) {
     console.log("VERDICT=FAIL client decode failed (silent hydration loss)");
     process.exitCode = 2;
+  } else if (RESTORE_PATCH && hydrateSkipped) {
+    // A fallback rebuild would mask the restore bug rather than exercise the fix.
+    console.log("VERDICT=FAIL hydration was skipped (fallback rebuild masked the restore path)");
+    process.exitCode = 2;
   } else if (EXPECT && !afterText.includes(EXPECT)) {
     console.log(`VERDICT=FAIL expected ${JSON.stringify(EXPECT)} in post-hydration view`);
     process.exitCode = 2;
+  } else if (RESTORE_PATCH && EXPECT && afterText.includes(EXPECT)) {
+    console.log("VERDICT=PASS restored model painted on the first SSR paint (hydrate + patch)");
+    process.exitCode = 0;
   } else if (EXPECT && ssrText.includes(EXPECT) && afterText.includes(EXPECT)) {
     console.log("VERDICT=PASS SSR data survived hydration");
     process.exitCode = 0;
