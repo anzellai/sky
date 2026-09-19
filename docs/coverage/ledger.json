@@ -698,7 +698,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1953,
+    "stdlib_entries": 1956,
     "stdlib_modules": 101,
     "surfaces_covered": 148,
     "surfaces_covered_pct": 88.6,
@@ -13158,7 +13158,7 @@
           ]
         },
         "Std.Html.Events": {
-          "count": 20,
+          "count": 21,
           "symbols": [
             "fileMaxSize",
             "on",
@@ -13166,6 +13166,7 @@
             "onCheck",
             "onContextMenu",
             "onDblClick",
+            "onEnter",
             "onError",
             "onFile",
             "onFocus",
@@ -13309,7 +13310,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 61,
+          "count": 62,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -13359,6 +13360,7 @@
             "fullHd",
             "gridTracksRaw",
             "layoutWith",
+            "onEnter",
             "onFile",
             "onImage",
             "onKeyDown",
@@ -13410,6 +13412,12 @@
           "symbols": [
             "Cfg",
             "Point"
+          ]
+        },
+        "Std.Ui.Events": {
+          "count": 1,
+          "symbols": [
+            "onEnter"
           ]
         },
         "Std.Ui.Font": {
@@ -13516,8 +13524,8 @@
           ]
         }
       },
-      "count": 653,
-      "pct_of_denominator": 33.4
+      "count": 656,
+      "pct_of_denominator": 33.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -14273,7 +14281,7 @@
           ]
         },
         "Std.Html.Events": {
-          "count": 26,
+          "count": 27,
           "symbols": [
             "fileMaxHeight",
             "fileMaxSize",
@@ -14285,6 +14293,7 @@
             "onClick",
             "onContextMenu",
             "onDblClick",
+            "onEnter",
             "onError",
             "onFile",
             "onFocus",
@@ -14434,7 +14443,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 61,
+          "count": 62,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -14484,6 +14493,7 @@
             "fullHd",
             "gridTracksRaw",
             "layoutWith",
+            "onEnter",
             "onFile",
             "onImage",
             "onKeyDown",
@@ -14535,6 +14545,12 @@
           "symbols": [
             "Cfg",
             "Point"
+          ]
+        },
+        "Std.Ui.Events": {
+          "count": 1,
+          "symbols": [
+            "onEnter"
           ]
         },
         "Std.Ui.Font": {
@@ -14642,8 +14658,8 @@
           ]
         }
       },
-      "count": 735,
-      "pct_of_denominator": 37.6
+      "count": 738,
+      "pct_of_denominator": 37.7
     }
   },
   "units": [

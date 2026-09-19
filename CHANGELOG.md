@@ -11,6 +11,36 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.6 — Enter-to-send, a configurable stream-header timeout, and a Markdown code-colour fix (2026-09-19)
+
+A patch over v0.25.5. `sky upgrade` is safe from any v0.25.x — additive stdlib +
+runtime only, no breaking change.
+
+### Added
+
+- **`Std.Ui.onEnter : msg -> Attribute msg`** — fire a `Msg` when the user presses
+  Enter WITHOUT Shift, so a chat-style composer sends on Enter while Shift-Enter
+  still inserts a newline. The client also calls `preventDefault` on the sending
+  keystroke, so a `<textarea>` does not also insert a line. It lowers to a
+  synthetic `"enter"` event that each delivery path binds as a keydown listener
+  firing only on `Enter && !shiftKey`: Sky.Live (server-driven JS), Sky.Spa
+  (client wasm), and the WebView desktop shell. Also exposed from
+  `Std.Html.Events` and `Std.Ui.Events`.
+- **The streaming response-header timeout is env-configurable** via
+  `SKY_HTTP_STREAM_HEADER_TIMEOUT` (default 30s, same as before). A slow upstream
+  that streams — a cold local LLM taking tens of seconds to emit its first token,
+  for example — no longer trips the hard-coded 30s streaming header deadline; set
+  a larger value (e.g. `180s`) for such a backend. The whole-request
+  `SKY_HTTP_CLIENT_TIMEOUT` is unchanged.
+
+### Fixed
+
+- **Markdown inline code and code blocks now set an explicit light text colour.**
+  `Std.Markdown` gave code spans and code blocks a dark background but no text
+  colour, so on a dark-inheriting page the code text rendered dark-on-dark —
+  invisible until selected. Both now set `color:#e6e6ec` alongside the dark
+  background, so code is legible.
+
 ## v0.25.5 — Sky.Spa carries App.api routes past a cons `::` (2026-09-18)
 
 A patch over v0.25.4. `sky upgrade` is safe from any v0.25.x — no language or
