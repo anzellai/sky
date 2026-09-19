@@ -96,6 +96,10 @@ fn main() -> ExitCode {
         Some("spa-split") => cmd_spa_split(&args[1..]),
         Some("fuzz") => cmd_fuzz(&args[1..]),
         Some("upgrade") => cmd_upgrade(&args[1..]),
+        // Hidden: warm Sky's isolated Go build cache (native + wasm) so the first
+        // real build is not a cold compile. Invoked by `sky upgrade` (with the NEW
+        // binary) and by `sky doctor --warm-cache`.
+        Some("__warm-go-cache") => cmd_warm_go_cache(),
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
             ExitCode::from(2)
@@ -112,6 +116,15 @@ fn main() -> ExitCode {
 /// A dev build refuses by default (self-replacing a local dev binary with a
 /// published release would throw away local work); `--force` overrides for users
 /// who explicitly want the latest published binary.
+/// Warm Sky's isolated Go build cache by compiling the runtime for native +
+/// js/wasm, so the first real build after an upgrade (or on a fresh machine) is
+/// warm. Best-effort — always exits SUCCESS; a failure only means the first build
+/// is cold, never that anything is broken.
+fn cmd_warm_go_cache() -> ExitCode {
+    println!("{}", project::go_cache::prime());
+    ExitCode::SUCCESS
+}
+
 fn cmd_upgrade(args: &[String]) -> ExitCode {
     let force = args.iter().any(|a| a == "--force");
     // `--notes` previews the release notes for (current, latest] WITHOUT upgrading.
@@ -210,6 +223,13 @@ fn cmd_upgrade_install(
     match download_and_replace_binary(&tag, artifact) {
         Ok(dest) => {
             println!("Upgraded to {tag} — {}", dest.display());
+            // Warm the Go build cache for the NEW runtime, so the first build after
+            // the upgrade is not a cold multi-minute compile. Runs the NEW binary
+            // (it embeds the new `rt`); best-effort — a failure never fails the
+            // upgrade. The new binary's own build-cache maintenance will have
+            // already reclaimed the previous version's now-stale objects.
+            println!("Warming the Go build cache for {tag} …");
+            let _ = Command::new(&dest).arg("__warm-go-cache").status();
             // Print the notes for every version between the old binary and the new
             // one (best-effort — never fail the upgrade if the notes fetch fails).
             if let (Ok(rels), Some(to)) = (fetch_releases(), parse_semver(&tag)) {
@@ -2817,32 +2837,61 @@ fn spa_split_and_build(
     // this generator wrote have it), and the backend is a `Sky.Http.Server` with no
     // `Std.Spa` import anyway.
     println!(
-        "\n== building backend (native{}) ==",
+        "\n== building backend (native{}) + frontend (--target {target}) in parallel ==",
         if embed { ", --embed" } else { "" }
     );
-    let mut backend = Command::new(&sky);
-    backend.arg("build");
-    if embed {
-        // --embed belongs on the BACKEND: it owns the DB, so it bundles PostgreSQL.
-        backend.arg("--embed");
-    }
-    let backend_ok = backend
-        .arg("src/Main.sky")
-        .current_dir(od.join("backend"))
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    // The two Go builds are independent and write disjoint dirs (backend/ vs
+    // frontend/), so run them CONCURRENTLY: the SPA wall-clock becomes
+    // max(backend, frontend) instead of their sum. Output is captured per leg and
+    // printed grouped afterwards, so the two streams never interleave and every
+    // error is still surfaced. (--embed belongs on the BACKEND: it owns the DB.)
+    let sky_ref = &sky;
+    let backend_dir = od.join("backend");
+    let frontend_dir = od.join("frontend");
+    let (backend_res, frontend_res) = std::thread::scope(|s| {
+        let b = s.spawn(|| {
+            let mut c = Command::new(sky_ref);
+            c.arg("build");
+            if embed {
+                c.arg("--embed");
+            }
+            c.arg("src/Main.sky").current_dir(&backend_dir).output()
+        });
+        let f = s.spawn(|| {
+            Command::new(sky_ref)
+                .args(["build", "--target", target, "src/Main.sky"])
+                .current_dir(&frontend_dir)
+                .output()
+        });
+        (b.join(), f.join())
+    });
+    let report_leg =
+        |label: &str, res: std::thread::Result<std::io::Result<std::process::Output>>| -> bool {
+            use std::io::Write;
+            println!("\n== {label} ==");
+            match res {
+                Ok(Ok(out)) => {
+                    let _ = std::io::stdout().write_all(&out.stdout);
+                    let _ = std::io::stderr().write_all(&out.stderr);
+                    out.status.success()
+                }
+                Ok(Err(e)) => {
+                    eprintln!("sky spa-split --build: {label}: spawn failed: {e}");
+                    false
+                }
+                Err(_) => {
+                    eprintln!("sky spa-split --build: {label}: build thread panicked");
+                    false
+                }
+            }
+        };
+    // Report BOTH legs (so both outputs are shown even if both fail), then decide.
+    let backend_ok = report_leg("backend (native)", backend_res);
+    let frontend_ok = report_leg(&format!("frontend (--target {target})"), frontend_res);
     if !backend_ok {
         eprintln!("sky spa-split --build: backend failed to build");
         return Err(ExitCode::FAILURE);
     }
-    println!("\n== building frontend (--target {target}) ==");
-    let frontend_ok = Command::new(&sky)
-        .args(["build", "--target", target, "src/Main.sky"])
-        .current_dir(od.join("frontend"))
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
     if !frontend_ok {
         eprintln!("sky spa-split --build: frontend failed to build");
         return Err(ExitCode::FAILURE);
@@ -8988,6 +9037,11 @@ enum Fix {
 /// `[live]`/`[auth]` is configured. Exit 0 = clean, 1 = at least one finding,
 /// 2 = no sky.toml visible (diagnostic couldn't run).
 fn cmd_doctor(args: &[String]) -> ExitCode {
+    // `sky doctor --warm-cache` — prime Sky's Go build cache (native + wasm) so a
+    // first build is warm. Needs no project, so it short-circuits the root check.
+    if args.iter().any(|a| a == "--warm-cache") {
+        return cmd_warm_go_cache();
+    }
     let do_fix = args.iter().any(|a| a == "--fix");
     let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
 

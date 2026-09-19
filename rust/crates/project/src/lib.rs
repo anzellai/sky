@@ -11,6 +11,7 @@
 // second definition of "the runtime's arity", and second definitions drift.
 pub mod abi_guard;
 mod build;
+pub mod go_cache;
 /// The ONE legacy-`sky.toml` → `withX` migration table (design §8.1). `pub` so
 /// the `config-migration` xtask gate can assert it covers every Sky.Config env
 /// target in `runtime-go/rt/sky_config.go` — a new builder cannot ship without

@@ -444,7 +444,25 @@ don't see it.
 sky doctor                       # report only
 sky doctor --fix                 # apply safe fixes (clean stale caches, etc.)
 sky doctor --verbose             # print check-id alongside each finding
+sky doctor --warm-cache          # prime the Go build cache (native + wasm)
 ```
+
+#### The Sky Go build cache
+
+`sky build` runs `go build`, which stores compiled objects in a build cache. Sky
+keeps its own **isolated** cache at `~/.sky/go-build` (rather than the shared
+machine-global Go cache), so Sky can bound its size and refresh it on upgrade
+without ever touching the cache your other Go projects rely on.
+
+- **Warm the cache** with `sky doctor --warm-cache` — it compiles the runtime for
+  native and js/wasm so the first real build is fast instead of a cold compile.
+  `sky upgrade` runs this automatically for the new version.
+- **Size is bounded.** The cache is pruned when it grows past a cap (default
+  10 GB, set `SKY_GO_CACHE_MAX_GB` to change it), so it never fills your disk.
+- **Upgrade refresh.** A new compiler embeds a new runtime; the first build after
+  an upgrade reclaims the previous version's now-dead cache entries.
+- **Escape hatch.** Set your own `GOCACHE` and Sky uses it as-is and manages
+  nothing (its size and lifetime become yours to control).
 
 Exit codes: `0` clean, `1` warnings, `2` errors. CI-friendly.
 

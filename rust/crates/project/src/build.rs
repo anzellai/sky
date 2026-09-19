@@ -615,6 +615,11 @@ fn build_inner(
     // the oracle (`app/Main.hs`) + CLAUDE.md §"Sky.Webview" cgo-detect note.
     // Output binary name honours the sky.toml `bin` key (default `app`).
     let bin_name = configured_bin_name(&opts.example_dir);
+    // Maintain Sky's isolated Go build cache before `go build`: clean it when the
+    // compiler's embedded runtime fingerprint changed (a `sky upgrade` — reclaims
+    // the now-dead objects) and bound its size. Best-effort + Sky-owned-only; a
+    // user GOCACHE and any failure are left untouched (go_cache.rs).
+    crate::go_cache::maintain(ffi::assets::embed_fingerprint());
     // `--wasm`: compile the client for the browser (GOOS=js GOARCH=wasm) and
     // drop the matching wasm_exec.js. The native cgo-detection path is skipped —
     // a Sky.Spa client imports `syscall/js` and must NOT native-build.
@@ -689,11 +694,16 @@ fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
     // weight — the client is delivered over the wire, so this is the one target
     // where stripping is unambiguously right. (Passed as a SINGLE argv element
     // so `-s -w` is the flag VALUE, not two separate build flags.)
-    let out = Command::new("go")
-        .current_dir(out_dir)
+    let mut cmd = Command::new("go");
+    cmd.current_dir(out_dir)
         .env("GOOS", "js")
         .env("GOARCH", "wasm")
-        .args(["build", "-ldflags=-s -w", "-o", "main.wasm", "."])
+        .args(["build", "-ldflags=-s -w", "-o", "main.wasm", "."]);
+    // Same isolated, bounded Sky build cache as the native build. The wasm build
+    // is a SEPARATE cache namespace (GOOS=js/GOARCH=wasm), so it never shared the
+    // constrained-HOME fallback before — apply it here too.
+    crate::go_cache::apply(&mut cmd);
+    let out = cmd
         .output()
         .map_err(|e| format!("failed to run `go build` (GOOS=js GOARCH=wasm): {e}"))?;
     if !out.status.success() {
@@ -818,12 +828,12 @@ fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuil
         .current_dir(out_dir)
         .env("GOFLAGS", sky_build_goflags())
         .env("CGO_ENABLED", cgo);
-    // Unprivileged environments (unwritable $HOME) can't use Go's default
-    // build/module caches — route them to the writable Sky cache (#7). No-op on
-    // a normal setup.
-    for (k, v) in ffi::inspect::go_env_for_constrained_home() {
-        cmd.env(k, v);
-    }
+    // Route `go build` through Sky's isolated, size-bounded build cache
+    // (~/.sky/go-build), honouring an explicit user GOCACHE, and keep the
+    // unwritable-$HOME module-cache fallback (#7). All no-ops on a normal setup
+    // with a user GOCACHE; otherwise Sky owns and bounds its own cache
+    // (go_cache.rs). No-op / default on any failure.
+    crate::go_cache::apply(&mut cmd);
     match run_bounded(cmd, GO_BUILD_TIMEOUT) {
         Ok(b) if b.timed_out => Err(format!(
             "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch). Partial stderr:\n{}",
