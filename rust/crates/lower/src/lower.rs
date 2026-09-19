@@ -4410,7 +4410,10 @@ impl<'a> Ctx<'a> {
             if let Some((sym, typed)) = self.ffi.call_symbol(package.as_str(), name.as_str()) {
                 self.ffi_used.insert(package.as_str().to_string());
                 let wparams = self.ffi.wrapper_params(&sym);
-                return self.ffi_call(&format!("rt.{sym}"), args, actual, &wparams, typed);
+                // FFI wrappers live in `package skyffi` (a dot-import of rt), not
+                // `package rt`, so base rt stays byte-stable and caches across
+                // projects. The call + its typed slot aliases are `skyffi.`-qualified.
+                return self.ffi_call(&format!("skyffi.{sym}"), args, actual, &wparams, typed);
             }
             // A Go-FFI call with no wrapper symbol for `name`. Two distinct
             // causes need two distinct developer actions:
@@ -4891,15 +4894,16 @@ impl<'a> Ctx<'a> {
         wrapper_params: &[String],
         typed: bool,
     ) -> GoExpr {
-        // A Go-FFI wrapper (`rt.Go_<Pkg>_<fn>T`) has TYPED params, not `any`:
+        // A Go-FFI wrapper (`skyffi.Go_<Pkg>_<fn>T`) has TYPED params, not `any`:
         // each arg must narrow to the wrapper's per-param slot alias
-        // `rt.FfiT_<base>_P<i>` (`base` = the wrapper name minus the `rt.` prefix
-        // and the trailing `T`). `rt.Coerce` handles the narrowing — including the
-        // reflect.MakeFunc adapter for a Sky closure flowing into a Go `func(...)`
-        // slot. Widening to `any` (as a kernel call does) fails `go build` because
-        // Go won't pass `any` into a `*mux.Router` / `string` / `func(...)` param.
+        // `skyffi.FfiT_<base>_P<i>` (`base` = the wrapper name minus the `skyffi.`
+        // prefix and the trailing `T`). `rt.Coerce` handles the narrowing —
+        // including the reflect.MakeFunc adapter for a Sky closure flowing into a
+        // Go `func(...)` slot. Widening to `any` (as a kernel call does) fails `go
+        // build` because Go won't pass `any` into a `*mux.Router` / `string` /
+        // `func(...)` param.
         let base = go
-            .strip_prefix("rt.")
+            .strip_prefix("skyffi.")
             .unwrap_or(go)
             .strip_suffix('T')
             .unwrap_or(go);
@@ -4924,8 +4928,9 @@ impl<'a> Ctx<'a> {
             let e = self.lower_expr(*a, &GoTy::Any);
             let slot_name = format!("FfiT_{base}_P{pi}");
             if self.ffi.has_ffi_slot(&slot_name) {
-                // Non-primitive Go param: narrow to its typed slot alias.
-                let slot = GoTy::Named(format!("rt.{slot_name}"), vec![]);
+                // Non-primitive Go param: narrow to its typed slot alias (defined
+                // in `package skyffi` alongside the wrapper).
+                let slot = GoTy::Named(format!("skyffi.{slot_name}"), vec![]);
                 let from = e.ty.clone();
                 largs.push(GoExpr::new(
                     GoExprKind::Coerce {
@@ -5414,7 +5419,7 @@ impl<'a> Ctx<'a> {
         // reflect dispatch for one widen and one narrow per element, but that is
         // a coercion this does not currently emit, and the rule for an unproven
         // site is to leave it exactly as it was.
-        if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.")) {
+        if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.") || n.starts_with("skyffi.")) {
             return erased(self, f, xs);
         }
         let elem = (*elem).clone();

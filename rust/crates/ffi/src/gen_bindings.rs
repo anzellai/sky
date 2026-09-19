@@ -1354,7 +1354,7 @@ pub(crate) fn emit_go_file(kernel_name: &str, info: &PackageInfo) -> String {
     lines.push(format!("// Re-run `sky add {}` to regenerate.", info.pkg));
     lines.push("//".to_string());
     lines.push(
-        "// Wrapper functions are in `package rt` with names <Kernel>_<lowerFn>.".to_string(),
+        "// Wrapper functions are in `package skyffi` (a dot-import of base `rt`) with names <Kernel>_<lowerFn>.".to_string(),
     );
     lines.push(format!(
         "// Sky source resolves `import {module_name} as X` and calls `X.<lowerFn>` — the canonicaliser routes it via"
@@ -1362,9 +1362,14 @@ pub(crate) fn emit_go_file(kernel_name: &str, info: &PackageInfo) -> String {
     lines.push("// the FFI registry to these typed Go functions. Every wrapper wraps".to_string());
     lines.push("// panics in Err[any, any] via SkyFfiRecover.".to_string());
     lines.push(String::new());
-    lines.push("package rt".to_string());
+    lines.push("package skyffi".to_string());
     lines.push(String::new());
     lines.push("import (".to_string());
+    // Dot-import the base runtime so the wrapper bodies keep calling its exported
+    // helpers (SkyResult/Ok/Err/ErrFfi/SkyFfiRecover*/As*) unqualified — the
+    // package moved, the bodies did not. skyffi → rt is one-way (rt never names a
+    // Go_* wrapper), so no import cycle.
+    lines.push("\t. \"sky-app/rt\"".to_string());
     lines.extend(import_lines);
     lines.push(")".to_string());
     lines.push(String::new());

@@ -48,20 +48,12 @@ impl Writer {
 /// Tui / Webview binary never links the console stack). Mirrors the oracle's
 /// `consoleNeededFromImports` gate on `collectGoImports`.
 pub fn emit_program(items: &[GoItem], console_needed: bool) -> String {
+    // Emit the body (items + gob registration) into a buffer FIRST, so the import
+    // block can be decided from what the body actually references: FFI wrappers
+    // live in `package skyffi` (materialised into `sky-out/skyffi/`, a dot-import
+    // of rt), and Go rejects an unused import, so `skyffi` is imported only when
+    // an FFI call (`skyffi.…`) was emitted.
     let mut w = Writer::new();
-    w.line("package main");
-    w.nl();
-    if console_needed {
-        w.line("import (");
-        w.line("\trt \"sky-app/rt\"");
-        w.line("\t_ \"sky-app/rt/console_app\"");
-        w.line(")");
-    } else {
-        w.line("import rt \"sky-app/rt\"");
-    }
-    w.nl();
-    w.line("var _ = rt.AsInt");
-    w.nl();
     for it in items {
         emit_item(&mut w, it);
         w.nl();
@@ -104,7 +96,34 @@ pub fn emit_program(items: &[GoItem], console_needed: bool) -> String {
         ));
         w.nl();
     }
-    w.buf
+
+    // Now that the body is known, build the header + imports. `skyffi` is imported
+    // only when an FFI wrapper call was actually emitted (else Go's unused-import
+    // check fails). The single-line `import rt` form is preserved for the common
+    // case (no console, no FFI) so most programs' emitted source is unchanged.
+    let body = w.buf;
+    let ffi_used = body.contains("skyffi.");
+    let mut out = Writer::new();
+    out.line("package main");
+    out.nl();
+    if console_needed || ffi_used {
+        out.line("import (");
+        out.line("\trt \"sky-app/rt\"");
+        if console_needed {
+            out.line("\t_ \"sky-app/rt/console_app\"");
+        }
+        if ffi_used {
+            out.line("\tskyffi \"sky-app/skyffi\"");
+        }
+        out.line(")");
+    } else {
+        out.line("import rt \"sky-app/rt\"");
+    }
+    out.nl();
+    out.line("var _ = rt.AsInt");
+    out.nl();
+    out.buf.push_str(&body);
+    out.buf
 }
 
 fn emit_item(w: &mut Writer, it: &GoItem) {

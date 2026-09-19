@@ -1612,7 +1612,10 @@ fn build_ffi_table(reg: &ffi::FfiRegistry) -> lower::FfiTable {
     table
 }
 
-/// Copy the Go wrapper for each called FFI package into `<out_dir>/rt/`.
+/// Copy the Go wrapper for each called FFI package into `<out_dir>/skyffi/`.
+/// The wrappers are `package skyffi` (a dot-import of `rt`), NOT `package rt`, so
+/// base `rt` stays byte-stable across projects — its compiled object then caches
+/// across every project instead of being rebuilt for each distinct FFI surface.
 fn materialise_ffi_bindings(
     reg: &ffi::FfiRegistry,
     used: &std::collections::BTreeSet<String>,
@@ -1621,8 +1624,8 @@ fn materialise_ffi_bindings(
     if used.is_empty() {
         return Ok(());
     }
-    let rt_dir = out_dir.join("rt");
-    std::fs::create_dir_all(&rt_dir)?;
+    let ffi_dir = out_dir.join("skyffi");
+    std::fs::create_dir_all(&ffi_dir)?;
     for module in used {
         let Some(pkg) = reg.resolve(module) else {
             continue;
@@ -1631,7 +1634,7 @@ fn materialise_ffi_bindings(
             continue;
         };
         if let Some(name) = src.file_name() {
-            std::fs::copy(src, rt_dir.join(name))?;
+            std::fs::copy(src, ffi_dir.join(name))?;
         }
     }
     Ok(())
