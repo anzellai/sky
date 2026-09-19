@@ -11,10 +11,29 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.25.8 — Sky.Spa restores localStorage scratch state on the first SSR paint (2026-09-19)
+## v0.25.8 — first-paint SSR restore fix + much faster builds (2026-09-20)
 
-A patch over v0.25.7. `sky upgrade` is safe from any v0.25.x — runtime only, no
-breaking change.
+A patch over v0.25.7. `sky upgrade` is safe from any v0.25.x — a runtime fix plus
+build-tooling changes, no source-breaking change. One migration note: a project
+with Go (FFI) dependencies regenerates its FFI surface on its next `sky install`
+(the generated wrappers moved to a `skyffi` package — see Build speed below).
+
+### Build speed
+
+- **Sky now keeps its own isolated, size-bounded Go build cache** at
+  `~/.sky/go-build`, so it can manage its footprint and refresh it on upgrade
+  without ever touching the cache your other Go projects use. It is pruned past a
+  cap (`SKY_GO_CACHE_MAX_GB`, default 10 GB), and a changed compiler fingerprint
+  (a `sky upgrade`) reclaims the previous version's now-dead entries. Set your own
+  `GOCACHE` to opt out and manage it yourself. `sky doctor --warm-cache` (run
+  automatically by `sky upgrade`) compiles the runtime for native and wasm so the
+  first build is warm rather than a cold multi-minute compile.
+- **Sky.Spa builds the native backend and the wasm frontend in parallel**, so a
+  SPA's build wall-clock is the slower leg, not the sum of both.
+- **Generated FFI wrappers now live in a `skyffi` package, not `package rt`.**
+  Previously any project with Go deps changed the `rt` source set and recompiled
+  the whole runtime for its distinct FFI surface; now base `rt` is byte-stable and
+  its compiled object caches across every project and every Sky release.
 
 ### Fixed
 
