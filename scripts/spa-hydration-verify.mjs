@@ -53,6 +53,13 @@ const PORT = Number(arg("--port", "8996"));
 // is then asserted on the POST-RELOAD view, and a "hydrate skipped" warning is a
 // FAIL (a fallback rebuild would mask the bug, not exercise the fix).
 const RESTORE_PATCH = arg("--restore-patch", "");
+// --click '<selector>' [--clicks N]: the interaction form of the restore test.
+// After the first load, click the selector N times (each an `update`, which the
+// runtime persists to localStorage in the app's OWN format — no JSON guessing),
+// then RELOAD and assert `--expect` on the restored view, hydration still used.
+const CLICK = arg("--click", "");
+const CLICKS = Number(arg("--clicks", "1"));
+const RESTORE_MODE = !!(RESTORE_PATCH || CLICK);
 const BACKEND_DIR = dirname(dirname(BACKEND)); // .../backend (app is backend/sky-out/app)
 
 // Optional: seed a sqlite DB in the backend run dir before boot.
@@ -118,6 +125,25 @@ try {
     await page.reload({ waitUntil: "networkidle" });
     await page.waitForTimeout(1500);
     afterText = (await page.locator("#app").innerText()).replace(/\s+/g, " ").trim();
+  } else if (CLICK) {
+    const target = page.locator(CLICK).first();
+    for (let i = 0; i < CLICKS; i++) {
+      await target.click();
+      await page.waitForTimeout(120);
+    }
+    const persisted = await page.evaluate(() => {
+      try {
+        return localStorage.getItem("sky:spa:model") || "";
+      } catch {
+        return "";
+      }
+    });
+    console.log("PERSISTED_MODEL=" + JSON.stringify(persisted));
+    console.log("PRE_RELOAD_TEXT=" + JSON.stringify((await page.locator("#app").innerText()).replace(/\s+/g, " ").trim()));
+    consoleMsgs.length = 0; // only care about the reload's console
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForTimeout(1500);
+    afterText = (await page.locator("#app").innerText()).replace(/\s+/g, " ").trim();
   }
   await browser.close();
 
@@ -126,21 +152,21 @@ try {
   console.log("SSR_TEXT=" + JSON.stringify(ssrText));
   console.log("AFTER_TEXT=" + JSON.stringify(afterText));
   console.log("DECODE_ERROR=" + (decodeErr ? JSON.stringify(decodeErr) : "none"));
-  if (RESTORE_PATCH) {
+  if (RESTORE_MODE) {
     console.log("HYDRATE_SKIPPED=" + (hydrateSkipped ? JSON.stringify(hydrateSkipped) : "none"));
   }
 
   if (decodeErr) {
     console.log("VERDICT=FAIL client decode failed (silent hydration loss)");
     process.exitCode = 2;
-  } else if (RESTORE_PATCH && hydrateSkipped) {
+  } else if (RESTORE_MODE && hydrateSkipped) {
     // A fallback rebuild would mask the restore bug rather than exercise the fix.
     console.log("VERDICT=FAIL hydration was skipped (fallback rebuild masked the restore path)");
     process.exitCode = 2;
   } else if (EXPECT && !afterText.includes(EXPECT)) {
     console.log(`VERDICT=FAIL expected ${JSON.stringify(EXPECT)} in post-hydration view`);
     process.exitCode = 2;
-  } else if (RESTORE_PATCH && EXPECT && afterText.includes(EXPECT)) {
+  } else if (RESTORE_MODE && EXPECT && afterText.includes(EXPECT)) {
     console.log("VERDICT=PASS restored model painted on the first SSR paint (hydrate + patch)");
     process.exitCode = 0;
   } else if (EXPECT && ssrText.includes(EXPECT) && afterText.includes(EXPECT)) {
