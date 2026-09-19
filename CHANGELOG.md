@@ -11,6 +11,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.8 — Sky.Spa restores localStorage scratch state on the first SSR paint (2026-09-19)
+
+A patch over v0.25.7. `sky upgrade` is safe from any v0.25.x — runtime only, no
+breaking change.
+
+### Fixed
+
+- **Sky.Spa: a model restored from localStorage now paints on the first SSR
+  load, not only after a later rebuild.** On a full page load of an SSR route the
+  server renders its HTML from the SSR seed model. The client then restored its
+  persisted model from localStorage but HYDRATED the restored tree onto the
+  seed-rendered DOM — binding event handlers without patching the server's text,
+  attributes or children — so restored scratch state (a message list, a cart,
+  filled inputs) stayed invisible until some later interaction forced a full
+  rebuild. The client now paints such a first load in two steps: it hydrates the
+  SEED render (which matches the server DOM by construction), then diff-patches to
+  the restored model through the normal path, preserving node identity, focus and
+  caret. A load whose restored model equals the seed still does a single hydrate,
+  exactly as before.
+- Apps that worked around this by adding a hidden element with two adjacent text
+  children (to force hydration to be skipped everywhere) no longer need it.
+
 ## v0.25.7 — a bring-your-own `Std.Ai` provider extension point (2026-09-19)
 
 A patch over v0.25.6. `sky upgrade` is safe from any v0.25.x — additive stdlib

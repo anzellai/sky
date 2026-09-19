@@ -145,6 +145,20 @@ func spaRestoreFromStorage(cfg any, doc js.Value) bool {
 	return true
 }
 
+// spaFirstPaintNeedsTwoStep reports whether the SSR first paint must be done in
+// two steps (hydrate the seed render, then diff-patch to the restored model) —
+// see spaFirstPaintPlan. It encodes both typed models with the app's model encoder
+// and compares the JSON. No encoder, or any encode panic, returns false so the
+// boot falls back to a single render (always correct — it is what a non-persisting
+// app does today).
+func spaFirstPaintNeedsTwoStep(seed, restored any) (twoStep bool) {
+	if spaModelEncoder == nil {
+		return false
+	}
+	defer func() { _ = recover() }()
+	return spaFirstPaintPlan(spaEncodeModel(seed), spaEncodeModel(restored))
+}
+
 // spaPersistAfterStep runs after each TEA step (live_wasm.go step). It encodes
 // the new model and writes it to localStorage, and — when a protected (session)
 // field went from set to cleared this step — POSTs the P3 sign-out endpoint to

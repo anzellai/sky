@@ -77,6 +77,55 @@ func TestSpaMergeStoredOverSeed(t *testing.T) {
 // TestSpaSessionClearedByStep covers the sign-out signal (spa_persist.go): a
 // protected field going non-null -> null/absent is a sign-out; every other
 // transition (unchanged, sign-in, scratch change) is not.
+// TestSpaFirstPaintPlan covers the SSR first-paint decision (spa_persist.go):
+// a restore that changes the model needs the two-step paint (hydrate the seed,
+// then diff-patch to the restored model), while a restore that leaves the model
+// equal to the seed — or no seed / no restored blob — needs only a single render.
+func TestSpaFirstPaintPlan(t *testing.T) {
+	seed := `{"session":"srv","messages":[],"loaded":false}`
+
+	t.Run("restored differs from seed → two-step", func(t *testing.T) {
+		restored := `{"session":"srv","messages":["a","b","c"],"loaded":true}`
+		if !spaFirstPaintPlan(seed, restored) {
+			t.Errorf("twoStep = false, want true when the restored model differs")
+		}
+	})
+
+	t.Run("restored byte-equal to seed → single render", func(t *testing.T) {
+		if spaFirstPaintPlan(seed, seed) {
+			t.Errorf("twoStep = true, want false when restored == seed")
+		}
+	})
+
+	t.Run("restored equal but reordered/whitespaced → single render", func(t *testing.T) {
+		// Same content, different key order and spacing — a JSON round-trip must
+		// see these as equal so a re-encode with a different key order does not
+		// force a needless second render.
+		reordered := `{ "loaded": false , "messages": [] , "session": "srv" }`
+		if spaFirstPaintPlan(seed, reordered) {
+			t.Errorf("twoStep = true, want false for a semantically identical model")
+		}
+	})
+
+	t.Run("empty seed → single render (no server markup to diverge from)", func(t *testing.T) {
+		if spaFirstPaintPlan("", `{"messages":["a"]}`) {
+			t.Errorf("twoStep = true, want false when the seed is empty")
+		}
+	})
+
+	t.Run("empty restored → single render (no restore happened)", func(t *testing.T) {
+		if spaFirstPaintPlan(seed, "") {
+			t.Errorf("twoStep = true, want false when there is no restored model")
+		}
+	})
+
+	t.Run("malformed restored → two-step (fail toward the always-correct patch)", func(t *testing.T) {
+		if !spaFirstPaintPlan(seed, `{"messages":`) {
+			t.Errorf("twoStep = false, want true when a blob will not parse")
+		}
+	})
+}
+
 func TestSpaSessionClearedByStep(t *testing.T) {
 	sess := []string{"session"}
 

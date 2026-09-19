@@ -156,18 +156,48 @@ func spaRun(cfg any) any {
 	// spaMergeStoredOverSeed), decodes it, and sets spaModel. Any failure (no
 	// storage, private mode, decode miss) keeps the seed/init model. On a restore
 	// the init command is not re-fired (it was already Cmd.none on this SSR path).
-	if spaRestoreFromStorage(cfg, doc) {
+	//
+	// Capture the SSR SEED model BEFORE the restore may replace it. The server
+	// rendered its HTML from the seed, so the seed render is what the DOM matches.
+	// A restore that CHANGES the model must therefore paint in two steps (below):
+	// hydrate the seed render onto the matching DOM, THEN diff-patch to the restored
+	// model. A single hydrate of the restored tree would bind handlers to the
+	// server's seed markup but never patch its text/attrs/children, so the restored
+	// scratch state (a message list, a cart) would never appear on first paint.
+	seedModel := spaModel
+	restored := spaRestoreFromStorage(cfg, doc)
+	if restored {
 		cmd0 = nil
 	}
+	restoredModel := spaModel
 
-	// Deep-link: resolve the initial URL and set the model's Page BEFORE the
-	// first paint, so a load straight onto /about renders About. Only when the
-	// app registered routes.
-	if len(spaRoutes) > 0 {
-		spaApplyURL(spaCurrentPath())
+	// Deep-link (applied per render below): resolve the initial URL and set the
+	// model's Page BEFORE the paint, so a load straight onto /about renders About.
+	// Only when the app registered routes.
+	applyURL := func() {
+		if len(spaRoutes) > 0 {
+			spaApplyURL(spaCurrentPath())
+		}
 	}
 
-	renderCurrent()
+	if restored && spaFirstPaintNeedsTwoStep(seedModel, restoredModel) {
+		// Step 1: render the SEED and hydrate/adopt the matching server DOM
+		// (spaPrev == nil → the hydrate path), so no server node is wiped.
+		spaModel = seedModel
+		applyURL()
+		renderCurrent()
+		// Step 2: patch to the restored model through the ordinary diff path
+		// (spaPrev now set → diffTrees), which updates text, attributes and
+		// children while preserving node identity, focus and caret. This runs
+		// before spaClearHydratingMarker / interpretCmd / reconcileSubs, so the
+		// first interactive paint is already the restored state.
+		spaModel = restoredModel
+		applyURL()
+		renderCurrent()
+	} else {
+		applyURL()
+		renderCurrent()
+	}
 	// The client has now rendered/hydrated, so every handler is attached: clear
 	// the first-paint hydration affordance (`<html data-sky-hydrating>` → progress
 	// cursor + top bar, liveBaseCSS). From here a click lands on a live handler.
@@ -806,7 +836,7 @@ func performTask(task, toMsg any, dispatch func(any)) {
 // `/_sky/sub?topic=<topic>` push endpoint (openTopic). Sub kinds "stream" /
 // "websocket" are still not wired on the client in v1.
 func reconcileSubs() {
-	desired := map[int]any{}       // interval ms -> msg (last-write-wins per interval)
+	desired := map[int]any{}          // interval ms -> msg (last-write-wins per interval)
 	desiredTopics := map[string]any{} // topic -> toMsg (last-write-wins per topic)
 	if spaSubs != nil {
 		root := asSubT(spaSubs(spaModel))

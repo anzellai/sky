@@ -80,6 +80,53 @@ func spaMergeStoredOverSeed(storedJSON, seedJSON string, protectedFields []strin
 	return string(out), true
 }
 
+// spaFirstPaintPlan decides how an SSR first paint proceeds after a localStorage
+// restore replaced the model. When the restored model's JSON differs from the SSR
+// seed's JSON, the client must paint in TWO steps: first hydrate/adopt the SEED
+// render (which matches the server DOM by construction, since the server rendered
+// from the seed), then diff-patch to the restored model through the normal path.
+// A single hydrate of the restored tree would bind handlers to the server's (seed)
+// markup but never patch its text/attrs/children, leaving stale content on screen.
+//
+// It returns twoStep=false — a single render, exactly today's behaviour — when the
+// restored model is byte-equal to the seed (nothing to patch), or when either blob
+// is empty (no seed means no server markup to diverge from; no restored model means
+// no restore happened). The comparison normalises through a JSON round-trip so key
+// order or whitespace differences do not force a needless second render. Pure and
+// host-testable; never panics.
+func spaFirstPaintPlan(seedJSON, restoredJSON string) (twoStep bool) {
+	if seedJSON == "" || restoredJSON == "" {
+		return false
+	}
+	return !spaJSONEqual(seedJSON, restoredJSON)
+}
+
+// spaJSONEqual reports whether two JSON blobs are semantically equal, ignoring
+// object key order and insignificant whitespace. A blob that fails to parse is
+// treated as not-equal (fail toward the two-step paint, which is always correct —
+// it just costs one extra diff). Never panics.
+func spaJSONEqual(a, b string) bool {
+	if a == b {
+		return true
+	}
+	var av, bv any
+	if json.Unmarshal([]byte(a), &av) != nil {
+		return false
+	}
+	if json.Unmarshal([]byte(b), &bv) != nil {
+		return false
+	}
+	na, err := json.Marshal(av)
+	if err != nil {
+		return false
+	}
+	nb, err := json.Marshal(bv)
+	if err != nil {
+		return false
+	}
+	return string(na) == string(nb)
+}
+
 // spaSessionClearedByStep reports whether a step signed the user OUT — a
 // protected (session) field went from a non-null value in prev to null/absent in
 // next. That is the signal to clear the httpOnly `sky_sid` cookie the client JS
