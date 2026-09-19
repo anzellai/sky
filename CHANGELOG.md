@@ -11,6 +11,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.7 — a bring-your-own `Std.Ai` provider extension point (2026-09-19)
+
+A patch over v0.25.6. `sky upgrade` is safe from any v0.25.x — additive stdlib
+only, no breaking change.
+
+### Added
+
+- **`Std.Ai.Provider.custom` and `customTools`** — wrap any
+  `List Message -> Task Error ChatResponse` as a `Provider`. This is the
+  extension point for a backend the stdlib does not ship: a different wire format
+  (Anthropic, Gemini), a proprietary API such as the OpenAI Responses API, a local
+  process, or a test double. The result is an ordinary `Provider`, so it composes
+  with `router`, `Std.Ai.Agent`, `Policy`, `Trace`, and `cost` unchanged.
+  `custom` wraps a chat-only backend (its `chatTools` degrades to a plain chat
+  that returns no tool calls, so it works with the prompt-based `Std.Ai.Tool`
+  loop); `customTools` also supplies a native tool-calling implementation, a full
+  peer of the built-in `openai` provider. The foundation stays vendor-neutral:
+  provider-specific logic lives in a user module or a Sky package, not the stdlib.
+
 ## v0.25.6 — Enter-to-send, a configurable stream-header timeout, and a Markdown code-colour fix (2026-09-19)
 
 A patch over v0.25.5. `sky upgrade` is safe from any v0.25.x — additive stdlib +
