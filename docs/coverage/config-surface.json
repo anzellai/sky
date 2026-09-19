@@ -48,14 +48,14 @@
   ],
   "pre_binary": {
     "bin": [
-      "rust/crates/project/src/build.rs:1560 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1570 (sky_toml_project_key)"
     ],
     "database.driver": [
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1576 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:9104 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:9158 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:143 (toml_value)"
@@ -89,14 +89,14 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:6531 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:6645 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:6580 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:6694 (sky_toml_project_key)"
     ],
     "root": [
-      "rust/crates/project/src/build.rs:1566 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1576 (sky_toml_project_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:6534 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:6583 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
@@ -246,7 +246,7 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 109,
+    "documented_names": 110,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 16,
     "read_without_doc": 26,
