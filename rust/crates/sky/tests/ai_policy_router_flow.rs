@@ -86,6 +86,14 @@ fn policy_gates_actions_and_router_dispatches() {
         stdout.contains("router: MOCKED-ANSWER"),
         "the router should dispatch to a backend (mocked):\n{stdout}"
     );
+    assert!(
+        stdout.contains("custom: CUSTOM-OK"),
+        "a Provider.custom backend should route through chat:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("custom-tools: 0 CUSTOM-OK"),
+        "chatTools on a chat-only custom provider should degrade to a plain chat with no tool calls:\n{stdout}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

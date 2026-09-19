@@ -43,6 +43,29 @@ Provider.router (\messages ->
     if sensitive messages then local else Provider.openai key "gpt-4o-mini")
 ```
 
+### Bring your own backend — `custom`
+
+The stdlib ships one wire format (OpenAI chat-completions) on purpose. A backend
+it does not ship — a different wire format, a proprietary API such as the OpenAI
+Responses API, a local process, or a test double — is added by the user, not the
+stdlib, through `custom`:
+
+```elm
+Provider.custom (\messages ->
+    Http.request theRequest |> Task.andThen decodeToChatResponse)
+```
+
+The result is an ordinary `Provider`, so it drops into `router`, `Agent`,
+`Policy`, `Trace`, and `cost` unchanged. `custom` wraps a plain
+`List Message -> Task Error ChatResponse`; `chatTools` on it degrades to a plain
+chat that returns no tool calls, so it works with the prompt-based `Tool` loop.
+A provider with its own NATIVE function-calling wire uses `customTools`, which
+also takes the `chatTools` implementation and is a full peer of the built-in
+`openai` provider. This is the extension point that keeps the foundation
+vendor-neutral: provider-specific logic lives in a user module or a Sky package
+(for example a `sky-openai` that models Chat Completions plus the Responses API),
+never in the stdlib.
+
 ## `Std.Ai.Agent` — an agent as a durable workflow
 
 `oneShot` is one system prompt plus the caller's messages, one journalled model

@@ -3,6 +3,8 @@ module Std.Ai.Provider exposing
     , openai
     , compatible
     , router
+    , custom
+    , customTools
     , Message
     , user
     , system
@@ -52,19 +54,28 @@ import Std.Codec as Codec exposing (Codec)
 import Std.Money as Money exposing (Money)
 import Std.Decimal as Decimal
 
-
 -- ---------------------------------------------------------------------------
 -- Provider
 -- ---------------------------------------------------------------------------
-
-
 type alias Direct =
-    { endpoint : String, apiKey : Secret, model : String }
+    { endpoint : String
+    , apiKey : Secret
+    , model : String
+    }
 
+{-| The bring-your-own backend: the two functions a `custom` provider supplies.
+`chat` is mandatory; `chatTools` is how it answers a native tool-calling request
+(a `custom` provider with no native wire degrades this to a plain `chat`).
+-}
+type alias CustomImpl =
+    { chat : List Message -> Task Error ChatResponse
+    , chatTools : List Turn -> List ToolSpec -> Task Error ToolResponse
+    }
 
 type Provider
     = Backend Direct
     | Routed (List Message -> Provider)
+    | Custom CustomImpl
 
 
 {-| The hosted OpenAI chat-completions endpoint. -}
@@ -100,13 +111,57 @@ router select =
     Routed select
 
 
+{-| Bring your own backend: wrap any `List Message -> Task Error ChatResponse`
+as a `Provider`. This is the extension point for a backend the stdlib does not
+ship — a different wire format (Anthropic, Gemini), a proprietary API (the OpenAI
+Responses API), a local process, or a test double. The result is an ordinary
+`Provider`, so it drops into `router`, `Std.Ai.Agent`, `Policy`, `Trace`, and
+`cost` unchanged. Keep provider-specific logic in your own module or a Sky
+package; the stdlib stays vendor-neutral.
+
+    myProvider =
+        Provider.custom
+            (\messages ->
+                Http.request theRequest
+                    |> Task.andThen decodeToChatResponse)
+
+A `custom` provider has no NATIVE tool-calling wire, so `chatTools` on it
+degrades to a plain `chat` that returns no tool calls. Use it with the
+prompt-based `Std.Ai.Tool` loop, or `customTools` to implement native calling.
+-}
+custom : (List Message -> Task Error ChatResponse) -> Provider
+custom chatFn =
+    Custom
+        { chat = chatFn
+        , chatTools =
+            \turns _tools ->
+                chatFn (turnMessages turns)
+                    |> Task.map
+                           (\r ->
+                               { content = r.content
+                               , toolCalls = []
+                               , usage = r.usage
+                               })
+        }
+
+
+{-| Like `custom`, but the provider ALSO implements native tool-calling: supply
+both the plain `chat` and a `chatTools` that advertises the tool specs and
+returns any `tool_calls` the model requested. Use this for a full peer of the
+built-in `openai` provider — a wire format with its own native function-calling
+(the OpenAI Responses API, Anthropic tool use, Gemini function calling).
+-}
+customTools : (List Message -> Task Error ChatResponse) -> (List Turn -> List ToolSpec -> Task Error ToolResponse) -> Provider
+customTools chatFn toolsFn =
+    Custom { chat = chatFn, chatTools = toolsFn }
+
 -- ---------------------------------------------------------------------------
 -- Messages
 -- ---------------------------------------------------------------------------
-
-
 type alias Message =
-    { role : String, content : String }
+    { role : String
+    , content : String
+    }
 
 
 user : String -> Message
@@ -123,52 +178,51 @@ assistant : String -> Message
 assistant content =
     { role = "assistant", content = content }
 
-
 -- ---------------------------------------------------------------------------
 -- Response + usage
 -- ---------------------------------------------------------------------------
-
-
 type alias Usage =
-    { promptTokens : Int, completionTokens : Int, totalTokens : Int }
-
+    { promptTokens : Int
+    , completionTokens : Int
+    , totalTokens : Int
+    }
 
 type alias ChatResponse =
-    { content : String, usage : Usage }
-
+    { content : String
+    , usage : Usage
+    }
 
 -- ---------------------------------------------------------------------------
 -- chat
 -- ---------------------------------------------------------------------------
-
-
 type alias Request =
-    { model : String, messages : List Message }
+    { model : String
+    , messages : List Message
+    }
 
 
 requestCodec : Codec Request
 requestCodec =
     Codec.auto { model = "", messages = [ { role = "", content = "" } ] }
 
-
 -- The OpenAI response subset we read. A lenient decoder ignores the other fields
 -- (id / object / created / finish_reason / …).
-
-
 type alias RawMessage =
     { content : String }
-
 
 type alias RawChoice =
     { message : RawMessage }
 
-
 type alias RawUsage =
-    { prompt_tokens : Int, completion_tokens : Int, total_tokens : Int }
-
+    { prompt_tokens : Int
+    , completion_tokens : Int
+    , total_tokens : Int
+    }
 
 type alias RawResponse =
-    { choices : List RawChoice, usage : RawUsage }
+    { choices : List RawChoice
+    , usage : RawUsage
+    }
 
 
 responseCodec : Codec RawResponse
@@ -185,11 +239,15 @@ classified `Error` on a non-2xx response, naming the status and body.
 chat : Provider -> List Message -> Task Error ChatResponse
 chat provider messages =
     case provider of
+
         Routed select ->
             chat (select messages) messages
 
         Backend p ->
             chatBackend p messages
+
+        Custom c ->
+            c.chat messages
 
 
 chatBackend : Direct -> List Message -> Task Error ChatResponse
@@ -197,37 +255,37 @@ chatBackend p messages =
     let
         body =
             Codec.toJson requestCodec { model = p.model, messages = messages }
-
-        req =
-            Http.defaultRequest p.endpoint
+        req = Http.defaultRequest p.endpoint
     in
-    { req | method = "POST" }
-        |> Http.withBearer p.apiKey
-        |> Http.withHeader "Content-Type" "application/json"
-        |> Http.withBody body
-        |> Http.request
-        |> Task.andThen
-            (\resp ->
-                if resp.status >= 200 && resp.status < 300 then
-                    case Codec.fromJson responseCodec resp.body of
-                        Ok raw ->
-                            Task.succeed (extract raw)
+        { req | method = "POST" } |> Http.withBearer p.apiKey
+            |> Http.withHeader "Content-Type" "application/json"
+            |> Http.withBody body
+            |> Http.request
+            |> Task.andThen
+                   (\resp ->
+                       if resp.status >= 200 && resp.status < 300 then
+                           case Codec.fromJson responseCodec resp.body of
 
-                        Err e ->
-                            Task.fail e
+                               Ok raw ->
+                                   Task.succeed (extract raw)
 
-                else
-                    Task.fail
-                        (Error.unexpected
-                            ("chat failed: HTTP " ++ String.fromInt resp.status ++ " — " ++ resp.body)
-                        )
-            )
+                               Err e ->
+                                   Task.fail e
+
+                       else
+                           Task.fail
+                               (Error.unexpected
+                                   ("chat failed: HTTP "
+                                       ++ String.fromInt resp.status
+                                       ++ " — "
+                                       ++ resp.body)))
 
 
 extract : RawResponse -> ChatResponse
 extract raw =
     { content =
         case List.head raw.choices of
+
             Just ch ->
                 ch.message.content
 
@@ -240,32 +298,34 @@ extract raw =
         }
     }
 
-
 -- ---------------------------------------------------------------------------
 -- Native function-calling (OpenAI tools API)
 -- ---------------------------------------------------------------------------
-
-
 {-| A tool the model may call, declared by name + description. Arguments are
 free-form JSON the model fills in and the tool parses (matching
 `Std.Ai.Tool`'s `exec : String -> Task Error String`). A typed, Codec-derived
 parameter schema is a later increment; v1 advertises a permissive object schema.
 -}
 type alias ToolSpec =
-    { name : String, description : String }
-
+    { name : String
+    , description : String
+    }
 
 {-| A tool call the model requested: the provider-assigned `id` (echoed back with
 the result), the tool `name`, and its `arguments` as a JSON string. -}
 type alias ToolCall =
-    { id : String, name : String, arguments : String }
-
+    { id : String
+    , name : String
+    , arguments : String
+    }
 
 {-| A response from `chatTools`: the assistant text (empty when it only called
 tools), the tool calls it requested (empty when it answered), and token usage. -}
 type alias ToolResponse =
-    { content : String, toolCalls : List ToolCall, usage : Usage }
-
+    { content : String
+    , toolCalls : List ToolCall
+    , usage : Usage
+    }
 
 {-| One entry in a tool-calling conversation. `Say` is a plain message; `Called`
 echoes the assistant's tool-call request back into history; `Returned` carries a
@@ -285,11 +345,15 @@ with `Std.Ai.Agent.nativeToolLoop`.
 chatTools : Provider -> List Turn -> List ToolSpec -> Task Error ToolResponse
 chatTools provider turns tools =
     case provider of
+
         Routed select ->
             chatTools (select (turnMessages turns)) turns tools
 
         Backend p ->
             chatToolsBackend p turns tools
+
+        Custom c ->
+            c.chatTools turns tools
 
 
 -- The router policy is a `List Message -> Provider`; project the turns to plain
@@ -299,6 +363,7 @@ turnMessages turns =
     List.filterMap
         (\turn ->
             case turn of
+
                 Say m ->
                     Just m
 
@@ -306,41 +371,38 @@ turnMessages turns =
                     Nothing
 
                 Returned _ content ->
-                    Just { role = "tool", content = content }
-        )
+                    Just { role = "tool", content = content })
         turns
 
 
 chatToolsBackend : Direct -> List Turn -> List ToolSpec -> Task Error ToolResponse
 chatToolsBackend p turns tools =
     let
-        body =
-            JsonE.encode 0 (requestValue p.model turns tools)
-
-        req =
-            Http.defaultRequest p.endpoint
+        body = JsonE.encode 0 (requestValue p.model turns tools)
+        req = Http.defaultRequest p.endpoint
     in
-    { req | method = "POST" }
-        |> Http.withBearer p.apiKey
-        |> Http.withHeader "Content-Type" "application/json"
-        |> Http.withBody body
-        |> Http.request
-        |> Task.andThen
-            (\resp ->
-                if resp.status >= 200 && resp.status < 300 then
-                    case JsonD.decodeString toolResponseDecoder resp.body of
-                        Ok r ->
-                            Task.succeed r
+        { req | method = "POST" } |> Http.withBearer p.apiKey
+            |> Http.withHeader "Content-Type" "application/json"
+            |> Http.withBody body
+            |> Http.request
+            |> Task.andThen
+                   (\resp ->
+                       if resp.status >= 200 && resp.status < 300 then
+                           case JsonD.decodeString toolResponseDecoder resp.body of
 
-                        Err e ->
-                            Task.fail e
+                               Ok r ->
+                                   Task.succeed r
 
-                else
-                    Task.fail
-                        (Error.unexpected
-                            ("chatTools failed: HTTP " ++ String.fromInt resp.status ++ " — " ++ resp.body)
-                        )
-            )
+                               Err e ->
+                                   Task.fail e
+
+                       else
+                           Task.fail
+                               (Error.unexpected
+                                   ("chatTools failed: HTTP "
+                                       ++ String.fromInt resp.status
+                                       ++ " — "
+                                       ++ resp.body)))
 
 
 requestValue model turns tools =
@@ -348,16 +410,15 @@ requestValue model turns tools =
         (( "model", JsonE.string model )
             :: ( "messages", JsonE.list turnValue turns )
             :: (if List.isEmpty tools then
-                    []
+                   []
 
-                else
-                    [ ( "tools", JsonE.list toolSpecValue tools ) ]
-               )
-        )
+               else
+                   [ ( "tools", JsonE.list toolSpecValue tools ) ]))
 
 
 turnValue turn =
     case turn of
+
         Say m ->
             JsonE.object
                 [ ( "role", JsonE.string m.role )
@@ -409,17 +470,26 @@ toolSpecValue spec =
 
 toolResponseDecoder =
     JsonD.map3
-        (\content calls usage -> { content = content, toolCalls = calls, usage = usage })
+        (\content calls usage ->
+            { content = content, toolCalls = calls, usage = usage })
         (JsonD.oneOf
-            [ JsonD.field "choices" (JsonD.index 0 (JsonD.field "message" (JsonD.field "content" JsonD.string)))
+            [ JsonD.field
+                  "choices"
+                  (JsonD.index
+                      0
+                      (JsonD.field "message" (JsonD.field "content" JsonD.string)))
             , JsonD.succeed ""
-            ]
-        )
+            ])
         (JsonD.oneOf
-            [ JsonD.field "choices" (JsonD.index 0 (JsonD.field "message" (JsonD.field "tool_calls" (JsonD.list toolCallDecoder))))
+            [ JsonD.field
+                  "choices"
+                  (JsonD.index
+                      0
+                      (JsonD.field
+                          "message"
+                          (JsonD.field "tool_calls" (JsonD.list toolCallDecoder))))
             , JsonD.succeed []
-            ]
-        )
+            ])
         (JsonD.field "usage" usageDecoder)
 
 
@@ -427,32 +497,33 @@ toolCallDecoder =
     JsonD.map2
         (\id fn -> { id = id, name = fn.name, arguments = fn.arguments })
         (JsonD.oneOf [ JsonD.field "id" JsonD.string, JsonD.succeed "" ])
-        (JsonD.field "function"
-            (JsonD.map2 (\n a -> { name = n, arguments = a })
+        (JsonD.field
+            "function"
+            (JsonD.map2
+                (\n a -> { name = n, arguments = a })
                 (JsonD.field "name" JsonD.string)
-                (JsonD.oneOf [ JsonD.field "arguments" JsonD.string, JsonD.succeed "" ])
-            )
-        )
+                (JsonD.oneOf
+                    [ JsonD.field "arguments" JsonD.string, JsonD.succeed "" ])))
 
 
 usageDecoder =
     JsonD.map3
         (\p c t -> { promptTokens = p, completionTokens = c, totalTokens = t })
         (JsonD.oneOf [ JsonD.field "prompt_tokens" JsonD.int, JsonD.succeed 0 ])
-        (JsonD.oneOf [ JsonD.field "completion_tokens" JsonD.int, JsonD.succeed 0 ])
+        (JsonD.oneOf
+            [ JsonD.field "completion_tokens" JsonD.int, JsonD.succeed 0 ])
         (JsonD.oneOf [ JsonD.field "total_tokens" JsonD.int, JsonD.succeed 0 ])
-
 
 -- ---------------------------------------------------------------------------
 -- Cost
 -- ---------------------------------------------------------------------------
-
-
 {-| Per-1000-token input/output rates for a model, in a currency. Versioned data
 so a historical trace prices with the rates that applied then.
 -}
 type alias PriceBook =
-    { inputPer1k : Money, outputPer1k : Money }
+    { inputPer1k : Money
+    , outputPer1k : Money
+    }
 
 
 {-| Build a price book from decimal-string rates (e.g. "0.00015" per 1k input
@@ -461,11 +532,13 @@ tokens). Returns an error if a rate does not parse.
 priceBook : Money.Currency -> String -> String -> Result Error PriceBook
 priceBook currency inputRate outputRate =
     case Money.fromString currency inputRate of
+
         Err e ->
             Err e
 
         Ok inp ->
             case Money.fromString currency outputRate of
+
                 Err e ->
                     Err e
 
@@ -494,10 +567,11 @@ per1k tokens rate =
     let
         frac =
             case Decimal.div (Decimal.fromInt tokens) (Decimal.fromInt 1000) of
+
                 Ok d ->
                     d
 
                 Err _ ->
                     Decimal.zero
     in
-    Money.mul frac rate
+        Money.mul frac rate

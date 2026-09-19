@@ -1,25 +1,31 @@
 module Main exposing (main)
 
-{-| Fixture: the Std.Ai action-firewall (Policy) and the multi-provider router.
+{-| Fixture: the Std.Ai action-firewall (Policy), the multi-provider router, and
+the bring-your-own `Provider.custom` extension point.
 Expected stdout (asserted by ai_policy_router_flow.rs):
 
     policy-allow: ran:ok
     policy-high: pending
     router: MOCKED-ANSWER
+    custom: CUSTOM-OK
+    custom-tools: 0 CUSTOM-OK
 -}
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Secret as Secret
+import Sky.Core.String as String
+import Sky.Core.List as List
 import Std.Log exposing (println)
-import Std.Ai.Provider as Provider
+import Std.Ai.Provider as Provider exposing (Turn(..))
 import Std.Ai.Policy as Policy exposing (Outcome(..))
 
 
 outcomeStr : Outcome String -> String
 outcomeStr o =
     case o of
+
         Ran v ->
             "ran:" ++ v
 
@@ -32,14 +38,50 @@ outcomeStr o =
 
 routed : Provider.Provider
 routed =
-    Provider.router (\_ -> Provider.openai (Secret.fromString "k") "gpt-4o-mini")
+    Provider.router
+        (\_ -> Provider.openai (Secret.fromString "k") "gpt-4o-mini")
+
+
+-- A bring-your-own backend built with `Provider.custom`: a pure function, no
+-- HTTP, so it needs no mock. It proves a user-supplied provider routes through
+-- `chat`, and that `chatTools` on a chat-only custom provider degrades to a
+-- plain chat with no tool calls.
+customProv : Provider.Provider
+customProv =
+    Provider.custom
+        (\_ ->
+            Task.succeed
+                { content = "CUSTOM-OK"
+                , usage =
+                    { promptTokens = 1, completionTokens = 2, totalTokens = 3 }
+                })
 
 
 main : Task Error ()
 main =
-    Policy.gate Policy.allowAll (Policy.action "read" "x" Policy.Low) (Task.succeed "ok")
+    Policy.gate
+        Policy.allowAll
+        (Policy.action "read" "x" Policy.Low)
+        (Task.succeed "ok")
         |> Task.andThen (\o1 -> println ("policy-allow: " ++ outcomeStr o1))
-        |> Task.andThen (\_ -> Policy.gate (Policy.requireApprovalAbove Policy.Low) (Policy.action "refund" "y" Policy.High) (Task.succeed "ran"))
+        |> Task.andThen
+               (\_ ->
+                   Policy.gate
+                       (Policy.requireApprovalAbove Policy.Low)
+                       (Policy.action "refund" "y" Policy.High)
+                       (Task.succeed "ran"))
         |> Task.andThen (\o2 -> println ("policy-high: " ++ outcomeStr o2))
         |> Task.andThen (\_ -> Provider.chat routed [ Provider.user "hi" ])
         |> Task.andThen (\r -> println ("router: " ++ r.content))
+        |> Task.andThen (\_ -> Provider.chat customProv [ Provider.user "hi" ])
+        |> Task.andThen (\rc -> println ("custom: " ++ rc.content))
+        |> Task.andThen
+               (\_ ->
+                   Provider.chatTools customProv [ Say (Provider.user "hi") ] [])
+        |> Task.andThen
+               (\rt ->
+                   println
+                       ("custom-tools: "
+                           ++ String.fromInt (List.length rt.toolCalls)
+                           ++ " "
+                           ++ rt.content))
