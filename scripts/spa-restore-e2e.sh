@@ -20,6 +20,10 @@ if [ ! -x "$SKY" ]; then
   echo "spa-restore-e2e: $SKY not found — run ./scripts/build.sh first." >&2
   exit 1
 fi
+# The installed compiler must have been built from THIS tree, or the e2e would
+# certify wasm the current source never produced (see scripts/lib/fresh-compiler.sh).
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$SKY" "$ROOT"
 for tool in node sqlite3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "spa-restore-e2e: '$tool' is required." >&2; exit 1; }
 done

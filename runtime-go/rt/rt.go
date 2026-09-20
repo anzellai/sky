@@ -4166,13 +4166,14 @@ var (
 )
 
 // Register exposes a Go function with no purity claim.
-// Auto-generated bindings use this. Callable only via Ffi.callTask.
-// reflectValueOfAny / reflectNewOf: thin aliases over reflect package
-// primitives, exported so auto-generated binding files (in package rt) don't
-// need to import "reflect" themselves. Used by the identity-pointer
+// Auto-generated bindings use these. Callable only via Ffi.callTask.
+// ReflectValueOfAny / ReflectNewOf: thin aliases over reflect package
+// primitives, EXPORTED so the auto-generated binding files (now in `package
+// skyffi`, which dot-imports rt) can call them — a dot-import brings only
+// exported names, so these must be uppercase. Used by the identity-pointer
 // generic fallback (Stripe's String[T any](v T) *T and friends).
-func reflectValueOfAny(v any) reflect.Value     { return reflect.ValueOf(v) }
-func reflectNewOf(t reflect.Type) reflect.Value { return reflect.New(t) }
+func ReflectValueOfAny(v any) reflect.Value     { return reflect.ValueOf(v) }
+func ReflectNewOf(t reflect.Type) reflect.Value { return reflect.New(t) }
 
 func Register(name string, fn func([]any) any) {
 	ffiRegistryMu.Lock()
