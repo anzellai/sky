@@ -1,0 +1,58 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Clinic =
+    { id : String, billingOverride : String }
+
+
+type alias ClinicRow =
+    { clinic : Clinic, ownerEmail : String }
+
+
+type alias Model =
+    { clinic : Maybe Clinic, note : String }
+
+
+type Msg
+    = Noop
+
+
+rows : List ClinicRow
+rows =
+    [ { clinic = { id = "a", billingOverride = "comped" }, ownerEmail = "o" } ]
+
+
+allComped : Bool
+allComped =
+    List.all (\r -> r.clinic.billingOverride == "comped") rows
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { clinic = Nothing, note = if allComped then "all" else "some" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ m =
+    ( m, Cmd.none )
+
+
+view : Model -> Element Msg
+view m =
+    Ui.text m.note
+
+
+appDef =
+    App.app { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+        |> App.withNotFound Noop
+
+
+main =
+    App.run appDef

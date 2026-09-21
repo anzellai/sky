@@ -11,6 +11,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.9 — nested-record-field lambda over a list no longer mis-types (2026-09-21)
+
+A patch over v0.25.8. `sky upgrade` is safe from any v0.25.x — a codegen
+correctness fix, no source-breaking change.
+
+Fixes an "if it compiles it works" break in an app that has a TEA `Model`. An
+inline lambda that reads a nested record field over a list — for example
+`List.all (\r -> r.clinic.billingOverride == "comped") clinicRows` where
+`clinicRows : List ClinicRow` and `ClinicRow` has a `clinic : Clinic` field —
+could mis-type. When the app's `Model` also has a field of the same name but a
+different type (a common shape: `Model` holds `clinic : Maybe Clinic` for the
+currently-selected clinic), the compiler resolved the lambda's inferred subset
+row `{ clinic | … }` to the `Model` on the field NAME alone. It then treated
+`r.clinic` as `Maybe Clinic`, so `sky check` passed but `go build` failed with
+`… .BillingOverride undefined (type rt.SkyMaybe[…] …)`. The subset now resolves
+to the `Model` only when the field set is unambiguously the `Model`'s — a field
+the `Model` wraps in `Maybe` while another record holds it bare sends the row to
+the sound reflective path instead. The workaround (lift the lambda to a
+top-level annotated helper, `List.all isComped clinicRows`) is no longer needed.
+
 ## v0.25.8 — first-paint SSR restore fix + much faster builds (2026-09-20)
 
 A patch over v0.25.7. `sky upgrade` is safe from any v0.25.x — a runtime fix plus

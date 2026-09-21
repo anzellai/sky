@@ -192,6 +192,17 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
                 if !names.is_empty()
                     && names.len() < model_fields.len()
                     && names.iter().all(|n| model_fields.binary_search(n).is_ok())
+                    // NAME-subset is not enough: a `ClinicRow { clinic : Clinic, … }`
+                    // of which only `.clinic` was accessed lowers to the subset row
+                    // `{ clinic | ρ }`, whose ONE field name `clinic` is ALSO a Model
+                    // field (`clinic : Maybe Clinic`). Resolving it to the Model then
+                    // renders `r.clinic` as `Maybe Clinic` and `r.clinic.field` as a
+                    // static access on a `SkyMaybe` — `go build` rejects it (the
+                    // 2026-09-20 `record_update`-adjacent nested-record-lambda bug).
+                    // So also require the subset's field TYPES to match the Model's;
+                    // a mismatch means the row is a subset of some OTHER nominal, and
+                    // it falls through to the safe reflective (`any`) path below.
+                    && model_subset_resolves(fields, &names, model_go, env, cur_mod, params)
                 {
                     return GoTy::Named(model_go.clone(), vec![]);
                 }
@@ -349,6 +360,109 @@ thread_local! {
     /// Outer = {value:Inner}`). Guarding it terminates the cycle.
     static RESOLVING_FIELDSETS: std::cell::RefCell<Vec<Vec<String>>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Decide whether a NAME-subset of the Model may safely resolve to the nominal
+/// Model. Two guards, either of which vetoes the resolution:
+///
+///  1. A definite field-TYPE contradiction against the Model's declared field
+///     (mirrors `select_record_candidate_inner`'s refutation rule — a parametric
+///     / `any` template slot and an unresolved concrete field never refute).
+///
+///  2. AMBIGUITY: another record nominal's field set ALSO contains every one of
+///     these names. Then the row could be a subset of that OTHER type instead —
+///     e.g. `{ clinic | ρ }`, the row a `\r -> r.clinic.…` lambda over a
+///     `List ClinicRow` infers, whose sole field name `clinic` belongs to BOTH
+///     the Model (`clinic : Maybe Clinic`) AND `ClinicRow` (`clinic : Clinic`).
+///     Guessing the Model there rendered `r.clinic` as `Maybe Clinic` and
+///     `r.clinic.field` as a static access on a `SkyMaybe`, which `go build`
+///     rejects (2026-09-20 nested-record-lambda bug). When the field type is
+///     still a flex var (the usual case for such a lambda) guard (1) cannot
+///     refute, so this NAME-ambiguity guard is what keeps it off the Model.
+///     An ambiguous row falls through to the safe reflective (`any`) path.
+///
+/// A view/update helper's Model subset (`{ activity, rows, … }`) names fields no
+/// other nominal collects, so it stays unambiguous and still resolves to the
+/// Model — the coercion-eliding case the resolution exists for is preserved.
+/// A `Maybe T` lowered to its Go carrier `rt.SkyMaybe[…]`.
+fn is_sky_maybe(g: &GoTy) -> bool {
+    matches!(g, GoTy::Named(n, _) if n == "rt.SkyMaybe")
+}
+
+fn model_subset_resolves(
+    fields: &[(Name, Ty)],
+    names: &[String],
+    model_go: &str,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> bool {
+    // (1) field-type refutation against the Model's own templates.
+    if let Some(templates) = env.record_templates.get(model_go) {
+        let tmpl: HashMap<&str, &Ty> =
+            templates.iter().map(|(n, t)| (n.as_str(), t)).collect();
+        for (fname, ct) in fields {
+            let Some(t) = tmpl.get(fname.as_str()) else {
+                continue;
+            };
+            if matches!(t, Ty::Var(_)) {
+                continue;
+            }
+            let tg = go_ty(t, env, cur_mod, params);
+            if tg == GoTy::Any {
+                continue;
+            }
+            if has_unresolved(ct, params) || go_ty(ct, env, cur_mod, params) == GoTy::Any {
+                continue;
+            }
+            if go_ty(ct, env, cur_mod, params) != tg {
+                return false;
+            }
+        }
+    }
+    // (2) name-ambiguity WITH a type difference: another record nominal collects
+    // all these names AND types at least one of them DIFFERENTLY from the Model.
+    // A shared name that has the SAME Go type in both is not ambiguous — the row
+    // resolves to the Model with the identical Go type either way, so those stay
+    // on the Model (no needless widening). Only a shared name whose Model type
+    // (`Maybe Clinic`) differs from the other nominal's (`Clinic`) makes the
+    // resolution a genuine coin-flip; there the row goes to the safe reflective
+    // path so a `ClinicRow` never renders as the Model.
+    if let Some(model_tmpls) = env.record_templates.get(model_go) {
+        let model_by: HashMap<&str, &Ty> =
+            model_tmpls.iter().map(|(n, t)| (n.as_str(), t)).collect();
+        for (go_name, templates) in &env.record_templates {
+            if go_name == model_go {
+                continue;
+            }
+            let other_by: HashMap<&str, &Ty> =
+                templates.iter().map(|(n, t)| (n.as_str(), t)).collect();
+            if !names.iter().all(|n| other_by.contains_key(n.as_str())) {
+                continue;
+            }
+            // The specific unsoundness: the Model WRAPS a shared field in a
+            // `Maybe` (`clinic : Maybe Clinic`) while the other nominal holds it
+            // bare (`clinic : Clinic`). Resolving the row to the Model then types
+            // `r.clinic` as `SkyMaybe[Clinic]`, and a nested `r.clinic.field`
+            // becomes a static access on a `SkyMaybe` — invalid Go. A field the
+            // two share with the SAME Go type is not a hazard (either resolution
+            // renders it identically), so only the wrap/unwrap mismatch vetoes.
+            let wrap_mismatch = names.iter().any(|n| {
+                match (model_by.get(n.as_str()), other_by.get(n.as_str())) {
+                    (Some(mt), Some(ot)) => {
+                        let mg = go_ty(mt, env, cur_mod, params);
+                        let og = go_ty(ot, env, cur_mod, params);
+                        is_sky_maybe(&mg) && !is_sky_maybe(&og) && mg != og
+                    }
+                    _ => false,
+                }
+            });
+            if wrap_mismatch {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn select_record_candidate<'a>(

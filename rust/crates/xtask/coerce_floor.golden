@@ -67,6 +67,22 @@
 # closed adapters the golden still reserved slack for, and that slack is now
 # gone. The `narrow` fall is a decrease in SITE count and is not a speedup
 # measurement — nothing here weights a site by how often it runs.
+#
+# ── Recorded transition, 2026-09-21 — Model-subset field-type disambiguation ──
+#     narrow  12858 -> 12850 (-8); 13-skyshop 1479 -> 1481 (+2), all other
+#             moves are DECREASES; NO other project rose.
+# A CORRECTNESS fix (lower/src/goty.rs `model_subset_resolves`). A row that is a
+# NAME-subset of the TEA Model used to resolve to the nominal Model on field
+# names alone. When a shared field is `Maybe X` in the Model but bare `X` in
+# ANOTHER record nominal (`Model.clinic : Maybe Clinic` vs `ClinicRow.clinic :
+# Clinic`), a `\r -> r.clinic.field` lambda over a `List ClinicRow` inferred the
+# subset `{ clinic | ρ }` and mis-resolved it to the Model — rendering `r.clinic`
+# as `SkyMaybe[Clinic]` and `r.clinic.field` as a static access on a `SkyMaybe`,
+# which `go build` REJECTS (`sky check` passed: an "if it compiles it works"
+# break, found in FacePlan). The fix vetoes the Model resolution for that
+# wrap/unwrap ambiguity, so the row falls to the sound reflective (`any`) path.
+# 13-skyshop carries one genuine instance of the same shape, hence +2; the net
+# is a decrease. Guard: rust/crates/sky/tests/codegen_model_subset_record_lambda_flow.rs.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -79,7 +95,7 @@
 09-live-counter	adapter=0	dispatch=0	narrow=133
 10-live-component	adapter=0	dispatch=0	narrow=136
 12-skyvote	adapter=0	dispatch=0	narrow=502
-13-skyshop	adapter=0	dispatch=0	narrow=1479
+13-skyshop	adapter=0	dispatch=0	narrow=1481
 14-task-demo	adapter=0	dispatch=0	narrow=10
 15-http-server	adapter=0	dispatch=0	narrow=19
 16-skychess	adapter=0	dispatch=0	narrow=610
@@ -139,6 +155,6 @@ examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=272
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=227
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/console	adapter=0	dispatch=0	narrow=335
+sky-bundled/console	adapter=0	dispatch=0	narrow=325
 sky-bundled/doc	adapter=0	dispatch=0	narrow=65
 test_pkg	adapter=0	dispatch=0	narrow=1
