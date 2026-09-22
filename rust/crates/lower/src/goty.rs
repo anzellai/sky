@@ -86,6 +86,17 @@ pub struct TypeEnv {
     /// Model per app makes this unambiguous (doc 07 §3 subset-record case, the
     /// TEA disambiguator).
     pub model: Option<(Vec<String>, String)>,
+    /// Memo for `go_ty`, keyed `(Ty, cur_mod)`. The record→nominal resolution
+    /// (`select_record_candidate`) is the lowering's dominant cost, repeated per
+    /// record OCCURRENCE; caching turns "cost × occurrences" into "cost × distinct
+    /// types". Interior-mutable so a `&TypeEnv` can fill it; scoped to this env
+    /// (one env per lowering), so there is no cross-program staleness. Only
+    /// CONTEXT-FREE results are stored (see `go_ty`: a result whose computation hit
+    /// the record cycle guard against a fieldset that predated the call is
+    /// context-tainted and never cached), so a cache hit is byte-for-byte what a
+    /// fresh resolution would produce. Determinism (L4): lookups only; iteration
+    /// order is never emitted.
+    pub goty_cache: std::cell::RefCell<HashMap<(Ty, Option<String>), GoTy>>,
 }
 
 /// Map a Sky type to its structural Go type. `cur_mod` is the module the type is
@@ -115,7 +126,72 @@ pub fn sky_ty_to_go_params(
     go_ty(t, env, cur_mod, params)
 }
 
+/// Memoizing front for [`go_ty_uncached`]. `go_ty` is a pure function of
+/// `(Ty, this env, cur_mod)` when `params` is empty — EXCEPT that the record
+/// cycle guard (`select_record_candidate`, line ~537) returns the anonymous
+/// struct fallback for ANY record whose field-name set is already resolving
+/// higher on the stack. That makes a result CONTEXT-DEPENDENT whenever its
+/// computation reaches such a guarded fieldset: the same `Ty` resolves to a
+/// nominal when the ancestor is not resolving, and to the anon-struct fallback
+/// when it is. Serving a context-tainted result at a later, empty-context site
+/// would emit different Go (a soundness break for mutually / self-nested record
+/// aliases — precisely the class the guard exists for).
+///
+/// So a result is cached ONLY when its whole computation is context-free: it hit
+/// the guard against no fieldset that PREDATED this call. `RESOLVING_FIELDSETS`
+/// is a stack, so "predated" is exactly "at a stack index below this call's entry
+/// depth". A self-recursive record still caches (its guard hit is against its OWN
+/// fieldset, pushed within this subtree — intrinsic to the type, not the
+/// context). `MIN_GUARD_HIT` carries the shallowest guard-hit index seen since
+/// the last reset; each cacheable call isolates its subtree, then propagates the
+/// min upward so an ancestor sees a child's taint too.
+///
+/// A record type appearing at N context-free sites — as a value, a `List`
+/// element, a field of another record — is thus resolved once instead of N times,
+/// and every excluded (guarded / parametric / context-tainted) case runs exactly
+/// as before, so the emitted Go stays byte-for-byte identical. See
+/// `TypeEnv::goty_cache`.
 fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, GoTy>) -> GoTy {
+    // A parametric record's Go type depends on `params`; never cache those. Guard
+    // hits inside still propagate to `MIN_GUARD_HIT`, so an ancestor that DOES
+    // cache correctly sees this subtree's context dependence.
+    if !params.is_empty() {
+        return go_ty_uncached(t, env, cur_mod, params);
+    }
+    // This exact record's field-name set already mid-resolution → the guard will
+    // fire; the anon-struct fallback is context-specific, never served/stored.
+    if let Ty::Record(fields, _) = t {
+        let mut fs: Vec<String> =
+            fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+        fs.sort();
+        if RESOLVING_FIELDSETS.with(|s| s.borrow().contains(&fs)) {
+            return go_ty_uncached(t, env, cur_mod, params);
+        }
+    }
+    let key = (t.clone(), cur_mod.map(str::to_string));
+    if let Some(hit) = env.goty_cache.borrow().get(&key).cloned() {
+        return hit;
+    }
+    // Isolate this subtree's guard hits, compute, then decide cacheability and
+    // fold our min back into the parent's.
+    let depth = RESOLVING_FIELDSETS.with(|s| s.borrow().len());
+    let saved = MIN_GUARD_HIT.with(|m| m.replace(usize::MAX));
+    let result = go_ty_uncached(t, env, cur_mod, params);
+    let subtree_min = MIN_GUARD_HIT.with(|m| m.get());
+    MIN_GUARD_HIT.with(|m| m.set(saved.min(subtree_min)));
+    // Context-free ⇔ no guard hit against a fieldset that predated this call.
+    if subtree_min >= depth {
+        env.goty_cache.borrow_mut().insert(key, result.clone());
+    }
+    result
+}
+
+fn go_ty_uncached(
+    t: &Ty,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> GoTy {
     match t {
         Ty::App(name, args) => app_to_go(name.as_str(), args, env, cur_mod, params),
         Ty::Fun(a, b) => {
@@ -360,6 +436,12 @@ thread_local! {
     /// Outer = {value:Inner}`). Guarding it terminates the cycle.
     static RESOLVING_FIELDSETS: std::cell::RefCell<Vec<Vec<String>>> =
         const { std::cell::RefCell::new(Vec::new()) };
+
+    /// The shallowest `RESOLVING_FIELDSETS` stack index at which the cycle guard
+    /// has fired since the last reset — `usize::MAX` if it has not. `go_ty`'s memo
+    /// reads it to decide whether a result depended on a fieldset that predated
+    /// the call (a context-tainted result must not be cached). See `go_ty`.
+    static MIN_GUARD_HIT: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
 }
 
 /// Decide whether a NAME-subset of the Model may safely resolve to the nominal
@@ -483,7 +565,12 @@ fn select_record_candidate<'a>(
         k.sort();
         k
     };
-    if RESOLVING_FIELDSETS.with(|s| s.borrow().contains(&key)) {
+    // A hit means this result depends on the ancestor at `idx` being mid-resolve;
+    // record the shallowest such index so `go_ty`'s memo can refuse to cache a
+    // context-tainted result. `idx` is the ancestor's stack position (an entry
+    // pushed BELOW a `go_ty` call's entry depth is one that predated it).
+    if let Some(idx) = RESOLVING_FIELDSETS.with(|s| s.borrow().iter().position(|k| k == &key)) {
+        MIN_GUARD_HIT.with(|m| m.set(m.get().min(idx)));
         return None;
     }
     RESOLVING_FIELDSETS.with(|s| s.borrow_mut().push(key.clone()));

@@ -351,6 +351,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         record_params,
         record_templates,
         model,
+        goty_cache: Default::default(),
     };
 
     // Type names declared in MORE THAN ONE module (`Msg`/`Model`/`Page` in a

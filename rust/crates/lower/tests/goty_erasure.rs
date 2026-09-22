@@ -264,6 +264,80 @@ fn opaque_and_kernel_handles_erase_to_any() {
 }
 
 // =========================================================================
+// MEMO SOUNDNESS (2026-09-22) — `go_ty`'s per-`(Ty, cur_mod)` memo must NOT
+// serve a CONTEXT-TAINTED result. A record's Go type depends on the ambient
+// `RESOLVING_FIELDSETS` set: the cycle guard degrades a record to the anon-struct
+// fallback when its field-NAME set is already resolving higher on the stack. A
+// naive memo would cache such a degraded result under the record's `Ty` key and
+// then serve it at a later, empty-context site — emitting different Go for the
+// same type. `go_ty`'s taint tracking (`MIN_GUARD_HIT`) refuses to cache a result
+// whose computation hit the guard against a fieldset that PREDATED the call.
+//
+// Construction that discriminates the fix from a naive memo. `N = {f:Int}` and
+// `M = {g:N}` are distinct fieldsets; `P = {f:M}` reuses N's field-NAME set `f`.
+// Resolving `P` pushes `{f}`, then resolves `M` (a `{g}` record — NOT its own
+// fieldset, so the cheap own-fieldset bypass does NOT catch it), whose field `g`
+// is `N` (a `{f}` record) → the guard fires against `P`'s `{f}`, so `N` degrades
+// to the fallback and `M`'s `R_M` candidate is REFUTED (its template `g` is the
+// nominal `N`, which no longer matches). `M`-under-`P` is thus the anon struct.
+// The SAME `Ty` `M`, resolved standalone, has `N → Main_N_R`, so `M → Main_M_R`.
+// A naive memo caches `M = anon` while resolving `P` and then serves it for the
+// standalone `M`; the taint guard leaves it uncached, so standalone `M` resolves
+// afresh to the nominal.
+// =========================================================================
+#[test]
+fn memo_does_not_serve_a_context_tainted_record_resolution() {
+    // Fresh, identically-configured env each time (`TypeEnv` is not `Clone`), so
+    // one assertion's cache never leaks into another's.
+    let mk_env = || {
+        let mut env = TypeEnv::default();
+        // `Main_N_R` reachable as a NOMINAL (App path, never touches the cycle
+        // guard), so `M`'s template field `g` resolves to it regardless of context.
+        reg(&mut env, "Main", "NNom", nominal("Main_N_R", NominalKind::Record, 0, false));
+        env.record_fieldsets
+            .insert(vec!["f".into()], vec!["Main_N_R".into()]);
+        env.record_fieldsets
+            .insert(vec!["g".into()], vec!["Main_M_R".into()]);
+        env.record_templates
+            .insert("Main_N_R".into(), vec![("f".into(), app0("Int"))]);
+        // `M`'s field `g` is the NOMINAL N (`app0("NNom")`), not a `{f}` record — so
+        // `tg` is `Main_N_R` even when the guard is active, while the CONCRETE `g`
+        // (the `{f}` record) degrades under the guard. That asymmetry is what makes
+        // `M`-under-`P` refute and `M`-standalone resolve.
+        env.record_templates
+            .insert("Main_M_R".into(), vec![("g".into(), app0("NNom"))]);
+        env
+    };
+
+    let n = Ty::Record(vec![field("f", app0("Int"))], None);
+    let m = Ty::Record(vec![field("g", n)], None);
+    let p = Ty::Record(vec![field("f", m.clone())], None);
+
+    // Sanity (fresh env): standalone, `M` resolves to its nominal (via
+    // `N → Main_N_R`).
+    assert_eq!(
+        sky_ty_to_go(&m, &mk_env()),
+        GoTy::Named("Main_M_R".into(), vec![]),
+        "standalone M must resolve to Main_M_R"
+    );
+
+    // Fresh env: resolve `P` FIRST — this reaches `M` under `P`'s `{f}` ancestor,
+    // where `M` degrades to the anon fallback. A naive memo would CACHE that
+    // degraded `M` under `M`'s `Ty` key.
+    let env = mk_env();
+    let _ = sky_ty_to_go(&p, &env);
+
+    // Now the SAME `Ty` `M` at an empty-context site must STILL be the nominal —
+    // the taint guard must have refused to cache the degraded resolution.
+    assert_eq!(
+        sky_ty_to_go(&m, &env),
+        GoTy::Named("Main_M_R".into(), vec![]),
+        "M resolved standalone AFTER P must not serve P's context-tainted (anon) \
+         resolution of the same Ty — the memo taint guard failed"
+    );
+}
+
+// =========================================================================
 // D2 — the well-known kernel wrappers map to their runtime generic heads.
 // A wrong head here silently mistypes every effect/optional/list value.
 // =========================================================================

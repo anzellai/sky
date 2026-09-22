@@ -11,6 +11,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.10 — faster type lowering on record-heavy apps (2026-09-22)
+
+A patch over v0.25.9. `sky upgrade` is safe from any v0.25.x — a compile-speed
+change only. The emitted Go is byte-for-byte identical to v0.25.9 (verified
+across the whole example + app corpus by the `coerce-floor` census), so there is
+no source-breaking change and no behaviour change.
+
+Speeds up the type-lowering phase of every build. The compiler maps each Sky
+type to its Go type, and the record-to-nominal resolution that dominates that
+map used to run once per record OCCURRENCE — the same record type re-resolved at
+every site it appears (as a value, a `List` element, a field of another record).
+It is now memoised per distinct type, so the cost scales with the number of
+distinct types, not the number of uses. On a large multi-module app the lowering
+phase drops from tens of seconds to a few. Programs with few types see no change;
+none see slower builds.
+
+The memo is provably output-preserving: a record's Go type can depend on the
+resolution context (the cycle guard for self- and mutually-nested record
+aliases), so a context-dependent result is never cached. Guarded by a unit test
+that fails if a context-tainted resolution is ever served, and by the corpus-wide
+`coerce-floor` byte census.
+
 ## v0.25.9 — nested-record-field lambda over a list no longer mis-types (2026-09-21)
 
 A patch over v0.25.8. `sky upgrade` is safe from any v0.25.x — a codegen
