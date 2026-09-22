@@ -344,6 +344,29 @@ hold the tag until it is green — never rely on the next nightly to find a
 regression after the tag is public. "The per-commit gate was green" is **not**
 a release verdict; the full suite is.
 
+### 0.2.2 A bug found during the work ships IN this release, never rolled to the next — INVIOLABLE
+
+The user's standing preference (2026-09-22): a bug I discover WHILE doing the
+work of a release — a second defect the same investigation surfaces, a "one
+smaller thing seen on the way", a pre-existing hole a fix exposes — is fixed and
+shipped in the SAME release as the work that found it. I do **not** ship the
+release and roll the found bug to a "follow-up" / "next release" / "v0.25.13".
+
+This sharpens AGENTS.md's no-deferral principle at the release boundary: "fixed
+in the next patch" means THIS patch when the bug was found during it. "Different
+subsystem", "needs its own test", "smaller thing", "diagnostic-only", "the
+report mis-framed it", "my partial fix is masked" are reasons to **do the extra
+work**, not to defer. If a found bug genuinely cannot be brought to a shippable
+state, the correct move is to **hold the tag** and say so plainly — never ship
+the verified part and defer the rest. The only exception is an explicit user
+"ship without fixing X" for that specific bug.
+
+The correction this encodes (v0.25.12): a secondary bug (opaque-type constructor
+exposure) surfaced while fixing the type-decl shadow. I shipped the verified fix
+and deferred the secondary; the instruction is that both should have shipped
+together. Hold the tag, do the work, ship once. See
+[[feedback_no_defer_found_bugs_same_release]].
+
 ### 0.3 Architectural-mechanism citation — INVIOLABLE for compiler workflows
 
 A compiler-level workflow that proposes closing a strategic goal via
