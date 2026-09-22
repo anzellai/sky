@@ -103,6 +103,22 @@ forces a fresh-value kernel (Uuid/Random/Time/Crypto.random).
 Full effect surface, bridges (`Task.fromResult`, `Task.onError`, …), and the
 two-level error pattern: `docs/stdlib.md` + `sky doc Sky.Core.Task`.
 
+**Effect and control-flow style — flat and named, not nested.** `Task` code
+chains with `andThen` / `map`. There is no do-notation and no `let!` bind, so
+`let x = someTask in …` binds the TASK value, not its result — `let … in` names
+PURE sub-expressions only (a key, a record, a string). Keep a chain readable by
+keeping the pipeline flat and naming its steps; right-drift (each `andThen (\x ->
+…)` holding the next `andThen` in its body) is the smell. The levers: a flat
+`t |> andThen step1 |> andThen step2 |> map finish`; a NAMED continuation over a
+long inline lambda (lift it out once it passes ~8 lines or holds another
+`andThen`); `map` for the terminal pure transform (never `andThen (\x -> succeed
+(f x))`); `map2` / `andMap` for INDEPENDENT tasks; `sequence` / `parallel` for a
+LIST of effects (`Task.sequence [ t1, t2, t3 ] |> Task.map (\_ -> ())`, not three
+nested `andThen`); and a local `bestEffort t = t |> Task.onError (\_ ->
+Task.succeed ())` / `unless cond t = if cond then Task.succeed () else t` for the
+two shapes the stdlib does not name. `templates/AGENTS.md` carries the worked
+before/after for scaffolded projects.
+
 ## Writing a Sky app — interview first, then architect
 
 **You are the front line. Lead with questions — do not guess.** When a user
