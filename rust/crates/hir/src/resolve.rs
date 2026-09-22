@@ -1313,10 +1313,9 @@ impl<'a> Resolver<'a> {
                                 cst::CtorExposure::Some(list) => Some(list),
                                 _ => None,
                             };
-                            let picked: Vec<(String, CtorRef)> = exports
-                                .unions
-                                .iter()
-                                .find(|u| u.name.as_str() == name)
+                            let source_union =
+                                exports.unions.iter().find(|u| u.name.as_str() == name);
+                            let picked: Vec<(String, CtorRef)> = source_union
                                 .map(|u| {
                                     u.ctors
                                         .iter()
@@ -1329,6 +1328,37 @@ impl<'a> Resolver<'a> {
                                         .collect()
                                 })
                                 .unwrap_or_default();
+                            // `exposing (T(..))` / `T(ctor)` asked for constructors, but the
+                            // source union publishes NONE — the module exposed the type
+                            // OPAQUELY (`exposing (T)`, not `T(..)`), so its constructors are
+                            // private. Binding nothing here is a silent trap: a bare use of
+                            // one of those constructors then resolves to an unrelated,
+                            // same-named constructor elsewhere in scope (e.g. `Std.Ui`'s
+                            // `Custom`), and the type error that follows is the CONSEQUENCE.
+                            // Report the CAUSE with its own code (E1013) so `build.rs` hoists
+                            // it AHEAD of that consequential type error, exactly as it does the
+                            // E1012 ambiguity — otherwise the type gate masks it.
+                            if picked.is_empty() {
+                                if let Some(u) = source_union {
+                                    if u.ctors.is_empty() {
+                                        let mut diag = Diagnostic::error(
+                                            "E1013",
+                                            format!(
+                                                "module `{module_name}` exposes the type \
+                                                 `{name}` but not its constructors"
+                                            ),
+                                        );
+                                        if let Some(sp) = span {
+                                            diag = diag.with_label(
+                                                sp,
+                                                "opaque type — its constructors are private \
+                                                 to the module; use the module's own API",
+                                            );
+                                        }
+                                        self.result.diagnostics.push(diag);
+                                    }
+                                }
+                            }
                             for (n, c) in picked {
                                 self.bind_ctor_imported(n, c);
                             }

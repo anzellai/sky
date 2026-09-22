@@ -48,7 +48,7 @@
   ],
   "pre_binary": {
     "bin": [
-      "rust/crates/project/src/build.rs:1570 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1581 (sky_toml_project_key)"
     ],
     "database.driver": [
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
@@ -93,7 +93,7 @@
       "rust/crates/sky/src/main.rs:6724 (sky_toml_project_key)"
     ],
     "root": [
-      "rust/crates/project/src/build.rs:1576 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1587 (sky_toml_project_key)"
     ],
     "version": [
       "rust/crates/sky/src/main.rs:6613 (sky_toml_project_key)"

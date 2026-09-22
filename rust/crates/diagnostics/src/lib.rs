@@ -137,6 +137,7 @@ fn code_title(code: &str) -> &'static str {
         "E1010" => "IMPORT CYCLE",
         "E1011" => "NOT EXPOSED",
         "E1012" => "AMBIGUOUS NAME",
+        "E1013" => "OPAQUE TYPE",
         "E2001" => "TYPE ERROR",
         "E2007" => "ARITY MISMATCH",
         // E2001-E2007 are allocated by the Haskell oracle

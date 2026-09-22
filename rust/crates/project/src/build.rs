@@ -328,14 +328,25 @@ fn assemble_and_emit_with(
     // printed `[E2001] type mismatch: List _ vs String` and never mentioned the
     // ambiguity. The other `[E1xxx]` name errors keep their existing position
     // after the type gate — only the cause/consequence inversion is fixed here.
-    let ambiguous: Vec<diagnostics::Diagnostic> = checked
+    //
+    // `[E1013]` (an `exposing (T(..))` on an OPAQUE type — the module publishes
+    // the type but not its constructors) is hoisted for the SAME reason: the
+    // resolver binds no constructor, so a bare `Custom`/`Foo` in the importer
+    // falls through to an unrelated same-named constructor elsewhere in scope
+    // (e.g. `Std.Ui`'s `Custom Int Int`), and the type error that follows is the
+    // consequence. Reporting `Int -> Breakpoint vs Provider` would hide that the
+    // real defect is asking for constructors the module keeps private.
+    let causes: Vec<diagnostics::Diagnostic> = checked
         .diagnostics
         .iter()
-        .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0 == "E1012")
+        .filter(|d| {
+            d.severity == diagnostics::Severity::Error
+                && (d.code.0 == "E1012" || d.code.0 == "E1013")
+        })
         .cloned()
         .collect();
-    if !ambiguous.is_empty() {
-        return Err(render_diags(&ambiguous, &sources));
+    if !causes.is_empty() {
+        return Err(render_diags(&causes, &sources));
     }
     if checked.type_errors > 0 {
         // Select by the type-error BAND (`E2…`), not by an enumerated allowlist.

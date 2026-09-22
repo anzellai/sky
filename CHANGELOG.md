@@ -11,6 +11,30 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.13 — a clear error when you ask for a type's private constructors (2026-09-22)
+
+A patch over v0.25.12. `sky upgrade` is safe from any v0.25.x — a diagnostics
+fix, no source-breaking change and no change to emitted code.
+
+Fixes a baffling error message. When you write `import Std.Ai.Provider exposing
+(Provider(..))` — asking for the constructors of a type the module keeps opaque
+(`Std.Ai.Provider` exposes `Provider`, but its constructors are private) — the
+compiler used to bind no constructor, so a later bare `Custom` in your code fell
+through to an unrelated same-named constructor in scope (`Std.Ui`'s `Custom Int
+Int`), and you got a mismatch like `Int -> Breakpoint vs Provider` that named
+neither the real cause nor the offending import. The compiler now reports the
+cause at the import itself:
+
+```text
+-- OPAQUE TYPE -------------------------------------- src/Main.sky:6:35 [E1013]
+
+module `Std.Ai.Provider` exposes the type `Provider` but not its constructors
+```
+
+Like the ambiguity cause (`E1012`), this is reported ahead of the downstream type
+error it would otherwise hide. Use the module's own API (here `Provider.custom`
+and friends) instead of the private constructors.
+
 ## v0.25.12 — a project type may share a stdlib type's name again (2026-09-22)
 
 A patch over v0.25.11. `sky upgrade` is safe from any v0.25.x — a codegen
