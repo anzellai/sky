@@ -35,6 +35,13 @@ Like the ambiguity cause (`E1012`), this is reported ahead of the downstream typ
 error it would otherwise hide. Use the module's own API (here `Provider.custom`
 and friends) instead of the private constructors.
 
+The same check uncovered a real under-exposure in the standard library:
+`Std.Ui.Responsive` exposed the type `DeviceClass` but not its constructors
+(`Phone | Tablet | Desktop | BigDesktop`), even though user code is meant to
+pattern-match on them. `Std.Ui.Responsive` now exposes `DeviceClass(..)`, so
+`import Std.Ui.Responsive exposing (DeviceClass(..))` and matching on `Phone` work
+as intended. No other standard-library type was affected.
+
 ## v0.25.12 — a project type may share a stdlib type's name again (2026-09-22)
 
 A patch over v0.25.11. `sky upgrade` is safe from any v0.25.x — a codegen
