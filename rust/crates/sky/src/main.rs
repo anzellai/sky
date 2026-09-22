@@ -1000,6 +1000,33 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// Stage a derived `Std.App` build tree at `out_root`: a fresh copy of the
 /// user's `src/` plus their `sky.toml` verbatim (dependencies, `[database]`, …).
 /// Returns the derived `src/` dir (where the caller writes the derived entry).
+/// The `SKY_DATA_DIR` a spawned Spa-target backend should use, or `None` when the
+/// user already set one (their value always wins). ABSOLUTE, so it resolves
+/// against the PROJECT root rather than the backend's own working directory.
+///
+/// A Spa `sky run` spawns the generated backend from `.split/backend`, and the
+/// runtime's default data dir is `<cwd>/.skydata` — i.e. `.split/backend/.skydata`,
+/// INSIDE the build tree that every rebuild wipes. So the embedded PostgreSQL
+/// cluster (and the `--embed` session-secret file) would be recreated on each
+/// build and be invisible to `sky db ps` (which looks beside the project). Pointing
+/// the backend at the project's own `.skydata` gives every target one shared,
+/// persistent cluster outside the wiped tree.
+fn spa_data_dir(project_dir: &Path, user_set: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    if user_set.is_some() {
+        return None;
+    }
+    let root = std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+    Some(root.join(".skydata"))
+}
+
+/// Set `SKY_DATA_DIR` on a spawned Spa backend command to the project's `.skydata`
+/// unless the user already set one. See [`spa_data_dir`].
+fn apply_spa_data_dir(cmd: &mut Command, project_dir: &Path) {
+    if let Some(dir) = spa_data_dir(project_dir, std::env::var_os("SKY_DATA_DIR").as_deref()) {
+        cmd.env("SKY_DATA_DIR", dir);
+    }
+}
+
 /// The derived entry is always built by explicit path, so the copied `sky.toml`
 /// `entry` field is left untouched.
 fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf, ExitCode> {
@@ -2575,6 +2602,7 @@ fn build_std_app(
                     println!("== opening the desktop window ==");
                     let mut backend_cmd = Command::new(&backend);
                     backend_cmd.current_dir(od.join("backend"));
+                    apply_spa_data_dir(&mut backend_cmd, project_dir);
                     if embed {
                         backend_cmd.arg("--embed");
                     }
@@ -2606,6 +2634,7 @@ fn build_std_app(
                     // The generated backend serves `../frontend/dist` RELATIVE to
                     // its own dir, so run it from there.
                     proc.current_dir(od.join("backend"));
+                    apply_spa_data_dir(&mut proc, project_dir);
                     if embed {
                         proc.arg("--embed");
                     }
@@ -5553,6 +5582,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         }
         let mut run = Command::new(&app);
         run.current_dir(&backend);
+        apply_spa_data_dir(&mut run, &project_dir);
         if embed {
             // An --embed backend bakes PostgreSQL in but still needs `--embed` at
             // RUNTIME to bring its own cluster up (mirrors `./sky-out/app --embed`).
@@ -10424,6 +10454,32 @@ fn stage_project_runtime_into_backend(project_dir: &std::path::Path, backend_dir
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Regression: a Spa `sky run` spawns the backend from `.split/backend`, whose
+    // default data dir (`<cwd>/.skydata`) is inside the wiped build tree. The three
+    // Spa spawn sites must point `SKY_DATA_DIR` at the PROJECT's `.skydata` (an
+    // ABSOLUTE path) so the embedded cluster survives rebuilds, is shared across
+    // targets, and `sky db ps` sees it — unless the user set `SKY_DATA_DIR` first.
+    #[test]
+    fn spa_data_dir_uses_absolute_project_skydata_unless_user_set() {
+        let tmp = std::env::temp_dir().join(format!("sky-spa-dd-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // A user-set SKY_DATA_DIR wins → we do NOT override it.
+        assert_eq!(
+            spa_data_dir(&tmp, Some(std::ffi::OsStr::new("/custom/data"))),
+            None,
+            "a user SKY_DATA_DIR must win"
+        );
+
+        // No user value → the project's own `.skydata`, absolute.
+        let got = spa_data_dir(&tmp, None).expect("should point at the project .skydata");
+        assert!(got.is_absolute(), "must be absolute (backend runs from .split/backend)");
+        assert_eq!(got.file_name(), Some(std::ffi::OsStr::new(".skydata")));
+        assert_eq!(got, std::fs::canonicalize(&tmp).unwrap().join(".skydata"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     // Bug #4a: a qualified `Spa.config` field value from a SIBLING module
     // (`Domain.update`) must become BARE (the split's generated code references it
