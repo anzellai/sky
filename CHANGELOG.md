@@ -11,6 +11,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.11 — Spa `sky run` shares one persistent embedded cluster (2026-09-22)
+
+A patch over v0.25.10. `sky upgrade` is safe from any v0.25.x — a dev-tooling fix,
+no source-breaking change and no runtime behaviour change for a deployed app.
+
+Fixes the embedded PostgreSQL data dir for a Sky.Spa `sky run`. A `web:app` /
+`desktop` run spawns the generated backend from `.split/backend`, and the runtime
+defaults its data dir to `<cwd>/.skydata` — which was `.split/backend/.skydata`,
+INSIDE the build tree that every rebuild wipes. So an `--embed` cluster (and the
+`--embed` session-secret file) were recreated on each build, and `sky db ps` —
+which looks beside the project — never saw them. `sky run` now points the
+spawned backend at the project's own `.skydata` (an absolute path), so every
+target shares one persistent cluster outside the wiped tree and `sky db ps` sees
+it. A `SKY_DATA_DIR` you set yourself still wins. This only affects local
+`sky run`; a deployed app (which consumes a DSN or runs `./app --embed` directly)
+is unchanged.
+
 ## v0.25.10 — faster type lowering on record-heavy apps (2026-09-22)
 
 A patch over v0.25.9. `sky upgrade` is safe from any v0.25.x — a compile-speed
