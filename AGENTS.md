@@ -422,6 +422,16 @@ spa-split <entry> --out <dir>` is the explicit form when you want the artefacts
 kept at a chosen path. (Recursion is impossible: the generated projects carry a
 `[spa] generated = true` marker that `sky build`/`sky run` never re-split.)
 
+**Serving the wasm — precompressed.** A Go→wasm client is multi-MB raw (~2.5 MB
+brotli), so `sky build` precompresses the hashed `main.<hash>.wasm` + `wasm_exec.js`
+in `frontend/dist` to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool
+is installed — else it warns once and ships gzip only). Those files sit unused
+until the static host serves them: Caddy `file_server { precompressed br gzip }`
+(Caddy's `encode` has no brotli), or nginx `gzip_static` + `ngx_brotli`. The wasm
+is content-hashed + `immutable`, so allow a CDN to cache `*.wasm` (Cloudflare does
+not by default). Deploy-time `brotli` bridges are no longer needed — the build
+emits `.br`/`.gz` itself (`rust/crates/sky/src/main.rs`, `precompress_web_asset`).
+
 **Embedded PostgreSQL — dev/prod engine parity.** `Std.Db` is dialect-safe
 across SQLite and Postgres, and that gap is a real tax: `Codec.auto` cannot
 encode `Money`/`Decimal`, and there is no `NUMERIC` DDL kind, while `Std.Money`

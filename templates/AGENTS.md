@@ -488,6 +488,25 @@ and `--embed` (bundle PostgreSQL into the backend) COMPOSE with the split. `sky
 check` type-checks the shared source without splitting; `sky spa-split <entry>
 --out <dir>` is the explicit form when you want the split trees kept at a path.
 
+**Serving a Sky.Spa build — precompress the wasm.** A Go→wasm client is multi-MB
+raw (~2.5 MB brotli), so it MUST be served compressed or the first paint drags on
+a small host. `sky build` does the compressing for you: it writes the hashed
+`main.<hash>.wasm` into `frontend/dist` and precompresses it (and `wasm_exec.js`)
+to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool is on the build
+machine — `brew install brotli` / `apt install brotli`; the build warns once and
+falls back to gzip otherwise). The `.br`/`.gz` sit in `dist` UNUSED until your
+static host serves them, so configure content-negotiation at the edge:
+
+- **Caddy** (what the reference deploys use): `file_server { precompressed br gzip }`
+  on the `*.wasm` + `wasm_exec.js` routes — Caddy's own `encode` has no brotli, so
+  precompressed `.br` is how you get it.
+- **nginx**: `gzip_static on;` for `.gz`, plus the `ngx_brotli` module (`brotli_static on;`) for `.br`.
+
+The wasm is content-hashed and served `immutable`, so it is safe to cache
+aggressively — and a CDN in front should be ALLOWED to cache `.wasm` (Cloudflare
+does NOT cache it by default; add a cache rule for `*.wasm`), or the origin
+re-sends it every visit.
+
 Run `sky verify` before you consider a change done — it runs fmt-clean +
 type-check + production build + every `tests/*.sky` suite, and exits non-zero on
 any failure.
