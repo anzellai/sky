@@ -1,0 +1,4 @@
+name  = "typedeclshadow"
+entry = "src/Main.sky"
+[source]
+root = "src"

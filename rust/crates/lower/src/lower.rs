@@ -123,6 +123,14 @@ struct DefEntry {
 /// A collected type declaration (union or record alias) awaiting emission.
 struct TypeDecl {
     name: String,
+    /// The Sky module that DECLARED this type. Its field / constructor-payload
+    /// types must resolve through `nominal_by_module` with this as `cur_mod` (as
+    /// function bodies already do), so a bare type name that ALSO exists in
+    /// another module resolves to the declaring module's own type — not to
+    /// whichever registered last in the flat `nominal` map. Without it, a project
+    /// `type Turn` shadowed `Std.Ai.Provider`'s `Turn` in the emitted struct
+    /// field, so `sky check` passed but `go build` rejected the struct literal.
+    module: String,
     go_name: String,
     kind: TypeDeclKind,
 }
@@ -1491,6 +1499,7 @@ fn collect_types(
                     };
                     decls.push(TypeDecl {
                         name: tname,
+                        module: mname.clone(),
                         go_name,
                         kind,
                     });
@@ -1548,6 +1557,7 @@ fn collect_types(
                         );
                         decls.push(TypeDecl {
                             name: tname,
+                            module: mname.clone(),
                             go_name,
                             kind: TypeDeclKind::Record(fields),
                         });
@@ -1623,8 +1633,11 @@ fn emit_type_decl(
     sealed_unions: &HashSet<String>,
 ) -> (Vec<GoItem>, Vec<String>) {
     let mut more: Vec<String> = Vec::new();
+    // Resolve declared field / constructor-payload types AS THE DECLARING MODULE,
+    // so a bare name that also exists in another module prefers this module's own
+    // declaration (via `nominal_by_module`) — matching how function bodies lower.
     let mut collect = |t: &Ty| {
-        let gt = sky_ty_to_go(t, env);
+        let gt = sky_ty_to_go_in(t, env, Some(decl.module.as_str()));
         collect_named(&gt, &mut more);
         gt
     };
@@ -1653,7 +1666,7 @@ fn emit_type_decl(
             let go_fields: Vec<(String, GoTy)> = fields
                 .iter()
                 .map(|(n, t)| {
-                    let gt = sky_ty_to_go_params(t, env, None, &param_map);
+                    let gt = sky_ty_to_go_params(t, env, Some(decl.module.as_str()), &param_map);
                     collect_named(&gt, &mut more);
                     (capitalize(n), gt)
                 })

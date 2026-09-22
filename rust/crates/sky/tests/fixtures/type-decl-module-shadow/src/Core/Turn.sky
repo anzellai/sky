@@ -1,0 +1,8 @@
+module Core.Turn exposing (Turn(..))
+
+import Sky.Core.Prelude exposing (..)
+
+
+type Turn
+    = Idle
+    | Busy String

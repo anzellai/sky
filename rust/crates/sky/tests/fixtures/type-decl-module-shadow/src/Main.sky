@@ -1,0 +1,39 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+import Std.Ai.Provider as Provider exposing (Provider)
+import Core.Turn exposing (Turn(..))
+
+
+brain : Provider
+brain =
+    Provider.custom
+        (\_ ->
+            Task.succeed
+                { content = "hi"
+                , usage =
+                    { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+                }
+        )
+
+
+state : Turn
+state =
+    Busy "x"
+
+
+main =
+    Provider.chat brain []
+        |> Task.andThen
+               (\r ->
+                   println
+                       (case state of
+                           Idle ->
+                               r.content
+
+                           Busy s ->
+                               r.content ++ " " ++ s
+                       )
+               )

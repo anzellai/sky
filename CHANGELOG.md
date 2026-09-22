@@ -11,6 +11,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.12 — a project type may share a stdlib type's name again (2026-09-22)
+
+A patch over v0.25.11. `sky upgrade` is safe from any v0.25.x — a codegen
+correctness fix, no source-breaking change.
+
+Fixes an "if it compiles it works" break. A project type whose BARE name matched
+a stdlib type — for example a `type Turn` in your own module, while
+`Std.Ai.Provider` also has a `Turn` — could mis-compile. The emitted Go struct
+for a stdlib record (here `Provider`'s custom-implementation struct) named the
+field's type after the PROJECT's type (`Core_Turn_Turn`), while the function
+value assigned to it, lowered inside the stdlib module, correctly used the stdlib
+type (`Std_Ai_Provider_Turn`). `sky check` passed but `go build` rejected the
+struct literal (`cannot use func(…) as func(…) value in struct literal`). The
+cause: a type declaration lowered its field and constructor-payload types without
+its declaring module set, so a bare name resolved through the flat, last-writer-
+wins nominal map instead of the module-scoped one that function bodies already
+use. Declarations now resolve the same way, so a bare name prefers its own
+module's type. The workaround (rename your type, or qualify the constructor) is
+no longer needed.
+
 ## v0.25.11 — Spa `sky run` shares one persistent embedded cluster (2026-09-22)
 
 A patch over v0.25.10. `sky upgrade` is safe from any v0.25.x — a dev-tooling fix,
