@@ -11,6 +11,42 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.14 — a tuple built in a lambda no longer panics; a clear error for an un-derivable Codec.auto (2026-09-23)
+
+A patch over v0.25.13. `sky upgrade` is safe from any v0.25.x. Two fixes, both
+closing "if it compiles it works" breaks found in a real app.
+
+Fixes a runtime panic on a tuple built inside a lambda. A tuple of four to nine
+elements built in a lambda passed to a type-erased higher-order function — for
+example `Maybe.map (\r -> ( r.days, r.unit, r.price, r.package )) (List.head
+rows)` — type-checked but panicked at run time with `CoerceFailure — rt.T4[…]
+cannot be cast to …`. The lambda's result type is erased, so the tuple's element
+types erased with it, and the runtime's tuple narrowing only covered 2- and
+3-tuples; a 4-to-9-tuple hit a strict cast and panicked. The narrowing now covers
+all tuple sizes. The workaround (mapping the fields one at a time) is no longer
+needed.
+
+Turns an un-derivable `Codec.auto` into a compile error. `Codec.auto` derives a
+codec by reflecting over a witness record value. When a `List <Record>` field's
+witness list is empty (`items = []`) and nothing pins the element type, the
+element used to erase to `any` and the built binary panicked at decode with
+`Codec.auto: cannot decode kind interface`. The compiler now reports this at
+compile time as `[E2009]`:
+
+```text
+-- UN-DERIVABLE CODEC ELEMENT ---------------------- src/Main.sky:21:41 [E2009]
+
+`Codec.auto` cannot derive an element codec for this `List` field: its element
+type is not determined here.
+```
+
+Fix it by annotating the codec binding (`myCodec : Codec MyRecord`), giving the
+witness a non-empty list, or setting the field's codec explicitly (`Codec.list
+<elementCodec>`). This fires only when the element is genuinely undetermined — an
+annotated binding, a non-empty witness, and a polymorphic codec helper are all
+accepted. (The nominal case that reflected over a named record type was already
+fixed in v0.25.12; this closes the remaining unannotated case.)
+
 ## v0.25.13 — a clear error when you ask for a type's private constructors (2026-09-22)
 
 A patch over v0.25.12. `sky upgrade` is safe from any v0.25.x — a diagnostics
