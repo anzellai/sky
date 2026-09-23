@@ -58,7 +58,7 @@ flag below.)
 sky run                          # defaults to web (Sky.Live)
 sky build --target terminal:tui  # a TUI
 sky build --target desktop       # Sky.Live in a native window
-sky check                        # type-checks the core (target-scoped for a backend)
+sky check                        # checks the target a bare build builds (check ≡ build)
 ```
 
 The build resolves `--target`, rewrites `App.run` → the target's `run<Backend>`
@@ -295,9 +295,23 @@ sky build --target mobile:ios  src/Main.sky   # native app (needs a Mac to sign)
 ```
 
 So `Std.App` covers **every** target from one source — you never write or import
-`Std.Spa`. (The derivation reads the standard `sky fmt`'d `App.app { init = …,
-update = …, view = …, subscriptions = … }` form; if it can't, it says so and you
-can drop to a `Std.Spa` entry.)
+`Std.Spa`.
+
+The derivation reads the app value **structurally**: the value actually passed
+to `App.run` (a second `App.app` elsewhere in the file is ignored), through local
+bindings, local helper functions and lambdas (`|> secured` where `secured a = a
+|> App.withGuard guard`), `|>`, `<|`, direct application (`App.withGuard g app`),
+the inline form `main = App.run (App.app { … } |> …)`, and any import spelling
+(`import Std.App as A` + `A.run`, or `exposing (run)` + bare `run`). Every
+builder step is either carried into the client build (`withRoutes`,
+`withNotFound`, `withHead`, `withOnNavigate`, `withRequest`, `withGuard`,
+`withRpcError`), or listed in a build warning as not applying to a client
+(`withConfig`, `withInput`, `withWindow`, `withOnKey`, `withBase`,
+`withDurable`, `withDurableId`). Anything else fails the build with an error
+that names it: an unknown builder, a function from another module applied to the
+app, or a builder argument that uses a local of the code building the app (the
+client build places that argument at top level). A guard is never dropped
+silently.
 
 See also: `sky doc Std.App`, `docs/skylive/overview.md`, `docs/skyspa/overview.md`,
 and the design rationale in `docs/design/unified-app-builder.md`.

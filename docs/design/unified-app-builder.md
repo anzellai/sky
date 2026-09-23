@@ -439,11 +439,14 @@ Empirically validated in Sky: the flag threads + flips through a builder chain w
 
 **Two consequences the design must handle (both resolved):**
 
-1. **`sky check` is target-scoped.** A dispatched entry's bare `sky check` verifies
-   the core via the least-demanding runner (`runTui`, accepts any flag) so a
-   terminal-only app is NOT forced to add `notFound`; `sky check --target web`
-   verifies web (via `runLive`, enforcing the fallback). Without this, an
-   all-backends check would force `notFound` on every app.
+1. **`sky check` is target-scoped, and checks what `sky build` builds.** A
+   dispatched entry's `sky check` verifies exactly the runner a `sky build` of the
+   same command line would build: the `--target`, else the sky.toml `[app]
+   target`, else `web` (via `runLive`, enforcing the fallback). A terminal-only
+   app pins `[app] target = "terminal:cli"` (or `"terminal:tui"`), so it is not
+   forced to add `notFound`. (An earlier bare check used the least-demanding
+   `runTui` runner; it passed apps a bare build then rejected, breaking check ≡
+   build.)
 2. **The dispatched `--target web` build gives a clean error.** If a dispatched
    app lacks `withNotFound`, the generated `main = App.runLive …` fails to
    type-check; the build captures that and reprints

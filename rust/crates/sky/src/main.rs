@@ -902,55 +902,22 @@ fn is_std_app_dispatched_entry(entry_file: &Path) -> bool {
     }
 }
 
-/// A `App.run` occurrence at `pos` is the BARE dispatcher iff it is not followed
-/// by an identifier character — so `App.run app`, `App.run(x)`, and a line-final
-/// `App.run` (the multiline `App.run\n    (App.app … |> …)` form) all count,
-/// while the concrete runners `App.runTui` / `App.runLive` / … (followed by a
-/// letter) never do. Matching only `App.run ` / `App.run(` missed the multiline
-/// form, so `App.run` was left as its `runTui` placeholder body → the app
-/// silently built for the terminal.
-fn is_bare_app_run_at(src: &str, pos: usize) -> bool {
-    match src.as_bytes().get(pos + "App.run".len()) {
-        None => true,
-        Some(&c) => !(c.is_ascii_alphanumeric() || c == b'_'),
-    }
-}
-
-/// True when the source calls the bare `App.run` dispatcher — NOT a concrete
+/// True when the source calls the `Std.App` dispatcher `run` — NOT a concrete
 /// runner like `App.runTui`. The build rewrites this call to the target's
-/// `run<Backend>`.
+/// `run<Backend>`. Alias-aware and token-based (`project::app_entry::run_refs`):
+/// `App.run`, `A.run` under `import Std.App as A`, and a bare `run` under
+/// `import Std.App exposing (run)` all count, in every call spelling (`run app`,
+/// `run(app)`, a line-final `run` with the argument on the next line); a
+/// comment or string that mentions `App.run` never does.
 fn uses_app_run(src: &str) -> bool {
-    let mut start = 0;
-    while let Some(rel) = src[start..].find("App.run") {
-        let pos = start + rel;
-        if is_bare_app_run_at(src, pos) {
-            return true;
-        }
-        start = pos + "App.run".len();
-    }
-    false
+    project::app_entry::uses_run(src)
 }
 
-/// Rewrite every bare `App.run` dispatcher call to a concrete `App.run<Backend>`.
-/// Every call spelling — `App.run app`, `App.run(...)`, and line-final
-/// `App.run\n    (...)` — is covered; concrete runners (`App.runTui`) are left
-/// untouched (they are followed by an identifier character).
+/// Rewrite every `Std.App` dispatcher call to the concrete runner `runner`,
+/// keeping the qualifier it was written with (a bare exposed `run` becomes
+/// `<qualifier>.<runner>`). Concrete runners (`App.runTui`) are left untouched.
 fn rewrite_app_run(src: &str, runner: &str) -> String {
-    let repl = format!("App.{runner}");
-    let mut out = String::with_capacity(src.len());
-    let mut start = 0;
-    while let Some(rel) = src[start..].find("App.run") {
-        let pos = start + rel;
-        out.push_str(&src[start..pos]);
-        if is_bare_app_run_at(src, pos) {
-            out.push_str(&repl);
-        } else {
-            out.push_str("App.run");
-        }
-        start = pos + "App.run".len();
-    }
-    out.push_str(&src[start..]);
-    out
+    project::app_entry::rewrite_run(src, runner)
 }
 
 /// Map a resolved [`target::Target`] to the `Std.App` runner that backs it and
@@ -1118,7 +1085,7 @@ fn stage_diagram_spa(
     }
     // Only an `App.web`/`App.app` (`Std.App`) entry is synthesizable into a Spa
     // entry; anything else returns None here.
-    let synthesized = synthesize_spa_source(&entry_src, true)?;
+    let synthesized = synthesize_spa_source(&entry_src, true).ok()?;
     // Stage into a UNIQUE system-temp dir, NOT `<project>/.skyapp` — the diagram
     // is read-only w.r.t. the project, and a per-invocation dir means two
     // concurrent `sky doc --diagram` runs (or a diagram run beside a build) never
@@ -1175,14 +1142,12 @@ fn remap_fallback_error(output: &str, tgt: target::Target) -> bool {
 /// `main`, so type-checking it directly fails at lowering). Stage a derived
 /// module with a `main` and `sky check` it.
 ///
-/// TARGET-SCOPED: with `--target <t>`, check exactly that backend's runner (so
-/// `--target web` enforces the `HasFallback` fallback via `runLive`). Bare `sky
-/// check` exercises the three VIEW ADAPTERS — `runTui` (identity), `runCli`
-/// (Element→text), `runSpa` (`Ui.layout`) — all of which accept any capability
-/// flag, so a terminal-only app is NOT forced to add `notFound`. `runLive`
-/// (fallback-required) and `runWebview` (seed pinned to unit) are verified only
-/// under their explicit `--target`.
-fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: Option<target::Target>) -> ExitCode {
+/// TARGET-SCOPED, and the target is the one a build of the same command line
+/// would build: the explicit `--target`, else the sky.toml `[app] target`, else
+/// `web` (the caller resolves it). So `sky check` ≡ `sky build`: `web` enforces
+/// the `HasFallback` fallback via `runLive`, exactly as the build does, and a
+/// terminal-only app pins its backend with `[app] target = "terminal:cli"`.
+fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: target::Target) -> ExitCode {
     let user_module = match entry_module_name(entry_file) {
         Some(m) => m,
         None => {
@@ -1203,7 +1168,7 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: Option<target::Targ
         // Explicit `main = App.run app` form: `app` may be un-exposed, so rewrite
         // the bare `App.run` in the COPIED entry to the check runner and check it.
         // A target checks exactly its runner; bare check uses `runTui` (any flag).
-        let check_runner = tgt.map(|t| std_app_runner(t).0).unwrap_or("runTui");
+        let check_runner = std_app_runner(tgt).0;
         let entry_name = entry_file.file_name().unwrap_or_default();
         let copied = src_to.join(entry_name);
         let rewritten = rewrite_app_run(&entry_src, check_runner);
@@ -1213,14 +1178,10 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: Option<target::Targ
         }
         copied
     } else {
-        // Legacy no-`main` form (exposes `app`): a target checks exactly its
-        // runner; bare check covers the three any-flag view-adapter runners.
-        let (runners, main_runner): (Vec<&str>, &str) = match tgt.map(std_app_runner) {
-            Some((runner, StdAppBuild::Direct)) | Some((runner, StdAppBuild::Spa)) => {
-                (vec![runner], runner)
-            }
-            None => (vec!["runTui", "runCli", "runSpa"], "runTui"),
-        };
+        // Legacy no-`main` form (exposes `app`): check exactly the resolved
+        // target's runner.
+        let runner = std_app_runner(tgt).0;
+        let (runners, main_runner): (Vec<&str>, &str) = (vec![runner], runner);
         let mut refs = String::new();
         for (i, r) in runners.iter().enumerate() {
             let lead = if i == 0 { "[ " } else { ", " };
@@ -1273,10 +1234,7 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: Option<target::Targ
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        if !tgt
-            .map(|t| remap_fallback_error(&combined, t))
-            .unwrap_or(false)
-        {
+        if !remap_fallback_error(&combined, tgt) {
             print!("{}", String::from_utf8_lossy(&out.stdout));
             eprint!("{}", String::from_utf8_lossy(&out.stderr));
         }
@@ -1331,171 +1289,145 @@ struct AppFields {
     /// drop is never silent — a genuinely uncarried builder (`withConfig`,
     /// `withOnKey`) must not vanish invisibly from the client build.
     dropped_builders: Vec<String>,
+    /// Top-level bindings for multi-line field / builder arguments. A multi-line
+    /// argument (a `case` inside a guard lambda) is layout-sensitive, so it is
+    /// hoisted verbatim into its own re-indented binding instead of being
+    /// flattened onto one line; the field above then names that binding.
+    hoisted: String,
+    /// The app was built with `App.web` (a `Std.Html` view), not `App.app`.
+    is_web: bool,
+    /// Zero-parameter top-level bindings the app value flowed through
+    /// (`appDef = App.app … |> …`); dropped from the synthesised entry.
+    value_bindings: Vec<String>,
+    /// How the entry imports `Std.App` (its qualifier).
+    import: project::app_entry::AppImport,
 }
 
-/// True iff the source uses the `App.web` BUILDER (a `Std.Html`-view app), as
-/// opposed to `App.app` (a `Std.Ui` `Element`-view app). The distinction drives
-/// whether the synthesised `Spa.config.view` wraps the user's view in
-/// `Ui.layout []` (Element → Html) or passes it through (already Html).
+/// `Std.App` builders the App→Spa synthesis CARRIES into the client build.
+const SPA_CARRIED_BUILDERS: &[&str] = &[
+    "withRoutes",
+    "withNotFound",
+    "withHead",
+    "withOnNavigate",
+    "withRequest",
+    "withGuard",
+    "withRpcError",
+];
+
+/// `Std.App` builders that do not apply to a Sky.Spa client build: terminal /
+/// desktop input and window knobs, per-target config (its static dir is read
+/// separately, `declared_static_mount`), the shared base config and the
+/// durable-model hooks. Reported by name as a warning, never silent. Any
+/// `with…` builder in NEITHER list fails the build (fail closed).
+const SPA_IGNORED_BUILDERS: &[&str] = &[
+    "withConfig",
+    "withInput",
+    "withWindow",
+    "withOnKey",
+    "withBase",
+    "withDurable",
+    "withDurableId",
+];
+
+/// Read the `App` value passed to `App.run` and turn it into the fields the
+/// App→Spa synthesis needs.
 ///
-/// A plain `src.contains("App.web")` ALSO matched `App.webDefaults` /
-/// `App.webConfig` — the `WebOpts` helpers a NORMAL `App.app` web app uses via
-/// `App.withConfig (App.WebConfig { App.webDefaults | … })` — so such an
-/// `App.app` app was misclassified as Html, its `Element` view passed through
-/// without the wrap, and the synthesised entry failed to type-check
-/// (`Html Msg vs Element Msg`). This detects `App.web` only at a CALL position:
-/// not followed by an identifier-continuation char (so `App.web`, `App.web `,
-/// `App.web(`, `App.web{`, `App.web\n` → the builder; `App.webDefaults`,
-/// `App.webConfig`, `App.webWhatever` → NOT), and not preceded by an
-/// identifier/`.` char (so a hypothetical `XApp.web` never matches). `--` line
-/// comments are stripped first, so a doc comment mentioning `App.web` (prose or
-/// a code sample) never flips the classification.
-fn uses_app_web_builder(src: &str) -> bool {
-    const NEEDLE: &str = "App.web";
-    for raw in src.lines() {
-        // Drop any `--` line comment — the builder we detect is code, never
-        // prose. (A `--` inside a string with `App.web` after it on the SAME
-        // line is not a shape real Sky produces.)
-        let line = raw.split_once("--").map(|(code, _)| code).unwrap_or(raw);
-        let bytes = line.as_bytes();
-        let mut from = 0;
-        while let Some(rel) = line[from..].find(NEEDLE) {
-            let at = from + rel;
-            let after = at + NEEDLE.len();
-            let next_is_ident = bytes
-                .get(after)
-                .map(|b| b.is_ascii_alphanumeric() || *b == b'_')
-                .unwrap_or(false);
-            let prev_is_ident = at
-                .checked_sub(1)
-                .and_then(|i| bytes.get(i))
-                .map(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'.')
-                .unwrap_or(false);
-            if !next_is_ident && !prev_is_ident {
-                return true;
-            }
-            from = after;
+/// The value is read STRUCTURALLY (`project::app_entry::read_app_value`): the
+/// app actually passed to the dispatcher (never a second `App.app` elsewhere in
+/// the file), through local bindings, local helper functions and lambdas
+/// (`|> secured` with `secured a = a |> App.withGuard guard`), `|>`, `<|` and
+/// direct application. Every builder step must be carried or known-ignorable;
+/// an unknown builder, an opaque function applied to the app, or an argument
+/// the client build cannot place at top level is an `Err` naming it. A guard
+/// that silently failed to cross into the client build ran every `/_rpc/<Msg>`
+/// unguarded, so this fails closed.
+fn extract_app_fields(src: &str) -> Result<AppFields, String> {
+    let carried = |n: &str| SPA_CARRIED_BUILDERS.contains(&n);
+    let value = project::app_entry::read_app_value(src, &carried)?;
+    let q = value.import.qualifier_or_default();
+    match value.builder.as_str() {
+        "app" | "web" => {}
+        other => {
+            return Err(format!(
+                "`{q}.{other}` has a `String` view and runs only on a terminal; a client \
+                 target needs `{q}.app` (a `Std.Ui` view) or `{q}.web` (a `Std.Html` view)"
+            ))
         }
     }
-    false
-}
-
-/// Match a record field `{ field = VAL` or `, field = VAL` (the fmt'd form) and
-/// return `VAL`.
-fn match_record_field(trimmed: &str, field: &str) -> Option<String> {
-    for lead in ["{ ", ", "] {
-        if let Some(v) = trimmed.strip_prefix(&format!("{lead}{field} = ")) {
-            return Some(v.trim().to_string());
+    let mut hoisted = String::new();
+    // A field / argument value as it is written into the synthesised entry: a
+    // plain name verbatim, a one-line expression parenthesised, a multi-line one
+    // hoisted into its own layout-preserving top-level binding.
+    let mut place = |slot: &str, t: &project::app_entry::ArgText| -> String {
+        if t.is_multiline() {
+            let name = format!("spaHoist_{slot}_");
+            hoisted.push_str(&t.render_binding(&name));
+            hoisted.push_str("\n\n");
+            name
+        } else if t.is_name() || t.is_parenthesised() {
+            t.text.trim().to_string()
+        } else {
+            format!("({})", t.text.trim())
         }
-    }
-    None
-}
-
-/// Extract the `App.app` config fields + `withRoutes`/`withNotFound` args from a
-/// fmt'd Std.App source. `None` if the app is not in the standard (fmt) form —
-/// the caller then tells the user to run `sky fmt` or use a `Std.Spa` entry.
-fn extract_app_fields(src: &str) -> Option<AppFields> {
-    let (mut init, mut update, mut view, mut subscriptions) = (None, None, None, None);
+    };
+    let mut field = |name: &str| -> Result<String, String> {
+        let t = value
+            .fields
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, t)| t.clone())
+            .ok_or_else(|| format!("the `{q}.{}` record has no `{name}` field", value.builder))?;
+        Ok(place(name, &t))
+    };
+    let init = field("init")?;
+    let update = field("update")?;
+    let view = field("view")?;
+    let subscriptions = field("subscriptions")?;
     let (mut routes, mut not_found, mut head) = (None, None, None);
     let (mut on_navigate, mut on_request, mut guard) = (None, None, None);
     let mut rpc_error = None;
     let mut dropped_builders: Vec<String> = Vec::new();
-    let lines: Vec<&str> = src.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let t = lines[i].trim();
-        if let Some(v) = match_record_field(t, "init") {
-            init = Some(v);
-        } else if let Some(v) = match_record_field(t, "update") {
-            update = Some(v);
-        } else if let Some(v) = match_record_field(t, "view") {
-            view = Some(v);
-        } else if let Some(v) = match_record_field(t, "subscriptions") {
-            subscriptions = Some(v);
-        } else if let Some(rest) = strip_app_builder(t, "withRoutes") {
-            // The `withRoutes` argument may span multiple lines (a `sky fmt`-wrapped
-            // list literal, or `(Routes.routes ++ apiRoutes)` broken across lines),
-            // so gather continuation lines by bracket-balancing rather than taking
-            // only the first physical line. GAP-1 then partitions the flattened
-            // argument into client page routes + backend api routes.
-            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
-            routes = Some(arg);
-            i += consumed;
-            continue;
-        } else if let Some(v) = t.strip_prefix("|> App.withNotFound ") {
-            not_found = Some(v.trim().to_string());
-        } else if let Some(rest) = strip_app_builder(t, "withHead") {
-            // CARRY `withHead` into the derived Spa entry (SSR per-route `<head>`,
-            // design §4.3 / §7-P0). Unlike the other builders this argument may
-            // span multiple lines — a `sky fmt`-wrapped `\m -> [ … ]` head list —
-            // and `extract_app_fields` is otherwise line-based, so gather
-            // continuation lines by bracket-balancing rather than truncating to
-            // the first physical line (§7-P0(c)). Because it is captured here it
-            // is NOT added to `dropped_builders` — the drop-warning must not name
-            // a builder that is now honoured (§7-P0(b)).
-            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
-            head = Some(arg);
-            i += consumed;
-            continue;
-        } else if let Some(rest) = strip_app_builder(t, "withOnNavigate") {
-            // CARRY `withOnNavigate` (fix 5): the Spa runtime already runs the
-            // `page -> msg` hook on the client (`Spa_withOnNavigate`), and the SSR
-            // settle (fix 2) fires it per resolved route. Its argument may span
-            // lines (a `sky fmt`-wrapped `\page -> case page of …`), so gather by
-            // bracket-balance like `withHead`. Captured here → NOT dropped.
-            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
-            on_navigate = Some(arg);
-            i += consumed;
-            continue;
-        } else if let Some(rest) = strip_app_builder(t, "withRequest") {
-            // CARRY `withRequest` (fix 5 / fix 2): the request seed hook
-            // (`Request -> model -> ( model, Cmd msg )`). The SSR backend applies
-            // it to seed `init`'s model from the real request. Argument may span
-            // lines (a multi-line `\req model -> …`). Captured here → NOT dropped.
-            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
-            on_request = Some(arg);
-            i += consumed;
-            continue;
-        } else if let Some(rest) = strip_app_builder(t, "withGuard") {
-            // CARRY `withGuard` (fix 5): the per-Msg authorisation guard
-            // (`msg -> model -> Result Error ()`). The generated backend enforces
-            // it on every `/_rpc/<Msg>` handler AND on SSR route resolution before
-            // any effect runs — the client is untrusted, so the TRUSTED check is
-            // server-side. Argument may span lines. Captured here → NOT dropped.
-            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
-            guard = Some(arg);
-            i += consumed;
-            continue;
-        } else if let Some(rest) = strip_app_builder(t, "withRpcError") {
-            // CARRY `withRpcError` (item 4): the failed-RPC handler
-            // (`Error -> msg`). The generated frontend `Applied<Msg> (Err e)` arm
-            // dispatches it into `update` so the app's own view can show the
-            // error, instead of silently keeping the model. Argument may span
-            // lines. Captured here → NOT dropped.
-            let (arg, consumed) = gather_builder_arg(&lines, i, rest);
-            rpc_error = Some(arg);
-            i += consumed;
-            continue;
-        } else if let Some(rest) = t.strip_prefix("|> App.with") {
-            // Any OTHER `|> App.withX …` builder step: the synthesis does not
-            // carry it into the derived Spa entry. Record the step name so the
-            // drop is reported, never silent (BUG-2). The name is the leading
-            // identifier of `rest` (`Config arg…` → `withConfig`).
-            let name: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            if !name.is_empty() {
-                dropped_builders.push(format!("with{name}"));
+    for step in &value.steps {
+        let name = step.name.as_str();
+        if SPA_IGNORED_BUILDERS.contains(&name) {
+            if !dropped_builders.iter().any(|d| d == name) {
+                dropped_builders.push(name.to_string());
             }
+            continue;
         }
-        i += 1;
+        if !carried(name) {
+            return Err(format!(
+                "`{q}.{name}` is not a builder the client build knows how to carry. It is \
+                 not dropped silently: remove it, or build this app for a Sky.Live target"
+            ));
+        }
+        if step.args.len() != 1 {
+            return Err(format!(
+                "`{q}.{name}` is applied to {} argument(s) before the app; it takes one",
+                step.arity
+            ));
+        }
+        let arg = &step.args[0];
+        // Last application wins, as at run time (each builder overwrites its slot).
+        match name {
+            // The route list is partitioned textually into client page routes and
+            // backend api routes (layout-free), so it is carried on one line.
+            "withRoutes" => routes = Some(arg.flat()),
+            "withNotFound" => not_found = Some(place("notFound", arg)),
+            "withHead" => head = Some(place("head", arg)),
+            "withOnNavigate" => on_navigate = Some(place("onNavigate", arg)),
+            "withRequest" => on_request = Some(place("onRequest", arg)),
+            "withGuard" => guard = Some(place("guard", arg)),
+            "withRpcError" => rpc_error = Some(place("rpcError", arg)),
+            _ => unreachable!("carried builder list and match disagree: {name}"),
+        }
     }
-    Some(AppFields {
-        init: init?,
-        update: update?,
-        view: view?,
-        subscriptions: subscriptions?,
+    Ok(AppFields {
+        init,
+        update,
+        view,
+        subscriptions,
         routes,
         not_found,
         head,
@@ -1504,124 +1436,11 @@ fn extract_app_fields(src: &str) -> Option<AppFields> {
         guard,
         rpc_error,
         dropped_builders,
+        hoisted,
+        is_web: value.builder == "web",
+        value_bindings: value.value_bindings,
+        import: value.import,
     })
-}
-
-/// Strip `|> App.<builder>` from a trimmed line, returning the argument text on
-/// that line (may be empty when `sky fmt` wrapped the argument to the next
-/// line). Matches only at a word boundary — `withHead` does NOT match a
-/// hypothetical `withHeadless` — so the builder name is not a loose prefix.
-fn strip_app_builder<'a>(trimmed: &'a str, builder: &str) -> Option<&'a str> {
-    let pfx = format!("|> App.{builder}");
-    let rest = trimmed.strip_prefix(&pfx)?;
-    match rest.chars().next() {
-        None => Some(rest),                                     // `|> App.withHead`
-        Some(c) if c.is_whitespace() || c == '(' => Some(rest), // ` fn` / `(…`
-        _ => None,                                              // withHeadless, …
-    }
-}
-
-/// Net bracket depth contributed by `s` — `([{` as +1, `)]}` as −1 — ignoring
-/// bracket characters inside `"…"` string literals and after a `--` line
-/// comment. Used to gather a possibly-multi-line builder argument without a
-/// full parser.
-fn bracket_delta(s: &str) -> i32 {
-    let mut depth = 0i32;
-    let mut in_str = false;
-    let mut escaped = false;
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if c == b'\\' {
-                escaped = true;
-            } else if c == b'"' {
-                in_str = false;
-            }
-        } else if c == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-            break; // `--` line comment: ignore the remainder
-        } else {
-            match c {
-                b'"' => in_str = true,
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    depth
-}
-
-/// Return `s` truncated at its first top-level `--` line comment (a `--` that is
-/// NOT inside a `"…"` string literal), with trailing space removed. Same
-/// string-literal-aware scan as [`bracket_delta`]. Used when flattening a
-/// multi-line builder argument: a `--` comment on a continuation line must be
-/// dropped, not folded onto the joined line, where it would comment out the code
-/// that follows it on that line (the `spaOnNavigate_`/`spaHead_` corruption).
-fn strip_line_comment(s: &str) -> &str {
-    let bytes = s.as_bytes();
-    let mut in_str = false;
-    let mut escaped = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if c == b'\\' {
-                escaped = true;
-            } else if c == b'"' {
-                in_str = false;
-            }
-        } else if c == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-            return s[..i].trim_end();
-        } else if c == b'"' {
-            in_str = true;
-        }
-        i += 1;
-    }
-    s
-}
-
-/// Gather a possibly-multi-line builder argument that starts at line `i`.
-/// `first_rest` is the argument text already on line `i` after the builder name
-/// (may be empty). Continuation lines are consumed while the running bracket
-/// depth is unbalanced (or no argument text has been seen yet), stopping at the
-/// next top-level (column-0) declaration. Each line's trailing `--` comment is
-/// stripped BEFORE the lines are joined, so a comment cannot eat the code folded
-/// after it. Returns the flattened single-line argument and the number of source
-/// lines it spanned (≥ 1, including line `i`).
-fn gather_builder_arg(lines: &[&str], i: usize, first_rest: &str) -> (String, usize) {
-    let mut parts: Vec<String> = Vec::new();
-    let mut depth = 0i32;
-    let f = strip_line_comment(first_rest.trim()).trim();
-    if !f.is_empty() {
-        parts.push(f.to_string());
-        depth += bracket_delta(f);
-    }
-    let mut consumed = 1usize;
-    let mut j = i + 1;
-    while (parts.is_empty() || depth > 0) && j < lines.len() {
-        let raw = lines[j];
-        // A column-0 non-blank line is the next top-level decl — a hard stop.
-        if !raw.is_empty() && !raw.starts_with(char::is_whitespace) {
-            break;
-        }
-        // Strip the line comment BEFORE pushing — else `join(" ")` folds it onto
-        // the flattened line and it comments out everything after it.
-        let tl = strip_line_comment(raw.trim()).trim();
-        if !tl.is_empty() {
-            parts.push(tl.to_string());
-            depth += bracket_delta(tl);
-        }
-        consumed += 1;
-        j += 1;
-    }
-    (parts.join(" "), consumed)
 }
 
 /// Split `s` into top-level parts on the two-character separator `sep` (`"++"`),
@@ -1752,6 +1571,12 @@ fn route_element_head(elem: &str) -> &str {
         .trim_end_matches('(')
 }
 
+/// True when a route element's head is `Std.App`'s `api` under the entry's
+/// qualifier `q` (`App.api`, or `A.api` under `import Std.App as A`).
+fn is_api_route_head(head: &str, q: &str) -> bool {
+    head == format!("{q}.api") || head == "App.api" || head == "Std.App.api"
+}
+
 /// Names of ENTRY top-level bindings whose value is a list literal of ONLY
 /// `App.api …` elements — the "api route table" bindings (`apiRoutes = [ App.api
 /// … ]`, the sky-lang.org shape). Used by [`partition_routes`] to route such a
@@ -1759,7 +1584,7 @@ fn route_element_head(elem: &str) -> &str {
 /// than the client route table. A binding that mixes `App.api` with page routes
 /// is NOT classified here (it is left on the client side, where the page routes
 /// belong; splitting a mixed binding would need to rewrite its declaration).
-fn api_route_binding_names(src: &str) -> std::collections::HashSet<String> {
+fn api_route_binding_names(src: &str, q: &str) -> std::collections::HashSet<String> {
     let lines: Vec<&str> = src.lines().collect();
     let mut out = std::collections::HashSet::new();
     let mut i = 0usize;
@@ -1793,7 +1618,11 @@ fn api_route_binding_names(src: &str) -> std::collections::HashSet<String> {
                 j += 1;
             }
             if let Some(elems) = split_list_elements(body.trim()) {
-                if !elems.is_empty() && elems.iter().all(|e| route_element_head(e) == "App.api") {
+                if !elems.is_empty()
+                    && elems
+                        .iter()
+                        .all(|e| is_api_route_head(route_element_head(e), q))
+                {
                     out.insert(name);
                 }
             }
@@ -1830,8 +1659,8 @@ fn strip_line_comment_run(s: &str) -> String {
 /// stays on the client side. Returns `(client_expr, Some(api_expr))`, or
 /// `(routes_arg, None)` when no api routes are found (no behaviour change for the
 /// common page-only app).
-fn partition_routes(routes_arg: &str, src: &str) -> (String, Option<String>) {
-    let api_bindings = api_route_binding_names(src);
+fn partition_routes(routes_arg: &str, src: &str, q: &str) -> (String, Option<String>) {
+    let api_bindings = api_route_binding_names(src, q);
     let stripped = strip_outer_parens(routes_arg);
     // Normalise a cons chain into `++` of singletons so `withRoutes` written
     // `App.route "/" Home :: apiRoutes` (idiomatic prepend) partitions the same as
@@ -1848,7 +1677,7 @@ fn partition_routes(routes_arg: &str, src: &str) -> (String, Option<String>) {
             let mut page_elems: Vec<String> = Vec::new();
             let mut api_elems: Vec<String> = Vec::new();
             for e in elems {
-                if route_element_head(&e) == "App.api" {
+                if is_api_route_head(route_element_head(&e), q) {
                     api_elems.push(e);
                 } else {
                     page_elems.push(e);
@@ -1917,33 +1746,6 @@ fn remove_top_level_binding(src: &str, name: &str) -> String {
         out.push('\n');
     }
     out
-}
-
-/// The name bound to the `App.app …` value: the argument of `App.run <name>`,
-/// else the top-level binding whose body starts with `App.app`.
-fn app_binding_name(src: &str) -> Option<String> {
-    for line in src.lines() {
-        if let Some(rest) = line.trim().strip_prefix("App.run ") {
-            let n = rest.trim().trim_end_matches(')').trim();
-            if !n.is_empty() {
-                return Some(n.to_string());
-            }
-        }
-    }
-    // no-`main` form: find `<name> =` whose next non-blank line is `App.app`.
-    let lines: Vec<&str> = src.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
-        if let Some(name) = line.strip_suffix(" =") {
-            if !name.is_empty() && !name.starts_with(char::is_whitespace) {
-                if let Some(next) = lines.get(i + 1) {
-                    if next.trim().starts_with("App.app") {
-                        return Some(name.to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
 }
 
 /// Number of leading space characters on `line`.
@@ -2187,9 +1989,8 @@ fn debare_sibling_config_ref(out: &mut String, value: &str) -> String {
     }
 }
 
-fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
+fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     let fields = extract_app_fields(src)?;
-    let app_name = app_binding_name(src)?;
     // BUG-2: never drop a `App.with…` builder step silently. The synthesis
     // carries only `withRoutes` + `withNotFound` into the client entry; warn,
     // by name, about every other step so a user's `withHead` (SEO) /
@@ -2203,15 +2004,39 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
              into the synthesised client entry: {list}.\n  \
              `withRoutes` + `withNotFound` + `withHead` + `withOnNavigate` + `withRequest` + \
              `withGuard` + `withRpcError` cross the App→Spa synthesis (guard/request enforced \
-             server-side). Other \
-             steps (`withConfig`, `withOnKey`) do not apply to the wasm client; any other \
-             client-relevant step must be re-expressed in a `Std.Spa` entry.",
+             server-side). The steps listed here (terminal / desktop input and window \
+             knobs, per-target config, base config, durable-model hooks) do not apply to a \
+             Sky.Spa client build; any other `App.with…` step fails the build.",
             n = fields.dropped_builders.len(),
             list = fields.dropped_builders.join(", "),
         );
     }
-    let mut out = remove_top_level_binding(src, &app_name);
+    let mut out = src.to_string();
+    for b in &fields.value_bindings {
+        out = remove_top_level_binding(&out, b);
+    }
     out = remove_top_level_binding(&out, "main");
+    // The generated code (`App.spaRoute`, the backend's `App.apiServerRoute`)
+    // references `Std.App` as `App`. When the entry imports it under another
+    // alias (`import Std.App as A`), add a second `as App` import — a module may
+    // be imported twice. If `App` already names a DIFFERENT module, fail rather
+    // than let generated code resolve to it.
+    if fields.import.qualifier.as_deref() != Some("App") {
+        let other_app = out.lines().any(|l| {
+            let w: Vec<&str> = l.split_whitespace().collect();
+            w.first() == Some(&"import")
+                && w.get(1) != Some(&"Std.App")
+                && w.iter().position(|x| *x == "as").and_then(|i| w.get(i + 1)) == Some(&"App")
+        });
+        if other_app {
+            return Err(
+                "the entry imports another module `as App`, and the client build needs \
+                 `App` to name `Std.App`; rename that alias"
+                    .to_string(),
+            );
+        }
+        out = ensure_import(&out, "import Std.App as App");
+    }
     // Ensure the imports the synthesised main needs.
     if !out.contains("import Std.Spa") {
         out = ensure_import(&out, "import Std.Spa as Spa");
@@ -2307,7 +2132,8 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
             // this, the client `spaRoutes_` referenced the whole arg — including a
             // server-tainted api binding the split drops — so the client entry
             // failed to compile (`E1001`).
-            let (client_expr, api_expr) = partition_routes(r, src);
+            let (client_expr, api_expr) =
+                partition_routes(r, src, &fields.import.qualifier_or_default());
             let mut binding =
                 format!("spaRoutes_ =\n    List.concatMap App.spaRoute ({client_expr})\n\n\n");
             if let Some(api) = api_expr {
@@ -2367,8 +2193,15 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
     // client `Spa.config` (Std.Spa has no client `withRequest` — the wasm client
     // hydrates from the SSR-embedded `#sky-model`, so it never re-runs the request
     // logic). Emitted whenever the app declares it so the backend can reference it.
+    //
+    // The hook takes two arguments and is always applied to both, so the
+    // binding is ETA-EXPANDED (`spaOnRequest_ req_ model_ = f req_ model_`)
+    // rather than written as a zero-parameter alias of the function value. A
+    // zero-parameter alias of a function-valued binding, applied to two
+    // arguments, lowers to curried Go calls against an uncurried func and fails
+    // `go build`; the eta form is a plain two-parameter function.
     let on_request_binding = match &fields.on_request {
-        Some(f) => format!("spaOnRequest_ =\n    ({f})\n\n\n"),
+        Some(f) => format!("spaOnRequest_ req_ model_ =\n    {f} req_ model_\n\n\n"),
         None => String::new(),
     };
     // Carry `App.withGuard` (fix 5). A NAMED top-level `spaGuard_` binding the
@@ -2376,8 +2209,9 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
     // resolution BEFORE any effect runs. The client is untrusted (the user
     // controls the wasm), so this is the TRUSTED authorisation point — enforced
     // server-side, never client-only.
+    // Eta-expanded for the same reason as `spaOnRequest_` (two arguments).
     let guard_binding = match &fields.guard {
-        Some(g) => format!("spaGuard_ =\n    ({g})\n\n\n"),
+        Some(g) => format!("spaGuard_ msg_ model_ =\n    {g} msg_ model_\n\n\n"),
         None => String::new(),
     };
     // Carry `App.withRpcError` (item 4). A NAMED top-level `spaRpcError_` binding
@@ -2394,7 +2228,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
     // needs `model -> Html`, so lay out the Element view but PASS THROUGH the
     // Html view — wrapping an already-Html view in `Ui.layout []` double-lays-out
     // and, for a `Ui.Html`-annotated view, fails to type-check.
-    let spa_view_body = if uses_app_web_builder(src) {
+    let spa_view_body = if fields.is_web {
         format!("{view} model_", view = fields.view)
     } else {
         format!("Ui.layout [] ({view} model_)", view = fields.view)
@@ -2410,6 +2244,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
     out.push_str(&format!(
         "\n\n-- GENERATED by `sky build --target <spa>`: a Sky.Spa entry synthesised\n\
          -- from the Std.App value, fed to the existing auto-split.\n\
+         {hoisted}\
          {boot_setup_binding}\
          {routes_binding}\
          {not_found_binding}\
@@ -2430,6 +2265,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
          , subscriptions = {subscriptions}\n            \
          }}{routes_line}{not_found_line}{head_line}{on_navigate_line}\n        \
          )\n",
+        hoisted = fields.hoisted,
         boot_setup_binding = boot_setup_binding,
         routes_binding = routes_binding,
         not_found_binding = not_found_binding,
@@ -2445,7 +2281,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
         head_line = head_line,
         on_navigate_line = on_navigate_line,
     ));
-    Some(out)
+    Ok(out)
 }
 
 /// Insert `import_line` after the last existing `import …` line.
@@ -2510,12 +2346,10 @@ fn build_std_app(
     if kind == StdAppBuild::Spa {
         let entry_src = std::fs::read_to_string(entry_file).unwrap_or_default();
         let synthesized = match synthesize_spa_source(&entry_src, false) {
-            Some(s) => s,
-            None => {
+            Ok(s) => s,
+            Err(e) => {
                 eprintln!(
-                    "sky build --target {}: could not auto-derive a client build from your `App.app`.\n  \
-                     Run `sky fmt` (the derivation reads the standard `App.app {{ init = …, update = …,\n  \
-                     view = …, subscriptions = … }}` form), or use a `Std.Spa` entry directly.",
+                    "sky build --target {}: cannot derive the client build from your `App` value:\n  {e}",
                     tgt.canonical()
                 );
                 return ExitCode::FAILURE;
@@ -3149,7 +2983,7 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     let entry_src = std::fs::read_to_string(file).unwrap_or_default();
     let (fuzz_repo, fuzz_project, fuzz_entry): (PathBuf, PathBuf, Option<String>) =
         match synthesize_spa_source(&entry_src, false) {
-            Some(synth) => {
+            Ok(synth) => {
                 let staging = project_dir.join(".skyapp").join("difffuzz-synth");
                 let src_to = match stage_std_app_derived(&project_dir, &staging) {
                     Ok(p) => p,
@@ -3163,7 +2997,11 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
                 }
                 (repo_root.clone(), staging, entry_module_name(&synth_entry))
             }
-            None => (
+            Err(e) if is_std_app_dispatched_entry(file) => {
+                eprintln!("sky fuzz: cannot derive the client build from your `App` value:\n  {e}");
+                return ExitCode::FAILURE;
+            }
+            Err(_) => (
                 repo_root.clone(),
                 project_dir.clone(),
                 entry_module_name(file),
@@ -3396,7 +3234,15 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     // — it has a `main`, so it takes the normal path below and DCE prunes the four
     // unused runners. `check` type-checks the shared source directly (no dispatch).
     if check_only && is_std_app_dispatched_entry(file) {
-        return check_std_app(&project_dir, file, parsed_target);
+        // `sky check` ≡ `sky build`: a bare check verifies the SAME target a bare
+        // build builds — the `[app] target` in sky.toml (resolved above), else
+        // `web`. Checking a different runner (the old any-capability `runTui`)
+        // passed apps a bare build then rejected (e.g. no `withNotFound`).
+        return check_std_app(
+            &project_dir,
+            file,
+            parsed_target.unwrap_or(target::Target::Web),
+        );
     }
     if !check_only && is_std_app_dispatched_entry(file) {
         // `--target` is optional — it defaults to `web` (Sky.Live), the primary
@@ -10655,7 +10501,7 @@ mod tests {
     #[test]
     fn partition_routes_handles_cons_of_page_route_and_api_binding() {
         let src = "apiRoutes =\n    [ App.api \"/health\" h ]\n";
-        let (client, api) = partition_routes("(App.route \"/\" Home :: apiRoutes)", src);
+        let (client, api) = partition_routes("(App.route \"/\" Home :: apiRoutes)", src, "App");
         assert!(
             client.contains("App.route \"/\" Home"),
             "the page route stays client-side: {client}"
@@ -10757,36 +10603,38 @@ mod tests {
     // after it. Before the fix, `gather_builder_arg` pushed each line verbatim
     // and joined with a space, so the comment ate `PageLink` + the closing paren
     // (the `spaOnNavigate_` corruption). RED before the fix.
+    // A multi-line `withOnNavigate` lambda carrying `--` comments on its own
+    // lines (the corruption the old line-folding reader had to strip): the
+    // structural reader hoists it verbatim, so no comment can swallow code.
     #[test]
-    fn gather_builder_arg_strips_line_comments_before_folding() {
-        // strip_line_comment: truncates at a top-level `--`, keeps a `--` in a string.
-        assert_eq!(strip_line_comment("PageLink -- pick target"), "PageLink");
-        assert_eq!(strip_line_comment("x = \"a--b\" -- note"), "x = \"a--b\"");
-        assert_eq!(strip_line_comment("no comment here"), "no comment here");
+    fn std_app_multiline_builder_arg_with_comments_is_hoisted_intact() {
+        let src = sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withOnNavigate\n               (\\_ ->\n                   -- clear the toast banner on every navigation\n                   PageLink)\n        |> App.withHead View.head\n\n\n\
+             main =\n    App.run appDef\n",
+        );
+        let out = synth_ok(&src);
+        assert!(
+            out.contains("spaOnNavigate_ =\n    (spaHoist_onNavigate_)"),
+            "{out}"
+        );
+        assert!(out.contains("    PageLink)"), "{out}");
+        assert!(
+            out.contains("spaHead_ model_ =\n    (View.head) model_"),
+            "{out}"
+        );
+    }
 
-        // A withOnNavigate lambda spanning lines, each carrying a `--` comment.
-        let lines = vec![
-            "        |> App.withOnNavigate",
-            "               (\\_ ->",
-            "                   -- clear the toast banner on every navigation",
-            "                   -- (mount, sky-nav, popstate)",
-            "                   PageLink)",
-            "        |> App.withHead View.head",
-        ];
-        // first_rest is empty (the builder name is line-final on line 0).
-        let (arg, consumed) = gather_builder_arg(&lines, 0, "");
-        // The folded arg must contain the real body and NO `--` that precedes
-        // live code, so `PageLink` and the closing paren survive.
-        assert!(
-            arg.contains("PageLink)"),
-            "body must survive the fold: {arg}"
+    // A `App.app` app that configures its web target through
+    // `App.withConfig (App.WebConfig { App.webDefaults | … })` is an Element-view
+    // app: its view is laid out with `Ui.layout`, not passed through as Html.
+    #[test]
+    fn std_app_webdefaults_config_does_not_make_an_app_a_web_builder() {
+        let src = sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withConfig (App.WebConfig { App.webDefaults | port = 9000 })\n\n\n\
+             main =\n    App.run appDef\n",
         );
-        assert!(
-            !arg.contains("--"),
-            "no comment may reach the folded arg: {arg}"
-        );
-        assert_eq!(arg, "(\\_ -> PageLink)");
-        assert_eq!(consumed, 5, "spans line 0 through the `PageLink)` line");
+        let out = synth_ok(&src);
+        assert!(out.contains("Ui.layout [] (view model_)"), "{out}");
     }
 
     #[test]
@@ -10820,6 +10668,176 @@ mod tests {
         assert_eq!(
             rewrite_app_run("main = App.runTui appDef\n", "runLive"),
             "main = App.runTui appDef\n"
+        );
+    }
+
+    // ---- Std.App entry extraction (SA-1 / SA-2 / SA-3 / SA-12) -------------
+
+    const SA_HEAD: &str = "module Main exposing (main)\n\n\
+        import Sky.Core.Prelude exposing (..)\n\
+        import Std.App as App\n\
+        import Std.Cmd as Cmd\n\
+        import Std.Sub as Sub\n\
+        import Std.Ui as Ui exposing (Element)\n\n\n";
+
+    fn sa_src(body: &str) -> String {
+        format!("{SA_HEAD}{body}")
+    }
+
+    fn synth_ok(src: &str) -> String {
+        match synthesize_spa_source(src, true) {
+            Ok(s) => s,
+            Err(e) => panic!("synthesis failed: {e}\n--- source ---\n{src}"),
+        }
+    }
+
+    // SA-1 (security): a guard attached through a LOCAL HELPER (`|> secured`,
+    // `secured a = a |> App.withGuard guard`) must reach `spaGuard_`. The old
+    // line-based reader only saw `|> App.withGuard` written inline in the chain,
+    // so the helper's guard was silently dropped and `/_rpc/<Msg>` ran unguarded.
+    #[test]
+    fn std_app_guard_attached_via_local_helper_is_carried() {
+        let src = sa_src(
+            "appDef =\n    App.app\n        { init = init\n        , update = update\n        , view = view\n        , subscriptions = \\_ -> Sub.none\n        }\n        |> App.withNotFound ()\n        |> secured\n\n\n\
+             secured a =\n    a |> App.withGuard guard\n\n\n\
+             main =\n    App.run appDef\n",
+        );
+        let out = synth_ok(&src);
+        assert!(
+            out.contains("spaGuard_ msg_ model_ =\n    guard msg_ model_"),
+            "the helper's guard must be carried into spaGuard_:\n{out}"
+        );
+    }
+
+    // SA-1: the direct-application spelling of a builder (`App.withGuard g app`)
+    // and a helper taking the guard as a parameter are followed too.
+    #[test]
+    fn std_app_guard_via_direct_application_and_param_helper_is_carried() {
+        let src = sa_src(
+            "appDef =\n    guarded guard (App.app { init = init, update = update, view = view, subscriptions = subs })\n\n\n\
+             guarded g a =\n    App.withGuard g a\n\n\n\
+             main =\n    App.run appDef\n",
+        );
+        let out = synth_ok(&src);
+        assert!(
+            out.contains("spaGuard_ msg_ model_ =\n    guard msg_ model_"),
+            "a param-helper guard must be carried as the caller's argument:\n{out}"
+        );
+    }
+
+    // SA-1 fail-closed: an `App.with…` builder the extractor does not know, or an
+    // opaque function applied to the App value, must FAIL — never be dropped.
+    #[test]
+    fn std_app_unknown_builder_or_opaque_step_fails_closed() {
+        let unknown = sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withSomethingNew x\n\n\n\
+             main =\n    App.run appDef\n",
+        );
+        let e = synthesize_spa_source(&unknown, true).expect_err("unknown builder must fail");
+        assert!(e.contains("withSomethingNew"), "error must name it: {e}");
+        let opaque = sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> Security.harden\n\n\n\
+             main =\n    App.run appDef\n",
+        );
+        let e = synthesize_spa_source(&opaque, true).expect_err("opaque step must fail");
+        assert!(e.contains("Security.harden"), "error must name it: {e}");
+    }
+
+    // SA-2: a second `App.app` (a debug variant) must not replace the fields of
+    // the app actually passed to `App.run`.
+    #[test]
+    fn std_app_second_app_value_does_not_replace_fields() {
+        let src = sa_src(
+            "appDef =\n    App.app\n        { init = init\n        , update = update\n        , view = view\n        , subscriptions = subs\n        }\n        |> App.withNotFound ()\n\n\n\
+             main =\n    App.run appDef\n\n\n\
+             debugApp =\n    App.app\n        { init = debugInit\n        , update = debugUpdate\n        , view = debugView\n        , subscriptions = subs\n        }\n        |> App.withNotFound ()\n",
+        );
+        let out = synth_ok(&src);
+        let config = &out[out.find("(Spa.config").expect("a Spa.config")..];
+        assert!(
+            config.contains("update = update") && !config.contains("debugUpdate"),
+            "fields must come from the app passed to App.run:\n{out}"
+        );
+        assert!(
+            out.contains("Ui.layout [] (view model_)"),
+            "view must be the run app's view:\n{out}"
+        );
+    }
+
+    // SA-3: `import Std.App as A` + `A.run`, and `exposing (run)` + bare `run`,
+    // are the dispatcher just like `App.run`.
+    #[test]
+    fn std_app_aliased_and_exposed_run_is_detected_and_rewritten() {
+        let aliased =
+            "module Main exposing (main)\n\nimport Std.App as A\n\n\nmain =\n    A.run appDef\n";
+        assert!(uses_app_run(aliased), "A.run must be the dispatcher");
+        assert_eq!(
+            rewrite_app_run(aliased, "runLive"),
+            "module Main exposing (main)\n\nimport Std.App as A\n\n\nmain =\n    A.runLive appDef\n"
+        );
+        assert!(!uses_app_run(
+            "module Main exposing (main)\n\nimport Std.App as A\n\n\nmain =\n    A.runTui appDef\n"
+        ));
+        let exposed = "module Main exposing (main)\n\nimport Std.App as App exposing (run)\n\n\nmain =\n    run appDef\n";
+        assert!(
+            uses_app_run(exposed),
+            "bare exposed `run` must be the dispatcher"
+        );
+        assert!(
+            rewrite_app_run(exposed, "runLive").contains("App.runLive appDef"),
+            "{}",
+            rewrite_app_run(exposed, "runLive")
+        );
+        // The synthesis reads an aliased app too.
+        let src = "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Std.App as A\nimport Std.Sub as Sub\n\n\n\
+            appDef =\n    A.app { init = init, update = update, view = view, subscriptions = subs }\n        |> A.withNotFound ()\n        |> A.withGuard guard\n\n\n\
+            main =\n    A.run appDef\n";
+        let out = synth_ok(src);
+        assert!(
+            out.contains("spaGuard_ msg_ model_ ="),
+            "aliased guard carried:\n{out}"
+        );
+        assert!(
+            out.contains("spaNotFound_ ="),
+            "aliased notFound carried:\n{out}"
+        );
+    }
+
+    // SA-12: the inline form `main = App.run (App.app {...} |> ...)` is read.
+    #[test]
+    fn std_app_inline_run_argument_is_read() {
+        let src = sa_src(
+            "main =\n    App.run\n        (App.app\n            { init = init\n            , update = update\n            , view = view\n            , subscriptions = \\_ -> Sub.none\n            }\n            |> App.withNotFound ()\n            |> App.withGuard guard\n        )\n",
+        );
+        let out = synth_ok(&src);
+        assert!(
+            out.contains("spaGuard_ msg_ model_ ="),
+            "inline guard carried:\n{out}"
+        );
+        assert!(
+            out.contains("update = update"),
+            "inline fields read:\n{out}"
+        );
+        assert!(out.contains("Spa.app"), "a Spa main is generated:\n{out}");
+    }
+
+    // A multi-line builder argument (a `case` guard lambda) keeps its layout: it
+    // is hoisted into a top-level binding rather than flattened onto one line.
+    #[test]
+    fn std_app_multiline_guard_lambda_keeps_its_layout() {
+        let src = sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withGuard\n            (\\msg _ ->\n                case msg of\n                    Admin ->\n                        Err (Error.invalidInput \"no\")\n\n                    _ ->\n                        Ok ()\n            )\n\n\n\
+             main =\n    App.run appDef\n",
+        );
+        let out = synth_ok(&src);
+        assert!(
+            out.contains("spaGuard_ msg_ model_ =\n    spaHoist_guard_ msg_ model_"),
+            "{out}"
+        );
+        assert!(
+            out.contains("\n                    Admin ->")
+                || out.contains("\n            Admin ->"),
+            "the case arms must stay on their own lines:\n{out}"
         );
     }
 
