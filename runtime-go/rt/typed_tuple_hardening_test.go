@@ -146,6 +146,48 @@ func TestUnpackPairTypedTuple(t *testing.T) {
 	}
 }
 
+// Regression (found 2026-09-23 in FacePlan): a tuple of arity 4..9 built
+// inside a lambda passed to a type-erased HOF (`Maybe.map (\r -> (a,b,c,d)) …`)
+// lowers to `rt.T4[any,any,any,any]{…}`, then the caller narrows it with
+// `MaybeCoerce[rt.T4[int,string,int,int]]` → `coerceInner`. The tuple-structural
+// narrowing branch used to cover ONLY T2/T3, so T4..T9 fell through to the
+// strict assertion and panicked with `CoerceFailure — rt.T4[any,any,any,any]
+// cannot be cast to rt.T4[int,string,int,int]` (distinct Go generic
+// instantiations). `sky check` accepted it; only building+running caught it.
+func TestCoerceTypedTupleT4ThroughT9(t *testing.T) {
+	// T4 through the top-level Coerce (the rt.Coerce site).
+	var src4 any = T4[any, any, any, any]{V0: 21, V1: "weeks", V2: 9000, V3: 32000}
+	g4 := Coerce[T4[int, string, int, int]](src4)
+	if g4.V0 != 21 || g4.V1 != "weeks" || g4.V2 != 9000 || g4.V3 != 32000 {
+		t.Fatalf("Coerce T4[any×4]->T4[int,string,int,int]: got %#v", g4)
+	}
+
+	// T4 through MaybeCoerce → coerceInner, exactly as codegen emits it for
+	// `Maybe.map (\r -> (r.days, r.unit, r.price, r.package)) (List.head rows)`.
+	var boxed any = T4[any, any, any, any]{V0: 1, V1: "a", V2: 2, V3: 3}
+	mg := MaybeCoerce[T4[int, string, int, int]](Just[any](boxed))
+	if mg.Tag != 0 { // Tag 0 == Just, Tag 1 == Nothing
+		t.Fatalf("MaybeCoerce T4: expected Just (tag 0), got tag %d", mg.Tag)
+	}
+	if mg.JustValue.V0 != 1 || mg.JustValue.V1 != "a" || mg.JustValue.V2 != 2 || mg.JustValue.V3 != 3 {
+		t.Fatalf("MaybeCoerce T4 value: got %#v", mg.JustValue)
+	}
+
+	// T5 and T9 exercise the general n=2..9 loop at its upper end.
+	var src5 any = T5[any, any, any, any, any]{V0: 1, V1: 2, V2: 3, V3: 4, V4: 5}
+	g5 := Coerce[T5[int, int, int, int, int]](src5)
+	if g5.V0 != 1 || g5.V4 != 5 {
+		t.Fatalf("Coerce T5: got %#v", g5)
+	}
+	var src9 any = T9[any, any, any, any, any, any, any, any, any]{
+		V0: 1, V1: 2, V2: 3, V3: 4, V4: 5, V5: 6, V6: 7, V7: 8, V8: 9,
+	}
+	g9 := Coerce[T9[int, int, int, int, int, int, int, int, int]](src9)
+	if g9.V0 != 1 || g9.V8 != 9 {
+		t.Fatalf("Coerce T9: got %#v", g9)
+	}
+}
+
 func TestDictFromListTASkipsNonTuple(t *testing.T) {
 	list := []any{
 		typedStrIntPair("keep", 5),

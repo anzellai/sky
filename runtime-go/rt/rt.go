@@ -623,31 +623,21 @@ func coerceInner[T any](v any) T {
 		zt := reflect.TypeOf(zero)
 		if zt != nil && zt.Kind() == reflect.Struct {
 			ztStr := zt.String()
-			if strings.HasPrefix(ztStr, "rt.T2[") && rv.NumField() >= 2 && zt.NumField() >= 2 {
-				v0Ty := zt.Field(0).Type
-				v1Ty := zt.Field(1).Type
+			// Narrow every fixed-arity typed tuple `rt.T2`..`rt.T9`: walk V0..Vn
+			// and Coerce each into the target element type. Generalised from
+			// the old T2/T3-only special-cases; a T4..T9 built as `rt.T{n}[any,…]`
+			// in a type-erased HOF slot (a 4-tuple from `\r -> (a,b,c,d)` passed
+			// to Maybe.map) previously fell through to the strict assertion and
+			// panicked, since `rt.T4[any,any,any,any]` and `rt.T4[int,…]` are
+			// distinct Go generic instantiations.
+			if n := zt.NumField(); n >= 2 && n <= 9 &&
+				rv.NumField() >= n &&
+				strings.HasPrefix(ztStr, fmt.Sprintf("rt.T%d[", n)) {
 				out := reflect.New(zt).Elem()
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
-					out.Field(0).Set(narrowed)
-				}
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
-					out.Field(1).Set(narrowed)
-				}
-				return out.Interface().(T)
-			}
-			if strings.HasPrefix(ztStr, "rt.T3[") && rv.NumField() >= 3 && zt.NumField() >= 3 {
-				v0Ty := zt.Field(0).Type
-				v1Ty := zt.Field(1).Type
-				v2Ty := zt.Field(2).Type
-				out := reflect.New(zt).Elem()
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
-					out.Field(0).Set(narrowed)
-				}
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
-					out.Field(1).Set(narrowed)
-				}
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(2).Interface()), v2Ty); narrowed.IsValid() {
-					out.Field(2).Set(narrowed)
+				for i := 0; i < n; i++ {
+					if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(i).Interface()), zt.Field(i).Type); narrowed.IsValid() {
+						out.Field(i).Set(narrowed)
+					}
 				}
 				return out.Interface().(T)
 			}
@@ -6340,31 +6330,18 @@ func Coerce[T any](v any) T {
 		// the slice / map narrowing arms above.
 		if rv.Kind() == reflect.Struct && targetTy.Kind() == reflect.Struct {
 			tStr := targetTy.String()
-			if strings.HasPrefix(tStr, "rt.T2[") && rv.NumField() >= 2 {
-				v0Ty := targetTy.Field(0).Type
-				v1Ty := targetTy.Field(1).Type
+			// Narrow every fixed-arity typed tuple `rt.T2`..`rt.T9` into the
+			// target element types (generalised from the old T2/T3-only arms;
+			// mirrors the coerceInner site). A T4..T9 built as `rt.T{n}[any,…]`
+			// previously fell through and panicked.
+			if n := targetTy.NumField(); n >= 2 && n <= 9 &&
+				rv.NumField() >= n &&
+				strings.HasPrefix(tStr, fmt.Sprintf("rt.T%d[", n)) {
 				out := reflect.New(targetTy).Elem()
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
-					out.Field(0).Set(narrowed)
-				}
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
-					out.Field(1).Set(narrowed)
-				}
-				return out.Interface().(T)
-			}
-			if strings.HasPrefix(tStr, "rt.T3[") && rv.NumField() >= 3 {
-				v0Ty := targetTy.Field(0).Type
-				v1Ty := targetTy.Field(1).Type
-				v2Ty := targetTy.Field(2).Type
-				out := reflect.New(targetTy).Elem()
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(0).Interface()), v0Ty); narrowed.IsValid() {
-					out.Field(0).Set(narrowed)
-				}
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(1).Interface()), v1Ty); narrowed.IsValid() {
-					out.Field(1).Set(narrowed)
-				}
-				if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(2).Interface()), v2Ty); narrowed.IsValid() {
-					out.Field(2).Set(narrowed)
+				for i := 0; i < n; i++ {
+					if narrowed := narrowReflectValue(reflect.ValueOf(rv.Field(i).Interface()), targetTy.Field(i).Type); narrowed.IsValid() {
+						out.Field(i).Set(narrowed)
+					}
 				}
 				return out.Interface().(T)
 			}
