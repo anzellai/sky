@@ -559,6 +559,9 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             // Row-poly result + no concrete annotation → `any` (matches the `any`
             // Go return `lower_def` emits + the reflective `rt.RecordUpdate` body).
             _ if rp_result => Some(Ty::Var(Name::new("any"))),
+            // A row-polymorphic lambda CAF presents its erased function type —
+            // the same one `lower_def` emits (see `caf_lambda_row_poly_ty`).
+            None => caf_lambda_row_poly_ty(&e.body, &e.types).or_else(|| e.types.result.clone()),
             _ => e.types.result.clone(),
         };
         if let Some(t) = t {
@@ -739,6 +742,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             warnings: Vec::new(),
             errors: Vec::new(),
             closure_elem: None,
+            caf_lambda_ty: None,
             ffi: &cfg.ffi,
             ffi_used: BTreeSet::new(),
             kernel_arity: &cfg.kernel_arity,
@@ -2093,6 +2097,11 @@ struct Ctx<'a> {
     /// runtime element (a nominal `_R`, or `any` for an erased list). `None`
     /// outside a combinator-closure arg. See `lower_lambda` + `lower_call`.
     closure_elem: Option<GoTy>,
+    /// The erased Go function type of the CURRENT def when it is a
+    /// row-polymorphic lambda CAF (`caf_lambda_row_poly_ty`). The root lambda is
+    /// lowered against it instead of its own (colliding-nominal) inferred type,
+    /// so its record params take the reflective `any` path. `None` otherwise.
+    caf_lambda_ty: Option<GoTy>,
     /// The `DefId` of the def currently being lowered — identifies self-calls
     /// for the tail-call optimiser.
     cur_def: DefId,
@@ -2317,10 +2326,22 @@ impl<'a> Ctx<'a> {
         // A CONCRETE declared/inferred return type — used both as the body's
         // expected slot and the emitted Go return type. `None` when neither the
         // sig nor per-def inference pinned it to something better than `any`.
+        let caf_lambda_rp = if sig.is_none() {
+            caf_lambda_row_poly_ty(&self.body, &self.types)
+        } else {
+            None
+        };
         let declared_ret: Option<GoTy> = if result_row_poly {
             // Row-polymorphic result: emit `any`, matching the reflective
             // `rt.RecordUpdate`/`rt.Field` body path (see the param loop above).
             Some(GoTy::Any)
+        } else if let Some(t) = &caf_lambda_rp {
+            // A row-polymorphic lambda CAF: its erased function type. The root
+            // lambda is lowered against the SAME type (`caf_lambda_ty`), so the
+            // emitted literal is `func(any, …) any`.
+            let gt = self.goty(t);
+            self.caf_lambda_ty = Some(gt.clone());
+            Some(gt)
         } else {
             match sig_ret {
                 Some(t) if !matches!(t, Ty::Var(_)) => Some(self.goty(&t)),
@@ -3359,7 +3380,16 @@ impl<'a> Ctx<'a> {
             Expr::Update { base, fields } => self.lower_update(*base, fields, actual),
             Expr::Tuple(elems) => self.lower_tuple(elems, actual),
             Expr::List(elems) => self.lower_list(elems, actual),
-            Expr::Lambda { params, body } => self.lower_lambda(params, *body, actual),
+            Expr::Lambda { params, body } => {
+                // A row-polymorphic lambda CAF's root lambda is lowered against its
+                // ERASED function type (see `caf_lambda_row_poly_ty`).
+                if Some(e) == self.body.root {
+                    if let Some(erased) = self.caf_lambda_ty.clone() {
+                        return self.lower_lambda(params, *body, &erased);
+                    }
+                }
+                self.lower_lambda(params, *body, actual)
+            }
             Expr::Case { subject, branches } => self.lower_case(*subject, branches, actual),
             Expr::Accessor(field) => {
                 // `.field` as a function value → func(x any) any { return x.Field }
@@ -7000,7 +7030,17 @@ impl<'a> Ctx<'a> {
             rt
         };
         let b = if eta_extra.is_empty() {
-            self.lower_expr(body, &rt)
+            match (&self.body.exprs[body], &rt) {
+                // A row-polymorphic lambda CAF (`caf_lambda_ty`) returning a tuple
+                // literal: build the tuple against the ERASED element types, so
+                // the reflective record update is not narrowed back to the
+                // nominal its open row collided with.
+                (Expr::Tuple(elems), GoTy::Tuple(_)) if self.caf_lambda_ty.is_some() => {
+                    let elems = elems.clone();
+                    self.lower_tuple(&elems, &rt)
+                }
+                _ => self.lower_expr(body, &rt),
+            }
         } else {
             // The body is a func VALUE of the remaining arrow type `func(eta_extra) rt`.
             // Lower it against that concrete func type (so a bare def reference like
@@ -7876,6 +7916,111 @@ fn record_ext_name(ty: Option<&Ty>) -> Option<&Name> {
         Some(Ty::Record(_, Some(name))) => Some(name),
         _ => None,
     }
+}
+
+/// The open-record extension-var names a RESULT position carries: the record
+/// itself when the result is an open record, or each open record that is a
+/// DIRECT element of a result tuple — the TEA `( { model | f = … }, Cmd.none )`
+/// shape. A row var that flows from a parameter into a tuple-wrapped result is
+/// just as row-polymorphic as one returned bare.
+fn result_ext_names(ty: Option<&Ty>) -> Vec<&Name> {
+    match ty {
+        Some(Ty::Record(_, Some(name))) => vec![name],
+        Some(Ty::Tuple(xs)) => xs.iter().filter_map(|x| record_ext_name(Some(x))).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The erased function type of a zero-param def whose value is a LAMBDA that is
+/// row-polymorphic (`onRequest = \req model -> ( { model | f = … }, Cmd.none )`):
+/// the lambda's own type with every row-poly param — and the result, when it
+/// carries the shared row — replaced by `any`. `None` when the def is not such
+/// a lambda or nothing is row-polymorphic, so every other CAF is unchanged.
+///
+/// Why: a generalised lambda keeps its record param OPEN (`{ ρ | f }`). Without
+/// this, the open row resolved by field NAME to whichever nominal record has
+/// exactly those fields (a one-field `{ f }` response record the split
+/// generates, a user alias), and the Model passed in was coerced DOWN to it —
+/// every other field silently reset to its zero value. The equivalent
+/// top-level `f req model = …` is already erased by `row_poly_flags`; this makes
+/// the eta-expanded lambda form lower the same way, and `lower_local_fn`
+/// (via `local_fn_row_poly`) emits the matching `func(any, any) any` literal.
+fn caf_lambda_row_poly_ty(body: &Body, types: &BodyTypes) -> Option<Ty> {
+    if !body.params.is_empty() {
+        return None;
+    }
+    let root = body.root?;
+    let Expr::Lambda { params, .. } = &body.exprs[root] else {
+        return None;
+    };
+    let fun = types.result.as_ref()?;
+    let mut ps: Vec<Ty> = Vec::new();
+    let mut cur = fun;
+    while let Ty::Fun(a, b) = cur {
+        if ps.len() == params.len() {
+            break;
+        }
+        ps.push((**a).clone());
+        cur = b;
+    }
+    if ps.len() != params.len() {
+        return None;
+    }
+    let ret = cur.clone();
+    use std::collections::HashMap as Hm;
+    let mut counts: Hm<Name, u32> = Hm::new();
+    for t in &ps {
+        if let Some(n) = record_ext_name(Some(t)) {
+            *counts.entry(n.clone()).or_insert(0) += 1;
+        }
+    }
+    for n in result_ext_names(Some(&ret)) {
+        *counts.entry(n.clone()).or_insert(0) += 1;
+    }
+    let shared = |n: &Name| counts.get(n).copied().unwrap_or(0) >= 2;
+    let any = || Ty::Var(Name::new("any"));
+    let mut changed = false;
+    let ps: Vec<Ty> = ps
+        .into_iter()
+        .map(|t| {
+            if record_ext_name(Some(&t)).is_some_and(shared) {
+                changed = true;
+                any()
+            } else {
+                t
+            }
+        })
+        .collect();
+    // The result: an open record carrying the shared row → `any`; a tuple keeps
+    // its shape with each such record ELEMENT erased (`rt.T2[any, Cmd]`), so the
+    // `( { model | … }, cmd )` literal is built without narrowing its record.
+    let ret = match ret {
+        Ty::Tuple(xs) => Ty::Tuple(
+            xs.into_iter()
+                .map(|x| {
+                    if record_ext_name(Some(&x)).is_some_and(shared) {
+                        changed = true;
+                        any()
+                    } else {
+                        x
+                    }
+                })
+                .collect(),
+        ),
+        r if record_ext_name(Some(&r)).is_some_and(shared) => {
+            changed = true;
+            any()
+        }
+        r => r,
+    };
+    if !changed {
+        return None;
+    }
+    Some(
+        ps.into_iter()
+            .rev()
+            .fold(ret, |acc, p| Ty::Fun(Box::new(p), Box::new(acc))),
+    )
 }
 
 /// Row-polymorphism flags for a def: `(per-param, result)`. A position is

@@ -1477,6 +1477,50 @@ pub fn find_config_field_def(
     None
 }
 
+/// What the synthesised `spaGuard_` (the carried `App.withGuard`) reads of its
+/// MODEL argument. The generated backend runs the guard on the model it
+/// rebuilds from the request, so every field the guard reads must ride every
+/// server-branch request — else the guard sees `init ()`'s default and rejects
+/// (or admits) on a value the client never had (SPA-4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardReads {
+    /// The app declares no guard.
+    NoGuard,
+    /// The guard reads exactly these model fields (precise `model.field` uses).
+    Fields(BTreeSet<String>),
+    /// The guard uses the model opaquely (or could not be resolved): send the
+    /// whole model — the sound over-approximation.
+    Whole,
+}
+
+/// Resolve [`GuardReads`] for the entry's `spaGuard_` binding. `spaGuard_ =
+/// (guard)` aliases the user's guard function; a guard written inline (a
+/// lambda) or anything else that cannot be read precisely is `Whole`.
+pub fn guard_readset(db: &skydb::SkyDatabase, entry: ModuleId) -> GuardReads {
+    let resolved = db.resolve(entry);
+    let Some(td) = resolved
+        .top_defs
+        .iter()
+        .find(|t| t.name.as_str() == "spaGuard_")
+    else {
+        return GuardReads::NoGuard;
+    };
+    let def = td.def;
+    let target = resolved.bodies.get(&def).and_then(|body| {
+        if body.params.len() >= 2 {
+            return Some(def);
+        }
+        match &body.exprs[body.root?] {
+            Expr::Var(Res::Def(d)) => Some(*d),
+            _ => None,
+        }
+    });
+    match target.and_then(|f| helper_readset(db, f, 1, 0)) {
+        Some(fields) => GuardReads::Fields(fields),
+        None => GuardReads::Whole,
+    }
+}
+
 /// Search the app modules for the `Spa.config { … }` call and read its `update`
 /// field. Returns the update DefId (the common case), a lambda body, or an
 /// "unavailable" reason for a non-name shape (partial app).

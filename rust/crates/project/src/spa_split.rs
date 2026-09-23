@@ -829,6 +829,10 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
     }
 }
 
+/// The lambda parameter the frontend's `Spa.rpc` request builder binds: the
+/// model snapshot the client passes when it SENDS the request.
+pub(crate) const SPA_RPC_MODEL: &str = "spaM_";
+
 /// SHARED WIRE EMIT — client leg: build the RPC `Req` value from the client
 /// model + Msg args. The exact inverse of [`emit_reconstruct`]'s read-set — what
 /// the frontend SENDS is what the backend reconstructs.
@@ -1488,6 +1492,30 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     if server.is_empty() {
         notes.push("no SERVER branches — the frontend is fully client-local and the backend only serves static assets.".into());
     }
+    // SPA-4: the backend runs the `App.withGuard` guard on the model it REBUILDS
+    // from each request (`init ()` + the request fields). A field the guard reads
+    // that the branch itself does not read would arrive as `init ()`'s default,
+    // so the guard would decide on a value the client never had (a false 403, or
+    // a false allow). Add the guard's read-set to EVERY server branch's request
+    // (the whole model when the guard's reads cannot be read precisely).
+    match spa_partition::guard_readset(&db, entry) {
+        spa_partition::GuardReads::NoGuard => {}
+        spa_partition::GuardReads::Whole => {
+            for (_, io) in server.iter_mut() {
+                io.reads_whole_model = true;
+            }
+            notes.push(
+                "App.withGuard: the guard's model reads could not be read precisely; every server-branch request carries the whole model so the server guard sees the client's values.".into(),
+            );
+        }
+        spa_partition::GuardReads::Fields(fields) => {
+            for (_, io) in server.iter_mut() {
+                let mut all: BTreeSet<String> = io.read_fields.iter().cloned().collect();
+                all.extend(fields.iter().cloned());
+                io.read_fields = all.into_iter().collect();
+            }
+        }
+    }
 
     // ---- GAP-A: resolve the module that DECLARES the `Msg` union ----
     // The generated frontend `update` references the `Applied<Msg>` RPC-response
@@ -1940,6 +1968,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let has_rpc_error = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaRpcError_"));
+    // SPA-4: a guard that reaches a server effect (an env read, a DB lookup)
+    // cannot run in the wasm client. The backend still enforces it on every
+    // server branch; client-local branches then run unguarded, so say so.
+    if tainted_names.iter().any(|t| t == "spaGuard_") {
+        warnings.push(
+            "warning [sky.spa]: `App.withGuard`'s guard reaches a server effect, so it cannot run in the wasm client. The backend enforces it on every server branch; client-local Msgs are NOT guarded. Keep the guard pure (read only the model) to guard every Msg like Sky.Live.".into(),
+        );
+    }
 
     // ---- literal SSR route patterns, across EVERY project module (§4.1) ----
     // The per-route SSR registration needs each route's literal URL pattern so
@@ -4173,6 +4209,27 @@ fn inject_model_decoder_into_main(main_text: &str, session_fields: &[String]) ->
     out
 }
 
+/// Insert one `|> Spa.with… ` builder line into the synthesised `main`'s config
+/// chain, immediately before the line that closes the `Spa.app` argument (the
+/// same placement as [`inject_model_decoder_into_main`]). Idempotent on
+/// `marker`; a `main` that is not the app builder is returned unchanged.
+fn inject_config_builder_into_main(main_text: &str, marker: &str, line: &str) -> String {
+    if main_text.contains(marker) {
+        return main_text.to_string();
+    }
+    if !main_text.contains("Spa.app") && !main_text.contains("Spa.config") {
+        return main_text.to_string();
+    }
+    let close = match main_text.rfind(')') {
+        Some(i) => i,
+        None => return main_text.to_string(),
+    };
+    let line_start = main_text[..close].rfind('\n').map(|n| n + 1).unwrap_or(0);
+    let mut out = main_text.to_string();
+    out.insert_str(line_start, line);
+    out
+}
+
 /// The pure MODEL expression of `init` (the first element of its returned
 /// `( model, cmd )` tuple), as source text. Used to derive the SSR model DECODER
 /// blank client-side: `Codec.fromJson (Codec.auto <model>) json` (design §4.5).
@@ -5513,6 +5570,24 @@ fn gen_frontend(
                 } else {
                     main_text.to_string()
                 };
+                // SPA-4: the client runs `App.withGuard` before `update` for
+                // every Msg, exactly like Sky.Live (the backend still re-checks
+                // every server branch — the trusted check). Only when the
+                // synthesised `spaGuard_` survives into the client (it is not
+                // server-tainted); a tainted guard is reported by `generate`.
+                let has_client_guard = file
+                    .decls()
+                    .any(|g| decl_name(&g).as_deref() == Some("spaGuard_"))
+                    && !tainted.iter().any(|t| t == "spaGuard_");
+                let main_text = if has_client_guard {
+                    inject_config_builder_into_main(
+                        &main_text,
+                        "Spa.withGuard",
+                        "            |> Spa.withGuard spaGuard_\n",
+                    )
+                } else {
+                    main_text
+                };
                 body.push_str(main_text.trim_end());
                 body.push_str("\n\n\n");
             }
@@ -5794,9 +5869,18 @@ fn gen_frontend_update(
             // Request payload — the shared client-leg build-req (also emitted by
             // the phase-2 differential fuzzer). The inverse of the backend's
             // reconstruct: what is sent is what is reconstructed.
-            let payload = emit_build_req(io, model_param, model_field_names);
+            //
+            // SPA-1/SPA-2: the payload is a FUNCTION of the model (`\spaM_ ->
+            // …`), not a value built now. `Spa.rpc` queues the call; the client
+            // runs one RPC at a time in dispatch order and builds each request
+            // from the model current when it is SENT (a second `Inc` then reads
+            // the first `Inc`'s result), and rebases the response onto that
+            // snapshot with every later Msg replayed on top (runtime-go
+            // spa_rpcqueue.go) — Sky.Live's order. Msg args are captured by the
+            // closure, so they keep their dispatch-time values.
+            let payload = emit_build_req(io, SPA_RPC_MODEL, model_field_names);
             arms_out.push_str(&format!(
-                "        {pat_text} ->\n            ( {model_param}\n            , Spa.postJson {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m}\n            )\n\n"
+                "        {pat_text} ->\n            ( {model_param}\n            , Spa.rpc {req_codec} {resp_codec} \"/_rpc/{m}\" (\\{SPA_RPC_MODEL} -> {payload}) Applied{m}\n            )\n\n"
             ));
         } else {
             // Pure client-local branch — verbatim.

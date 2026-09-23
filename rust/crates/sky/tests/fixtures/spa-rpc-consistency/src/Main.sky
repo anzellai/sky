@@ -1,0 +1,279 @@
+module Main exposing (main)
+
+-- Sky.Spa RPC consistency fixture (scripts/spa-rpc-consistency-e2e.sh).
+-- Every scenario has a Sky.Live answer the web:app client must match:
+--   Inc twice -> count 2; a draft typed while Save is in flight survives;
+--   out-of-order responses apply in dispatch order; the guard sees the fields
+--   it reads and rejects client Msgs; a server branch's follow-up Cmd runs;
+--   a retried RPC does not run its effect twice; reload keeps client state.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+
+type alias Model =
+    { count : Int
+    , draft : String
+    , saved : String
+    , name : String
+    , unlocked : Bool
+    , wrote : String
+    , loaded : String
+    , bumped : Int
+    , hits : Int
+    , note : String
+    , server : String
+    }
+
+type Msg
+    = Inc
+    | Draft String
+    | Save
+    | SetName String
+    | Enable
+    | Unlock
+    | Secure
+    | SaveThenLoad
+    | Load
+    | ServerThenPure
+    | Bumped (Result Error Int)
+    | Hit
+    | Note String
+    | Touch
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0
+      , draft = ""
+      , saved = ""
+      , name = ""
+      , unlocked = False
+      , wrote = "no"
+      , loaded = ""
+      , bumped = 0
+      , hits = 0
+      , note = ""
+      , server = ""
+      }
+    , Cmd.none
+    )
+
+
+writeCount : Int -> Int
+writeCount n =
+    case Task.run (File.writeFile "count.txt" (String.fromInt n)) of
+
+        Ok _ ->
+            n
+
+        Err _ ->
+            n
+
+
+readSeed : () -> String
+readSeed _ =
+    Result.withDefault "" (Task.run (File.readFile "seed.txt"))
+
+
+-- The server truth for `server` (the SSR seed reads it on every page load, via
+-- App.withRequest). `server` is written only by a server branch, so on a
+-- reload it must come from this seed, never from the stale localStorage copy
+-- (K5).
+readServer : () -> String
+readServer _ =
+    String.trim
+        (Result.withDefault "none" (Task.run (File.readFile "server.txt")))
+
+
+-- Non-idempotent: every run appends one line, and the branch answers with the
+-- number of runs so far. A retried request that ran twice shows 2.
+hitOnce : () -> Int
+hitOnce _ =
+    case Task.run (File.append "hits.txt" "x") of
+
+        Ok _ ->
+            String.length
+                (Result.withDefault "" (Task.run (File.readFile "hits.txt")))
+
+        Err _ ->
+            -1
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( { model | count = writeCount (model.count + 1) }, Cmd.none )
+
+        Draft s ->
+            ( { model | draft = s }, Cmd.none )
+
+        Save ->
+            ( { model | saved = model.draft ++ ":" ++ readSeed (), draft = "" }
+            , Cmd.none
+            )
+
+        SetName s ->
+            ( { model | name = s ++ String.left 0 (readSeed ()) }, Cmd.none )
+
+        Enable ->
+            ( { model | unlocked = True }, Cmd.none )
+
+        Unlock ->
+            ( { model | unlocked = True }, Cmd.none )
+
+        Secure ->
+            ( { model | wrote = "yes" ++ String.left 0 (readSeed ()) }
+            , Cmd.none
+            )
+
+        SaveThenLoad ->
+            let
+                _ = Task.run (File.writeFile "follow.txt" "hello")
+            in
+                ( { model | saved = "savedThenLoad" }
+                , Cmd.perform (Task.succeed ()) (\_ -> Load)
+                )
+
+        Load ->
+            ( { model | loaded =
+                  Result.withDefault
+                      "err"
+                      (Task.run (File.readFile "follow.txt"))
+              }
+            , Cmd.none
+            )
+
+        ServerThenPure ->
+            let
+                _ = Task.run (File.writeFile "y.txt" "y")
+            in
+                ( model, Cmd.perform (Task.succeed 7) Bumped )
+
+        Bumped r ->
+            ( { model | bumped = model.bumped + Result.withDefault 0 r }
+            , Cmd.none
+            )
+
+        Hit ->
+            ( { model | hits = hitOnce () }, Cmd.none )
+
+        Note s ->
+            ( { model | note = s }, Cmd.none )
+
+        Touch ->
+            ( { model | server = readServer () }, Cmd.none )
+
+
+guard : Msg -> Model -> Result Error ()
+guard msg model =
+    case msg of
+
+        Unlock ->
+            Err (Error.unexpected "unlock forbidden")
+
+        Secure ->
+            if model.unlocked then
+                Ok ()
+
+            else
+                Err (Error.unexpected "locked")
+
+        _ ->
+            Ok ()
+
+
+row : String -> String -> Element Msg
+row id txt =
+    Ui.el [ Ui.htmlAttribute "id" id ] (Ui.text txt)
+
+
+btn : String -> Msg -> Element Msg
+btn id m =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just m, label = Ui.text id }
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 4 ]
+        [ row "count" ("count=" ++ String.fromInt model.count)
+        , row "saved" ("saved=" ++ model.saved)
+        , row "draftv" ("draft=" ++ model.draft)
+        , row "name" ("name=" ++ model.name)
+        , row
+              "unlocked"
+              ("unlocked="
+                  ++ (if model.unlocked then
+                         "yes"
+
+                     else
+                         "no"))
+        , row "wrote" ("wrote=" ++ model.wrote)
+        , row "loaded" ("loaded=" ++ model.loaded)
+        , row "bumped" ("bumped=" ++ String.fromInt model.bumped)
+        , row "hits" ("hits=" ++ String.fromInt model.hits)
+        , row "note" ("note=" ++ model.note)
+        , row "server" ("server=" ++ model.server)
+        , Input.text
+              [ Ui.htmlAttribute "id" "draft" ]
+              { onChange = Draft
+              , text = model.draft
+              , placeholder = Nothing
+              , label = Input.labelHidden "d"
+              }
+        , Input.text
+              [ Ui.htmlAttribute "id" "nameIn" ]
+              { onChange = SetName
+              , text = model.name
+              , placeholder = Nothing
+              , label = Input.labelHidden "n"
+              }
+        , Input.text
+              [ Ui.htmlAttribute "id" "noteIn" ]
+              { onChange = Note
+              , text = model.note
+              , placeholder = Nothing
+              , label = Input.labelHidden "o"
+              }
+        , btn "inc" Inc
+        , btn "save" Save
+        , btn "enable" Enable
+        , btn "unlock" Unlock
+        , btn "secure" Secure
+        , btn "saveThenLoad" SaveThenLoad
+        , btn "serverThenPure" ServerThenPure
+        , btn "hit" Hit
+        , btn "touch" Touch
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound (Ui.text "nf")
+        |> App.withGuard guard
+        |> App.withRequest
+               (\_ model -> ( { model | server = readServer () }, Cmd.none ))
+        |> App.run

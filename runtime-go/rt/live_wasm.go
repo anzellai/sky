@@ -64,6 +64,11 @@ var (
 	// keeps the path) leaves scroll alone. This is the wasm counterpart of
 	// live.go's __skyLastPath / __skyDidNavigate. Empty until the first mount.
 	spaLastSettledPath string
+	// spaGuard is the optional `msg -> model -> Result Error ()` guard
+	// (Spa.withGuard / App.withGuard), run before update for every Msg.
+	spaGuard any
+	// spaRpcQ serialises the auto-split's server-branch RPCs (spa_rpcqueue.go).
+	spaRpcQ = newSpaRpcQueue("boot")
 )
 
 type spaTimer struct {
@@ -104,6 +109,8 @@ func spaRun(cfg any) any {
 	// the protected (session) field-name list are wired by the auto-split beside
 	// the SSR model decoder; both nil/empty on an app with no encoder, in which
 	// case persistence is simply off. Read once here (spa_persist_wasm.go).
+	spaGuard = Field(cfg, "Guard")
+	spaRpcQ = newSpaRpcQueue(spaRpcNonce())
 	spaModelEncoder = Field(cfg, "ModelEncoder")
 	spaPersistProt = spaStringList(Field(cfg, "PersistProtectedFields"))
 
@@ -460,10 +467,13 @@ func step(msg any) {
 	// is kept, the panic is logged with a [sky.spa] prefix, and the next event
 	// still dispatches. The perform / timer / topic paths already recover; this
 	// closes the primary path.
+	// While a server-branch RPC is in flight, record the Msg so the response
+	// can be rebased under it (spa_rpcqueue.go) — Live's dispatch order.
+	spaRpcQ.record(msg)
 	prevModel := spaModel
 	spaModel = spaTransition(
 		msg, spaModel,
-		spaUpdate,
+		spaGuardedStep,
 		func(model any) {
 			spaModel = model
 			renderCurrent()
@@ -489,6 +499,146 @@ func step(msg any) {
 	// Guarded (spa_persist_wasm.go): a codec panic or a storage throw never kills
 	// the instance. Runs outside spaTransition's guard, so it has its own.
 	spaPersistAfterStep(prevModel, spaModel)
+}
+
+// spaGuardedStep is update behind the client guard (Spa.withGuard): a rejected
+// Msg keeps the model, runs no Cmd, and is reported on the console.
+func spaGuardedStep(msg, model any) SkyTuple2 {
+	pair, rejected, reason := spaGuardedUpdate(spaGuard, spaUpdate, msg, model)
+	if rejected {
+		if c := js.Global().Get("console"); c.Truthy() {
+			c.Call("warn", "[sky.spa] guard rejected a Msg; model kept:", fmt.Sprintf("%v", reason))
+		}
+	}
+	return pair
+}
+
+// spaRpcNonce is a per-page-load random prefix for RPC request ids, so ids from
+// two tabs or two reloads never collide in the backend's dedupe cache.
+func spaRpcNonce() string {
+	if c := js.Global().Get("crypto"); c.Truthy() {
+		if f := c.Get("randomUUID"); f.Type() == js.TypeFunction {
+			if v := c.Call("randomUUID"); v.Type() == js.TypeString {
+				return v.String()
+			}
+		}
+	}
+	m := js.Global().Get("Math")
+	d := js.Global().Get("Date")
+	return fmt.Sprintf("%x-%x", int64(m.Call("random").Float()*1e15), int64(d.Call("now").Float()))
+}
+
+// spaRpcPump sends the queue head when no RPC is in flight. The request is
+// built from the CURRENT model — the send-time snapshot.
+func spaRpcPump() {
+	if j := spaRpcQ.startHead(spaModel); j != nil {
+		go spaRpcSend(j)
+	}
+}
+
+// spaRpcSend runs one queued RPC (on its own goroutine: the fetch blocks it,
+// not the browser event loop) and settles it. A network failure keeps the job
+// at the queue head — later RPCs stay queued behind it, in order — and arms the
+// Retry overlay to re-send the SAME job (same snapshot, same request id, so the
+// backend's dedupe cache answers a request it already ran).
+func spaRpcSend(j *spaRpcJob) {
+	result := spaRunRpcTask(j)
+	if spaIsNetworkErr(result) {
+		spaShowRetryOverlay(func() { spaRpcSend(j) })
+		// Report the failure to the app (Applied<Msg> (Err _) keeps the model,
+		// or App.withRpcError routes it) without recording it for the rebase:
+		// the job is still pending and settles on retry.
+		spaDispatchUnrecorded(spaApplyToMsg(j.toMsg, result))
+		return
+	}
+	if result.Tag == 0 {
+		spaHideRetryOverlayIfIdle()
+	} else if spaReportableTransportErr(result) {
+		if c := js.Global().Get("console"); c.Truthy() {
+			c.Call("error",
+				"[sky.spa] RPC failed; kept last good model (no app-level handler for this transport error):",
+				spaTransportErrText(result))
+		}
+	}
+	spaRpcComplete(spaApplyToMsg(j.toMsg, result))
+	spaRpcPump()
+}
+
+// spaRunRpcTask builds the request task from the job's snapshot + request id
+// and runs it to a Result. A panic while building or running is a classified
+// Err, never a dead client.
+func spaRunRpcTask(j *spaRpcJob) (result SkyResult[SkyADT, any]) {
+	defer func() {
+		if r := recover(); r != nil {
+			ev, _ := ErrUnexpected(fmt.Sprintf("Sky.Spa RPC panicked: %v", r)).(SkyADT)
+			result = SkyResult[SkyADT, any]{Tag: 1, ErrValue: ev}
+		}
+	}()
+	return spaRunTask(sky_call2(j.mk, j.snapshot, j.rid))
+}
+
+// spaRpcComplete settles the in-flight RPC with its result Msg: the result is
+// applied to the snapshot the request was built from, and every Msg dispatched
+// since is replayed on top (spaRpcQueue.complete) — the model Sky.Live computes
+// for the same Msg order. Then paint, run the result's Cmd, reconcile subs and
+// persist, exactly like step.
+func spaRpcComplete(resMsg any) {
+	prevModel := spaModel
+	defer func() {
+		if r := recover(); r != nil {
+			spaModel = prevModel
+			spaReportPanic("rpc-apply", r)
+		}
+	}()
+	m, cmd, err := spaRpcQ.complete(resMsg, spaModel, spaUpdate, spaGuardedStep)
+	if err != nil {
+		spaReportPanic("rpc-rebase", err)
+	}
+	spaModel = m
+	renderCurrent()
+	spaSyncURLFromDOM(true)
+	spaScrollOnNavigate()
+	interpretCmd(asCmdT(cmd), spaDispatch)
+	reconcileSubs()
+	spaPersistAfterStep(prevModel, spaModel)
+}
+
+// spaDispatchUnrecorded runs a Msg through the normal step path without
+// recording it in the in-flight RPC's replay log.
+func spaDispatchUnrecorded(msg any) {
+	j := spaRpcQ.inFlight()
+	var saved []any
+	if j != nil {
+		saved = j.log
+	}
+	step(msg)
+	if j != nil {
+		j.log = saved
+	}
+}
+
+// spaApplyToMsg maps a perform/RPC Result to its Msg (typed assertion first,
+// reflect fallback for a non-standard shape).
+func spaApplyToMsg(toMsg any, result SkyResult[SkyADT, any]) any {
+	if tm, ok := toMsg.(func(SkyResult[SkyADT, any]) any); ok {
+		return tm(result)
+	}
+	return sky_call(toMsg, result)
+}
+
+// spaRunTask runs a Cmd.perform / RPC task to its Result, reflection-free for
+// the standard shapes (see performTask).
+func spaRunTask(task any) SkyResult[SkyADT, any] {
+	switch t := task.(type) {
+	case SkyTask[SkyADT, any]:
+		return t()
+	case func() SkyResult[SkyADT, any]:
+		return t()
+	default:
+		r := anyTaskInvoke(task) // reflection-free (RunAny); erases E to any
+		ev, _ := r.ErrValue.(SkyADT)
+		return SkyResult[SkyADT, any]{Tag: r.Tag, OkValue: r.OkValue, ErrValue: ev}
+	}
 }
 
 // spaReportPanic is the js sink spaTransition (and dispatchEvent) report a
@@ -726,6 +876,11 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		// simply returns immediately on its goroutine and dispatches. This
 		// mirrors the server's `go runPerform` (live.go), minus the SSE/lock.
 		go performTask(cmd.task, cmd.toMsg, dispatch)
+	case "rpc":
+		// An auto-split server-branch RPC (Spa.rpc): queue it; it is sent when
+		// every earlier RPC has settled, from the model current at that moment.
+		spaRpcQ.enqueue(cmd.task, cmd.toMsg)
+		spaRpcPump()
 	case "publish", "publishNoEcho":
 		// v1 DECISION: Cmd.publish / publishNoEcho are a documented no-op on
 		// the Sky.Spa client. In-process pub/sub in Sky.Live fans a message
@@ -775,17 +930,7 @@ func performTask(task, toMsg any, dispatch func(any)) {
 	// reflect `sky_call` fallbacks below are unreached for a real Spa client and
 	// exist only for a non-standard task/toMsg shape (and are DCE-stripped once
 	// no client path references reflect).
-	var result SkyResult[SkyADT, any]
-	switch t := task.(type) {
-	case SkyTask[SkyADT, any]:
-		result = t()
-	case func() SkyResult[SkyADT, any]:
-		result = t()
-	default:
-		r := anyTaskInvoke(task) // reflection-free (RunAny); erases E to any
-		ev, _ := r.ErrValue.(SkyADT)
-		result = SkyResult[SkyADT, any]{Tag: r.Tag, OkValue: r.OkValue, ErrValue: ev}
-	}
+	result := spaRunTask(task)
 	// Built-in connection resilience: if the perform failed because the server
 	// was unreachable (a fetch rejection → Err(ErrNetwork)), show the retry
 	// overlay armed to re-run THIS exact perform, instead of leaving the client
@@ -796,7 +941,7 @@ func performTask(task, toMsg any, dispatch func(any)) {
 		t, tm := task, toMsg
 		spaShowRetryOverlay(func() { performTask(t, tm, dispatch) })
 	} else if result.Tag == 0 {
-		spaHideRetryOverlay()
+		spaHideRetryOverlayIfIdle()
 	} else if spaReportableTransportErr(result) {
 		// A completed round-trip that FAILED with a non-network error (a 5xx the
 		// backend answered, a response the shared codec could not decode). The

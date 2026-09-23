@@ -180,6 +180,25 @@ func Spa_withPersistProtectedFields(fields, cfg any) any {
 	return spaCfgSet(cfg, "PersistProtectedFields", fields)
 }
 
+// Spa_withGuard stores the `msg -> model -> Result Error ()` guard under
+// "Guard". The wasm client runs it before `update` for every Msg the app
+// dispatches (clicks, keystrokes, timer ticks, follow-ups), exactly as Sky.Live
+// runs `Live.withGuard` before every update: a rejected Msg keeps the model and
+// runs no Cmd. The generated backend re-checks every server branch (the TRUSTED
+// check — the client is untrusted); this gives the client-local branches the
+// same behaviour. An RPC result (Applied<Msg>) is runtime-internal and is not
+// guarded.
+func Spa_withGuard(fn, cfg any) any { return spaCfgSet(cfg, "Guard", fn) }
+
+// Spa_rpc is the auto-split's server-branch RPC Cmd (`Spa.rpc`). `mk` is
+// `model -> String -> Task Error a`: given the model SNAPSHOT at send time and
+// the request id, it builds the request task (read-set + Msg args encoded with
+// the shared codec, POSTed to `/_rpc/<Msg>?rid=<id>`). The wasm client queues
+// it (spa_rpcqueue.go): one RPC in flight per client, each request built when it
+// is sent, each response rebased onto its snapshot. `to` maps the Result to the
+// generated Applied<Msg> constructor.
+func Spa_rpc(mk, to any) SkyCmd { return cmdT{kind: "rpc", task: mk, toMsg: to} }
+
 // ── Route matching (portable pure helpers) ──────────────────────────
 //
 // Reimplements Sky.Live's matchRoute / splitPath algorithm (live.go:1600-1624)

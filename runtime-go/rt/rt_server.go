@@ -409,7 +409,9 @@ func Server_listen(port any, routes any) any {
 	// Wrap with CSRF (Phase 1.2) + observability (Phase 1.1a Step 3).
 	// Order: observability is OUTER so CSRF rejections still get
 	// metered as 403 — surfaces attacks / misconfigs in dashboards.
-	csrfed := CSRFMiddleware(mux)
+	// The RPC dedupe layer sits INSIDE CSRF so a rejected request is never
+	// cached; it answers a retried auto-split RPC id from its first run.
+	csrfed := CSRFMiddleware(spaRpcDedupeMiddleware(mux))
 	observed := ObservabilityMiddleware(csrfed)
 
 	srv := &http.Server{

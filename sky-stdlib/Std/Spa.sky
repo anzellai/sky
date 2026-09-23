@@ -87,6 +87,8 @@ module Std.Spa exposing
     , withPersistProtectedFields
     , getJson
     , postJson
+    , rpc
+    , withGuard
     )
 
 import Sky.Ffi as Ffi
@@ -281,6 +283,42 @@ postJson bodyCodec respCodec url payload toMsg =
             (decodeResponse respCodec)
             (Http.post url (Codec.toJson bodyCodec payload)))
         toMsg
+
+
+-- | `rpc bodyCodec respCodec url build toMsg` — the auto-split's server-branch
+-- RPC (the generated frontend emits it; you rarely write it by hand). Unlike
+-- `postJson`, the request body is built by `build` from the model current WHEN
+-- THE REQUEST IS SENT, not when the Msg was dispatched, and the client runs the
+-- RPCs of one page one at a time, in dispatch order. Each response is applied to
+-- the model its request was built from, and every Msg dispatched meanwhile is
+-- replayed on top, so the result is the model Sky.Live computes for the same Msg
+-- order. Each request carries a request id (`?rid=`) that a Retry reuses, so the
+-- backend answers a retried request from its first run instead of running the
+-- effect twice.
+rpc : Codec body -> Codec a -> String -> (model -> body) -> (Result Error a -> msg) -> Cmd msg
+rpc bodyCodec respCodec url build toMsg =
+    rpcCmd
+        (\m rid ->
+            Task.andThenResult
+                (decodeResponse respCodec)
+                (Http.post
+                    (url ++ "?rid=" ++ rid)
+                    (Codec.toJson bodyCodec (build m))))
+        toMsg
+
+
+rpcCmd : (model -> String -> Task Error a) -> (Result Error a -> msg) -> Cmd msg
+rpcCmd =
+    Ffi.kernel "Spa_rpc"
+
+
+-- | Attach a per-Msg guard — `guard msg model` returns `Err` to reject the
+-- message before `update` runs, on the client, exactly as Sky.Live does. The
+-- auto-split wires `App.withGuard` here for a `web:app` build; the generated
+-- backend still re-checks every server branch (the client is untrusted).
+withGuard : (msg -> model -> Result Error ()) -> AppConfig model msg -> AppConfig model msg
+withGuard =
+    Ffi.kernel "Spa_withGuard"
 
 
 -- | Decode an HTTP response body with a codec, treating a non-2xx status as an

@@ -49,3 +49,24 @@ func spaReportableTransportErr(result SkyResult[SkyADT, any]) bool {
 func spaTransportErrText(result SkyResult[SkyADT, any]) string {
 	return Basics_errorToStringT(result.ErrValue)
 }
+
+// spaAppendRetry adds a failed perform's retry action to the pending list, in
+// failure order. Every failure is kept (SPA-7): an earlier failed perform is
+// never replaced by a later one. Portable so the ordering is host-tested.
+func spaAppendRetry(queue []func(), retry func()) []func() {
+	if retry == nil {
+		return queue
+	}
+	return append(queue, retry)
+}
+
+// spaRunRetries re-runs the pending retry actions in order. Each action blocks
+// until its perform settles, so the next one starts only after it — the order
+// the performs originally failed in is the order they are retried in.
+func spaRunRetries(rs []func()) {
+	for _, r := range rs {
+		if r != nil {
+			r()
+		}
+	}
+}
