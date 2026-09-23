@@ -34,6 +34,13 @@ var spaDispatch func(msg any)
 // unreleased js.Func leaks its Go closure for the life of the process.
 var spaNodeFns = map[string][]js.Func{}
 
+// spaNodeHandlers holds each element's CURRENT handlers (see spa_handlers.go). A
+// listener reads its message from here when it fires rather than capturing it at
+// bind time, and renderCurrent refreshes the table after every patch, so a
+// payload-only change (`Pick "a1"` -> `Pick "b2"`, which the shared diff does not
+// patch) still dispatches the new payload.
+var spaNodeHandlers = spaHandlerSlots{}
+
 // spaMount replaces mount's content with a freshly-built DOM tree for root and
 // records the event listeners it attaches. Used for the initial render only.
 func spaMount(mount js.Value, root VNode) {
@@ -241,6 +248,8 @@ func boolAttr(v string) bool { return v != "" && v != "false" }
 // the js.Funcs under el.SkyID. `sky-`-prefixed meta events (onImage/onFile) are
 // side-channel data attributes, not DOM events, and are skipped.
 func bindNodeEvents(n js.Value, el VNode) {
+	spaNodeHandlers.set(el.SkyID, el.Events)
+	id := el.SkyID
 	for evt, handler := range el.Events {
 		// File / image inputs. `Ui.onFile` / `Ui.onImage` lower to the meta
 		// events "sky-file" / "sky-image" (Std/Html/Events.sky). Sky.Live wires
@@ -252,9 +261,10 @@ func bindNodeEvents(n js.Value, el VNode) {
 		// so the wasm binary carries no image codec and the resize is server-side.
 		if evt == "sky-image" || evt == "sky-file" {
 			h := handler
+			ek := evt
 			node := n
 			f := js.FuncOf(func(this js.Value, args []js.Value) any {
-				spaReadFileAndDispatch(node, h)
+				spaReadFileAndDispatch(node, spaNodeHandlers.lookup(id, ek, h))
 				return nil
 			})
 			spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
@@ -277,7 +287,7 @@ func bindNodeEvents(n js.Value, el VNode) {
 					}
 					ev.Call("preventDefault")
 				}
-				dispatchEvent(h, "")
+				dispatchEvent(spaNodeHandlers.lookup(id, "enter", h), "")
 				return nil
 			})
 			spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
@@ -287,9 +297,10 @@ func bindNodeEvents(n js.Value, el VNode) {
 		if strings.HasPrefix(evt, "sky-") {
 			continue
 		}
-		h := handler // capture per listener
+		h := handler // fallback only; the live handler is read at dispatch time
 		e := evt
 		f := js.FuncOf(func(this js.Value, args []js.Value) any {
+			cur := spaNodeHandlers.lookup(id, e, h)
 			// A form submit is the one event that carries structured data (the
 			// field values), and it MUST preventDefault or the browser does a
 			// native submit — which, on a form with no method, is a GET that
@@ -302,11 +313,11 @@ func bindNodeEvents(n js.Value, el VNode) {
 			if e == "submit" {
 				if len(args) > 0 && args[0].Truthy() {
 					args[0].Call("preventDefault")
-					dispatchSubmit(h, spaFormData(args[0].Get("target")))
+					dispatchSubmit(cur, spaFormData(args[0].Get("target")))
 					return nil
 				}
 			}
-			dispatchEvent(h, eventPayload(e, args))
+			dispatchEvent(cur, eventPayload(e, args))
 			return nil
 		})
 		spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
@@ -734,6 +745,7 @@ func findVNode(root *VNode, id string) *VNode {
 }
 
 func releaseNodeFns(id string) {
+	spaNodeHandlers.drop(id)
 	if fns, ok := spaNodeFns[id]; ok {
 		for _, f := range fns {
 			f.Release()

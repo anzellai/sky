@@ -537,6 +537,10 @@ func renderCurrent() {
 		// what keeps the typing case a MINIMAL patch set.
 		patches := diffTrees(spaPrev, &vn, snapshotFocusedInput())
 		spaApplyPatches(patches, spaPrev, &vn)
+		// The diff compares handlers by constructor name, so a payload-only
+		// change emits no patch and no rebind. Refresh every element's handler
+		// slot from the new tree so its listener dispatches the CURRENT payload.
+		spaNodeHandlers.refresh(&vn)
 	}
 	spaPrev = &vn
 }

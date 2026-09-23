@@ -11,6 +11,27 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.17 — a re-rendered Sky.Spa button dispatches the current message (2026-09-23)
+
+A patch over v0.25.16. `sky upgrade` is safe from any v0.25.x — a runtime fix in
+the Sky.Spa wasm client, no source-breaking change and no change to emitted code.
+
+Fixes a Sky.Spa (`--target web:app`) button that kept dispatching the message
+payload from its FIRST render. A list re-rendered with the same visible text but
+different data — for example rows `Ui.button [] { onPress = Just (Edit row.id),
+… }` replaced by rows with other ids — reused the existing DOM nodes, and clicking
+"Edit" then sent the OLD id. The DOM diff compares event handlers by constructor
+name (`Edit "a1"` and `Edit "b2"` both read as `Edit`), which is correct for
+Sky.Live and the desktop webview (they look the handler up on the server from the
+latest render), but the wasm client attached a listener that captured the message
+when it was first bound. Its listeners now read the message from a per-element
+slot that every render refreshes, so the payload always follows the model. This
+covers both an in-session re-render and the boot path, where the client hydrates
+the server's first paint and then patches to a model restored from
+`localStorage` with identical text. Sky.Live and the desktop webview were not
+affected. A browser regression gate (`scripts/spa-stale-handler-e2e.sh`) now runs
+nightly next to the restore first-paint gate.
+
 ## v0.25.16 — the Sky-managed Go build cache is never cleaned under a running build (2026-09-23)
 
 A patch over v0.25.15. `sky upgrade` is safe from any v0.25.x — a dev-tooling

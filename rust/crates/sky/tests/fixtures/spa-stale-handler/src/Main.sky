@@ -1,0 +1,124 @@
+module Main exposing (main)
+
+-- Sky.Spa stale-handler e2e regression. A re-rendered button must dispatch the
+-- message payload of the CURRENT model, not the one bound at its first render.
+-- "Swap the list" replaces the rows with rows whose visible text is identical but
+-- whose ids differ (a1 -> b2), so the DOM diff reuses every node and emits no
+-- patch for the buttons (the diff compares handlers by constructor name only).
+--
+-- Shape (mirrors the real app that hit it):
+--   * `db` CAF reaches Db.open, so the split routes it BACKEND-ONLY, and init's
+--     command is a GET-safe Db.query. The split then wires the client model
+--     decoder/encoder, which is what makes the client persist the model to
+--     localStorage — so a reload hydrates the SSR seed render (ids a1) and then
+--     patches to the RESTORED model (ids b2) with identical text: the boot path.
+--   * Rows are both a plain button and a button inside a Ui.row with a text
+--     sibling (the real app's row shape).
+--
+-- e2e: scripts/spa-stale-handler-e2e.sh (drives scripts/spa-stale-handler-verify.mjs).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Task as Task
+import Sky.Core.System as System
+import Std.Db as Db
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+db : Db.Db
+db =
+    case Task.run (Db.open "sqlite" (System.getenvOr "SSR_DB_PATH" "app.db")) of
+
+        Ok c ->
+            c
+
+        Err _ ->
+            System.exit 1
+
+type alias Item =
+    { id : String
+    , label : String
+    }
+
+type alias Model =
+    { items : List Item
+    , picked : String
+    , loaded : Bool
+    }
+
+type Msg
+    = Loaded (Result Error (List (Dict String String)))
+    | Swap
+    | Pick String
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { items = [ { id = "a1", label = "Row" } ]
+      , picked = "none"
+      , loaded = False
+      }
+    , Cmd.perform (Db.query db "SELECT 1 AS one" []) Loaded
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Loaded _ ->
+            ( { model | loaded = True }, Cmd.none )
+
+        Swap ->
+            ( { model | items = [ { id = "b2", label = "Row" } ] }, Cmd.none )
+
+        Pick id ->
+            ( { model | picked = id }, Cmd.none )
+
+
+plainButton : Item -> Element Msg
+plainButton i =
+    Ui.button [] { onPress = Just (Pick i.id), label = Ui.text "Edit" }
+
+
+rowWithSibling : Item -> Element Msg
+rowWithSibling i =
+    Ui.row
+        [ Ui.spacing 8 ]
+        [ Ui.text i.label
+        , Ui.button
+              []
+              { onPress = Just (Pick ("row-" ++ i.id)), label = Ui.text "Open" }
+        ]
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 12 ]
+        ([ Ui.button [] { onPress = Just Swap, label = Ui.text "Swap the list" }
+        , Ui.row [] [ Ui.text ("picked: " ++ model.picked) ]
+        ]
+            ++ List.map plainButton model.items
+            ++ List.map rowWithSibling model.items)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app
