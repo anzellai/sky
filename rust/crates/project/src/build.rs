@@ -714,6 +714,8 @@ fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
     // is a SEPARATE cache namespace (GOOS=js/GOARCH=wasm), so it never shared the
     // constrained-HOME fallback before — apply it here too.
     crate::go_cache::apply(&mut cmd);
+    // Hold the cache shared for the whole build: a concurrent clean waits.
+    let _cache = crate::go_cache::hold_shared();
     let out = cmd
         .output()
         .map_err(|e| format!("failed to run `go build` (GOOS=js GOARCH=wasm): {e}"))?;
@@ -727,8 +729,14 @@ fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
     let goroot = String::from_utf8_lossy(&goroot.stdout).trim().to_string();
     // Go 1.21+ ships wasm_exec.js under lib/wasm; older toolchains, misc/wasm.
     let candidates = [
-        Path::new(&goroot).join("lib").join("wasm").join("wasm_exec.js"),
-        Path::new(&goroot).join("misc").join("wasm").join("wasm_exec.js"),
+        Path::new(&goroot)
+            .join("lib")
+            .join("wasm")
+            .join("wasm_exec.js"),
+        Path::new(&goroot)
+            .join("misc")
+            .join("wasm")
+            .join("wasm_exec.js"),
     ];
     let src = candidates.iter().find(|p| p.exists()).ok_or_else(|| {
         format!("wasm_exec.js not found under GOROOT ({goroot}); looked in lib/wasm and misc/wasm")
@@ -737,7 +745,8 @@ fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
     // The GOROOT copy is read-only (0444); a prior build left a read-only dest,
     // so overwriting it would EPERM. Remove it first (best-effort).
     let _ = std::fs::remove_file(&dest);
-    std::fs::copy(src, &dest).map_err(|e| format!("copy wasm_exec.js -> {}: {e}", dest.display()))?;
+    std::fs::copy(src, &dest)
+        .map_err(|e| format!("copy wasm_exec.js -> {}: {e}", dest.display()))?;
     Ok(())
 }
 
@@ -845,6 +854,8 @@ fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuil
     // with a user GOCACHE; otherwise Sky owns and bounds its own cache
     // (go_cache.rs). No-op / default on any failure.
     crate::go_cache::apply(&mut cmd);
+    // Hold the cache shared for the whole build: a concurrent clean waits.
+    let _cache = crate::go_cache::hold_shared();
     match run_bounded(cmd, GO_BUILD_TIMEOUT) {
         Ok(b) if b.timed_out => Err(format!(
             "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch). Partial stderr:\n{}",
@@ -1167,21 +1178,19 @@ pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             ("database", "maxIdleConns") => {
                 cfg.extra_defaults.push(("DB_MAX_IDLE_CONNS".into(), val))
             }
-            ("database", "connMaxLifetime") => {
-                cfg.extra_defaults.push(("DB_CONN_MAX_LIFETIME".into(), val))
-            }
-            ("database", "connMaxIdleTime") => {
-                cfg.extra_defaults.push(("DB_CONN_MAX_IDLE_TIME".into(), val))
-            }
+            ("database", "connMaxLifetime") => cfg
+                .extra_defaults
+                .push(("DB_CONN_MAX_LIFETIME".into(), val)),
+            ("database", "connMaxIdleTime") => cfg
+                .extra_defaults
+                .push(("DB_CONN_MAX_IDLE_TIME".into(), val)),
             // `isolation` raises the level Std.Db.transaction begins at.
             // Unset = the driver default (READ COMMITTED on PostgreSQL),
             // which is what shipped before this key existed and is not
             // changed by adding it. `txRetry` is the retry budget for a
             // 40001/40P01 conflict and is only safe when the transaction
             // body is REPLAYABLE — see resolveDbTxConfig in db_pool.go.
-            ("database", "isolation") => {
-                cfg.extra_defaults.push(("DB_ISOLATION".into(), val))
-            }
+            ("database", "isolation") => cfg.extra_defaults.push(("DB_ISOLATION".into(), val)),
             ("database", "txRetry") => cfg.extra_defaults.push(("DB_TX_RETRY".into(), val)),
             // `embedded` opts the project into the `sky db start` cluster
             // supervisor (docs/skydb/embedded-postgres.md). It is a TOOLCHAIN
@@ -1286,7 +1295,8 @@ pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
             // mistake.
             _ => {
                 if !is_externally_consumed_section(&section) {
-                    cfg.unknown_config_keys.push((section.clone(), key.to_string()));
+                    cfg.unknown_config_keys
+                        .push((section.clone(), key.to_string()));
                 }
             }
         }
@@ -1444,9 +1454,7 @@ pub fn unknown_config_keys(keys: &[(String, String)]) -> Vec<String> {
                 // Unknown SECTION, not merely an unknown key in a known one.
                 // Naming the real sections is the useful thing here: the
                 // likeliest cause is a typo or an invented section.
-                msg.push_str(
-                    "`[",
-                );
+                msg.push_str("`[");
                 msg.push_str(section);
                 msg.push_str(
                     "]` is not a section Sky reads. Runtime sections are: \
@@ -1917,7 +1925,9 @@ fn write_postgres_bundle(archive: Option<&Path>, out_dir: &Path) -> Result<(), S
     }
     let want = bundle_stamp(archive, &meta);
     let fresh = staged.is_file()
-        && std::fs::read_to_string(&stamp).map(|s| s.trim() == want).unwrap_or(false);
+        && std::fs::read_to_string(&stamp)
+            .map(|s| s.trim() == want)
+            .unwrap_or(false);
     if !fresh {
         // Copy through a sibling and rename: a `go build` racing a half-written
         // 25MB archive embeds a truncated one, and gzip only notices at the far
@@ -1964,11 +1974,18 @@ fn write_postgres_bundle(archive: Option<&Path>, out_dir: &Path) -> Result<(), S
     // `lower_main`), because `[database] path`/`url` arrive as
     // `rt.SetSkyDefault` in the prologue `init()` and `--embed`'s ambiguity check
     // has to be able to see them.
-    if std::fs::read_to_string(&generated).map(|s| s == go).unwrap_or(false) {
+    if std::fs::read_to_string(&generated)
+        .map(|s| s == go)
+        .unwrap_or(false)
+    {
         return Ok(());
     }
-    std::fs::write(&generated, go)
-        .map_err(|e| format!("sky build --embed: cannot write {}: {e}", generated.display()))
+    std::fs::write(&generated, go).map_err(|e| {
+        format!(
+            "sky build --embed: cannot write {}: {e}",
+            generated.display()
+        )
+    })
 }
 
 fn bundle_stamp(archive: &Path, meta: &std::fs::Metadata) -> String {
@@ -2098,7 +2115,9 @@ pub(crate) fn load_source_db(
     for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
         let slug = path.replace('/', "_");
         if !example_dir.join(".skydeps").join(&slug).is_dir() {
-            return Err(format!("Sky dependency {path} not fetched — run 'sky install'"));
+            return Err(format!(
+                "Sky dependency {path} not fetched — run 'sky install'"
+            ));
         }
     }
     for (n, file) in load_skydeps(&db, &mut next_id, &example_dir.join(".skydeps")) {
@@ -2334,14 +2353,20 @@ mod embed_bundle_tests {
         assert_eq!(std::fs::read(&staged).unwrap(), b"pretend gzip");
 
         let go = std::fs::read_to_string(out.join(EMBEDDED_BUNDLE_GO)).unwrap();
-        assert!(go.contains(&format!("//go:embed {EMBEDDED_BUNDLE_FILENAME}")), "{go}");
+        assert!(
+            go.contains(&format!("//go:embed {EMBEDDED_BUNDLE_FILENAME}")),
+            "{go}"
+        );
         assert!(
             go.contains(&format!(
                 "rt.EmbeddedPostgresBundleName = \"{EMBEDDED_BUNDLE_FILENAME}\""
             )),
             "{go}"
         );
-        assert!(go.contains("rt.EmbeddedPostgresBundle = skyEmbeddedPostgresBundle"), "{go}");
+        assert!(
+            go.contains("rt.EmbeddedPostgresBundle = skyEmbeddedPostgresBundle"),
+            "{go}"
+        );
         // The two calls that START a cluster belong in `func main()`, never here:
         // `[database] path`/`url` arrive as rt.SetSkyDefault in the prologue
         // `init()`, and from a second `init()` the ambiguity check cannot see
@@ -2370,7 +2395,11 @@ mod embed_bundle_tests {
         assert!(out.join(EMBEDDED_BUNDLE_FILENAME).exists());
 
         write_postgres_bundle(None, &out).unwrap();
-        for f in [EMBEDDED_BUNDLE_FILENAME, EMBEDDED_BUNDLE_GO, EMBEDDED_BUNDLE_STAMP] {
+        for f in [
+            EMBEDDED_BUNDLE_FILENAME,
+            EMBEDDED_BUNDLE_GO,
+            EMBEDDED_BUNDLE_STAMP,
+        ] {
             assert!(!out.join(f).exists(), "{f} survived a non-embed build");
         }
         let _ = std::fs::remove_dir_all(&root);
@@ -2543,7 +2572,9 @@ mod sky_toml_tests {
         // emitted for any program. They are picked up by the inert-key warning
         // and their Removed migration rows instead.
         assert!(
-            !cfg.extra_defaults.iter().any(|(s, _)| s.starts_with("AUTH_")),
+            !cfg.extra_defaults
+                .iter()
+                .any(|(s, _)| s.starts_with("AUTH_")),
             "no AUTH_* suffix may be seeded: {:?}",
             cfg.extra_defaults
         );
@@ -2695,7 +2726,11 @@ mod sky_toml_tests {
             ("[live]\nembedded = true\n", false),
         ] {
             std::fs::write(&path, text).unwrap();
-            assert_eq!(sky_toml_flag(&dir, "database", "embedded"), want, "{text:?}");
+            assert_eq!(
+                sky_toml_flag(&dir, "database", "embedded"),
+                want,
+                "{text:?}"
+            );
         }
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -2721,9 +2756,15 @@ mod sky_toml_tests {
             sky_toml_section_key(&dir, "database", "url").as_deref(),
             Some("postgres://u:p@host/db")
         );
-        assert_eq!(sky_toml_section_key(&dir, "env", "prefix").as_deref(), Some("FENCE"));
+        assert_eq!(
+            sky_toml_section_key(&dir, "env", "prefix").as_deref(),
+            Some("FENCE")
+        );
         // Set-but-empty is not the same as absent.
-        assert_eq!(sky_toml_section_key(&dir, "database", "path").as_deref(), Some(""));
+        assert_eq!(
+            sky_toml_section_key(&dir, "database", "path").as_deref(),
+            Some("")
+        );
         assert_eq!(sky_toml_section_key(&dir, "database", "driver"), None);
         assert_eq!(sky_toml_section_key(&dir, "nosuch", "url"), None);
 
@@ -2782,10 +2823,7 @@ mod sky_toml_tests {
             .find(|m| m.contains("session_ttl"))
             .expect("session_ttl warned");
         assert!(auth_msg.contains("no effect"), "{auth_msg}");
-        assert!(
-            auth_msg.contains("not a section Sky reads"),
-            "{auth_msg}"
-        );
+        assert!(auth_msg.contains("not a section Sky reads"), "{auth_msg}");
         // And the runtime-sections list it names must no longer advertise
         // `[auth]` as a section (it opens with the key `[auth] session_ttl`, so
         // we check the section LIST fragment specifically).
@@ -2806,7 +2844,14 @@ mod sky_toml_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sky.toml");
         for section in [
-            "live", "database", "auth", "log", "analytics", "jobs", "env", "security",
+            "live",
+            "database",
+            "auth",
+            "log",
+            "analytics",
+            "jobs",
+            "env",
+            "security",
         ] {
             for key in accepted_config_keys(section) {
                 std::fs::write(&path, format!("[{section}]\n{key} = \"v\"\n")).unwrap();
@@ -2891,7 +2936,7 @@ mod sky_toml_tests {
         let path = dir.join("sky.toml");
 
         for (section, key) in [
-            ("databse", "path"),        // typo of an existing section
+            ("databse", "path"),          // typo of an existing section
             ("observability", "enabled"), // claimed by observability.go, parsed by nothing
             ("totally_made_up", "x"),
         ] {
@@ -2914,8 +2959,8 @@ mod sky_toml_tests {
             ("dependencies", "somelib"),
             ("go.dependencies", "github.com/x/y"),
             ("lib", "name"),
-            ("spa", "generated"),  // build recursion guard
-            ("app", "target"),     // persisted build backend (App.cli/App.tui)
+            ("spa", "generated"), // build recursion guard
+            ("app", "target"),    // persisted build backend (App.cli/App.tui)
             ("", "port"),
         ] {
             let body = if section.is_empty() {
@@ -2955,12 +3000,18 @@ mod sky_toml_tests {
     fn contradicting_driver_and_dsn_is_reported() {
         let w = db_driver_conflict(Some("postgres"), Some("./app.db"))
             .expect("a postgres driver over a sqlite path must be reported");
-        assert!(w.contains("sqlite"), "must name the driver actually used: {w}");
+        assert!(
+            w.contains("sqlite"),
+            "must name the driver actually used: {w}"
+        );
         assert!(w.contains("./app.db"), "must quote the DSN: {w}");
 
         let w = db_driver_conflict(Some("sqlite"), Some("postgres://u@h/db"))
             .expect("a sqlite driver over a postgres URL must be reported");
-        assert!(w.contains("postgres"), "must name the driver actually used: {w}");
+        assert!(
+            w.contains("postgres"),
+            "must name the driver actually used: {w}"
+        );
     }
 
     /// …and the converse, so the check cannot pass by shouting at everyone.
@@ -3110,14 +3161,20 @@ mod materialise_rt_tests {
         write(&src, "kept.go", "package rt\n");
         write(&src, "dropped.go", "package rt\nfunc gone() {}\n");
         materialise_rt(&src, &dst, false).unwrap();
-        assert!(dst.join("dropped.go").exists(), "setup: first build copies it");
+        assert!(
+            dst.join("dropped.go").exists(),
+            "setup: first build copies it"
+        );
 
         // The upgrade: upstream no longer ships `dropped.go`.
         fs::remove_file(src.join("dropped.go")).unwrap();
         write(&src, "added.go", "package rt\n");
         materialise_rt(&src, &dst, false).unwrap();
 
-        assert!(dst.join("kept.go").exists(), "an unchanged file must survive");
+        assert!(
+            dst.join("kept.go").exists(),
+            "an unchanged file must survive"
+        );
         assert!(dst.join("added.go").exists(), "a new file must appear");
         assert!(
             !dst.join("dropped.go").exists(),
@@ -3266,7 +3323,9 @@ mod offline_db_plan_tests {
         );
         assert_eq!(
             p,
-            OfflineDbPlan::Sqlite { db_path_env: "SKY_DB_PATH".to_string() },
+            OfflineDbPlan::Sqlite {
+                db_path_env: "SKY_DB_PATH".to_string()
+            },
             "a SQLite app must have its path redirected, NOT be forced onto embedded Postgres"
         );
     }
@@ -3277,7 +3336,12 @@ mod offline_db_plan_tests {
             "sqlitepath",
             "name = \"a\"\nversion = \"0.1.0\"\n\n[database]\npath = \"app.db\"\n",
         );
-        assert_eq!(p, OfflineDbPlan::Sqlite { db_path_env: "SKY_DB_PATH".to_string() });
+        assert_eq!(
+            p,
+            OfflineDbPlan::Sqlite {
+                db_path_env: "SKY_DB_PATH".to_string()
+            }
+        );
     }
 
     #[test]
@@ -3323,6 +3387,11 @@ mod offline_db_plan_tests {
             "prefix",
             "name = \"a\"\nversion = \"0.1.0\"\n\n[env]\nprefix = \"FENCE\"\n\n[database]\ndriver = \"sqlite\"\n",
         );
-        assert_eq!(p, OfflineDbPlan::Sqlite { db_path_env: "FENCE_DB_PATH".to_string() });
+        assert_eq!(
+            p,
+            OfflineDbPlan::Sqlite {
+                db_path_env: "FENCE_DB_PATH".to_string()
+            }
+        );
     }
 }

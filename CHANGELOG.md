@@ -16,6 +16,20 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 A patch over v0.25.14. `sky upgrade` is safe from any v0.25.x — a dev-tooling
 addition, no source-breaking change and no change to emitted code.
 
+### Fix: the Sky-managed Go build cache is never cleaned under a running build
+
+Sky keeps its own Go build cache (`~/.sky/go-build`) and cleans it when the
+compiler's embedded runtime changes or the cache goes over its size cap. That
+clean used to run with no coordination, so a `sky build` starting while
+another one was compiling could wipe the objects the other was reading: `go`
+then failed with "could not import X: no such file or directory" and
+"package X is not in std", and the failure looked random (it hit the release
+gate suite, where tests build in parallel, and could hit a `--target web:app`
+build whose two legs run concurrently). The cache dir now carries an advisory
+lock: every `go build` holds it shared for its whole run, and a clean takes it
+exclusively or skips until the next build. Nothing changes for a user-set
+`GOCACHE`, which Sky never manages.
+
 Adds `SKY_BUILD_SERIAL` for Sky.Spa builds. A `sky build --target web:app` builds
 the backend and frontend legs concurrently. Each leg is a whole `sky build` (a
 large Sky front-end plus the Go toolchain), so the concurrent peak is roughly the

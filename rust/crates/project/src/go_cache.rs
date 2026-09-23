@@ -28,6 +28,13 @@ use std::time::Duration;
 const GOCACHE: &str = "GOCACHE";
 const FP_STAMP: &str = ".sky-embed-fp";
 const CAP_MARKER: &str = ".sky-cap-checked";
+/// Advisory lock file inside the cache dir. A build holds it SHARED for the
+/// whole `go build`; a clean needs it EXCLUSIVE. Without it, one `sky build`
+/// could wipe the cache (fingerprint change after a compiler rebuild, or the
+/// size cap) while a concurrent build was still reading from it — the objects
+/// vanish mid-build and `go` reports "could not import X: no such file" and
+/// "package X is not in std". Seen as flaky gate failures under `cargo test`.
+const LOCK_FILE: &str = ".sky-lock";
 const DEFAULT_CAP_GB: u64 = 10;
 /// Throttle the (directory-walking) size check to at most once per this window,
 /// so an ordinary build never pays for a full cache walk.
@@ -91,8 +98,65 @@ pub(crate) fn maintain(embed_fingerprint: &str) {
     let Some(dir) = owned_cache_dir() else {
         return;
     };
+    // Only ever clean with the cache to ourselves. Another `sky build` holding
+    // the shared lock means "leave it alone this time": stale or oversized
+    // objects are harmless (content-addressed) and the next build retries.
+    let Some(_exclusive) = try_exclusive_in(&dir) else {
+        return;
+    };
     invalidate_if_stale(&dir, embed_fingerprint);
     enforce_cap(&dir);
+}
+
+/// A shared hold on Sky's cache for the duration of one `go build`. Keep the
+/// value alive across the build; dropping it releases the lock. `None`-backed
+/// (no lock) when Sky does not own the cache or the lock file is unwritable.
+pub(crate) struct CacheGuard(Option<std::fs::File>);
+
+impl Drop for CacheGuard {
+    fn drop(&mut self) {
+        if let Some(f) = &self.0 {
+            let _ = f.unlock();
+        }
+    }
+}
+
+/// Take the shared lock before running `go build`. Blocks while a clean is in
+/// progress (a clean is short); never fails a build.
+pub(crate) fn hold_shared() -> CacheGuard {
+    match owned_cache_dir() {
+        Some(dir) => hold_shared_in(&dir),
+        None => CacheGuard(None),
+    }
+}
+
+fn lock_file(dir: &Path) -> Option<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join(LOCK_FILE))
+        .ok()
+}
+
+fn hold_shared_in(dir: &Path) -> CacheGuard {
+    let Some(f) = lock_file(dir) else {
+        return CacheGuard(None);
+    };
+    if f.lock_shared().is_err() {
+        return CacheGuard(None);
+    }
+    CacheGuard(Some(f))
+}
+
+/// The exclusive lock, or `None` right away when any build holds it shared.
+fn try_exclusive_in(dir: &Path) -> Option<CacheGuard> {
+    let f = lock_file(dir)?;
+    if f.try_lock().is_err() {
+        return None;
+    }
+    Some(CacheGuard(Some(f)))
 }
 
 /// Clean the Sky cache when the compiler's embedded fingerprint has changed. The
@@ -118,7 +182,11 @@ fn enforce_cap(dir: &Path) {
     let marker = dir.join(CAP_MARKER);
     if let Ok(m) = std::fs::metadata(&marker) {
         if let Ok(modified) = m.modified() {
-            if modified.elapsed().map(|e| e < CAP_CHECK_EVERY).unwrap_or(false) {
+            if modified
+                .elapsed()
+                .map(|e| e < CAP_CHECK_EVERY)
+                .unwrap_or(false)
+            {
                 return;
             }
         }
@@ -219,6 +287,7 @@ pub fn prime() -> String {
         }
         cmd.env("CGO_ENABLED", "0");
         cmd.env("GOFLAGS", "-mod=mod -buildvcs=false");
+        let _cache = hold_shared();
         match cmd.status() {
             Ok(s) if s.success() => notes.push(format!("{label} ✓")),
             Ok(_) => notes.push(format!("{label} (skipped: build tags)")),
@@ -247,6 +316,24 @@ mod tests {
         std::fs::write(d.join("a"), b"12345").unwrap();
         std::fs::write(d.join("sub").join("b"), b"678").unwrap();
         assert_eq!(dir_size_bytes(&d), 8);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_shared_hold_keeps_a_clean_out_until_it_is_dropped() {
+        let d = std::env::temp_dir().join(format!("sky-gocache-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let build = hold_shared_in(&d);
+        assert!(build.0.is_some(), "the shared lock should be taken");
+        // A clean must not start while a build holds the cache.
+        assert!(try_exclusive_in(&d).is_none());
+        drop(build);
+        // With no build running the clean may proceed, and it in turn keeps a
+        // new build waiting (blocking), which we only assert as "exclusive taken".
+        let cleaning = try_exclusive_in(&d);
+        assert!(cleaning.is_some());
+        drop(cleaning);
         let _ = std::fs::remove_dir_all(&d);
     }
 
