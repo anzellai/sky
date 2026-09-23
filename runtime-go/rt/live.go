@@ -3217,7 +3217,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 // replaces HTML is no better than returning the body directly — keep the
 // HTML fast-path for those cases.
 func patchesAreFullReplace(patches []Patch) bool {
-	return len(patches) == 1 && patches[0].HTML != nil && patches[0].ID == "r"
+	return len(patches) == 1 && (patches[0].HTML != nil || patches[0].Replace != nil) && patches[0].ID == "r"
 }
 
 // dispatch: run update with msg, process cmd, reset subs, re-render view.
@@ -6548,7 +6548,8 @@ function __skyApplyPatches(patches) {
       missedTarget++;
       if (window.console && console.warn) {
         console.warn("[sky.live] patch target not found:", p.id,
-            "(op=" + (p.text !== undefined ? "text" : p.html !== undefined ? "html" : "attrs") + ")");
+            "(op=" + (p.text !== undefined ? "text" : p.html !== undefined ? "html" :
+              p.kids !== undefined ? "kids" : p.replace !== undefined ? "replace" : "attrs") + ")");
       }
       continue;
     }
@@ -6566,8 +6567,16 @@ function __skyApplyPatches(patches) {
         el.textContent = p.text;
       }
     }
+    if (p.replace !== undefined && p.replace !== null) {
+      // The root changed tag: replace the element itself.
+      __skyReplaceElement(el, p.replace);
+      continue;
+    }
     if (p.html !== undefined && p.html !== null) {
       __skyReplaceHTMLPreservingFocus(el, p.html);
+    }
+    if (p.kids) {
+      missedTarget += __skyApplyKids(el, p.kids);
     }
     if (p.attrs) {
       var dirty = __skyIsDirty(el);
@@ -6671,6 +6680,112 @@ function __skyApplyPatches(patches) {
   // SSR).  See __skyReviveScripts above for the full rationale.
   var skyRootForPatches = document.getElementById("sky-root");
   if (skyRootForPatches) __skyReviveScripts(skyRootForPatches);
+}
+
+// ── Children reconcile (Patch.kids) ─────────────────────────
+// The diff (runtime-go/rt/live_core.go diffChildren / KidOp) lists the
+// target's NEW children in order: {keep: id[, id: newId]} keeps the
+// existing child with that sky-id as the SAME node — a focused input
+// inside it keeps focus, caret, IME state and its typed value — and
+// {html: markup} is a new node. Every other child is removed. A kept
+// child whose id changed is renamed (its subtree's sky-id / data-sky-hid
+// move from the old prefix to the new one), so the DOM never holds an id
+// the server no longer renders. Returns how many kept children were
+// missing (a desync the caller resyncs).
+function __skyParseInto(container, html) {
+  if (container.namespaceURI && container.namespaceURI !== "http://www.w3.org/1999/xhtml") {
+    var range = document.createRange();
+    range.selectNodeContents(container);
+    return range.createContextualFragment(html);
+  }
+  var t = document.createElement("template");
+  t.innerHTML = html;
+  return t.content;
+}
+
+function __skyApplyKids(el, kids) {
+  var byId = {}, kept = {}, renames = [], missed = 0, c, i, k;
+  for (c = el.firstElementChild; c; c = c.nextElementSibling) {
+    var sid = c.getAttribute("sky-id");
+    if (sid) byId[sid] = c;
+  }
+  var focused = document.activeElement;
+  var focusInside = !!(focused && focused !== el && el.contains(focused));
+  var selS = null, selE = null;
+  if (focusInside) {
+    try { selS = focused.selectionStart; selE = focused.selectionEnd; } catch (_) {}
+  }
+  for (i = 0; i < kids.length; i++) {
+    k = kids[i];
+    if (!k.keep) continue;
+    if (byId[k.keep] && !kept[k.keep]) {
+      kept[k.keep] = byId[k.keep];
+      if (k.id && k.id !== k.keep) renames.push([byId[k.keep], k.keep, k.id]);
+    } else {
+      missed++;
+    }
+  }
+  for (c = el.firstChild; c; ) {
+    var next = c.nextSibling;
+    if (!(c.nodeType === 1 && kept[c.getAttribute("sky-id")] === c)) el.removeChild(c);
+    c = next;
+  }
+  __skyRenameKept(renames);
+  var cursor = el.firstChild;
+  for (i = 0; i < kids.length; i++) {
+    k = kids[i];
+    var nodes;
+    if (k.keep && kept[k.keep]) nodes = [kept[k.keep]];
+    else if (k.html !== undefined && k.html !== null) nodes = Array.prototype.slice.call(__skyParseInto(el, k.html).childNodes);
+    else continue;
+    for (var j = 0; j < nodes.length; j++) {
+      if (nodes[j] === cursor) { cursor = cursor.nextSibling; continue; }
+      el.insertBefore(nodes[j], cursor);
+    }
+  }
+  // Moving a kept node (a reorder) blurs it; restore focus and caret.
+  if (focusInside && focused.isConnected && document.activeElement !== focused) {
+    try { focused.focus({preventScroll: true}); } catch (_) { try { focused.focus(); } catch (_) {} }
+    if (selS !== null && typeof focused.setSelectionRange === "function") {
+      try { focused.setSelectionRange(selS, selE === null ? selS : selE); } catch (_) {}
+    }
+  }
+  return missed;
+}
+
+// __skyRenameKept — move each renamed kept subtree's ids (and the
+// client's per-input state) from the old prefix to the new one. All ids
+// are read before any is written, so a shift (a->b while b->c) is safe.
+function __skyRenameKept(renames) {
+  var moves = [], r, i;
+  for (r = 0; r < renames.length; r++) {
+    var root = renames[r][0], from = renames[r][1], to = renames[r][2];
+    var all = [root].concat(Array.prototype.slice.call(root.querySelectorAll("[sky-id]")));
+    for (i = 0; i < all.length; i++) {
+      var e = all[i], sid = e.getAttribute("sky-id");
+      if (!sid || (sid !== from && sid.indexOf(from + ".") !== 0)) continue;
+      var m = {el: e, to: to + sid.slice(from.length), hid: null, entry: __skyInputs[sid]};
+      var hid = e.getAttribute("data-sky-hid");
+      if (hid && hid.indexOf(from + ".") === 0) m.hid = to + hid.slice(from.length);
+      if (m.entry) delete __skyInputs[sid];
+      moves.push(m);
+    }
+  }
+  for (i = 0; i < moves.length; i++) {
+    var mv = moves[i];
+    mv.el.setAttribute("sky-id", mv.to);
+    if (mv.hid) mv.el.setAttribute("data-sky-hid", mv.hid);
+    if (mv.entry) __skyInputs[mv.to] = mv.entry;
+  }
+}
+
+// __skyReplaceElement — Patch.replace: the element itself is replaced
+// (only the root, when it changes tag). An innerHTML write nested the new
+// root inside the old one.
+function __skyReplaceElement(el, html) {
+  var parent = el.parentNode;
+  if (!parent) return;
+  parent.replaceChild(__skyParseInto(parent, html), el);
 }
 
 function __skyContainsFocusedInput(el) {

@@ -280,7 +280,7 @@ var benchMutations = []mutation{
 	},
 	{
 		name: "list_append",
-		desc: "one row added -- child-count change, forces full subtree re-render",
+		desc: "one row added -- child-count change; the rows are kept and one row of markup ships (a kids patch)",
 		make: func(n int) (*VNode, *VNode) {
 			return prepared(n, ""), prepared(n+1, "")
 		},
@@ -453,12 +453,13 @@ func TestBenchFixturesAreNonVacuous(t *testing.T) {
 		wantHTML  bool
 		wantText  bool
 		wantAttrs bool
+		wantKids  bool
 	}{
 		{mutation: "noop", wantEmpty: true},
 		{mutation: "text_one", wantText: true},
 		{mutation: "attr_one", wantAttrs: true},
 		{mutation: "text_all", wantText: true},
-		{mutation: "list_append", wantHTML: true},
+		{mutation: "list_append", wantKids: true},
 	}
 
 	for _, tc := range cases {
@@ -488,7 +489,7 @@ func TestBenchFixturesAreNonVacuous(t *testing.T) {
 			continue
 		}
 
-		var sawHTML, sawText, sawAttrs bool
+		var sawHTML, sawText, sawAttrs, sawKids bool
 		for _, p := range patches {
 			if p.HTML != nil {
 				sawHTML = true
@@ -499,9 +500,15 @@ func TestBenchFixturesAreNonVacuous(t *testing.T) {
 			if len(p.Attrs) > 0 {
 				sawAttrs = true
 			}
+			if len(p.Kids) > 0 {
+				sawKids = true
+			}
 		}
 		if tc.wantHTML && !sawHTML {
 			t.Errorf("%s: expected a full-HTML subtree patch, got none (%d patches)", tc.mutation, len(patches))
+		}
+		if tc.wantKids && !sawKids {
+			t.Errorf("%s: expected a kids (children-reconcile) patch, got none (%d patches)", tc.mutation, len(patches))
 		}
 		if tc.wantText && !sawText {
 			t.Errorf("%s: expected a text patch, got none (%d patches)", tc.mutation, len(patches))

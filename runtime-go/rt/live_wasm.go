@@ -284,7 +284,10 @@ func spaApplyURL(path string) {
 	if len(spaRoutes) == 0 {
 		return
 	}
-	page, ok := spaResolveRoutes(spaRoutes, path)
+	// location.pathname is percent-encoded; the server side (Sky.Live, the
+	// Spa SSR resolver) matches Go's decoded r.URL.Path. Decode the same way so
+	// a route param reads identically on every side (SPA-5).
+	page, ok := spaResolveRoutes(spaRoutes, spaRoutePath(path))
 	if !ok {
 		if spaNotFound == nil {
 			return
@@ -537,6 +540,10 @@ func renderCurrent() {
 		// what keeps the typing case a MINIMAL patch set.
 		patches := diffTrees(spaPrev, &vn, snapshotFocusedInput())
 		spaApplyPatches(patches, spaPrev, &vn)
+		// UF-5: the control the user just used shows the MODEL, even when the
+		// model did not move (update rejected or normalised the input), which
+		// the tree-to-tree diff cannot see.
+		spaReconcileControlled(&vn)
 		// The diff compares handlers by constructor name, so a payload-only
 		// change emits no patch and no rebind. Refresh every element's handler
 		// slot from the new tree so its listener dispatches the CURRENT payload.

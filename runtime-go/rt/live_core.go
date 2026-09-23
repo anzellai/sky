@@ -266,6 +266,13 @@ func applyHtmlAttrShape(vn *VNode, name string, fields []any) {
 		if len(fields) >= 2 && AsBool(fields[1]) {
 			k := AsString(fields[0])
 			vn.setAttr(k, k)
+		} else if len(fields) >= 2 && AsString(fields[0]) == "checked" {
+			// `Html.Attributes.checked False` renders no attribute, which is
+			// indistinguishable from "this checkbox is uncontrolled". Mark
+			// it, so a user click the model refuses is put back (the
+			// input-authority user-event rule; Std.Ui's checkbox and radio
+			// carry the same marker).
+			vn.setAttr("data-sky-ctl", "checked")
 		}
 	case "EventAttr":
 		if len(fields) >= 1 {
@@ -436,6 +443,62 @@ func renderChildrenHTML(children []VNode) string {
 	return sb.String()
 }
 
+// renderChildrenHTMLOf serialises parent's children exactly as they sit
+// inside parent's own rendering — which is NOT the same as rendering each
+// child alone. Under a <select value=v> the option whose value is v carries
+// `selected`, and under <style>/<script> a text child is emitted verbatim.
+// A subtree-replace patch at a <select> used renderChildrenHTML, lost the
+// `selected` marking, and the browser fell back to the first option: the
+// select showed a value the model never held.
+func renderChildrenHTMLOf(parent *VNode) string {
+	var sb strings.Builder
+	for i := range parent.Children {
+		renderChildInto(&sb, parent, &parent.Children[i], nil)
+	}
+	return sb.String()
+}
+
+// renderChildHTMLOf is renderChildrenHTMLOf for one child.
+func renderChildHTMLOf(parent, c *VNode) string {
+	var sb strings.Builder
+	renderChildInto(&sb, parent, c, nil)
+	return sb.String()
+}
+
+// renderChildInto renders one child of parent with its parent context.
+func renderChildInto(sb *strings.Builder, parent, c *VNode, handlers map[string]any) {
+	// <script> and <style> bodies are raw text in HTML (CDATA-like):
+	// escaping `'` to `&#39;` breaks the JS at parse time. Sky users
+	// pass the body as a plain string (`script [] "code here"`), which
+	// becomes a text VNode. Emit text children verbatim under these
+	// tags; sub-elements still render normally (rare but valid for
+	// <style> @import chains). Matches html/template's behaviour for
+	// JSStr / CSSText contexts.
+	if (parent.Tag == "script" || parent.Tag == "style") && c.Kind == "text" {
+		sb.WriteString(c.Text)
+		return
+	}
+	// <select> uses child <option selected> to indicate the chosen
+	// value. Mark the matching option inline — less invasive than
+	// rebuilding the children tree.
+	if parent.Tag == "select" && c.Kind == "element" && c.Tag == "option" {
+		if sv := parent.Attrs["value"]; sv != "" {
+			// Copy the option, flipping `selected` on the matching value.
+			// Shallow copy of Attrs so we don't mutate the caller's VNode.
+			picked := *c
+			picked.Attrs = copyAttrs(c.Attrs)
+			if picked.Attrs["value"] == sv {
+				picked.Attrs["selected"] = "selected"
+			} else {
+				delete(picked.Attrs, "selected")
+			}
+			renderVNodeInto(sb, picked, handlers)
+			return
+		}
+	}
+	renderVNodeInto(sb, *c, handlers)
+}
+
 func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 	if n.Kind == "text" {
 		sb.WriteString(html.EscapeString(n.Text))
@@ -603,31 +666,8 @@ func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 	// tags; sub-elements still render normally (rare but valid for
 	// <style> @import chains). Matches html/template's behaviour for
 	// JSStr / CSSText contexts.
-	rawBody := n.Tag == "script" || n.Tag == "style"
-	// <select> uses child <option selected> to indicate the chosen
-	// value. Mark the matching option inline — less invasive than
-	// rebuilding the children tree.
-	selectValue := ""
-	if n.Tag == "select" && textareaValue != "" {
-		selectValue = textareaValue
-	}
-	for _, c := range n.Children {
-		if rawBody && c.Kind == "text" {
-			sb.WriteString(c.Text)
-		} else if selectValue != "" && c.Kind == "element" && c.Tag == "option" {
-			// Copy the option, flipping `selected` on the matching value.
-			// Shallow copy of Attrs so we don't mutate the caller's VNode.
-			picked := c
-			picked.Attrs = copyAttrs(c.Attrs)
-			if picked.Attrs["value"] == selectValue {
-				picked.Attrs["selected"] = "selected"
-			} else {
-				delete(picked.Attrs, "selected")
-			}
-			renderVNodeInto(sb, picked, handlers)
-		} else {
-			renderVNodeInto(sb, c, handlers)
-		}
+	for i := range n.Children {
+		renderChildInto(sb, &n, &n.Children[i], handlers)
 	}
 	sb.WriteString("</")
 	sb.WriteString(n.Tag)
@@ -745,11 +785,48 @@ func isDOMEventName(ev string) bool {
 // or implicit from `name` on form-bearing tags), it's appended so
 // keyed list items and named form fields keep identity across reorder.
 // See docs/skylive/input-authority-protocol.md §Sky-id grammar.
+//
+// A KEYED child whose key is unique among its element siblings (same tag +
+// key) drops the index: its segment is `.#<tag>:<key>`. Its id therefore
+// does not move when a sibling is inserted or removed before it, or when
+// the list is reordered — which is what lets the diff match it by key and
+// keep its DOM node (and a focused input's focus, caret and IME state). A
+// key shared by several siblings (a radio group's common `name`) cannot
+// identify one of them, so those keep the index: `.<index>#<tag>:<key>`.
 func assignSkyIDs(n *VNode, path string) {
 	if n.Kind != "element" {
 		return
 	}
 	n.SkyID = path
+	if n.Tag == "select" {
+		markSelectedOptions(n)
+	}
+	// Keys are rare; compute them only when a child carries one, and count
+	// duplicates only when two or more children are keyed.
+	var keys []string
+	keyed := 0
+	for i := range n.Children {
+		c := &n.Children[i]
+		if c.Kind != "element" {
+			continue
+		}
+		if k := skyIDKey(c); k != "" {
+			if keys == nil {
+				keys = make([]string, len(n.Children))
+			}
+			keys[i] = k
+			keyed++
+		}
+	}
+	var seen map[string]int
+	if keyed > 1 {
+		seen = make(map[string]int, keyed)
+		for i, k := range keys {
+			if k != "" {
+				seen[n.Children[i].Tag+":"+k]++
+			}
+		}
+	}
 	for i := range n.Children {
 		child := &n.Children[i]
 		if child.Kind != "element" {
@@ -758,12 +835,69 @@ func assignSkyIDs(n *VNode, path string) {
 			// same index they'd have had under the old scheme.
 			continue
 		}
-		seg := path + "." + itoa(i) + "#" + child.Tag
-		if k := skyIDKey(child); k != "" {
-			seg += ":" + k
+		var seg string
+		if keys != nil && keys[i] != "" {
+			if seen == nil || seen[child.Tag+":"+keys[i]] == 1 {
+				seg = path + ".#" + child.Tag + ":" + keys[i]
+			} else {
+				seg = path + "." + itoa(i) + "#" + child.Tag + ":" + keys[i]
+			}
+		} else {
+			seg = path + "." + itoa(i) + "#" + child.Tag
 		}
 		assignSkyIDs(child, seg)
 	}
+}
+
+// markSelectedOptions makes a <select value=v>'s choice part of the TREE:
+// the option whose value is v carries `selected`, every other option has
+// none. The renderer always marked the option in its HTML output, but the
+// VNode did not say so, which left two holes:
+//
+//   - the diff compared options without the marking, so when the options
+//     changed (one inserted before the chosen one, the list re-rendered) no
+//     patch moved the selection and the select showed a value the model
+//     never held;
+//   - the Sky.Spa client builds the DOM from the VNode, reflected `.value`
+//     onto the select before its options existed (a no-op), and so painted
+//     the first option.
+//
+// Run from assignSkyIDs, which every render path calls before it diffs or
+// builds DOM. The option attribute maps are copied, never written through.
+func markSelectedOptions(n *VNode) {
+	sv, ok := n.Attrs["value"]
+	if !ok || sv == "" {
+		return
+	}
+	for i := range n.Children {
+		c := &n.Children[i]
+		if c.Kind != "element" || c.Tag != "option" {
+			continue
+		}
+		_, has := c.Attrs["selected"]
+		want := c.Attrs["value"] == sv
+		if has == want && (!has || c.Attrs["selected"] == "selected") {
+			continue
+		}
+		c.Attrs = copyAttrs(c.Attrs)
+		if want {
+			c.Attrs["selected"] = "selected"
+		} else {
+			delete(c.Attrs, "selected")
+		}
+	}
+}
+
+// skyIDIsIndexFree reports whether a child id (under parentID) is
+// independent of the child's position — a uniquely-keyed element
+// (`.#tag:key`) or an injected <style> (`.~mq` …). The diff matches these
+// by id alone; every other child is matched by shape.
+func skyIDIsIndexFree(parentID, childID string) bool {
+	if len(childID) < len(parentID)+2 || !strings.HasPrefix(childID, parentID) || childID[len(parentID)] != '.' {
+		return false
+	}
+	c := childID[len(parentID)+1]
+	return c == '#' || c == '~'
 }
 
 // injectMediaQueryStyles walks the tree after assignSkyIDs and rewrites
@@ -955,8 +1089,20 @@ func applyMarkerAsFirstChild(n *VNode, spec styleMarkerSpec) {
 			spec.styleAttr: n.SkyID,
 		},
 		Children: []VNode{{Kind: "raw", Text: styleText}},
+		SkyID:    injectedStyleID(n.SkyID, spec),
 	}
 	n.Children = append([]VNode{styleNode}, n.Children...)
+}
+
+// injectedStyleID is the sky-id of the <style> a pass injects for the
+// element `owner`: `<owner>.~<pass>` (`.~mq`, `.~pc`, `.~tr`, `.~anim`).
+// The style needs an id of its own so the diff can address it: without
+// one, a CSS change (a hover colour that follows the model) was never
+// patched, and a moved owner left its old <style> behind. The `~` segment
+// cannot collide with a child segment (`.<index>#` / `.#`), and it is
+// index-free, so the style keeps its id whenever its owner does.
+func injectedStyleID(owner string, spec styleMarkerSpec) string {
+	return owner + ".~" + strings.TrimPrefix(spec.styleAttr, "data-sky-")
 }
 
 // walkChildrenWithVoidSiblingHoist recurses into each child + splices
@@ -1000,6 +1146,7 @@ func walkChildrenWithVoidSiblingHoist(children []VNode, spec styleMarkerSpec) []
 							spec.styleAttr: child.SkyID,
 						},
 						Children: []VNode{{Kind: "raw", Text: styleText}},
+						SkyID:    injectedStyleID(child.SkyID, spec),
 					}
 				}
 				for _, ma := range spec.markerAttrs {
@@ -1584,12 +1731,47 @@ func vnodeEqualShallow(a, b *VNode) bool {
 }
 
 // Patch describes one DOM mutation the client will apply.
+//
+// Operations, applied in this order when several are set:
+//
+//   - Replace: replace the target element ITSELF (outerHTML). Emitted only
+//     when the root changes tag — every other tag change is handled at the
+//     parent by Kids / HTML, and an innerHTML write at the old root nested
+//     the new root inside it.
+//   - Text: the target's only child becomes this text.
+//   - HTML: the target's children become this markup.
+//   - Kids: reconcile the target's children in place (see KidOp).
+//   - Attrs: set (or, for "", remove) attributes.
+//   - Remove: remove the target.
 type Patch struct {
-	ID     string            `json:"id"` // target element's sky-id
-	Text   *string           `json:"text,omitempty"`
-	HTML   *string           `json:"html,omitempty"`
-	Attrs  map[string]string `json:"attrs,omitempty"` // value "" => remove
-	Remove bool              `json:"remove,omitempty"`
+	ID      string            `json:"id"` // target element's sky-id
+	Text    *string           `json:"text,omitempty"`
+	HTML    *string           `json:"html,omitempty"`
+	Kids    []KidOp           `json:"kids,omitempty"`
+	Replace *string           `json:"replace,omitempty"`
+	Attrs   map[string]string `json:"attrs,omitempty"` // value "" => remove
+	Remove  bool              `json:"remove,omitempty"`
+}
+
+// KidOp is one slot of a children-reconcile patch. Kids lists the target's
+// NEW children in order, one KidOp per new child:
+//
+//   - Keep: the existing child element with this sky-id moves (if needed) to
+//     this slot, as the SAME DOM node — so a focused input keeps its focus,
+//     caret, IME composition and uncommitted value. When ID is set and differs
+//     from Keep, the kept node was renamed: every sky-id in its subtree that
+//     equals Keep or starts with Keep+"." is rewritten to start with ID (and
+//     data-sky-hid likewise). Later patches in the same batch address the
+//     node by its new id.
+//   - HTML: a new node (or text) for this slot, as markup.
+//
+// Every existing child that no KidOp keeps is removed. Kept nodes appear in
+// DOM order unless the list was reordered, so the applier inserts new nodes
+// around them and moves a kept node only for a real reorder.
+type KidOp struct {
+	Keep string  `json:"keep,omitempty"`
+	ID   string  `json:"id,omitempty"`
+	HTML *string `json:"html,omitempty"`
 }
 
 // inputStateEntry carries the client's current idea of a dirty input.
@@ -1637,10 +1819,15 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	if old == nil || new_ == nil {
 		return
 	}
-	// Tag / kind change → replace subtree via HTML patch.
+	// Tag / kind change → replace the element itself. diffChildren never
+	// pairs children of different tags, so this is reached only for the ROOT
+	// pair. It used to emit an HTML (innerHTML) patch carrying the whole new
+	// element, which every applier wrote INSIDE the old root: the old tag
+	// survived with the new root nested in it (and the Spa applier rebuilt
+	// only the children).
 	if old.Tag != new_.Tag || old.Kind != new_.Kind {
 		html := renderVNode(*new_, nil)
-		*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+		*out = append(*out, Patch{ID: old.SkyID, Replace: &html})
 		return
 	}
 	// Attrs diff — with client-value alignment for form fields so the
@@ -1749,52 +1936,371 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 		return
 	}
 
-	// Structural diff of children: if counts differ OR any child pair
-	// has mismatched tag/kind, replace the whole subtree's innerHTML.
-	if len(old.Children) != len(new_.Children) {
-		if old.SkyID != "" {
-			html := renderChildrenHTML(new_.Children)
-			*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+	diffChildren(old, new_, clientState, out)
+}
+
+// diffChildren reconciles old.Children into new_.Children.
+//
+// Fast path: the same children in the same slots (same kinds, equal text,
+// same element ids) — recurse pairwise, as the diff always has.
+//
+// Otherwise the children are MATCHED, not compared by position:
+//
+//  1. a child whose id is index-free (a uniquely keyed element, an injected
+//     <style>) matches the old child with the same id, wherever it moved;
+//  2. the remaining elements match by shape (tag, key, type/name, child tags)
+//     along a longest common subsequence, so an unkeyed sibling inserted or
+//     removed before an element does not steal its identity;
+//  3. leftover unkeyed elements of the same tag between two matches pair up
+//     in order, so an element that changed shape is still updated in place.
+//
+// Matched children are KEPT (the same DOM node) and diffed recursively;
+// everything else is new markup. One Kids patch carries the result. A kept
+// child whose positional id changed is renamed in the same patch, so the DOM
+// never holds a node whose sky-id differs from the new tree's — the drift
+// that made later patches miss ("target not found") and a Spa listener
+// dispatch the old message.
+//
+// Children holding raw HTML (Std.Html.raw) cannot be addressed one by one
+// (a raw string may parse to any number of nodes), and <style>/<script>/
+// <textarea> children are text, so those parents still get one HTML patch.
+func diffChildren(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
+	if childrenSameSlots(old.Children, new_.Children) {
+		for i := range old.Children {
+			if old.Children[i].Kind == "element" {
+				diffNodes(&old.Children[i], &new_.Children[i], clientState, out)
+			}
 		}
 		return
 	}
-
-	for i := range old.Children {
-		oc := &old.Children[i]
-		nc := &new_.Children[i]
-		if oc.Kind == "text" && nc.Kind == "text" {
-			if oc.Text != nc.Text && old.SkyID != "" {
-				// Single-text is above; mixed children = replace subtree.
-				html := renderChildrenHTML(new_.Children)
-				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
-				return
-			}
-			continue
-		}
-		if oc.Kind == "raw" && nc.Kind == "raw" {
-			// A raw node's text IS its parent's innerHTML (Std.Html.raw). It has
-			// no sky-id of its own to address, so when the raw string changes we
-			// re-serialise the parent's children and replace the subtree — the
-			// same HTML-patch shape the browser applier (client spaSetChildren /
-			// server __skyApplyPatches) already handles. Unchanged raw emits
-			// nothing, so a static <style>/embed is never needlessly re-rendered.
-			if oc.Text != nc.Text && old.SkyID != "" {
-				html := renderChildrenHTML(new_.Children)
-				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
-				return
-			}
-			continue
-		}
-		if oc.Tag != nc.Tag || oc.Kind != nc.Kind {
-			// Tag mismatch: replace subtree at the parent.
-			if old.SkyID != "" {
-				html := renderChildrenHTML(new_.Children)
-				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
-			}
-			return
-		}
-		diffNodes(oc, nc, clientState, out)
+	if old.SkyID == "" {
+		return
 	}
+	if childrenNeedWholeHTML(old, new_) {
+		html := renderChildrenHTMLOf(new_)
+		*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+		return
+	}
+	match := alignChildren(old, new_)
+	kept := 0
+	for _, j := range match {
+		if j >= 0 {
+			kept++
+		}
+	}
+	if kept == 0 {
+		html := renderChildrenHTMLOf(new_)
+		*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+		return
+	}
+	kids := make([]KidOp, len(new_.Children))
+	for i := range new_.Children {
+		nc := &new_.Children[i]
+		if j := match[i]; j >= 0 {
+			oc := &old.Children[j]
+			kids[i] = KidOp{Keep: oc.SkyID}
+			if oc.SkyID != nc.SkyID {
+				kids[i].ID = nc.SkyID
+			}
+			continue
+		}
+		h := renderChildHTMLOf(new_, nc)
+		kids[i] = KidOp{HTML: &h}
+	}
+	*out = append(*out, Patch{ID: old.SkyID, Kids: kids})
+	for i := range new_.Children {
+		j := match[i]
+		if j < 0 {
+			continue
+		}
+		oc := &old.Children[j]
+		nc := &new_.Children[i]
+		cs := clientState
+		if oc.SkyID != nc.SkyID {
+			renamed := renameSubtreeIDs(*oc, oc.SkyID, nc.SkyID)
+			cs = renameClientState(clientState, oc.SkyID, nc.SkyID)
+			oc = &renamed
+		}
+		diffNodes(oc, nc, cs, out)
+	}
+}
+
+// childrenSameSlots: the fast path's precondition.
+func childrenSameSlots(a, b []VNode) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		x, y := &a[i], &b[i]
+		if x.Kind != y.Kind {
+			return false
+		}
+		switch x.Kind {
+		case "text", "raw":
+			if x.Text != y.Text {
+				return false
+			}
+		default:
+			if x.Tag != y.Tag || x.SkyID != y.SkyID {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// childrenNeedWholeHTML: parents whose children cannot be reconciled one by
+// one (see diffChildren).
+func childrenNeedWholeHTML(old, new_ *VNode) bool {
+	switch new_.Tag {
+	case "style", "script", "textarea":
+		return true
+	}
+	for i := range old.Children {
+		if old.Children[i].Kind == "raw" {
+			return true
+		}
+	}
+	for i := range new_.Children {
+		if new_.Children[i].Kind == "raw" {
+			return true
+		}
+	}
+	return false
+}
+
+// childShape is the matching key for step 2 of alignChildren.
+func childShape(n *VNode) string {
+	var sb strings.Builder
+	sb.WriteString(n.Tag)
+	sb.WriteByte('|')
+	sb.WriteString(n.Attrs["sky-key"])
+	sb.WriteByte('|')
+	sb.WriteString(n.Attrs["name"])
+	sb.WriteByte('|')
+	sb.WriteString(n.Attrs["type"])
+	for _, sa := range injectedStyleAttrs {
+		if _, ok := n.Attrs[sa]; ok {
+			sb.WriteString("|" + sa)
+		}
+	}
+	sb.WriteByte('|')
+	for i := range n.Children {
+		c := &n.Children[i]
+		if c.Kind == "element" {
+			sb.WriteString(c.Tag)
+		} else {
+			sb.WriteString(c.Kind)
+		}
+		sb.WriteByte(',')
+	}
+	return sb.String()
+}
+
+var injectedStyleAttrs = []string{"data-sky-mq", "data-sky-pc", "data-sky-tr", "data-sky-anim"}
+
+// alignChildrenLCSLimit bounds the O(n·m) subsequence table. Past it the
+// matcher is greedy (each new child takes the next old child of the same
+// shape) — still correct, since any pairing is diffed recursively, only
+// less economical for a pathological reorder of a very long list.
+const alignChildrenLCSLimit = 1 << 18
+
+// alignChildren returns, for each new child, the index of the old child it
+// keeps, or -1. Only elements are ever matched, only to elements of the same
+// tag, and each old child at most once.
+func alignChildren(old, new_ *VNode) []int {
+	oc, nc := old.Children, new_.Children
+	match := make([]int, len(nc))
+	for i := range match {
+		match[i] = -1
+	}
+	used := make([]bool, len(oc))
+	oldKeyed := func(j int) bool {
+		return oc[j].Kind == "element" && skyIDIsIndexFree(old.SkyID, oc[j].SkyID)
+	}
+	newKeyed := func(i int) bool {
+		return nc[i].Kind == "element" && skyIDIsIndexFree(new_.SkyID, nc[i].SkyID)
+	}
+
+	// 1. Index-free ids (uniquely keyed elements, injected styles). The id
+	// is relative to the parent, so compare the suffix after it.
+	var byID map[string]int
+	for j := range oc {
+		if oldKeyed(j) {
+			if byID == nil {
+				byID = map[string]int{}
+			}
+			byID[oc[j].SkyID[len(old.SkyID):]] = j
+		}
+	}
+	for i := range nc {
+		if !newKeyed(i) {
+			continue
+		}
+		if j, ok := byID[nc[i].SkyID[len(new_.SkyID):]]; ok && oc[j].Tag == nc[i].Tag {
+			match[i] = j
+			used[j] = true
+		}
+	}
+
+	// 2. Shape LCS over the unkeyed elements.
+	var ai, bi []int
+	for j := range oc {
+		if oc[j].Kind == "element" && !used[j] && !oldKeyed(j) {
+			ai = append(ai, j)
+		}
+	}
+	for i := range nc {
+		if nc[i].Kind == "element" && match[i] < 0 && !newKeyed(i) {
+			bi = append(bi, i)
+		}
+	}
+	if len(ai) > 0 && len(bi) > 0 {
+		as := make([]string, len(ai))
+		for k, j := range ai {
+			as[k] = childShape(&oc[j])
+		}
+		bs := make([]string, len(bi))
+		for k, i := range bi {
+			bs[k] = childShape(&nc[i])
+		}
+		// Common prefix and suffix match without a table — the usual shape
+		// (an append, a removal, one insert) never reaches the O(n·m) part.
+		for len(as) > 0 && len(bs) > 0 && as[0] == bs[0] {
+			match[bi[0]] = ai[0]
+			used[ai[0]] = true
+			as, bs, ai, bi = as[1:], bs[1:], ai[1:], bi[1:]
+		}
+		for len(as) > 0 && len(bs) > 0 && as[len(as)-1] == bs[len(bs)-1] {
+			match[bi[len(bi)-1]] = ai[len(ai)-1]
+			used[ai[len(ai)-1]] = true
+			as, bs = as[:len(as)-1], bs[:len(bs)-1]
+			ai, bi = ai[:len(ai)-1], bi[:len(bi)-1]
+		}
+		if len(as) == 0 || len(bs) == 0 {
+			// Everything left is unmatched; step 3 pairs what it can.
+		} else if len(ai)*len(bi) <= alignChildrenLCSLimit {
+			n, m := len(as), len(bs)
+			// dp[x][y] = LCS length of as[x:], bs[y:].
+			dp := make([][]int32, n+1)
+			for x := range dp {
+				dp[x] = make([]int32, m+1)
+			}
+			for x := n - 1; x >= 0; x-- {
+				for y := m - 1; y >= 0; y-- {
+					if as[x] == bs[y] {
+						dp[x][y] = dp[x+1][y+1] + 1
+					} else if dp[x+1][y] >= dp[x][y+1] {
+						dp[x][y] = dp[x+1][y]
+					} else {
+						dp[x][y] = dp[x][y+1]
+					}
+				}
+			}
+			x, y := 0, 0
+			for x < n && y < m {
+				if as[x] == bs[y] {
+					match[bi[y]] = ai[x]
+					used[ai[x]] = true
+					x++
+					y++
+				} else if dp[x+1][y] >= dp[x][y+1] {
+					x++
+				} else {
+					y++
+				}
+			}
+		} else {
+			x := 0
+			for y := range bs {
+				for k := x; k < len(as); k++ {
+					if as[k] == bs[y] {
+						match[bi[y]] = ai[k]
+						used[ai[k]] = true
+						x = k + 1
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Between two matches, pair leftover unkeyed elements of the same tag
+	// in order.
+	lo := 0
+	for i := 0; i < len(nc); {
+		if match[i] >= 0 {
+			if match[i] >= lo {
+				lo = match[i] + 1
+			}
+			i++
+			continue
+		}
+		e := i
+		for e < len(nc) && match[e] < 0 {
+			e++
+		}
+		hi := len(oc)
+		for k := e; k < len(nc); k++ {
+			if match[k] >= lo {
+				hi = match[k]
+				break
+			}
+		}
+		j := lo
+		for k := i; k < e; k++ {
+			if nc[k].Kind != "element" || newKeyed(k) {
+				continue
+			}
+			for ; j < hi; j++ {
+				if !used[j] && oc[j].Kind == "element" && oc[j].Tag == nc[k].Tag && !oldKeyed(j) {
+					match[k] = j
+					used[j] = true
+					j++
+					break
+				}
+			}
+		}
+		i = e
+	}
+	return match
+}
+
+// renameSubtreeIDs returns a deep copy of n in which every sky-id equal to
+// from, or starting with from+".", starts with to instead — the diff-side
+// twin of the applier's rename of a kept node (see KidOp).
+func renameSubtreeIDs(n VNode, from, to string) VNode {
+	out := n
+	if n.SkyID == from {
+		out.SkyID = to
+	} else if strings.HasPrefix(n.SkyID, from+".") {
+		out.SkyID = to + n.SkyID[len(from):]
+	}
+	if len(n.Children) > 0 {
+		out.Children = make([]VNode, len(n.Children))
+		for i := range n.Children {
+			out.Children[i] = renameSubtreeIDs(n.Children[i], from, to)
+		}
+	}
+	return out
+}
+
+// renameClientState re-keys the client's reported input values for a
+// renamed subtree, so input-authority alignment still finds them.
+func renameClientState(cs map[string]string, from, to string) map[string]string {
+	if len(cs) == 0 {
+		return cs
+	}
+	out := make(map[string]string, len(cs))
+	for k, v := range cs {
+		out[k] = v
+		if k == from {
+			out[to] = v
+		} else if strings.HasPrefix(k, from+".") {
+			out[to+k[len(from):]] = v
+		}
+	}
+	return out
 }
 
 // isFormInputTag — tags whose value/checked/selected attrs are

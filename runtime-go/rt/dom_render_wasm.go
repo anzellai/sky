@@ -77,6 +77,9 @@ func spaShouldHydrate(mount js.Value, root VNode) bool {
 		return false
 	}
 	ok, reason := spaHydratableVNode(root)
+	if ok {
+		ok, reason = spaHydrationParity(mount.Get("firstElementChild"), &root)
+	}
 	if !ok {
 		if c := js.Global().Get("console"); c.Truthy() {
 			c.Call("warn", "[sky.spa] SSR hydrate skipped, full rebuild:", reason)
@@ -84,6 +87,74 @@ func spaShouldHydrate(mount js.Value, root VNode) bool {
 		return false
 	}
 	return true
+}
+
+// spaHydrationParity checks that the server-painted DOM SHOWS what the
+// client's first tree says — tags, sky-ids, the tree's attributes and every
+// text node — before hydration adopts it (SPA-5). Hydration only binds
+// listeners; it writes no text. So when the server and the client computed a
+// different first view (a route param the server decoded and the client did
+// not, a model field only one side had), the page kept showing the server's
+// text while the client's model and every later diff assumed its own. A
+// mismatch rebuilds from the client tree instead, which is always correct.
+//
+// Extra DOM attributes are allowed (the server stamps sky-<event> and
+// data-sky-hid, which the client does not model). A child list holding raw
+// HTML is not compared node by node (a raw string parses to any number of
+// nodes).
+func spaHydrationParity(node js.Value, v *VNode) (bool, string) {
+	if !node.Truthy() || node.Get("nodeType").Int() != 1 {
+		return false, "server DOM has no element for " + v.SkyID
+	}
+	if strings.ToLower(tagName(node)) != v.Tag {
+		return false, "tag differs at " + v.SkyID + ": server <" + strings.ToLower(tagName(node)) + ">, client <" + v.Tag + ">"
+	}
+	if v.SkyID != "" {
+		if s := node.Call("getAttribute", "sky-id"); s.Type() != js.TypeString || s.String() != v.SkyID {
+			return false, "sky-id differs at " + v.SkyID
+		}
+	}
+	for k, want := range v.Attrs {
+		if k == "value" && (v.Tag == "select" || v.Tag == "textarea") {
+			continue
+		}
+		if got := node.Call("getAttribute", k); got.Type() != js.TypeString || got.String() != want {
+			return false, "attribute " + k + " differs at " + v.SkyID
+		}
+	}
+	for i := range v.Children {
+		if v.Children[i].Kind == "raw" {
+			return true, ""
+		}
+	}
+	dom := node.Get("firstChild")
+	for i := range v.Children {
+		c := &v.Children[i]
+		if c.Kind == "text" && c.Text == "" {
+			continue
+		}
+		if !dom.Truthy() {
+			return false, "server DOM has fewer children at " + v.SkyID
+		}
+		switch c.Kind {
+		case "text":
+			if dom.Get("nodeType").Int() != 3 {
+				return false, "text expected at " + v.SkyID
+			}
+			if d := dom.Get("data"); d.Type() != js.TypeString || d.String() != c.Text {
+				return false, "text differs at " + v.SkyID
+			}
+		default:
+			if ok, why := spaHydrationParity(dom, c); !ok {
+				return false, why
+			}
+		}
+		dom = dom.Get("nextSibling")
+	}
+	if dom.Truthy() {
+		return false, "server DOM has more children at " + v.SkyID
+	}
+	return true, ""
 }
 
 // spaHydrate attaches the client's real event closures (and input-prop
@@ -167,6 +238,13 @@ func buildDOM(el VNode) js.Value {
 		}
 		for k, v := range el.Attrs {
 			n.Call("setAttribute", k, v)
+			// A <select>'s value can only be reflected once its options
+			// exist; before that `.value = v` is a no-op and the first
+			// option wins the first paint (F5). It is reflected below,
+			// after spaSetChildren.
+			if el.Tag == "select" && k == "value" {
+				continue
+			}
 			reflectInputProp(n, k, v)
 		}
 		// A submit-handled <form> with no explicit method gets method="post", so a
@@ -183,7 +261,24 @@ func buildDOM(el VNode) js.Value {
 		}
 		bindNodeEvents(n, el)
 		spaSetChildren(n, el.Children)
+		spaSyncSelectValue(n, &el)
 		return n
+	}
+}
+
+// spaSyncSelectValue sets a <select>'s .value from its VNode once the
+// options are in place. The options already carry `selected` for the
+// model's value (markSelectedOptions), so this is the belt to those
+// braces — and the only thing that moves the selection when the options
+// were rebuilt under a select the user had already touched.
+func spaSyncSelectValue(n js.Value, el *VNode) {
+	if el == nil || el.Tag != "select" {
+		return
+	}
+	if v, ok := el.Attrs["value"]; ok && v != "" {
+		if cur := n.Get("value"); cur.Type() != js.TypeString || cur.String() != v {
+			n.Set("value", v)
+		}
 	}
 }
 
@@ -249,7 +344,19 @@ func boolAttr(v string) bool { return v != "" && v != "false" }
 // side-channel data attributes, not DOM events, and are skipped.
 func bindNodeEvents(n js.Value, el VNode) {
 	spaNodeHandlers.set(el.SkyID, el.Events)
-	id := el.SkyID
+	bound := el.SkyID
+	// The listener resolves its node's sky-id when it FIRES, not when it is
+	// bound: a kept node can be renamed by a children-reconcile patch (see
+	// KidOp), and a listener holding the old id would look up the old
+	// handler slot and dispatch the old message.
+	idOf := func(this js.Value) string {
+		if this.Type() == js.TypeObject {
+			if s := this.Call("getAttribute", "sky-id"); s.Type() == js.TypeString && s.String() != "" {
+				return s.String()
+			}
+		}
+		return bound
+	}
 	for evt, handler := range el.Events {
 		// File / image inputs. `Ui.onFile` / `Ui.onImage` lower to the meta
 		// events "sky-file" / "sky-image" (Std/Html/Events.sky). Sky.Live wires
@@ -264,7 +371,7 @@ func bindNodeEvents(n js.Value, el VNode) {
 			ek := evt
 			node := n
 			f := js.FuncOf(func(this js.Value, args []js.Value) any {
-				spaReadFileAndDispatch(node, spaNodeHandlers.lookup(id, ek, h))
+				spaReadFileAndDispatch(node, spaNodeHandlers.lookup(idOf(this), ek, h))
 				return nil
 			})
 			spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
@@ -276,18 +383,20 @@ func bindNodeEvents(n js.Value, el VNode) {
 		// preventDefault so a <textarea> does not also insert a newline for the
 		// sending keystroke. Shift-Enter is left untouched, so it inserts a
 		// newline as normal. Sky.Live does the same in its client JS. The handler
-		// is a bare Msg (no payload), so dispatch it with an empty string.
+		// is a bare Msg (no payload), so dispatch it with an empty string. An
+		// Enter that CONFIRMS an IME composition is not a send.
 		if evt == "enter" {
 			h := handler
 			f := js.FuncOf(func(this js.Value, args []js.Value) any {
 				if len(args) > 0 && args[0].Truthy() {
 					ev := args[0]
-					if ev.Get("key").String() != "Enter" || ev.Get("shiftKey").Truthy() {
+					if ev.Get("key").String() != "Enter" || ev.Get("shiftKey").Truthy() || ev.Get("isComposing").Truthy() {
 						return nil
 					}
 					ev.Call("preventDefault")
 				}
-				dispatchEvent(spaNodeHandlers.lookup(id, "enter", h), "")
+				spaNoteEventTarget(this)
+				dispatchEvent(spaNodeHandlers.lookup(idOf(this), "enter", h), "")
 				return nil
 			})
 			spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
@@ -300,7 +409,7 @@ func bindNodeEvents(n js.Value, el VNode) {
 		h := handler // fallback only; the live handler is read at dispatch time
 		e := evt
 		f := js.FuncOf(func(this js.Value, args []js.Value) any {
-			cur := spaNodeHandlers.lookup(id, e, h)
+			cur := spaNodeHandlers.lookup(idOf(this), e, h)
 			// A form submit is the one event that carries structured data (the
 			// field values), and it MUST preventDefault or the browser does a
 			// native submit — which, on a form with no method, is a GET that
@@ -317,11 +426,141 @@ func bindNodeEvents(n js.Value, el VNode) {
 					return nil
 				}
 			}
+			// IME (UF-11): while a composition is open the input events carry
+			// the PRE-EDIT text (romaji, a half-built syllable). Dispatching them
+			// ran update on text the user never committed and re-rendered the
+			// field under the IME. Wait for compositionend (bound below), which
+			// dispatches the committed text once.
+			if e == "input" && len(args) > 0 && args[0].Truthy() {
+				if args[0].Get("isComposing").Truthy() || this.Get("__skyComposing").Truthy() {
+					return nil
+				}
+				// Firefox fires one more input AFTER compositionend with the
+				// committed value: that one was already dispatched.
+				if done := this.Get("__skyComposed"); done.Type() == js.TypeString {
+					this.Set("__skyComposed", js.Undefined())
+					if v := this.Get("value"); v.Type() == js.TypeString && v.String() == done.String() {
+						return nil
+					}
+				}
+			}
+			spaNoteEventTarget(this)
 			dispatchEvent(cur, eventPayload(e, args))
 			return nil
 		})
 		spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
 		n.Call("addEventListener", evt, f)
+		if evt == "input" {
+			spaBindComposition(n, el.SkyID, h, idOf)
+		}
+	}
+}
+
+// spaBindComposition wires compositionstart / compositionend on a node with
+// an input handler: the start marks the node composing (so input events and
+// value patches leave it alone), the end dispatches the committed text once.
+func spaBindComposition(n js.Value, id string, h any, idOf func(js.Value) string) {
+	start := js.FuncOf(func(this js.Value, args []js.Value) any {
+		this.Set("__skyComposing", true)
+		return nil
+	})
+	end := js.FuncOf(func(this js.Value, args []js.Value) any {
+		this.Set("__skyComposing", false)
+		val := ""
+		if v := this.Get("value"); v.Type() == js.TypeString {
+			val = v.String()
+		}
+		this.Set("__skyComposed", val)
+		spaNoteEventTarget(this)
+		dispatchEvent(spaNodeHandlers.lookup(idOf(this), "input", h), val)
+		return nil
+	})
+	spaNodeFns[id] = append(spaNodeFns[id], start, end)
+	n.Call("addEventListener", "compositionstart", start)
+	n.Call("addEventListener", "compositionend", end)
+}
+
+// spaEventTarget is the form control the last user event came from. After
+// the re-render, spaReconcileControlled makes its live state (.value /
+// .checked) show the MODEL — see UF-5 in docs/skylive/input-authority-protocol.md.
+var spaEventTarget js.Value
+
+func spaNoteEventTarget(this js.Value) {
+	if this.Type() != js.TypeObject {
+		spaEventTarget = js.Value{}
+		return
+	}
+	switch tagName(this) {
+	case "INPUT", "TEXTAREA", "SELECT":
+		spaEventTarget = this
+	default:
+		spaEventTarget = js.Value{}
+	}
+}
+
+// spaReconcileControlled is the Spa half of the input-authority rule for a
+// user event (UF-5): after update has run and the patches are applied, a
+// CONTROLLED form control shows what the model says, even when the model
+// did not change. The diff compares the previous VNode with the new one, so
+// when update rejects or normalises the input (keeps "abc" when the user
+// typed "abcd", refuses a checkbox tick) both trees agree, no patch is
+// emitted, and the DOM kept the user's rejected state.
+//
+//   - text-like input / textarea / select: controlled when the VNode has a
+//     `value`; .value is rewritten when it differs (caret kept, clamped).
+//   - checkbox / radio: controlled when the VNode has `checked` or declares
+//     `data-sky-ctl="checked"` (Std.Ui's checkbox and radio, and
+//     Html.Attributes.checked False); .checked follows the VNode.
+//   - a file input is never touched.
+func spaReconcileControlled(root *VNode) {
+	el := spaEventTarget
+	spaEventTarget = js.Value{}
+	if el.Type() != js.TypeObject || !el.Get("isConnected").Truthy() {
+		return
+	}
+	if el.Get("__skyComposing").Truthy() {
+		return
+	}
+	sid := el.Call("getAttribute", "sky-id")
+	if sid.Type() != js.TypeString {
+		return
+	}
+	nv := findVNode(root, sid.String())
+	if nv == nil {
+		return
+	}
+	typ := strings.ToLower(nv.Attrs["type"])
+	switch typ {
+	case "file":
+		return
+	case "checkbox", "radio":
+		_, has := nv.Attrs["checked"]
+		if !has && nv.Attrs["data-sky-ctl"] != "checked" {
+			return
+		}
+		want := has && boolAttr(nv.Attrs["checked"])
+		if el.Get("checked").Truthy() != want {
+			el.Set("checked", want)
+		}
+		return
+	}
+	v, ok := nv.Attrs["value"]
+	if !ok {
+		return
+	}
+	cur := el.Get("value")
+	if cur.Type() == js.TypeString && cur.String() == v {
+		return
+	}
+	s, e := -1, -1
+	focused := el.Equal(js.Global().Get("document").Get("activeElement"))
+	if focused {
+		s, e = selectionRange(el)
+	}
+	el.Set("value", v)
+	if focused && s >= 0 && hasFn(el, "setSelectionRange") {
+		l := valueLen(el)
+		el.Call("setSelectionRange", min(s, l), min(e, l))
 	}
 }
 
@@ -405,7 +644,7 @@ func spaReadFileAndDispatch(input js.Value, handler any) {
 		if max, err := strconv.Atoi(maxAttr.String()); err == nil && max > 0 {
 			if sz := file.Get("size"); sz.Type() == js.TypeNumber && sz.Int() > max {
 				if alert := js.Global().Get("alert"); alert.Type() == js.TypeFunction {
-					alert.Invoke("That file is too large. Max " + strconv.Itoa(max/1000000) + "MB.")
+					alert.Invoke(spaFileTooLargeMessage(max))
 				}
 				input.Set("value", "")
 				return
@@ -436,17 +675,34 @@ func spaReadFileAndDispatch(input js.Value, handler any) {
 	reader.Call("readAsDataURL", file)
 }
 
-// eventPayload extracts the string argument a handler expects. Input/change hand
-// in the target's current value; other events carry no payload.
-func eventPayload(evt string, args []js.Value) string {
-	if evt != "input" && evt != "change" {
+// eventPayload extracts the argument a handler expects, with the same
+// convention as Sky.Live's __skyExtractArgs (live.go):
+//
+//   - input / change on a checkbox or radio → its .checked (a Bool), so
+//     Html.Events.onCheck gets the Bool it is typed for (F11: it used to get
+//     the string "" and the dispatch panicked);
+//   - input / change otherwise → the target's .value;
+//   - keydown / keyup / keypress → event.key (F10: it used to be "");
+//   - anything else → no payload.
+func eventPayload(evt string, args []js.Value) any {
+	if len(args) == 0 || !args[0].Truthy() {
 		return ""
 	}
-	if len(args) == 0 {
+	ev := args[0]
+	switch evt {
+	case "keydown", "keyup", "keypress":
+		if k := ev.Get("key"); k.Type() == js.TypeString {
+			return k.String()
+		}
 		return ""
-	}
-	target := args[0].Get("target")
-	if target.Truthy() {
+	case "input", "change":
+		target := ev.Get("target")
+		if !target.Truthy() {
+			return ""
+		}
+		if t := target.Get("type"); t.Type() == js.TypeString && (t.String() == "checkbox" || t.String() == "radio") {
+			return target.Get("checked").Truthy()
+		}
 		if v := target.Get("value"); v.Type() == js.TypeString {
 			return v.String()
 		}
@@ -456,8 +712,8 @@ func eventPayload(evt string, args []js.Value) string {
 
 // dispatchEvent turns an event handler value into a Msg and dispatches it.
 // A plain Msg value (onClick Increment) is dispatched as-is; a handler
-// function (onInput toMsg) is applied to the event payload string first.
-func dispatchEvent(handler any, payload string) {
+// function (onInput toMsg) is applied to the event payload first.
+func dispatchEvent(handler any, payload any) {
 	if spaDispatch == nil {
 		return
 	}
@@ -473,13 +729,15 @@ func dispatchEvent(handler any, payload string) {
 		}
 	}()
 	// Reflection-free (Sky.Spa client): a payload handler emits as
-	// `func(string) any` (onInput/onChange) or `func(any) any`; apply by TYPED
-	// ASSERTION rather than `reflect.Value.Call` (TinyGo cannot compile it). A
-	// plain Msg value (onClick Increment) is not a func → dispatched as-is. The
-	// reflect `sky_call` fallback is unreached for a real Spa client.
+	// `func(string) any` (onInput/onChange), `func(bool) any` (onCheck) or
+	// `func(any) any`; apply by TYPED ASSERTION rather than
+	// `reflect.Value.Call` (TinyGo cannot compile it). A plain Msg value
+	// (onClick Increment) is not a func → dispatched as-is.
 	switch h := handler.(type) {
 	case func(string) any:
-		spaDispatch(h(payload))
+		spaDispatch(h(payloadString(payload)))
+	case func(bool) any:
+		spaDispatch(h(payloadBool(payload)))
 	case func(any) any:
 		spaDispatch(h(payload))
 	default:
@@ -492,11 +750,10 @@ func dispatchEvent(handler any, payload string) {
 }
 
 // spaApplyPatches applies a []Patch (produced by diffTrees) to the live DOM,
-// addressing each target by sky-id. oldRoot/newRoot are the previous and new
-// VNode trees: newRoot is the source of truth for subtree rebuilds (so real
-// listeners get re-attached), oldRoot lets us release listeners of removed
-// subtrees. Focus/cursor/dirty-input authority is ported from
-// live.go's __skyApplyPatches.
+// addressing each target by sky-id. newRoot is the source of truth for every
+// node the patches create (so real listeners get attached); listeners of
+// removed nodes are released by walking the removed DOM. Focus/cursor/
+// dirty-input authority is ported from live.go's __skyApplyPatches.
 func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 	if len(patches) == 0 {
 		return
@@ -528,24 +785,198 @@ func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 			continue
 		}
 
+		if p.Replace != nil {
+			spaReplaceNode(el, p.ID, newRoot)
+			continue
+		}
 		if p.Text != nil {
 			// textContent on a container that holds the focused input would
 			// also wipe the input. Guard like the HTML path.
 			if containsFocusedInput(el) {
-				rebuildChildrenPreservingFocus(el, p.ID, oldRoot, newRoot)
+				rebuildChildrenPreservingFocus(el, p.ID, newRoot)
 			} else {
+				releaseDOMChildren(el)
 				el.Set("textContent", *p.Text)
 			}
 		}
 		if p.HTML != nil {
-			rebuildChildrenPreservingFocus(el, p.ID, oldRoot, newRoot)
+			rebuildChildrenPreservingFocus(el, p.ID, newRoot)
+		}
+		if p.Kids != nil {
+			spaApplyKids(el, p, newRoot)
 		}
 		if p.Attrs != nil {
 			applyAttrs(el, p.Attrs, p.ID, newRoot)
 		}
 		if p.Remove {
-			releaseSubtree(findVNode(oldRoot, p.ID))
+			releaseDOMSubtree(el)
 			el.Call("remove")
+		}
+	}
+}
+
+// spaReplaceNode replaces el itself with a node built from the new tree (a
+// root that changed tag, K3). It used to rebuild only el's children, so the
+// old root tag survived.
+func spaReplaceNode(el js.Value, id string, newRoot *VNode) {
+	nv := findVNode(newRoot, id)
+	if nv == nil {
+		return
+	}
+	releaseDOMSubtree(el)
+	el.Call("replaceWith", buildDOM(*nv))
+}
+
+// spaApplyKids applies a children-reconcile patch (see KidOp): kept children
+// stay the SAME DOM node (moved only on a real reorder), new children are
+// built from the new tree, everything else is removed, and a kept child whose
+// id changed is renamed. A focused input inside a kept child keeps its focus,
+// caret, IME state and uncommitted value.
+func spaApplyKids(el js.Value, p Patch, newRoot *VNode) {
+	nv := findVNode(newRoot, p.ID)
+	byID := map[string]js.Value{}
+	for c := el.Get("firstElementChild"); c.Truthy(); c = c.Get("nextElementSibling") {
+		if s := c.Call("getAttribute", "sky-id"); s.Type() == js.TypeString {
+			byID[s.String()] = c
+		}
+	}
+	doc := js.Global().Get("document")
+	active := doc.Get("activeElement")
+	focusInside := active.Truthy() && el.Call("contains", active).Bool() && !el.Equal(active)
+	selStart, selEnd := -1, -1
+	if focusInside {
+		selStart, selEnd = selectionRange(active)
+	}
+
+	// 1. Which existing children stay.
+	kept := map[string]bool{}
+	var renames []spaRename
+	for _, k := range p.Kids {
+		if k.Keep == "" || kept[k.Keep] {
+			continue
+		}
+		n, ok := byID[k.Keep]
+		if !ok {
+			// The node to keep is missing (the DOM drifted): the slot is
+			// built fresh from the new tree below rather than left a hole.
+			if c := js.Global().Get("console"); c.Truthy() {
+				c.Call("warn", "[sky.spa] kept child not found, rebuilding:", k.Keep)
+			}
+			continue
+		}
+		kept[k.Keep] = true
+		if k.ID != "" && k.ID != k.Keep {
+			renames = append(renames, spaRename{n, k.Keep, k.ID})
+		}
+	}
+	// 2. Remove (and release) everything else — BEFORE any new node binds
+	// listeners, since a removed node may carry an id a new node reuses.
+	for c := el.Get("firstChild"); c.Truthy(); {
+		next := c.Get("nextSibling")
+		keep := false
+		if c.Get("nodeType").Int() == 1 {
+			if s := c.Call("getAttribute", "sky-id"); s.Type() == js.TypeString && kept[s.String()] {
+				keep = true
+			}
+		}
+		if !keep {
+			releaseDOMSubtree(c)
+			el.Call("removeChild", c)
+		}
+		c = next
+	}
+	// 3. Rename kept nodes — also before new nodes bind, since a kept node's
+	// OLD id may be a new node's id (a shift).
+	spaRenameKept(renames)
+	// 4. Build the new nodes and put every slot in order. Kept nodes already
+	// sit in relative order unless the list was reordered; only then is a
+	// kept node moved.
+	cursor := el.Get("firstChild")
+	for i, k := range p.Kids {
+		var n js.Value
+		if k.Keep != "" && kept[k.Keep] {
+			n = byID[k.Keep]
+		} else if nv != nil && i < len(nv.Children) {
+			n = buildDOM(nv.Children[i])
+		} else {
+			continue
+		}
+		if cursor.Truthy() && n.Equal(cursor) {
+			cursor = cursor.Get("nextSibling")
+			continue
+		}
+		if cursor.Truthy() {
+			el.Call("insertBefore", n, cursor)
+		} else {
+			el.Call("appendChild", n)
+		}
+	}
+	if nv != nil {
+		spaSyncSelectValue(el, nv)
+	}
+	// A moved node loses focus (removal blurs); put it back.
+	if focusInside && active.Get("isConnected").Truthy() && !active.Equal(doc.Get("activeElement")) {
+		active.Call("focus")
+		if selStart >= 0 && hasFn(active, "setSelectionRange") {
+			l := valueLen(active)
+			active.Call("setSelectionRange", min(selStart, l), min(selEnd, l))
+		}
+	}
+}
+
+// spaRename is one kept child whose sky-id changed (KidOp.ID).
+type spaRename struct {
+	n        js.Value
+	from, to string
+}
+
+// spaRenameKept rewrites the sky-ids of renamed kept subtrees (every id equal
+// to `from` or under `from.` moves to `to`), and moves the listener
+// bookkeeping with them. Two phases: every renamed id is taken out of the
+// table before any is put back, so a shift (a→b while b→c) cannot clobber.
+func spaRenameKept(renames []spaRename) {
+	type moved struct {
+		n      js.Value
+		to     string
+		hidTo  string
+		hasHid bool
+		fns    []js.Func
+	}
+	var all []moved
+	for _, r := range renames {
+		root, from, to := r.n, r.from, r.to
+		visit := func(n js.Value) {
+			s := n.Call("getAttribute", "sky-id")
+			if s.Type() != js.TypeString {
+				return
+			}
+			old := s.String()
+			if old != from && !strings.HasPrefix(old, from+".") {
+				return
+			}
+			m := moved{n: n, to: to + old[len(from):]}
+			if h := n.Call("getAttribute", "data-sky-hid"); h.Type() == js.TypeString && strings.HasPrefix(h.String(), from+".") {
+				m.hasHid = true
+				m.hidTo = to + h.String()[len(from):]
+			}
+			m.fns = spaNodeFns[old]
+			delete(spaNodeFns, old)
+			spaNodeHandlers.drop(old)
+			all = append(all, m)
+		}
+		visit(root)
+		list := root.Call("querySelectorAll", "[sky-id]")
+		for i := 0; i < list.Length(); i++ {
+			visit(list.Index(i))
+		}
+	}
+	for _, m := range all {
+		m.n.Call("setAttribute", "sky-id", m.to)
+		if m.hasHid {
+			m.n.Call("setAttribute", "data-sky-hid", m.hidTo)
+		}
+		if len(m.fns) > 0 {
+			spaNodeFns[m.to] = append(spaNodeFns[m.to], m.fns...)
 		}
 	}
 }
@@ -598,6 +1029,12 @@ func applyAttrs(el js.Value, attrs map[string]string, id string, newRoot *VNode)
 		// empty `checked`/`selected`/`disabled` must drive the property to false.
 		switch k {
 		case "value":
+			// An open IME composition owns the field; writing .value under it
+			// cancels the composition (UF-11). The committed text dispatches
+			// on compositionend and the next render reconciles.
+			if el.Get("__skyComposing").Truthy() {
+				continue
+			}
 			el.Set("value", v)
 			valueChanged = true
 		case "checked":
@@ -631,15 +1068,16 @@ func applyAttrs(el js.Value, attrs map[string]string, id string, newRoot *VNode)
 }
 
 // rebuildChildrenPreservingFocus replaces el's children from the new VNode
-// subtree (real nodes + listeners), releasing the old subtree's listeners
+// subtree (real nodes + listeners), releasing the old children's listeners
 // first, and preserves focus + caret of any input that was focused inside el by
 // re-focusing the element with the same sky-id after the rebuild.
 //
 // NOTE: the focused input's DOM node identity is NOT preserved across this
-// path (the subtree is rebuilt). Focus, caret and value ARE restored. In the
-// minimal-patch typing case the input is never under an HTML/text-container
-// patch, so its node identity is stable — see spaApplyPatches' Attrs path.
-func rebuildChildrenPreservingFocus(el js.Value, id string, oldRoot, newRoot *VNode) {
+// path (the subtree is rebuilt). It is reached only for children that cannot
+// be reconciled one by one (raw HTML, <style>/<script>/<textarea> text) or
+// when nothing matched; every other child change is a Kids patch, which keeps
+// the nodes (spaApplyKids).
+func rebuildChildrenPreservingFocus(el js.Value, id string, newRoot *VNode) {
 	newSub := findVNode(newRoot, id)
 	if newSub == nil {
 		return
@@ -657,13 +1095,10 @@ func rebuildChildrenPreservingFocus(el js.Value, id string, oldRoot, newRoot *VN
 		}
 	}
 
-	if oldSub := findVNode(oldRoot, id); oldSub != nil {
-		for i := range oldSub.Children {
-			releaseSubtree(&oldSub.Children[i])
-		}
-	}
+	releaseDOMChildren(el)
 	el.Set("innerHTML", "")
 	spaSetChildren(el, newSub.Children)
+	spaSyncSelectValue(el, newSub)
 
 	if focSid != "" {
 		nf := doc.Call("querySelector", `[sky-id="`+escAttr(focSid)+`"]`)
@@ -754,14 +1189,28 @@ func releaseNodeFns(id string) {
 	}
 }
 
-func releaseSubtree(n *VNode) {
-	if n == nil {
+// releaseDOMSubtree releases the listeners bound on n and every element
+// under it, by the sky-ids the DOM carries NOW (a kept node may have been
+// renamed since it was built, so the VNode tree is not the authority).
+func releaseDOMSubtree(n js.Value) {
+	if n.Type() != js.TypeObject || n.Get("nodeType").Int() != 1 {
 		return
 	}
-	if n.SkyID != "" {
-		releaseNodeFns(n.SkyID)
+	if s := n.Call("getAttribute", "sky-id"); s.Type() == js.TypeString {
+		releaseNodeFns(s.String())
 	}
-	for i := range n.Children {
-		releaseSubtree(&n.Children[i])
+	list := n.Call("querySelectorAll", "[sky-id]")
+	for i := 0; i < list.Length(); i++ {
+		if s := list.Index(i).Call("getAttribute", "sky-id"); s.Type() == js.TypeString {
+			releaseNodeFns(s.String())
+		}
+	}
+}
+
+// releaseDOMChildren releases the listeners of every element under el (not
+// el's own).
+func releaseDOMChildren(el js.Value) {
+	for c := el.Get("firstElementChild"); c.Truthy(); c = c.Get("nextElementSibling") {
+		releaseDOMSubtree(c)
 	}
 }

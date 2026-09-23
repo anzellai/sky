@@ -695,6 +695,78 @@ const webviewSharedJS = `
     }
   }
 
+  // Children reconcile (Patch.kids) and root replace (Patch.replace) —
+  // the same semantics as Sky.Live's __skyApplyKids / __skyReplaceElement
+  // (live.go; the diff side is live_core.go diffChildren / KidOp).
+  function __skyParseInto(container, html) {
+    if (container.namespaceURI && container.namespaceURI !== "http://www.w3.org/1999/xhtml") {
+      var range = document.createRange();
+      range.selectNodeContents(container);
+      return range.createContextualFragment(html);
+    }
+    var t = document.createElement("template");
+    t.innerHTML = html;
+    return t.content;
+  }
+
+  function __skyRenameKept(renames) {
+    var moves = [], r, i;
+    for (r = 0; r < renames.length; r++) {
+      var root = renames[r][0], from = renames[r][1], to = renames[r][2];
+      var all = [root].concat(Array.prototype.slice.call(root.querySelectorAll("[sky-id]")));
+      for (i = 0; i < all.length; i++) {
+        var e = all[i], sid = e.getAttribute("sky-id");
+        if (!sid || (sid !== from && sid.indexOf(from + ".") !== 0)) continue;
+        var m = {el: e, to: to + sid.slice(from.length), hid: null};
+        var hid = e.getAttribute("data-sky-hid");
+        if (hid && hid.indexOf(from + ".") === 0) m.hid = to + hid.slice(from.length);
+        moves.push(m);
+      }
+    }
+    for (i = 0; i < moves.length; i++) {
+      moves[i].el.setAttribute("sky-id", moves[i].to);
+      if (moves[i].hid) moves[i].el.setAttribute("data-sky-hid", moves[i].hid);
+    }
+  }
+
+  function __skyApplyKids(el, kids) {
+    var byId = {}, kept = {}, renames = [], c, i, k;
+    for (c = el.firstElementChild; c; c = c.nextElementSibling) {
+      var sid = c.getAttribute("sky-id");
+      if (sid) byId[sid] = c;
+    }
+    var focused = document.activeElement;
+    var focusInside = !!(focused && focused !== el && el.contains(focused));
+    for (i = 0; i < kids.length; i++) {
+      k = kids[i];
+      if (k.keep && byId[k.keep] && !kept[k.keep]) {
+        kept[k.keep] = byId[k.keep];
+        if (k.id && k.id !== k.keep) renames.push([byId[k.keep], k.keep, k.id]);
+      }
+    }
+    for (c = el.firstChild; c; ) {
+      var next = c.nextSibling;
+      if (!(c.nodeType === 1 && kept[c.getAttribute("sky-id")] === c)) el.removeChild(c);
+      c = next;
+    }
+    __skyRenameKept(renames);
+    var cursor = el.firstChild;
+    for (i = 0; i < kids.length; i++) {
+      k = kids[i];
+      var nodes;
+      if (k.keep && kept[k.keep]) nodes = [kept[k.keep]];
+      else if (k.html !== undefined && k.html !== null) nodes = Array.prototype.slice.call(__skyParseInto(el, k.html).childNodes);
+      else continue;
+      for (var j = 0; j < nodes.length; j++) {
+        if (nodes[j] === cursor) { cursor = cursor.nextSibling; continue; }
+        el.insertBefore(nodes[j], cursor);
+      }
+    }
+    if (focusInside && focused.isConnected && document.activeElement !== focused) {
+      try { focused.focus(); } catch (_) {}
+    }
+  }
+
   // __skyApplyPatches: identical wire shape to Sky.Live's. Walks
   // patches in order, applies via querySelector('[sky-id=…]'),
   // skips any whose target is inside the open <select> ancestor
@@ -718,8 +790,15 @@ const webviewSharedJS = `
           el.textContent = p.text;
         }
       }
+      if (p.replace !== undefined && p.replace !== null) {
+        if (el.parentNode) el.parentNode.replaceChild(__skyParseInto(el.parentNode, p.replace), el);
+        continue;
+      }
       if (p.html !== undefined && p.html !== null) {
         __skyReplaceHTMLPreservingFocus(el, p.html);
+      }
+      if (p.kids) {
+        __skyApplyKids(el, p.kids);
       }
       if (p.attrs) {
         var keys = Object.keys(p.attrs);
