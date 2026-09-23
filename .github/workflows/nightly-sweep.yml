@@ -200,6 +200,12 @@ jobs:
           command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
           scripts/spa-restore-e2e.sh
           scripts/spa-stale-handler-e2e.sh
+      # spa-vdom-identity-e2e — node identity across the shared diff (keyed and
+      # unkeyed sibling inserts, a re-keyed row), select value, key / checkbox
+      # payloads, refused-input reconcile, IME, labels, injected styles,
+      # hydration parity and route-param decoding; Spa and Sky.Live.
+      - name: Gate — Sky.Spa + Sky.Live DOM identity e2e
+        run: scripts/spa-vdom-identity-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported
       # "binary missing" for two examples and "N% pixels exceed" for nine

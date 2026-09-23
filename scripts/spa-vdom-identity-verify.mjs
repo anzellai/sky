@@ -7,7 +7,13 @@
 // fixture rust/crates/sky/tests/fixtures/spa-vdom-identity (see its header for
 // the finding each control pins) in real headless Chromium.
 //
-// Usage: node scripts/spa-vdom-identity-verify.mjs <backend-app> [--port N]
+// With --live the app is the same fixture built for Sky.Live (--target web),
+// and only the checks that exercise the SHARED diff and the stdlib run: node
+// identity (F8, K2), select value (F4), injected styles (F6) and labels
+// (UF-13). The Live client's own payload / reconcile / IME handling is covered
+// by the Sky.Live suites.
+//
+// Usage: node scripts/spa-vdom-identity-verify.mjs <app> [--port N] [--live]
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
 import pw from "playwright";
 const { chromium } = pw;
@@ -26,12 +32,13 @@ if (!BACKEND) {
 const PORT = Number(arg("--port", "9200"));
 const BASE = `http://127.0.0.1:${PORT}`;
 const BACKEND_DIR = dirname(dirname(BACKEND));
+const LIVE = process.argv.includes("--live");
 
-const proc = spawn(BACKEND, [], { cwd: BACKEND_DIR, env: { ...process.env, PORT: String(PORT) } });
+const proc = spawn(BACKEND, [], { cwd: BACKEND_DIR, env: { ...process.env, PORT: String(PORT), SKY_LIVE_PORT: String(PORT) } });
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));
-const listening = new Promise((res) => proc.stdout.on("data", (d) => d.toString().includes("Sky server listening") && res()));
+const listening = new Promise((res) => proc.stdout.on("data", (d) => /listening/i.test(d.toString()) && res()));
 
 const failures = [];
 function check(ok, step, detail) {
@@ -43,17 +50,18 @@ function watch(page, sink) {
   page.on("pageerror", (e) => sink.push(`[pageerror] ${e.message}`));
   page.on("console", (m) => {
     const t = m.text();
-    if (t.includes("[sky.spa]") && (m.type() === "warning" || m.type() === "error")) sink.push(`[${m.type()}] ${t}`);
+    if ((t.includes("[sky.spa]") || t.includes("[sky.live]")) && (m.type() === "warning" || m.type() === "error")) sink.push(`[${m.type()}] ${t}`);
   });
 }
 
 const text = (page, sel) => page.locator(sel).first().innerText();
 const logText = (page) => text(page, "#log");
 const stateText = (page) => text(page, "#state");
-const settle = (page) => page.waitForTimeout(150);
+// Sky.Live round-trips every event (and debounces typing), so it settles slower.
+const settle = (page) => page.waitForTimeout(LIVE ? 700 : 150);
 
 async function boot(page, path = "/") {
-  await page.goto(BASE + path, { waitUntil: "networkidle" });
+  await page.goto(BASE + path, { waitUntil: LIVE ? "load" : "networkidle" });
   await page.waitForFunction(() => !document.documentElement.hasAttribute("data-sky-hydrating"), null, { timeout: 15000 });
   await page.waitForTimeout(300);
 }
@@ -77,7 +85,7 @@ try {
 
     // F8 — a sibling line appears above the field mid-typing.
     await page.locator("#vv").click();
-    await page.keyboard.type("abcdefg", { delay: 40 });
+    await page.keyboard.type("abcdefg", { delay: LIVE ? 120 : 40 });
     await settle(page);
     const vv = await page.locator("#vv").inputValue();
     const focused = await page.evaluate(() => document.activeElement && document.activeElement.id === "vv");
@@ -99,6 +107,7 @@ try {
     await settle(page);
     check((await page.locator("#sel").inputValue()) === "c", "F4 select keeps the model value when options change");
 
+    if (!LIVE) {
     // F10 — key payload.
     await page.locator("#kd").click();
     await page.keyboard.press("x");
@@ -122,6 +131,8 @@ try {
     check(!lockChecked && (await logText(page)).includes("SetLock"),
       "UF-5 a checkbox stays unticked when update refuses the tick", `checked=${lockChecked}`);
 
+    }
+
     // UF-13 — the caption text is a real label.
     await page.getByText("Accept terms", { exact: true }).click();
     await settle(page);
@@ -130,6 +141,7 @@ try {
     await settle(page);
     check((await stateText(page)).includes("colour=b"), "UF-13 clicking a radio option's text picks it");
 
+    if (!LIVE) {
     // UF-11 — IME: pre-edit is not dispatched, the committed text is, once.
     await page.locator("#ime").click();
     const cdp = await page.context().newCDPSession(page);
@@ -141,6 +153,8 @@ try {
     const imeVal = await page.locator("#ime").inputValue();
     check(imeLog.length === 1 && imeLog[0] === "Ime:か" && imeVal === "か",
       "UF-11 IME pre-edit is not dispatched; the committed text is, once", `dispatched=${JSON.stringify(imeLog)} value=${imeVal}`);
+
+    }
 
     // F6 — the injected hover style follows the model.
     const hovCss = () => page.evaluate(() => {
@@ -154,6 +168,7 @@ try {
     const after = await hovCss();
     check(before !== "" && after !== "" && before !== after, "F6 the injected hover <style> follows the model");
 
+    if (!LIVE) {
     // SPA-5 — client-side navigation to a non-ASCII route param.
     await page.evaluate(() => {
       const a = document.createElement("a");
@@ -166,13 +181,14 @@ try {
     await settle(page);
     const nav = `${await text(page, "#uname")} ${await text(page, "#ulen")}`;
     check(nav === "name=Jörg len=4", "SPA-5 client navigation decodes the route param like the server", nav);
+    }
 
     check(warn.length === 0, "no [sky.spa] warnings or page errors on Home", warn.join(" | "));
     await page.close();
   }
 
   // ── SPA-5: cold load of the route — server and client agree ──────────
-  {
+  if (!LIVE) {
     const page = await browser.newPage();
     const warn = [];
     watch(page, warn);
@@ -183,8 +199,16 @@ try {
     await page.close();
   }
 
+  // ── F5: a page the client builds from scratch (not hydratable) ───────
+  if (!LIVE) {
+    const page = await browser.newPage();
+    await boot(page, "/plain");
+    check((await page.locator("#sel2").inputValue()) === "c", "F5 select first paint on the build-from-scratch path shows the model value");
+    await page.close();
+  }
+
   // ── Hydration parity: a server page that differs is rebuilt ──────────
-  {
+  if (!LIVE) {
     const page = await browser.newPage();
     const warn = [];
     watch(page, warn);
@@ -194,7 +218,7 @@ try {
       await route.fulfill({ response: resp, body });
     });
     await boot(page);
-    const body = await page.locator("#app").innerText();
+    const body = await page.locator("body").innerText();
     check(body.includes("Accept terms") && !body.includes("Tampered text"),
       "SPA-5 hydration verifies text parity and rebuilds a server DOM that differs");
     check((await page.locator("#sel").inputValue()) === "c", "F5 select first paint on the rebuild path shows the model value");

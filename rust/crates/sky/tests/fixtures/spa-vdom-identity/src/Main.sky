@@ -19,6 +19,8 @@ module Main exposing (main)
 --   ime       UF-11 IME pre-edit is not dispatched; the committed text is, once
 --   hov       F6   the injected hover <style> follows the model
 --   /u/:name  SPA-5 a route param decodes the same on the server and the client
+--   /plain    F5   a page the client cannot hydrate (a valued textarea) is
+--                  built from scratch; its select must still show "c"
 --
 -- `Reload` reads a file (a SERVER branch), which puts the app on the SSR path.
 
@@ -38,6 +40,7 @@ import Std.Html.Events as HE
 type Page
     = Home
     | UserPage String
+    | Plain
     | NotFoundPage
 
 type alias Model =
@@ -306,6 +309,25 @@ view model =
                 , btn "toggle" Toggle
                 ]
 
+        Plain ->
+            Ui.column
+                []
+                [ Input.multiline
+                      [ Ui.htmlAttribute "id" "notes" ]
+                      { onChange = Vv
+                      , text = "notes"
+                      , placeholder = Nothing
+                      , label = Input.labelHidden "notes"
+                      , spellcheck = False
+                      }
+                , Ui.html
+                      (Html.select
+                          [ HA.id "sel2", HA.value model.sel, HE.onChange Pick ]
+                          (List.map
+                              (\o -> Html.option [ HA.value o ] [ Html.text o ])
+                              model.opts))
+                ]
+
         NotFoundPage ->
             Ui.column [] [ Ui.text "No such page here" ]
 
@@ -323,7 +345,10 @@ app =
         , subscriptions = subscriptions
         }
         |> App.withRoutes
-               [ App.route "/" Home, App.routeParam "/u/:name" UserPage ]
+               [ App.route "/" Home
+               , App.route "/plain" Plain
+               , App.routeParam "/u/:name" UserPage
+               ]
         |> App.withNotFound NotFoundPage
 
 

@@ -35,5 +35,17 @@ APP="$FX/.skyapp/web-app/.split/backend/sky-out/app"
 echo "==> driving the wasm client"
 node "$ROOT/scripts/spa-vdom-identity-verify.mjs" "$APP" --port "${PORT:-9200}"
 
+# The same source on Sky.Live: the diff and the Std.Ui controls are shared, so
+# node identity, select value, injected styles and labels must hold there too.
+LFX="$(dirname "$FX")/spa-vdom-identity-live"
+mkdir -p "$LFX"
+cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-vdom-identity/." "$LFX/"
+echo "==> building the fixture for Sky.Live (--target web)"
+( cd "$LFX" && "$SKY" build --target web src/Main.sky )
+LAPP="$LFX/.skyapp/web/sky-out/app"
+[ -x "$LAPP" ] || { echo "spa-vdom-identity-e2e: Live app not built at $LAPP" >&2; exit 1; }
+echo "==> driving the Sky.Live client"
+node "$ROOT/scripts/spa-vdom-identity-verify.mjs" "$LAPP" --port "$(( ${PORT:-9200} + 1 ))" --live
+
 echo "spa-vdom-identity-e2e: PASS"
 rm -rf "$(dirname "$FX")"

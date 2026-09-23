@@ -158,6 +158,21 @@ compiling — that is the whole point.
 decoded body, or an `Err` — a non-2xx status, a decode failure, and a network
 failure are all `Err`), so the app writes one `case`, not two.
 
+### How the client paints and handles events
+
+The client renders with the same diff as Sky.Live
+([input-authority protocol](../skylive/input-authority-protocol.md) §Patch
+operations): children are matched by key (`Std.Ui.Keyed`, a `name`d field) or
+by shape, and a matched child keeps its DOM node, so a focused input keeps its
+focus, caret and typing when something is inserted above it. Event payloads
+follow Sky.Live's convention: `onKeyDown` / `onKeyUp` / `onKeyPress` get
+`event.key`, `onCheck` gets the checkbox's Bool, input / change get the value.
+After an event, a controlled control shows the model even when `update` refused
+or normalised the input (the user-event reconcile). While an IME composition is
+open the field's input events are not dispatched; the committed text is, once.
+A server-painted first page is adopted (hydrated) only when it shows exactly
+what the client's first view says; otherwise the client builds the page itself.
+
 ## Routing — `App.withRoutes` (History API)
 
 Routing is opt-in via the `App.withX` builders (a single-view app needs none).
@@ -167,7 +182,9 @@ The names read exactly like the web target:
   Put literal routes before `:param` patterns.
 - `App.routeParam path toPage` — a route whose `path` carries a `:param` segment
   (`App.routeParam "/thing/:id" ThingPage`, `ThingPage : String -> Page`),
-  captured as a **String** and passed to the page constructor. Parse it (e.g.
+  captured as a **String** and passed to the page constructor. The captured
+  value is percent-DECODED (`/u/J%C3%B6rg` gives `"Jörg"`), identically on the
+  client, in the server-side first paint and on Sky.Live. Parse it (e.g.
   `String.toInt`) inside the constructor or `view` when you need a typed id;
   route an id your app rejects to `App.withNotFound`.
 - `App.withRoutes routes` — resolves `location.pathname` on mount, on an
