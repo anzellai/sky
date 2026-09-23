@@ -594,8 +594,13 @@ contradicted the support table further down this same file — see
 `docs/stdlib.md` under `Std.Ui.Lazy` for the four caveats that decide whether it
 is worth using (a hit still pays the whole render walk; the key is a reflective
 deep walk paid on hits too; the LRU is shared across sessions; a locally-built
-closure never hits). `Keyed.*` emits the `sky-key` attribute so Sky.Live's diff
-algorithm can identify children across re-renders.
+closure never hits). `Keyed.*` emits the `sky-key` attribute. A key unique among its siblings gives the
+child an index-free sky-id, so the diff (shared by Sky.Live, Sky.Spa and the
+desktop webview) matches it by key: an insert, a removal or a reorder keeps
+the same DOM node, and a focused input inside it keeps its focus and typing.
+Unkeyed children are matched by shape, which covers the common case (a line
+shown above a field) but not a reorder of look-alike rows — key those. See
+`docs/skylive/input-authority-protocol.md` §Patch operations.
 
 ## Responsive
 
@@ -689,7 +694,7 @@ Ui.breakpoint Ui.mobile
 
 ```html
 <div sky-id="r.0.2#div" style="display: flex; flex-direction: column;">
-    <style data-sky-mq="r.0.2#div">
+    <style sky-id="r.0.2#div.~mq" data-sky-mq="r.0.2#div">
         @media (max-width: 767px) {
             [sky-id="r.0.2#div"] { padding: 8px 8px 8px 8px; }
         }
@@ -817,11 +822,11 @@ Ui.breakpoint Ui.mobile
 
 ### What renders on the wire
 
-`Background.hoverColor` attaches a `data-sky-pc-rules` marker to the element. The runtime injects a sky-id-scoped `<style>` child:
+`Background.hoverColor` attaches a `data-sky-pc-rules` marker to the element. The runtime injects a sky-id-scoped `<style>` child. The style has its own sky-id (`<owner>.~pc`), so when the colour follows the model the diff patches it:
 
 ```html
 <button sky-id="r.0.2#button" style="...base styles...">
-    <style data-sky-pc="r.0.2#button">
+    <style sky-id="r.0.2#button.~pc" data-sky-pc="r.0.2#button">
         @media (hover: hover) {
             [sky-id="r.0.2#button"]:hover { background-color: rgba(0, 92, 215, 1); }
         }
@@ -961,12 +966,12 @@ For every other case — hover/focus transitions, page-load fades, slide-in pane
 
 ```html
 <button sky-id="r.0#button" style="...base styles...">
-    <style data-sky-tr="r.0#button">
+    <style sky-id="r.0#button.~tr" data-sky-tr="r.0#button">
         @media (prefers-reduced-motion: no-preference) {
             [sky-id="r.0#button"] { transition: background-color 200ms ease-out; }
         }
     </style>
-    <style data-sky-pc="r.0#button">
+    <style sky-id="r.0#button.~pc" data-sky-pc="r.0#button">
         @media (hover: hover) {
             [sky-id="r.0#button"]:hover { background-color: rgba(0, 92, 215, 1); }
         }
@@ -979,7 +984,7 @@ For an animated element:
 
 ```html
 <div sky-id="r.1#div" style="...base styles...">
-    <style data-sky-anim="r.1#div">
+    <style sky-id="r.1#div.~anim" data-sky-anim="r.1#div">
         @keyframes fadeInUp__r_1_div {
             0% { transform: translateY(10px); opacity: 0; }
             100% { transform: translateY(0px); opacity: 1; }

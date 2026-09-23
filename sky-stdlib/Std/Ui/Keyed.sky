@@ -3,10 +3,11 @@ module Std.Ui.Keyed exposing (el, row, column)
 
 -- Std.Ui.Keyed — keyed children for stable diffing across reorders.
 --
--- Sky.Live's diff already supports `sky-key` as a stable identity
--- attribute (`runtime-go/rt/live.go:908+`); these wrappers attach
--- that attribute so the diff matches keyed children by key rather
--- than positional index. Use when rendering a list whose elements
+-- The shared diff (Sky.Live, Sky.Spa, webview) uses `sky-key` as a
+-- stable identity: a key unique among its siblings gives the child an
+-- index-free sky-id (`runtime-go/rt/live_core.go` assignSkyIDs), and the
+-- diff matches keyed children by key rather than positional index, so
+-- the child keeps its DOM node across an insert, a removal or a move. Use when rendering a list whose elements
 -- can be reordered, inserted, or removed (TODO lists, chat
 -- messages, sortable rows).
 

@@ -75,17 +75,23 @@ func TestSkyIDCollisionFree(t *testing.T) {
 	if len(inCtr.Children) == 0 || len(upCtr.Children) == 0 {
 		t.Fatalf("container empty: in=%d up=%d", len(inCtr.Children), len(upCtr.Children))
 	}
-	seen := map[string]bool{}
-	for _, c := range inCtr.Children {
-		if c.SkyID != "" {
-			seen[c.SkyID] = true
+	// A shared id is allowed only for the SAME logical element: a uniquely
+	// named field (`name="email"`) keeps one index-free id wherever it sits,
+	// which is what lets the diff keep its DOM node (and the user's typing)
+	// across the two pages. A shared id between elements of a different tag
+	// or name is the collision this test exists for.
+	seen := map[string]*VNode{}
+	for i := range inCtr.Children {
+		if c := &inCtr.Children[i]; c.SkyID != "" {
+			seen[c.SkyID] = c
 		}
 	}
-	for _, c := range upCtr.Children {
+	for i := range upCtr.Children {
+		c := &upCtr.Children[i]
 		if c.SkyID == "" {
 			continue
 		}
-		if seen[c.SkyID] {
+		if o, ok := seen[c.SkyID]; ok && (o.Tag != c.Tag || o.Attrs["name"] != c.Attrs["name"] || o.Attrs["name"] == "") {
 			t.Errorf("collision: signIn and signUp share sky-id %q", c.SkyID)
 		}
 	}

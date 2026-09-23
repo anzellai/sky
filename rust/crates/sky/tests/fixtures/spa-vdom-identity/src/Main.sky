@@ -1,0 +1,356 @@
+module Main exposing (main)
+
+-- Sky.Spa DOM-identity and form-control e2e fixture. Each control pins one
+-- audit finding; scripts/spa-vdom-identity-verify.mjs drives them in headless
+-- Chromium (scripts/spa-vdom-identity-e2e.sh builds this with --target web:app).
+--
+--   vv        F8   a "too long" line appears ABOVE the field (both plain divs)
+--                  while the user types; no keystroke or focus may be lost
+--   kbtn      K2   a keyed row whose key follows the model; after "Rekey" the
+--                  button must dispatch the NEW key, with no "target not found"
+--   sel       F4/F5 a select whose value is "c": first paint and after an option
+--                  is prepended it must still show "c"
+--   kd        F10  onKeyDown gets event.key
+--   ck        F11  onCheck gets a Bool (it panicked on a string)
+--   lim       UF-5 update refuses more than 3 characters: the field shows the model
+--   lock      UF-5 update refuses the tick: the checkbox stays unticked
+--   accept    UF-13 clicking the caption text ticks the checkbox
+--   colour    UF-13 clicking a radio option's text picks it
+--   ime       UF-11 IME pre-edit is not dispatched; the committed text is, once
+--   hov       F6   the injected hover <style> follows the model
+--   /u/:name  SPA-5 a route param decodes the same on the server and the client
+--   /plain    F5   a page the client cannot hydrate (a valued textarea) is
+--                  built from scratch; its select must still show "c"
+--
+-- `Reload` reads a file (a SERVER branch), which puts the app on the SSR path.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+import Std.Ui.Keyed as Keyed
+import Std.Ui.Background as Background
+import Std.Html as Html
+import Std.Html.Attributes as HA
+import Std.Html.Events as HE
+
+type Page
+    = Home
+    | UserPage String
+    | Plain
+    | NotFoundPage
+
+type alias Model =
+    { page : Page
+    , note : String
+    , vv : String
+    , rowKey : String
+    , sel : String
+    , opts : List String
+    , lim : String
+    , lock : Bool
+    , accept : Bool
+    , colour : String
+    , ime : String
+    , dark : Bool
+    , log : List String
+    }
+
+type Msg
+    = Reload
+    | Reloaded (Result Error String)
+    | Vv String
+    | Rekey
+    | PickK String
+    | Pick String
+    | AddOpt
+    | Key String
+    | Chk Bool
+    | Lim String
+    | SetLock Bool
+    | Accept Bool
+    | Colour String
+    | Ime String
+    | Toggle
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home
+      , note = ""
+      , vv = ""
+      , rowKey = "a"
+      , sel = "c"
+      , opts = [ "a", "b", "c" ]
+      , lim = ""
+      , lock = False
+      , accept = False
+      , colour = "a"
+      , ime = ""
+      , dark = False
+      , log = []
+      }
+    , Cmd.none
+    )
+
+
+logm : String -> Model -> Model
+logm s m =
+    { m | log = s :: m.log }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Reload ->
+            ( model, Cmd.perform (File.readFile "data/note.txt") Reloaded )
+
+        Reloaded (Ok raw) ->
+            ( { model | note = raw }, Cmd.none )
+
+        Reloaded (Err _) ->
+            ( { model | note = "" }, Cmd.none )
+
+        Vv s ->
+            ( { model | vv = s }, Cmd.none )
+
+        Rekey ->
+            ( { model | rowKey = "b" }, Cmd.none )
+
+        PickK k ->
+            ( logm ("PickK:" ++ k) model, Cmd.none )
+
+        Pick s ->
+            ( logm ("Pick:" ++ s) { model | sel = s }, Cmd.none )
+
+        AddOpt ->
+            ( { model | opts = "z" :: model.opts }, Cmd.none )
+
+        Key k ->
+            ( logm ("Key:" ++ k) model, Cmd.none )
+
+        Chk b ->
+            ( logm
+                  ("Chk:"
+                      ++ (if b then
+                             "T"
+
+                         else
+                             "F"))
+                  model
+            , Cmd.none
+            )
+
+        Lim s ->
+            if String.length s > 3 then
+                ( model, Cmd.none )
+
+            else
+                ( { model | lim = s }, Cmd.none )
+
+        SetLock _ ->
+            ( logm "SetLock" model, Cmd.none )
+
+        Accept b ->
+            ( { model | accept = b }, Cmd.none )
+
+        Colour c ->
+            ( { model | colour = c }, Cmd.none )
+
+        Ime s ->
+            ( logm ("Ime:" ++ s) { model | ime = s }, Cmd.none )
+
+        Toggle ->
+            ( { model | dark = not model.dark }, Cmd.none )
+
+
+btn : String -> Msg -> Element Msg
+btn lbl m =
+    Ui.button
+        [ Ui.htmlAttribute "id" ("b-" ++ lbl) ]
+        { onPress = Just m, label = Ui.text lbl }
+
+
+flag : Bool -> String
+flag b =
+    if b then
+        "T"
+
+    else
+        "F"
+
+
+home : Model -> Element Msg
+home model =
+    Ui.column
+        []
+        [ Ui.column
+              []
+              ((if String.length model.vv > 3 then
+                  [ Ui.text "too long" ]
+
+              else
+                  [])
+                  ++ [ Input.text
+                           [ Ui.htmlAttribute "id" "vv" ]
+                           { onChange = Vv
+                           , text = model.vv
+                           , placeholder = Nothing
+                           , label = Input.labelHidden "vv"
+                           }
+                     ])
+        , Keyed.column
+              []
+              [ ( model.rowKey
+                , Ui.button
+                      [ Ui.htmlAttribute "id" "kbtn" ]
+                      { onPress = Just (PickK model.rowKey)
+                      , label = Ui.text ("row " ++ model.rowKey)
+                      }
+                )
+              ]
+        , btn "rekey" Rekey
+        , Ui.html
+              (Html.select
+                  [ HA.id "sel", HA.value model.sel, HE.onChange Pick ]
+                  (List.map
+                      (\o -> Html.option [ HA.value o ] [ Html.text o ])
+                      model.opts))
+        , btn "addopt" AddOpt
+        , Ui.html (Html.input [ HA.id "kd", HE.onKeyDown Key ])
+        , Ui.html
+              (Html.input [ HA.id "ck", HA.type_ "checkbox", HE.onCheck Chk ])
+        , Input.text
+              [ Ui.htmlAttribute "id" "lim" ]
+              { onChange = Lim
+              , text = model.lim
+              , placeholder = Nothing
+              , label = Input.labelHidden "lim"
+              }
+        , Input.checkbox
+              [ Ui.htmlAttribute "id" "lock" ]
+              { onChange = SetLock
+              , icon = \b -> Ui.text (flag b)
+              , checked = model.lock
+              , label = Input.labelHidden "lock"
+              }
+        , Input.checkbox
+              [ Ui.htmlAttribute "id" "accept" ]
+              { onChange = Accept
+              , icon = \b -> Ui.text ""
+              , checked = model.accept
+              , label = Input.labelRight [] (Ui.text "Accept terms")
+              }
+        , Input.radio
+              [ Ui.htmlAttribute "id" "colour" ]
+              { onChange = Colour
+              , options =
+                  [ Input.option "a" (Ui.text "Alpha")
+                  , Input.option "b" (Ui.text "Beta")
+                  ]
+              , selected = model.colour
+              , label = Input.labelHidden "colour"
+              }
+        , Input.text
+              [ Ui.htmlAttribute "id" "ime" ]
+              { onChange = Ime
+              , text = model.ime
+              , placeholder = Nothing
+              , label = Input.labelHidden "ime"
+              }
+        , Ui.el
+              [ Ui.htmlAttribute "id" "hov"
+              , Background.hoverColor
+                    (if model.dark then
+                        Ui.rgb 255 0 0
+
+                    else
+                        Ui.rgb 0 0 255)
+              ]
+              (Ui.text "hover me")
+        , btn "toggle" Toggle
+        , Ui.el
+              [ Ui.htmlAttribute "id" "state" ]
+              (Ui.text
+                  ("vv=" ++ model.vv ++ " sel=" ++ model.sel ++ " lim="
+                      ++ model.lim
+                      ++ " accept="
+                      ++ flag model.accept
+                      ++ " colour="
+                      ++ model.colour
+                      ++ " ime="
+                      ++ model.ime))
+        , Ui.el
+              [ Ui.htmlAttribute "id" "log" ]
+              (Ui.text (String.join "," (List.reverse model.log)))
+        ]
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+
+        Home ->
+            home model
+
+        UserPage name ->
+            Ui.column
+                []
+                [ Ui.el
+                      [ Ui.htmlAttribute "id" "uname" ]
+                      (Ui.text ("name=" ++ name))
+                , Ui.el
+                      [ Ui.htmlAttribute "id" "ulen" ]
+                      (Ui.text ("len=" ++ String.fromInt (String.length name)))
+                , btn "toggle" Toggle
+                ]
+
+        Plain ->
+            Ui.column
+                []
+                [ Input.multiline
+                      [ Ui.htmlAttribute "id" "notes" ]
+                      { onChange = Vv
+                      , text = "notes"
+                      , placeholder = Nothing
+                      , label = Input.labelHidden "notes"
+                      , spellcheck = False
+                      }
+                , Ui.html
+                      (Html.select
+                          [ HA.id "sel2", HA.value model.sel, HE.onChange Pick ]
+                          (List.map
+                              (\o -> Html.option [ HA.value o ] [ Html.text o ])
+                              model.opts))
+                ]
+
+        NotFoundPage ->
+            Ui.column [] [ Ui.text "No such page here" ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.route "/" Home
+               , App.route "/plain" Plain
+               , App.routeParam "/u/:name" UserPage
+               ]
+        |> App.withNotFound NotFoundPage
+
+
+main =
+    App.run app

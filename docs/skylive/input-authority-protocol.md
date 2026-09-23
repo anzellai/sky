@@ -46,18 +46,32 @@ Explicitly **not** guaranteed (out of scope for v1):
 
 ```
 sky-id    = "r"                                        -- root
-          | parent-id "." index "#" tag [ ":" key ]
+          | parent-id "." index "#" tag                -- unkeyed element
+          | parent-id ".#" tag ":" key                 -- uniquely keyed element
+          | parent-id "." index "#" tag ":" key        -- key shared by siblings
+          | owner-id ".~" pass                         -- injected <style>
 
 parent-id = sky-id
+owner-id  = sky-id
 index     = 1*DIGIT
 tag       = 1*ALPHA                                    -- lowercase HTML tag
 key       = 1*( ALPHA / DIGIT / "-" / "_" )            -- disambiguator
+pass      = "mq" / "pc" / "tr" / "anim"                -- the style pass
 ```
 
 **Key priority** (first match wins):
-1. Explicit `Html.keyed "k" node` wrapper → `k`.
+1. Explicit `sky-key` attribute (`Std.Ui.Keyed`, `Html.keyed "k" node`) → `k`.
 2. `name` attribute on `input`, `textarea`, `select`, `form`, `button`, `fieldset` → the attribute value.
 3. No key.
+
+A key that is **unique among the element's siblings** (same tag + key) drops
+the index, so the id does not change when a sibling is inserted, removed or
+reordered before it. A key that several siblings share (a radio group's common
+`name`) cannot identify one of them, so those ids keep the index.
+
+Every `<style>` that the style passes inject (`Ui.breakpoint`, `Ui.onPseudo` /
+hover colours, transitions, animations) has its own id `<owner>.~<pass>`, so a
+CSS change that follows the model is patched like any other node.
 
 Examples:
 
@@ -66,13 +80,53 @@ Examples:
 | root `<div id="sky-root">` | `r` |
 | first child `<div>` (CSS stylesheet) | `r.0#div` |
 | `<header>` at index 1 | `r.1#header` |
-| Email input inside a form | `r.2#main.0#form.3#input:email` |
-| Keyed list item | `r.4#ul.0#li:todo-42` |
+| Email input inside a form | `r.2#main.0#form.#input:email` |
+| Keyed list item | `r.4#ul.#li:todo-42` |
+| Two radios sharing `name="size"` | `r.3#div.0#input:size`, `r.3#div.1#input:size` |
+| Hover style of `r.1#div` | `r.1#div.~pc` |
 
 **Properties:**
 - Unique within a single render (structural walk produces unique paths).
 - Stable across renders when the element is structurally the same (same walk path, same tag, same key).
+- A uniquely keyed element keeps its id wherever it moves among its siblings.
 - Automatically differentiates across renders when structure diverges (different tag → different id).
+
+### Patch operations
+
+A patch addresses one element by its sky-id. Operations, applied in this order
+when several are set (`runtime-go/rt/live_core.go`, `Patch`):
+
+| Field | Meaning |
+|---|---|
+| `replace` | Replace the element itself with this markup. Emitted only when the root changes tag. |
+| `text` | The element's only child becomes this text. |
+| `html` | The element's children become this markup. Used only where children cannot be reconciled one by one: a child list holding raw HTML, `<style>` / `<script>` / `<textarea>` text, or no child matched. |
+| `kids` | Reconcile the element's children in place (below). |
+| `attrs` | Set attributes (`""` removes). |
+| `remove` | Remove the element. |
+
+`kids` lists the element's NEW children in order, one entry per child:
+
+- `{"keep": "<old id>"}` keeps the existing child with that id as the **same DOM
+  node** (moved only when the list was reordered). A focused input inside it
+  keeps its focus, caret, IME composition and typed value.
+- `{"keep": "<old id>", "id": "<new id>"}` keeps it and renames it: every
+  `sky-id` in its subtree that equals the old id or starts with `<old id>.` is
+  rewritten to start with the new id, and `data-sky-hid` likewise. Later patches
+  in the same batch address it by the new id. The client moves any per-input
+  state keyed by the old id (Sky.Live `__skyInputs`) to the new id.
+- `{"html": "<markup>"}` is a new node (or text) for that slot.
+
+Every existing child no entry keeps is removed. A `keep` whose node is missing
+is a desync: Sky.Live resyncs, the Sky.Spa client rebuilds the slot from its
+tree.
+
+The diff matches children in three steps (`diffChildren` / `alignChildren`):
+index-free ids first (uniquely keyed elements, injected styles), then unkeyed
+elements by shape (tag, key, `name`, `type`, child tags) along a longest common
+subsequence, then leftover unkeyed elements of the same tag in order. So an
+unkeyed line inserted ABOVE an input's wrapper does not take the wrapper's
+identity: the wrapper is kept and renamed, and the input survives.
 
 ### Request: `POST /_sky/event`
 
@@ -103,13 +157,13 @@ path uses the header.
   "seq": 42,
   "msg": "UpdateEmail",
   "args": ["alice@example.com"],
-  "handlerId": "r.2#main.0#form.3#input:email.input",
+  "handlerId": "r.2#main.0#form.#input:email.input",
   "inputState": {
-    "r.2#main.0#form.3#input:email": {
+    "r.2#main.0#form.#input:email": {
       "value": "alice@example.com",
       "seq": 42
     },
-    "r.2#main.0#form.5#input:password": {
+    "r.2#main.0#form.#input:password": {
       "value": "hunter2",
       "seq": 40
     }
@@ -131,11 +185,11 @@ When the server has usable patches to send back as JSON:
 {
   "seq": 42,
   "ackInputs": {
-    "r.2#main.0#form.3#input:email": 42,
-    "r.2#main.0#form.5#input:password": 40
+    "r.2#main.0#form.#input:email": 42,
+    "r.2#main.0#form.#input:password": 40
   },
   "patches": [
-    {"id": "r.2#main.0#form.3#input:email", "attrs": {"value": "alice@example.com"}},
+    {"id": "r.2#main.0#form.#input:email", "attrs": {"value": "alice@example.com"}},
     {"id": "r.1#header.0#span:greeting", "text": "Hi, Alice"}
   ]
 }
@@ -235,6 +289,43 @@ else:
 The same filter runs for innerHTML patches targeting ancestors of a focused/dirty input: **an innerHTML patch that would wipe a dirty input is rewritten to a scoped patch that preserves the input's subtree.** Implementation: before applying `innerHTML`, scan the new HTML for sky-ids, diff against existing dirty inputs, and if a dirty input is inside the target, fall back to per-element patching for that subtree (morph-style).
 
 This preserves G1 even when the server sends a "wipe your whole form and rebuild" patch.
+
+### User-event reconcile (the model wins after update)
+
+The rules above protect what the user is typing from a server value that is
+older than it. The opposite case needs a rule too: **after the user's own
+event has been through `update`, a controlled control shows the model**, even
+when the model did not move. When `update` refuses or normalises the input
+(keeps `"abc"` when the user typed `"abcd"`, refuses a checkbox tick), the
+previous and the new tree agree, so a tree-to-tree diff emits nothing and the
+DOM keeps the refused state.
+
+The rule, per applier, for the control the event came from:
+
+1. After the patches for that event are applied, read the control's LIVE state
+   (`.value`, or `.checked` for a checkbox / radio) and compare it with the new
+   tree — not with the previous tree.
+2. Text-like `input`, `textarea`, `select`: controlled when the VNode has a
+   `value` attribute. Write `.value` when it differs; keep the caret (clamped
+   to the new length).
+3. `checkbox` / `radio`: controlled when the VNode has `checked`, or declares
+   `data-sky-ctl="checked"` (Std.Ui's checkbox and radio always do;
+   `Html.Attributes.checked False` renders it too, since "no `checked`" alone
+   cannot tell "unticked" from "uncontrolled"). Set `.checked` to whether the
+   VNode has `checked`.
+4. Never touch a `file` input, or a field with an open IME composition (the
+   composition owns it; see below).
+
+Sky.Spa implements this in `spaReconcileControlled` (`dom_render_wasm.go`),
+run by `renderCurrent` after every patch set. A Sky.Live applier mirrors it
+for the element the event came from once the event's reply is applied.
+
+**IME composition.** While a composition is open (`compositionstart` to
+`compositionend`, or `event.isComposing`), `input` events carry pre-edit text
+and are NOT dispatched, and no `value` patch is written to that field. On
+`compositionend` the committed text is dispatched once (a following
+non-composing `input` event with the same value is not dispatched again). An
+Enter that confirms a composition does not fire `Ui.onEnter`.
 
 ## Server state
 

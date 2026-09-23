@@ -312,10 +312,10 @@ checkbox attrs cfg =
         controlAttrs = snd layoutAndControl
         checkedAttrs =
             if cfg.checked then
-                [ Ui.htmlAttribute "checked" "checked" ]
+                [ Ui.htmlAttribute "checked" "checked", controlledChecked ]
 
             else
-                []
+                [ controlledChecked ]
         checkInput =
             inputElementWith
                 "checkbox"
@@ -330,7 +330,7 @@ checkbox attrs cfg =
         rowBaseAttrs =
             Ui.spacing 8 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
     in
-        wrapWithLabel
+        wrapWithClickableLabel
             cfg.label
             layoutAttrs
             (Ui.row rowBaseAttrs [ checkInput, iconEl ])
@@ -457,10 +457,10 @@ renderRadioOption onChange selected RadioOption value labelEl =
         isChecked = value == selected
         checkedAttr =
             if isChecked then
-                [ Ui.htmlAttribute "checked" "checked" ]
+                [ Ui.htmlAttribute "checked" "checked", controlledChecked ]
 
             else
-                []
+                [ controlledChecked ]
         radioInput =
             Ui.input
                 ([ Ui.htmlAttribute "type" "radio"
@@ -469,7 +469,7 @@ renderRadioOption onChange selected RadioOption value labelEl =
                 ]
                     ++ checkedAttr)
     in
-        Ui.row [ Ui.spacing 6, Ui.pointer ] [ radioInput, labelEl ]
+        labelNode rowLayout [ Ui.spacing 6, Ui.pointer ] [ radioInput, labelEl ]
 
 
 -- Internal: extract a single placeholder string from the Element
@@ -600,6 +600,76 @@ implicitFillIfHoisted layoutAttrs =
 
     else
         [ Ui.width Ui.fill, Ui.height Ui.fill ]
+
+
+-- The checked state of a Std.Ui checkbox / radio follows the model. The
+-- marker tells the renderers so: after a click that update rejects, the
+-- control is put back to what the model says (docs/skylive/
+-- input-authority-protocol.md, "User-event reconcile").
+controlledChecked : Attribute msg
+controlledChecked =
+    Ui.htmlAttribute "data-sky-ctl" "checked"
+
+
+rowLayout : Attribute msg
+rowLayout =
+    AttrStyle "__row" "true"
+
+
+colLayout : Attribute msg
+colLayout =
+    AttrStyle "__col" "true"
+
+
+-- A real `<label>` element laid out like `Ui.row` / `Ui.column` / `Ui.el`
+-- (pass the layout marker first, or none for `el`). The browser forwards
+-- a click anywhere inside it to the `<input>` it contains, so the caption
+-- and the icon toggle a checkbox or pick a radio.
+labelNode : Attribute msg -> List (Attribute msg) -> List (Element msg) -> Element msg
+labelNode layout attrs children =
+    Ui.TaggedNode "label" Ui.NoDescription (layout :: attrs) children
+
+
+-- `wrapWithLabel` for a checkbox: the wrapper is a `<label>`, so a click on
+-- the caption (or on the icon, for a hidden label) toggles the box. A text
+-- input keeps `wrapWithLabel` (its wrapper holds no click semantics).
+wrapWithClickableLabel : Label msg -> List (Attribute msg) -> Element msg -> Element msg
+wrapWithClickableLabel lbl wrapperAttrs control =
+    case lbl of
+
+        LabelHidden text ->
+            Ui.TaggedNode
+                "label"
+                Ui.NoDescription
+                (Ui.htmlAttribute "aria-label" text :: wrapperAttrs)
+                [ control ]
+
+        Label pos labelAttrs labelEl ->
+            case pos of
+
+                AbovePos ->
+                    labelNode
+                        colLayout
+                        wrapperAttrs
+                        [ Ui.el labelAttrs labelEl, control ]
+
+                BelowPos ->
+                    labelNode
+                        colLayout
+                        wrapperAttrs
+                        [ control, Ui.el labelAttrs labelEl ]
+
+                LeftPos ->
+                    labelNode
+                        rowLayout
+                        wrapperAttrs
+                        [ Ui.el labelAttrs labelEl, control ]
+
+                RightPos ->
+                    labelNode
+                        rowLayout
+                        wrapperAttrs
+                        [ control, Ui.el labelAttrs labelEl ]
 
 
 -- Wrap a control in its label according to LabelPosition. Hidden
