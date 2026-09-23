@@ -186,7 +186,11 @@ impl Server {
             .stderr(log)
             .spawn()
             .unwrap_or_else(|e| panic!("failed to spawn server on :{port}: {e}"));
-        let mut s = Server { child, port, log_path };
+        let mut s = Server {
+            child,
+            port,
+            log_path,
+        };
         if !s.wait_for_log(&format!("Sky.Live listening on :{port}"), 60) {
             let log = s.read_log();
             panic!("server never reported listening on :{port}\nlog:\n{log}");
@@ -226,14 +230,22 @@ impl Server {
 
 fn curl_get(port: u16, path: &str, jar: &Path, save: bool) -> String {
     let url = format!("http://127.0.0.1:{port}{path}");
-    let mut args: Vec<String> =
-        vec!["-s".into(), "--max-time".into(), "30".into(), "-b".into(), jar.display().to_string()];
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "--max-time".into(),
+        "30".into(),
+        "-b".into(),
+        jar.display().to_string(),
+    ];
     if save {
         args.push("-c".into());
         args.push(jar.display().to_string());
     }
     args.push(url);
-    let out = Command::new("curl").args(&args).output().expect("run curl GET");
+    let out = Command::new("curl")
+        .args(&args)
+        .output()
+        .expect("run curl GET");
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
@@ -248,14 +260,28 @@ fn curl_get_fresh(port: u16, path: &str) -> String {
 
 fn curl_post_event(port: u16, jar: &Path, csrf: &str, handler_id: &str) -> String {
     let url = format!("http://127.0.0.1:{port}/_sky/event");
-    let body = format!("{{\"sessionId\":\"\",\"msg\":\"\",\"args\":[],\"handlerId\":\"{handler_id}\"}}");
+    let body =
+        format!("{{\"sessionId\":\"\",\"msg\":\"\",\"args\":[],\"handlerId\":\"{handler_id}\"}}");
     let out = Command::new("curl")
         .args([
-            "-s", "--max-time", "30", "-o", "/dev/null", "-w", "%{http_code}",
-            "-b", &jar.display().to_string(),
-            "-H", "Content-Type: application/json",
-            "-H", &format!("X-Sky-Csrf: {csrf}"),
-            "-X", "POST", &url, "-d", &body,
+            "-s",
+            "--max-time",
+            "30",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-b",
+            &jar.display().to_string(),
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            &format!("X-Sky-Csrf: {csrf}"),
+            "-X",
+            "POST",
+            &url,
+            "-d",
+            &body,
         ])
         .output()
         .expect("run curl POST");
@@ -318,12 +344,23 @@ fn a_live_model_survives_a_process_restart_via_durable_snapshot() {
     std::fs::write(project.join("src").join("Main.sky"), APP_SRC).unwrap();
 
     let build = run_bounded(
-        Command::new(SKY).args(["build", "src/Main.sky"]).current_dir(&project),
+        Command::new(SKY)
+            .args(["build", "src/Main.sky"])
+            .current_dir(&project),
         "sky build src/Main.sky",
     );
-    assert!(build.status.success(), "durable Live app build failed:\n{}", both(&build));
+    assert!(
+        build.status.success(),
+        "durable Live app build failed:\n{}",
+        both(&build)
+    );
     let app_bin = project.join("sky-out").join("app");
-    assert!(app_bin.is_file(), "no binary at {}\n{}", app_bin.display(), both(&build));
+    assert!(
+        app_bin.is_file(),
+        "no binary at {}\n{}",
+        app_bin.display(),
+        both(&build)
+    );
 
     // ── Process 1: establish a session and mutate the Model to 3. ──
     let server1 = Server::launch(&project, &app_bin, 8821);
@@ -336,14 +373,14 @@ fn a_live_model_survives_a_process_restart_via_durable_snapshot() {
     );
     let sid = cookie_from_jar(&jar, "sky_sid").expect("process 1 set no sky_sid cookie");
     let csrf = cookie_from_jar(&jar, "__sky_csrf").expect("process 1 set no __sky_csrf cookie");
-    let handler_id =
-        button_handler_id(&initial).expect("could not find the button data-sky-hid");
+    let handler_id = button_handler_id(&initial).expect("could not find the button data-sky-hid");
 
     const TARGET: i64 = 3;
     for i in 1..=TARGET {
         let status = curl_post_event(server1.port, &jar, &csrf, &handler_id);
         assert_eq!(
-            status, "200",
+            status,
+            "200",
             "event #{i} returned HTTP {status}, not 200\nlog:\n{}",
             server1.read_log()
         );

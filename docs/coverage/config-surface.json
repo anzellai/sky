@@ -54,20 +54,20 @@
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
     ],
     "database.embedded": [
-      "rust/crates/sky/src/db_cluster.rs:1576 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:9204 (sky_toml_flag)"
+      "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
+      "rust/crates/sky/src/main.rs:9332 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
-      "rust/crates/sky/src/db_pool_sizing.rs:143 (toml_value)"
+      "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
     ],
     "database.path": [
-      "rust/crates/sky/src/db_cluster.rs:1658 (sky_toml_section_key)"
+      "rust/crates/sky/src/db_cluster.rs:1742 (sky_toml_section_key)"
     ],
     "database.postgresVersion": [
       "rust/crates/sky/src/db_provision.rs:158 (sky_toml_section_key)"
     ],
     "database.url": [
-      "rust/crates/sky/src/db_cluster.rs:1662 (sky_toml_section_key)"
+      "rust/crates/sky/src/db_cluster.rs:1746 (sky_toml_section_key)"
     ],
     "dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — reads the whole table. `sky add`/`remove`/`install`/`update` and the LSP's unfetched-dep hints all run with no binary in existence."
@@ -76,8 +76,8 @@
       "structural: rust/crates/sky/src/main.rs fn parse_toml_entry — its own parser, no key argument. Decides WHAT is compiled, so it is read before any compile. `sky doctor` reads it through a SECOND, looser parser (`toml_entry`) that does not stop at the first section."
     ],
     "env.prefix": [
-      "rust/crates/sky/src/db_cluster.rs:1585 (sky_toml_section_key)",
-      "rust/crates/sky/src/db_pool_sizing.rs:153 (toml_value)"
+      "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
+      "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
@@ -89,14 +89,14 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:6626 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:6740 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:6683 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:6803 (sky_toml_project_key)"
     ],
     "root": [
       "rust/crates/project/src/build.rs:1595 (sky_toml_project_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:6629 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:6690 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
@@ -225,6 +225,8 @@
     "ANALYTICS_DB_PATH",
     "ANALYTICS_RETENTION",
     "CSRF",
+    "DB_CONN_MAX_IDLE_TIME",
+    "DB_CONN_MAX_LIFETIME",
     "DB_ISOLATION",
     "DB_MAX_IDLE_CONNS",
     "DB_MAX_OPEN_CONNS",
@@ -250,7 +252,7 @@
     "read_without_doc": 26,
     "runtime_read_literal_sky_names": 45,
     "runtime_read_suffixes": 45,
-    "seeded_suffixes": 18,
+    "seeded_suffixes": 20,
     "seeded_without_reader": 0,
     "unclassified_keys": 0,
     "unresolved_read_sites": 0

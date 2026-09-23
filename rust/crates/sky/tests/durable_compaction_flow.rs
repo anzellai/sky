@@ -28,7 +28,8 @@ fn have_go() -> bool {
 }
 
 fn stage_fixture() -> PathBuf {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/durable-compaction");
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/durable-compaction");
     let dir = std::env::temp_dir().join(format!(
         "sky-durable-compact-{}-{}",
         std::process::id(),

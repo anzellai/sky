@@ -86,7 +86,9 @@ fn accepted_keys(root: &Path) -> Option<BTreeSet<String>> {
         let qstart = head[..qend].rfind('"')?;
         let section = &head[qstart + 1..qend];
         let tail = &body[idx + "=> &[".len()..];
-        let Some(close) = tail.find(']') else { continue };
+        let Some(close) = tail.find(']') else {
+            continue;
+        };
         for lit in tail[..close].split('"').skip(1).step_by(2) {
             out.insert(format!("{section}.{lit}"));
         }
@@ -103,13 +105,25 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
     };
 
     let Some(suffixes) = parse_go_string_map(&go, "configKeyToEnvSuffix") else {
-        return (false, 0, "could not parse configKeyToEnvSuffix from sky_config.go".into());
+        return (
+            false,
+            0,
+            "could not parse configKeyToEnvSuffix from sky_config.go".into(),
+        );
     };
     let Some(literals) = parse_go_string_map(&go, "configKeyToLiteralEnv") else {
-        return (false, 0, "could not parse configKeyToLiteralEnv from sky_config.go".into());
+        return (
+            false,
+            0,
+            "could not parse configKeyToLiteralEnv from sky_config.go".into(),
+        );
     };
     let Some(builders) = parse_go_string_map(&go, "configKeyToBuilder") else {
-        return (false, 0, "could not parse configKeyToBuilder from sky_config.go".into());
+        return (
+            false,
+            0,
+            "could not parse configKeyToBuilder from sky_config.go".into(),
+        );
     };
     // Derivation sanity: the maps must be non-trivial, or every clause below
     // passes over an empty set (the `reject.rs >= 13` vacuity shape).
@@ -128,7 +142,11 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
     }
 
     let Some(accepted) = accepted_keys(root) else {
-        return (false, 0, "could not derive accepted_config_keys from build.rs".into());
+        return (
+            false,
+            0,
+            "could not derive accepted_config_keys from build.rs".into(),
+        );
     };
 
     // The set of env targets the Rust table names.
@@ -262,7 +280,10 @@ mod tests {
     fn the_checked_in_tree_passes() {
         let (passed, assertions, detail) = check_body(&repo_root());
         assert!(passed, "config-migration must pass on the tree:\n{detail}");
-        assert!(assertions > 0, "a passing gate that asserted nothing is vacuous");
+        assert!(
+            assertions > 0,
+            "a passing gate that asserted nothing is vacuous"
+        );
     }
 
     #[test]

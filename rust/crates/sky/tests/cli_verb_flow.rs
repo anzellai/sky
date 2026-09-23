@@ -105,10 +105,7 @@ fn init_help_does_not_scaffold() {
     let dir = scratch("inithelp");
     let (code, out) = run_sky(&dir, &["init", "--help"]);
     assert_eq!(code, 0, "sky init --help should exit 0; output:\n{out}");
-    assert!(
-        out.contains("sky init"),
-        "help text expected; got:\n{out}"
-    );
+    assert!(out.contains("sky init"), "help text expected; got:\n{out}");
 
     let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
     assert!(
@@ -183,7 +180,11 @@ fn watch_rejects_bad_invocations_without_starting() {
 
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/Main.sky"), "module Main exposing (main)\n").unwrap();
-    std::fs::write(dir.join("sky.toml"), "name = \"w\"\nentry = \"src/Main.sky\"\n").unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"w\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
 
     let (code, out) = run_sky(&dir, &["watch", "src/Main.sky", "--kill-timeout=abc"]);
     assert_eq!(
@@ -208,7 +209,10 @@ fn db_rejects_an_unknown_subcommand() {
     // permanently green no-op. The same property is asserted here for `sky db`.
     let dir = scratch("dbbad");
     let (code, out) = run_sky(&dir, &["db", "bogus"]);
-    assert_eq!(code, 2, "unknown `sky db` subcommand must exit 2; got:\n{out}");
+    assert_eq!(
+        code, 2,
+        "unknown `sky db` subcommand must exit 2; got:\n{out}"
+    );
     assert!(
         out.contains("usage: sky db"),
         "expected usage text; got:\n{out}"
@@ -248,14 +252,20 @@ fn install_and_update_are_clean_no_ops_without_dependencies() {
     let proj = dir.join("app");
 
     let (code, out) = run_sky(&proj, &["install"]);
-    assert_eq!(code, 0, "install on an empty dep set should succeed; got:\n{out}");
+    assert_eq!(
+        code, 0,
+        "install on an empty dep set should succeed; got:\n{out}"
+    );
     assert!(
         out.contains("nothing to do"),
         "install must say it did nothing; got:\n{out}"
     );
 
     let (code, out) = run_sky(&proj, &["update"]);
-    assert_eq!(code, 0, "update on an empty dep set should succeed; got:\n{out}");
+    assert_eq!(
+        code, 0,
+        "update on an empty dep set should succeed; got:\n{out}"
+    );
     assert!(
         out.contains("no declared surfaces"),
         "update must say it had nothing to regenerate; got:\n{out}"
@@ -330,7 +340,11 @@ fn unknown_verb_exits_two() {
 fn embed_on_run_is_refused_and_points_at_what_does_work() {
     let dir = scratch("embed-on-run");
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("sky.toml"), "name = \"x\"\nentry = \"src/Main.sky\"\n").unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"x\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src").join("Main.sky"),
         "module Main exposing (main)\n\nmain = ()\n",
@@ -338,7 +352,10 @@ fn embed_on_run_is_refused_and_points_at_what_does_work() {
     .unwrap();
 
     let (code, out) = run_sky(&dir, &["run", "--embed", "src/Main.sky"]);
-    assert_eq!(code, 2, "a misplaced --embed must not be swallowed; got:\n{out}");
+    assert_eq!(
+        code, 2,
+        "a misplaced --embed must not be swallowed; got:\n{out}"
+    );
     assert!(
         out.contains("embedded = true"),
         "the refusal must name the sky.toml key that does work; got:\n{out}"

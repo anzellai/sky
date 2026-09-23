@@ -28,7 +28,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
@@ -64,7 +67,11 @@ fn io<'a>(branches: &'a [BranchVerdict], msg: &str) -> &'a BranchIo {
 fn pure_client_arm_is_not_a_server_branch() {
     let bs = analyze();
     let b = branch(&bs, "Bump");
-    assert!(!b.server, "Bump is pure/client, must not be SERVER: {}", b.reason);
+    assert!(
+        !b.server,
+        "Bump is pure/client, must not be SERVER: {}",
+        b.reason
+    );
     assert!(b.io.is_none(), "a CLIENT branch carries no RPC I/O");
 }
 
@@ -72,7 +79,11 @@ fn pure_client_arm_is_not_a_server_branch() {
 fn guard_wrapper_arm_narrows_write_set_to_the_continuation() {
     let bs = analyze();
     let b = branch(&bs, "Edit _");
-    assert!(b.server, "Edit's continuation reaches File -> SERVER: {}", b.reason);
+    assert!(
+        b.server,
+        "Edit's continuation reaches File -> SERVER: {}",
+        b.reason
+    );
     let io = io(&bs, "Edit _");
     assert!(
         !io.writes_whole_model,

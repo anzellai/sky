@@ -342,15 +342,15 @@ func Native_openUrl(url any) any {
 // ()`). It shows a real device notification, preferring a NATIVE bridge the
 // generated mobile shells install over the Web Notification API:
 //
-//   1. iOS  — `window.webkit.messageHandlers.skyNative` (a
-//      WKScriptMessageHandlerWithReply the WKWebView shell registers). The
-//      shell's Swift handler drives `UNUserNotificationCenter`, so a real local
-//      notification fires even though iOS WKWebView disables the Web
-//      Notification API. postMessage returns a Promise → Ok/Err.
-//   2. Android — `window.SkyNative.notify(title, body)` (an @JavascriptInterface
-//      the WebView shell installs) drives `NotificationManager`; returns a bool.
-//   3. Web / desktop — the Web Notification API (requestPermission + new
-//      Notification), the original path.
+//  1. iOS  — `window.webkit.messageHandlers.skyNative` (a
+//     WKScriptMessageHandlerWithReply the WKWebView shell registers). The
+//     shell's Swift handler drives `UNUserNotificationCenter`, so a real local
+//     notification fires even though iOS WKWebView disables the Web
+//     Notification API. postMessage returns a Promise → Ok/Err.
+//  2. Android — `window.SkyNative.notify(title, body)` (an @JavascriptInterface
+//     the WebView shell installs) drives `NotificationManager`; returns a bool.
+//  3. Web / desktop — the Web Notification API (requestPermission + new
+//     Notification), the original path.
 func Native_notify(title any, body any) any {
 	t := fmt.Sprintf("%v", title)
 	b := fmt.Sprintf("%v", body)

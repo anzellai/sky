@@ -104,7 +104,6 @@ import Std.Html exposing (Html)
 type AppConfig model msg
     = AppConfig_OPAQUE
 
-
 -- | A client-side route, produced by `route` and registered with `withRoutes`.
 -- Opaque — its runtime shape (`rt.spaRoute`) is an implementation detail.
 type Route
@@ -128,13 +127,11 @@ type Route
 -- client driver reconciles the active `Sub.every` timers against the result
 -- (starts new intervals, stops removed ones, leaves unchanged ones running).
 -- Use `\_ -> Sub.none` when the app has no ongoing subscriptions.
-config :
-    { init : a -> ( model, Cmd msg )
-    , update : msg -> model -> ( model, Cmd msg )
-    , view : model -> Html msg
-    , subscriptions : model -> Sub msg
-    }
-    -> AppConfig model msg
+config : { init : a -> ( model, Cmd msg )
+, update : msg -> model -> ( model, Cmd msg )
+, view : model -> Html msg
+, subscriptions : model -> Sub msg
+} -> AppConfig model msg
 config =
     Ffi.kernel "Spa_config"
 
@@ -280,9 +277,9 @@ getJson codec url toMsg =
 postJson : Codec body -> Codec a -> String -> body -> (Result Error a -> msg) -> Cmd msg
 postJson bodyCodec respCodec url payload toMsg =
     Cmd.perform
-        (Task.andThenResult (decodeResponse respCodec)
-            (Http.post url (Codec.toJson bodyCodec payload))
-        )
+        (Task.andThenResult
+            (decodeResponse respCodec)
+            (Http.post url (Codec.toJson bodyCodec payload)))
         toMsg
 
 
@@ -299,5 +296,4 @@ decodeResponse codec resp =
     else
         Err
             (Error.unexpected
-                ("HTTP " ++ String.fromInt resp.status ++ ": " ++ resp.body)
-            )
+                ("HTTP " ++ String.fromInt resp.status ++ ": " ++ resp.body))

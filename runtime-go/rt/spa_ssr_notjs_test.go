@@ -93,12 +93,12 @@ func TestSpaSSRPage_EndToEndDocument(t *testing.T) {
 	body := Spa_ssrRenderBody(VNode{Kind: "element", Tag: "main", Children: []VNode{{Kind: "text", Text: "hello"}}})
 	page := Spa_ssrPage(head, body, "main.deadbeef0000.wasm", "")
 	for _, want := range []string{
-		"<title>Home</title>",         // per-route head
-		"data-sky-ssr",                // hydrate marker on #app
-		`id="app"`,                    // mount id the client keys off
-		"hello",                       // real server-rendered body content
-		"main.deadbeef0000.wasm",      // content-hashed wasm loader
-		"instantiateStreaming",        // the boot script
+		"<title>Home</title>",    // per-route head
+		"data-sky-ssr",           // hydrate marker on #app
+		`id="app"`,               // mount id the client keys off
+		"hello",                  // real server-rendered body content
+		"main.deadbeef0000.wasm", // content-hashed wasm loader
+		"instantiateStreaming",   // the boot script
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("SpaSSRPage missing %q:\n%s", want, page)

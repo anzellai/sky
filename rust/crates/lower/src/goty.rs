@@ -161,8 +161,7 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
     // This exact record's field-name set already mid-resolution → the guard will
     // fire; the anon-struct fallback is context-specific, never served/stored.
     if let Ty::Record(fields, _) = t {
-        let mut fs: Vec<String> =
-            fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+        let mut fs: Vec<String> = fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
         fs.sort();
         if RESOLVING_FIELDSETS.with(|s| s.borrow().contains(&fs)) {
             return go_ty_uncached(t, env, cur_mod, params);
@@ -420,9 +419,7 @@ fn has_unresolved(t: &Ty, params: &HashMap<Name, GoTy>) -> bool {
         Ty::Fun(a, b) => has_unresolved(a, params) || has_unresolved(b, params),
         Ty::Tuple(xs) => xs.iter().any(|x| has_unresolved(x, params)),
         // An OPEN row is itself missing information about the rest of the record.
-        Ty::Record(fs, ext) => {
-            ext.is_some() || fs.iter().any(|(_, ft)| has_unresolved(ft, params))
-        }
+        Ty::Record(fs, ext) => ext.is_some() || fs.iter().any(|(_, ft)| has_unresolved(ft, params)),
         Ty::Unit => false,
     }
 }
@@ -481,8 +478,7 @@ fn model_subset_resolves(
 ) -> bool {
     // (1) field-type refutation against the Model's own templates.
     if let Some(templates) = env.record_templates.get(model_go) {
-        let tmpl: HashMap<&str, &Ty> =
-            templates.iter().map(|(n, t)| (n.as_str(), t)).collect();
+        let tmpl: HashMap<&str, &Ty> = templates.iter().map(|(n, t)| (n.as_str(), t)).collect();
         for (fname, ct) in fields {
             let Some(t) = tmpl.get(fname.as_str()) else {
                 continue;
@@ -529,16 +525,17 @@ fn model_subset_resolves(
             // becomes a static access on a `SkyMaybe` — invalid Go. A field the
             // two share with the SAME Go type is not a hazard (either resolution
             // renders it identically), so only the wrap/unwrap mismatch vetoes.
-            let wrap_mismatch = names.iter().any(|n| {
-                match (model_by.get(n.as_str()), other_by.get(n.as_str())) {
-                    (Some(mt), Some(ot)) => {
-                        let mg = go_ty(mt, env, cur_mod, params);
-                        let og = go_ty(ot, env, cur_mod, params);
-                        is_sky_maybe(&mg) && !is_sky_maybe(&og) && mg != og
-                    }
-                    _ => false,
-                }
-            });
+            let wrap_mismatch =
+                names.iter().any(
+                    |n| match (model_by.get(n.as_str()), other_by.get(n.as_str())) {
+                        (Some(mt), Some(ot)) => {
+                            let mg = go_ty(mt, env, cur_mod, params);
+                            let og = go_ty(ot, env, cur_mod, params);
+                            is_sky_maybe(&mg) && !is_sky_maybe(&og) && mg != og
+                        }
+                        _ => false,
+                    },
+                );
             if wrap_mismatch {
                 return false;
             }
@@ -740,10 +737,7 @@ fn app_to_go(
     // `apps/relay` (which imports `Std.Config` for its typed decoders) caught it
     // as a +15 widening on the `coerce-floor` gate. The bare-name arms further
     // down had always covered this; hoisting them closes the qualified hole too.
-    if matches!(
-        ty::nominal::base(name),
-        "Decoder" | "Value" | "Cmd" | "Sub"
-    ) {
+    if matches!(ty::nominal::base(name), "Decoder" | "Value" | "Cmd" | "Sub") {
         return GoTy::Any;
     }
     // A qualified reference (`Counter.Msg`) carries its declaring module in the

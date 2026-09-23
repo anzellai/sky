@@ -654,7 +654,15 @@ impl Svg {
         let cx = x + w / 2.0;
         self.text(cx, y + 24.0, title, "middle", 12.0, "600", TEXT);
         for (i, l) in lines.iter().enumerate() {
-            self.text(cx, y + 42.0 + i as f64 * 13.0, l, "middle", 9.5, "400", SUBTLE);
+            self.text(
+                cx,
+                y + 42.0 + i as f64 * 13.0,
+                l,
+                "middle",
+                9.5,
+                "400",
+                SUBTLE,
+            );
         }
     }
 

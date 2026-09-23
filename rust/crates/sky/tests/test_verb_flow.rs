@@ -85,7 +85,11 @@ fn project(tag: &str, suite_rel: &str, header: &str) -> (PathBuf, PathBuf) {
     .unwrap();
     let suite = dir.join(suite_rel);
     std::fs::create_dir_all(suite.parent().unwrap()).unwrap();
-    std::fs::write(&suite, format!("module {header} exposing (tests)\n\n{SUITE_BODY}")).unwrap();
+    std::fs::write(
+        &suite,
+        format!("module {header} exposing (tests)\n\n{SUITE_BODY}"),
+    )
+    .unwrap();
     (dir, suite)
 }
 

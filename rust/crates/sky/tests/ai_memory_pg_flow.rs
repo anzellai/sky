@@ -144,6 +144,9 @@ fn memory_recalls_by_vector_and_hybrid() {
     );
 
     // Best-effort: stop the per-project cluster the fixture started.
-    let _ = Command::new(SKY).args(["db", "stop"]).current_dir(&dir).output();
+    let _ = Command::new(SKY)
+        .args(["db", "stop"])
+        .current_dir(&dir)
+        .output();
     let _ = std::fs::remove_dir_all(&dir);
 }

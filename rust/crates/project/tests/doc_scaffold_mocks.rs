@@ -21,7 +21,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
@@ -29,8 +32,8 @@ fn repo_root() -> PathBuf {
 fn finds_direct_get_and_piped_request_builder() {
     let root = repo_root();
     let dir = root.join("rust/crates/sky/tests/fixtures/scaffold-http");
-    let r = scaffold_mocks(&root, &dir, None)
-        .unwrap_or_else(|e| panic!("scaffold_mocks failed: {e}"));
+    let r =
+        scaffold_mocks(&root, &dir, None).unwrap_or_else(|e| panic!("scaffold_mocks failed: {e}"));
 
     // The direct `Http.get "https://api.example.com/v1/things"` — a full literal.
     let get = r
@@ -66,8 +69,15 @@ fn no_http_calls_is_empty_with_a_note() {
     let root = repo_root();
     // spa-derived-read is a pure Spa app: view/update, no outbound Http.
     let dir = root.join("rust/crates/sky/tests/fixtures/spa-derived-read");
-    let r = scaffold_mocks(&root, &dir, None)
-        .unwrap_or_else(|e| panic!("scaffold_mocks failed: {e}"));
-    assert!(r.calls.is_empty(), "no outbound Http here; got {:?}", r.calls);
-    assert!(!r.notes.is_empty(), "an empty inventory must carry an explanatory note");
+    let r =
+        scaffold_mocks(&root, &dir, None).unwrap_or_else(|e| panic!("scaffold_mocks failed: {e}"));
+    assert!(
+        r.calls.is_empty(),
+        "no outbound Http here; got {:?}",
+        r.calls
+    );
+    assert!(
+        !r.notes.is_empty(),
+        "an empty inventory must carry an explanatory note"
+    );
 }

@@ -827,11 +827,36 @@ fn provable_list_hof_sites_route_to_the_typed_helper() {
 
     // (def, typed symbol, erased symbol, which census bucket it stands for)
     let cases = [
-        ("Main_bumped", "rt.List_mapT[", "rt.List_mapAny(", "partially applied def"),
-        ("Main_kept", "rt.List_filterT[", "rt.List_filterAny(", "bare top-level def"),
-        ("Main_ids", "rt.List_filterMapT[", "rt.List_filterMap(", "bare def returning Maybe"),
-        ("Main_idx", "rt.List_indexedMapT[", "rt.List_indexedMap(", "2-ary bare def"),
-        ("Main_lambdaed", "rt.List_mapT[", "rt.List_mapAny(", "inline lambda"),
+        (
+            "Main_bumped",
+            "rt.List_mapT[",
+            "rt.List_mapAny(",
+            "partially applied def",
+        ),
+        (
+            "Main_kept",
+            "rt.List_filterT[",
+            "rt.List_filterAny(",
+            "bare top-level def",
+        ),
+        (
+            "Main_ids",
+            "rt.List_filterMapT[",
+            "rt.List_filterMap(",
+            "bare def returning Maybe",
+        ),
+        (
+            "Main_idx",
+            "rt.List_indexedMapT[",
+            "rt.List_indexedMap(",
+            "2-ary bare def",
+        ),
+        (
+            "Main_lambdaed",
+            "rt.List_mapT[",
+            "rt.List_mapAny(",
+            "inline lambda",
+        ),
     ];
     for (def, typed, erased, bucket) in cases {
         let body = func_body(&src, def);
@@ -848,7 +873,13 @@ fn provable_list_hof_sites_route_to_the_typed_helper() {
     }
     // The typed helper returns the element type, so the narrowing that used to
     // wrap every one of these call sites is gone with it.
-    for def in ["Main_bumped", "Main_kept", "Main_ids", "Main_idx", "Main_lambdaed"] {
+    for def in [
+        "Main_bumped",
+        "Main_kept",
+        "Main_ids",
+        "Main_idx",
+        "Main_lambdaed",
+    ] {
         let body = func_body(&src, def);
         assert!(
             !body.contains("rt.AsListT["),

@@ -469,8 +469,7 @@ pub fn analyze_components(
                 .into(),
         ),
         AppShape::Http => notes.push(
-            "Sky.Http.Server: a client reaches the HTTP API; every effect runs server-side."
-                .into(),
+            "Sky.Http.Server: a client reaches the HTTP API; every effect runs server-side.".into(),
         ),
     }
 
@@ -638,7 +637,10 @@ fn render_components_puml(g: &ComponentGraph) -> String {
         let auth = if c.auth { " · auth" } else { "" };
         // Label the /_rpc crossing with the count of EFFECTFUL actions that
         // round-trip; a note carries the PURE client-action count.
-        let eff = g.rpc_effectful.map(|n| format!(" · {n} effectful")).unwrap_or_default();
+        let eff = g
+            .rpc_effectful
+            .map(|n| format!(" · {n} effectful"))
+            .unwrap_or_default();
         o.push_str(&format!("spa --> backend : /_rpc{auth}{eff}\n"));
         if let Some(pure) = g.rpc_pure {
             o.push_str(&format!(
@@ -652,7 +654,11 @@ fn render_components_puml(g: &ComponentGraph) -> String {
             _ if g.capabilities.contains(&Capability::Realtime) => "HTTPS + SSE",
             _ => "HTTPS",
         };
-        let auth = if c.auth && !g.shape.is_terminal() { " · auth" } else { "" };
+        let auth = if c.auth && !g.shape.is_terminal() {
+            " · auth"
+        } else {
+            ""
+        };
         o.push_str(&format!("user --> backend : {via}{auth}\n"));
     }
     for (i, (_, edge)) in c.stores.iter().enumerate() {
@@ -722,7 +728,11 @@ fn render_components_md(g: &ComponentGraph) -> String {
         o.push_str(&format!(
             "### Data store — {} table(s)\n\n{}\n\n",
             g.tables.len(),
-            g.tables.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", ")
+            g.tables
+                .iter()
+                .map(|t| format!("`{t}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
 
@@ -968,7 +978,15 @@ fn render_components_svg(g: &ComponentGraph) -> String {
     let mut sx = store_row_x;
     for (label, edge) in &c.stores {
         if *label == "Database" && !table_lines.is_empty() {
-            svg.datastore_list(sx, store_y, store_w, db_store_h, "Database", &table_lines, d::STROKE);
+            svg.datastore_list(
+                sx,
+                store_y,
+                store_w,
+                db_store_h,
+                "Database",
+                &table_lines,
+                d::STROKE,
+            );
         } else {
             svg.datastore(sx, store_y, store_w, store_h, label, d::STROKE);
         }
@@ -1116,7 +1134,10 @@ fn render_components_svg(g: &ComponentGraph) -> String {
     }
     match g.shape {
         AppShape::Spa => rows.push((d::SERVER_EDGE.into(), "/_rpc server round-trip".into())),
-        AppShape::Live => rows.push((d::SERVER_EDGE.into(), "browser → server (HTTPS + SSE)".into())),
+        AppShape::Live => rows.push((
+            d::SERVER_EDGE.into(),
+            "browser → server (HTTPS + SSE)".into(),
+        )),
         AppShape::Tui | AppShape::Cli => {
             rows.push((d::SERVER_EDGE.into(), "in-process call".into()))
         }
@@ -1719,7 +1740,9 @@ fn render_wire_md(r: &WireReport) -> String {
              families it reaches and their targets.\n\n",
         );
         o.push_str("## RPC endpoints (/_rpc)\n\n");
-        o.push_str("| Endpoint | Access | Request (fields + args) | Response (writes) | Call-path |\n");
+        o.push_str(
+            "| Endpoint | Access | Request (fields + args) | Response (writes) | Call-path |\n",
+        );
         o.push_str("|---|---|---|---|---|\n");
         let store = r.data_store.as_deref();
         for e in &r.endpoints {
@@ -1739,8 +1762,12 @@ fn render_wire_md(r: &WireReport) -> String {
         }
     } else if !r.http_endpoints.is_empty() {
         match r.shape {
-            AppShape::Live => o.push_str("HTTP route table (Sky.Live: page GET routes + raw api).\n\n"),
-            AppShape::Http => o.push_str("HTTP endpoint map — every route this server registers.\n\n"),
+            AppShape::Live => {
+                o.push_str("HTTP route table (Sky.Live: page GET routes + raw api).\n\n")
+            }
+            AppShape::Http => {
+                o.push_str("HTTP endpoint map — every route this server registers.\n\n")
+            }
             _ => o.push_str("HTTP endpoint map.\n\n"),
         }
         wire_http_md(&mut o, &r.http_endpoints);
@@ -1789,11 +1816,17 @@ fn render_wire_puml(r: &WireReport) -> String {
         // Per-endpoint effect families (from the partition report) as notes.
         for (i, e) in r.endpoints.iter().enumerate() {
             if let Some(fx) = &e.effects {
-                o.push_str(&format!("note right of ep{i} : effects: {}\n", puml_msg_text(fx)));
+                o.push_str(&format!(
+                    "note right of ep{i} : effects: {}\n",
+                    puml_msg_text(fx)
+                ));
             }
         }
         // An external inbound entity for any raw `api` endpoint (a webhook sender).
-        if r.http_endpoints.iter().any(|e| e.kind == EndpointKind::RawApi) {
+        if r.http_endpoints
+            .iter()
+            .any(|e| e.kind == EndpointKind::RawApi)
+        {
             o.push_str("rectangle \"External\\n«webhook / API client»\" as X <<boundary>>\n");
         }
         // Each /_rpc endpoint is one request in + one response out.
@@ -1810,7 +1843,11 @@ fn render_wire_puml(r: &WireReport) -> String {
             ));
         }
         for (i, e) in r.http_endpoints.iter().enumerate() {
-            let from = if e.kind == EndpointKind::RawApi { "X" } else { "C" };
+            let from = if e.kind == EndpointKind::RawApi {
+                "X"
+            } else {
+                "C"
+            };
             o.push_str(&format!(
                 "{from} -[{}]-> hep{i} : {}\n",
                 diagram_svg::SERVER_EDGE,
@@ -1885,13 +1922,32 @@ fn draw_wire_table(
     }
     let mut ry = hdr_y + 8.0;
     for (row, rh) in rows.iter().zip(&row_heights) {
-        svg.rule(sec_x + pad - 4.0, ry, sec_x + sec_w - pad, ry, "#e2e5ea", false);
+        svg.rule(
+            sec_x + pad - 4.0,
+            ry,
+            sec_x + sec_w - pad,
+            ry,
+            "#e2e5ea",
+            false,
+        );
         let base = ry + line_h;
         for (ci, cell) in row.iter().enumerate() {
             let cx = cols[ci].x;
-            let (size, weight) = if ci == 0 { (11.0, "600") } else { (10.5, "500") };
+            let (size, weight) = if ci == 0 {
+                (11.0, "600")
+            } else {
+                (10.5, "500")
+            };
             for (i, l) in cell.iter().enumerate() {
-                svg.text(cx, base + i as f64 * line_h, l, "start", size, weight, d::TEXT);
+                svg.text(
+                    cx,
+                    base + i as f64 * line_h,
+                    l,
+                    "start",
+                    size,
+                    weight,
+                    d::TEXT,
+                );
             }
         }
         ry += rh;
@@ -1982,7 +2038,11 @@ fn render_wire_svg(r: &WireReport) -> String {
     } else {
         "Client"
     };
-    svg.actor(client_zone_x + client_zone_w / 2.0, flow_y - 30.0, client_glyph);
+    svg.actor(
+        client_zone_x + client_zone_w / 2.0,
+        flow_y - 30.0,
+        client_glyph,
+    );
     svg.zone(
         server_zone_x,
         ztop,
@@ -2011,7 +2071,14 @@ fn render_wire_svg(r: &WireReport) -> String {
 
     // The trust boundary: a dashed vertical line the crossings must pass.
     let band_bottom = ztop + band_h;
-    svg.rule(boundary_x, ztop + 4.0, boundary_x, band_bottom - 16.0, d::SUBTLE, true);
+    svg.rule(
+        boundary_x,
+        ztop + 4.0,
+        boundary_x,
+        band_bottom - 16.0,
+        d::SUBTLE,
+        true,
+    );
     svg.text(
         boundary_x,
         band_bottom - 3.0,
@@ -2029,8 +2096,22 @@ fn render_wire_svg(r: &WireReport) -> String {
         _ => ("request · HTTP".to_string(), "response".to_string()),
     };
     let client_edge_x = client_zone_x + client_zone_w / 2.0 + 20.0;
-    svg.ortho(client_edge_x, flow_y - 12.0, srv_x, flow_y - 12.0, d::SERVER_EDGE, Some(&req_label));
-    svg.ortho(srv_x, flow_y + 14.0, client_edge_x, flow_y + 14.0, d::CLIENT_EDGE, Some(&resp_label));
+    svg.ortho(
+        client_edge_x,
+        flow_y - 12.0,
+        srv_x,
+        flow_y - 12.0,
+        d::SERVER_EDGE,
+        Some(&req_label),
+    );
+    svg.ortho(
+        srv_x,
+        flow_y + 14.0,
+        client_edge_x,
+        flow_y + 14.0,
+        d::CLIENT_EDGE,
+        Some(&resp_label),
+    );
 
     let sec_x = lx;
     let mut y = band_bottom + 28.0;
@@ -2050,10 +2131,26 @@ fn render_wire_svg(r: &WireReport) -> String {
         let c4_w = 128.0;
         let sec_w = c4_x + c4_w + pad - sec_x;
         let cols = vec![
-            TCol { title: "Endpoint (Msg)".into(), x: c1_x, color: d::SUBTLE },
-            TCol { title: "Request (client → server)".into(), x: c2_x, color: d::SERVER_EDGE },
-            TCol { title: "Response (server → client)".into(), x: c3_x, color: d::CLIENT_EDGE },
-            TCol { title: "Effects".into(), x: c4_x, color: d::EXTERNAL },
+            TCol {
+                title: "Endpoint (Msg)".into(),
+                x: c1_x,
+                color: d::SUBTLE,
+            },
+            TCol {
+                title: "Request (client → server)".into(),
+                x: c2_x,
+                color: d::SERVER_EDGE,
+            },
+            TCol {
+                title: "Response (server → client)".into(),
+                x: c3_x,
+                color: d::CLIENT_EDGE,
+            },
+            TCol {
+                title: "Effects".into(),
+                x: c4_x,
+                color: d::EXTERNAL,
+            },
         ];
         let rows: Vec<Vec<Vec<String>>> = r
             .endpoints
@@ -2067,7 +2164,15 @@ fn render_wire_svg(r: &WireReport) -> String {
                 ]
             })
             .collect();
-        y = draw_wire_table(&mut svg, sec_x, y, sec_w, "RPC endpoints (/_rpc)", &cols, &rows) + 24.0;
+        y = draw_wire_table(
+            &mut svg,
+            sec_x,
+            y,
+            sec_w,
+            "RPC endpoints (/_rpc)",
+            &cols,
+            &rows,
+        ) + 24.0;
     }
 
     // ---- 2. HTTP endpoints table ----
@@ -2076,10 +2181,17 @@ fn render_wire_svg(r: &WireReport) -> String {
         // For a Spa app the http endpoints are raw `api` (webhooks): draw an
         // inbound EXTERNAL entity crossing the boundary to them. For Live/Http the
         // table is the whole route map.
-        let raw_only = r.http_endpoints.iter().all(|e| e.kind == EndpointKind::RawApi);
+        let raw_only = r
+            .http_endpoints
+            .iter()
+            .all(|e| e.kind == EndpointKind::RawApi);
         let ext_h = if spa && raw_only { 92.0 } else { 0.0 };
         let ext_w = 150.0;
-        let table_x = if ext_h > 0.0 { sec_x + ext_w + 96.0 } else { sec_x };
+        let table_x = if ext_h > 0.0 {
+            sec_x + ext_w + 96.0
+        } else {
+            sec_x
+        };
 
         let c1_x = table_x + pad;
         let c1_w = 72.0;
@@ -2091,10 +2203,26 @@ fn render_wire_svg(r: &WireReport) -> String {
         let c4_w = 150.0;
         let sec_w = c4_x + c4_w + pad - table_x;
         let cols = vec![
-            TCol { title: "Method".into(), x: c1_x, color: d::SERVER_EDGE },
-            TCol { title: "Path".into(), x: c2_x, color: d::SUBTLE },
-            TCol { title: "Handler / page".into(), x: c3_x, color: d::SUBTLE },
-            TCol { title: "Kind".into(), x: c4_x, color: d::EXTERNAL },
+            TCol {
+                title: "Method".into(),
+                x: c1_x,
+                color: d::SERVER_EDGE,
+            },
+            TCol {
+                title: "Path".into(),
+                x: c2_x,
+                color: d::SUBTLE,
+            },
+            TCol {
+                title: "Handler / page".into(),
+                x: c3_x,
+                color: d::SUBTLE,
+            },
+            TCol {
+                title: "Kind".into(),
+                x: c4_x,
+                color: d::EXTERNAL,
+            },
         ];
         let rows: Vec<Vec<Vec<String>>> = r
             .http_endpoints
@@ -2116,13 +2244,21 @@ fn render_wire_svg(r: &WireReport) -> String {
             "HTTP endpoints"
         };
         let table_top = y;
-        let table_bottom = draw_wire_table(&mut svg, table_x, table_top, sec_w, title, &cols, &rows);
+        let table_bottom =
+            draw_wire_table(&mut svg, table_x, table_top, sec_w, title, &cols, &rows);
 
         // The inbound external entity for a Spa app's raw webhooks.
         if ext_h > 0.0 {
             let ex_y = table_top + 6.0;
             let ex_cy = ex_y + ext_h / 2.0;
-            svg.zone(sec_x, ex_y - 6.0, ext_w, ext_h + 12.0, "External · untrusted", d::EXTERNAL);
+            svg.zone(
+                sec_x,
+                ex_y - 6.0,
+                ext_w,
+                ext_h + 12.0,
+                "External · untrusted",
+                d::EXTERNAL,
+            );
             svg.container(
                 sec_x + 10.0,
                 ex_y + 8.0,
@@ -2136,20 +2272,51 @@ fn render_wire_svg(r: &WireReport) -> String {
             // A dashed boundary + one inbound arrow into the table.
             let bx = sec_x + ext_w + 44.0;
             svg.rule(bx, table_top, bx, table_bottom, d::SUBTLE, true);
-            svg.text(bx, table_bottom + 11.0, "trust boundary", "middle", 9.0, "600", d::SUBTLE);
-            svg.ortho(sec_x + ext_w, ex_cy, table_x, ex_cy, d::SERVER_EDGE, Some("inbound"));
+            svg.text(
+                bx,
+                table_bottom + 11.0,
+                "trust boundary",
+                "middle",
+                9.0,
+                "600",
+                d::SUBTLE,
+            );
+            svg.ortho(
+                sec_x + ext_w,
+                ex_cy,
+                table_x,
+                ex_cy,
+                d::SERVER_EDGE,
+                Some("inbound"),
+            );
         }
         y = table_bottom;
     }
 
     // ---- legend ----
     let mut rows_l = vec![
-        (d::BOUNDARY_TRUSTED.to_string(), "trust boundary (dashed)".to_string()),
-        (d::SERVER_EDGE.to_string(), "request (client → server)".to_string()),
-        (d::CLIENT_EDGE.to_string(), "response (server → client)".to_string()),
+        (
+            d::BOUNDARY_TRUSTED.to_string(),
+            "trust boundary (dashed)".to_string(),
+        ),
+        (
+            d::SERVER_EDGE.to_string(),
+            "request (client → server)".to_string(),
+        ),
+        (
+            d::CLIENT_EDGE.to_string(),
+            "response (server → client)".to_string(),
+        ),
     ];
-    if have_http && r.http_endpoints.iter().any(|e| e.kind == EndpointKind::RawApi) {
-        rows_l.push((d::EXTERNAL.to_string(), "raw api · inbound external".to_string()));
+    if have_http
+        && r.http_endpoints
+            .iter()
+            .any(|e| e.kind == EndpointKind::RawApi)
+    {
+        rows_l.push((
+            d::EXTERNAL.to_string(),
+            "raw api · inbound external".to_string(),
+        ));
     }
     svg.legend(sec_x, y + 18.0, &rows_l);
     svg.render()
@@ -3240,7 +3407,10 @@ pub fn analyze_journey(
         }
         let effectful_of = |name: &str| -> bool {
             server_by_msg.get(name).copied().unwrap_or(false)
-                || fams_by_msg.get(name).map(|f| !f.is_empty()).unwrap_or(false)
+                || fams_by_msg
+                    .get(name)
+                    .map(|f| !f.is_empty())
+                    .unwrap_or(false)
         };
         if actions.is_empty() {
             // Our own branch scan found nothing (a lambda / delegating `update`);
@@ -3248,7 +3418,11 @@ pub fn analyze_journey(
             let mut names: Vec<String> = server_by_msg.keys().cloned().collect();
             names.sort();
             for n in names {
-                let server = if is_spa { server_by_msg.get(&n).copied() } else { None };
+                let server = if is_spa {
+                    server_by_msg.get(&n).copied()
+                } else {
+                    None
+                };
                 actions.push(JourneyAction {
                     msg: n.clone(),
                     server,
@@ -3546,7 +3720,10 @@ fn puml_action_notes(o: &mut String, shape: AppShape, actions: &[&JourneyAction]
     let pure: Vec<&&JourneyAction> = actions.iter().filter(|a| !a.effectful).collect();
     if !effectful.is_empty() {
         o.push_str("note as effectful_note\n");
-        o.push_str(&format!("  <b>{}</b>\n", effectful_section_label(shape, effectful.len())));
+        o.push_str(&format!(
+            "  <b>{}</b>\n",
+            effectful_section_label(shape, effectful.len())
+        ));
         for a in &effectful {
             o.push_str(&format!("  {}\n", action_chip_label(a)));
         }
@@ -3554,7 +3731,10 @@ fn puml_action_notes(o: &mut String, shape: AppShape, actions: &[&JourneyAction]
     }
     if !pure.is_empty() {
         o.push_str("note as pure_note\n");
-        o.push_str(&format!("  <b>{}</b>\n", pure_section_label(shape, pure.len())));
+        o.push_str(&format!(
+            "  <b>{}</b>\n",
+            pure_section_label(shape, pure.len())
+        ));
         for a in &pure {
             o.push_str(&format!("  {}\n", short_edge_label(&a.msg)));
         }
@@ -3711,7 +3891,16 @@ fn render_journey_svg(r: &JourneyReport) -> String {
     // machine, just the action inventory split into Effectful and Pure.
     if r.pages.is_empty() {
         if r.actions.is_empty() {
-            svg.node(8.0, 8.0, 200.0, NODE_H, d::FILL, d::STROKE, "No pages found", None);
+            svg.node(
+                8.0,
+                8.0,
+                200.0,
+                NODE_H,
+                d::FILL,
+                d::STROKE,
+                "No pages found",
+                None,
+            );
             return svg.render();
         }
         let all: Vec<&JourneyAction> = r.actions.iter().collect();
@@ -3731,7 +3920,10 @@ fn render_journey_svg(r: &JourneyReport) -> String {
             y + 6.0,
             &[
                 (d::SERVER_EDGE.to_string(), eff_label.to_string()),
-                (d::CLIENT_EDGE.to_string(), "pure action (no effect)".to_string()),
+                (
+                    d::CLIENT_EDGE.to_string(),
+                    "pure action (no effect)".to_string(),
+                ),
             ],
         );
         return svg.render();
@@ -3940,7 +4132,14 @@ fn render_journey_svg(r: &JourneyReport) -> String {
     // (model-only) sections, each chip annotated with its effect families.
     let internal = non_nav_actions(r);
     if !internal.is_empty() {
-        section_y = journey_inventory_svg(&mut svg, r.shape, &internal, col0_x, section_y, content_right);
+        section_y = journey_inventory_svg(
+            &mut svg,
+            r.shape,
+            &internal,
+            col0_x,
+            section_y,
+            content_right,
+        );
     }
 
     // Legend.
@@ -4144,12 +4343,22 @@ pub struct FlowReport {
 fn msg_union_of_update(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Option<DefId> {
     for mid in check_ids {
         let resolved = db.resolve(*mid);
-        let Some(td) = resolved.top_defs.iter().find(|t| t.name.as_str() == "update") else {
+        let Some(td) = resolved
+            .top_defs
+            .iter()
+            .find(|t| t.name.as_str() == "update")
+        else {
             continue;
         };
-        let Some(body) = resolved.bodies.get(&td.def) else { continue };
-        let Some(case_e) = find_dispatch_case(body) else { continue };
-        let Expr::Case { branches, .. } = &body.exprs[case_e] else { continue };
+        let Some(body) = resolved.bodies.get(&td.def) else {
+            continue;
+        };
+        let Some(case_e) = find_dispatch_case(body) else {
+            continue;
+        };
+        let Expr::Case { branches, .. } = &body.exprs[case_e] else {
+            continue;
+        };
         for br in branches {
             if let Pattern::Ctor { ctor: Some(c), .. } = &body.pats[br.pat] {
                 return Some(c.type_);
@@ -4180,7 +4389,11 @@ fn collect_msgs_and_refs(
             }
         }
         if let Expr::Var(Res::Def(d)) = &body.exprs[*x] {
-            if db.def_loc(*d).map(|l| project_modules.contains(&l.module)).unwrap_or(false) {
+            if db
+                .def_loc(*d)
+                .map(|l| project_modules.contains(&l.module))
+                .unwrap_or(false)
+            {
                 refs.push(*d);
             }
         }
@@ -4218,9 +4431,19 @@ fn view_msgs_in(
         }
         let Some(loc) = db.def_loc(d) else { continue };
         let resolved = db.resolve(loc.module);
-        let Some(dbody) = resolved.bodies.get(&d) else { continue };
+        let Some(dbody) = resolved.bodies.get(&d) else {
+            continue;
+        };
         let Some(droot) = dbody.root else { continue };
-        collect_msgs_and_refs(db, dbody, droot, msg_union, project_modules, out, &mut queue);
+        collect_msgs_and_refs(
+            db,
+            dbody,
+            droot,
+            msg_union,
+            project_modules,
+            out,
+            &mut queue,
+        );
     }
 }
 
@@ -4237,7 +4460,9 @@ fn analyze_view_msgs(
     page_names: &HashSet<String>,
 ) -> (HashMap<String, Vec<String>>, bool) {
     let out: HashMap<String, Vec<String>> = HashMap::new();
-    let Some(msg_union) = msg_union else { return (out, false) };
+    let Some(msg_union) = msg_union else {
+        return (out, false);
+    };
     if page_names.is_empty() {
         return (out, false);
     }
@@ -4258,7 +4483,9 @@ fn analyze_view_msgs(
                 }
             });
             for ce in cases {
-                let Expr::Case { branches, .. } = &body.exprs[ce] else { continue };
+                let Expr::Case { branches, .. } = &body.exprs[ce] else {
+                    continue;
+                };
                 let n = branches
                     .iter()
                     .filter(|br| {
@@ -4273,21 +4500,37 @@ fn analyze_view_msgs(
             }
         }
     }
-    let Some((_, mid, def, case_e)) = best else { return (out, false) };
+    let Some((_, mid, def, case_e)) = best else {
+        return (out, false);
+    };
     // Re-resolve the winning module + walk each page arm for the Msgs its view
     // (and the view helpers it calls) can dispatch.
     let resolved = db.resolve(mid);
-    let Some(body) = resolved.bodies.get(&def) else { return (out, false) };
-    let Expr::Case { branches, .. } = &body.exprs[case_e] else { return (out, false) };
+    let Some(body) = resolved.bodies.get(&def) else {
+        return (out, false);
+    };
+    let Expr::Case { branches, .. } = &body.exprs[case_e] else {
+        return (out, false);
+    };
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
     let mut grounded = false;
     for br in branches {
-        let Some(page) = pattern_ctor_name(body, br.pat) else { continue };
+        let Some(page) = pattern_ctor_name(body, br.pat) else {
+            continue;
+        };
         if !page_names.contains(&page) {
             continue;
         }
         let mut msgs: BTreeSet<String> = BTreeSet::new();
-        view_msgs_in(db, body, br.body, msg_union, &project_modules, &mut msgs, true);
+        view_msgs_in(
+            db,
+            body,
+            br.body,
+            msg_union,
+            &project_modules,
+            &mut msgs,
+            true,
+        );
         if !msgs.is_empty() {
             grounded = true;
         }
@@ -4311,10 +4554,30 @@ fn analyze_view_msgs(
 fn pii_reason(name: &str) -> Option<&'static str> {
     let n = name.to_ascii_lowercase();
     const PII: &[&str] = &[
-        "email", "firstname", "lastname", "fullname", "surname", "address",
-        "phone", "mobile", "postcode", "zipcode", "card", "cardnumber", "cvv",
-        "iban", "sortcode", "ssn", "passport", "dob", "dateofbirth", "password",
-        "secret", "token", "apikey", "creditcard",
+        "email",
+        "firstname",
+        "lastname",
+        "fullname",
+        "surname",
+        "address",
+        "phone",
+        "mobile",
+        "postcode",
+        "zipcode",
+        "card",
+        "cardnumber",
+        "cvv",
+        "iban",
+        "sortcode",
+        "ssn",
+        "passport",
+        "dob",
+        "dateofbirth",
+        "password",
+        "secret",
+        "token",
+        "apikey",
+        "creditcard",
     ];
     // `name`/`addr` are matched as whole-ish words to avoid `filename`/`address`
     // double-count noise; the list above already covers the compound forms.
@@ -4337,7 +4600,9 @@ fn is_secret_ty(ty_name: &str) -> bool {
 /// Best-effort: strips the scheme, takes up to the first `/`, `?`, or `:`. Returns
 /// `None` for a non-URL string (so a stray literal is not mistaken for a host).
 fn url_host(s: &str) -> Option<String> {
-    let rest = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://"))?;
+    let rest = s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))?;
     let host: String = rest
         .chars()
         .take_while(|&c| c != '/' && c != '?' && c != ':' && c != ' ')
@@ -4382,10 +4647,20 @@ fn host_role(host: &str) -> ExtRole {
     let h = host.to_ascii_lowercase();
     // Content / CDN / embed hosts — third-party CONTENT, not a data sub-processor.
     const CDN: &[&str] = &[
-        "youtube.com", "youtu.be", "ytimg.com", "vimeo.com",
-        "fonts.googleapis.com", "fonts.gstatic.com", "gstatic.com",
-        "githubusercontent.com", "github.io", "gravatar.com",
-        "jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com", "jquery.com",
+        "youtube.com",
+        "youtu.be",
+        "ytimg.com",
+        "vimeo.com",
+        "fonts.googleapis.com",
+        "fonts.gstatic.com",
+        "gstatic.com",
+        "githubusercontent.com",
+        "github.io",
+        "gravatar.com",
+        "jsdelivr.net",
+        "unpkg.com",
+        "cdnjs.cloudflare.com",
+        "jquery.com",
     ];
     if CDN.iter().any(|n| h.contains(n)) {
         return ExtRole::Cdn;
@@ -4396,11 +4671,26 @@ fn host_role(host: &str) -> ExtRole {
     }
     // OAuth / IdP — github/google are ALSO general APIs, but in a Sky app they are
     // reached through Std.Auth OAuth, so IdP is the audit-relevant role.
-    const OAUTH: &[&str] = &["accounts.google.com", "github.com", "auth0.com", "okta.com", "login.microsoftonline.com"];
+    const OAUTH: &[&str] = &[
+        "accounts.google.com",
+        "github.com",
+        "auth0.com",
+        "okta.com",
+        "login.microsoftonline.com",
+    ];
     if OAUTH.iter().any(|n| h.contains(n)) {
         return ExtRole::OAuth;
     }
-    const EMAIL: &[&str] = &["sendgrid", "mailgun", "postmark", "resend.com", "smtp", "mailchimp", "mandrill", "ses.amazonaws"];
+    const EMAIL: &[&str] = &[
+        "sendgrid",
+        "mailgun",
+        "postmark",
+        "resend.com",
+        "smtp",
+        "mailchimp",
+        "mandrill",
+        "ses.amazonaws",
+    ];
     if EMAIL.iter().any(|n| h.contains(n)) {
         return ExtRole::Email;
     }
@@ -4435,7 +4725,12 @@ fn own_domains(project_dir: &Path) -> Vec<String> {
             let t = line.trim();
             for key in ["domain", "host", "hostname"] {
                 if let Some(v) = t.strip_prefix(key) {
-                    let v = v.trim().trim_start_matches('=').trim().trim_matches('"').to_ascii_lowercase();
+                    let v = v
+                        .trim()
+                        .trim_start_matches('=')
+                        .trim()
+                        .trim_matches('"')
+                        .to_ascii_lowercase();
                     if v.contains('.') && !v.contains('/') {
                         out.push(v);
                     }
@@ -4468,7 +4763,11 @@ fn http_hosts_in(
     const CAP: usize = 4000;
     let mut queue: Vec<DefId> = Vec::new();
     let mut seen: HashSet<DefId> = HashSet::new();
-    let mut visit = |db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>, queue: &mut Vec<DefId>| {
+    let mut visit = |db: &dyn SkyDb,
+                     body: &Body,
+                     e: ExprId,
+                     out: &mut BTreeSet<String>,
+                     queue: &mut Vec<DefId>| {
         let mut ids: Vec<ExprId> = Vec::new();
         walk_exprs(body, e, &mut |x| ids.push(x));
         for x in &ids {
@@ -4496,7 +4795,11 @@ fn http_hosts_in(
                 }
             }
             if let Expr::Var(Res::Def(d)) = &body.exprs[*x] {
-                if db.def_loc(*d).map(|l| project_modules.contains(&l.module)).unwrap_or(false) {
+                if db
+                    .def_loc(*d)
+                    .map(|l| project_modules.contains(&l.module))
+                    .unwrap_or(false)
+                {
                     queue.push(*d);
                 }
             }
@@ -4505,12 +4808,16 @@ fn http_hosts_in(
     visit(db, body, e, out, &mut queue);
     while let Some(d) = queue.pop() {
         if !seen.insert(d) || seen.len() > CAP {
-            if seen.len() > CAP { break; }
+            if seen.len() > CAP {
+                break;
+            }
             continue;
         }
         let Some(loc) = db.def_loc(d) else { continue };
         let resolved = db.resolve(loc.module);
-        let Some(dbody) = resolved.bodies.get(&d) else { continue };
+        let Some(dbody) = resolved.bodies.get(&d) else {
+            continue;
+        };
         let Some(droot) = dbody.root else { continue };
         visit(db, dbody, droot, out, &mut queue);
     }
@@ -4529,7 +4836,12 @@ fn data_store_name(project_dir: &Path) -> Option<String> {
         }
         if in_db {
             if let Some(v) = t.strip_prefix("driver") {
-                let v = v.trim().trim_start_matches('=').trim().trim_matches('"').to_ascii_lowercase();
+                let v = v
+                    .trim()
+                    .trim_start_matches('=')
+                    .trim()
+                    .trim_matches('"')
+                    .to_ascii_lowercase();
                 return match v.as_str() {
                     "postgres" | "postgresql" | "pg" => Some("PostgreSQL".to_string()),
                     "sqlite" | "sqlite3" => Some("SQLite".to_string()),
@@ -4563,14 +4875,24 @@ pub fn analyze_flow(
     let mut continuations: HashMap<String, Vec<String>> = HashMap::new();
     for mid in &check_ids {
         let resolved = db.resolve(*mid);
-        let Some(td) = resolved.top_defs.iter().find(|t| t.name.as_str() == "update") else {
+        let Some(td) = resolved
+            .top_defs
+            .iter()
+            .find(|t| t.name.as_str() == "update")
+        else {
             continue;
         };
-        let Some(body) = resolved.bodies.get(&td.def) else { continue };
-        let Some(case_e) = find_dispatch_case(body) else { break };
+        let Some(body) = resolved.bodies.get(&td.def) else {
+            continue;
+        };
+        let Some(case_e) = find_dispatch_case(body) else {
+            break;
+        };
         if let Expr::Case { branches, .. } = &body.exprs[case_e] {
             for br in branches {
-                let Some(msg) = pattern_ctor_name(body, br.pat) else { continue };
+                let Some(msg) = pattern_ctor_name(body, br.pat) else {
+                    continue;
+                };
                 let conts = crate::spa_partition::arm_continuation_msgs(&db, body, br.body);
                 if !conts.is_empty() {
                     let e = continuations.entry(msg).or_default();
@@ -4590,14 +4912,24 @@ pub fn analyze_flow(
     let mut all_hosts: BTreeSet<String> = BTreeSet::new();
     for mid in &check_ids {
         let resolved = db.resolve(*mid);
-        let Some(td) = resolved.top_defs.iter().find(|t| t.name.as_str() == "update") else {
+        let Some(td) = resolved
+            .top_defs
+            .iter()
+            .find(|t| t.name.as_str() == "update")
+        else {
             continue;
         };
-        let Some(body) = resolved.bodies.get(&td.def) else { continue };
-        let Some(case_e) = find_dispatch_case(body) else { break };
+        let Some(body) = resolved.bodies.get(&td.def) else {
+            continue;
+        };
+        let Some(case_e) = find_dispatch_case(body) else {
+            break;
+        };
         if let Expr::Case { branches, .. } = &body.exprs[case_e] {
             for br in branches {
-                let Some(msg) = pattern_ctor_name(body, br.pat) else { continue };
+                let Some(msg) = pattern_ctor_name(body, br.pat) else {
+                    continue;
+                };
                 let mut hosts: BTreeSet<String> = BTreeSet::new();
                 http_hosts_in(&db, body, br.body, &project_modules, &mut hosts);
                 if !hosts.is_empty() {
@@ -4616,7 +4948,9 @@ pub fn analyze_flow(
     for mid in &check_ids {
         let resolved = db.resolve(*mid);
         for td in &resolved.top_defs {
-            let Some(body) = resolved.bodies.get(&td.def) else { continue };
+            let Some(body) = resolved.bodies.get(&td.def) else {
+                continue;
+            };
             let Some(root) = body.root else { continue };
             let mut ids: Vec<ExprId> = Vec::new();
             walk_exprs(body, root, &mut |x| ids.push(x));
@@ -4648,7 +4982,11 @@ pub fn analyze_flow(
                 return None;
             }
             let role = host_role(&h);
-            Some(ExternalSystem { purpose: host_purpose(&h), host: h, role })
+            Some(ExternalSystem {
+                purpose: host_purpose(&h),
+                host: h,
+                role,
+            })
         })
         .collect();
     self_ref_hosts.sort();
@@ -4700,7 +5038,11 @@ pub fn analyze_flow(
                 }
             }
             if !reasons.is_empty() {
-                classifications.entry(b.msg.clone()).or_default().reasons.extend(reasons);
+                classifications
+                    .entry(b.msg.clone())
+                    .or_default()
+                    .reasons
+                    .extend(reasons);
             }
         }
     }
@@ -4714,7 +5056,10 @@ pub fn analyze_flow(
 
     // Data store node: present when any action reaches the `Db` family, or when
     // sky.toml declares a database driver.
-    let uses_db = journey.actions.iter().any(|a| a.effect_families.iter().any(|e| e == "Db"));
+    let uses_db = journey
+        .actions
+        .iter()
+        .any(|a| a.effect_families.iter().any(|e| e == "Db"));
     let data_store = if uses_db {
         Some(data_store_name(project_dir).unwrap_or_else(|| "App database".to_string()))
     } else {
@@ -4807,7 +5152,11 @@ fn flow_action_line(r: &FlowReport, a: &JourneyAction) -> String {
     // reaches HTTP (`Http → api.stripe.com`).
     let hosts = r.action_externals.get(&a.msg);
     let eff = if a.effect_families.is_empty() {
-        if a.effectful { " · effect".to_string() } else { String::new() }
+        if a.effectful {
+            " · effect".to_string()
+        } else {
+            String::new()
+        }
     } else {
         let fams: Vec<String> = a
             .effect_families
@@ -4815,8 +5164,11 @@ fn flow_action_line(r: &FlowReport, a: &JourneyAction) -> String {
             .map(|f| {
                 if f == "Http" {
                     if let Some(hs) = hosts {
-                        let named: Vec<&str> =
-                            hs.iter().filter(|h| *h != "*dynamic*").map(|s| s.as_str()).collect();
+                        let named: Vec<&str> = hs
+                            .iter()
+                            .filter(|h| *h != "*dynamic*")
+                            .map(|s| s.as_str())
+                            .collect();
                         if !named.is_empty() {
                             return format!("Http → {}", named.join(", "));
                         }
@@ -4854,16 +5206,27 @@ fn flow_action_line(r: &FlowReport, a: &JourneyAction) -> String {
 /// `sub-processors.md`.
 fn subprocessors_section(r: &FlowReport) -> String {
     let mut o = String::new();
-    let subs: Vec<&ExternalSystem> =
-        r.external_systems.iter().filter(|e| e.role.is_subprocessor()).collect();
-    let embeds: Vec<&ExternalSystem> =
-        r.external_systems.iter().filter(|e| !e.role.is_subprocessor()).collect();
+    let subs: Vec<&ExternalSystem> = r
+        .external_systems
+        .iter()
+        .filter(|e| e.role.is_subprocessor())
+        .collect();
+    let embeds: Vec<&ExternalSystem> = r
+        .external_systems
+        .iter()
+        .filter(|e| !e.role.is_subprocessor())
+        .collect();
     if !subs.is_empty() {
         o.push_str("## External systems (data sub-processors)\n\n");
         o.push_str("_Third parties the app sends or receives application data to/from (ISO 27001 A.15 / SOC2 supplier evidence)._\n\n");
         o.push_str("| Host | Role | Purpose |\n|---|---|---|\n");
         for e in &subs {
-            o.push_str(&format!("| `{}` | {} | {} |\n", e.host, e.role.label(), e.purpose));
+            o.push_str(&format!(
+                "| `{}` | {} | {} |\n",
+                e.host,
+                e.role.label(),
+                e.purpose
+            ));
         }
         o.push('\n');
     }
@@ -4879,7 +5242,11 @@ fn subprocessors_section(r: &FlowReport) -> String {
     if !r.self_ref_hosts.is_empty() {
         o.push_str(&format!(
             "_Excluded as the app's own domain (not a sub-processor): {}._\n\n",
-            r.self_ref_hosts.iter().map(|h| format!("`{h}`")).collect::<Vec<_>>().join(", ")
+            r.self_ref_hosts
+                .iter()
+                .map(|h| format!("`{h}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     o
@@ -4987,7 +5354,11 @@ fn render_flow_svg(r: &FlowReport) -> String {
     use diagram_svg as d;
     let j = &r.journey;
     const CONF: &str = "#dc2626"; // confidential flow (red)
-    let title = format!("{} — behaviour & data flow · generated {}", j.project, today_utc());
+    let title = format!(
+        "{} — behaviour & data flow · generated {}",
+        j.project,
+        today_utc()
+    );
     let mut svg = d::Svg::new(&title);
 
     // Non-web shapes have no client/server split — one honest line, not a broken
@@ -5001,7 +5372,16 @@ fn render_flow_svg(r: &FlowReport) -> String {
     let left = 24.0_f64;
     let width = 940.0_f64;
     let lane_w = width - left * 2.0;
-    let confidential_n = j.actions.iter().filter(|a| r.classifications.get(&a.msg).map(|c| c.confidential).unwrap_or(false)).count();
+    let confidential_n = j
+        .actions
+        .iter()
+        .filter(|a| {
+            r.classifications
+                .get(&a.msg)
+                .map(|c| c.confidential)
+                .unwrap_or(false)
+        })
+        .count();
 
     // Lane + trust-boundary labels differ by app shape: a Sky.Spa client is a wasm
     // app reaching the server over `/_rpc`; a Sky.Live client is a plain browser
@@ -5027,19 +5407,41 @@ fn render_flow_svg(r: &FlowReport) -> String {
     let gap = 16.0_f64;
     let per_row = ((lane_w - 20.0) / (pn_w + gap)).floor().max(1.0) as usize;
     let pages: Vec<&JourneyPage> = j.pages.iter().collect();
-    let rows = if pages.is_empty() { 1 } else { (pages.len() + per_row - 1) / per_row };
+    let rows = if pages.is_empty() {
+        1
+    } else {
+        (pages.len() + per_row - 1) / per_row
+    };
     let lane1_h = 30.0 + rows as f64 * (pn_h + gap);
     svg.zone(left, y, lane_w, lane1_h, client_lane, d::CLIENT_EDGE);
     let mut server_anchor_x = left + lane_w / 2.0;
     if pages.is_empty() {
-        svg.node(left + 20.0, y + 30.0, pn_w, pn_h, d::FILL, d::CLIENT_EDGE, "(single view)", None);
+        svg.node(
+            left + 20.0,
+            y + 30.0,
+            pn_w,
+            pn_h,
+            d::FILL,
+            d::CLIENT_EDGE,
+            "(single view)",
+            None,
+        );
     } else {
         for (i, p) in pages.iter().enumerate() {
             let col = i % per_row;
             let row = i / per_row;
             let nx = left + 20.0 + col as f64 * (pn_w + gap);
             let ny = y + 30.0 + row as f64 * (pn_h + gap);
-            svg.node(nx, ny, pn_w, pn_h, d::FILL, d::CLIENT_EDGE, &p.name, p.url.as_deref());
+            svg.node(
+                nx,
+                ny,
+                pn_w,
+                pn_h,
+                d::FILL,
+                d::CLIENT_EDGE,
+                &p.name,
+                p.url.as_deref(),
+            );
         }
     }
     server_anchor_x = server_anchor_x.max(left + lane_w / 2.0);
@@ -5058,31 +5460,87 @@ fn render_flow_svg(r: &FlowReport) -> String {
         AppShape::Live => "Sky.Live server (SSR + SSE)",
         _ => "server",
     };
-    svg.node(sv_x, sv_y, sv_w, sv_h, d::FILL_ALT, d::SERVER_EDGE, "Application server", Some(srv_sub));
+    svg.node(
+        sv_x,
+        sv_y,
+        sv_w,
+        sv_h,
+        d::FILL_ALT,
+        d::SERVER_EDGE,
+        "Application server",
+        Some(srv_sub),
+    );
     let sv_cx = sv_x + sv_w / 2.0;
     // client → server: the aggregated user-action flow (the trust-boundary cross).
     let act_label = if confidential_n > 0 {
-        format!("{} user actions · {} confidential 🔒", j.actions.len(), confidential_n)
+        format!(
+            "{} user actions · {} confidential 🔒",
+            j.actions.len(),
+            confidential_n
+        )
     } else {
         format!("{} user actions", j.actions.len())
     };
-    let cross_color = if confidential_n > 0 { CONF } else { d::CLIENT_EDGE };
-    svg.edge(sv_cx, sv_y, server_anchor_x, boundary_y + 4.0, cross_color, Some(&act_label));
+    let cross_color = if confidential_n > 0 {
+        CONF
+    } else {
+        d::CLIENT_EDGE
+    };
+    svg.edge(
+        sv_cx,
+        sv_y,
+        server_anchor_x,
+        boundary_y + 4.0,
+        cross_color,
+        Some(&act_label),
+    );
     // the trust boundary line
-    svg.text(left, boundary_y, boundary_label, "start", 10.5, "600", d::BOUNDARY_UNTRUSTED);
+    svg.text(
+        left,
+        boundary_y,
+        boundary_label,
+        "start",
+        10.5,
+        "600",
+        d::BOUNDARY_UNTRUSTED,
+    );
     y += lane2_h + 46.0;
 
     // ---- Lane 3: Data store ----
     if let Some(store) = &r.data_store {
         let lane3_h = 30.0 + 52.0 + 12.0;
-        svg.zone(left, y, lane_w, lane3_h, "③ Data store", d::BOUNDARY_TRUSTED);
+        svg.zone(
+            left,
+            y,
+            lane_w,
+            lane3_h,
+            "③ Data store",
+            d::BOUNDARY_TRUSTED,
+        );
         let db_w = 220.0_f64;
         let db_x = left + lane_w / 2.0 - db_w / 2.0;
         let db_y = y + 30.0;
         svg.database(db_x, db_y, db_w, 52.0, d::FILL, d::BOUNDARY_TRUSTED, store);
-        let db_conf = j.actions.iter().any(|a| a.effect_families.iter().any(|e| e == "Db") && r.classifications.get(&a.msg).map(|c| c.confidential).unwrap_or(false));
+        let db_conf = j.actions.iter().any(|a| {
+            a.effect_families.iter().any(|e| e == "Db")
+                && r.classifications
+                    .get(&a.msg)
+                    .map(|c| c.confidential)
+                    .unwrap_or(false)
+        });
         let ecol = if db_conf { CONF } else { d::SERVER_EDGE };
-        svg.edge(db_x + db_w / 2.0, db_y, sv_cx, sv_y + sv_h, ecol, Some(if db_conf { "reads/writes 🔒" } else { "reads/writes" }));
+        svg.edge(
+            db_x + db_w / 2.0,
+            db_y,
+            sv_cx,
+            sv_y + sv_h,
+            ecol,
+            Some(if db_conf {
+                "reads/writes 🔒"
+            } else {
+                "reads/writes"
+            }),
+        );
         y += lane3_h + 46.0;
     }
 
@@ -5093,13 +5551,29 @@ fn render_flow_svg(r: &FlowReport) -> String {
         let per = ((lane_w - 20.0) / (ex_w + gap)).floor().max(1.0) as usize;
         let erows = (r.external_systems.len() + per - 1) / per;
         let lane4_h = 30.0 + erows as f64 * (ex_h + gap);
-        svg.zone(left, y, lane_w, lane4_h, "④ External systems (sub-processors)", d::EXTERNAL);
+        svg.zone(
+            left,
+            y,
+            lane_w,
+            lane4_h,
+            "④ External systems (sub-processors)",
+            d::EXTERNAL,
+        );
         for (i, e) in r.external_systems.iter().enumerate() {
             let col = i % per;
             let row = i / per;
             let nx = left + 20.0 + col as f64 * (ex_w + gap);
             let ny = y + 30.0 + row as f64 * (ex_h + gap);
-            svg.node(nx, ny, ex_w, ex_h, d::FILL, d::EXTERNAL, &e.host, Some(&e.purpose));
+            svg.node(
+                nx,
+                ny,
+                ex_w,
+                ex_h,
+                d::FILL,
+                d::EXTERNAL,
+                &e.host,
+                Some(&e.purpose),
+            );
             svg.edge(nx + ex_w / 2.0, ny, sv_cx, sv_y + sv_h, d::EXTERNAL, None);
         }
         y += lane4_h + 46.0;
@@ -5107,9 +5581,33 @@ fn render_flow_svg(r: &FlowReport) -> String {
 
     // ---- Legend ----
     svg.text(left, y, "Legend:", "start", 11.5, "700", d::TEXT);
-    svg.text(left + 62.0, y, "blue = user action across the trust boundary", "start", 10.5, "400", d::CLIENT_EDGE);
-    svg.text(left + 62.0, y + 16.0, "red 🔒 = confidential flow (Secret / Std.Auth session / PII)", "start", 10.5, "400", CONF);
-    svg.text(left + 62.0, y + 32.0, "green = data store · purple = external sub-processor", "start", 10.5, "400", d::EXTERNAL);
+    svg.text(
+        left + 62.0,
+        y,
+        "blue = user action across the trust boundary",
+        "start",
+        10.5,
+        "400",
+        d::CLIENT_EDGE,
+    );
+    svg.text(
+        left + 62.0,
+        y + 16.0,
+        "red 🔒 = confidential flow (Secret / Std.Auth session / PII)",
+        "start",
+        10.5,
+        "400",
+        CONF,
+    );
+    svg.text(
+        left + 62.0,
+        y + 32.0,
+        "green = data store · purple = external sub-processor",
+        "start",
+        10.5,
+        "400",
+        d::EXTERNAL,
+    );
     let _ = width;
     svg.render()
 }
@@ -5117,7 +5615,11 @@ fn render_flow_svg(r: &FlowReport) -> String {
 fn render_flow_md(r: &FlowReport) -> String {
     let j = &r.journey;
     let mut o = String::new();
-    o.push_str(&format!("# Behaviour & data flow — {} · generated {}\n\n", j.project, today_utc()));
+    o.push_str(&format!(
+        "# Behaviour & data flow — {} · generated {}\n\n",
+        j.project,
+        today_utc()
+    ));
     let shape_line = match j.shape {
         AppShape::Spa => "Sky.Spa (wasm client + server over /_rpc)",
         AppShape::Live => "Sky.Live (one server, SSR + SSE)",
@@ -5149,7 +5651,11 @@ fn render_flow_md(r: &FlowReport) -> String {
     if !r.chrome_actions.is_empty() {
         o.push_str("## Global (available on every page)\n\n");
         o.push_str("_Shared navigation / layout actions, dispatchable from any page._\n\n");
-        for a in j.actions.iter().filter(|a| r.chrome_actions.contains(&a.msg)) {
+        for a in j
+            .actions
+            .iter()
+            .filter(|a| r.chrome_actions.contains(&a.msg))
+        {
             o.push_str(&format!("- {}\n", flow_action_line(r, a)));
         }
         o.push('\n');
@@ -5170,7 +5676,11 @@ fn render_flow_md(r: &FlowReport) -> String {
         for &idx in &order {
             let p = &j.pages[idx];
             let is_init = Some(idx) == init;
-            let url = p.url.as_deref().map(|u| format!(" · `{u}`")).unwrap_or_default();
+            let url = p
+                .url
+                .as_deref()
+                .map(|u| format!(" · `{u}`"))
+                .unwrap_or_default();
             let star = if is_init { " (initial)" } else { "" };
             o.push_str(&format!("## {}{}{}\n\n", p.name, url, star));
             let acts = actions_on_page(r, &p.name);
@@ -5191,7 +5701,11 @@ fn render_flow_md(r: &FlowReport) -> String {
         if !j.pages.is_empty() {
             o.push_str("## Pages\n\n");
             for p in &j.pages {
-                let url = p.url.as_deref().map(|u| format!(" · `{u}`")).unwrap_or_default();
+                let url = p
+                    .url
+                    .as_deref()
+                    .map(|u| format!(" · `{u}`"))
+                    .unwrap_or_default();
                 let star = if Some(p.name.clone()) == init.map(|i| j.pages[i].name.clone()) {
                     " (initial)"
                 } else {
@@ -5270,7 +5784,11 @@ fn render_flow_puml(r: &FlowReport) -> String {
                 ));
             }
             if a.dynamic_nav {
-                o.push_str(&format!("{} --> [*] : {} (dynamic)\n", page_node_id(src), short_edge_label(&a.msg)));
+                o.push_str(&format!(
+                    "{} --> [*] : {} (dynamic)\n",
+                    page_node_id(src),
+                    short_edge_label(&a.msg)
+                ));
             }
         }
     }
@@ -5336,7 +5854,11 @@ mod tests {
         ComponentGraph {
             project: "examples/demo".into(),
             is_spa,
-            shape: if is_spa { AppShape::Spa } else { AppShape::Live },
+            shape: if is_spa {
+                AppShape::Spa
+            } else {
+                AppShape::Live
+            },
             tables,
             rpc_effectful,
             rpc_pure,
@@ -5403,7 +5925,10 @@ mod tests {
         assert!(out.contains("backend --> store0 : SQL"), "{out}");
         // Auth is a control marker on the client → server crossing; a Live app's
         // crossing is HTTPS + SSE (the session channel).
-        assert!(out.contains("user --> backend : HTTPS + SSE · auth"), "{out}");
+        assert!(
+            out.contains("user --> backend : HTTPS + SSE · auth"),
+            "{out}"
+        );
         // single lane: no browser zone, no /_rpc crossing.
         assert!(!out.contains("Browser · untrusted"), "{out}");
         assert!(!out.contains("/_rpc"), "{out}");
@@ -5430,7 +5955,12 @@ mod tests {
 
     #[test]
     fn components_puml_lists_tables_and_rpc_counts() {
-        let g = graph_with(true, vec!["users".into(), "orders".into()], Some(3), Some(5));
+        let g = graph_with(
+            true,
+            vec!["users".into(), "orders".into()],
+            Some(3),
+            Some(5),
+        );
         let out = render_components(&g, Format::Puml);
         // The Database node label carries the real table names.
         assert!(
@@ -5438,7 +5968,10 @@ mod tests {
             "table list in the Database node:\n{out}"
         );
         // The /_rpc crossing carries the effectful count; a note the pure count.
-        assert!(out.contains("spa --> backend : /_rpc · auth · 3 effectful"), "{out}");
+        assert!(
+            out.contains("spa --> backend : /_rpc · auth · 3 effectful"),
+            "{out}"
+        );
         assert!(
             out.contains("note bottom of spa : 5 pure client actions (wasm)"),
             "{out}"
@@ -5450,7 +5983,10 @@ mod tests {
         let tables: Vec<String> = (0..12).map(|i| format!("t{i}")).collect();
         let g = graph_with(false, tables, None, None);
         let out = render_components(&g, Format::Puml);
-        assert!(out.contains("\\n+4 more\""), "over-cap folds into +N more:\n{out}");
+        assert!(
+            out.contains("\\n+4 more\""),
+            "over-cap folds into +N more:\n{out}"
+        );
     }
 
     #[test]
@@ -5499,8 +6035,14 @@ mod tests {
         let g = graph_with(false, vec!["users".into(), "orders".into()], None, None);
         let out = render_components(&g, Format::Svg);
         assert!(is_svg(&out), "{out}");
-        assert!(out.contains(">users<"), "table name inside Database store: {out}");
-        assert!(out.contains(">orders<"), "table name inside Database store: {out}");
+        assert!(
+            out.contains(">users<"),
+            "table name inside Database store: {out}"
+        );
+        assert!(
+            out.contains(">orders<"),
+            "table name inside Database store: {out}"
+        );
     }
 
     #[test]
@@ -5510,10 +6052,22 @@ mod tests {
         // The C4 container-led md lists the data store's tables in the data-store
         // section (a container row + the table list), and keeps the module detail
         // in the appendix.
-        assert!(out.contains("### Data store — 2 table(s)"), "data-store heading:\n{out}");
-        assert!(out.contains("`users`") && out.contains("`orders`"), "table names:\n{out}");
-        assert!(out.contains("## Containers"), "C4 container view leads:\n{out}");
-        assert!(out.contains("## Appendix — modules"), "module table demoted to appendix:\n{out}");
+        assert!(
+            out.contains("### Data store — 2 table(s)"),
+            "data-store heading:\n{out}"
+        );
+        assert!(
+            out.contains("`users`") && out.contains("`orders`"),
+            "table names:\n{out}"
+        );
+        assert!(
+            out.contains("## Containers"),
+            "C4 container view leads:\n{out}"
+        );
+        assert!(
+            out.contains("## Appendix — modules"),
+            "module table demoted to appendix:\n{out}"
+        );
     }
 
     #[test]
@@ -5521,14 +6075,20 @@ mod tests {
         let tables: Vec<String> = (0..12).map(|i| format!("t{i}")).collect();
         let g = graph_with(false, tables, None, None);
         let out = render_components(&g, Format::Svg);
-        assert!(out.contains(">+4 more<"), "over-cap folds into +N more: {out}");
+        assert!(
+            out.contains(">+4 more<"),
+            "over-cap folds into +N more: {out}"
+        );
     }
 
     #[test]
     fn components_svg_spa_rpc_edge_counts_effectful_actions() {
         let g = graph_with(true, Vec::new(), Some(3), Some(5));
         let out = render_components(&g, Format::Svg);
-        assert!(out.contains(">3 effectful → /_rpc<"), "effectful count on /_rpc edge: {out}");
+        assert!(
+            out.contains(">3 effectful → /_rpc<"),
+            "effectful count on /_rpc edge: {out}"
+        );
         assert!(
             out.contains(">5 pure client actions (wasm)<"),
             "pure caption under SPA: {out}"
@@ -5638,7 +6198,9 @@ mod tests {
         let out = render_wire(&wire_report(), Format::Md);
         assert!(out.contains("## RPC endpoints (/_rpc)"), "{out}");
         assert!(
-            out.contains("| Endpoint | Access | Request (fields + args) | Response (writes) | Call-path |"),
+            out.contains(
+                "| Endpoint | Access | Request (fields + args) | Response (writes) | Call-path |"
+            ),
             "{out}"
         );
         assert!(
@@ -5656,9 +6218,14 @@ mod tests {
     #[test]
     fn wire_md_lists_the_app_api_webhook_beside_rpc() {
         let out = render_wire(&wire_report_with_webhook(), Format::Md);
-        assert!(out.contains("## HTTP endpoints (raw `App.api`, beside /_rpc)"), "{out}");
         assert!(
-            out.contains("| POST | /webhooks/stripe | Payments.handleWebhook | raw api · CSRF-exempt |"),
+            out.contains("## HTTP endpoints (raw `App.api`, beside /_rpc)"),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "| POST | /webhooks/stripe | Payments.handleWebhook | raw api · CSRF-exempt |"
+            ),
             "{out}"
         );
     }
@@ -5667,10 +6234,19 @@ mod tests {
     fn wire_svg_draws_the_webhook_as_an_inbound_external_entity() {
         let out = render_wire(&wire_report_with_webhook(), Format::Svg);
         assert!(is_svg(&out), "{out}");
-        assert!(out.contains("HTTP endpoints (raw api · CSRF-exempt)"), "{out}");
-        assert!(out.contains(">Webhook sender<"), "inbound external entity: {out}");
+        assert!(
+            out.contains("HTTP endpoints (raw api · CSRF-exempt)"),
+            "{out}"
+        );
+        assert!(
+            out.contains(">Webhook sender<"),
+            "inbound external entity: {out}"
+        );
         assert!(out.contains("/webhooks/stripe"), "{out}");
-        assert!(out.contains(">inbound<"), "inbound crossing arrow label: {out}");
+        assert!(
+            out.contains(">inbound<"),
+            "inbound crossing arrow label: {out}"
+        );
     }
 
     #[test]
@@ -5694,7 +6270,10 @@ mod tests {
         assert!(out.contains("req {basket, region} + {region}"), "{out}");
         assert!(out.contains("resp {basket, region}"), "{out}");
         // per-endpoint effect families as a note (SetRegion reaches Db).
-        assert!(out.contains("note right of ep") && out.contains("effects: Db"), "no effects note:\n{out}");
+        assert!(
+            out.contains("note right of ep") && out.contains("effects: Db"),
+            "no effects note:\n{out}"
+        );
         assert!(!out.contains("```"), "{out}");
     }
 
@@ -5742,9 +6321,15 @@ mod tests {
     #[test]
     fn wire_http_md_lists_the_endpoint_map() {
         let out = render_wire(&http_wire_report(), Format::Md);
-        assert!(out.contains("| Method | Path | Handler / page | Kind |"), "{out}");
+        assert!(
+            out.contains("| Method | Path | Handler / page | Kind |"),
+            "{out}"
+        );
         assert!(out.contains("| GET | / | handleHome | http |"), "{out}");
-        assert!(out.contains("| POST | /api/echo | handleEcho | http |"), "{out}");
+        assert!(
+            out.contains("| POST | /api/echo | handleEcho | http |"),
+            "{out}"
+        );
         assert!(
             !out.contains("| Endpoint |"),
             "no /_rpc table for an HTTP app: {out}"
@@ -5824,8 +6409,14 @@ mod tests {
         assert!(is_svg(&svg), "{svg}");
         assert!(svg.contains("no client/server wire"), "{svg}");
         // No DFD zones are drawn for a terminal app.
-        assert!(!svg.contains(">Server · trusted<"), "no boundary zone drawn: {svg}");
-        assert!(!svg.contains(">Client · untrusted<"), "no client zone drawn: {svg}");
+        assert!(
+            !svg.contains(">Server · trusted<"),
+            "no boundary zone drawn: {svg}"
+        );
+        assert!(
+            !svg.contains(">Client · untrusted<"),
+            "no client zone drawn: {svg}"
+        );
     }
 
     #[test]
@@ -5962,7 +6553,11 @@ mod tests {
                     url: None,
                 },
             ],
-            shape: if classified { AppShape::Spa } else { AppShape::Live },
+            shape: if classified {
+                AppShape::Spa
+            } else {
+                AppShape::Live
+            },
             page_field: Some("currentPage".into()),
             actions: vec![
                 JourneyAction {
@@ -6001,7 +6596,10 @@ mod tests {
         assert!(out.contains("## Pages"), "{out}");
         assert!(out.contains("| HomePage | / |"), "{out}");
         assert!(out.contains("| LoginPage | — |"), "{out}");
-        assert!(out.contains("| Action | Kind | Effects | Navigates to |"), "{out}");
+        assert!(
+            out.contains("| Action | Kind | Effects | Navigates to |"),
+            "{out}"
+        );
         assert!(
             out.contains("| UpvotePost | effectful (server · /_rpc) | Db | LoginPage |"),
             "{out}"
@@ -6037,9 +6635,15 @@ mod tests {
         );
         // Non-navigating actions split into Effectful / Pure floating notes, the
         // effectful chip annotated with its effect family.
-        assert!(out.contains("note as effectful_note"), "no effectful note:\n{out}");
+        assert!(
+            out.contains("note as effectful_note"),
+            "no effectful note:\n{out}"
+        );
         assert!(out.contains("<b>Effectful actions (1)"), "{out}");
-        assert!(out.contains("Refresh · Http"), "effect family on the chip:\n{out}");
+        assert!(
+            out.contains("Refresh · Http"),
+            "effect family on the chip:\n{out}"
+        );
         assert!(!out.contains("```"), "{out}");
     }
 
@@ -6141,7 +6745,10 @@ mod tests {
             is_spa: true,
             shape: AppShape::Spa,
             target: Some("web:app".into()),
-            pages: vec![JourneyPage { name: "HomePage".into(), url: Some("/".into()) }],
+            pages: vec![JourneyPage {
+                name: "HomePage".into(),
+                url: Some("/".into()),
+            }],
             page_field: Some("page".into()),
             actions: vec![
                 JourneyAction {
@@ -6165,9 +6772,15 @@ mod tests {
             notes: vec![],
         };
         let svg = render_journey(&r, Format::Svg);
-        assert!(svg.contains("Effectful actions (1)"), "effectful section: {svg}");
+        assert!(
+            svg.contains("Effectful actions (1)"),
+            "effectful section: {svg}"
+        );
         assert!(svg.contains("Pure actions (1)"), "pure section: {svg}");
-        assert!(svg.contains(">AddToBasket · Db<"), "effect family on chip: {svg}");
+        assert!(
+            svg.contains(">AddToBasket · Db<"),
+            "effect family on chip: {svg}"
+        );
         assert!(svg.contains(">ToggleMenu<"), "pure chip: {svg}");
     }
 
@@ -6252,7 +6865,11 @@ mod tests {
         // NOT actions repeated under every page. Each action appears exactly once.
         assert!(md.contains("## Pages"), "{md}");
         assert!(md.contains("## Actions"), "{md}");
-        assert_eq!(md.matches("`UpvotePost`").count(), 1, "action must appear once:\n{md}");
+        assert_eq!(
+            md.matches("`UpvotePost`").count(),
+            1,
+            "action must appear once:\n{md}"
+        );
         assert!(md.contains("does not dispatch on the page field"), "{md}");
     }
 
@@ -6267,12 +6884,24 @@ mod tests {
         }];
         r.classifications.insert(
             "UpvotePost".into(),
-            Classification { confidential: true, reasons: vec!["Auth session / token".into()] },
+            Classification {
+                confidential: true,
+                reasons: vec!["Auth session / token".into()],
+            },
         );
         let md = render_flow_md(&r);
-        assert!(md.contains("**Data store:** PostgreSQL"), "store overlay:\n{md}");
-        assert!(md.contains("api.stripe.com") && md.contains("Payments (Stripe)"), "external overlay:\n{md}");
-        assert!(md.contains("🔒 **CONFIDENTIAL** (Auth session / token)"), "classification overlay:\n{md}");
+        assert!(
+            md.contains("**Data store:** PostgreSQL"),
+            "store overlay:\n{md}"
+        );
+        assert!(
+            md.contains("api.stripe.com") && md.contains("Payments (Stripe)"),
+            "external overlay:\n{md}"
+        );
+        assert!(
+            md.contains("🔒 **CONFIDENTIAL** (Auth session / token)"),
+            "classification overlay:\n{md}"
+        );
         // Title carries the generated-on date stamp.
         assert!(md.contains("· generated 20"), "date stamp missing:\n{md}");
     }
@@ -6287,11 +6916,22 @@ mod tests {
             role: ExtRole::Payments,
         }];
         let svg = render_flow_svg(&r);
-        assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"), "{svg}");
-        for lane in ["Browser client", "Server (/_rpc)", "Data store", "External systems"] {
+        assert!(
+            svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"),
+            "{svg}"
+        );
+        for lane in [
+            "Browser client",
+            "Server (/_rpc)",
+            "Data store",
+            "External systems",
+        ] {
             assert!(svg.contains(lane), "lane `{lane}` missing:\n{svg}");
         }
-        assert!(svg.contains("api.stripe.com") && svg.contains("PostgreSQL"), "nodes missing:\n{svg}");
+        assert!(
+            svg.contains("api.stripe.com") && svg.contains("PostgreSQL"),
+            "nodes missing:\n{svg}"
+        );
         assert!(svg.contains("trust boundary"), "boundary missing:\n{svg}");
     }
 
@@ -6321,34 +6961,71 @@ mod tests {
     fn subprocessors_section_splits_and_notes_selfref() {
         let mut r = flow_report(true);
         r.external_systems = vec![
-            ExternalSystem { host: "api.stripe.com".into(), purpose: "Payments (Stripe)".into(), role: ExtRole::Payments },
-            ExternalSystem { host: "www.youtube.com".into(), purpose: "External service (www.youtube.com)".into(), role: ExtRole::Cdn },
+            ExternalSystem {
+                host: "api.stripe.com".into(),
+                purpose: "Payments (Stripe)".into(),
+                role: ExtRole::Payments,
+            },
+            ExternalSystem {
+                host: "www.youtube.com".into(),
+                purpose: "External service (www.youtube.com)".into(),
+                role: ExtRole::Cdn,
+            },
         ];
         r.self_ref_hosts = vec!["sky-lang.org".into()];
         let md = subprocessors_section(&r);
-        assert!(md.contains("data sub-processors") && md.contains("api.stripe.com"), "subproc table:\n{md}");
-        assert!(md.contains("Embedded third-party content") && md.contains("www.youtube.com"), "embed table:\n{md}");
+        assert!(
+            md.contains("data sub-processors") && md.contains("api.stripe.com"),
+            "subproc table:\n{md}"
+        );
+        assert!(
+            md.contains("Embedded third-party content") && md.contains("www.youtube.com"),
+            "embed table:\n{md}"
+        );
         // The embed host must not appear in the sub-processor table region.
         let subproc_region = &md[..md.find("Embedded").unwrap_or(md.len())];
-        assert!(!subproc_region.contains("youtube"), "youtube leaked into sub-processors:\n{md}");
-        assert!(md.contains("Excluded as the app's own domain") && md.contains("sky-lang.org"), "self-ref note:\n{md}");
+        assert!(
+            !subproc_region.contains("youtube"),
+            "youtube leaked into sub-processors:\n{md}"
+        );
+        assert!(
+            md.contains("Excluded as the app's own domain") && md.contains("sky-lang.org"),
+            "self-ref note:\n{md}"
+        );
     }
 
     #[test]
     fn filter_self_ref_moves_own_host_out() {
         let mut r = flow_report(true);
         r.external_systems = vec![
-            ExternalSystem { host: "github.com".into(), purpose: "OAuth / API (GitHub)".into(), role: ExtRole::OAuth },
-            ExternalSystem { host: "sky-lang.org".into(), purpose: "External service".into(), role: ExtRole::Api },
+            ExternalSystem {
+                host: "github.com".into(),
+                purpose: "OAuth / API (GitHub)".into(),
+                role: ExtRole::OAuth,
+            },
+            ExternalSystem {
+                host: "sky-lang.org".into(),
+                purpose: "External service".into(),
+                role: ExtRole::Api,
+            },
         ];
         let dir = std::env::temp_dir().join(format!("sky-selfref-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("CNAME"), "sky-lang.org\n").unwrap();
         filter_self_ref(&mut r, &dir);
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(r.external_systems.iter().any(|e| e.host == "github.com"), "github kept");
-        assert!(!r.external_systems.iter().any(|e| e.host == "sky-lang.org"), "own host removed");
-        assert!(r.self_ref_hosts.contains(&"sky-lang.org".to_string()), "own host recorded");
+        assert!(
+            r.external_systems.iter().any(|e| e.host == "github.com"),
+            "github kept"
+        );
+        assert!(
+            !r.external_systems.iter().any(|e| e.host == "sky-lang.org"),
+            "own host removed"
+        );
+        assert!(
+            r.self_ref_hosts.contains(&"sky-lang.org".to_string()),
+            "own host recorded"
+        );
     }
 
     #[test]
@@ -6357,7 +7034,10 @@ mod tests {
         assert!(!is_secret_ty("String"));
         assert!(pii_reason("customerEmail").is_some() && pii_reason("cardNumber").is_some());
         assert!(pii_reason("count").is_none());
-        assert_eq!(url_host("https://api.stripe.com/v1/charges").as_deref(), Some("api.stripe.com"));
+        assert_eq!(
+            url_host("https://api.stripe.com/v1/charges").as_deref(),
+            Some("api.stripe.com")
+        );
         assert_eq!(url_host("not a url"), None);
         assert_eq!(host_purpose("api.stripe.com"), "Payments (Stripe)");
     }

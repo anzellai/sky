@@ -3,8 +3,9 @@
 // generating Sky FFI bindings.
 //
 // Usage:
-//   sky-ffi-inspect github.com/pkg/path                 # single
-//   sky-ffi-inspect pkg1 pkg2 pkg3 ...                  # multi
+//
+//	sky-ffi-inspect github.com/pkg/path                 # single
+//	sky-ffi-inspect pkg1 pkg2 pkg3 ...                  # multi
 //
 // Single-package mode (1 argv) emits a single PackageInfo JSON object
 // for backwards compat. Multi-package mode (2+ argv) emits a JSON
@@ -19,20 +20,21 @@
 // dependency profile, this typically halves total install time.
 //
 // Output schema for single-mode (legacy callers):
-//   {
-//     "pkg": "github.com/pkg/path",
-//     "name": "path",
-//     "functions": [
-//       {
-//         "name": "Func",
-//         "params": [{"name":"x", "type":"string"}, ...],
-//         "results": [{"type":"int"}, ...],
-//         "effect": "pure"|"fallible"|"effectful",
-//         "exported": true
-//       }
-//     ],
-//     "errors": []
-//   }
+//
+//	{
+//	  "pkg": "github.com/pkg/path",
+//	  "name": "path",
+//	  "functions": [
+//	    {
+//	      "name": "Func",
+//	      "params": [{"name":"x", "type":"string"}, ...],
+//	      "results": [{"type":"int"}, ...],
+//	      "effect": "pure"|"fallible"|"effectful",
+//	      "exported": true
+//	    }
+//	  ],
+//	  "errors": []
+//	}
 //
 // Multi-mode output: a JSON array of the above shape, indexed in the
 // same order as the argv pkg paths so callers can match results back
@@ -41,8 +43,8 @@
 // Effect classification:
 //   - fallible  : returns (T, error) or error — maps to Result String T
 //   - effectful : returns channels, starts goroutines, or has zero signals
-//                 we can't tell → conservatively mark as effectful when
-//                 we can't prove purity
+//     we can't tell → conservatively mark as effectful when
+//     we can't prove purity
 //   - pure      : everything else. Caller should call via Ffi.callPure.
 //
 // The tool never crashes: on any failure it emits a JSON with "errors".
@@ -87,24 +89,24 @@ type Param struct {
 }
 
 type Function struct {
-	Name      string  `json:"name"`
-	Params    []Param `json:"params"`
-	Results   []Param `json:"results"`
-	Variadic  bool    `json:"variadic"`
-	Effect    string  `json:"effect"`
-	Exported  bool    `json:"exported"`
+	Name     string  `json:"name"`
+	Params   []Param `json:"params"`
+	Results  []Param `json:"results"`
+	Variadic bool    `json:"variadic"`
+	Effect   string  `json:"effect"`
+	Exported bool    `json:"exported"`
 	// For method wrappers: the Go receiver type name (e.g. "Router" for
 	// *mux.Router.HandleFunc) and the actual Go method name ("HandleFunc").
 	// Empty for free-standing functions.
 	RecvType   string `json:"recvType,omitempty"`
 	MethodName string `json:"methodName,omitempty"`
 	// IsField: true for synthetic struct-field getters.
-	IsField    bool   `json:"isField,omitempty"`
+	IsField bool `json:"isField,omitempty"`
 	// IsFieldSet: true for synthetic struct-field setters (value-first).
-	IsFieldSet bool   `json:"isFieldSet,omitempty"`
+	IsFieldSet bool `json:"isFieldSet,omitempty"`
 	// IsPkgVar: true for synthetic accessors around package-level vars
 	// and consts (Firestore.Asc, Firestore.Desc, etc.).
-	IsPkgVar   bool   `json:"isPkgVar,omitempty"`
+	IsPkgVar bool `json:"isPkgVar,omitempty"`
 }
 
 type PackageInfo struct {
@@ -370,9 +372,10 @@ func implementsIface(t types.Type, iface *types.Interface) bool {
 // Alias derivation: last path segment, sanitised to a valid Go ident.
 // Versioned packages (path ending in /v\d+) fold the version segment
 // onto the previous one. E.g.:
-//   "github.com/stripe/stripe-go/v84" → "stripe_go_v84"
-//   "github.com/google/go-cmp/cmp"    → "cmp"
-//   "net/http"                        → "http"
+//
+//	"github.com/stripe/stripe-go/v84" → "stripe_go_v84"
+//	"github.com/google/go-cmp/cmp"    → "cmp"
+//	"net/http"                        → "http"
 func computePkgAlias(pkg *packages.Package) map[string]string {
 	if pkg == nil {
 		return nil
@@ -437,7 +440,6 @@ func sanitiseIdent(s string) string {
 	}
 	return string(out)
 }
-
 
 // walkPackage produces the PackageInfo for one loaded *packages.Package.
 // Extracted out of main so single-mode and multi-mode share the same
@@ -552,7 +554,6 @@ func walkPackage(requestedPath string, pkg *packages.Package) PackageInfo {
 	return info
 }
 
-
 // emitInfoOrArray writes the appropriate JSON shape for single or multi
 // mode. Single-mode (1 root): a bare PackageInfo object — keeps the
 // legacy callers happy. Multi-mode (2+ roots): a JSON array. The
@@ -574,7 +575,6 @@ func emitInfoOrArray(results []PackageInfo, multi bool) {
 	}
 	emitInfo(results[0])
 }
-
 
 // methodsOf emits methods declared directly on a named type. Each method
 // carries its real declared receiver type (value or pointer) so generated
@@ -628,13 +628,13 @@ func addPointerMethods(info *PackageInfo, mset *types.MethodSet, typeName string
 			continue
 		}
 		info.Functions = append(info.Functions, Function{
-			Name:     name,
-			Params:   append([]Param{paramForReceiver(types.NewPointer(named.Obj().Type()))}, paramsOf(sig)...),
-			Results:  resultsOf(sig),
-			Variadic: sig.Variadic(),
-			Effect:   classifyEffect(resultsOf(sig)),
-			Exported: true,
-			RecvType: typeName,
+			Name:       name,
+			Params:     append([]Param{paramForReceiver(types.NewPointer(named.Obj().Type()))}, paramsOf(sig)...),
+			Results:    resultsOf(sig),
+			Variadic:   sig.Variadic(),
+			Effect:     classifyEffect(resultsOf(sig)),
+			Exported:   true,
+			RecvType:   typeName,
 			MethodName: fn.Name(),
 		})
 		seen[name] = true
@@ -772,7 +772,6 @@ func withGoType(p Param, gt types.Type) Param {
 	return p
 }
 
-
 // skyTypeOf renders a Go type as the string the Sky-side
 // goTypeToSky translator expects, with one important
 // transformation versus the bare types.Type.String() path: a
@@ -829,10 +828,10 @@ func describeMethod(typeName string, fn *types.Func, sig *types.Signature, recvT
 // addZeroConstructor emits `New<TypeName>() -> *TypeName` — a zero-value
 // constructor helper so Sky code can write `Stripe.newCustomerParams ()`
 // without hand-writing a Go factory. Skipped when:
-//   * the package already exports a `New<TypeName>` function (avoid Go
+//   - the package already exports a `New<TypeName>` function (avoid Go
 //     redeclaration — happens regardless of `scope.Names()` iteration
 //     order because we consult the pkg scope directly).
-//   * the type is generic — `new(pkg.Foo)` won't compile without
+//   - the type is generic — `new(pkg.Foo)` won't compile without
 //     instantiation, and we don't know the constraint here.
 func addZeroConstructor(info *PackageInfo, typeName string, named *types.Named) {
 	name := "New" + typeName
@@ -852,16 +851,15 @@ func addZeroConstructor(info *PackageInfo, typeName string, named *types.Named) 
 		}
 	}
 	info.Functions = append(info.Functions, Function{
-		Name:       name,
-		Params:     []Param{{Name: "_", Type: "struct{}"}},
-		Results:    []Param{{Type: types.NewPointer(named.Obj().Type()).String()}},
-		Effect:     "pure",
-		Exported:   true,
-		RecvType:   typeName,
-		IsPkgVar:   true,  // reuse the "one-line wrapper" path
+		Name:     name,
+		Params:   []Param{{Name: "_", Type: "struct{}"}},
+		Results:  []Param{{Type: types.NewPointer(named.Obj().Type()).String()}},
+		Effect:   "pure",
+		Exported: true,
+		RecvType: typeName,
+		IsPkgVar: true, // reuse the "one-line wrapper" path
 	})
 }
-
 
 // addFieldGetters emits one synthetic unary function per exported struct
 // field (the getter) AND one binary setter per settable field. Name
@@ -917,7 +915,6 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 	}
 }
 
-
 // addInterfaceMethods emits methods from an interface's explicit method set
 // as synthetic free functions. Receiver is the named interface type itself
 // (no pointer — interface values are already reference-typed).
@@ -953,7 +950,6 @@ func addInterfaceMethods(info *PackageInfo, iface *types.Interface, typeName str
 		seen[name] = true
 	}
 }
-
 
 func lowerFirstByte(s string) string {
 	if len(s) == 0 {

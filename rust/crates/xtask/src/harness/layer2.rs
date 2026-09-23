@@ -205,7 +205,12 @@ impl Server {
     /// `process_group(0)` is the whole point: `kill(child)` on a shell wrapper
     /// leaves the real server holding the port. The group is what `killpg`
     /// reaches.
-    pub fn spawn(binary: &Path, dir: &Path, port: u16, env: &[(&str, String)]) -> Result<Server, String> {
+    pub fn spawn(
+        binary: &Path,
+        dir: &Path,
+        port: u16,
+        env: &[(&str, String)],
+    ) -> Result<Server, String> {
         Server::spawn_inner(binary, dir, port, env, false)
     }
 
@@ -515,9 +520,8 @@ pub fn http(
     s.set_write_timeout(Some(timeout)).ok();
 
     let body = body.unwrap_or("");
-    let mut req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n"
-    );
+    let mut req =
+        format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n");
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -532,14 +536,20 @@ pub fn http(
     let _ = s.shutdown(Shutdown::Write);
 
     let mut raw = Vec::new();
-    s.read_to_end(&mut raw).map_err(|e| format!("read {path}: {e}"))?;
+    s.read_to_end(&mut raw)
+        .map_err(|e| format!("read {path}: {e}"))?;
     let raw = String::from_utf8_lossy(&raw).into_owned();
 
     let status = raw
         .split_whitespace()
         .nth(1)
         .and_then(|c| c.parse::<u16>().ok())
-        .ok_or_else(|| format!("no HTTP status line in response to {path}: {}", tail(&raw, 5)))?;
+        .ok_or_else(|| {
+            format!(
+                "no HTTP status line in response to {path}: {}",
+                tail(&raw, 5)
+            )
+        })?;
     let body = raw
         .split_once("\r\n\r\n")
         .map(|(_, b)| b.to_string())
@@ -598,7 +608,9 @@ pub fn bind_position_port_literals(root: &Path, project_rel: &str) -> Vec<String
 }
 
 fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -656,13 +668,24 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(tmp.join("proj/sky.toml"), "name=\"p\"\n").unwrap();
 
-        std::fs::write(src.join("Bad.sky"), "main =\n    Server.listen 8000 routes\n").unwrap();
+        std::fs::write(
+            src.join("Bad.sky"),
+            "main =\n    Server.listen 8000 routes\n",
+        )
+        .unwrap();
         let hits = bind_position_port_literals(&tmp, "proj");
         assert_eq!(hits.len(), 1, "hardcoded 8000 must be caught: {hits:?}");
 
-        std::fs::write(src.join("Bad.sky"), "main =\n    Server.listen port routes\n").unwrap();
+        std::fs::write(
+            src.join("Bad.sky"),
+            "main =\n    Server.listen port routes\n",
+        )
+        .unwrap();
         let hits = bind_position_port_literals(&tmp, "proj");
-        assert!(hits.is_empty(), "an env-derived port must be allowed: {hits:?}");
+        assert!(
+            hits.is_empty(),
+            "an env-derived port must be allowed: {hits:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

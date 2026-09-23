@@ -77,24 +77,68 @@ fn migrate_apply_moves_every_legacy_key() {
     let new_main = std::fs::read_to_string(dir.join("src/Main.sky")).unwrap();
 
     // sky.toml: every migratable key is gone; residual keys survive.
-    for legacy in ["port =", "store =", "storePath =", "format =", "level =", "csrf =", "path ="] {
-        assert!(!new_toml.contains(legacy), "migrated `{legacy}` must be gone:\n{new_toml}");
+    for legacy in [
+        "port =",
+        "store =",
+        "storePath =",
+        "format =",
+        "level =",
+        "csrf =",
+        "path =",
+    ] {
+        assert!(
+            !new_toml.contains(legacy),
+            "migrated `{legacy}` must be gone:\n{new_toml}"
+        );
     }
-    assert!(new_toml.contains("maxOpenConns = 25"), "residual pool knob kept:\n{new_toml}");
-    assert!(new_toml.contains("driver = \"sqlite\""), "residual driver kept:\n{new_toml}");
-    assert!(new_toml.contains("[database]"), "[database] header kept (has residuals):\n{new_toml}");
-    assert!(!new_toml.contains("[live]"), "emptied [live] dropped:\n{new_toml}");
-    assert!(!new_toml.contains("[log]"), "emptied [log] dropped:\n{new_toml}");
-    assert!(!new_toml.contains("[security]"), "emptied [security] dropped:\n{new_toml}");
+    assert!(
+        new_toml.contains("maxOpenConns = 25"),
+        "residual pool knob kept:\n{new_toml}"
+    );
+    assert!(
+        new_toml.contains("driver = \"sqlite\""),
+        "residual driver kept:\n{new_toml}"
+    );
+    assert!(
+        new_toml.contains("[database]"),
+        "[database] header kept (has residuals):\n{new_toml}"
+    );
+    assert!(
+        !new_toml.contains("[live]"),
+        "emptied [live] dropped:\n{new_toml}"
+    );
+    assert!(
+        !new_toml.contains("[log]"),
+        "emptied [log] dropped:\n{new_toml}"
+    );
+    assert!(
+        !new_toml.contains("[security]"),
+        "emptied [security] dropped:\n{new_toml}"
+    );
 
     // Main.sky: Sky.Config binding created + exposed + imported.
-    assert!(new_main.contains("module Main exposing (main, config)"), "{new_main}");
-    assert!(new_main.contains("import Sky.Config as Config exposing ("), "{new_main}");
+    assert!(
+        new_main.contains("module Main exposing (main, config)"),
+        "{new_main}"
+    );
+    assert!(
+        new_main.contains("import Sky.Config as Config exposing ("),
+        "{new_main}"
+    );
     assert!(new_main.contains("config : Config.Config"), "{new_main}");
     assert!(new_main.contains("Config.default"), "{new_main}");
-    assert!(new_main.contains("|> Config.withLog Json Warn"), "{new_main}");
-    assert!(new_main.contains("|> Config.withSessions (SessionsSqlite \"sessions.db\")"), "{new_main}");
-    assert!(new_main.contains("|> Config.withDatabase (Sqlite \"shop.db\")"), "{new_main}");
+    assert!(
+        new_main.contains("|> Config.withLog Json Warn"),
+        "{new_main}"
+    );
+    assert!(
+        new_main.contains("|> Config.withSessions (SessionsSqlite \"sessions.db\")"),
+        "{new_main}"
+    );
+    assert!(
+        new_main.contains("|> Config.withDatabase (Sqlite \"shop.db\")"),
+        "{new_main}"
+    );
     assert!(new_main.contains("|> Config.withCsrf False"), "{new_main}");
     // Live builder went into the Live.config pipeline, not the config binding.
     assert!(new_main.contains("|> Live.withPort 8000"), "{new_main}");
@@ -118,12 +162,26 @@ fn dry_run_shows_a_diff_and_writes_nothing() {
 
     let out = config_migrate::run(&dir, Mode::DryRun).expect("dry-run runs");
     assert!(!out.wrote, "dry-run must not write");
-    assert!(out.diff.contains("- port = 8000"), "diff shows the removed key:\n{}", out.diff);
-    assert!(out.diff.contains("+ config : Config.Config"), "diff shows the new binding:\n{}", out.diff);
+    assert!(
+        out.diff.contains("- port = 8000"),
+        "diff shows the removed key:\n{}",
+        out.diff
+    );
+    assert!(
+        out.diff.contains("+ config : Config.Config"),
+        "diff shows the new binding:\n{}",
+        out.diff
+    );
 
     // Files unchanged on disk.
-    assert_eq!(std::fs::read_to_string(dir.join("sky.toml")).unwrap(), toml_before);
-    assert_eq!(std::fs::read_to_string(dir.join("src/Main.sky")).unwrap(), main_before);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("sky.toml")).unwrap(),
+        toml_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("src/Main.sky")).unwrap(),
+        main_before
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -136,7 +194,11 @@ fn a_clean_project_is_already_migrated() {
         "name = \"x\"\nentry = \"src/Main.sky\"\n\n[database]\nmaxOpenConns = 25\nembedded = true\n",
     )
     .unwrap();
-    std::fs::write(dir.join("src/Main.sky"), "module Main exposing (main)\n\nmain = run\n").unwrap();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        "module Main exposing (main)\n\nmain = run\n",
+    )
+    .unwrap();
 
     let out = config_migrate::run(&dir, Mode::Check).expect("check runs");
     assert!(out.clean, "pool knobs / embedded are residual, not legacy");

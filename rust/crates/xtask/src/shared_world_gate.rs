@@ -77,10 +77,7 @@ impl Verdict {
     /// A human-readable account of the FIRST difference — enough to act on.
     fn explain(&self, other: &Verdict) -> String {
         if self.type_errors != other.type_errors {
-            return format!(
-                "type_errors {} vs {}",
-                self.type_errors, other.type_errors
-            );
+            return format!("type_errors {} vs {}", self.type_errors, other.type_errors);
         }
         if self.name_errors != other.name_errors {
             return format!("name_errors {} vs {}", self.name_errors, other.name_errors);
@@ -96,7 +93,9 @@ impl Verdict {
             let b: BTreeSet<&String> = other.diagnostics.iter().collect();
             let only_a: Vec<&&String> = a.difference(&b).take(2).collect();
             let only_b: Vec<&&String> = b.difference(&a).take(2).collect();
-            return format!("diagnostics differ: whole-program-only {only_a:?}; shared-only {only_b:?}");
+            return format!(
+                "diagnostics differ: whole-program-only {only_a:?}; shared-only {only_b:?}"
+            );
         }
         let a: BTreeSet<&String> = self.def_types.iter().collect();
         let b: BTreeSet<&String> = other.def_types.iter().collect();
@@ -321,7 +320,11 @@ fn infer_items(root: &Path) -> Vec<Item> {
             .unwrap_or("?")
             .to_string();
         let src_dir = dir.join("src");
-        let load_root = if src_dir.is_dir() { src_dir } else { dir.clone() };
+        let load_root = if src_dir.is_dir() {
+            src_dir
+        } else {
+            dir.clone()
+        };
         let locals = crate::reject_gate::load_dir_pub(&load_root, "src");
         if locals.is_empty() {
             continue;

@@ -1208,7 +1208,8 @@ fn issue164_followup_importing_module_union_vs_imported_alias_same_name() {
     assert!(
         report.emitted && report.go_build_ok,
         "issue #164-follow: expected type-check + go build to succeed; note: {}, go_stderr: {}",
-        report.note, report.go_build_stderr
+        report.note,
+        report.go_build_stderr
     );
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -1261,7 +1262,8 @@ fn issue166_record_update_on_annotated_param_keeps_full_record() {
     assert!(
         report.emitted && report.go_build_ok,
         "issue #166: expected type-check + go build to succeed; note: {}, go_stderr: {}",
-        report.note, report.go_build_stderr
+        report.note,
+        report.go_build_stderr
     );
     let go = std::fs::read_to_string(out.join("main.go")).unwrap_or_default();
     // The `handle` update must NOT narrow to an anon struct of only the updated
@@ -1323,7 +1325,8 @@ fn issue166_record_update_on_unannotated_param_keeps_full_record() {
     assert!(
         report.emitted && report.go_build_ok,
         "issue #166u: expected type-check + go build to succeed; note: {}, go_stderr: {}",
-        report.note, report.go_build_stderr
+        report.note,
+        report.go_build_stderr
     );
     let go = std::fs::read_to_string(out.join("main.go")).unwrap_or_default();
     assert!(

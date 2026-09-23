@@ -300,11 +300,14 @@ pub fn gate_if_postgres_cannot_start(err: &str) -> bool {
 /// The first non-empty line of `s`, trimmed to something a one-line marker can
 /// carry. A multi-line `initdb` transcript is the reason, not the headline.
 fn first_line(s: &str) -> String {
-    let l = s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let l = s
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     if l.chars().count() > 140 {
         format!("{}…", l.chars().take(140).collect::<String>())
     } else {
         l.to_string()
     }
 }
-

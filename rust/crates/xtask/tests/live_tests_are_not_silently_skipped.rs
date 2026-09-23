@@ -84,14 +84,23 @@ const GATED_BY: &[&str] = &[
 /// is down is not a defect in this repository. That carve-out is exactly the
 /// shape a future silent skip would be written in, so the sites that may use it
 /// are listed rather than left to judgement. A third one is a reviewable diff.
-const NETWORK_SITES: &[&str] = &["crates/sky/tests/cli_verb_flow.rs", "crates/sky/tests/ffi_verb_flow.rs"];
+const NETWORK_SITES: &[&str] = &[
+    "crates/sky/tests/cli_verb_flow.rs",
+    "crates/sky/tests/ffi_verb_flow.rs",
+];
 
 /// Where each delegating spelling in [`GATED_BY`] is proved to gate. See
 /// `every_helper_that_satisfies_the_rule_by_delegation_gates_for_real`.
 const DELEGATES: &[(&str, &str)] = &[
-    ("provision_fixture", "crates/sky/src/db_shared/live_tests.rs"),
+    (
+        "provision_fixture",
+        "crates/sky/src/db_shared/live_tests.rs",
+    ),
     ("pg_bins_or_gate", "crates/sky/src/db_shared/live_tests.rs"),
-    ("provision_or_gate", "crates/sky/src/db_shared/live_tests.rs"),
+    (
+        "provision_or_gate",
+        "crates/sky/src/db_shared/live_tests.rs",
+    ),
 ];
 
 /// The live gate's own contract test. It names every `Need` on purpose, so it
@@ -122,7 +131,9 @@ fn repo() -> PathBuf {
 /// it is ours.
 fn sources() -> Vec<(String, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
@@ -167,7 +178,11 @@ fn tests_in(text: &str) -> Vec<(String, String)> {
             .find("fn ")
             .map(|f| {
                 let after = &body[f + 3..];
-                after.split(['(', '<', ' ']).next().unwrap_or("<unnamed>").to_string()
+                after
+                    .split(['(', '<', ' '])
+                    .next()
+                    .unwrap_or("<unnamed>")
+                    .to_string()
             })
             .unwrap_or_else(|| "<unnamed>".into());
         out.push((name, body.to_string()));
@@ -184,7 +199,10 @@ fn the_live_gate_exists_and_the_probe_list_is_live() {
         "{GATE_FILE} is missing — every rule in this file is then checking a \
          mechanism that does not exist"
     );
-    assert!(!PROBES.is_empty(), "PROBES is empty; the probe rule inspects nothing");
+    assert!(
+        !PROBES.is_empty(),
+        "PROBES is empty; the probe rule inspects nothing"
+    );
     let all: String = sources().iter().map(|(_, t)| t.as_str()).collect();
     for p in PROBES {
         assert!(
@@ -229,7 +247,10 @@ fn no_file_defines_its_own_skip_helper() {
 fn no_skip_is_announced_through_libtests_capture() {
     let mut bad = Vec::new();
     for (path, text) in sources() {
-        if path == GATE_FILE || path == SELF || !path.contains("/tests/") && !path.contains("_tests.rs") {
+        if path == GATE_FILE
+            || path == SELF
+            || !path.contains("/tests/") && !path.contains("_tests.rs")
+        {
             continue;
         }
         for (n, line) in text.lines().enumerate() {
@@ -265,7 +286,9 @@ fn every_test_that_probes_for_a_live_environment_goes_through_the_gate() {
                 continue;
             }
             checked += 1;
-            let exempt = PROBE_NOT_A_GATE.iter().any(|(f, t, _)| *f == path && *t == name);
+            let exempt = PROBE_NOT_A_GATE
+                .iter()
+                .any(|(f, t, _)| *f == path && *t == name);
             if !exempt && !GATED_BY.iter().any(|g| body.contains(g)) {
                 bad.push(format!("{path}: {name}"));
             }
@@ -401,7 +424,10 @@ fn every_helper_that_satisfies_the_rule_by_delegation_gates_for_real() {
              nothing behind it."
         );
     }
-    assert!(!DELEGATES.is_empty(), "DELEGATES is empty — this rule inspects nothing");
+    assert!(
+        !DELEGATES.is_empty(),
+        "DELEGATES is empty — this rule inspects nothing"
+    );
 }
 
 /// Sites that START a cluster without routing the failure through the gate,
@@ -530,8 +556,9 @@ fn every_cluster_start_routes_its_failure_through_the_gate() {
         // ever, because `provision_or_gate`'s own body calls
         // `provision_cluster(opts)`: the accounting would then be checked
         // against the routing it was supposed to be an exception to.
-        let still_offends =
-            files.iter().any(|(p, t)| p == path && ungated_cluster_starts_in(t) > 0);
+        let still_offends = files
+            .iter()
+            .any(|(p, t)| p == path && ungated_cluster_starts_in(t) > 0);
         assert!(
             still_offends,
             "`{path}` is listed in UNGATED_CLUSTER_STARTS and no longer has an ungated \
@@ -603,7 +630,9 @@ fn every_cluster_start_routes_its_failure_through_the_gate() {
     );
     for (path, reason) in CLI_START_WITHOUT_A_CLUSTER {
         assert!(
-            files.iter().any(|(p, t)| p == path && t.contains("\"db\", \"start\"")),
+            files
+                .iter()
+                .any(|(p, t)| p == path && t.contains("\"db\", \"start\"")),
             "`{path}` is exempted from the CLI-start rule and no longer runs \
              `sky db start`. A stale exemption is a hole nobody is holding open on \
              purpose."

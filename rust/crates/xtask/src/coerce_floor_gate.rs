@@ -301,7 +301,15 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         }
     };
 
-    diff_and_gate(&counts, &no_emit, &golden, &only, verbose, skip_requested(), &corpus_report(root))
+    diff_and_gate(
+        &counts,
+        &no_emit,
+        &golden,
+        &only,
+        verbose,
+        skip_requested(),
+        &corpus_report(root),
+    )
 }
 
 /// The CORPUS denominator — discovered on disk, independent of the golden.
@@ -456,7 +464,9 @@ fn count_tokens(source: &str) -> Counts {
         if prev_ok && j > id_start {
             let ident = &source[id_start..j];
             if let Some(fam) = tracked.get(ident) {
-                counts.by_class.bump(classify(ident, type_arg_at(source, j)));
+                counts
+                    .by_class
+                    .bump(classify(ident, type_arg_at(source, j)));
                 *counts.per_family.entry(*fam).or_insert(0) += 1;
             }
         }
@@ -613,9 +623,7 @@ fn assert_conservation(root: &Path, counts: &BTreeMap<String, Counts>) -> Result
         ));
     }
     if new_rows < old_rows {
-        problems.push(format!(
-            "row count FELL {old_rows} -> {new_rows}"
-        ));
+        problems.push(format!("row count FELL {old_rows} -> {new_rows}"));
     }
 
     if problems.is_empty() {
@@ -638,8 +646,10 @@ fn rows_to_write(
     counts: &BTreeMap<String, Counts>,
     old: &BTreeMap<String, Classed>,
 ) -> BTreeMap<String, Classed> {
-    let mut rows: BTreeMap<String, Classed> =
-        counts.iter().map(|(k, c)| (k.clone(), c.by_class)).collect();
+    let mut rows: BTreeMap<String, Classed> = counts
+        .iter()
+        .map(|(k, c)| (k.clone(), c.by_class))
+        .collect();
     for (name, v) in old {
         if !rows.contains_key(name) && dir_for_key(root, name).is_dir() {
             rows.insert(name.clone(), *v);
@@ -672,7 +682,12 @@ fn assert_adapter_monotone(
         .filter_map(|(k, n)| {
             let o = old.get(k)?;
             (n.adapter > o.adapter).then(|| {
-                format!("{k}: adapter {} -> {} (+{})", o.adapter, n.adapter, n.adapter - o.adapter)
+                format!(
+                    "{k}: adapter {} -> {} (+{})",
+                    o.adapter,
+                    n.adapter,
+                    n.adapter - o.adapter
+                )
             })
         })
         .collect();
@@ -1055,8 +1070,11 @@ fn diff_and_gate(
     // Projects on disk that the golden does not lock a floor for. Independent
     // of the golden by construction, which is the whole point: reading the
     // denominator off the golden made a missing row invisible.
-    let undeclared: Vec<&String> =
-        corpus.expected.iter().filter(|k| !golden.contains_key(*k)).collect();
+    let undeclared: Vec<&String> = corpus
+        .expected
+        .iter()
+        .filter(|k| !golden.contains_key(*k))
+        .collect();
     println!(
         "COVERAGE  |  {} of {} project(s) discovered on disk emitted this run; \
          {measured_of_golden} of {} golden row(s) measured{}",
@@ -1272,7 +1290,11 @@ fn diff_and_gate(
             "\nCOERCE-FLOOR GATE: FAIL — {} project(s) exist on disk with a `sky.toml` and \
              a `src/` and have NO golden row, so no floor is locked for them:\n  {}",
             undeclared.len(),
-            undeclared.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n  ")
+            undeclared
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n  ")
         );
         eprintln!(
             "  The denominator of this gate is the CORPUS — projects discovered on disk —\n\
@@ -1498,7 +1520,9 @@ fn discovered(root: &Path) -> Vec<String> {
     for key in layer2_keys(root) {
         // Member D's declared path IS `examples/13-skyshop`, and member E is a
         // scenario over member A's directory. Both would otherwise double-count.
-        let already = ds.iter().any(|n| dir_for_key(root, n) == dir_for_key(root, &key));
+        let already = ds
+            .iter()
+            .any(|n| dir_for_key(root, n) == dir_for_key(root, &key));
         if !already {
             ds.push(key);
         }
@@ -1512,8 +1536,15 @@ fn discovered(root: &Path) -> Vec<String> {
 /// Directories a walk must not descend into: build output, generated FFI, and
 /// dependency caches. Descending into them would discover projects the compiler
 /// generated rather than projects a human wrote.
-const NOT_A_PROJECT_ROOT: &[&str] =
-    &["sky-out", "sky-out-rust", ".skycache", ".skydeps", "sky-ffi", "node_modules", "target"];
+const NOT_A_PROJECT_ROOT: &[&str] = &[
+    "sky-out",
+    "sky-out-rust",
+    ".skycache",
+    ".skydeps",
+    "sky-ffi",
+    "node_modules",
+    "target",
+];
 
 fn walk_projects(root: &Path, dir: &Path, out: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -1524,7 +1555,11 @@ fn walk_projects(root: &Path, dir: &Path, out: &mut Vec<String>) {
             let rel = rel.to_string_lossy().replace('\\', "/");
             // The golden's two key shapes: a bare name for a direct child of
             // `examples/`, a repo-relative path for anything else.
-            out.push(rel.strip_prefix("examples/").filter(|s| !s.contains('/')).map_or(rel.clone(), str::to_string));
+            out.push(
+                rel.strip_prefix("examples/")
+                    .filter(|s| !s.contains('/'))
+                    .map_or(rel.clone(), str::to_string),
+            );
         }
     }
     for entry in entries.filter_map(|e| e.ok()) {
@@ -1567,8 +1602,12 @@ fn layer2_keys(root: &Path) -> Vec<String> {
         if !in_member {
             continue;
         }
-        let Some(rest) = t.strip_prefix("path") else { continue };
-        let Some(v) = rest.split('=').nth(1) else { continue };
+        let Some(rest) = t.strip_prefix("path") else {
+            continue;
+        };
+        let Some(v) = rest.split('=').nth(1) else {
+            continue;
+        };
         let p = v.trim().trim_matches('"').to_string();
         if p.is_empty() {
             continue;
@@ -1703,7 +1742,10 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         );
         // #1 target IS a func; #4 narrows each element INTO a func slot via
         // narrowReflectValue (rt.go:2338) — the same per-element reflect cost.
-        assert_eq!(c.by_class.adapter, 2, "func-targeted: the Coerce and the AsListT");
+        assert_eq!(
+            c.by_class.adapter, 2,
+            "func-targeted: the Coerce and the AsListT"
+        );
         // #2's target is a Result that happens to CONTAIN a func: one assertion,
         // no thunk. #3 and #5 are plain container narrowings.
         assert_eq!(c.by_class.narrow, 3);
@@ -1732,12 +1774,20 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
     fn bless_refuses_to_raise_the_adapter_column() {
         let old = BTreeMap::from([(
             "p".to_string(),
-            Classed { adapter: 0, dispatch: 2, narrow: 10 },
+            Classed {
+                adapter: 0,
+                dispatch: 2,
+                narrow: 10,
+            },
         )]);
 
         let lowered = BTreeMap::from([(
             "p".to_string(),
-            Classed { adapter: 0, dispatch: 1, narrow: 40 },
+            Classed {
+                adapter: 0,
+                dispatch: 1,
+                narrow: 40,
+            },
         )]);
         assert!(
             assert_adapter_monotone(&old, &lowered).is_ok(),
@@ -1746,7 +1796,11 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
 
         let raised = BTreeMap::from([(
             "p".to_string(),
-            Classed { adapter: 1, dispatch: 2, narrow: 10 },
+            Classed {
+                adapter: 1,
+                dispatch: 2,
+                narrow: 10,
+            },
         )]);
         let err = assert_adapter_monotone(&old, &raised).expect_err("must refuse");
         assert!(err.contains("adapter 0 -> 1"), "got: {err}");
@@ -1768,11 +1822,31 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
     #[test]
     fn a_golden_row_that_could_not_be_measured_fails_the_gate() {
         let golden = BTreeMap::from([
-            ("emits".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 7 }),
-            ("blocked".to_string(), Classed { adapter: 2, dispatch: 0, narrow: 9 }),
+            (
+                "emits".to_string(),
+                Classed {
+                    adapter: 0,
+                    dispatch: 0,
+                    narrow: 7,
+                },
+            ),
+            (
+                "blocked".to_string(),
+                Classed {
+                    adapter: 2,
+                    dispatch: 0,
+                    narrow: 9,
+                },
+            ),
         ]);
         let measured = |n: &str, c: Classed| {
-            (n.to_string(), Counts { by_class: c, per_family: BTreeMap::new() })
+            (
+                n.to_string(),
+                Counts {
+                    by_class: c,
+                    per_family: BTreeMap::new(),
+                },
+            )
         };
 
         // HALF-MEASURED: `blocked` exists but has no FFI surface here. Every
@@ -1784,7 +1858,15 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             "`Github.Com.Google.Uuid` has no generated FFI surface".to_string(),
         )];
         assert_eq!(
-            diff_and_gate(&partial, &no_emit, &golden, &None, false, false, &corpus_of(&["emits", "blocked"])),
+            diff_and_gate(
+                &partial,
+                &no_emit,
+                &golden,
+                &None,
+                false,
+                false,
+                &corpus_of(&["emits", "blocked"])
+            ),
             1,
             "a run that measured 1 of 2 golden rows must NOT report PASS: the \
              unchecked row's floor is unratcheted for the whole run"
@@ -1796,7 +1878,15 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             measured("blocked", golden["blocked"]),
         ]);
         assert_eq!(
-            diff_and_gate(&full, &[], &golden, &None, false, false, &corpus_of(&["emits", "blocked"])),
+            diff_and_gate(
+                &full,
+                &[],
+                &golden,
+                &None,
+                false,
+                false,
+                &corpus_of(&["emits", "blocked"])
+            ),
             0,
             "with the whole corpus measured and every class at its floor, the \
              gate must pass — the coverage clause keys on the SHORTFALL"
@@ -1807,7 +1897,15 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         // path. Threading `skip` as a param is what makes this assertable AND
         // keeps the require-mode test above hermetic (it no longer reads the env).
         assert_eq!(
-            diff_and_gate(&partial, &no_emit, &golden, &None, false, true, &corpus_of(&["emits", "blocked"])),
+            diff_and_gate(
+                &partial,
+                &no_emit,
+                &golden,
+                &None,
+                false,
+                true,
+                &corpus_of(&["emits", "blocked"])
+            ),
             0,
             "SKY_LIVE_TESTS=skip downgrades an unmeasurable row to UNMEASURED, not a failure"
         );
@@ -1842,17 +1940,34 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
     /// projects with a `sky.toml` and a `src/` — stayed unlocked.
     #[test]
     fn a_discovered_project_with_no_golden_row_fails_even_when_it_did_not_emit() {
-        let golden =
-            BTreeMap::from([("a".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 1 })]);
+        let golden = BTreeMap::from([(
+            "a".to_string(),
+            Classed {
+                adapter: 0,
+                dispatch: 0,
+                narrow: 1,
+            },
+        )]);
         let counts = BTreeMap::from([(
             "a".to_string(),
-            Counts { by_class: golden["a"], per_family: BTreeMap::new() },
+            Counts {
+                by_class: golden["a"],
+                per_family: BTreeMap::new(),
+            },
         )]);
 
         // CONTROL: the corpus is exactly the golden's key. Every golden row
         // measured, every discovered project declared → PASS.
         assert_eq!(
-            diff_and_gate(&counts, &[], &golden, &None, false, false, &corpus_of(&["a"])),
+            diff_and_gate(
+                &counts,
+                &[],
+                &golden,
+                &None,
+                false,
+                false,
+                &corpus_of(&["a"])
+            ),
             0,
             "a fully declared, fully measured corpus must pass, or the assertion \
              below is about something else"
@@ -1881,15 +1996,27 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
     /// accounting is how a hole outlives the thing it excused.
     #[test]
     fn a_stale_exclusion_fails() {
-        let golden =
-            BTreeMap::from([("a".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 1 })]);
+        let golden = BTreeMap::from([(
+            "a".to_string(),
+            Classed {
+                adapter: 0,
+                dispatch: 0,
+                narrow: 1,
+            },
+        )]);
         let counts = BTreeMap::from([(
             "a".to_string(),
-            Counts { by_class: golden["a"], per_family: BTreeMap::new() },
+            Counts {
+                by_class: golden["a"],
+                per_family: BTreeMap::new(),
+            },
         )]);
         let mut corpus = corpus_of(&["a"]);
         corpus.stale_exclusions = vec!["examples/long-gone".to_string()];
-        assert_eq!(diff_and_gate(&counts, &[], &golden, &None, false, false, &corpus), 1);
+        assert_eq!(
+            diff_and_gate(&counts, &[], &golden, &None, false, false, &corpus),
+            1
+        );
     }
 
     /// The discovery walk must find the projects the old one-level `read_dir`
@@ -1908,7 +2035,10 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             "apps/ledger",
             "sky-bundled/console",
         ] {
-            assert!(found.iter().any(|k| k == expect), "discovery missed `{expect}`: {found:?}");
+            assert!(
+                found.iter().any(|k| k == expect),
+                "discovery missed `{expect}`: {found:?}"
+            );
         }
         // Every discovered key must be a real project directory, so a walk that
         // started inventing keys fails here rather than widening the corpus.
@@ -1933,17 +2063,42 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
     #[test]
     fn an_explicit_subset_run_is_not_a_coverage_shortfall() {
         let golden = BTreeMap::from([
-            ("a".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 1 }),
-            ("b".to_string(), Classed { adapter: 0, dispatch: 0, narrow: 2 }),
+            (
+                "a".to_string(),
+                Classed {
+                    adapter: 0,
+                    dispatch: 0,
+                    narrow: 1,
+                },
+            ),
+            (
+                "b".to_string(),
+                Classed {
+                    adapter: 0,
+                    dispatch: 0,
+                    narrow: 2,
+                },
+            ),
         ]);
         let only = Some(vec!["a".to_string()]);
         let counts = BTreeMap::from([(
             "a".to_string(),
-            Counts { by_class: golden["a"], per_family: BTreeMap::new() },
+            Counts {
+                by_class: golden["a"],
+                per_family: BTreeMap::new(),
+            },
         )]);
         let no_emit = vec![("b".to_string(), "filtered out".to_string())];
         assert_eq!(
-            diff_and_gate(&counts, &no_emit, &golden, &only, false, false, &corpus_of(&["a", "b"])),
+            diff_and_gate(
+                &counts,
+                &no_emit,
+                &golden,
+                &only,
+                false,
+                false,
+                &corpus_of(&["a", "b"])
+            ),
             0,
             "--only names the subset the operator wants; that is not a hole"
         );
@@ -1982,15 +2137,25 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
         let dir = std::env::temp_dir().join(format!("coerce-floor-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(dir.join("rust/crates/xtask"));
         let mut counts = BTreeMap::new();
-        let a = Classed { adapter: 1, dispatch: 2, narrow: 3 };
+        let a = Classed {
+            adapter: 1,
+            dispatch: 2,
+            narrow: 3,
+        };
         let b = Classed::default();
         counts.insert(
             "01-hello".to_string(),
-            Counts { by_class: a, per_family: BTreeMap::new() },
+            Counts {
+                by_class: a,
+                per_family: BTreeMap::new(),
+            },
         );
         counts.insert(
             "02-world".to_string(),
-            Counts { by_class: b, per_family: BTreeMap::new() },
+            Counts {
+                by_class: b,
+                per_family: BTreeMap::new(),
+            },
         );
         assert_eq!(bless_golden(&dir, &counts, &[]), 0);
         let loaded = load_golden(&dir).expect("golden readable");

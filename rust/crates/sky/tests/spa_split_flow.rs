@@ -59,13 +59,11 @@ fn multimodule_fixture_entry() -> PathBuf {
 }
 
 fn mixed_codec_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-mixed-codec/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-mixed-codec/src/Main.sky")
 }
 
 fn error_wire_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-error-wire/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-error-wire/src/Main.sky")
 }
 
 fn msg_with_wire_types_fixture_entry() -> PathBuf {
@@ -74,8 +72,7 @@ fn msg_with_wire_types_fixture_entry() -> PathBuf {
 }
 
 fn union_wire_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-union-wire/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-union-wire/src/Main.sky")
 }
 
 fn auto_record_codec_fixture_entry() -> PathBuf {
@@ -84,8 +81,7 @@ fn auto_record_codec_fixture_entry() -> PathBuf {
 }
 
 fn bare_adt_wire_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-bare-adt-wire/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-bare-adt-wire/src/Main.sky")
 }
 
 fn ssr_multimodule_fixture_dir() -> PathBuf {
@@ -108,33 +104,27 @@ fn explicit_rpc_fixture_entry() -> PathBuf {
 }
 
 fn server_chain_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-server-chain/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-server-chain/src/Main.sky")
 }
 
 fn guard_wrapper_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-guard-wrapper/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-guard-wrapper/src/Main.sky")
 }
 
 fn client_result_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-client-result/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-client-result/src/Main.sky")
 }
 
 fn guarded_chain_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-guarded-chain/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-guarded-chain/src/Main.sky")
 }
 
 fn multihop_chain_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-multihop-chain/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-multihop-chain/src/Main.sky")
 }
 
 fn derived_read_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-derived-read/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-derived-read/src/Main.sky")
 }
 
 /// The wasm bundle is content-hashed (main.<hash>.wasm), so check for that shape
@@ -256,7 +246,10 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
     }
     // The backend, by contrast, MUST carry the effect (it runs it server-side).
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
-    assert!(back.contains("saveN"), "backend must keep the server effect saveN");
+    assert!(
+        back.contains("saveN"),
+        "backend must keep the server effect saveN"
+    );
     assert!(
         back.contains("Server.api \"POST /_rpc/Persist\""),
         "backend must expose the generated RPC endpoint"
@@ -427,7 +420,10 @@ fn client_only_app_generates_a_buildable_static_only_backend() {
         ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "sky spa-split should succeed on a client-only app");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on a client-only app"
+    );
 
     // The backend has NO RPC routes (nothing was server-tainted) but MUST still
     // serve static assets — and the generated list must be well-formed.
@@ -468,7 +464,6 @@ fn client_only_app_generates_a_buildable_static_only_backend() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-
 /// A `Std.Native.*` effect is a CLIENT effect: it must stay in the wasm frontend,
 /// never become a server RPC. Native capabilities (`clipboardWrite`, `share`, …)
 /// reach a browser/webview-only platform API whose `//go:build !js` counterpart is
@@ -492,7 +487,10 @@ fn native_effects_stay_client_side_not_rpc() {
         ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "sky spa-split should succeed on a client-native app");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on a client-native app"
+    );
 
     // The frontend KEEPS the native kernel calls in its `update` — they run in the
     // wasm client. (Both are inside a `Cmd.perform (Native.… ) Done`.)
@@ -544,7 +542,10 @@ fn backend_default_port_matches_the_generated_shell() {
     assert!(
         back.contains("getenvOr \"PORT\" \"8951\""),
         "backend serverPort must default to 8951 (the shells' port), got:\n{}",
-        back.lines().filter(|l| l.contains("PORT")).collect::<Vec<_>>().join("\n")
+        back.lines()
+            .filter(|l| l.contains("PORT"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 
     // The shell generator (this crate's main.rs) must bake the SAME default, or
@@ -647,10 +648,18 @@ main =
 
     let out = proj.join("dist");
     let status = Command::new(SKY)
-        .args(["spa-split", proj.join("src/Main.sky").to_str().unwrap(), "--out", out.to_str().unwrap()])
+        .args([
+            "spa-split",
+            proj.join("src/Main.sky").to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "spa-split should succeed on an app with an external dep");
+    assert!(
+        status.success(),
+        "spa-split should succeed on an app with an external dep"
+    );
 
     // The generated frontend must declare the dep AND carry its .skydeps source.
     let front_toml = std::fs::read_to_string(out.join("frontend/sky.toml")).unwrap();
@@ -659,7 +668,10 @@ main =
         "generated frontend manifest must carry [dependencies], got:\n{front_toml}"
     );
     assert!(
-        out.join("frontend/.skydeps").join(slug).join("src/Ext/Greet.sky").is_file(),
+        out.join("frontend/.skydeps")
+            .join(slug)
+            .join("src/Ext/Greet.sky")
+            .is_file(),
         "generated frontend must carry the .skydeps source tree"
     );
     // And the same for the backend.
@@ -676,7 +688,10 @@ main =
             .current_dir(out.join("frontend"))
             .status()
             .expect("run sky build (frontend)");
-        assert!(build.success(), "generated frontend must build with the external import resolved");
+        assert!(
+            build.success(),
+            "generated frontend must build with the external import resolved"
+        );
     }
     let _ = std::fs::remove_dir_all(&proj);
 }
@@ -704,7 +719,10 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
         ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "sky spa-split should succeed on the todos app");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on the todos app"
+    );
 
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
@@ -717,8 +735,7 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
         "ToggleReq must carry the typed Msg arg `id : Int`:\n{shared}"
     );
     assert!(
-        shared.contains("toggleReqCodec")
-            && shared.contains("Codec.field \"id\" .id Codec.int"),
+        shared.contains("toggleReqCodec") && shared.contains("Codec.field \"id\" .id Codec.int"),
         "toggleReqCodec must encode the Msg arg with a real codec"
     );
     // Backend RECONSTRUCTS the Msg with the wire arg, not a bare ctor.
@@ -743,7 +760,9 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
     );
     // The user's type + codecs are COPIED into Shared (so both projects share one).
     assert!(
-        shared.contains("type alias Todo =") && shared.contains("todoCodec =") && shared.contains("todoListCodec ="),
+        shared.contains("type alias Todo =")
+            && shared.contains("todoCodec =")
+            && shared.contains("todoListCodec ="),
         "Shared must copy the user's Todo type + todoCodec + todoListCodec"
     );
     // …and therefore NOT be re-declared in either project's Main (duplicate def).
@@ -780,15 +799,24 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
         .status()
         .expect("run sky build (backend)");
     assert!(backend_build.success(), "todos backend must build natively");
-    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend produces sky-out/app"
+    );
 
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
         .current_dir(out.join("frontend"))
         .status()
         .expect("run sky build --target web (frontend)");
-    assert!(frontend_build.success(), "todos frontend must build to wasm");
-    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+    assert!(
+        frontend_build.success(),
+        "todos frontend must build to wasm"
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -825,7 +853,8 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
 
     // --- Module routing: pure `Domain` → both trees, effectful `Store` → backend only. ---
     assert!(
-        out.join("backend/src/Domain.sky").is_file() && out.join("frontend/src/Domain.sky").is_file(),
+        out.join("backend/src/Domain.sky").is_file()
+            && out.join("frontend/src/Domain.sky").is_file(),
         "the PURE Domain module must be copied into BOTH trees"
     );
     assert!(
@@ -863,7 +892,14 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
     );
 
     // --- SECURITY: no server effect / tainted helper / effectful module in the client. ---
-    for needle in ["File.", "loadTodos", "saveTodos", "Store.", "Db.", "System."] {
+    for needle in [
+        "File.",
+        "loadTodos",
+        "saveTodos",
+        "Store.",
+        "Db.",
+        "System.",
+    ] {
         assert!(
             !front.contains(needle),
             "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`"
@@ -882,7 +918,9 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
 
     // --- The backend keeps the effects + reconstructs the Msg-arg RPCs. ---
     assert!(
-        std::fs::read_to_string(out.join("backend/src/Store.sky")).unwrap().contains("File."),
+        std::fs::read_to_string(out.join("backend/src/Store.sky"))
+            .unwrap()
+            .contains("File."),
         "backend Store must keep the File effect (it runs it server-side)"
     );
     assert!(
@@ -905,16 +943,28 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
         .current_dir(out.join("backend"))
         .status()
         .expect("run sky build (backend)");
-    assert!(backend_build.success(), "multi-module backend must build natively");
-    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+    assert!(
+        backend_build.success(),
+        "multi-module backend must build natively"
+    );
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend produces sky-out/app"
+    );
 
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
         .current_dir(out.join("frontend"))
         .status()
         .expect("run sky build --target web (frontend)");
-    assert!(frontend_build.success(), "multi-module frontend must build to wasm");
-    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+    assert!(
+        frontend_build.success(),
+        "multi-module frontend must build to wasm"
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1018,7 +1068,10 @@ fn splits_a_module_that_co_locates_msg_with_its_wire_types() {
         backend_build.success(),
         "backend must build natively (proves Types.Item unifies with Shared.Item on the RPC fold)"
     );
-    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend produces sky-out/app"
+    );
 
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
@@ -1029,7 +1082,10 @@ fn splits_a_module_that_co_locates_msg_with_its_wire_types() {
         frontend_build.success(),
         "frontend must build to wasm (proves the client-side fold unifies too)"
     );
-    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1074,7 +1130,9 @@ fn splits_a_module_whose_wire_rides_a_nominal_union_by_owning_it_in_shared() {
     // --- Shared declares `Page` ONCE (the single definition) and never imports
     //     the Msg module `Types`. ---
     assert!(
-        shared.contains("type Page") && shared.contains("HomePage") && shared.contains("AccountPage"),
+        shared.contains("type Page")
+            && shared.contains("HomePage")
+            && shared.contains("AccountPage"),
         "Shared must declare the `Page` union (its single definition):\n{shared}"
     );
     assert!(
@@ -1100,7 +1158,10 @@ fn splits_a_module_whose_wire_rides_a_nominal_union_by_owning_it_in_shared() {
 
     // --- The Msg module imports `Page(..)` from Shared (its `Model` field + the
     //     `pathOf` helper reference it), and keeps its `Msg` union + `Model`. ---
-    for (label, src) in [("frontend Types", &front_types), ("backend Types", &back_types)] {
+    for (label, src) in [
+        ("frontend Types", &front_types),
+        ("backend Types", &back_types),
+    ] {
         assert!(
             src.contains("import Shared exposing (") && src.contains("Page(..)"),
             "{label} must import `Page(..)` from Shared:\n{src}"
@@ -1163,7 +1224,10 @@ fn splits_a_module_whose_wire_rides_a_nominal_union_by_owning_it_in_shared() {
         backend_build.success(),
         "backend must build natively (proves every `Page` reference resolves to Shared's single definition)"
     );
-    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend produces sky-out/app"
+    );
 
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
@@ -1174,7 +1238,10 @@ fn splits_a_module_whose_wire_rides_a_nominal_union_by_owning_it_in_shared() {
         frontend_build.success(),
         "frontend must build to wasm (proves the client-side fold resolves to Shared.Page too)"
     );
-    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1253,11 +1320,15 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
 
     // --- The backend keeps the effect + carries the codec via Shared (no clash). ---
     assert!(
-        std::fs::read_to_string(out.join("backend/src/Data.sky")).unwrap().contains("File."),
+        std::fs::read_to_string(out.join("backend/src/Data.sky"))
+            .unwrap()
+            .contains("File."),
         "backend Data must keep the File effect (it runs it server-side)"
     );
     assert!(
-        back.contains("import Shared exposing (") && back.contains("Item") && back.contains("itemCodec"),
+        back.contains("import Shared exposing (")
+            && back.contains("Item")
+            && back.contains("itemCodec"),
         "backend Main imports Shared for the copied codec/type (explicit exposing list):\n{back}"
     );
 
@@ -1272,16 +1343,28 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
         .current_dir(out.join("backend"))
         .status()
         .expect("run sky build (backend)");
-    assert!(backend_build.success(), "mixed-codec backend must build natively");
-    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+    assert!(
+        backend_build.success(),
+        "mixed-codec backend must build natively"
+    );
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend produces sky-out/app"
+    );
 
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
         .current_dir(out.join("frontend"))
         .status()
         .expect("run sky build --target web (frontend)");
-    assert!(frontend_build.success(), "mixed-codec frontend must build to wasm");
-    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+    assert!(
+        frontend_build.success(),
+        "mixed-codec frontend must build to wasm"
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1357,16 +1440,28 @@ fn wires_a_result_error_payload_through_the_stdlib_error_codec() {
         .current_dir(out.join("backend"))
         .status()
         .expect("run sky build (backend)");
-    assert!(backend_build.success(), "error-wire backend must build natively");
-    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+    assert!(
+        backend_build.success(),
+        "error-wire backend must build natively"
+    );
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend produces sky-out/app"
+    );
 
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
         .current_dir(out.join("frontend"))
         .status()
         .expect("run sky build --target web (frontend)");
-    assert!(frontend_build.success(), "error-wire frontend must build to wasm");
-    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+    assert!(
+        frontend_build.success(),
+        "error-wire frontend must build to wasm"
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1410,8 +1505,7 @@ fn auto_derives_a_record_codec_for_a_plain_record_wire_field() {
         "Shared must synthesise a NOMINALLY-annotated blank `blankReceipt_ : Receipt` (an inline unannotated literal erases element types):\n{shared}"
     );
     assert!(
-        shared.contains("autoReceiptCodec_ =")
-            && shared.contains("Codec.auto blankReceipt_"),
+        shared.contains("autoReceiptCodec_ =") && shared.contains("Codec.auto blankReceipt_"),
         "Shared must derive `autoReceiptCodec_ = Codec.auto blankReceipt_`:\n{shared}"
     );
     // --- The record (and its NESTED record) are copied into Shared. ---
@@ -1425,7 +1519,12 @@ fn auto_derives_a_record_codec_for_a_plain_record_wire_field() {
         "the `Result Error Receipt` field must wire `Codec.result Codec.error autoReceiptCodec_`:\n{shared}"
     );
     // --- The mixed field defaults are sound (String/Int/Maybe/List/nested). ---
-    for needle in ["orderId = \"\"", "amountMinor = 0", "note = Nothing", "tags = []"] {
+    for needle in [
+        "orderId = \"\"",
+        "amountMinor = 0",
+        "note = Nothing",
+        "tags = []",
+    ] {
         assert!(
             shared.contains(needle),
             "blankReceipt_ must default `{needle}`:\n{shared}"
@@ -1452,14 +1551,20 @@ fn auto_derives_a_record_codec_for_a_plain_record_wire_field() {
         backend_build.success(),
         "auto-record-codec backend must build natively (the derived codec must type-check)"
     );
-    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend produces sky-out/app"
+    );
 
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
         .current_dir(out.join("frontend"))
         .status()
         .expect("run sky build --target web (frontend)");
-    assert!(frontend_build.success(), "auto-record-codec frontend must build to wasm");
+    assert!(
+        frontend_build.success(),
+        "auto-record-codec frontend must build to wasm"
+    );
     assert!(
         dist_has_wasm(&out.join("frontend/dist")),
         "frontend stages a hashed main.<hash>.wasm"
@@ -1529,7 +1634,10 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
         ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "sky spa-split should succeed on the push fixture");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on the push fixture"
+    );
 
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
@@ -1582,7 +1690,10 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
         .status()
         .expect("run sky build (backend)");
     assert!(backend_build.success(), "push backend must build natively");
-    assert!(out.join("backend/sky-out/app").is_file(), "backend produces sky-out/app");
+    assert!(
+        out.join("backend/sky-out/app").is_file(),
+        "backend produces sky-out/app"
+    );
 
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
@@ -1590,7 +1701,10 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
         .status()
         .expect("run sky build --target web (frontend)");
     assert!(frontend_build.success(), "push frontend must build to wasm");
-    assert!(dist_has_wasm(&out.join("frontend/dist")), "frontend stages a hashed main.<hash>.wasm");
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
 
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1661,7 +1775,11 @@ fn explicit_spa_rpc_branch_stays_client_not_a_synthesized_model_rpc() {
     // Nothing anywhere synthesized an `AddItemReq` / `AddItemResp` wire record.
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
-    for (name, text) in [("shared", &shared), ("backend", &back), ("frontend", &front)] {
+    for (name, text) in [
+        ("shared", &shared),
+        ("backend", &back),
+        ("frontend", &front),
+    ] {
         assert!(
             !text.contains("AddItemReq") && !text.contains("AddItemResp"),
             "no synthesized AddItemReq/AddItemResp wire record should exist in {name}"
@@ -1692,7 +1810,10 @@ fn explicit_spa_rpc_branch_stays_client_not_a_synthesized_model_rpc() {
         .current_dir(out.join("frontend"))
         .status()
         .expect("run sky build --target web (frontend)");
-    assert!(frontend_build.success(), "explicit-RPC frontend must build to wasm");
+    assert!(
+        frontend_build.success(),
+        "explicit-RPC frontend must build to wasm"
+    );
     assert!(
         dist_has_wasm(&out.join("frontend/dist")),
         "frontend stages a hashed main.<hash>.wasm"
@@ -1759,9 +1880,13 @@ fn web_app_target_wraps_ui_element_view_despite_webdefaults() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "BUG-1: --target web:app must build end-to-end:\n{log}");
     assert!(
-        proj.join(".skyapp/web-app/.split/backend/sky-out/app").is_file(),
+        output.status.success(),
+        "BUG-1: --target web:app must build end-to-end:\n{log}"
+    );
+    assert!(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/app")
+            .is_file(),
         "backend binary must be built:\n{log}"
     );
     assert!(
@@ -1896,7 +2021,15 @@ main =
     // dropped-builder warning — a doc/spec generator is not a build. Same
     // fixture (it drops `withOnKey`), via the diagram staging path.
     let doc = Command::new(SKY)
-        .args(["doc", "--diagram", "journey", "--target", "web:app", "--format", "md"])
+        .args([
+            "doc",
+            "--diagram",
+            "journey",
+            "--target",
+            "web:app",
+            "--format",
+            "md",
+        ])
         .current_dir(&proj)
         .output()
         .expect("run sky doc --diagram journey");
@@ -2099,7 +2232,10 @@ fn web_app_carries_sibling_module_view_and_head_into_the_client() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "CARRY: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "CARRY: --target web:app must build end-to-end:\n{log}"
+    );
     assert!(
         dist_has_wasm(&proj.join(".skyapp/web-app/.split/frontend/dist")),
         "CARRY: the frontend wasm must be staged:\n{log}"
@@ -2204,7 +2340,10 @@ fn web_app_rejects_server_tainted_view_with_a_clear_diagnostic() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    assert!(!output.status.success(), "a server-tainted view must fail the build:\n{log}");
+    assert!(
+        !output.status.success(),
+        "a server-tainted view must fail the build:\n{log}"
+    );
     // The confusing pre-fix symptom must be gone.
     assert!(
         !log.contains("Undefined name: spaView_"),
@@ -2324,9 +2463,13 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "SSR-P1: --target web:app must build end-to-end:\n{log}");
     assert!(
-        proj.join(".skyapp/web-app/.split/backend/sky-out/app").is_file(),
+        output.status.success(),
+        "SSR-P1: --target web:app must build end-to-end:\n{log}"
+    );
+    assert!(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/app")
+            .is_file(),
         "backend binary must be built:\n{log}"
     );
     assert!(
@@ -2409,7 +2552,10 @@ fn spa_ssr_settles_per_route_onnavigate_data() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "fix 2: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "fix 2: --target web:app must build end-to-end:\n{log}"
+    );
     let backend_dir = proj.join(".skyapp/web-app/.split/backend");
     let app_bin = backend_dir.join("sky-out/app");
     assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
@@ -2469,8 +2615,12 @@ fn spa_ssr_settles_per_route_onnavigate_data() {
     );
     // / has no per-route onNavigate data → empty body (proves per-route, not global).
     let home_app = {
-        let s = home_body.find(r#"<div id="app""#).expect("home #app must exist");
-        let e = home_body.find(r#"<script id="sky-model""#).unwrap_or(home_body.len());
+        let s = home_body
+            .find(r#"<div id="app""#)
+            .expect("home #app must exist");
+        let e = home_body
+            .find(r#"<script id="sky-model""#)
+            .unwrap_or(home_body.len());
         &home_body[s..e]
     };
     assert!(
@@ -2577,7 +2727,10 @@ fn spa_guard_is_enforced_server_side_on_rpc() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "fix 5: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "fix 5: --target web:app must build end-to-end:\n{log}"
+    );
     let backend_dir = proj.join(".skyapp/web-app/.split/backend");
     let app_bin = backend_dir.join("sky-out/app");
     assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
@@ -2664,8 +2817,9 @@ fn web_app_sibling_update_with_rpc_error_builds() {
 
     // The sibling `Logic` module is REGENERATED in the frontend (bug #4c): its
     // `Save` arm becomes an RPC and the `AppliedSave` fold arm is present.
-    let front_logic = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Logic.sky"))
-        .expect("the regenerated frontend Logic module must exist");
+    let front_logic =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Logic.sky"))
+            .expect("the regenerated frontend Logic module must exist");
     assert!(
         front_logic.contains("Spa.postJson") && front_logic.contains("/_rpc/Save"),
         "bug #4c: the sibling `update`'s Save arm must become an RPC in the frontend:\n{front_logic}"
@@ -2764,8 +2918,9 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
         "bug #1: the backend must reconstruct `note` from the request payload, not default it:\n{backend}"
     );
 
-    let frontend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
-        .expect("generated frontend entry must exist");
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+            .expect("generated frontend entry must exist");
     assert!(
         frontend.contains("note = model.note"),
         "bug #1: the client must send its own `note` in the request:\n{frontend}"
@@ -2776,7 +2931,10 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "bug #1: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "bug #1: --target web:app must build end-to-end:\n{log}"
+    );
     let backend_dir = proj.join(".skyapp/web-app/.split/backend");
     let app_bin = backend_dir.join("sky-out/app");
     assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
@@ -2808,7 +2966,10 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
     let _ = std::fs::remove_dir_all(&proj);
 
     let (code, body) = posted.expect("POST /_rpc/Act should return");
-    assert_eq!(code, 200, "bug #1: a valid /_rpc/Act must return 200; body {body:?}");
+    assert_eq!(
+        code, 200,
+        "bug #1: a valid /_rpc/Act must return 200; body {body:?}"
+    );
     assert!(
         body.contains("\"note\":\"keep\""),
         "bug #1: the preserved `note` must survive the round-trip (not the empty default), was {body:?}"
@@ -2922,13 +3083,20 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "SSR-P3: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "SSR-P3: --target web:app must build end-to-end:\n{log}"
+    );
     let backend_dir = proj.join(".skyapp/web-app/.split/backend");
     let app_bin = backend_dir.join("sky-out/app");
     assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
     // Stage the data the settle reads (init: File.readFile "data/items.json").
     std::fs::create_dir_all(backend_dir.join("data")).unwrap();
-    std::fs::copy(proj.join("data/items.json"), backend_dir.join("data/items.json")).unwrap();
+    std::fs::copy(
+        proj.join("data/items.json"),
+        backend_dir.join("data/items.json"),
+    )
+    .unwrap();
 
     let port = 8973u16;
     let log_path = backend_dir.join("server.log");
@@ -2988,8 +3156,12 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     // data is resolved once and the Home *view* simply does not display it.) So
     // assert on the rendered body region, not the whole document.
     let home_app = {
-        let s = home_body.find(r#"<div id="app""#).expect("home #app must exist");
-        let e = home_body.find(r#"<script id="sky-model""#).unwrap_or(home_body.len());
+        let s = home_body
+            .find(r#"<div id="app""#)
+            .expect("home #app must exist");
+        let e = home_body
+            .find(r#"<script id="sky-model""#)
+            .unwrap_or(home_body.len());
         &home_body[s..e]
     };
     assert!(
@@ -3037,7 +3209,10 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "deep-link fixture must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "deep-link fixture must build end-to-end:\n{log}"
+    );
     let backend_dir = proj.join(".skyapp/web-app/.split/backend");
     let app_bin = backend_dir.join("sky-out/app");
     assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
@@ -3134,7 +3309,10 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "deep-link fixture must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "deep-link fixture must build end-to-end:\n{log}"
+    );
     let backend_dir = proj.join(".skyapp/web-app/.split/backend");
     let app_bin = backend_dir.join("sky-out/app");
     assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
@@ -3163,7 +3341,10 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
 
     // An unmatched deep path SSRs the NotFound page — 200, not a bare 404.
     let (code, ctype) = unknown_status.expect("GET unknown path should answer");
-    assert_eq!(code, 200, "unmatched path must SSR NotFound (200), got {code} ({ctype})");
+    assert_eq!(
+        code, 200,
+        "unmatched path must SSR NotFound (200), got {code} ({ctype})"
+    );
     assert!(
         ctype.starts_with("text/html"),
         "the NotFound SSR must be text/html, got {ctype}"
@@ -3182,7 +3363,10 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
 
     // A REAL asset is NOT shadowed by the fallback: still 200 JavaScript.
     let (acode, actype) = asset.expect("GET /wasm_exec.js should answer");
-    assert_eq!(acode, 200, "/wasm_exec.js must still be 200, got {acode} ({actype})");
+    assert_eq!(
+        acode, 200,
+        "/wasm_exec.js must still be 200, got {acode} ({actype})"
+    );
     assert!(
         actype.contains("javascript"),
         "/wasm_exec.js must serve as JavaScript, got {actype}"
@@ -3334,8 +3518,9 @@ fn spa_ssr_union_field_pins_and_registers_variants_so_hydration_is_lossless() {
     );
 
     // Always-run: the decoder derives from an annotated `spaModelBlank_` binding.
-    let frontend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
-        .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+            .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
     let frontend_code = strip_line_comments(&frontend);
     assert!(
         frontend_code.contains("spaModelBlank_ :")
@@ -3354,10 +3539,9 @@ fn spa_ssr_union_field_pins_and_registers_variants_so_hydration_is_lossless() {
         output.status.success(),
         "SSR union: --target web:app must build end-to-end:\n{log}"
     );
-    let fe_go = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
-    )
-    .unwrap_or_default();
+    let fe_go =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"))
+            .unwrap_or_default();
     if !fe_go.is_empty() {
         assert!(
             fe_go.contains("Status Main_Status"),
@@ -3409,10 +3593,8 @@ fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
     // ── The crux: the FRONTEND copy of the SIBLING `Boot` module is stripped to
     // `Cmd.none` and carries no `db` / `Db.*` / backend-only-module reference.
     // Holds without a Go toolchain (the `.sky` is generated before any go build). ──
-    let boot = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/src/Boot.sky"),
-    )
-    .unwrap_or_else(|_| panic!("generated frontend Boot.sky must exist:\n{log}"));
+    let boot = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Boot.sky"))
+        .unwrap_or_else(|_| panic!("generated frontend Boot.sky must exist:\n{log}"));
     let boot_code = strip_line_comments(&boot);
     assert!(
         boot_code.contains("Cmd.none"),
@@ -3432,10 +3614,9 @@ fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
     // The model DECODER is still emitted + wired (derived from the SIBLING init's
     // pure model), so the client boots from `#sky-model` — symmetric with the
     // backend embed.
-    let fe_main = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"),
-    )
-    .unwrap_or_else(|_| panic!("generated frontend Main.sky must exist:\n{log}"));
+    let fe_main =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+            .unwrap_or_else(|_| panic!("generated frontend Main.sky must exist:\n{log}"));
     let fe_main_code = strip_line_comments(&fe_main);
     assert!(
         fe_main_code.contains("spaModelDecoder_ jsonStr_ =")
@@ -3446,18 +3627,15 @@ fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
     );
 
     // ── The BACKEND keeps the `db` CAF (in `Conn`) + settles the read. ──
-    let backend = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/backend/src/Conn.sky"),
-    )
-    .unwrap_or_else(|_| panic!("generated backend Conn.sky must exist:\n{log}"));
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Conn.sky"))
+        .unwrap_or_else(|_| panic!("generated backend Conn.sky must exist:\n{log}"));
     assert!(
         backend.contains("db =") && backend.contains("Db.open"),
         "GAP-2: the `db` CAF must remain in the BACKEND `Conn` module:\n{backend}"
     );
-    let backend_main = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/backend/src/Main.sky"),
-    )
-    .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
+    let backend_main =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+            .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
     assert!(
         backend_main.contains("spaSsrSettle routed cmd0 update"),
         "GAP-2: the sibling init must be resolved GET-safe → a data-resolve settle:\n{backend_main}"
@@ -3473,10 +3651,9 @@ fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
         output.status.success(),
         "GAP-2: --target web:app must build end-to-end:\n{log}"
     );
-    let fe_go = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
-    )
-    .unwrap_or_default();
+    let fe_go =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"))
+            .unwrap_or_default();
     if !fe_go.is_empty() {
         assert!(
             !fe_go.contains("Db_query") && !fe_go.contains("Db_open"),
@@ -3520,16 +3697,20 @@ fn splits_mixed_page_and_api_routes() {
     // ── GAP-1 client leg: the synthesised client `spaRoutes_` carries ONLY the
     // page routes; it does NOT reference the server `apiRoutes` binding (which the
     // split drops) nor any api handler. Holds without a Go toolchain. ──
-    let fe_main = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"),
-    )
-    .unwrap_or_else(|_| panic!("generated frontend Main.sky must exist:\n{log}"));
+    let fe_main =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+            .unwrap_or_else(|_| panic!("generated frontend Main.sky must exist:\n{log}"));
     let fe_code = strip_line_comments(&fe_main);
     assert!(
         fe_code.contains("|> Spa.withRoutes spaRoutes_") && fe_code.contains("spaRoutes_ ="),
         "GAP-1: the frontend must define + wire the page-only `spaRoutes_`:\n{fe_main}"
     );
-    for needle in ["apiRoutes", "spaApiRoutes_", "handleItemsApi", "handleHealthz"] {
+    for needle in [
+        "apiRoutes",
+        "spaApiRoutes_",
+        "handleItemsApi",
+        "handleHealthz",
+    ] {
         assert!(
             !references_word_test(&fe_code, needle),
             "GAP-1: the client `spaRoutes_`/entry must NOT reference the api binding `{needle}`:\n{fe_main}"
@@ -3539,10 +3720,8 @@ fn splits_mixed_page_and_api_routes() {
     // ── GAP-1 backend leg: the api endpoints are mounted BACKEND-ONLY, via
     // `App.apiServerRoute spaApiRoutes_`, and `spaApiRoutes_` carries the api
     // route source. ──
-    let backend = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/backend/src/Main.sky"),
-    )
-    .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
     assert!(
         backend.contains("spaApiRoutes_ =")
             && backend.contains("++ List.concatMap App.apiServerRoute spaApiRoutes_"),
@@ -3563,10 +3742,8 @@ fn splits_mixed_page_and_api_routes() {
     );
 
     // ── GAP-2 within the mixed app: the sibling `Boot.init` is stripped. ──
-    let boot = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/src/Boot.sky"),
-    )
-    .unwrap_or_else(|_| panic!("generated frontend Boot.sky must exist:\n{log}"));
+    let boot = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Boot.sky"))
+        .unwrap_or_else(|_| panic!("generated frontend Boot.sky must exist:\n{log}"));
     let boot_code = strip_line_comments(&boot);
     assert!(
         boot_code.contains("Cmd.none")
@@ -3590,10 +3767,9 @@ fn splits_mixed_page_and_api_routes() {
         dist_has_wasm(&dist),
         "GAP-1: the wasm frontend must build to a content-hashed main.<hash>.wasm:\n{log}"
     );
-    let fe_go = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
-    )
-    .unwrap_or_default();
+    let fe_go =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"))
+            .unwrap_or_default();
     if !fe_go.is_empty() {
         assert!(
             !fe_go.contains("Db_query"),
@@ -3634,10 +3810,9 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let backend_raw = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/backend/src/Main.sky"),
-    )
-    .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
+    let backend_raw =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+            .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
     // Strip `--` comments: the fixture's own doc comment is copied verbatim into
     // the backend and mentions `Server.api "GET /admin/login" ssrHandler` in
     // prose — a `.contains` on the raw source would match THAT, not a real
@@ -3756,10 +3931,8 @@ fn declared_static_dir_is_propagated_into_the_frontend_dist() {
         asset.display()
     );
     // Byte-identical to the source asset (a real copy, not a stub).
-    let want = std::fs::read(
-        static_assets_fixture_dir().join("brand/screenshots/spa-web.png"),
-    )
-    .unwrap();
+    let want =
+        std::fs::read(static_assets_fixture_dir().join("brand/screenshots/spa-web.png")).unwrap();
     let got = std::fs::read(&asset).unwrap();
     assert_eq!(
         got, want,
@@ -3767,7 +3940,8 @@ fn declared_static_dir_is_propagated_into_the_frontend_dist() {
     );
     // Directory structure is preserved (the top-level asset too).
     assert!(
-        proj.join(".skyapp/web-app/.split/frontend/dist/brand/logo.png").is_file(),
+        proj.join(".skyapp/web-app/.split/frontend/dist/brand/logo.png")
+            .is_file(),
         "FINDING C: nested + top-level assets under the static dir must be copied"
     );
 
@@ -3780,21 +3954,23 @@ fn declared_static_dir_is_propagated_into_the_frontend_dist() {
     // catch-all, and the committed seed assets must be staged into `backend/brand`
     // so seed + runtime uploads serve from one place. Written by the generator,
     // so this holds without a Go toolchain.
-    let back = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/backend/src/Main.sky"),
-    )
-    .expect("the generated backend source must exist");
+    let back = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .expect("the generated backend source must exist");
     // Anchor inside the route block: the module doc comment copied to the top of
     // the backend mentions `Server.static "/" "../frontend/dist"`, so a naive
     // whole-file find would match the comment, not the route.
-    let listen = back.find("Server.listen").expect("backend must have Server.listen");
+    let listen = back
+        .find("Server.listen")
+        .expect("backend must have Server.listen");
     let routes = &back[listen..];
     let live = routes
         .find("Server.static \"/brand\" \"brand\"")
-        .unwrap_or_else(|| panic!(
-            "the backend must emit a LIVE static mount for runtime uploads \
+        .unwrap_or_else(|| {
+            panic!(
+                "the backend must emit a LIVE static mount for runtime uploads \
              (Server.static \"/brand\" \"brand\") — split log:\n{log}"
-        ));
+            )
+        });
     let catch_all = routes
         .find("\"../frontend/dist\"")
         .expect("the backend must still serve the dist catch-all");
@@ -3806,7 +3982,8 @@ fn declared_static_dir_is_propagated_into_the_frontend_dist() {
     // Committed seed assets are staged into backend/<dir> — the live dir the mount
     // serves and the cwd-relative dir the app's runtime writes land in.
     assert!(
-        proj.join(".skyapp/web-app/.split/backend/brand/screenshots/spa-web.png").is_file(),
+        proj.join(".skyapp/web-app/.split/backend/brand/screenshots/spa-web.png")
+            .is_file(),
         "FINDING C: committed seed assets must be staged into backend/<dir> so \
          the live mount serves them alongside runtime uploads"
     );
@@ -3875,8 +4052,9 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
     // CAF. `init`'s command is stripped to `Cmd.none`; no `db`/`Db.*` reference
     // survives into the client tree. This assertion holds without a Go toolchain
     // (the frontend `.sky` is generated before any `go build`). ──
-    let frontend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
-        .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+            .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
     // Scan CODE only — the generated frontend carries the module doc comment,
     // which legitimately mentions `db` / `Db.query`. Strip `--` line comments so
     // the assertions test references in code, not prose.
@@ -3942,12 +4120,14 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "SSR client-leg: --target web:app must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "SSR client-leg: --target web:app must build end-to-end:\n{log}"
+    );
     // The wasm frontend actually links with no `db`/`Db_*` symbol.
-    let fe_go = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
-    )
-    .unwrap_or_default();
+    let fe_go =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"))
+            .unwrap_or_default();
     if !fe_go.is_empty() {
         assert!(
             !fe_go.contains("Db_query") && !fe_go.contains("Db_open"),
@@ -4048,8 +4228,9 @@ fn spa_ssr_nested_record_model_blank_pins_the_nominal_type_so_hydration_is_lossl
     // literal that erases nested element types to `[]any`. This is the
     // deterministic RED→GREEN gate: pre-fix the frontend had no `spaModelBlank_`
     // binding and used the inline `Codec.auto ({ … })` form. ──
-    let frontend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
-        .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+            .unwrap_or_else(|_| panic!("generated frontend entry must exist:\n{log}"));
     let frontend_code = strip_line_comments(&frontend);
     assert!(
         frontend_code.contains("spaModelBlank_ :") && frontend_code.contains("spaModelBlank_ ="),
@@ -4080,10 +4261,9 @@ fn spa_ssr_nested_record_model_blank_pins_the_nominal_type_so_hydration_is_lossl
         "SSR nested-record: --target web:app must build end-to-end (the annotated \
          blank must type-check in the constrained frontend module):\n{log}"
     );
-    let fe_go = std::fs::read_to_string(
-        proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"),
-    )
-    .unwrap_or_default();
+    let fe_go =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/sky-out/main.go"))
+            .unwrap_or_default();
     if !fe_go.is_empty() {
         assert!(
             fe_go.contains("Posts []Main_Post_R"),
@@ -4376,8 +4556,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
             Some(c),
         )
     });
-    let admin_after_ok =
-        std::fs::read_to_string(backend_dir.join("admin.txt")).unwrap_or_default();
+    let admin_after_ok = std::fs::read_to_string(backend_dir.join("admin.txt")).unwrap_or_default();
 
     let _ = child.kill();
     let _ = child.wait();
@@ -4392,10 +4571,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
         admin_after_forge, "",
         "SECURITY: a forged wire session must NOT run the admin effect — admin.txt must be absent/empty, was {admin_after_forge:?}"
     );
-    assert!(
-        cookie.is_some(),
-        "login must issue a signed sky_sid cookie"
-    );
+    assert!(cookie.is_some(), "login must issue a signed sky_sid cookie");
     let (acode, _, _) = admin_ok.expect("cookie'd SaveAdmin should return");
     assert_eq!(acode, 200, "cookie'd SaveAdmin should answer 200");
     assert_eq!(
@@ -4408,7 +4584,14 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
 fn curl_status_ctype(port: u16, path: &str) -> Option<(u32, String)> {
     let url = format!("http://127.0.0.1:{port}{path}");
     let out = Command::new("curl")
-        .args(["-s", "-o", "/dev/null", "-w", "%{http_code} %{content_type}", &url])
+        .args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code} %{content_type}",
+            &url,
+        ])
         .output()
         .ok()?;
     let s = String::from_utf8_lossy(&out.stdout).to_string();
@@ -4494,7 +4677,10 @@ main =
         String::from_utf8_lossy(&output.stderr)
     );
 
-    assert!(!output.status.success(), "a broken synthesised entry must fail the build");
+    assert!(
+        !output.status.success(),
+        "a broken synthesised entry must fail the build"
+    );
     // The rendered diagnostic — an Elm-style TYPE ERROR block with a file:line
     // header — must be present (BUG-3: the count alone used to be all we got).
     assert!(
@@ -4556,8 +4742,9 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
 
     // GAP-A: the FRONTEND copy of the imported `Msg` module (`State`) carries the
     // generated `Applied<Msg>` variants + the `Shared` import they need.
-    let fe_state = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/State.sky"))
-        .expect("generated frontend State.sky must exist");
+    let fe_state =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/State.sky"))
+            .expect("generated frontend State.sky must exist");
     assert!(
         fe_state.contains("| AppliedSaveItem (Result Error SaveItemResp)"),
         "GAP-A: the `Applied<Msg>` variant must be injected into the imported `Msg` union:\n{fe_state}"
@@ -4570,11 +4757,14 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     // GAP-A security spine: the effectful `Store` module never reaches the
     // frontend, and no server effect (`writeFile`/`saveItems`) leaks into it.
     assert!(
-        !proj.join(".skyapp/web-app/.split/frontend/src/Store.sky").exists(),
+        !proj
+            .join(".skyapp/web-app/.split/frontend/src/Store.sky")
+            .exists(),
         "the backend-only `Store` module must NOT be emitted into the wasm frontend"
     );
-    let fe_main = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
-        .expect("generated frontend Main.sky must exist");
+    let fe_main =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+            .expect("generated frontend Main.sky must exist");
     // The `SaveItem` server branch is rewritten to an RPC (proving the effect
     // stays server-side); the frontend never calls `Store.saveItems` directly.
     assert!(
@@ -4584,8 +4774,9 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
 
     // GAP-A cycle guard: `Shared` must not re-import the TEA sibling modules
     // (they reach `Msg`, which imports `Shared`) — that would be an `E1010`.
-    let fe_shared = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Shared.sky"))
-        .expect("generated frontend Shared.sky must exist");
+    let fe_shared =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Shared.sky"))
+            .expect("generated frontend Shared.sky must exist");
     for sib in ["import State", "import Data", "import Routes"] {
         assert!(
             !fe_shared.contains(sib),
@@ -4617,7 +4808,10 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
-    assert!(output.status.success(), "--target web:app must build end-to-end:\n{log}");
+    assert!(
+        output.status.success(),
+        "--target web:app must build end-to-end:\n{log}"
+    );
 
     // GAP-A: the wasm frontend built to a hashed bundle (no `E1001`).
     let dist = proj.join(".skyapp/web-app/.split/frontend/dist");
@@ -4631,7 +4825,11 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
     // Stage the data the settle reads (init: File.readFile "data/items.json").
     std::fs::create_dir_all(backend_dir.join("data")).unwrap();
-    std::fs::copy(proj.join("data/items.json"), backend_dir.join("data/items.json")).unwrap();
+    std::fs::copy(
+        proj.join("data/items.json"),
+        backend_dir.join("data/items.json"),
+    )
+    .unwrap();
 
     let port = 8976u16;
     let log_path = backend_dir.join("server.log");
@@ -4683,8 +4881,12 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     );
     // Per-route body: `/` renders Home, not the Items view.
     let home_app = {
-        let s = home_body.find(r#"<div id="app""#).expect("home #app must exist");
-        let e = home_body.find(r#"<script id="sky-model""#).unwrap_or(home_body.len());
+        let s = home_body
+            .find(r#"<div id="app""#)
+            .expect("home #app must exist");
+        let e = home_body
+            .find(r#"<script id="sky-model""#)
+            .unwrap_or(home_body.len());
         &home_body[s..e]
     };
     assert!(
@@ -4699,8 +4901,7 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
 // ---------------------------------------------------------------------------
 
 fn sibling_update_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-sibling-update/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-sibling-update/src/Main.sky")
 }
 
 fn sibling_update_msg_fixture_entry() -> PathBuf {
@@ -4709,8 +4910,7 @@ fn sibling_update_msg_fixture_entry() -> PathBuf {
 }
 
 fn mixed_purity_fixture_entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/spa-mixed-purity/src/Main.sky")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-mixed-purity/src/Main.sky")
 }
 
 /// Strip Sky comments (`--` line, `{- -}` block) from `src` so the leak-grep
@@ -4770,7 +4970,9 @@ fn concat_sky_tree(dir: &std::path::Path) -> String {
                 stack.push(p);
             } else if p.extension().and_then(|s| s.to_str()) == Some("sky") {
                 out.push_str(&format!("\n----- {} -----\n", p.display()));
-                out.push_str(&strip_sky_comments(&std::fs::read_to_string(&p).unwrap_or_default()));
+                out.push_str(&strip_sky_comments(
+                    &std::fs::read_to_string(&p).unwrap_or_default(),
+                ));
             }
         }
     }
@@ -4844,7 +5046,16 @@ fn sibling_module_update_regenerates_in_its_own_frontend_copy() {
     // SECURITY — no server kernel / tainted helper / backend-only module anywhere
     // in the frontend tree.
     let front_tree = concat_sky_tree(&out.join("frontend"));
-    for needle in ["Db.", "persist", "loadTodos", "saveTodos", "import Conn", "Conn.", "System.getenv", "File."] {
+    for needle in [
+        "Db.",
+        "persist",
+        "loadTodos",
+        "saveTodos",
+        "import Conn",
+        "Conn.",
+        "System.getenv",
+        "File.",
+    ] {
         assert!(
             !front_tree.contains(needle),
             "SECURITY LEAK: frontend tree contains `{needle}`:\n{front_tree}"
@@ -4911,7 +5122,14 @@ fn sibling_module_update_and_msg_compose_in_one_frontend_copy() {
     );
 
     let front_tree = concat_sky_tree(&out.join("frontend"));
-    for needle in ["Db.", "persist", "import Conn", "Conn.", "System.getenv", "File."] {
+    for needle in [
+        "Db.",
+        "persist",
+        "import Conn",
+        "Conn.",
+        "System.getenv",
+        "File.",
+    ] {
         assert!(
             !front_tree.contains(needle),
             "SECURITY LEAK: frontend tree contains `{needle}`:\n{front_tree}"
@@ -4958,8 +5176,16 @@ fn mixed_module_emits_pure_subset_to_frontend_effects_stay_backend() {
     // SECURITY — no server binding anywhere in the frontend tree.
     let front_tree = concat_sky_tree(&out.join("frontend"));
     for needle in [
-        "File.", "System.getenv", "loadTodos", "saveTodos", "deepLoad", "midLoad",
-        "leafLoad", "dataDir", "loadEach", "Db.",
+        "File.",
+        "System.getenv",
+        "loadTodos",
+        "saveTodos",
+        "deepLoad",
+        "midLoad",
+        "leafLoad",
+        "dataDir",
+        "loadEach",
+        "Db.",
     ] {
         assert!(
             !front_tree.contains(needle),
@@ -5186,7 +5412,10 @@ fn wait_for_listening_substr(log_path: &std::path::Path, port: u16, tries: u32) 
         if let Ok(mut f) = std::fs::File::open(log_path) {
             let mut buf = String::new();
             if f.read_to_string(&mut buf).is_ok() {
-                if buf.lines().any(|l| l.to_lowercase().contains("listening") && l.contains(&needle)) {
+                if buf
+                    .lines()
+                    .any(|l| l.to_lowercase().contains("listening") && l.contains(&needle))
+                {
                     return true;
                 }
             }
@@ -5200,7 +5429,16 @@ fn wait_for_listening_substr(log_path: &std::path::Path, port: u16, tries: u32) 
 fn curl_post(port: u16, path: &str, data: &str) -> Option<String> {
     let url = format!("http://127.0.0.1:{port}{path}");
     let out = Command::new("curl")
-        .args(["-s", "-X", "POST", "-H", "Content-Type: application/json", "-d", data, &url])
+        .args([
+            "-s",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            data,
+            &url,
+        ])
         .output()
         .ok()?;
     Some(String::from_utf8_lossy(&out.stdout).to_string())
@@ -5237,7 +5475,10 @@ fn guard_wrapper_narrows_and_whole_model_msg_arg_send_is_explicit() {
         ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "sky spa-split should succeed on the guard-wrapper app");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on the guard-wrapper app"
+    );
 
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
@@ -5303,13 +5544,19 @@ fn guard_wrapper_narrows_and_whole_model_msg_arg_send_is_explicit() {
         .current_dir(out.join("backend"))
         .status()
         .expect("run sky build (backend)");
-    assert!(backend_build.success(), "guard-wrapper backend must build natively");
+    assert!(
+        backend_build.success(),
+        "guard-wrapper backend must build natively"
+    );
     let frontend_build = Command::new(SKY)
         .args(["build", "--target", "web", "src/Main.sky"])
         .current_dir(out.join("frontend"))
         .status()
         .expect("run sky build --target web (frontend)");
-    assert!(frontend_build.success(), "guard-wrapper frontend must build to wasm");
+    assert!(
+        frontend_build.success(),
+        "guard-wrapper frontend must build to wasm"
+    );
     assert!(
         dist_has_wasm(&out.join("frontend/dist")),
         "frontend build must stage a content-hashed main.<hash>.wasm"
@@ -5355,7 +5602,10 @@ fn client_result_perform_wires_task_result_to_client() {
         ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "sky spa-split should succeed on the client-result app");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on the client-result app"
+    );
 
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
@@ -5555,10 +5805,15 @@ fn client_result_e2e_post_upload_returns_task_result() {
     let url = format!("http://127.0.0.1:{port}/_rpc/Upload");
     let body = Command::new("curl")
         .args([
-            "-s", "-X", "POST",
-            "-H", "Content-Type: application/json",
-            "-H", "Authorization: Bearer test",
-            "-d", "{\"data\":\"hello-blob\"}",
+            "-s",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            "Authorization: Bearer test",
+            "-d",
+            "{\"data\":\"hello-blob\"}",
             &url,
         ])
         .output()
@@ -5612,7 +5867,10 @@ fn spa_guarded_chain_settles_server_side_and_prunes_the_wire() {
         ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "sky spa-split should succeed on the guarded-chain app");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on the guarded-chain app"
+    );
 
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
@@ -5754,7 +6012,10 @@ fn spa_multihop_chain_prunes_every_transitive_continuation() {
         ])
         .status()
         .expect("run sky spa-split");
-    assert!(status.success(), "sky spa-split should succeed on the multi-hop app");
+    assert!(
+        status.success(),
+        "sky spa-split should succeed on the multi-hop app"
+    );
 
     let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
     let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
@@ -5938,14 +6199,22 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
             b < l,
             "backend must run the boot setup BEFORE `Server.listen`:\n{back}"
         ),
-        _ => panic!("backend `main` must both force `spaBootSetup_` and call `Server.listen`:\n{back}"),
+        _ => panic!(
+            "backend `main` must both force `spaBootSetup_` and call `Server.listen`:\n{back}"
+        ),
     }
 
     // 3. The FRONTEND must NOT reference the server effect. `setupThing`,
     // `spaBootSetup_`, and the `Db.`/`File.`/`System.` kernels are server-tainted.
     let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
         .expect("generated frontend entry must exist");
-    for needle in ["setupThing", "spaBootSetup_", "File.mkdirAll", "Db.", "System."] {
+    for needle in [
+        "setupThing",
+        "spaBootSetup_",
+        "File.mkdirAll",
+        "Db.",
+        "System.",
+    ] {
         assert!(
             !front.contains(needle),
             "SECURITY LEAK: frontend/src/Main.sky contains `{needle}`:\n{front}"
@@ -5962,7 +6231,8 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
         "BOOT-SETUP: --target web:app must build end-to-end:\n{log}"
     );
     assert!(
-        proj.join(".skyapp/web-app/.split/backend/sky-out/app").is_file(),
+        proj.join(".skyapp/web-app/.split/backend/sky-out/app")
+            .is_file(),
         "backend binary must be built:\n{log}"
     );
     assert!(

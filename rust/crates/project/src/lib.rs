@@ -11,15 +11,14 @@
 // second definition of "the runtime's arity", and second definitions drift.
 pub mod abi_guard;
 mod build;
-pub mod go_cache;
+/// `sky config migrate` — the automatic legacy-`sky.toml` → typed-`config`
+/// rewriter. Reuses the ONE `config_migration::MIGRATIONS` table, never a copy.
+pub mod config_migrate;
 /// The ONE legacy-`sky.toml` → `withX` migration table (design §8.1). `pub` so
 /// the `config-migration` xtask gate can assert it covers every Sky.Config env
 /// target in `runtime-go/rt/sky_config.go` — a new builder cannot ship without
 /// its migration entry.
 pub mod config_migration;
-/// `sky config migrate` — the automatic legacy-`sky.toml` → typed-`config`
-/// rewriter. Reuses the ONE `config_migration::MIGRATIONS` table, never a copy.
-pub mod config_migrate;
 /// `sky doc --diagram components` — a read-only architecture/component diagram
 /// of a Sky app (module nodes + capability buckets + edges, with the Sky.Spa
 /// client/server split). Reads the resolved HIR; never lowers, emits, or writes.
@@ -30,13 +29,10 @@ pub mod diagram_svg;
 mod doc;
 mod driver;
 mod ffi_ops;
+pub mod go_cache;
 /// `sky doc --api openapi` — a valid OpenAPI 3.1 spec generated statically from
 /// the app's typed source, reusing the `diagram::wire` analysis.
 pub mod openapi;
-/// `sky spa-partition` — read-only Sky.Spa client/server partition analysis
-/// (Phase 1 of the auto-split; no codegen). See the module docstring.
-pub mod spa_partition;
-pub mod spa_split;
 /// `spa_diff_gen` — the type-directed value-generator EMITTER for the Sky.Spa
 /// differential split fuzzer (phase 1 of `docs/design/auto-testing.md`). Emits
 /// Sky generators from `ty::Ty`; runs nothing. See the module docstring.
@@ -46,6 +42,10 @@ pub mod spa_diff_gen;
 /// that run each checkable server branch two ways (direct vs the split plumbing)
 /// and assert they agree. See the module docstring.
 pub mod spa_diff_harness;
+/// `sky spa-partition` — read-only Sky.Spa client/server partition analysis
+/// (Phase 1 of the auto-split; no codegen). See the module docstring.
+pub mod spa_partition;
+pub mod spa_split;
 pub use build::{
     build_example, build_project, configured_bin_name, configured_source_root, db_driver_conflict,
     driver_for_dsn, emit_example_source, emit_example_warnings, enumerate_skydep_files,
@@ -58,8 +58,7 @@ pub use doc::{
 };
 pub use driver::{
     assets_root_for, declared_module_name, is_compiler_repo_root, module_name_from_path,
-    project_dir_for, repo_root_for, source_root_for_declared,
-    run_app,
+    project_dir_for, repo_root_for, run_app, source_root_for_declared,
 };
 /// Re-exported so `sky init` can scaffold an embedded template (`CLAUDE.md`)
 /// when running standalone, outside the repo tree (doc 09 §E).

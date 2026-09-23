@@ -276,13 +276,19 @@ pub fn check(root: &Path) -> i32 {
     let added: Vec<&String> = b.difference(&a).collect();
     let removed: Vec<&String> = a.difference(&b).collect();
     if !added.is_empty() {
-        println!("  {} case(s) the generator produces that the manifest lacks:", added.len());
+        println!(
+            "  {} case(s) the generator produces that the manifest lacks:",
+            added.len()
+        );
         for id in added.iter().take(20) {
             println!("    + {id}");
         }
     }
     if !removed.is_empty() {
-        println!("  {} case(s) the manifest declares that the generator no longer produces:", removed.len());
+        println!(
+            "  {} case(s) the manifest declares that the generator no longer produces:",
+            removed.len()
+        );
         for id in removed.iter().take(20) {
             println!("    - {id}");
         }

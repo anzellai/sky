@@ -53,8 +53,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The assertion functions of `Sky.Test`. `pass` is deliberately NOT here.
-const ASSERTION_FNS: &[&str] =
-    &["equal", "notEqual", "ok", "err", "expectErrorKind", "isTrue", "isFalse", "fail"];
+const ASSERTION_FNS: &[&str] = &[
+    "equal",
+    "notEqual",
+    "ok",
+    "err",
+    "expectErrorKind",
+    "isTrue",
+    "isFalse",
+    "fail",
+];
 
 pub fn run(args: &[String], repo_root: &Path) -> i32 {
     let check_only = args.iter().any(|a| a == "--check");
@@ -73,7 +81,10 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
     let removals = match parse_removals(&removals_path) {
         Ok(n) => n,
         Err(e) => {
-            eprintln!("xtask denominators: {} is malformed\n{e}", removals_path.display());
+            eprintln!(
+                "xtask denominators: {} is malformed\n{e}",
+                removals_path.display()
+            );
             return 1;
         }
     };
@@ -145,13 +156,19 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
 
     if let Some(parent) = out_path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("xtask denominators: cannot create {}: {e}", parent.display());
+            eprintln!(
+                "xtask denominators: cannot create {}: {e}",
+                parent.display()
+            );
             return 1;
         }
     }
     let text = format!("{}\n", serde_json::to_string_pretty(&current).unwrap());
     if let Err(e) = std::fs::write(&out_path, text) {
-        eprintln!("xtask denominators: cannot write {}: {e}", out_path.display());
+        eprintln!(
+            "xtask denominators: cannot write {}: {e}",
+            out_path.display()
+        );
         return 1;
     }
     println!("\nxtask denominators: wrote {}", out_path.display());
@@ -187,7 +204,9 @@ fn compute(repo_root: &Path) -> Result<Value, String> {
     let _ = std::fs::remove_dir_all(&tmp);
     let manifest: Value =
         serde_json::from_str(&manifest?).map_err(|e| format!("symbols.json is not JSON: {e}"))?;
-    let entries = manifest["entries"].as_array().ok_or("symbols.json has no `entries` array")?;
+    let entries = manifest["entries"]
+        .as_array()
+        .ok_or("symbols.json has no `entries` array")?;
 
     let mut m_modules = std::collections::BTreeSet::new();
     let mut m_types = 0usize;
@@ -204,11 +223,13 @@ fn compute(repo_root: &Path) -> Result<Value, String> {
     let per_module = project::stdlib_denominators(repo_root)
         .map_err(|e| format!("stdlib_denominators FAILED: {e}"))?;
 
-    let sum = |f: fn(&project::ModuleDenominator) -> usize| -> usize {
-        per_module.iter().map(f).sum()
-    };
-    let (f_entries, f_values, f_types) =
-        (sum(|m| m.filtered_entries), sum(|m| m.filtered_values), sum(|m| m.filtered_types));
+    let sum =
+        |f: fn(&project::ModuleDenominator) -> usize| -> usize { per_module.iter().map(f).sum() };
+    let (f_entries, f_values, f_types) = (
+        sum(|m| m.filtered_entries),
+        sum(|m| m.filtered_values),
+        sum(|m| m.filtered_types),
+    );
 
     // Cross-check: the manifest writer and the symbol extractor must agree.
     if (m_entries, m_values, m_types, m_modules.len())
@@ -223,8 +244,11 @@ fn compute(repo_root: &Path) -> Result<Value, String> {
         ));
     }
 
-    let (u_entries, u_values, u_types) =
-        (sum(|m| m.unfiltered_entries), sum(|m| m.unfiltered_values), sum(|m| m.unfiltered_types));
+    let (u_entries, u_values, u_types) = (
+        sum(|m| m.unfiltered_entries),
+        sum(|m| m.unfiltered_values),
+        sum(|m| m.unfiltered_types),
+    );
 
     let all_mods: Vec<&project::ModuleDenominator> =
         per_module.iter().filter(|m| m.exposes_all).collect();
@@ -232,8 +256,11 @@ fn compute(repo_root: &Path) -> Result<Value, String> {
     let all_entries: usize = all_mods.iter().map(|m| m.filtered_entries).sum();
     let explicit_mods = per_module.len() - all_mods.len();
     let explicit_entries = f_entries - all_entries;
-    let explicit_unfiltered: usize =
-        per_module.iter().filter(|m| !m.exposes_all).map(|m| m.unfiltered_entries).sum();
+    let explicit_unfiltered: usize = per_module
+        .iter()
+        .filter(|m| !m.exposes_all)
+        .map(|m| m.unfiltered_entries)
+        .sum();
 
     // --- tests ---------------------------------------------------------------
     let conformance = count_tests(&[repo_root.join("tests/conformance/tests")]);
@@ -412,8 +439,11 @@ fn metrics(v: &Value) -> BTreeMap<String, i64> {
                     if k.starts_with('_') || (prefix.is_empty() && k == "removals_accounted") {
                         continue;
                     }
-                    let key =
-                        if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+                    let key = if prefix.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{prefix}.{k}")
+                    };
                     walk(&key, child, out);
                 }
             }
@@ -426,8 +456,9 @@ fn metrics(v: &Value) -> BTreeMap<String, i64> {
 }
 
 fn same_metrics(a: &Value, b: &Value) -> bool {
-    metrics(a) == metrics(b) && a["stdlib"]["exposing_all"]["module_names"]
-        == b["stdlib"]["exposing_all"]["module_names"]
+    metrics(a) == metrics(b)
+        && a["stdlib"]["exposing_all"]["module_names"]
+            == b["stdlib"]["exposing_all"]["module_names"]
 }
 
 fn metric_diff(base: &Value, cur: &Value) -> String {
@@ -559,8 +590,10 @@ fn ratchet(base: &Value, cur: &Value, removals_now: usize) -> Result<(), String>
     if newly_accounted >= worst {
         return Ok(());
     }
-    let listed: Vec<String> =
-        decreases.iter().map(|(k, b, c)| format!("  {k}: {b} -> {c}  (-{})", b - c)).collect();
+    let listed: Vec<String> = decreases
+        .iter()
+        .map(|(k, b, c)| format!("  {k}: {b} -> {c}  (-{})", b - c))
+        .collect();
     Err(format!(
         "DENOMINATOR SHRANK — {} metric(s) decreased:\n{}\n\n\
          Largest single-metric decrease: {worst}. Newly accounted removals: {newly_accounted} \
@@ -634,10 +667,22 @@ fn print_report(v: &Value, removals: usize) {
     println!("xtask denominators — docs/ci-test-architecture-v2.md §5");
     println!("======================================================");
     println!("\nSTDLIB API  (source: api/symbols.json via the `sky doc --export` code path)");
-    println!("  modules ............................. {}", g(&["stdlib", "modules"]));
-    println!("  entries ............................. {}", g(&["stdlib", "entries"]));
-    println!("    values ............................ {}", g(&["stdlib", "values"]));
-    println!("    types ............................. {}", g(&["stdlib", "types"]));
+    println!(
+        "  modules ............................. {}",
+        g(&["stdlib", "modules"])
+    );
+    println!(
+        "  entries ............................. {}",
+        g(&["stdlib", "entries"])
+    );
+    println!(
+        "    values ............................ {}",
+        g(&["stdlib", "values"])
+    );
+    println!(
+        "    types ............................. {}",
+        g(&["stdlib", "types"])
+    );
     println!("\n  FILTERED vs UNFILTERED (reported separately; never averaged)");
     println!(
         "  unfiltered entries (all top-level decls)  {}",
@@ -649,8 +694,11 @@ fn print_report(v: &Value, removals: usize) {
     );
     let all_e = g(&["stdlib", "exposing_all", "entries"]);
     let total_e = g(&["stdlib", "entries"]);
-    println!("\n  `exposing (..)` modules ({} of {}) — UNFILTERED BY CONSTRUCTION:",
-        g(&["stdlib", "exposing_all", "modules"]), g(&["stdlib", "modules"]));
+    println!(
+        "\n  `exposing (..)` modules ({} of {}) — UNFILTERED BY CONSTRUCTION:",
+        g(&["stdlib", "exposing_all", "modules"]),
+        g(&["stdlib", "modules"])
+    );
     if let Some(names) = v["stdlib"]["exposing_all"]["module_names"].as_array() {
         for n in names {
             println!("      {}", n.as_str().unwrap_or("?"));
@@ -666,26 +714,52 @@ fn print_report(v: &Value, removals: usize) {
         g(&["stdlib", "explicit_exposing", "entries"])
     );
     println!("\nLANGUAGE  (source: syntax::SyntaxKind::KINDS + syntax::kind_class)");
-    println!("  syntax kinds ........................ {}", g(&["language", "syntax_kinds"]));
-    println!("  classified CONSTRUCT ................ {}", g(&["language", "constructs"]));
-    println!("  classified NON-construct ............ {}", g(&["language", "non_constructs"]));
-    for (label, key) in [("CONFORMANCE", "conformance"), ("EXAMPLE SUITES", "examples")] {
+    println!(
+        "  syntax kinds ........................ {}",
+        g(&["language", "syntax_kinds"])
+    );
+    println!(
+        "  classified CONSTRUCT ................ {}",
+        g(&["language", "constructs"])
+    );
+    println!(
+        "  classified NON-construct ............ {}",
+        g(&["language", "non_constructs"])
+    );
+    for (label, key) in [
+        ("CONFORMANCE", "conformance"),
+        ("EXAMPLE SUITES", "examples"),
+    ] {
         println!("\n{label}  (tests)");
         if key == "examples" {
-            println!("  suites .............................. {}", g(&["tests", key, "suites"]));
+            println!(
+                "  suites .............................. {}",
+                g(&["tests", key, "suites"])
+            );
         }
-        println!("  cases (Test.test) ................... {}", g(&["tests", key, "cases"]));
-        println!("  assertions .......................... {}", g(&["tests", key, "assertions"]));
+        println!(
+            "  cases (Test.test) ................... {}",
+            g(&["tests", key, "cases"])
+        );
+        println!(
+            "  assertions .......................... {}",
+            g(&["tests", key, "assertions"])
+        );
         println!(
             "  vacuous Test.pass ................... {}",
             g(&["tests", key, "vacuous_pass"])
         );
         if let Some(map) = v["tests"][key]["by_assertion_fn"].as_object() {
-            let mut pairs: Vec<(&String, i64)> =
-                map.iter().map(|(k, v)| (k, v.as_i64().unwrap_or(0))).collect();
+            let mut pairs: Vec<(&String, i64)> = map
+                .iter()
+                .map(|(k, v)| (k, v.as_i64().unwrap_or(0)))
+                .collect();
             pairs.sort_by(|a, b| b.1.cmp(&a.1));
-            let shown: Vec<String> =
-                pairs.iter().filter(|(_, n)| *n > 0).map(|(k, n)| format!("{k} {n}")).collect();
+            let shown: Vec<String> = pairs
+                .iter()
+                .filter(|(_, n)| *n > 0)
+                .map(|(k, n)| format!("{k} {n}"))
+                .collect();
             println!("    {}", shown.join(" · "));
         }
     }
@@ -707,7 +781,10 @@ mod tests {
     #[test]
     fn prose_and_bookkeeping_are_not_metrics() {
         let m = metrics(&doc(10, 3));
-        assert_eq!(m.keys().collect::<Vec<_>>(), vec!["stdlib.entries", "stdlib.modules"]);
+        assert_eq!(
+            m.keys().collect::<Vec<_>>(),
+            vec!["stdlib.entries", "stdlib.modules"]
+        );
     }
 
     #[test]
@@ -799,7 +876,10 @@ mod tests {
     fn the_aggregate_assertion_count_is_still_ratcheted() {
         let err = ratchet(&tests_doc(9, 32, 148), &tests_doc(9, 32, 147), 0).unwrap_err();
         assert!(err.contains("DENOMINATOR SHRANK"), "{err}");
-        assert!(err.contains("tests.examples.assertions: 148 -> 147"), "{err}");
+        assert!(
+            err.contains("tests.examples.assertions: 148 -> 147"),
+            "{err}"
+        );
     }
 
     /// Migrating a module from `exposing (..)` to an explicit `exposing (list)`

@@ -33,7 +33,9 @@ fn list(shard: Option<(u32, u32)>) -> Vec<String> {
         cmd.env("SWEEP_SHARD_INDEX", i.to_string())
             .env("SWEEP_SHARD_TOTAL", t.to_string());
     }
-    let out = cmd.output().expect("run example-sweep.sh --list (bash on PATH?)");
+    let out = cmd
+        .output()
+        .expect("run example-sweep.sh --list (bash on PATH?)");
     assert!(
         out.status.success(),
         "example-sweep.sh --list {:?} exited {:?}:\n{}",
@@ -93,7 +95,8 @@ fn shards_are_disjoint_and_total_for_each_n() {
 
         // Total: the union is exactly the full set.
         assert_eq!(
-            union_set, full,
+            union_set,
+            full,
             "N={total}: the union of shards is NOT the full example set.\n\
              missing from shards: {:?}\n\
              extra in shards: {:?}",

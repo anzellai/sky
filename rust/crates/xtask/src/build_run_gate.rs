@@ -408,7 +408,15 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     // friends) measure 10-32s in CI, so there is nothing to win there anyway.
     let concurrent = !do_verify && !bless;
     let rows: Vec<Row> = if concurrent {
-        build_run_parallel(root, &selected, do_verify, golden, bless, verbose, jobs(args))
+        build_run_parallel(
+            root,
+            &selected,
+            do_verify,
+            golden,
+            bless,
+            verbose,
+            jobs(args),
+        )
     } else {
         selected
             .iter()
@@ -2826,8 +2834,12 @@ mod golden_gate_tests {
     #[test]
     fn uses_bare_app_run_distinguishes_dispatcher_from_concrete_runners() {
         assert!(uses_bare_app_run("main =\n    App.run appDef\n"));
-        assert!(uses_bare_app_run("main = App.run (App.app { init = init })\n"));
-        assert!(uses_bare_app_run("    App.run\n        (App.app cfg |> App.web)\n"));
+        assert!(uses_bare_app_run(
+            "main = App.run (App.app { init = init })\n"
+        ));
+        assert!(uses_bare_app_run(
+            "    App.run\n        (App.app cfg |> App.web)\n"
+        ));
         // Concrete runners are NOT the bare dispatcher.
         assert!(!uses_bare_app_run("main = App.runTui appDef\n"));
         assert!(!uses_bare_app_run("main = App.runLive appDef\n"));
@@ -2849,7 +2861,9 @@ mod golden_gate_tests {
         )
         .unwrap();
         let toml = match target {
-            Some(t) => format!("name = \"x\"\nentry = \"src/Main.sky\"\n\n[app]\ntarget = \"{t}\"\n"),
+            Some(t) => {
+                format!("name = \"x\"\nentry = \"src/Main.sky\"\n\n[app]\ntarget = \"{t}\"\n")
+            }
             None => "name = \"x\"\nentry = \"src/Main.sky\"\n".to_string(),
         };
         std::fs::write(dir.join("sky.toml"), toml).unwrap();
@@ -2997,7 +3011,8 @@ mod golden_gate_tests {
     // — and none of them may classify Match.
     #[test]
     fn empty_golden_is_never_a_match() {
-        let root = std::env::temp_dir().join(format!("golden-gate-test-empty-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("golden-gate-test-empty-{}", std::process::id()));
         let _ = std::fs::create_dir_all(golden_dir(&root));
 
         // (a) empty golden + empty run — what 55-store-partial-update was.
@@ -3159,9 +3174,8 @@ mod gate_result_verdict_tests {
         // For every corpus size and shard count, the union of all shards is the
         // whole set and no example lands in two shards. A drop is a false-green:
         // an example no shard gates is silently unbuilt/unrun across the fan-out.
-        let names = |total: usize| -> Vec<String> {
-            (0..total).map(|i| format!("{i:03}-ex")).collect()
-        };
+        let names =
+            |total: usize| -> Vec<String> { (0..total).map(|i| format!("{i:03}-ex")).collect() };
         for total in [0usize, 1, 2, 3, 7, 60, 61] {
             for n in 1..=4usize {
                 let full = names(total);
@@ -3172,7 +3186,11 @@ mod gate_result_verdict_tests {
                 union.sort();
                 let mut expect = full.clone();
                 expect.sort();
-                assert_eq!(union.len(), expect.len(), "size={total} n={n}: overlap or drop");
+                assert_eq!(
+                    union.len(),
+                    expect.len(),
+                    "size={total} n={n}: overlap or drop"
+                );
                 assert_eq!(union, expect, "size={total} n={n}: union != corpus");
             }
         }

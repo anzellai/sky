@@ -94,12 +94,8 @@ fn doc_module_prints_signatures() {
 /// dependency). Returns (status_code, body) or None if the connection failed.
 fn http_get(port: u16, path: &str) -> Option<(u16, String)> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .ok()?;
-    let req = format!(
-        "GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-    );
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    let req = format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).ok()?;
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).ok()?;
@@ -219,8 +215,7 @@ fn doc_serve_answers_http_200() {
 /// (`System.getenv`), so it becomes `POST /_rpc/Save`.
 #[test]
 fn doc_diagram_wire_on_std_app_web_charts_rpc() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/diagram-app-web");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-app-web");
     let out = Command::new(SKY)
         .args(["doc", "--diagram", "wire", "--target", "web:app"])
         .current_dir(&fixture)
@@ -263,8 +258,7 @@ fn doc_diagram_wire_on_std_app_web_charts_rpc() {
 /// render the Client / Server lanes over the `/_rpc` boundary.
 #[test]
 fn doc_diagram_components_on_std_app_web_renders_lanes() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/diagram-app-web");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-app-web");
     let out = Command::new(SKY)
         .args(["doc", "--diagram", "components", "--target", "web:app"])
         .current_dir(&fixture)
@@ -279,14 +273,24 @@ fn doc_diagram_components_on_std_app_web_renders_lanes() {
     );
     // Default format is PlantUML: a C4 container view with the Browser and
     // Server trust-boundary zones and the `/_rpc` crossing between them.
-    assert!(stdout.starts_with("@startuml"), "not a PlantUML doc:\n{stdout}");
-    assert!(stdout.contains("rectangle \"Browser · untrusted\" <<boundary>>"), "no Browser zone:\n{stdout}");
-    assert!(stdout.contains("rectangle \"Server · trusted\" <<boundary>>"), "no Server zone:\n{stdout}");
+    assert!(
+        stdout.starts_with("@startuml"),
+        "not a PlantUML doc:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("rectangle \"Browser · untrusted\" <<boundary>>"),
+        "no Browser zone:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("rectangle \"Server · trusted\" <<boundary>>"),
+        "no Server zone:\n{stdout}"
+    );
     assert!(stdout.contains("/_rpc"), "no /_rpc crossing:\n{stdout}");
     // The title names the app (`sky.toml` `name`), not a machine-local file path:
     // a diagram is a shared artefact, and a path is noise (and leaks a layout).
     assert!(
-        stdout.contains("— diagram-app-web-fixture") && !stdout.contains(&*fixture.to_string_lossy()),
+        stdout.contains("— diagram-app-web-fixture")
+            && !stdout.contains(&*fixture.to_string_lossy()),
         "diagram title should use the sky.toml app name, not a file path:\n{stdout}"
     );
     assert!(
@@ -302,8 +306,7 @@ fn doc_diagram_components_on_std_app_web_renders_lanes() {
 /// cleaned up on the telemetry arm (run under `--target web:app`).
 #[test]
 fn doc_diagram_telemetry_no_sites_exits_zero() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/diagram-app-web");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-app-web");
     let out = Command::new(SKY)
         .args(["doc", "--diagram", "telemetry", "--target", "web:app"])
         .current_dir(&fixture)
@@ -354,11 +357,20 @@ fn doc_diagram_journey_on_skyforum_lists_pages_and_actions() {
     );
     // The page set (>= 2 pages), recovered from the `Page` union — the behaviour
     // graph renders one `## <Page>` section per page, not a `## Pages` table.
-    assert!(stdout.contains("## HomePage"), "missing HomePage section:\n{stdout}");
-    assert!(stdout.contains("## LoginPage"), "missing LoginPage section:\n{stdout}");
+    assert!(
+        stdout.contains("## HomePage"),
+        "missing HomePage section:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("## LoginPage"),
+        "missing LoginPage section:\n{stdout}"
+    );
     // At least one action, with a recovered navigation target. Actions are the
     // per-page edges now (`- `Navigate` → **…**`), not a `## Actions` table.
-    assert!(stdout.contains("`Navigate`"), "missing Navigate action:\n{stdout}");
+    assert!(
+        stdout.contains("`Navigate`"),
+        "missing Navigate action:\n{stdout}"
+    );
     // UpvotePost reroutes to LoginPage; the Live app has no /_rpc round-trip, so
     // its edge names the target page but carries no `/_rpc` lane chip.
     let upvote = stdout
@@ -382,10 +394,17 @@ fn doc_diagram_journey_on_skyforum_lists_pages_and_actions() {
 /// plain `/_rpc` table used to miss.
 #[test]
 fn doc_diagram_wire_charts_the_app_api_webhook() {
-    let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
     let out = Command::new(SKY)
-        .args(["doc", "--diagram", "wire", "--target", "web:app", "--format", "md"])
+        .args([
+            "doc",
+            "--diagram",
+            "wire",
+            "--target",
+            "web:app",
+            "--format",
+            "md",
+        ])
         .current_dir(&fixture)
         .stdin(std::process::Stdio::null())
         .output()
@@ -394,7 +413,10 @@ fn doc_diagram_wire_charts_the_app_api_webhook() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "wire failed:\n{stdout}{stderr}");
     // The /_rpc contract is still charted (the effectful `Save` branch).
-    assert!(stdout.contains("POST /_rpc/Save"), "missing /_rpc/Save:\n{stdout}");
+    assert!(
+        stdout.contains("POST /_rpc/Save"),
+        "missing /_rpc/Save:\n{stdout}"
+    );
     // The raw `App.api` webhook is charted in its own HTTP-endpoints section.
     assert!(
         stdout.contains("## HTTP endpoints (raw `App.api`, beside /_rpc)"),
@@ -414,12 +436,18 @@ fn doc_diagram_wire_charts_the_app_api_webhook() {
         .expect("spawn sky doc --diagram wire puml");
     let puml = String::from_utf8_lossy(&puml.stdout);
     assert!(puml.starts_with("@startuml"), "not puml:\n{puml}");
-    assert!(puml.contains("/webhooks/stripe"), "webhook missing from puml:\n{puml}");
+    assert!(
+        puml.contains("/webhooks/stripe"),
+        "webhook missing from puml:\n{puml}"
+    );
     assert!(
         puml.contains("note right of ep") && puml.contains("effects:"),
         "puml missing per-endpoint effects note:\n{puml}"
     );
-    assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged scratch not cleaned up"
+    );
 }
 
 /// `sky doc --diagram journey --target web:app` on the same app must split the
@@ -427,10 +455,17 @@ fn doc_diagram_wire_charts_the_app_api_webhook() {
 /// (`Save` is effectful via `System.getenv`; `Inc` is pure).
 #[test]
 fn doc_diagram_journey_splits_effectful_and_pure() {
-    let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
     let md = Command::new(SKY)
-        .args(["doc", "--diagram", "journey", "--target", "web:app", "--format", "md"])
+        .args([
+            "doc",
+            "--diagram",
+            "journey",
+            "--target",
+            "web:app",
+            "--format",
+            "md",
+        ])
         .current_dir(&fixture)
         .stdin(std::process::Stdio::null())
         .output()
@@ -451,19 +486,36 @@ fn doc_diagram_journey_splits_effectful_and_pure() {
         .lines()
         .find(|l| l.contains("`Inc`"))
         .unwrap_or_else(|| panic!("missing Inc action:\n{stdout}"));
-    assert!(inc.contains("client"), "Inc must be a pure client action:\n{inc}");
+    assert!(
+        inc.contains("client"),
+        "Inc must be a pure client action:\n{inc}"
+    );
     // The SVG is the trust-boundary swimlane DFD: client + server lanes and the
     // aggregated action flow crossing the boundary.
     let svg = Command::new(SKY)
-        .args(["doc", "--diagram", "journey", "--target", "web:app", "--format", "svg"])
+        .args([
+            "doc",
+            "--diagram",
+            "journey",
+            "--target",
+            "web:app",
+            "--format",
+            "svg",
+        ])
         .current_dir(&fixture)
         .stdin(std::process::Stdio::null())
         .output()
         .expect("spawn sky doc --diagram journey svg");
     let svg = String::from_utf8_lossy(&svg.stdout);
-    assert!(svg.contains("Browser client (wasm)"), "no client lane:\n{svg}");
+    assert!(
+        svg.contains("Browser client (wasm)"),
+        "no client lane:\n{svg}"
+    );
     assert!(svg.contains("Server (/_rpc)"), "no server lane:\n{svg}");
-    assert!(svg.contains("user actions"), "no aggregated action flow:\n{svg}");
+    assert!(
+        svg.contains("user actions"),
+        "no aggregated action flow:\n{svg}"
+    );
     // Default puml is a state diagram (pages as states).
     let puml = Command::new(SKY)
         .args(["doc", "--diagram", "journey", "--target", "web:app"])
@@ -473,18 +525,31 @@ fn doc_diagram_journey_splits_effectful_and_pure() {
         .expect("spawn sky doc --diagram journey puml");
     let puml = String::from_utf8_lossy(&puml.stdout);
     assert!(puml.contains("@startuml"), "not a puml doc:\n{puml}");
-    assert!(puml.contains("state \"HomePage\""), "no HomePage state:\n{puml}");
-    assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
+    assert!(
+        puml.contains("state \"HomePage\""),
+        "no HomePage state:\n{puml}"
+    );
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged scratch not cleaned up"
+    );
 }
 
 /// `sky doc --diagram components --target web:app` on the same app must list the
 /// real `Std.Db` table name inside the Database container.
 #[test]
 fn doc_diagram_components_lists_db_table_names() {
-    let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diagram-webhook");
     let md = Command::new(SKY)
-        .args(["doc", "--diagram", "components", "--target", "web:app", "--format", "md"])
+        .args([
+            "doc",
+            "--diagram",
+            "components",
+            "--target",
+            "web:app",
+            "--format",
+            "md",
+        ])
         .current_dir(&fixture)
         .stdin(std::process::Stdio::null())
         .output()
@@ -496,13 +561,24 @@ fn doc_diagram_components_lists_db_table_names() {
         "the Data store container must list the real table name:\n{stdout}"
     );
     let svg = Command::new(SKY)
-        .args(["doc", "--diagram", "components", "--target", "web:app", "--format", "svg"])
+        .args([
+            "doc",
+            "--diagram",
+            "components",
+            "--target",
+            "web:app",
+            "--format",
+            "svg",
+        ])
         .current_dir(&fixture)
         .stdin(std::process::Stdio::null())
         .output()
         .expect("spawn sky doc --diagram components svg");
     let svg = String::from_utf8_lossy(&svg.stdout);
-    assert!(svg.contains(">widgets<"), "table name inside the Database store:\n{svg}");
+    assert!(
+        svg.contains(">widgets<"),
+        "table name inside the Database store:\n{svg}"
+    );
     // Default puml carries the table name in the Database node label + the
     // effectful count on the /_rpc crossing.
     let puml = Command::new(SKY)
@@ -516,8 +592,14 @@ fn doc_diagram_components_lists_db_table_names() {
         puml.contains("database \"Database\\nwidgets\""),
         "puml Database node must list the table:\n{puml}"
     );
-    assert!(puml.contains("effectful"), "puml /_rpc edge must carry the effectful count:\n{puml}");
-    assert!(!fixture.join(".skyapp").exists(), "staged scratch not cleaned up");
+    assert!(
+        puml.contains("effectful"),
+        "puml /_rpc edge must carry the effectful count:\n{puml}"
+    );
+    assert!(
+        !fixture.join(".skyapp").exists(),
+        "staged scratch not cleaned up"
+    );
 }
 
 /// `--format mermaid` is retired: the CLI exits non-zero with a message naming
@@ -537,7 +619,10 @@ fn doc_diagram_mermaid_format_is_retired() {
         stderr.contains("mermaid was retired") && stderr.contains("puml"),
         "expected the retired-mermaid message:\n{stderr}"
     );
-    assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "no diagram should be printed");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).is_empty(),
+        "no diagram should be printed"
+    );
 }
 
 /// `--format svg` produces a self-contained, well-formed SVG on stdout.
@@ -551,8 +636,16 @@ fn doc_diagram_components_svg_is_wellformed() {
         .output()
         .expect("spawn sky doc --diagram components --format svg");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "svg render failed:\n{}", String::from_utf8_lossy(&out.stderr));
-    assert!(stdout.trim_start().starts_with("<svg"), "not an SVG:\n{}", &stdout[..stdout.len().min(200)]);
+    assert!(
+        out.status.success(),
+        "svg render failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.trim_start().starts_with("<svg"),
+        "not an SVG:\n{}",
+        &stdout[..stdout.len().min(200)]
+    );
     assert!(stdout.trim_end().ends_with("</svg>"), "SVG not closed");
     assert!(stdout.contains("<rect"), "SVG has no nodes");
 }
@@ -571,10 +664,20 @@ fn doc_diagram_out_writes_a_file() {
         .stdin(std::process::Stdio::null())
         .output()
         .expect("spawn sky doc --diagram components --out");
-    assert!(out.status.success(), "--out failed:\n{}", String::from_utf8_lossy(&out.stderr));
-    assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "stdout must be empty with --out");
+    assert!(
+        out.status.success(),
+        "--out failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).is_empty(),
+        "stdout must be empty with --out"
+    );
     let written = std::fs::read_to_string(&out_path).expect("--out file exists");
-    assert!(written.starts_with("@startuml"), "file is not a PlantUML doc:\n{written}");
+    assert!(
+        written.starts_with("@startuml"),
+        "file is not a PlantUML doc:\n{written}"
+    );
     let _ = std::fs::remove_file(&out_path);
 }
 
@@ -582,7 +685,8 @@ fn doc_diagram_out_writes_a_file() {
 /// endpoint map recovered from the resolved HIR: method + path + handler.
 #[test]
 fn doc_diagram_wire_on_http_server_charts_endpoint_map() {
-    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/15-http-server");
+    let project =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/15-http-server");
     assert!(
         project.join("src/Main.sky").exists(),
         "examples/15-http-server is a committed example and must be present"
@@ -595,16 +699,25 @@ fn doc_diagram_wire_on_http_server_charts_endpoint_map() {
         .expect("spawn sky doc --diagram wire");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "wire on http-server failed:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "wire on http-server failed:\n{stdout}{stderr}"
+    );
     assert!(
         stdout.contains("| Method | Path | Handler / page | Kind |"),
         "no endpoint map:\n{stdout}"
     );
-    assert!(stdout.contains("| GET | / | handleHome | http |"), "missing GET / route:\n{stdout}");
+    assert!(
+        stdout.contains("| GET | / | handleHome | http |"),
+        "missing GET / route:\n{stdout}"
+    );
     assert!(
         stdout.contains("| POST | /api/echo | handleEcho | http |"),
         "missing POST route:\n{stdout}"
     );
     // It is not a Spa app, so there is no /_rpc table.
-    assert!(!stdout.contains("| Endpoint |"), "an HTTP app has no /_rpc table:\n{stdout}");
+    assert!(
+        !stdout.contains("| Endpoint |"),
+        "an HTTP app has no /_rpc table:\n{stdout}"
+    );
 }

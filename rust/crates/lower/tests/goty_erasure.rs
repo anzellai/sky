@@ -45,13 +45,12 @@ fn reg(env: &mut TypeEnv, module: &str, name: &str, n: Nominal) {
 #[test]
 fn concrete_record_resolves_to_nominal_closed_and_open() {
     let mut env = TypeEnv::default();
-    env.record_fieldsets
-        .insert(vec!["count".into(), "name".into()], vec!["Main_Model_R".into()]);
+    env.record_fieldsets.insert(
+        vec!["count".into(), "name".into()],
+        vec!["Main_Model_R".into()],
+    );
 
-    let fields = vec![
-        field("count", app0("Int")),
-        field("name", app0("String")),
-    ];
+    let fields = vec![field("count", app0("Int")), field("name", app0("String"))];
     let closed = Ty::Record(fields.clone(), None);
     assert_eq!(
         sky_ty_to_go(&closed, &env),
@@ -94,12 +93,18 @@ fn record_with_dict_field_stays_nominal_and_dict_key_pinned() {
     // The Dict field's own lowering — value kept, key pinned to string.
     assert_eq!(
         sky_ty_to_go(&dict_ss, &env),
-        GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(GoTy::Bare(Prim::Str)))
+        GoTy::Map(
+            Box::new(GoTy::Bare(Prim::Str)),
+            Box::new(GoTy::Bare(Prim::Str))
+        )
     );
     let dict_is = Ty::App(Name::new("Dict"), vec![app0("Int"), app0("String")]);
     assert_eq!(
         sky_ty_to_go(&dict_is, &env),
-        GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(GoTy::Bare(Prim::Str))),
+        GoTy::Map(
+            Box::new(GoTy::Bare(Prim::Str)),
+            Box::new(GoTy::Bare(Prim::Str))
+        ),
         "Dict Int _ must still key on string (runtime stores stringified keys)"
     );
 }
@@ -178,11 +183,17 @@ fn fieldset_collision_selects_by_field_type() {
     );
     env.record_templates.insert(
         "User_EnvForm_R".into(),
-        vec![("key".into(), app0("String")), ("value".into(), app0("String"))],
+        vec![
+            ("key".into(), app0("String")),
+            ("value".into(), app0("String")),
+        ],
     );
     env.record_templates.insert(
         "Analytics_EventProp_R".into(),
-        vec![("key".into(), app0("String")), ("value".into(), app0("PropValue"))],
+        vec![
+            ("key".into(), app0("String")),
+            ("value".into(), app0("PropValue")),
+        ],
     );
 
     // {key:String, value:String} → the user's EnvForm (value:String).
@@ -198,7 +209,10 @@ fn fieldset_collision_selects_by_field_type() {
 
     // {key:String, value:PropValue} → the Analytics EventProp (value:PropValue).
     let prop_rec = Ty::Record(
-        vec![field("key", app0("String")), field("value", app0("PropValue"))],
+        vec![
+            field("key", app0("String")),
+            field("value", app0("PropValue")),
+        ],
         None,
     );
     assert_eq!(
@@ -245,7 +259,11 @@ fn opaque_and_kernel_handles_erase_to_any() {
         "Route",
         nominal("Server_Route", NominalKind::Iota, 0, true),
     );
-    assert_eq!(sky_ty_to_go(&app0("Route"), &env), GoTy::Any, "opaque handle → any");
+    assert_eq!(
+        sky_ty_to_go(&app0("Route"), &env),
+        GoTy::Any,
+        "opaque handle → any"
+    );
     assert_eq!(
         sky_ty_to_go(&Ty::App(Name::new("Cmd"), vec![app0("Msg")]), &env),
         GoTy::Any,
@@ -293,7 +311,12 @@ fn memo_does_not_serve_a_context_tainted_record_resolution() {
         let mut env = TypeEnv::default();
         // `Main_N_R` reachable as a NOMINAL (App path, never touches the cycle
         // guard), so `M`'s template field `g` resolves to it regardless of context.
-        reg(&mut env, "Main", "NNom", nominal("Main_N_R", NominalKind::Record, 0, false));
+        reg(
+            &mut env,
+            "Main",
+            "NNom",
+            nominal("Main_N_R", NominalKind::Record, 0, false),
+        );
         env.record_fieldsets
             .insert(vec!["f".into()], vec!["Main_N_R".into()]);
         env.record_fieldsets

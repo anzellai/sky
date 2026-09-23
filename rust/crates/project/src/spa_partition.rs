@@ -116,8 +116,27 @@ enum KernelClass {
 /// universal implementation mechanism of *every* kernel (pure and effect), so
 /// the effect lives in the symbol string, not the bare `Ffi` reference.
 const EFFECT_KERNELS: &[&str] = &[
-    "Db", "Auth", "File", "Server", "Process", "Io", "System", "RateLimit", "Middleware", "Http",
-    "Time", "Random", "Uuid", "Log", "Live", "Jobs", "Cli", "Tui", "Webview", "Context", "Image",
+    "Db",
+    "Auth",
+    "File",
+    "Server",
+    "Process",
+    "Io",
+    "System",
+    "RateLimit",
+    "Middleware",
+    "Http",
+    "Time",
+    "Random",
+    "Uuid",
+    "Log",
+    "Live",
+    "Jobs",
+    "Cli",
+    "Tui",
+    "Webview",
+    "Context",
+    "Image",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -337,7 +356,11 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
                 }
             }
             if let Expr::Var(Res::Kernel { module, func }) = &body.exprs[*callee] {
-                let m = module.as_str().rsplit('.').next().unwrap_or(module.as_str());
+                let m = module
+                    .as_str()
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(module.as_str());
                 // `Task.run <arg>` — an inline effect-execution site.
                 if m == "Task" && func.as_str() == "run" {
                     acc.inline_force = true;
@@ -431,11 +454,16 @@ fn record_ffi_symbol(sym: &str, acc: &mut Refs) {
         acc.inline_force = true;
     }
     let prefix = sym.split('_').next().unwrap_or(sym);
-    let rest = sym.strip_prefix(prefix).unwrap_or("").trim_start_matches('_');
+    let rest = sym
+        .strip_prefix(prefix)
+        .unwrap_or("")
+        .trim_start_matches('_');
     let rest = if rest.is_empty() { sym } else { rest };
     match classify_kernel(prefix, rest) {
         KernelClass::Neutral => {}
-        KernelClass::ClientEffect => acc.client_kernels.push((prefix.to_string(), rest.to_string())),
+        KernelClass::ClientEffect => acc
+            .client_kernels
+            .push((prefix.to_string(), rest.to_string())),
         class => acc
             .server_kernels
             .push((prefix.to_string(), rest.to_string(), class)),
@@ -445,11 +473,17 @@ fn record_ffi_symbol(sym: &str, acc: &mut Refs) {
 fn record_res(res: &Res, acc: &mut Refs) {
     match res {
         Res::Kernel { module, func } => {
-            let m = module.as_str().rsplit('.').next().unwrap_or(module.as_str());
+            let m = module
+                .as_str()
+                .rsplit('.')
+                .next()
+                .unwrap_or(module.as_str());
             let f = func.as_str();
             match classify_kernel(m, f) {
                 KernelClass::Neutral => {}
-                KernelClass::ClientEffect => acc.client_kernels.push((m.to_string(), f.to_string())),
+                KernelClass::ClientEffect => {
+                    acc.client_kernels.push((m.to_string(), f.to_string()))
+                }
                 class => acc
                     .server_kernels
                     .push((m.to_string(), f.to_string(), class)),
@@ -970,10 +1004,11 @@ impl SpaPartitionReport {
         }
         o.push('\n');
 
-        let (s, c) = self
-            .branches
-            .iter()
-            .fold((0, 0), |(s, c), b| if b.server { (s + 1, c) } else { (s, c + 1) });
+        let (s, c) =
+            self.branches.iter().fold(
+                (0, 0),
+                |(s, c), b| if b.server { (s + 1, c) } else { (s, c + 1) },
+            );
         if self.whole_update.is_none() {
             o.push_str(&format!(
                 "Summary: {s} SERVER, {c} CLIENT branch(es); {} tainted binding(s).\n",
@@ -1004,7 +1039,8 @@ pub fn analyze(
     project_dir: &Path,
     entry_module: Option<&str>,
 ) -> Result<SpaPartitionReport, String> {
-    let (db, entry, check_ids) = crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let (db, entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
     let project = project_dir
         .strip_prefix(repo_root)
         .unwrap_or(project_dir)
@@ -1100,7 +1136,9 @@ pub fn analyze_loaded(
             }
         }
     }
-    tainted.sort_by(|a, b| (a.module.clone(), a.name.clone()).cmp(&(b.module.clone(), b.name.clone())));
+    tainted.sort_by(|a, b| {
+        (a.module.clone(), a.name.clone()).cmp(&(b.module.clone(), b.name.clone()))
+    });
     tainted.dedup_by(|a, b| a.module == b.module && a.name == b.name);
 
     // ---- per-branch classification ----
@@ -1129,7 +1167,13 @@ pub fn analyze_loaded(
                 let types = ty::Typer::new(db).body_types(umod, update_def, body);
                 model_fields = model_fields_typed(&types.result);
                 classify_update_body(
-                    db, &graph, umod, update_def, body, &mut branches, &mut whole_update,
+                    db,
+                    &graph,
+                    umod,
+                    update_def,
+                    body,
+                    &mut branches,
+                    &mut whole_update,
                     &mut notes,
                 );
                 // Server-internal effect chaining (Phase 1 + Phase 2). Resolve
@@ -1153,7 +1197,15 @@ pub fn analyze_loaded(
             update_module_name = Some(db.module_name(umod).to_string());
             // A lambda update: analyse its body as one unit (no stable Msg
             // pattern names unless it is itself a `case`).
-            classify_lambda_update(db, &graph, umod, &body, root, &mut branches, &mut whole_update);
+            classify_lambda_update(
+                db,
+                &graph,
+                umod,
+                &body,
+                root,
+                &mut branches,
+                &mut whole_update,
+            );
             notes.push(
                 "update is an inline lambda; per-branch names taken from its `case` if present."
                     .into(),
@@ -1458,7 +1510,8 @@ fn find_config_update_field(
         }
     }
     UpdateField::Unavailable(
-        "no `Spa.config { … }` / `App.app { … }` / `App.web { … }` call found in the project".into(),
+        "no `Spa.config { … }` / `App.app { … }` / `App.web { … }` call found in the project"
+            .into(),
     )
 }
 
@@ -1749,8 +1802,11 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
     // forces-effect fixpoint (parallel to `server`): a def forces iff its OWN
     // body forces (`Task.run` / `let _ =`) OR any callee forces. Seeds on the
     // per-node `forces` flag. Same monotone least-fixpoint as `server`.
-    let mut forces_effect: HashSet<DefId> =
-        nodes.iter().filter(|(_, n)| n.forces).map(|(d, _)| *d).collect();
+    let mut forces_effect: HashSet<DefId> = nodes
+        .iter()
+        .filter(|(_, n)| n.forces)
+        .map(|(d, _)| *d)
+        .collect();
     loop {
         let mut changed = false;
         for (d, n) in &nodes {
@@ -1777,8 +1833,12 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
     loop {
         let mut changed = false;
         for (d, n) in &nodes {
-            let mut set: std::collections::BTreeSet<String> =
-                trans_fams.get(d).cloned().unwrap_or_default().into_iter().collect();
+            let mut set: std::collections::BTreeSet<String> = trans_fams
+                .get(d)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
             let before = set.len();
             for c in &n.callees {
                 if let Some(cf) = trans_fams.get(c) {
@@ -1854,7 +1914,8 @@ fn classify_update_body(
         let mut acc = Refs::default();
         collect(body, root, &mut acc, &CollectCtx::default());
         *whole_update = Some(verdict(db, "(whole update)", &acc, graph));
-        notes.push("update has no top-level `case msg of` — showing a whole-update verdict.".into());
+        notes
+            .push("update has no top-level `case msg of` — showing a whole-update verdict.".into());
         return;
     };
 
@@ -1875,7 +1936,16 @@ fn classify_update_body(
             update_def: Some(def),
         };
         classify_case_arms(
-            db, graph, body, arms, &shared, &ctx, model_local, &src, &types.locals, branches,
+            db,
+            graph,
+            body,
+            arms,
+            &shared,
+            &ctx,
+            model_local,
+            &src,
+            &types.locals,
+            branches,
         );
     }
 }
@@ -1945,12 +2015,16 @@ fn classify_case_arms(
             if server[i] {
                 continue;
             }
-            let force = facts[i].refs.scoped_updates.iter().any(|s| match by_name.get(s) {
-                Some(&j) => server[j],
-                // A scoped Msg name that matches no arm → cannot resolve → be
-                // conservative (server). Never under-mark.
-                None => true,
-            });
+            let force = facts[i]
+                .refs
+                .scoped_updates
+                .iter()
+                .any(|s| match by_name.get(s) {
+                    Some(&j) => server[j],
+                    // A scoped Msg name that matches no arm → cannot resolve → be
+                    // conservative (server). Never under-mark.
+                    None => true,
+                });
             if force {
                 server[i] = true;
                 changed = true;
@@ -1977,10 +2051,14 @@ fn classify_case_arms(
             if forces[i] {
                 continue;
             }
-            let f = facts[i].refs.scoped_updates.iter().any(|s| match by_name.get(s) {
-                Some(&j) => forces[j],
-                None => true,
-            });
+            let f = facts[i]
+                .refs
+                .scoped_updates
+                .iter()
+                .any(|s| match by_name.get(s) {
+                    Some(&j) => forces[j],
+                    None => true,
+                });
             if f {
                 forces[i] = true;
                 changed = true;
@@ -2000,7 +2078,14 @@ fn classify_case_arms(
                 msg: f.label.clone(),
                 server: true,
                 reason: r.clone(),
-                io: Some(compute_branch_io(db, body, arms[i].body, arms[i].pat, model_local, src)),
+                io: Some(compute_branch_io(
+                    db,
+                    body,
+                    arms[i].body,
+                    arms[i].pat,
+                    model_local,
+                    src,
+                )),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
@@ -2010,7 +2095,14 @@ fn classify_case_arms(
                 msg: f.label.clone(),
                 server: true,
                 reason: compose_reason(&f.refs.scoped_updates, &by_name, &server, &direct),
-                io: Some(compute_branch_io(db, body, arms[i].body, arms[i].pat, model_local, src)),
+                io: Some(compute_branch_io(
+                    db,
+                    body,
+                    arms[i].body,
+                    arms[i].pat,
+                    model_local,
+                    src,
+                )),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
@@ -2160,7 +2252,10 @@ pub(crate) fn arm_continuation_msgs(db: &dyn SkyDb, body: &Body, arm_body: ExprI
         let mut leaves: Vec<CmdLeaf> = Vec::new();
         resolve_cmd_leaves(db, body, ce, &mut leaves);
         for leaf in leaves {
-            if let CmdLeaf::Perform { to_msg: Some(m), .. } = leaf {
+            if let CmdLeaf::Perform {
+                to_msg: Some(m), ..
+            } = leaf
+            {
                 out.push(m);
             }
         }
@@ -2609,7 +2704,10 @@ fn compute_server_chaining(
     }
     for arm in arms.iter() {
         let head = arm_ctor_key(body, arm.pat);
-        let is_server = head.as_ref().map(|h| server_head_set.contains(h)).unwrap_or(false);
+        let is_server = head
+            .as_ref()
+            .map(|h| server_head_set.contains(h))
+            .unwrap_or(false);
         if !is_server {
             // A CLIENT arm (or a non-ctor arm) — the Msgs it constructs are
             // client-dispatched (a client re-dispatch).
@@ -2674,7 +2772,10 @@ fn compute_server_chaining(
                                 dirty = true;
                                 arm_contributed = true;
                             }
-                            CmdLeaf::Perform { to_msg, task_client_effect } if !guarded => {
+                            CmdLeaf::Perform {
+                                to_msg,
+                                task_client_effect,
+                            } if !guarded => {
                                 // DIRECT perform — today's rule, unchanged.
                                 has_perform = true;
                                 arm_contributed = true;
@@ -2693,7 +2794,10 @@ fn compute_server_chaining(
                                     }
                                 }
                             }
-                            CmdLeaf::Perform { to_msg, task_client_effect } => {
+                            CmdLeaf::Perform {
+                                to_msg,
+                                task_client_effect,
+                            } => {
                                 // GUARDED perform. It joins the server-side chain
                                 // ONLY when the continuation is a resolvable,
                                 // unambiguous SERVER head (reaches a server effect).
@@ -2728,7 +2832,11 @@ fn compute_server_chaining(
                 }
             }
         }
-        HeadInfo { clean_conts, dirty, has_perform }
+        HeadInfo {
+            clean_conts,
+            dirty,
+            has_perform,
+        }
     };
     let mut info: HashMap<String, HeadInfo> = HashMap::new();
     for h in &all_heads {
@@ -2803,8 +2911,10 @@ fn compute_server_chaining(
         // Chainable root: BFS its clean continuations (all in `settleable`),
         // collecting the server-internal set + the reachable arms for the I/O union.
         out.chaining_branches.push(bn.clone());
-        let mut reachable_arms: BTreeSet<usize> =
-            arms_by_ctor.get(bn).map(|v| v.iter().copied().collect()).unwrap_or_default();
+        let mut reachable_arms: BTreeSet<usize> = arms_by_ctor
+            .get(bn)
+            .map(|v| v.iter().copied().collect())
+            .unwrap_or_default();
         let mut visited: HashSet<String> = HashSet::new();
         visited.insert(bn.clone());
         let mut queue: Vec<String> = hi.clean_conts.clone();
@@ -2860,7 +2970,10 @@ fn compute_server_chaining(
             .iter()
             .copied()
             .filter(|&j| match arm_ctor_key(body, arms[j].pat) {
-                Some(ctor) => info.get(&ctor).map(|mi| mi.clean_conts.is_empty()).unwrap_or(true),
+                Some(ctor) => info
+                    .get(&ctor)
+                    .map(|mi| mi.clean_conts.is_empty())
+                    .unwrap_or(true),
                 None => true,
             })
             .collect();
@@ -2869,7 +2982,12 @@ fn compute_server_chaining(
         } else {
             let mut acc: Option<BTreeSet<String>> = None;
             for j in &terminal_arms {
-                let s: BTreeSet<String> = arm_always.get(j).cloned().unwrap_or_default().into_iter().collect();
+                let s: BTreeSet<String> = arm_always
+                    .get(j)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
                 acc = Some(match acc {
                     None => s,
                     Some(a) => a.intersection(&s).cloned().collect(),
@@ -2946,7 +3064,10 @@ fn compute_server_chaining(
         for leaf in &leaves {
             match leaf {
                 CmdLeaf::NoneCmd => {}
-                CmdLeaf::Perform { to_msg, task_client_effect } => {
+                CmdLeaf::Perform {
+                    to_msg,
+                    task_client_effect,
+                } => {
                     perform_count += 1;
                     if *task_client_effect {
                         clean = false; // a client Std.Native task cannot run server-side.
@@ -3117,7 +3238,14 @@ fn collect_reads(
     macro_rules! go {
         ($x:expr) => {
             collect_reads(
-                db, body, $x, model_local, allowed_bare, let_locals, read_fields, reads_whole,
+                db,
+                body,
+                $x,
+                model_local,
+                allowed_bare,
+                let_locals,
+                read_fields,
+                reads_whole,
                 depth,
             )
         };
@@ -3249,12 +3377,27 @@ fn collect_reads(
             add_let_locals(defs, &mut ls);
             for d in defs {
                 collect_reads(
-                    db, body, d.body, model_local, allowed_bare, &ls, read_fields, reads_whole,
+                    db,
+                    body,
+                    d.body,
+                    model_local,
+                    allowed_bare,
+                    &ls,
+                    read_fields,
+                    reads_whole,
                     depth,
                 );
             }
             collect_reads(
-                db, body, *b, model_local, allowed_bare, &ls, read_fields, reads_whole, depth,
+                db,
+                body,
+                *b,
+                model_local,
+                allowed_bare,
+                &ls,
+                read_fields,
+                reads_whole,
+                depth,
             );
         }
         Expr::Case { subject, branches } => {
@@ -3309,7 +3452,15 @@ fn collect_writes_tail(
     macro_rules! recur {
         ($x:expr, $ls:expr) => {
             collect_writes_tail(
-                db, body, $x, model_local, $ls, write_fields, writes_whole, allowed_bare, depth,
+                db,
+                body,
+                $x,
+                model_local,
+                $ls,
+                write_fields,
+                writes_whole,
+                allowed_bare,
+                depth,
                 cont_local,
             )
         };
@@ -3398,7 +3549,15 @@ fn collect_writes_tail(
                 recur!(gw.lambda_body, let_locals);
                 // (ii) the guard helper's own writes on its model parameter, with
                 // its continuation call skipped.
-                collect_guard_wrapper_writes(db, gw.guard, gw.model_arg_idx, gw.cont_arg_idx, write_fields, writes_whole, depth + 1);
+                collect_guard_wrapper_writes(
+                    db,
+                    gw.guard,
+                    gw.model_arg_idx,
+                    gw.cont_arg_idx,
+                    write_fields,
+                    writes_whole,
+                    depth + 1,
+                );
                 return;
             }
             let model_positions: Vec<usize> = args
@@ -3463,7 +3622,8 @@ fn collect_write_leaves(
             }
             // A field-preserving `{ model | … }` (directly or through a chain of
             // preserving helpers) — the leaf assigns exactly those keys.
-            model_write_shape(db, body, m, model_local, let_locals, depth).map(|fields| vec![fields])
+            model_write_shape(db, body, m, model_local, let_locals, depth)
+                .map(|fields| vec![fields])
         }
         Expr::Let { defs, body: b } => {
             let mut ls = let_locals.clone();
@@ -3473,22 +3633,45 @@ fn collect_write_leaves(
         Expr::If { arms, els } => {
             let mut out = Vec::new();
             for (_, t) in arms {
-                out.extend(collect_write_leaves(db, body, *t, model_local, let_locals, depth)?);
+                out.extend(collect_write_leaves(
+                    db,
+                    body,
+                    *t,
+                    model_local,
+                    let_locals,
+                    depth,
+                )?);
             }
-            out.extend(collect_write_leaves(db, body, *els, model_local, let_locals, depth)?);
+            out.extend(collect_write_leaves(
+                db,
+                body,
+                *els,
+                model_local,
+                let_locals,
+                depth,
+            )?);
             Some(out)
         }
         Expr::Case { branches, .. } => {
             let mut out = Vec::new();
             for br in branches {
-                out.extend(collect_write_leaves(db, body, br.body, model_local, let_locals, depth)?);
+                out.extend(collect_write_leaves(
+                    db,
+                    body,
+                    br.body,
+                    model_local,
+                    let_locals,
+                    depth,
+                )?);
             }
             Some(out)
         }
         // A let-bound `(model', cmd)` returned by name — resolve and analyse it.
         // Chasing a name can cycle, so this step spends depth.
         Expr::Var(Res::Local(l)) => match let_locals.get(l) {
-            Some(bound) => collect_write_leaves(db, body, *bound, model_local, let_locals, depth + 1),
+            Some(bound) => {
+                collect_write_leaves(db, body, *bound, model_local, let_locals, depth + 1)
+            }
             None => None,
         },
         // Guard-wrapper tail `GUARD model (\_ -> CONT)` — the ONLY model-write
@@ -3567,7 +3750,12 @@ fn param_local_at(body: &Body, i: usize) -> Option<LocalId> {
 /// resolved. Uses `model_write_shape` (a bare-`Model` return), NOT the
 /// tuple-based `inherit_delegate_writes` (which analyses a `(Model, Cmd)` arm
 /// tail).
-fn helper_writeset_at(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> Option<BTreeSet<String>> {
+fn helper_writeset_at(
+    db: &dyn SkyDb,
+    f: DefId,
+    i: usize,
+    depth: usize,
+) -> Option<BTreeSet<String>> {
     if depth > IO_DELEGATE_DEPTH {
         return None;
     }
@@ -3680,7 +3868,10 @@ fn detect_guard_wrapper(
     let cont_arg_idx = 1 - model_arg_idx;
     // The OTHER argument must be an INLINE lambda continuation — a passed-by-name
     // helper (`GUARD model handler`) is opaque and stays whole-model (fail closed).
-    let Expr::Lambda { body: lambda_body, .. } = &body.exprs[args[cont_arg_idx]] else {
+    let Expr::Lambda {
+        body: lambda_body, ..
+    } = &body.exprs[args[cont_arg_idx]]
+    else {
         return None;
     };
     // The guard's own body must resolve and bind plain parameters at BOTH the
@@ -3864,8 +4055,7 @@ fn model_write_shape(
                 .iter()
                 .enumerate()
                 .filter_map(|(i, a)| {
-                    model_write_shape(db, body, *a, model_local, let_locals, depth)
-                        .map(|s| (i, s))
+                    model_write_shape(db, body, *a, model_local, let_locals, depth).map(|s| (i, s))
                 })
                 .collect();
             if derived.len() != 1 {
@@ -3886,15 +4076,36 @@ fn model_write_shape(
         Expr::If { arms, els } => {
             let mut s = BTreeSet::new();
             for (_, t) in arms {
-                s.extend(model_write_shape(db, body, *t, model_local, let_locals, depth)?);
+                s.extend(model_write_shape(
+                    db,
+                    body,
+                    *t,
+                    model_local,
+                    let_locals,
+                    depth,
+                )?);
             }
-            s.extend(model_write_shape(db, body, *els, model_local, let_locals, depth)?);
+            s.extend(model_write_shape(
+                db,
+                body,
+                *els,
+                model_local,
+                let_locals,
+                depth,
+            )?);
             Some(s)
         }
         Expr::Case { branches, .. } => {
             let mut s = BTreeSet::new();
             for br in branches {
-                s.extend(model_write_shape(db, body, br.body, model_local, let_locals, depth)?);
+                s.extend(model_write_shape(
+                    db,
+                    body,
+                    br.body,
+                    model_local,
+                    let_locals,
+                    depth,
+                )?);
             }
             Some(s)
         }
@@ -3939,7 +4150,11 @@ fn msg_arg_field_tys(
     out
 }
 
-fn field_for_local(name: String, local: Option<LocalId>, locals: &HashMap<LocalId, ty::Ty>) -> ModelFieldTy {
+fn field_for_local(
+    name: String,
+    local: Option<LocalId>,
+    locals: &HashMap<LocalId, ty::Ty>,
+) -> ModelFieldTy {
     let ty = local.and_then(|l| locals.get(&l)).cloned();
     let mut f = match &ty {
         Some(t) => field_ty_codec(t),
@@ -4207,8 +4422,12 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         };
     }
     // Deterministic: pick the lowest-id server callee.
-    let mut server_callees: Vec<DefId> =
-        acc.callees.iter().copied().filter(|c| graph.server.contains(c)).collect();
+    let mut server_callees: Vec<DefId> = acc
+        .callees
+        .iter()
+        .copied()
+        .filter(|c| graph.server.contains(c))
+        .collect();
     server_callees.sort();
     if let Some(c) = server_callees.first() {
         let origin = graph
@@ -4344,7 +4563,10 @@ mod tests {
             "kernel module(s) `{}` are not classified for the Sky.Spa auto-split — add each to EFFECT (server) or KNOWN_PURE (client) in spa_partition::classify_kernel; defaulting an unknown kernel to client would leak it into the wasm frontend.",
             gaps.join("`, `")
         );
-        assert!(msg.contains("Telemetry"), "failure message names the culprit: {msg}");
+        assert!(
+            msg.contains("Telemetry"),
+            "failure message names the culprit: {msg}"
+        );
     }
 
     /// The three classification outcomes — including the fail-closed default that
@@ -4359,10 +4581,19 @@ mod tests {
         assert_eq!(classify_kernel("String", "toUpper"), KernelClass::Neutral);
         assert_eq!(classify_kernel("List", "map"), KernelClass::Neutral);
         // Client-effect family -> ClientEffect (stays in the wasm client, not RPC).
-        assert_eq!(classify_kernel("Native", "geolocation"), KernelClass::ClientEffect);
-        assert_eq!(classify_kernel("Native", "clipboardWrite"), KernelClass::ClientEffect);
+        assert_eq!(
+            classify_kernel("Native", "geolocation"),
+            KernelClass::ClientEffect
+        );
+        assert_eq!(
+            classify_kernel("Native", "clipboardWrite"),
+            KernelClass::ClientEffect
+        );
         // Unknown family -> conservative SERVER (fail-closed), never Neutral.
-        assert_eq!(classify_kernel("BrandNewEffect", "boom"), KernelClass::ServerOnly);
+        assert_eq!(
+            classify_kernel("BrandNewEffect", "boom"),
+            KernelClass::ServerOnly
+        );
     }
 
     /// A `Std.Native.*` FFI symbol (`Native_<cap>`) records as a CLIENT effect,
@@ -4378,9 +4609,19 @@ mod tests {
             "Std.Native must not record as a server kernel: {:?}",
             acc.server_kernels
         );
-        assert!(acc.direct_server_reason().is_none(), "no server reason for a client effect");
-        assert_eq!(acc.client_kernels.len(), 2, "both Native symbols land in client_kernels");
-        assert!(acc.client_effect_note().is_some(), "client-effect note is populated");
+        assert!(
+            acc.direct_server_reason().is_none(),
+            "no server reason for a client effect"
+        );
+        assert_eq!(
+            acc.client_kernels.len(),
+            2,
+            "both Native symbols land in client_kernels"
+        );
+        assert!(
+            acc.client_effect_note().is_some(),
+            "client-effect note is populated"
+        );
     }
 
     /// EFFECT, KNOWN_PURE, and CLIENT_EFFECT are pairwise disjoint — no kernel can

@@ -890,9 +890,9 @@ fn is_std_app_dispatched_entry(entry_file: &Path) -> bool {
             let imports_app = src
                 .lines()
                 .any(|l| l.trim_start().starts_with("import Std.App"));
-            let has_main = src
-                .lines()
-                .any(|l| l.starts_with("main ") || l.starts_with("main:") || l.starts_with("main="));
+            let has_main = src.lines().any(|l| {
+                l.starts_with("main ") || l.starts_with("main:") || l.starts_with("main=")
+            });
             // Two dispatched forms: the explicit `main = App.run app` (preferred)
             // and the legacy no-`main` form (exposes `app`). Both let `--target`
             // pick the backend.
@@ -958,7 +958,7 @@ fn rewrite_app_run(src: &str, runner: &str) -> String {
 /// Sky.Spa auto-split. This is the single place the `--target family[:variant]`
 /// axis is turned into a backend for a unified entry.
 fn std_app_runner(tgt: target::Target) -> (&'static str, StdAppBuild) {
-    use target::{DesktopOs, TabletOs, TermRenderer, Target::*};
+    use target::{DesktopOs, TabletOs, Target::*, TermRenderer};
     match tgt {
         // Bare family = a Sky.Live delivery; a named platform = native (Spa).
         Web => ("runLive", StdAppBuild::Direct),
@@ -1186,7 +1186,10 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: Option<target::Targ
     let user_module = match entry_module_name(entry_file) {
         Some(m) => m,
         None => {
-            eprintln!("sky check: cannot find the `module` declaration in {}", entry_file.display());
+            eprintln!(
+                "sky check: cannot find the `module` declaration in {}",
+                entry_file.display()
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -1270,7 +1273,10 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: Option<target::Targ
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        if !tgt.map(|t| remap_fallback_error(&combined, t)).unwrap_or(false) {
+        if !tgt
+            .map(|t| remap_fallback_error(&combined, t))
+            .unwrap_or(false)
+        {
             print!("{}", String::from_utf8_lossy(&out.stdout));
             eprint!("{}", String::from_utf8_lossy(&out.stderr));
         }
@@ -1509,9 +1515,9 @@ fn strip_app_builder<'a>(trimmed: &'a str, builder: &str) -> Option<&'a str> {
     let pfx = format!("|> App.{builder}");
     let rest = trimmed.strip_prefix(&pfx)?;
     match rest.chars().next() {
-        None => Some(rest),                                  // `|> App.withHead`
+        None => Some(rest),                                     // `|> App.withHead`
         Some(c) if c.is_whitespace() || c == '(' => Some(rest), // ` fn` / `(…`
-        _ => None,                                            // withHeadless, …
+        _ => None,                                              // withHeadless, …
     }
 }
 
@@ -1739,7 +1745,11 @@ fn split_list_elements(s: &str) -> Option<Vec<String>> {
 /// The head token of a route element (`App.api "GET /x" h` → `App.api`,
 /// `App.route "/" Home` → `App.route`).
 fn route_element_head(elem: &str) -> &str {
-    elem.trim().split_whitespace().next().unwrap_or("").trim_end_matches('(')
+    elem.trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('(')
 }
 
 /// Names of ENTRY top-level bindings whose value is a list literal of ONLY
@@ -1880,10 +1890,7 @@ fn normalize_cons_to_concat(expr: &str) -> String {
     }
     // The last operand is the list tail; the earlier ones are single elements.
     let (tail, heads) = parts.split_last().expect("len > 1");
-    let mut out: Vec<String> = heads
-        .iter()
-        .map(|h| format!("[ {} ]", h.trim()))
-        .collect();
+    let mut out: Vec<String> = heads.iter().map(|h| format!("[ {} ]", h.trim())).collect();
     out.push(tail.trim().to_string());
     out.join(" ++ ")
 }
@@ -2095,9 +2102,8 @@ fn add_name_to_import_exposing(out: &mut String, prefix: &str, name: &str) -> bo
             .position(|w| *w == "as")
             .and_then(|i| words.get(i + 1))
             .copied();
-        let binds = module == prefix
-            || module.rsplit('.').next() == Some(prefix)
-            || alias == Some(prefix);
+        let binds =
+            module == prefix || module.rsplit('.').next() == Some(prefix) || alias == Some(prefix);
         if !binds {
             continue;
         }
@@ -2302,16 +2308,18 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Option<String> {
             // server-tainted api binding the split drops — so the client entry
             // failed to compile (`E1001`).
             let (client_expr, api_expr) = partition_routes(r, src);
-            let mut binding = format!(
-                "spaRoutes_ =\n    List.concatMap App.spaRoute ({client_expr})\n\n\n"
-            );
+            let mut binding =
+                format!("spaRoutes_ =\n    List.concatMap App.spaRoute ({client_expr})\n\n\n");
             if let Some(api) = api_expr {
                 // `spaApiRoutes_` references the server-tainted api handlers, so
                 // the split's taint analysis drops it from the wasm frontend
                 // automatically; the backend keeps + mounts it.
                 binding.push_str(&format!("spaApiRoutes_ =\n    ({api})\n\n\n"));
             }
-            (binding, "\n            |> Spa.withRoutes spaRoutes_".to_string())
+            (
+                binding,
+                "\n            |> Spa.withRoutes spaRoutes_".to_string(),
+            )
         }
         None => (String::new(), String::new()),
     };
@@ -2480,7 +2488,10 @@ fn build_std_app(
     let user_module = match entry_module_name(entry_file) {
         Some(m) => m,
         None => {
-            eprintln!("sky build: cannot find the `module` declaration in {}", entry_file.display());
+            eprintln!(
+                "sky build: cannot find the `module` declaration in {}",
+                entry_file.display()
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -2527,8 +2538,7 @@ fn build_std_app(
         // pass it in — the backend then emits a LIVE static mount for runtime
         // uploads (an admin image write to `public/products/<uuid>`), which the
         // build-time `dist` snapshot cannot hold.
-        let static_mount =
-            project::spa_split::declared_static_mount(&entry_src, project_dir);
+        let static_mount = project::spa_split::declared_static_mount(&entry_src, project_dir);
         return match spa_split_and_build(
             repo_root,
             &out_root,
@@ -2717,7 +2727,10 @@ fn build_std_app(
         }
     };
     let _ = runner;
-    println!("== building Std.App entry (--target {}) ==", tgt.canonical());
+    println!(
+        "== building Std.App entry (--target {}) ==",
+        tgt.canonical()
+    );
     let mut cmd = Command::new(&sky);
     cmd.arg("build");
     if embed {
@@ -2729,7 +2742,10 @@ fn build_std_app(
     let out = match cmd.output() {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("sky build --target {}: run derived build: {e}", tgt.canonical());
+            eprintln!(
+                "sky build --target {}: run derived build: {e}",
+                tgt.canonical()
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -2744,7 +2760,10 @@ fn build_std_app(
         if !remap_fallback_error(&combined, tgt) {
             print!("{}", String::from_utf8_lossy(&out.stdout));
             eprint!("{}", String::from_utf8_lossy(&out.stderr));
-            eprintln!("sky build --target {}: derived build failed", tgt.canonical());
+            eprintln!(
+                "sky build --target {}: derived build failed",
+                tgt.canonical()
+            );
         }
         return ExitCode::FAILURE;
     }
@@ -2812,14 +2831,20 @@ fn spa_split_and_build(
     // entry). `None` → `generate` reads it from its own entry + `sky.toml`.
     static_mount: Option<(String, String)>,
 ) -> Result<PathBuf, ExitCode> {
-    let report =
-        match project::spa_split::generate(repo_root, project_dir, entry_module, out_dir, broker, static_mount) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("sky spa-split: {e}");
-                return Err(ExitCode::FAILURE);
-            }
-        };
+    let report = match project::spa_split::generate(
+        repo_root,
+        project_dir,
+        entry_module,
+        out_dir,
+        broker,
+        static_mount,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("sky spa-split: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
     println!("client/server split → {}", report.out_dir);
     let joined = |v: &[String]| {
         if v.is_empty() {
@@ -2986,7 +3011,9 @@ fn build_and_run_fuzz_harness(
     // an ephemeral embedded cluster; a SQLite app is already offline and just
     // has its path redirected to a scratch file (forcing embedded Postgres onto
     // a SQLite app is a conflict the runtime refuses — see `offline_db_plan`).
-    let app = harness_dir.join("sky-out").join(project::configured_bin_name(harness_dir));
+    let app = harness_dir
+        .join("sky-out")
+        .join(project::configured_bin_name(harness_dir));
     let mut cmd = std::process::Command::new(&app);
     cmd.current_dir(app_project_dir);
     cmd.env("SKY_TEST_MODE", "1");
@@ -3089,7 +3116,9 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     }
     match build_and_run_fuzz_harness(&repo_root, &model_out, &project_dir, seed) {
         Ok(()) => {
-            println!("sky fuzz: model net PASS — {iters} random Msg sequences, no unclassified panic");
+            println!(
+                "sky fuzz: model net PASS — {iters} random Msg sequences, no unclassified panic"
+            );
         }
         Err(e) => {
             eprintln!(
@@ -3101,7 +3130,10 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     }
 
     // --- 2. Differential split oracle (Sky.Spa client targets only) ---
-    let run_split = target.as_deref().map(project::diagram::target_is_spa_client).unwrap_or(false);
+    let run_split = target
+        .as_deref()
+        .map(project::diagram::target_is_spa_client)
+        .unwrap_or(false);
     if !run_split {
         if let Some(t) = &target {
             println!("sky fuzz: target {t} has no client/server split — model net only.");
@@ -3131,7 +3163,11 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
                 }
                 (repo_root.clone(), staging, entry_module_name(&synth_entry))
             }
-            None => (repo_root.clone(), project_dir.clone(), entry_module_name(file)),
+            None => (
+                repo_root.clone(),
+                project_dir.clone(),
+                entry_module_name(file),
+            ),
         };
     let diff_out = project_dir.join(".difffuzz");
     let diff_report = match project::spa_split::generate_diff_fuzz(
@@ -5763,7 +5799,9 @@ fn open_url(url: &str) {
     };
     match spawned {
         Ok(_) => println!("sky run --open: opening {url}"),
-        Err(e) => eprintln!("sky run --open: could not launch a browser ({e}); open {url} yourself."),
+        Err(e) => {
+            eprintln!("sky run --open: could not launch a browser ({e}); open {url} yourself.")
+        }
     }
 }
 
@@ -5975,8 +6013,11 @@ fn cmd_test(args: &[String]) -> ExitCode {
 /// `match.method` + `match.urlContains`; leaves `body` empty to paste a captured
 /// payload into. Never overwrites an existing fixture. See docs/tooling/testing.md.
 fn cmd_scaffold_mocks(args: &[String]) -> ExitCode {
-    let positional: Vec<String> =
-        args.iter().filter(|a| !a.starts_with("--")).cloned().collect();
+    let positional: Vec<String> = args
+        .iter()
+        .filter(|a| !a.starts_with("--"))
+        .cloned()
+        .collect();
     let file = match resolve_entry_arg(
         &positional,
         "usage: sky test --scaffold-mocks [<file.sky>]  (or run inside a Sky app project)",
@@ -6008,7 +6049,10 @@ fn cmd_scaffold_mocks(args: &[String]) -> ExitCode {
 
     let mocks_dir = project_dir.join("tests").join("mocks");
     if let Err(e) = std::fs::create_dir_all(&mocks_dir) {
-        eprintln!("sky test --scaffold-mocks: cannot create {}: {e}", mocks_dir.display());
+        eprintln!(
+            "sky test --scaffold-mocks: cannot create {}: {e}",
+            mocks_dir.display()
+        );
         return ExitCode::FAILURE;
     }
 
@@ -6030,12 +6074,22 @@ fn cmd_scaffold_mocks(args: &[String]) -> ExitCode {
             url = url_contains.replace('"', "\\\""),
         );
         if let Err(e) = std::fs::write(&path, fixture) {
-            eprintln!("sky test --scaffold-mocks: cannot write {}: {e}", path.display());
+            eprintln!(
+                "sky test --scaffold-mocks: cannot write {}: {e}",
+                path.display()
+            );
             return ExitCode::FAILURE;
         }
         written += 1;
-        let shown_url = if url_contains.is_empty() { "(fill urlContains)" } else { &url_contains };
-        println!("  write tests/mocks/{slug}.json  {} {shown_url}", call.method);
+        let shown_url = if url_contains.is_empty() {
+            "(fill urlContains)"
+        } else {
+            &url_contains
+        };
+        println!(
+            "  write tests/mocks/{slug}.json  {} {shown_url}",
+            call.method
+        );
     }
     println!(
         "sky test --scaffold-mocks: {written} fixture(s) written, {skipped} kept. \
@@ -6621,10 +6675,17 @@ fn cmd_doc_api(repo_root: &Path, project_dir: &Path, api_kind: &str, args: &[Str
         Some((dir, entry_mod)) => (dir.as_path(), entry_mod.clone()),
         None => (project_dir, None),
     };
-    let dir_base = project_dir.file_name().and_then(|s| s.to_str()).unwrap_or("app");
+    let dir_base = project_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("app");
     let app_name = {
         let n = project::sky_toml_project_key(project_dir, "name", dir_base);
-        if n.is_empty() { dir_base.to_string() } else { n }
+        if n.is_empty() {
+            dir_base.to_string()
+        } else {
+            n
+        }
     };
     let version = project::sky_toml_project_key(project_dir, "version", "0.0.0");
     let cleanup = |staged: &Option<(PathBuf, Option<String>)>| {
@@ -6639,28 +6700,30 @@ fn cmd_doc_api(repo_root: &Path, project_dir: &Path, api_kind: &str, args: &[Str
         analysis_entry.as_deref(),
         app_target.as_deref(),
     ) {
-        Ok(report) => match project::openapi::render(&report, &app_name, &version, include_rpc, format) {
-            Ok(spec) => match &out_path {
-                Some(p) => match std::fs::write(p, &spec) {
-                    Ok(()) => {
-                        eprintln!("sky doc --api openapi: wrote {} bytes to {p}", spec.len());
+        Ok(report) => {
+            match project::openapi::render(&report, &app_name, &version, include_rpc, format) {
+                Ok(spec) => match &out_path {
+                    Some(p) => match std::fs::write(p, &spec) {
+                        Ok(()) => {
+                            eprintln!("sky doc --api openapi: wrote {} bytes to {p}", spec.len());
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("sky doc --api openapi: could not write {p}: {e}");
+                            ExitCode::FAILURE
+                        }
+                    },
+                    None => {
+                        print!("{spec}");
                         ExitCode::SUCCESS
                     }
-                    Err(e) => {
-                        eprintln!("sky doc --api openapi: could not write {p}: {e}");
-                        ExitCode::FAILURE
-                    }
                 },
-                None => {
-                    print!("{spec}");
-                    ExitCode::SUCCESS
+                Err(e) => {
+                    eprintln!("sky doc --api openapi: {e}");
+                    ExitCode::FAILURE
                 }
-            },
-            Err(e) => {
-                eprintln!("sky doc --api openapi: {e}");
-                ExitCode::FAILURE
             }
-        },
+        }
         Err(e) => {
             eprintln!("sky doc --api openapi: {e}");
             ExitCode::FAILURE
@@ -6738,7 +6801,11 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
         .to_string();
     let project_label = {
         let name = project::sky_toml_project_key(project_dir, "name", dir_base);
-        if name.is_empty() { path_label } else { name }
+        if name.is_empty() {
+            path_label
+        } else {
+            name
+        }
     };
     // Best-effort clean of the staged scratch tree (a unique system-temp dir)
     // once the report is rendered. Nothing under the project is touched.
@@ -6814,9 +6881,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
                     None,
                     app_target.as_deref(),
                 ) {
-                    Ok(report) => {
-                        emit(project::diagram::render_wire(&report, format))
-                    }
+                    Ok(report) => emit(project::diagram::render_wire(&report, format)),
                     Err(e) => {
                         eprintln!("sky doc --diagram wire: {e}");
                         ExitCode::FAILURE
@@ -6897,9 +6962,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
                     None,
                     app_target.as_deref(),
                 ) {
-                    Ok(report) => {
-                        emit(project::diagram::render_telemetry(&report, format))
-                    }
+                    Ok(report) => emit(project::diagram::render_telemetry(&report, format)),
                     Err(e) => {
                         eprintln!("sky doc --diagram telemetry: {e}");
                         ExitCode::FAILURE
@@ -6932,9 +6995,7 @@ fn cmd_doc_diagram(repo_root: &Path, project_dir: &Path, kind: &str, args: &[Str
                 None,
                 app_target.as_deref(),
             ) {
-                Ok(graph) => {
-                    emit(project::diagram::render_components(&graph, format))
-                }
+                Ok(graph) => emit(project::diagram::render_components(&graph, format)),
                 Err(e) => {
                     eprintln!("sky doc --diagram components: {e}");
                     ExitCode::FAILURE
@@ -6966,7 +7027,10 @@ fn write_audit_bundle(
 ) -> ExitCode {
     use project::diagram::{self as dg, Format};
     if let Err(e) = std::fs::create_dir_all(dir) {
-        eprintln!("sky doc --diagram audit: cannot create {}: {e}", dir.display());
+        eprintln!(
+            "sky doc --diagram audit: cannot create {}: {e}",
+            dir.display()
+        );
         return ExitCode::FAILURE;
     }
     let mut written: Vec<String> = Vec::new();
@@ -6986,10 +7050,30 @@ fn write_audit_bundle(
         Ok(mut f) => {
             f.journey.project = label.to_string();
             dg::filter_self_ref(&mut f, project_dir);
-            put("journey.svg", dg::render_flow(&f, Format::Svg), &mut written, &mut errors);
-            put("journey.md", dg::render_flow(&f, Format::Md), &mut written, &mut errors);
-            put("sub-processors.md", dg::render_subprocessors(&f), &mut written, &mut errors);
-            put("data-inventory.md", dg::render_data_inventory(&f), &mut written, &mut errors);
+            put(
+                "journey.svg",
+                dg::render_flow(&f, Format::Svg),
+                &mut written,
+                &mut errors,
+            );
+            put(
+                "journey.md",
+                dg::render_flow(&f, Format::Md),
+                &mut written,
+                &mut errors,
+            );
+            put(
+                "sub-processors.md",
+                dg::render_subprocessors(&f),
+                &mut written,
+                &mut errors,
+            );
+            put(
+                "data-inventory.md",
+                dg::render_data_inventory(&f),
+                &mut written,
+                &mut errors,
+            );
         }
         Err(e) => errors.push(format!("journey: {e}")),
     }
@@ -6999,8 +7083,18 @@ fn write_audit_bundle(
     {
         Ok(mut c) => {
             c.project = label.to_string();
-            put("components.svg", dg::render_components(&c, Format::Svg), &mut written, &mut errors);
-            put("components.md", dg::render_components(&c, Format::Md), &mut written, &mut errors);
+            put(
+                "components.svg",
+                dg::render_components(&c, Format::Svg),
+                &mut written,
+                &mut errors,
+            );
+            put(
+                "components.md",
+                dg::render_components(&c, Format::Md),
+                &mut written,
+                &mut errors,
+            );
         }
         Err(e) => errors.push(format!("components: {e}")),
     }
@@ -7010,7 +7104,12 @@ fn write_audit_bundle(
     {
         Ok(mut w) => {
             w.project = label.to_string();
-            put("wire.md", dg::render_wire(&w, Format::Md), &mut written, &mut errors);
+            put(
+                "wire.md",
+                dg::render_wire(&w, Format::Md),
+                &mut written,
+                &mut errors,
+            );
         }
         Err(e) => errors.push(format!("wire: {e}")),
     }
@@ -7020,7 +7119,12 @@ fn write_audit_bundle(
     {
         Ok(mut t) => {
             t.project = label.to_string();
-            put("telemetry.md", dg::render_telemetry(&t, Format::Md), &mut written, &mut errors);
+            put(
+                "telemetry.md",
+                dg::render_telemetry(&t, Format::Md),
+                &mut written,
+                &mut errors,
+            );
         }
         Err(e) => errors.push(format!("telemetry: {e}")),
     }
@@ -7047,12 +7151,36 @@ fn write_audit_bundle(
 /// control mapping (from docs/design/audit-grade-diagrams.md).
 fn audit_index_md(label: &str, date: &str, written: &[String]) -> String {
     let rows: &[(&str, &str, &str)] = &[
-        ("journey.svg / journey.md", "Behaviour & data-flow diagram (trust-boundary swimlanes; confidential flows marked)", "SOC2 CC3, CC6 · ISO A.8, A.13"),
-        ("components.svg / components.md", "System architecture (C4 containers, trust zones, protocols)", "SOC2 system description · ISO A.14"),
-        ("wire.md", "API & authentication call-paths (endpoints, CSRF, request/response shapes)", "SOC2 CC6, CC7 · ISO A.9, A.14"),
-        ("telemetry.md", "Audit-logging & monitoring surface", "SOC2 CC7 · ISO A.12.4"),
-        ("data-inventory.md", "Data inventory & classification (Secret / auth / PII at rest)", "ISO A.8"),
-        ("sub-processors.md", "Sub-processors & external systems register", "SOC2 supplier controls · ISO A.15"),
+        (
+            "journey.svg / journey.md",
+            "Behaviour & data-flow diagram (trust-boundary swimlanes; confidential flows marked)",
+            "SOC2 CC3, CC6 · ISO A.8, A.13",
+        ),
+        (
+            "components.svg / components.md",
+            "System architecture (C4 containers, trust zones, protocols)",
+            "SOC2 system description · ISO A.14",
+        ),
+        (
+            "wire.md",
+            "API & authentication call-paths (endpoints, CSRF, request/response shapes)",
+            "SOC2 CC6, CC7 · ISO A.9, A.14",
+        ),
+        (
+            "telemetry.md",
+            "Audit-logging & monitoring surface",
+            "SOC2 CC7 · ISO A.12.4",
+        ),
+        (
+            "data-inventory.md",
+            "Data inventory & classification (Secret / auth / PII at rest)",
+            "ISO A.8",
+        ),
+        (
+            "sub-processors.md",
+            "Sub-processors & external systems register",
+            "SOC2 supplier controls · ISO A.15",
+        ),
     ];
     let mut o = String::new();
     o.push_str(&format!("# Audit pack — {label}\n\n"));
@@ -10450,7 +10578,10 @@ fn print_help() {
 /// asset dir. Best-effort: a missing source is skipped, and an existing target
 /// (one the split already staged) is never overwritten. Failures are warned, not
 /// fatal — the app may simply not use them.
-fn stage_project_runtime_into_backend(project_dir: &std::path::Path, backend_dir: &std::path::Path) {
+fn stage_project_runtime_into_backend(
+    project_dir: &std::path::Path,
+    backend_dir: &std::path::Path,
+) {
     let env_src = project_dir.join(".env");
     let env_dst = backend_dir.join(".env");
     if env_src.is_file() && !env_dst.exists() {
@@ -10490,7 +10621,10 @@ mod tests {
 
         // No user value → the project's own `.skydata`, absolute.
         let got = spa_data_dir(&tmp, None).expect("should point at the project .skydata");
-        assert!(got.is_absolute(), "must be absolute (backend runs from .split/backend)");
+        assert!(
+            got.is_absolute(),
+            "must be absolute (backend runs from .split/backend)"
+        );
         assert_eq!(got.file_name(), Some(std::ffi::OsStr::new(".skydata")));
         assert_eq!(got, std::fs::canonicalize(&tmp).unwrap().join(".skydata"));
 
@@ -10598,7 +10732,10 @@ mod tests {
         std::fs::write(proj.join("public/index.html"), "<h1>hi</h1>").unwrap();
 
         stage_project_runtime_into_backend(&proj, &backend);
-        assert_eq!(std::fs::read_to_string(backend.join(".env")).unwrap(), "TOKEN=abc\n");
+        assert_eq!(
+            std::fs::read_to_string(backend.join(".env")).unwrap(),
+            "TOKEN=abc\n"
+        );
         assert_eq!(
             std::fs::read_to_string(backend.join("public/index.html")).unwrap(),
             "<h1>hi</h1>"
@@ -10607,7 +10744,10 @@ mod tests {
         // A `.env` the split already staged is NOT clobbered.
         std::fs::write(backend.join(".env"), "STAGED=1\n").unwrap();
         stage_project_runtime_into_backend(&proj, &backend);
-        assert_eq!(std::fs::read_to_string(backend.join(".env")).unwrap(), "STAGED=1\n");
+        assert_eq!(
+            std::fs::read_to_string(backend.join(".env")).unwrap(),
+            "STAGED=1\n"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -10637,8 +10777,14 @@ mod tests {
         let (arg, consumed) = gather_builder_arg(&lines, 0, "");
         // The folded arg must contain the real body and NO `--` that precedes
         // live code, so `PageLink` and the closing paren survive.
-        assert!(arg.contains("PageLink)"), "body must survive the fold: {arg}");
-        assert!(!arg.contains("--"), "no comment may reach the folded arg: {arg}");
+        assert!(
+            arg.contains("PageLink)"),
+            "body must survive the fold: {arg}"
+        );
+        assert!(
+            !arg.contains("--"),
+            "no comment may reach the folded arg: {arg}"
+        );
         assert_eq!(arg, "(\\_ -> PageLink)");
         assert_eq!(consumed, 5, "spans line 0 through the `PageLink)` line");
     }
@@ -10660,7 +10806,10 @@ mod tests {
         // Multiline: `App.run` is line-final, the argument on the next line. This
         // is the form that silently fell back to the `runTui` placeholder before.
         let multiline = "main =\n    App.run\n        (App.app { i = i }\n            |> App.withNotFound NotFound)\n";
-        assert!(uses_app_run(multiline), "multiline App.run must be detected");
+        assert!(
+            uses_app_run(multiline),
+            "multiline App.run must be detected"
+        );
         assert_eq!(
             rewrite_app_run(multiline, "runLive"),
             "main =\n    App.runLive\n        (App.app { i = i }\n            |> App.withNotFound NotFound)\n"
@@ -10688,8 +10837,14 @@ mod tests {
         );
         // Any non-listening line (incl. one that happens to carry a number) is
         // ignored, so `--open` never fires on a stray log line.
-        assert_eq!(detect_listening_port("booted 3 workers on port config"), None);
-        assert_eq!(detect_listening_port("Sky.Live listening on :3000"), Some(3000));
+        assert_eq!(
+            detect_listening_port("booted 3 workers on port config"),
+            None
+        );
+        assert_eq!(
+            detect_listening_port("Sky.Live listening on :3000"),
+            Some(3000)
+        );
         // A listening line with no port yields nothing rather than a panic.
         assert_eq!(detect_listening_port("now listening for connections"), None);
     }

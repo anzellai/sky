@@ -163,10 +163,7 @@ struct Probe {
 fn rec_decl(etype: &str) -> (&'static str, &'static str) {
     // `(the parameter's written type, the literal used to build one)`.
     match etype {
-        "alias" => (
-            "Rec",
-            "{ alpha = 1, beta = \"x\", gamma = 42 }",
-        ),
+        "alias" => ("Rec", "{ alpha = 1, beta = \"x\", gamma = 42 }"),
         "inline" => (
             "{ alpha : Int, beta : String, gamma : Int }",
             "{ alpha = 1, beta = \"x\", gamma = 42 }",
@@ -193,19 +190,34 @@ fn probe(a: &Assignment) -> Probe {
             format!("bump : {ty} -> {ty}\nbump r =\n    {{ r | alpha = 7 }}\n"),
             format!("(bump {lit}).gamma"),
             "Main_bump",
-            vec!["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert"],
+            vec![
+                "no-erasure",
+                "no-narrowing",
+                "no-any-in-signature",
+                "no-raw-type-assert",
+            ],
         ),
         "field_read" => (
             format!("pick : {ty} -> Int\npick r =\n    r.gamma\n"),
             format!("pick {lit}"),
             "Main_pick",
-            vec!["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert"],
+            vec![
+                "no-erasure",
+                "no-narrowing",
+                "no-any-in-signature",
+                "no-raw-type-assert",
+            ],
         ),
         "field_read_in_binop" => (
             format!("pick : {ty} -> Int\npick r =\n    r.gamma + 0\n"),
             format!("pick {lit}"),
             "Main_pick",
-            vec!["no-erasure", "no-narrowing", "no-any-in-signature", "no-raw-type-assert"],
+            vec![
+                "no-erasure",
+                "no-narrowing",
+                "no-any-in-signature",
+                "no-raw-type-assert",
+            ],
         ),
         "tuple_projection" => (
             format!("pick : ( {ty}, Int ) -> Int\npick p =\n    (fst p).gamma\n"),
@@ -340,7 +352,10 @@ pub fn build(a: &Assignment) -> GenCase {
 }
 
 pub fn all() -> Vec<GenCase> {
-    super::axes::full_cross(&STRATUM).iter().map(build).collect()
+    super::axes::full_cross(&STRATUM)
+        .iter()
+        .map(build)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -520,7 +535,8 @@ pub fn check(case: &GenCase, go: &str) -> Vec<PropOutcome> {
                 }
                 "no-any-in-signature" => {
                     let h = header.unwrap_or("");
-                    let bad = h.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    let bad = h
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
                         .any(|w| w == "any");
                     PropOutcome {
                         property: id,
@@ -660,7 +676,9 @@ pub fn run(root: &Path) -> i32 {
     let scratch = super::runner::scratch_root("emit-shape");
     let _ = std::fs::remove_dir_all(&scratch);
 
-    println!("CORPUS EMIT SHAPE — v2 §3.1 family E (properties of the generated Go, no `go build`)");
+    println!(
+        "CORPUS EMIT SHAPE — v2 §3.1 family E (properties of the generated Go, no `go build`)"
+    );
     println!("  cases      : {}", cases.len());
     println!(
         "  assertions : {} (one per asserted property)",
@@ -723,14 +741,20 @@ pub fn run(root: &Path) -> i32 {
     println!("  properties satisfied : {proven}");
     if !blocked_red.is_empty() {
         println!();
-        println!("  ---- {} BLOCKED (known product defect, still red) ----", blocked_red.len());
+        println!(
+            "  ---- {} BLOCKED (known product defect, still red) ----",
+            blocked_red.len()
+        );
         for f in &blocked_red {
             println!("  {f}");
         }
     }
     if !blocked_now_green.is_empty() {
         println!();
-        println!("  ---- {} BLOCKED propert(y/ies) NOW GREEN ----", blocked_now_green.len());
+        println!(
+            "  ---- {} BLOCKED propert(y/ies) NOW GREEN ----",
+            blocked_now_green.len()
+        );
         for f in &blocked_now_green {
             println!("  {f}");
         }
@@ -739,7 +763,10 @@ pub fn run(root: &Path) -> i32 {
     }
     if !expired.is_empty() {
         println!();
-        println!("  ---- {} BLOCKED propert(y/ies) EXPIRED ----", expired.len());
+        println!(
+            "  ---- {} BLOCKED propert(y/ies) EXPIRED ----",
+            expired.len()
+        );
         for f in &expired {
             println!("  {f}");
         }
@@ -825,7 +852,10 @@ mod tests {
     #[test]
     fn narrowing_set_matches_coerce_floor() {
         for t in ERASURE_TOKENS {
-            assert!(NARROWING_TOKENS.contains(t), "{t} missing from NARROWING_TOKENS");
+            assert!(
+                NARROWING_TOKENS.contains(t),
+                "{t} missing from NARROWING_TOKENS"
+            );
         }
         let floor = crate::coerce_floor_gate::tracked_tokens();
         let mut a: Vec<&str> = NARROWING_TOKENS.to_vec();

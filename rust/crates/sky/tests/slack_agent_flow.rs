@@ -81,7 +81,8 @@ fn slack_mention_runs_a_durable_agent_and_posts_a_reply() {
         "slack-agent fixture exited non-zero:\n{stdout}"
     );
     assert!(
-        stdout.contains("slack reply=MOCKED-REPLY posted=1700000000.000100 cost=0.00075 status=done"),
+        stdout
+            .contains("slack reply=MOCKED-REPLY posted=1700000000.000100 cost=0.00075 status=done"),
         "the mention should run a durable agent, post through the firewall, and capture cost; \
          got:\n{stdout}"
     );

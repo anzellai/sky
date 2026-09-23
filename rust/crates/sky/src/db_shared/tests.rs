@@ -12,7 +12,11 @@ use super::*;
 /// A host with `posix_fadvise`, i.e. Linux — the tuning that carries
 /// `effective_io_concurrency`. The platform without it has its own gate below.
 fn facts(gib: u64, cpus: u32) -> HostFacts {
-    HostFacts { mem_bytes: gib * 1024 * 1024 * 1024, cpus, posix_fadvise: true }
+    HostFacts {
+        mem_bytes: gib * 1024 * 1024 * 1024,
+        cpus,
+        posix_fadvise: true,
+    }
 }
 
 fn spec() -> ServiceSpec {
@@ -43,7 +47,12 @@ fn the_socket_directory_is_not_inside_the_data_directory() {
 
 #[test]
 fn an_ephemeral_state_directory_is_refused() {
-    for dir in ["/tmp/sky", "/var/tmp/sky", "/dev/shm/sky", "/var/folders/xy/sky"] {
+    for dir in [
+        "/tmp/sky",
+        "/var/tmp/sky",
+        "/dev/shm/sky",
+        "/var/folders/xy/sky",
+    ] {
         let e = state_dir_error(Path::new(dir)).unwrap_or_else(|| panic!("{dir} was accepted"));
         assert!(e.contains("which the system empties"), "{dir}: {e}");
     }
@@ -168,13 +177,24 @@ fn the_shared_default_covers_the_apps_the_host_is_sized_for() {
         );
         // The block generated from it must carry it, or the derivation is
         // computed and thrown away.
-        let block = tuning_block(&facts(16, cpus), derived, &Listen::default(), Path::new("/var/lib/sky/run"));
-        assert!(block.contains(&format!("max_connections = {derived}")), "{block}");
+        let block = tuning_block(
+            &facts(16, cpus),
+            derived,
+            &Listen::default(),
+            Path::new("/var/lib/sky/run"),
+        );
+        assert!(
+            block.contains(&format!("max_connections = {derived}")),
+            "{block}"
+        );
     }
     // …and it must actually MOVE with the host, which a flat 200 did not.
     let small = Opts::default().resolved_max_connections(&facts(2, 2));
     let large = Opts::default().resolved_max_connections(&facts(128, 32));
-    assert!(small < large, "the default is flat: {small} on 2 cores, {large} on 32");
+    assert!(
+        small < large,
+        "the default is flat: {small} on 2 cores, {large} on 32"
+    );
 }
 
 /// The derivation is a DEFAULT, not a policy. An operator who states a number
@@ -186,7 +206,11 @@ fn an_explicit_max_connections_overrides_the_derivation() {
     let o = parse_args(&["--shared".into(), "--max-connections".into(), "137".into()]).unwrap();
     assert_eq!(o.max_connections, Some(137));
     assert_eq!(o.resolved_max_connections(&facts(16, 8)), 137);
-    assert_eq!(o.resolved_max_connections(&facts(2, 1)), 137, "the host must not touch a stated value");
+    assert_eq!(
+        o.resolved_max_connections(&facts(2, 1)),
+        137,
+        "the host must not touch a stated value"
+    );
     // The stated value is still validated; the derived one is bounded by its
     // own clamp and never reaches this check.
     let e = parse_args(&["--shared".into(), "--max-connections".into(), "9".into()]).unwrap_err();
@@ -199,18 +223,24 @@ fn an_explicit_max_connections_overrides_the_derivation() {
 #[test]
 fn re_tuning_replaces_the_managed_block_rather_than_stacking_it() {
     let base = "# PostgreSQL configuration\nlisten_addresses = 'localhost'\n";
-    let first = apply_managed_block(base, &tuning_block(
-        &facts(4, 4),
-        100,
-        &Listen::default(),
-        Path::new("/var/lib/sky/run"),
-    ));
-    let second = apply_managed_block(&first, &tuning_block(
-        &facts(32, 8),
-        200,
-        &Listen::default(),
-        Path::new("/var/lib/sky/run"),
-    ));
+    let first = apply_managed_block(
+        base,
+        &tuning_block(
+            &facts(4, 4),
+            100,
+            &Listen::default(),
+            Path::new("/var/lib/sky/run"),
+        ),
+    );
+    let second = apply_managed_block(
+        &first,
+        &tuning_block(
+            &facts(32, 8),
+            200,
+            &Listen::default(),
+            Path::new("/var/lib/sky/run"),
+        ),
+    );
     assert_eq!(second.matches(CONF_BEGIN).count(), 1, "{second}");
     assert_eq!(second.matches(CONF_END).count(), 1);
     assert!(second.contains("shared_buffers = 8192MB"), "{second}");
@@ -218,12 +248,15 @@ fn re_tuning_replaces_the_managed_block_rather_than_stacking_it() {
     // Whatever the operator had is still there.
     assert!(second.contains("# PostgreSQL configuration"));
     // And it is a fixed point.
-    let third = apply_managed_block(&second, &tuning_block(
-        &facts(32, 8),
-        200,
-        &Listen::default(),
-        Path::new("/var/lib/sky/run"),
-    ));
+    let third = apply_managed_block(
+        &second,
+        &tuning_block(
+            &facts(32, 8),
+            200,
+            &Listen::default(),
+            Path::new("/var/lib/sky/run"),
+        ),
+    );
     assert_eq!(second, third);
 }
 
@@ -233,12 +266,15 @@ fn re_tuning_replaces_the_managed_block_rather_than_stacking_it() {
 #[test]
 fn a_truncated_managed_block_is_replaced_not_merged() {
     let broken = format!("port = 5432\n{CONF_BEGIN}\nshared_buffers = 99MB\n");
-    let fixed = apply_managed_block(&broken, &tuning_block(
-        &facts(4, 2),
-        100,
-        &Listen::default(),
-        Path::new("/var/lib/sky/run"),
-    ));
+    let fixed = apply_managed_block(
+        &broken,
+        &tuning_block(
+            &facts(4, 2),
+            100,
+            &Listen::default(),
+            Path::new("/var/lib/sky/run"),
+        ),
+    );
     assert!(!fixed.contains("99MB"), "{fixed}");
     assert_eq!(fixed.matches(CONF_BEGIN).count(), 1);
 }
@@ -252,11 +288,14 @@ fn a_truncated_managed_block_is_replaced_not_merged() {
 #[test]
 fn a_platform_without_posix_fadvise_gets_no_effective_io_concurrency() {
     let mut h = facts(8, 4);
-    assert!(tuning_block(&h, 100, &Listen::default(), Path::new("/run")).contains("effective_io_concurrency = 200"));
+    assert!(tuning_block(&h, 100, &Listen::default(), Path::new("/run"))
+        .contains("effective_io_concurrency = 200"));
     h.posix_fadvise = false;
     let block = tuning_block(&h, 100, &Listen::default(), Path::new("/run"));
     assert!(
-        !block.lines().any(|l| !l.trim_start().starts_with('#') && l.contains("effective_io_concurrency")),
+        !block
+            .lines()
+            .any(|l| !l.trim_start().starts_with('#') && l.contains("effective_io_concurrency")),
         "{block}"
     );
     // And what the current host reports is what the current host is.
@@ -285,7 +324,9 @@ fn the_superuser_rule_precedes_the_app_rule_and_nothing_uses_trust() {
         .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
         .collect();
     assert_eq!(rules.len(), 3, "{hba}");
-    assert!(rules[0].starts_with("local") && rules[0].contains("skypg") && rules[0].ends_with("peer"));
+    assert!(
+        rules[0].starts_with("local") && rules[0].contains("skypg") && rules[0].ends_with("peer")
+    );
     assert!(rules[2].contains(" all ") && rules[2].ends_with("scram-sha-256"));
     assert!(
         !hba.lines().any(|l| !l.trim_start().starts_with('#') && (l.contains("trust") || l.contains("md5"))),
@@ -297,9 +338,18 @@ fn the_superuser_rule_precedes_the_app_rule_and_nothing_uses_trust() {
 fn tcp_rules_appear_only_when_a_listen_address_was_asked_for() {
     let socket_only = pg_hba("skypg", &Listen::default());
     assert!(!socket_only.contains("host    all"));
-    let tcp = pg_hba("skypg", &Listen { addr: Some("127.0.0.1".into()), port: 5432 });
-    assert!(tcp.contains("host    all             all             127.0.0.1/32            scram-sha-256"));
-    assert!(!tcp.lines().any(|l| !l.trim_start().starts_with('#') && l.contains("0.0.0.0/0")));
+    let tcp = pg_hba(
+        "skypg",
+        &Listen {
+            addr: Some("127.0.0.1".into()),
+            port: 5432,
+        },
+    );
+    assert!(tcp
+        .contains("host    all             all             127.0.0.1/32            scram-sha-256"));
+    assert!(!tcp
+        .lines()
+        .any(|l| !l.trim_start().starts_with('#') && l.contains("0.0.0.0/0")));
 }
 
 // ---- the app SQL ---------------------------------------------------------
@@ -314,10 +364,22 @@ fn the_app_sql_revokes_public_before_granting_the_app() {
     let joined = sql.join(";\n");
     let revoke = joined.find("REVOKE ALL ON DATABASE").expect(&joined);
     let grant = joined.find("GRANT CONNECT, TEMPORARY").expect(&joined);
-    assert!(revoke < grant, "the grant would be undone by the revoke:\n{joined}");
+    assert!(
+        revoke < grant,
+        "the grant would be undone by the revoke:\n{joined}"
+    );
     assert!(joined.contains("CREATE DATABASE \"alpha\" OWNER \"alpha\""));
-    for attr in ["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOREPLICATION", "NOBYPASSRLS"] {
-        assert!(joined.contains(attr), "the role is created without {attr}:\n{joined}");
+    for attr in [
+        "NOSUPERUSER",
+        "NOCREATEDB",
+        "NOCREATEROLE",
+        "NOREPLICATION",
+        "NOBYPASSRLS",
+    ] {
+        assert!(
+            joined.contains(attr),
+            "the role is created without {attr}:\n{joined}"
+        );
     }
 }
 
@@ -328,15 +390,29 @@ fn the_app_sql_revokes_public_before_granting_the_app() {
 #[test]
 fn template1_is_hardened_as_well_as_postgres() {
     let t1 = cluster_hardening_sql("template1");
-    assert!(t1.iter().any(|s| s == "REVOKE ALL ON SCHEMA public FROM PUBLIC"), "{t1:?}");
+    assert!(
+        t1.iter()
+            .any(|s| s == "REVOKE ALL ON SCHEMA public FROM PUBLIC"),
+        "{t1:?}"
+    );
     let pg = cluster_hardening_sql("postgres");
-    assert!(pg.iter().any(|s| s.contains("REVOKE ALL ON DATABASE postgres FROM PUBLIC")), "{pg:?}");
-    assert!(pg.iter().any(|s| s.contains("REVOKE ALL ON DATABASE template1 FROM PUBLIC")), "{pg:?}");
+    assert!(
+        pg.iter()
+            .any(|s| s.contains("REVOKE ALL ON DATABASE postgres FROM PUBLIC")),
+        "{pg:?}"
+    );
+    assert!(
+        pg.iter()
+            .any(|s| s.contains("REVOKE ALL ON DATABASE template1 FROM PUBLIC")),
+        "{pg:?}"
+    );
 }
 
 #[test]
 fn app_names_that_cannot_be_a_database_a_role_and_a_filename_are_refused() {
-    for bad in ["", "Alpha", "1alpha", "al pha", "al-pha", "al'pha", "../etc", "pg_toast", "postgres"] {
+    for bad in [
+        "", "Alpha", "1alpha", "al pha", "al-pha", "al'pha", "../etc", "pg_toast", "postgres",
+    ] {
         assert!(validate_app_name(bad).is_err(), "{bad:?} was accepted");
     }
     for good in ["alpha", "a", "my_app_2", "a123"] {
@@ -356,7 +432,9 @@ fn the_account_that_provisioned_the_cluster_is_not_a_usable_app_name() {
     let me = os_user().expect("id -un");
     // Only meaningful if the name could otherwise pass; a user called `Anzel` or
     // `postgres` is already refused by the charset rule or by RESERVED.
-    if me.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    if me
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         && me.starts_with(|c: char| c.is_ascii_lowercase())
         && !RESERVED.contains(&me.as_str())
     {
@@ -378,7 +456,10 @@ fn the_account_that_provisioned_the_cluster_is_not_a_usable_app_name() {
 fn a_retention_window_that_deletes_the_backups_is_refused() {
     let e = parse_args(&["--shared".into(), "--backup-keep".into(), "0".into()]).unwrap_err();
     assert!(e.contains("--backup-keep"), "{e}");
-    assert!(e.contains("delete"), "the message does not say what 0 would do:\n{e}");
+    assert!(
+        e.contains("delete"),
+        "the message does not say what 0 would do:\n{e}"
+    );
     assert!(parse_args(&["--shared".into(), "--backup-keep".into(), "1".into()]).is_ok());
     assert!(parse_args(&["--shared".into(), "--backup-keep".into(), "3650".into()]).is_ok());
     assert!(parse_args(&["--shared".into(), "--backup-keep".into(), "3651".into()]).is_err());
@@ -406,11 +487,32 @@ fn generated_passwords_are_url_safe_and_not_repeated() {
 
 #[test]
 fn the_dsn_is_the_shape_the_runtime_classifies_as_postgres() {
-    let socket = app_dsn("alpha", "pw", Path::new("/var/lib/sky/run"), &Listen::default());
+    let socket = app_dsn(
+        "alpha",
+        "pw",
+        Path::new("/var/lib/sky/run"),
+        &Listen::default(),
+    );
     assert_eq!(socket, "postgresql://alpha:pw@/alpha?host=/var/lib/sky/run");
-    let tcp = app_dsn("alpha", "pw", Path::new("/x"), &Listen { addr: Some("127.0.0.1".into()), port: 6000 });
+    let tcp = app_dsn(
+        "alpha",
+        "pw",
+        Path::new("/x"),
+        &Listen {
+            addr: Some("127.0.0.1".into()),
+            port: 6000,
+        },
+    );
     assert_eq!(tcp, "postgresql://alpha:pw@127.0.0.1:6000/alpha");
-    let odd_port = app_dsn("alpha", "pw", Path::new("/x"), &Listen { addr: None, port: 6000 });
+    let odd_port = app_dsn(
+        "alpha",
+        "pw",
+        Path::new("/x"),
+        &Listen {
+            addr: None,
+            port: 6000,
+        },
+    );
     assert_eq!(odd_port, "postgresql://alpha:pw@/alpha?host=/x&port=6000");
     // An IPv6 address MUST be bracketed. Unbracketed, libpq reads everything
     // after the first colon as the port and refuses the DSN with `invalid
@@ -418,10 +520,26 @@ fn the_dsn_is_the_shape_the_runtime_classifies_as_postgres() {
     // names the port, so the operator debugs the wrong thing entirely. `pg_hba`
     // emits a `::1/128` rule whenever `--listen` is given, so this address is
     // one sky explicitly supports.
-    let v6 = app_dsn("alpha", "pw", Path::new("/x"), &Listen { addr: Some("::1".into()), port: DEFAULT_PORT });
+    let v6 = app_dsn(
+        "alpha",
+        "pw",
+        Path::new("/x"),
+        &Listen {
+            addr: Some("::1".into()),
+            port: DEFAULT_PORT,
+        },
+    );
     assert_eq!(v6, "postgresql://alpha:pw@[::1]:5432/alpha");
     // Already bracketed by the operator is not bracketed twice.
-    let v6b = app_dsn("alpha", "pw", Path::new("/x"), &Listen { addr: Some("[::1]".into()), port: 6000 });
+    let v6b = app_dsn(
+        "alpha",
+        "pw",
+        Path::new("/x"),
+        &Listen {
+            addr: Some("[::1]".into()),
+            port: 6000,
+        },
+    );
     assert_eq!(v6b, "postgresql://alpha:pw@[::1]:6000/alpha");
 }
 
@@ -444,7 +562,11 @@ fn a_wildcard_bind_address_becomes_an_address_a_client_can_dial() {
     };
     for wildcard in ["*", "0.0.0.0"] {
         write(wildcard);
-        assert_eq!(effective_listen(&l).addr.as_deref(), Some("127.0.0.1"), "{wildcard}");
+        assert_eq!(
+            effective_listen(&l).addr.as_deref(),
+            Some("127.0.0.1"),
+            "{wildcard}"
+        );
     }
     write("::");
     assert_eq!(effective_listen(&l).addr.as_deref(), Some("::1"));
@@ -465,7 +587,10 @@ fn the_systemd_unit_stops_postgres_with_sigint_not_sigterm() {
     let u = systemd_service(&spec());
     assert!(u.contains("\nKillSignal=SIGINT\n"), "{u}");
     assert!(u.contains("\nTimeoutStopSec=120\n"));
-    assert!(!u.contains("Type=notify"), "the bundle is built --without-systemd");
+    assert!(
+        !u.contains("Type=notify"),
+        "the bundle is built --without-systemd"
+    );
 }
 
 /// A structural check of the INI shape, since `systemd-analyze verify` does not
@@ -480,7 +605,10 @@ fn the_systemd_unit_is_structurally_well_formed() {
         assert_eq!(u.matches(section).count(), 1, "{section} in:\n{u}");
     }
     let exec = u.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
-    assert!(exec.strip_prefix("ExecStart=").unwrap().starts_with('/'), "{exec}");
+    assert!(
+        exec.strip_prefix("ExecStart=").unwrap().starts_with('/'),
+        "{exec}"
+    );
     assert!(u.contains("WantedBy=multi-user.target"));
     // Every non-comment line inside a section is `key=value`.
     for line in u.lines() {
@@ -490,7 +618,10 @@ fn the_systemd_unit_is_structurally_well_formed() {
         }
         assert!(t.contains('='), "not a key=value line: {t:?}");
     }
-    assert!(u.contains(&format!("ReadWritePaths={}", spec().layout.state_dir.display())));
+    assert!(u.contains(&format!(
+        "ReadWritePaths={}",
+        spec().layout.state_dir.display()
+    )));
 }
 
 /// launchd has no `KillSignal`, so the plist cannot ask for SIGINT and the
@@ -502,7 +633,10 @@ fn the_launchd_job_runs_the_wrapper_that_converts_sigterm_to_sigint() {
     let s = spec();
     let p = launchd_plist(&s);
     assert!(p.contains(&s.wrapper_path().display().to_string()), "{p}");
-    assert!(!p.contains("/opt/pg/bin/postgres"), "the plist bypasses the wrapper:\n{p}");
+    assert!(
+        !p.contains("/opt/pg/bin/postgres"),
+        "the plist bypasses the wrapper:\n{p}"
+    );
     let w = launchd_wrapper(&s);
     assert!(w.contains("kill -INT"), "{w}");
     assert!(w.contains("trap"), "{w}");
@@ -563,7 +697,10 @@ fn the_backup_script_dumps_roles_when_it_can_and_says_so_when_it_cannot() {
 fn the_backup_script_says_how_to_restore_without_undoing_the_boundary() {
     let s = backup_script(&spec());
     assert!(s.contains("pg_restore --create --dbname postgres"), "{s}");
-    assert!(s.contains("PUBLIC's default"), "the reason is not stated, only the command:\n{s}");
+    assert!(
+        s.contains("PUBLIC's default"),
+        "the reason is not stated, only the command:\n{s}"
+    );
 }
 
 #[test]
@@ -574,7 +711,10 @@ fn the_backup_timer_survives_a_host_that_was_off() {
     assert!(t.contains("WantedBy=timers.target"), "{t}");
     let p = launchd_backup_plist(&spec());
     assert!(p.contains("<key>StartCalendarInterval</key>"), "{p}");
-    assert!(p.contains("<key>Hour</key>\n    <integer>3</integer>"), "{p}");
+    assert!(
+        p.contains("<key>Hour</key>\n    <integer>3</integer>"),
+        "{p}"
+    );
 }
 
 // ---- argument parsing ----------------------------------------------------
@@ -587,8 +727,14 @@ fn embed_and_shared_are_not_run_together() {
 
 #[test]
 fn listen_and_port_are_refused_on_an_app_provision() {
-    let e = parse_args(&["--shared".into(), "--app".into(), "alpha".into(), "--port".into(), "6000".into()])
-        .unwrap_err();
+    let e = parse_args(&[
+        "--shared".into(),
+        "--app".into(),
+        "alpha".into(),
+        "--port".into(),
+        "6000".into(),
+    ])
+    .unwrap_err();
     assert!(e.contains("describe the CLUSTER"), "{e}");
 }
 

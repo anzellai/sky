@@ -57,8 +57,8 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 fn stage_fixture() -> PathBuf {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/type-decl-module-shadow");
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/type-decl-module-shadow");
     let dir = std::env::temp_dir().join(format!(
         "sky-typedecl-shadow-{}-{}",
         std::process::id(),

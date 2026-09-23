@@ -517,7 +517,12 @@ fn classify(g: &Gate, run: &child::ChildRun) -> (GateState, String) {
 }
 
 fn render(reports: &[Report]) {
-    let w = reports.iter().map(|r| r.gate.len()).max().unwrap_or(4).max(4);
+    let w = reports
+        .iter()
+        .map(|r| r.gate.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
     println!(
         "{:<w$}  {:<14}  {:>10}  {:>8}  DETAIL",
         "GATE",
@@ -665,7 +670,13 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
     }
 
     let w = all.iter().map(|r| r.gate.len()).max().unwrap_or(4).max(4);
-    println!("{:<w$}  {:<28}  {:<13}  DETAIL", "GATE", "MUTATION", "OUTCOME", w = w);
+    println!(
+        "{:<w$}  {:<28}  {:<13}  DETAIL",
+        "GATE",
+        "MUTATION",
+        "OUTCOME",
+        w = w
+    );
     println!("{}", "-".repeat(w + 60));
     for r in &all {
         println!(
@@ -741,7 +752,10 @@ impl Proofs {
         if e.get("outcome").and_then(|o| o.as_str()) != Some("as-declared") {
             return false;
         }
-        let recorded = e.get("mutation").and_then(|m| m.as_str()).unwrap_or_default();
+        let recorded = e
+            .get("mutation")
+            .and_then(|m| m.as_str())
+            .unwrap_or_default();
         let declared = registry::GATES
             .iter()
             .find(|g| g.name == gate)
@@ -749,7 +763,10 @@ impl Proofs {
         if !declared {
             return false;
         }
-        let at = e.get("proven_at_unix").and_then(|v| v.as_u64()).unwrap_or(0);
+        let at = e
+            .get("proven_at_unix")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let now = now_unix();
         now.saturating_sub(at) <= PROOF_WINDOW_DAYS * 86_400
     }
@@ -830,7 +847,13 @@ mod proof_ledger_tests {
 
     fn report(gate: &'static str, outcome: Falsified) -> FalsifyReport {
         let as_declared = matches!(outcome, Falsified::Proven);
-        FalsifyReport { gate, mutation: "m", outcome, as_declared, detail: String::new() }
+        FalsifyReport {
+            gate,
+            mutation: "m",
+            outcome,
+            as_declared,
+            detail: String::new(),
+        }
     }
 
     fn write_ledger(dir: &Path, body: &str) {
@@ -862,14 +885,26 @@ mod proof_ledger_tests {
                 "outcome":"as-declared","proven_at_unix":1786369944}}}"#,
         );
 
-        Proofs::record(&root, &[report("apps-fleet", Falsified::Inconclusive("no DSN".into()))])
-            .unwrap();
+        Proofs::record(
+            &root,
+            &[report(
+                "apps-fleet",
+                Falsified::Inconclusive("no DSN".into()),
+            )],
+        )
+        .unwrap();
 
         let after = Proofs::load(&root);
-        let e = after.entries.get("apps-fleet").expect("the row must survive");
+        let e = after
+            .entries
+            .get("apps-fleet")
+            .expect("the row must survive");
         assert_eq!(e["outcome"], "as-declared", "the proof was erased");
         assert_eq!(e["observed"], "PROVEN");
-        assert_eq!(e["proven_at_unix"], 1786369944, "the proof's age must not be refreshed");
+        assert_eq!(
+            e["proven_at_unix"], 1786369944,
+            "the proof's age must not be refreshed"
+        );
         // The failed attempt is visible rather than silent.
         assert!(e.get("last_inconclusive_at_unix").is_some());
     }
@@ -881,13 +916,22 @@ mod proof_ledger_tests {
         let root = scratch_dir("fresh");
         write_ledger(&root, r#"{"gates":{}}"#);
 
-        Proofs::record(&root, &[report("apps-fleet", Falsified::Inconclusive("no DSN".into()))])
-            .unwrap();
+        Proofs::record(
+            &root,
+            &[report(
+                "apps-fleet",
+                Falsified::Inconclusive("no DSN".into()),
+            )],
+        )
+        .unwrap();
 
         let after = Proofs::load(&root);
         let e = after.entries.get("apps-fleet").expect("must be recorded");
         assert_eq!(e["outcome"], "NOT-as-declared");
-        assert!(!after.fresh("apps-fleet"), "INCONCLUSIVE must never render a gate proven");
+        assert!(
+            !after.fresh("apps-fleet"),
+            "INCONCLUSIVE must never render a gate proven"
+        );
     }
 
     /// A real VACUOUS on a `Falsifiable` gate is a genuine defect finding and

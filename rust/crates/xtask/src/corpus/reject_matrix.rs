@@ -362,7 +362,8 @@ fn defect(defect: &str, rimport: &str) -> (Side, Side, &'static str) {
         // `hir::resolve::process_import` and `hir::is_reserved_sky_namespace`.
         "unknown_module" => {
             let mut ill = Side::new("", "String.fromInt Nope.answer");
-            ill.extra_imports.push("import Std.NoSuchModule as Nope".into());
+            ill.extra_imports
+                .push("import Std.NoSuchModule as Nope".into());
             (ill, Side::new("", "String.fromInt knownName"), "E1001")
         }
         "unexposed_name" => {
@@ -519,7 +520,10 @@ pub fn build(a: &Assignment) -> GenCase {
 
 /// Every Family-R case: the full cross of the three axes.
 pub fn all() -> Vec<GenCase> {
-    super::axes::full_cross(&STRATUM).iter().map(build).collect()
+    super::axes::full_cross(&STRATUM)
+        .iter()
+        .map(build)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +598,10 @@ pub fn run(root: &Path) -> i32 {
 
     println!("CORPUS REJECT MATRIX — v2 §3.1 family R (code-pinned rejection + accepted twin)");
     println!("  cases      : {}", rows.len());
-    println!("  assertions : {} (one rejection + one twin per case)", rows.len() * 2);
+    println!(
+        "  assertions : {} (one rejection + one twin per case)",
+        rows.len() * 2
+    );
     println!();
 
     let accepted_holes: Vec<&RowOutcome> = rows.iter().filter(|r| !r.rejected).collect();
@@ -605,16 +612,25 @@ pub fn run(root: &Path) -> i32 {
     let twin_holes: Vec<&RowOutcome> = rows.iter().filter(|r| !r.twin_accepted).collect();
 
     if !accepted_holes.is_empty() {
-        println!("  ---- {} SOUNDNESS HOLE(S): accepted, must be rejected ----", accepted_holes.len());
+        println!(
+            "  ---- {} SOUNDNESS HOLE(S): accepted, must be rejected ----",
+            accepted_holes.len()
+        );
         for r in &accepted_holes {
             println!("  {}", r.id);
         }
         println!();
     }
     if !wrong_code.is_empty() {
-        println!("  ---- {} rejected by the WRONG diagnostic ----", wrong_code.len());
+        println!(
+            "  ---- {} rejected by the WRONG diagnostic ----",
+            wrong_code.len()
+        );
         for r in &wrong_code {
-            println!("  {}  declared {} observed {:?}", r.id, r.declared, r.observed);
+            println!(
+                "  {}  declared {} observed {:?}",
+                r.id, r.declared, r.observed
+            );
         }
         println!("  A rejection that carries a different code is a rejection for a");
         println!("  different reason. Fix the checker, or — where Rust legitimately");
@@ -623,7 +639,10 @@ pub fn run(root: &Path) -> i32 {
         println!();
     }
     if !twin_holes.is_empty() {
-        println!("  ---- {} TWIN(S) REJECTED: the pair proves nothing ----", twin_holes.len());
+        println!(
+            "  ---- {} TWIN(S) REJECTED: the pair proves nothing ----",
+            twin_holes.len()
+        );
         for r in &twin_holes {
             println!("  {}  twin: {}", r.id, r.twin_detail);
         }
@@ -711,8 +730,7 @@ mod tests {
                 for l in b.lines() {
                     *counts.entry(l).or_default() -= 1;
                 }
-                let differing: usize =
-                    counts.values().map(|v| v.unsigned_abs() as usize).sum();
+                let differing: usize = counts.values().map(|v| v.unsigned_abs() as usize).sum();
                 worst = worst.max(differing);
                 assert!(
                     differing <= 6,

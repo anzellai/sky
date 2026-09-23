@@ -391,7 +391,10 @@ mod resolve_memo_tests {
     #[test]
     fn overwrite_invalidates_the_overwritten_module() {
         let mut db = SourceDb::new();
-        let m = db.add_module("Std.Log", p("module Std.Log exposing (alpha)\n\nalpha = 1\n"));
+        let m = db.add_module(
+            "Std.Log",
+            p("module Std.Log exposing (alpha)\n\nalpha = 1\n"),
+        );
         let before = SkyDb::resolve(&db, m);
         let n_before = before.top_defs.len();
         assert_eq!(n_before, 1);
@@ -401,7 +404,10 @@ mod resolve_memo_tests {
             "Std.Log",
             p("module Std.Log exposing (beta, gamma)\n\nbeta = 1\n\ngamma = 2\n"),
         );
-        assert_eq!(m, m2, "same name must reuse the ModuleId (the overwrite path)");
+        assert_eq!(
+            m, m2,
+            "same name must reuse the ModuleId (the overwrite path)"
+        );
 
         let after = SkyDb::resolve(&db, m);
         assert!(
@@ -413,7 +419,11 @@ mod resolve_memo_tests {
             .iter()
             .map(|d| d.name.as_str().to_string())
             .collect();
-        assert_eq!(names.len(), 2, "resolution must reflect the NEW parse: {names:?}");
+        assert_eq!(
+            names.len(),
+            2,
+            "resolution must reflect the NEW parse: {names:?}"
+        );
         assert!(names.iter().any(|n| n == "beta"));
     }
 

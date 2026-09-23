@@ -58,7 +58,10 @@ fn build(report: &WireReport, app_name: &str, version: &str, include_rpc: bool) 
         let csrf_exempt = e.kind.is_csrf_exempt();
         let mut op = Map::new();
         op.insert("summary".into(), json!(format!("{} {}", e.method, e.path)));
-        op.insert("operationId".into(), json!(operation_id(&e.method, &e.path)));
+        op.insert(
+            "operationId".into(),
+            json!(operation_id(&e.method, &e.path)),
+        );
         let kind = match e.kind {
             EndpointKind::PageRoute => {
                 "A Std.App page route (server-rendered GET). Its auth is enforced in the app, not statically recovered here."
@@ -304,7 +307,10 @@ mod tests {
     #[test]
     fn primitive_types_map() {
         assert_eq!(ty_to_schema("String"), json!({ "type": "string" }));
-        assert_eq!(ty_to_schema("Int"), json!({ "type": "integer", "format": "int64" }));
+        assert_eq!(
+            ty_to_schema("Int"),
+            json!({ "type": "integer", "format": "int64" })
+        );
         assert_eq!(ty_to_schema("Bool"), json!({ "type": "boolean" }));
     }
 
@@ -344,7 +350,10 @@ mod tests {
     #[test]
     fn operation_id_is_sane() {
         assert_eq!(operation_id("GET", "/admin/login"), "get_admin_login");
-        assert_eq!(operation_id("POST", "/webhooks/stripe"), "post_webhooks_stripe");
+        assert_eq!(
+            operation_id("POST", "/webhooks/stripe"),
+            "post_webhooks_stripe"
+        );
     }
 
     /// Soundness (bug #1): a field an internal branch WRITES but does not READ
@@ -387,7 +396,9 @@ mod tests {
             msg_arg_tys: vec![],
         };
         let schema = request_schema(&e, &model);
-        let props = schema["properties"].as_object().expect("request has properties");
+        let props = schema["properties"]
+            .as_object()
+            .expect("request has properties");
         assert!(props.contains_key("counter"), "read field carried");
         assert!(
             props.contains_key("note"),

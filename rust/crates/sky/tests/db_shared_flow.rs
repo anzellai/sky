@@ -23,7 +23,9 @@ const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn find_pg_bin() -> Option<PathBuf> {
     let complete = |d: &Path| {
-        ["initdb", "pg_ctl", "postgres", "pg_dump"].iter().all(|b| d.join(b).is_file())
+        ["initdb", "pg_ctl", "postgres", "pg_dump"]
+            .iter()
+            .all(|b| d.join(b).is_file())
     };
     if let Ok(v) = std::env::var("SKY_POSTGRES_BIN") {
         let d = PathBuf::from(v);
@@ -115,7 +117,10 @@ fn the_verb_is_routed_and_not_eaten_by_the_embed_parser() {
     let state = scratch("route");
     let out = sky(&["--shared", "--app", "Bad Name"], &state);
     let t = text(&out);
-    assert!(!t.contains("unknown argument: --shared"), "the verb never reached phase 6:\n{t}");
+    assert!(
+        !t.contains("unknown argument: --shared"),
+        "the verb never reached phase 6:\n{t}"
+    );
     assert!(t.contains("not a usable app name"), "{t}");
     assert_eq!(out.status.code(), Some(2), "{t}");
 }
@@ -125,7 +130,11 @@ fn embed_and_shared_together_are_refused_before_anything_is_written() {
     let state = scratch("both");
     let out = sky(&["--shared", "--embed"], &state);
     assert!(text(&out).contains("different jobs"), "{}", text(&out));
-    assert!(!state.exists(), "a refused invocation created {}", state.display());
+    assert!(
+        !state.exists(),
+        "a refused invocation created {}",
+        state.display()
+    );
 }
 
 #[test]
@@ -149,7 +158,9 @@ fn provisioning_an_app_named_after_this_account_is_refused_by_the_binary() {
     let me = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if me.is_empty()
         || !me.starts_with(|c: char| c.is_ascii_lowercase())
-        || !me.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        || !me
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
     {
         // A name already refused by the charset rule proves nothing about this one.
         return;
@@ -159,14 +170,24 @@ fn provisioning_an_app_named_after_this_account_is_refused_by_the_binary() {
     let t = text(&out);
     assert!(t.contains("bootstrap superuser"), "{t}");
     assert_eq!(out.status.code(), Some(2), "{t}");
-    assert!(!state.exists(), "a refused invocation created {}", state.display());
+    assert!(
+        !state.exists(),
+        "a refused invocation created {}",
+        state.display()
+    );
 }
 
 #[test]
 fn provisioning_an_app_before_the_cluster_says_so() {
     let state = scratch("noclu");
     let out = sky(
-        &["--shared", "--app", "alpha", "--state-dir", &state.display().to_string()],
+        &[
+            "--shared",
+            "--app",
+            "alpha",
+            "--state-dir",
+            &state.display().to_string(),
+        ],
         &state,
     );
     let t = text(&out);
@@ -191,7 +212,16 @@ fn the_binary_provisions_a_cluster_whose_apps_cannot_read_each_other() {
     let sd = state.display().to_string();
 
     let out = sky(
-        &["--shared", "--state-dir", &sd, "--service", "--backup", "--start", "--max-connections", "30"],
+        &[
+            "--shared",
+            "--state-dir",
+            &sd,
+            "--service",
+            "--backup",
+            "--start",
+            "--max-connections",
+            "30",
+        ],
         &state,
     );
     let t = text(&out);
@@ -212,15 +242,29 @@ fn the_binary_provisions_a_cluster_whose_apps_cannot_read_each_other() {
     // The artefacts the operator was promised.
     assert!(state.join("pg/PG_VERSION").is_file(), "{t}");
     let conf = std::fs::read_to_string(state.join("pg/postgresql.conf")).unwrap();
-    assert!(conf.contains("sky shared cluster: managed block"), "the conf was not tuned");
-    assert!(conf.contains("shared_buffers = 128MB"), "not tuned from SKY_PG_TUNE_MEM_MB:\n{conf}");
+    assert!(
+        conf.contains("sky shared cluster: managed block"),
+        "the conf was not tuned"
+    );
+    assert!(
+        conf.contains("shared_buffers = 128MB"),
+        "not tuned from SKY_PG_TUNE_MEM_MB:\n{conf}"
+    );
     let hba = std::fs::read_to_string(state.join("pg/pg_hba.conf")).unwrap();
     assert!(
-        !hba.lines().any(|l| !l.trim_start().starts_with('#') && l.contains("trust")),
+        !hba.lines()
+            .any(|l| !l.trim_start().starts_with('#') && l.contains("trust")),
         "a trust rule survived:\n{hba}"
     );
-    let unit = if cfg!(target_os = "macos") { "org.sky.postgres.plist" } else { "sky-postgres.service" };
-    assert!(state.join("service").join(unit).is_file(), "no {unit}:\n{t}");
+    let unit = if cfg!(target_os = "macos") {
+        "org.sky.postgres.plist"
+    } else {
+        "sky-postgres.service"
+    };
+    assert!(
+        state.join("service").join(unit).is_file(),
+        "no {unit}:\n{t}"
+    );
     assert!(state.join("service/sky-postgres-backup.sh").is_file());
     assert!(t.contains("Install the service (as root):"), "{t}");
 
@@ -272,8 +316,22 @@ fn the_binary_provisions_a_cluster_whose_apps_cannot_read_each_other() {
     );
 
     // alpha's password, claiming to be beta.
-    let alpha_pw = dsns[0].split(':').nth(2).unwrap().split('@').next().unwrap().to_string();
-    let beta_pw = dsns[1].split(':').nth(2).unwrap().split('@').next().unwrap().to_string();
+    let alpha_pw = dsns[0]
+        .split(':')
+        .nth(2)
+        .unwrap()
+        .split('@')
+        .next()
+        .unwrap()
+        .to_string();
+    let beta_pw = dsns[1]
+        .split(':')
+        .nth(2)
+        .unwrap()
+        .split('@')
+        .next()
+        .unwrap()
+        .to_string();
     let impostor = dsns[1].replace(&beta_pw, &alpha_pw);
     assert_ne!(impostor, dsns[1]);
     let denied = pg_dump(&impostor);

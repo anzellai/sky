@@ -83,7 +83,8 @@ fn run_fuzz(dir: &Path, iters: u32) -> (i32, String) {
     (out.status.code().unwrap_or(-1), s)
 }
 
-const SQLITE_TOML: &str = "name = \"fuzzsqlite\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+const SQLITE_TOML: &str =
+    "name = \"fuzzsqlite\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
      [source]\nroot = \"src\"\n\n\
      [database]\ndriver = \"sqlite\"\npath = \"app.db\"\n";
 
@@ -151,7 +152,10 @@ fn sqlite_db_app_fuzzes_offline() {
         !out.contains("will not choose between them") && !out.contains("SKY_EMBED_POSTGRES"),
         "a SQLite app must NOT be forced onto embedded Postgres; output:\n{out}"
     );
-    assert_eq!(code, 0, "a SQLite DB app must fuzz offline and PASS; output:\n{out}");
+    assert_eq!(
+        code, 0,
+        "a SQLite DB app must fuzz offline and PASS; output:\n{out}"
+    );
     assert!(out.contains("no unclassified panic"), "output:\n{out}");
     // The run must be ephemeral: never touch the project's real database file.
     assert!(

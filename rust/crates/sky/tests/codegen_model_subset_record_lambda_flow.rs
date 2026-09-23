@@ -58,8 +58,8 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 fn stage_fixture() -> PathBuf {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/model-subset-record-lambda");
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/model-subset-record-lambda");
     let dir = std::env::temp_dir().join(format!(
         "sky-model-subset-{}-{}",
         std::process::id(),

@@ -93,7 +93,9 @@ simulatedExec sql =
     if String.contains "DROP" sql then
         { rowsAffected = 0
         , rows = []
-        , error = Just (Error.permissionDenied |> Error.withMessage "DROP not allowed")
+        , error =
+            Just
+                (Error.permissionDenied |> Error.withMessage "DROP not allowed")
         }
 
     else if String.contains "UNIQUE" sql then
@@ -122,12 +124,13 @@ simulatedQuery : String -> SimResult
 simulatedQuery sql =
     if String.contains "users WHERE id = 'u1'" sql then
         { rowsAffected = 1
-        , rows = [ makeRow
-                [ ( "id", "u1" )
-                , ( "email", "admin@example.com" )
-                , ( "role", "admin" )
-                ]
-          ]
+        , rows =
+            [ makeRow
+                  [ ( "id", "u1" )
+                  , ( "email", "admin@example.com" )
+                  , ( "role", "admin" )
+                  ]
+            ]
         , error = Nothing
         }
 
@@ -136,17 +139,18 @@ simulatedQuery sql =
 
     else if String.contains "SELECT * FROM users" sql then
         { rowsAffected = 2
-        , rows = [ makeRow
-                [ ( "id", "u1" )
-                , ( "email", "admin@example.com" )
-                , ( "role", "admin" )
-                ]
-          , makeRow
-                [ ( "id", "u2" )
-                , ( "email", "alice@example.com" )
-                , ( "role", "member" )
-                ]
-          ]
+        , rows =
+            [ makeRow
+                  [ ( "id", "u1" )
+                  , ( "email", "admin@example.com" )
+                  , ( "role", "admin" )
+                  ]
+            , makeRow
+                  [ ( "id", "u2" )
+                  , ( "email", "alice@example.com" )
+                  , ( "role", "member" )
+                  ]
+            ]
         , error = Nothing
         }
 

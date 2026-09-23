@@ -72,7 +72,10 @@ fn target_web_stages_a_servable_wasm_bundle() {
     assert!(out.status.success(), "build --target web failed:\n{log}");
 
     // The wasm client + its JS bootstrap land in sky-out/.
-    assert!(dir.join("sky-out").join("main.wasm").is_file(), "no sky-out/main.wasm:\n{log}");
+    assert!(
+        dir.join("sky-out").join("main.wasm").is_file(),
+        "no sky-out/main.wasm:\n{log}"
+    );
     assert!(
         dir.join("sky-out").join("wasm_exec.js").is_file(),
         "no sky-out/wasm_exec.js:\n{log}"
@@ -428,7 +431,10 @@ fn web_app_with_rpc_error_routes_a_failed_rpc_into_update() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "withRpcError web:app build must succeed end-to-end:\n{log}");
+    assert!(
+        out.status.success(),
+        "withRpcError web:app build must succeed end-to-end:\n{log}"
+    );
 
     // The synthesis carried the handler into a named binding, and the frontend
     // routes the Err arm through it into `update`.
@@ -485,7 +491,10 @@ fn web_app_without_rpc_error_keeps_the_floor() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "control web:app build must succeed:\n{log}\n---\n{app}");
+    assert!(
+        out.status.success(),
+        "control web:app build must succeed:\n{log}\n---\n{app}"
+    );
     let front = std::fs::read_to_string(dir.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
         .expect("generated frontend entry must exist");
     assert!(

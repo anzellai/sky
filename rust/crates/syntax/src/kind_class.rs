@@ -235,7 +235,10 @@ pub const KIND_CLASSES: &[(SyntaxKind, KindClass)] = &[
 /// The classification of `k`, or `None` if the table does not cover it (which
 /// [`assert_total`] makes impossible).
 pub fn classify(k: SyntaxKind) -> Option<KindClass> {
-    KIND_CLASSES.iter().find(|(kind, _)| *kind == k).map(|(_, c)| *c)
+    KIND_CLASSES
+        .iter()
+        .find(|(kind, _)| *kind == k)
+        .map(|(_, c)| *c)
 }
 
 /// Every kind classified as a language construct — the LANGUAGE DENOMINATOR
@@ -323,7 +326,10 @@ mod tests {
     fn construct_split_is_pinned() {
         let constructs = construct_kinds().len();
         let total = kind_count();
-        assert_eq!(total, 124, "SyntaxKind count changed — reclassify, then update this pin");
+        assert_eq!(
+            total, 124,
+            "SyntaxKind count changed — reclassify, then update this pin"
+        );
         assert_eq!(
             constructs, 80,
             "construct count changed ({constructs} of {total}) — intentional? update this pin \

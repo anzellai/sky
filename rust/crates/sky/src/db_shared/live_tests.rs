@@ -62,7 +62,9 @@ static ONE_LIVE_CLUSTER_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(
 /// fails on the lock rather than on its own claim — so the first real failure
 /// would be the hardest one to find.
 fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
-    ONE_LIVE_CLUSTER_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner())
+    ONE_LIVE_CLUSTER_AT_A_TIME
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 /// One cluster per run, torn down whatever happens: a leaked postmaster holds a
@@ -110,12 +112,19 @@ fn dsn_and_password(out: &str, app: &str) -> (String, String) {
         .find(|l| l.starts_with("postgresql://"))
         .unwrap_or_else(|| panic!("no DSN in:\n{out}"))
         .to_string();
-    let after = dsn.strip_prefix(&format!("postgresql://{app}:")).unwrap_or_else(|| panic!("{dsn}"));
+    let after = dsn
+        .strip_prefix(&format!("postgresql://{app}:"))
+        .unwrap_or_else(|| panic!("{dsn}"));
     let pw = after.split('@').next().unwrap().to_string();
     (dsn, pw)
 }
 
-fn connect_as(layout: &Layout, user: &str, db: &str, pw: &str) -> Result<Conn, crate::pg_wire::Error> {
+fn connect_as(
+    layout: &Layout,
+    user: &str,
+    db: &str,
+    pw: &str,
+) -> Result<Conn, crate::pg_wire::Error> {
     Conn::connect(
         &Target::Unix(layout.socket_dir.clone(), DEFAULT_PORT),
         user,
@@ -232,7 +241,10 @@ fn provision_fixture(tag: &str) -> Option<(Fixture, String, String, String, Stri
     let (a_dsn, a_pw) = dsn_and_password(&a, "alpha");
     let (b_dsn, b_pw) = dsn_and_password(&b, "beta");
     // `--app` leaves the cluster as it found it, and it found it running.
-    assert!(cluster_running(&fx.layout), "the app provision stopped a cluster it did not start");
+    assert!(
+        cluster_running(&fx.layout),
+        "the app provision stopped a cluster it did not start"
+    );
     Some((fx, a_dsn, a_pw, b_dsn, b_pw))
 }
 
@@ -260,7 +272,8 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
             .unwrap_or_else(|e| panic!("{app} cannot reach its own database: {e}"));
         c.execute("CREATE TABLE secrets (v text)")
             .unwrap_or_else(|e| panic!("{app} cannot create a table it owns: {e}"));
-        c.execute(&format!("INSERT INTO secrets VALUES ('{app}-secret')")).unwrap();
+        c.execute(&format!("INSERT INTO secrets VALUES ('{app}-secret')"))
+            .unwrap();
         assert_eq!(
             c.scalar("SELECT v FROM secrets").unwrap().as_deref(),
             Some(format!("{app}-secret").as_str())
@@ -272,7 +285,11 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
     // the evidence rather than a claim about it: with the REVOKE removed this
     // prints beta's table list, taken out of beta's database by alpha.
     match connect_as(&fx.layout, "alpha", "beta", &a_pw) {
-        Err(e) => assert_eq!(e.sqlstate(), Some("42501"), "expected insufficient_privilege, got: {e}"),
+        Err(e) => assert_eq!(
+            e.sqlstate(),
+            Some("42501"),
+            "expected insufficient_privilege, got: {e}"
+        ),
         Ok(mut c) => {
             let seen = c.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
             panic!("alpha connected to beta's database and read {seen:?}");
@@ -284,7 +301,11 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
     // process may simply claim to be beta, and every grant behind it is
     // decoration. So this probe reads beta's row on the failing branch.
     match connect_as(&fx.layout, "beta", "beta", &a_pw) {
-        Err(e) => assert_eq!(e.sqlstate(), Some("28P01"), "expected invalid_password, got: {e}"),
+        Err(e) => assert_eq!(
+            e.sqlstate(),
+            Some("28P01"),
+            "expected invalid_password, got: {e}"
+        ),
         Ok(mut c) => {
             let leaked = c.scalar("SELECT v FROM secrets");
             panic!("alpha's password authenticated as beta, which then read {leaked:?}");
@@ -303,9 +324,14 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
     // --- probe 4: the same two questions, asked by a real libpq client -------
     // pg_dump is from the PostgreSQL distribution and knows nothing about sky's
     // wire client; if that client were lying about what happened, this disagrees.
-    let cross = a_dsn.replace("/alpha?", "/beta?").replace("@/alpha", "@/beta");
+    let cross = a_dsn
+        .replace("/alpha?", "/beta?")
+        .replace("@/alpha", "@/beta");
     let out = pg_dump(&fx.bins, &cross, &["--schema-only"]);
-    assert!(!out.status.success(), "pg_dump read beta's schema with alpha's DSN");
+    assert!(
+        !out.status.success(),
+        "pg_dump read beta's schema with alpha's DSN"
+    );
     let text = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(
         text.contains("permission denied for database"),
@@ -314,7 +340,10 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
 
     let impostor = b_dsn.replace(&b_pw, &a_pw);
     let out = pg_dump(&fx.bins, &impostor, &["--schema-only"]);
-    assert!(!out.status.success(), "alpha's password authenticated as beta through libpq");
+    assert!(
+        !out.status.success(),
+        "alpha's password authenticated as beta through libpq"
+    );
 
     // Positive control for the client itself: the DSN sky printed does work.
     let out = pg_dump(&fx.bins, &a_dsn, &["--schema-only"]);
@@ -337,7 +366,8 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
     // form: a role that belongs to NO role cannot have been granted any
     // cluster-wide capability, whichever one a future edit happens to pick.
     let mut held = connect_as(&fx.layout, "beta", "beta", &b_pw).expect("beta");
-    held.execute("SELECT 'p6-canary-4111111111111111 someone@example.test'").unwrap();
+    held.execute("SELECT 'p6-canary-4111111111111111 someone@example.test'")
+        .unwrap();
     let mut a = connect_as(&fx.layout, "alpha", "alpha", &a_pw).expect("alpha");
     assert_eq!(
         a.scalar("SELECT count(*) FROM pg_auth_members WHERE member = 'alpha'::regrole")
@@ -378,7 +408,9 @@ fn an_apps_credentials_cannot_reach_another_apps_database() {
 /// then a wrong password connects, and this test says what it read.
 #[test]
 fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
-    let Some(bins) = pg_bins_or_gate() else { return };
+    let Some(bins) = pg_bins_or_gate() else {
+        return;
+    };
     let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("adopt");
@@ -392,7 +424,12 @@ fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
     let out = Command::new(bins.tool("initdb"))
         .arg("-D")
         .arg(&layout.data_dir)
-        .args(["--encoding=UTF8", "--locale=C", "--auth-local=trust", "--auth-host=trust"])
+        .args([
+            "--encoding=UTF8",
+            "--locale=C",
+            "--auth-local=trust",
+            "--auth-host=trust",
+        ])
         .arg(format!("--username={user}"))
         .stdout(Stdio::null())
         .output()
@@ -423,7 +460,12 @@ fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
     ));
     std::fs::write(&conf, text).unwrap();
 
-    let fx = Fixture { _live: live, layout, bins, user: user.clone() };
+    let fx = Fixture {
+        _live: live,
+        layout,
+        bins,
+        user: user.clone(),
+    };
     start_postmaster(&fx.bins, &fx.layout).expect("the operator's cluster did not start");
     assert!(cluster_running(&fx.layout));
     // Precondition: it really is a `trust` cluster. Without this the test could
@@ -432,9 +474,15 @@ fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
     connect_as(&fx.layout, &user, "postgres", "not-the-password")
         .expect("the fixture did not produce a trust cluster; the test is wrong, not the code");
 
-    provision_cluster(&Opts { state_dir: Some(state.clone()), ..Opts::default() })
-        .unwrap_or_else(|e| panic!("provision failed:\n{e}"));
-    assert!(cluster_running(&fx.layout), "provisioning stopped a cluster it did not start");
+    provision_cluster(&Opts {
+        state_dir: Some(state.clone()),
+        ..Opts::default()
+    })
+    .unwrap_or_else(|e| panic!("provision failed:\n{e}"));
+    assert!(
+        cluster_running(&fx.layout),
+        "provisioning stopped a cluster it did not start"
+    );
 
     let out = provision_app(&Opts {
         state_dir: Some(state.clone()),
@@ -448,7 +496,11 @@ fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
     connect_as(&fx.layout, "gamma", "gamma", &pw).expect("the DSN sky printed does not work");
 
     match connect_as(&fx.layout, "gamma", "gamma", "not-the-password") {
-        Err(e) => assert_eq!(e.sqlstate(), Some("28P01"), "expected invalid_password, got: {e}"),
+        Err(e) => assert_eq!(
+            e.sqlstate(),
+            Some("28P01"),
+            "expected invalid_password, got: {e}"
+        ),
         Ok(mut c) => {
             let who = c.scalar("SELECT current_user").unwrap();
             let seen = c.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
@@ -460,8 +512,13 @@ fn an_adopted_running_cluster_ends_up_enforcing_the_hba_sky_wrote() {
     }
     // And with no password at all, which is what `trust` really means.
     assert!(
-        Conn::connect(&Target::Unix(fx.layout.socket_dir.clone(), DEFAULT_PORT), "gamma", "gamma", None)
-            .is_err(),
+        Conn::connect(
+            &Target::Unix(fx.layout.socket_dir.clone(), DEFAULT_PORT),
+            "gamma",
+            "gamma",
+            None
+        )
+        .is_err(),
         "gamma connected with no password at all"
     );
 }
@@ -511,12 +568,16 @@ fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
     };
 
     // 1. The bootstrap superuser — the account that ran `--shared`.
-    let e = provision_app(&app_opts(&fx.user)).expect_err("the superuser was provisioned as an app");
+    let e =
+        provision_app(&app_opts(&fx.user)).expect_err("the superuser was provisioned as an app");
     assert!(e.contains("already exists"), "{e}");
     let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
     assert!(
         admin
-            .scalar(&format!("SELECT 1 FROM pg_database WHERE datname = {}", quote_literal(&fx.user)))
+            .scalar(&format!(
+                "SELECT 1 FROM pg_database WHERE datname = {}",
+                quote_literal(&fx.user)
+            ))
             .unwrap()
             .is_none(),
         "a database was created for the superuser before the refusal"
@@ -534,7 +595,10 @@ fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
     // 3. And a plain pre-existing role: a previous tenant's, or another tool's.
     let old_pw = generate_password();
     admin
-        .execute(&format!("CREATE ROLE tenantx LOGIN PASSWORD {}", quote_literal(&old_pw)))
+        .execute(&format!(
+            "CREATE ROLE tenantx LOGIN PASSWORD {}",
+            quote_literal(&old_pw)
+        ))
         .unwrap();
 
     let verifier = |admin: &mut Conn, role: &str| {
@@ -549,14 +613,30 @@ fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
     let tenant_before = verifier(&mut admin, "tenantx");
     assert!(ops_before.is_some() && tenant_before.is_some());
 
-    let e = provision_app(&app_opts("ops")).expect_err("a CREATEROLE role was provisioned as an app");
-    assert!(e.contains("CREATEROLE") || e.contains("more than its own database"), "{e}");
-    let e = provision_app(&app_opts("tenantx")).expect_err("a foreign role was provisioned as an app");
-    assert!(e.contains("sky did not create") || e.contains("already exists"), "{e}");
+    let e =
+        provision_app(&app_opts("ops")).expect_err("a CREATEROLE role was provisioned as an app");
+    assert!(
+        e.contains("CREATEROLE") || e.contains("more than its own database"),
+        "{e}"
+    );
+    let e =
+        provision_app(&app_opts("tenantx")).expect_err("a foreign role was provisioned as an app");
+    assert!(
+        e.contains("sky did not create") || e.contains("already exists"),
+        "{e}"
+    );
 
     let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
-    assert_eq!(verifier(&mut admin, "ops"), ops_before, "the operator's role was given a new password");
-    assert_eq!(verifier(&mut admin, "tenantx"), tenant_before, "the pre-existing role was rotated");
+    assert_eq!(
+        verifier(&mut admin, "ops"),
+        ops_before,
+        "the operator's role was given a new password"
+    );
+    assert_eq!(
+        verifier(&mut admin, "tenantx"),
+        tenant_before,
+        "the pre-existing role was rotated"
+    );
     // The refusals are not a blanket one: a name nobody has taken still works.
     let out = provision_app(&app_opts("gamma")).expect("a fresh app name was refused");
     let (_, pw) = dsn_and_password(&out, "gamma");
@@ -572,10 +652,20 @@ fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
     // every ownership question says yes and the attribute check is the only
     // thing between `--rotate-password` and a DSN for a role that reads the
     // whole cluster. With an arm deleted the refusal does not happen at all.
-    for attr in ["SUPERUSER", "CREATEROLE", "CREATEDB", "REPLICATION", "BYPASSRLS"] {
+    for attr in [
+        "SUPERUSER",
+        "CREATEROLE",
+        "CREATEDB",
+        "REPLICATION",
+        "BYPASSRLS",
+    ] {
         let before = verifier(&mut admin, "alpha");
         admin.execute(&format!("ALTER ROLE alpha {attr}")).unwrap();
-        let e = provision_app(&Opts { rotate: true, ..app_opts("alpha") }).expect_err(&format!(
+        let e = provision_app(&Opts {
+            rotate: true,
+            ..app_opts("alpha")
+        })
+        .expect_err(&format!(
             "alpha was rotated after being promoted to {attr}; the DSN reads every database"
         ));
         panic_if_not_refused(&e, attr);
@@ -584,7 +674,9 @@ fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
             before,
             "alpha's password was rotated despite holding {attr}"
         );
-        admin.execute(&format!("ALTER ROLE alpha NO{attr}")).unwrap();
+        admin
+            .execute(&format!("ALTER ROLE alpha NO{attr}"))
+            .unwrap();
     }
 
     // And the same five held by a role sky did NOT create, which is the shape
@@ -651,8 +743,14 @@ fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
     // no elevated attribute. Every question the refusal used to ask says yes.
     let alpha_before = verifier(&mut admin, "alpha");
     for grant in ["beta", "pg_monitor"] {
-        admin.execute(&format!("GRANT {} TO alpha", quote_ident(grant))).unwrap();
-        let e = provision_app(&Opts { rotate: true, ..app_opts("alpha") }).expect_err(&format!(
+        admin
+            .execute(&format!("GRANT {} TO alpha", quote_ident(grant)))
+            .unwrap();
+        let e = provision_app(&Opts {
+            rotate: true,
+            ..app_opts("alpha")
+        })
+        .expect_err(&format!(
             "alpha was re-provisioned while a member of {grant}; the DSN reads its data"
         ));
         assert!(
@@ -664,12 +762,17 @@ fn provisioning_an_app_over_a_role_sky_did_not_create_is_refused() {
             alpha_before,
             "alpha's password was rotated despite the refusal"
         );
-        admin.execute(&format!("REVOKE {} FROM alpha", quote_ident(grant))).unwrap();
+        admin
+            .execute(&format!("REVOKE {} FROM alpha", quote_ident(grant)))
+            .unwrap();
     }
     // Positive control: with the membership gone, the same call works. Without
     // this the refusal above could be a rotate path that is simply broken.
-    let out = provision_app(&Opts { rotate: true, ..app_opts("alpha") })
-        .expect("alpha could not be rotated even with no membership");
+    let out = provision_app(&Opts {
+        rotate: true,
+        ..app_opts("alpha")
+    })
+    .expect("alpha could not be rotated even with no membership");
     let (_, rotated) = dsn_and_password(&out, "alpha");
     assert_ne!(rotated, a_pw);
     connect_as(&fx.layout, "alpha", "alpha", &rotated).expect("the rotated DSN does not work");
@@ -718,9 +821,14 @@ fn an_app_run_does_not_take_over_a_database_sky_did_not_create() {
     // the same name, owned by an ordinary account of theirs.
     let ops_pw = generate_password();
     admin
-        .execute(&format!("CREATE ROLE opsowner LOGIN PASSWORD {}", quote_literal(&ops_pw)))
+        .execute(&format!(
+            "CREATE ROLE opsowner LOGIN PASSWORD {}",
+            quote_literal(&ops_pw)
+        ))
         .unwrap();
-    admin.execute("CREATE DATABASE metrics OWNER opsowner").unwrap();
+    admin
+        .execute("CREATE DATABASE metrics OWNER opsowner")
+        .unwrap();
     assert!(
         admin
             .scalar("SELECT 1 FROM pg_roles WHERE rolname = 'metrics'")
@@ -815,7 +923,9 @@ fn an_app_run_does_not_take_over_a_database_sky_did_not_create() {
 /// bits ARE the kernel's access control — asserting them is exact, not a proxy.
 #[test]
 fn the_socket_is_reachable_by_an_app_running_as_another_account() {
-    let Some(bins) = pg_bins_or_gate() else { return };
+    let Some(bins) = pg_bins_or_gate() else {
+        return;
+    };
     let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("sock");
@@ -830,11 +940,23 @@ fn the_socket_is_reachable_by_an_app_running_as_another_account() {
         let _ = std::fs::remove_dir_all(&state);
         return;
     }
-    let fx = Fixture { _live: live, layout: Layout::new(&state), bins, user: os_user().unwrap() };
-    assert!(cluster_running(&fx.layout), "--start left no cluster running");
+    let fx = Fixture {
+        _live: live,
+        layout: Layout::new(&state),
+        bins,
+        user: os_user().unwrap(),
+    };
+    assert!(
+        cluster_running(&fx.layout),
+        "--start left no cluster running"
+    );
 
     use std::os::unix::fs::PermissionsExt;
-    let dir = std::fs::metadata(&fx.layout.socket_dir).unwrap().permissions().mode() & 0o777;
+    let dir = std::fs::metadata(&fx.layout.socket_dir)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
     assert_ne!(
         dir & 0o001,
         0,
@@ -863,8 +985,10 @@ fn the_generated_backup_produces_a_restorable_dump() {
         return;
     };
     let mut c = connect_as(&fx.layout, "alpha", "alpha", &a_pw).expect("alpha");
-    c.execute("CREATE TABLE ledger (id int, note text)").unwrap();
-    c.execute("INSERT INTO ledger VALUES (1, 'the row that must survive')").unwrap();
+    c.execute("CREATE TABLE ledger (id int, note text)")
+        .unwrap();
+    c.execute("INSERT INTO ledger VALUES (1, 'the row that must survive')")
+        .unwrap();
     drop(c);
 
     // A file old enough to be past the retention window, to prove the retention
@@ -886,13 +1010,20 @@ fn the_generated_backup_produces_a_restorable_dump() {
         "the backup script failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(!stale.exists(), "the retention window did not delete a 2020 dump");
+    assert!(
+        !stale.exists(),
+        "the retention window did not delete a 2020 dump"
+    );
 
     let dumps: Vec<PathBuf> = std::fs::read_dir(&fx.layout.backup_dir)
         .unwrap()
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .filter(|p| p.file_name().map(|n| n.to_string_lossy().starts_with("alpha-")).unwrap_or(false))
+        .filter(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().starts_with("alpha-"))
+                .unwrap_or(false)
+        })
         .collect();
     assert_eq!(dumps.len(), 1, "expected one alpha dump, got {dumps:?}");
     // Both apps are dumped, from the list `--app` maintains — not from a list
@@ -914,14 +1045,21 @@ fn the_generated_backup_produces_a_restorable_dump() {
     // `umask 077` in the script and the 0700 on the directory are the entire
     // mechanism; these three assertions are what observes them.
     use std::os::unix::fs::PermissionsExt;
-    let dir_mode = std::fs::metadata(&fx.layout.backup_dir).unwrap().permissions().mode() & 0o777;
+    let dir_mode = std::fs::metadata(&fx.layout.backup_dir)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
     assert_eq!(
         dir_mode & 0o077,
         0,
         "the backup directory is {dir_mode:o}: another account may list and read every dump"
     );
     let mut checked = 0;
-    for e in std::fs::read_dir(&fx.layout.backup_dir).unwrap().filter_map(Result::ok) {
+    for e in std::fs::read_dir(&fx.layout.backup_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+    {
         let name = e.file_name().to_string_lossy().to_string();
         if !(name.ends_with(".dump") || (name.starts_with("globals-") && name.ends_with(".sql"))) {
             continue;
@@ -930,7 +1068,10 @@ fn the_generated_backup_produces_a_restorable_dump() {
         assert_eq!(mode, 0o600, "{name} is {mode:o}, not 0600");
         checked += 1;
     }
-    assert!(checked >= 3, "expected two dumps and a globals file, checked {checked}");
+    assert!(
+        checked >= 3,
+        "expected two dumps and a globals file, checked {checked}"
+    );
 
     // Restore into a database that has never seen this data.
     let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
@@ -951,7 +1092,9 @@ fn the_generated_backup_produces_a_restorable_dump() {
     );
     let mut r = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "restored").unwrap();
     assert_eq!(
-        r.scalar("SELECT note FROM ledger WHERE id = 1").unwrap().as_deref(),
+        r.scalar("SELECT note FROM ledger WHERE id = 1")
+            .unwrap()
+            .as_deref(),
         Some("the row that must survive"),
         "the dump restored, and the row was not in it"
     );
@@ -973,12 +1116,17 @@ fn the_generated_backup_produces_a_restorable_dump() {
     // DATABASE … FROM PUBLIC` — with it deleted there is no ACL in the archive
     // to carry, and beta reads the recovered database.
     let mut admin = admin_conn(&fx.layout, DEFAULT_PORT, &fx.user, "postgres").unwrap();
-    admin.execute("DROP DATABASE alpha").expect("alpha could not be dropped");
+    admin
+        .execute("DROP DATABASE alpha")
+        .expect("alpha could not be dropped");
     let out = Command::new(fx.bins.tool("pg_restore"))
         .args([
             "--create",
             "--dbname",
-            &format!("postgresql:///postgres?host={}", fx.layout.socket_dir.display()),
+            &format!(
+                "postgresql:///postgres?host={}",
+                fx.layout.socket_dir.display()
+            ),
         ])
         .arg(&dumps[0])
         .output()
@@ -990,13 +1138,19 @@ fn the_generated_backup_produces_a_restorable_dump() {
     );
     let mut a = connect_as(&fx.layout, "alpha", "alpha", &a_pw).expect("alpha after the restore");
     assert_eq!(
-        a.scalar("SELECT note FROM ledger WHERE id = 1").unwrap().as_deref(),
+        a.scalar("SELECT note FROM ledger WHERE id = 1")
+            .unwrap()
+            .as_deref(),
         Some("the row that must survive"),
         "the recovered database does not hold the row"
     );
     drop(a);
     match connect_as(&fx.layout, "beta", "alpha", &b_pw) {
-        Err(e) => assert_eq!(e.sqlstate(), Some("42501"), "expected insufficient_privilege, got: {e}"),
+        Err(e) => assert_eq!(
+            e.sqlstate(),
+            Some("42501"),
+            "expected insufficient_privilege, got: {e}"
+        ),
         Ok(mut c) => {
             let seen = c.query("SELECT note FROM ledger");
             panic!("beta read the RECOVERED alpha and got {seen:?}: the restore lost the REVOKE");
@@ -1031,13 +1185,19 @@ fn re_provisioning_converges_a_database_acl_that_drifted_back_to_the_default() {
 
     // Precondition: the boundary is up. This is the state the whole phase claims.
     match connect_as(&fx.layout, "beta", "alpha", &b_pw) {
-        Err(e) => assert_eq!(e.sqlstate(), Some("42501"), "expected insufficient_privilege: {e}"),
+        Err(e) => assert_eq!(
+            e.sqlstate(),
+            Some("42501"),
+            "expected insufficient_privilege: {e}"
+        ),
         Ok(_) => panic!("beta reached alpha's database before the ACL was even touched"),
     }
 
     // The drift: what `CREATE DATABASE` leaves behind, which is what a database
     // rebuilt from a dump has.
-    admin.execute("GRANT CONNECT, TEMPORARY ON DATABASE alpha TO PUBLIC").unwrap();
+    admin
+        .execute("GRANT CONNECT, TEMPORARY ON DATABASE alpha TO PUBLIC")
+        .unwrap();
     // Positive control: the reset really did open it. Without this, a re-run
     // that did nothing at all would still pass the assertion below.
     let opened = connect_as(&fx.layout, "beta", "alpha", &b_pw)
@@ -1145,8 +1305,12 @@ fn a_reload_that_cannot_be_proved_to_have_taken_is_refused() {
 
     // Restore, and prove the restoration: the same call succeeds again, so the
     // refusal above was the shadow and not some state the test left behind.
-    admin.execute("ALTER DATABASE postgres RESET search_path").unwrap();
-    admin.execute("DROP SCHEMA sky_frozen_clock CASCADE").unwrap();
+    admin
+        .execute("ALTER DATABASE postgres RESET search_path")
+        .unwrap();
+    admin
+        .execute("DROP SCHEMA sky_frozen_clock CASCADE")
+        .unwrap();
     reload_hba(&fx.layout, DEFAULT_PORT, &fx.user)
         .expect("reload_hba stayed broken after the shadow was removed");
 }
@@ -1180,7 +1344,11 @@ fn the_generated_launchd_jobs_pass_apples_own_parser() {
     ] {
         let p = dir.join(name);
         std::fs::write(&p, body).unwrap();
-        let out = Command::new("plutil").arg("-lint").arg(&p).output().expect("plutil");
+        let out = Command::new("plutil")
+            .arg("-lint")
+            .arg(&p)
+            .output()
+            .expect("plutil");
         assert!(
             out.status.success(),
             "{name} is not a valid plist:\n{}\n{}",
@@ -1191,12 +1359,28 @@ fn the_generated_launchd_jobs_pass_apples_own_parser() {
     // The wrapper is a shell script, and `sh -n` is its parser.
     let w = dir.join("sky-postgres-run.sh");
     std::fs::write(&w, launchd_wrapper(&spec)).unwrap();
-    let out = Command::new("/bin/sh").arg("-n").arg(&w).output().expect("sh -n");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("/bin/sh")
+        .arg("-n")
+        .arg(&w)
+        .output()
+        .expect("sh -n");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let b = dir.join("backup.sh");
     std::fs::write(&b, backup_script(&spec)).unwrap();
-    let out = Command::new("/bin/sh").arg("-n").arg(&b).output().expect("sh -n");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("/bin/sh")
+        .arg("-n")
+        .arg(&b)
+        .output()
+        .expect("sh -n");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1231,7 +1415,9 @@ fn the_generated_launchd_jobs_pass_apples_own_parser() {
 #[cfg(target_os = "macos")]
 #[test]
 fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
-    let Some(bins) = pg_bins_or_gate() else { return };
+    let Some(bins) = pg_bins_or_gate() else {
+        return;
+    };
     let live = one_at_a_time();
     std::env::set_var("SKY_PG_TUNE_MEM_MB", "512");
     let state = scratch_state_dir("wrap");
@@ -1246,8 +1432,16 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
         let _ = std::fs::remove_dir_all(&state);
         return;
     }
-    let fx = Fixture { _live: live, layout: Layout::new(&state), bins, user: os_user().unwrap() };
-    assert!(!cluster_running(&fx.layout), "the fixture wanted a stopped cluster");
+    let fx = Fixture {
+        _live: live,
+        layout: Layout::new(&state),
+        bins,
+        user: os_user().unwrap(),
+    };
+    assert!(
+        !cluster_running(&fx.layout),
+        "the fixture wanted a stopped cluster"
+    );
 
     // The wrapper's output goes to a FILE, not to /dev/null.
     //
@@ -1300,8 +1494,11 @@ fn the_launchd_wrapper_turns_sigterm_into_a_fast_shutdown() {
     );
 
     let pid = child.id() as i32;
-    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGTERM)
-        .expect("kill");
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .expect("kill");
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut exited = false;
@@ -1347,7 +1544,10 @@ fn re_provisioning_an_app_is_idempotent_and_prints_no_invented_dsn() {
     })
     .expect("second --app");
     assert!(again.contains("already exists"), "{again}");
-    assert!(!again.contains("postgresql://"), "a DSN was invented:\n{again}");
+    assert!(
+        !again.contains("postgresql://"),
+        "a DSN was invented:\n{again}"
+    );
     // The original password still works.
     connect_as(&fx.layout, "alpha", "alpha", &a_pw).expect("the re-run changed the password");
 

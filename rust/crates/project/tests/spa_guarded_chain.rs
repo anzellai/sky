@@ -22,7 +22,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
@@ -61,7 +64,9 @@ fn guard_wrapped_all_server_chain_settles() {
     );
     // No fail-closed warning: the chain settles cleanly.
     assert!(
-        !r.server_chain_warnings.iter().any(|w| w.contains("Trigger") || w.contains("Saved")),
+        !r.server_chain_warnings
+            .iter()
+            .any(|w| w.contains("Trigger") || w.contains("Saved")),
         "the guard-wrapped all-server chain settles — no fail-closed warning expected; got {:?}",
         r.server_chain_warnings
     );
@@ -76,7 +81,10 @@ fn trigger_writeset_unions_the_continuation_narrowly() {
         .find(|b| b.msg == "Trigger" || b.msg.split_whitespace().next() == Some("Trigger"))
         .expect("no Trigger branch");
     assert!(trig.server, "Trigger reaches File -> SERVER");
-    let io = trig.io.as_ref().expect("Trigger is a SERVER branch with I/O");
+    let io = trig
+        .io
+        .as_ref()
+        .expect("Trigger is a SERVER branch with I/O");
     // Soundness: the write-set must NOT be lost — it gains the continuation's
     // narrow writes, and must NOT over-approximate to the whole model.
     assert!(

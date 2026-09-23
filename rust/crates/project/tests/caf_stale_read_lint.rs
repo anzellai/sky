@@ -42,7 +42,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 

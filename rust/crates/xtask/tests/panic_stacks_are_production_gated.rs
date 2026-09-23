@@ -41,7 +41,9 @@ fn repo_root() -> PathBuf {
 const STACK_OWNER: &str = "runtime-go/rt/panic_log.go";
 
 fn walk_go(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -93,7 +95,9 @@ fn stack_capture_lives_only_in_the_hardened_path() {
         if f == &owner {
             continue;
         }
-        let Ok(src) = fs::read_to_string(f) else { continue };
+        let Ok(src) = fs::read_to_string(f) else {
+            continue;
+        };
         for (i, line) in src.lines().enumerate() {
             if is_comment(line) {
                 continue;

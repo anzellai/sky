@@ -143,11 +143,28 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
     (
         "Basics",
         &[
-            "abs", "always", "clamp", "compare", "errorToString", "fst", "identity", "js", "max",
-            "min", "modBy", "negate", "not", "snd", "sqrt", "toString",
+            "abs",
+            "always",
+            "clamp",
+            "compare",
+            "errorToString",
+            "fst",
+            "identity",
+            "js",
+            "max",
+            "min",
+            "modBy",
+            "negate",
+            "not",
+            "snd",
+            "sqrt",
+            "toString",
         ],
     ),
-    ("Context", &["background", "todo", "withCancel", "withValue"]),
+    (
+        "Context",
+        &["background", "todo", "withCancel", "withValue"],
+    ),
     // `findWhere` is untyped ON PURPOSE, and must stay that way. Audit P1-3
     // renamed it to `unsafeFindWhere`; `rt.Db_findWhere` survives only as an
     // alias for already-compiled `sky-out/` trees. Typing it requires EXPOSING
@@ -158,7 +175,9 @@ const UNTYPED_KERNEL_MEMBERS: &[(&str, &[&str])] = &[
     ("Db", &["findWhere", "getFieldOr"]),
     (
         "Ffi",
-        &["call", "callPure", "callTask", "has", "isPure", "kernel", "toAny"],
+        &[
+            "call", "callPure", "callTask", "has", "isPure", "kernel", "toAny",
+        ],
     ),
     ("Fmt", &["errorf", "sprint", "sprintf", "sprintln"]),
     ("Io", &["writeString"]),
@@ -245,7 +264,9 @@ fn signatures_by_pseudo(root: &Path) -> BTreeMap<&'static str, BTreeSet<String>>
             .join(path.replace('.', "/"))
             .with_extension("sky");
         if let Ok(src) = fs::read_to_string(&f) {
-            out.entry(pseudo).or_default().extend(declared_signatures(&src));
+            out.entry(pseudo)
+                .or_default()
+                .extend(declared_signatures(&src));
         }
     }
     out
@@ -288,7 +309,12 @@ fn advertised_kernel_members_without_a_sky_signature_match_the_allowlist() {
 
     let fmt = |m: &BTreeMap<&str, BTreeSet<String>>| {
         m.iter()
-            .map(|(p, s)| format!("  {p}: {}", s.iter().cloned().collect::<Vec<_>>().join(", ")))
+            .map(|(p, s)| {
+                format!(
+                    "  {p}: {}",
+                    s.iter().cloned().collect::<Vec<_>>().join(", ")
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     };

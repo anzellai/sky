@@ -34,7 +34,7 @@ partition pred list =
             else
                 ( trues, List.cons x falses )
     in
-    List.foldr step ( [], [] ) list
+        List.foldr step ( [], [] ) list
 
 
 -- #170 sibling — MIXED element types (`Int`, `List Int`) in the accumulator, so
@@ -51,24 +51,23 @@ tally xs =
             else
                 ( count + 1, evens )
     in
-    List.foldl step ( 0, [] ) xs
-
+        List.foldl step ( 0, [] ) xs
 
 -- #171 — a row-poly local fn (`acc` is `{ value : Int | ρ }` shared with the
 -- result) updated inside a `foldl`. The un-updated `name` field must survive the
 -- update (pre-fix it erased to a subset struct and came back zeroed).
 type alias Item =
-    { name : Int, value : Int }
+    { name : Int
+    , value : Int
+    }
 
 
 sumInto : Item -> List Item -> Item
 sumInto head rest =
     let
-        addValues item acc =
-            { acc | value = acc.value + item.value }
+        addValues item acc = { acc | value = acc.value + item.value }
     in
-    List.foldl addValues head rest
-
+        List.foldl addValues head rest
 
 -- #172 — a generic ADT payload matched with a NESTED CONTAINER pattern. `Loaded`
 -- carries `Maybe (List String)` boxed as `any`; matching `Loaded (Just xs)` must
@@ -81,6 +80,7 @@ type Status a
 describeStatus : Status (Maybe (List String)) -> String
 describeStatus s =
     case s of
+
         Loaded (Just _) ->
             "loaded-some"
 
@@ -90,21 +90,22 @@ describeStatus s =
         Loading ->
             "loading"
 
-
 -- #172 sibling — a generic ADT payload matched with a RECORD pattern. `Box a`'s
 -- payload is `any`; matching `Full { x, y }` must read the fields reflectively.
 type Box a
     = Empty
     | Full a
 
-
 type alias Point =
-    { x : Int, y : Int }
+    { x : Int
+    , y : Int
+    }
 
 
 sumPoint : Box Point -> Int
 sumPoint b =
     case b of
+
         Full { x, y } ->
             x + y
 
@@ -114,29 +115,43 @@ sumPoint b =
 
 tests : List Test
 tests =
-    [ Test.test "#170 tuple-param destructure through foldr — trues" <|
-        \_ -> Test.equal [ 4, 5 ] (fst (partition (\n -> n > 3) [ 1, 2, 3, 4, 5 ]))
-    , Test.test "#170 tuple-param destructure through foldr — falses" <|
-        \_ -> Test.equal [ 1, 2, 3 ] (snd (partition (\n -> n > 3) [ 1, 2, 3, 4, 5 ]))
-    , Test.test "#170 mixed-type tuple accumulator — count" <|
-        \_ -> Test.equal 4 (fst (tally [ 1, 2, 3, 4 ]))
-    , Test.test "#170 mixed-type tuple accumulator — evens" <|
-        \_ -> Test.equal [ 4, 2 ] (snd (tally [ 1, 2, 3, 4 ]))
-    , Test.test "#171 row-poly record update through foldl preserves name" <|
-        \_ ->
-            Test.equal
-                { name = 7, value = 6 }
-                (sumInto { name = 7, value = 1 } [ { name = 7, value = 2 }, { name = 7, value = 3 } ])
-    , Test.test "#171 empty rest leaves the head untouched" <|
-        \_ -> Test.equal { name = 9, value = 2 } (sumInto { name = 9, value = 2 } [])
-    , Test.test "#172 generic ADT payload — nested container pattern (Just)" <|
-        \_ -> Test.equal "loaded-some" (describeStatus (Loaded (Just [ "a", "b" ])))
-    , Test.test "#172 generic ADT payload — nested container pattern (Nothing)" <|
-        \_ -> Test.equal "loaded-none" (describeStatus (Loaded Nothing))
-    , Test.test "#172 generic ADT payload — record pattern" <|
-        \_ -> Test.equal 10 (sumPoint (Full { x = 3, y = 7 }))
-    , Test.test "#172 generic ADT payload — record pattern (Empty)" <|
-        \_ -> Test.equal 0 (sumPoint Empty)
+    [ Test.test "#170 tuple-param destructure through foldr — trues"
+          <| \_ ->
+                 Test.equal
+                     [ 4, 5 ]
+                     (fst (partition (\n -> n > 3) [ 1, 2, 3, 4, 5 ]))
+    , Test.test "#170 tuple-param destructure through foldr — falses"
+          <| \_ ->
+                 Test.equal
+                     [ 1, 2, 3 ]
+                     (snd (partition (\n -> n > 3) [ 1, 2, 3, 4, 5 ]))
+    , Test.test "#170 mixed-type tuple accumulator — count"
+          <| \_ -> Test.equal 4 (fst (tally [ 1, 2, 3, 4 ]))
+    , Test.test "#170 mixed-type tuple accumulator — evens"
+          <| \_ -> Test.equal [ 4, 2 ] (snd (tally [ 1, 2, 3, 4 ]))
+    , Test.test "#171 row-poly record update through foldl preserves name"
+          <| \_ ->
+                 Test.equal
+                     { name = 7, value = 6 }
+                     (sumInto
+                         { name = 7, value = 1 }
+                         [ { name = 7, value = 2 }, { name = 7, value = 3 } ])
+    , Test.test "#171 empty rest leaves the head untouched"
+          <| \_ ->
+                 Test.equal
+                     { name = 9, value = 2 }
+                     (sumInto { name = 9, value = 2 } [])
+    , Test.test "#172 generic ADT payload — nested container pattern (Just)"
+          <| \_ ->
+                 Test.equal
+                     "loaded-some"
+                     (describeStatus (Loaded (Just [ "a", "b" ])))
+    , Test.test "#172 generic ADT payload — nested container pattern (Nothing)"
+          <| \_ -> Test.equal "loaded-none" (describeStatus (Loaded Nothing))
+    , Test.test "#172 generic ADT payload — record pattern"
+          <| \_ -> Test.equal 10 (sumPoint (Full { x = 3, y = 7 }))
+    , Test.test "#172 generic ADT payload — record pattern (Empty)"
+          <| \_ -> Test.equal 0 (sumPoint Empty)
     ]
 
 

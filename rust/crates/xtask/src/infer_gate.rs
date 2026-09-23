@@ -139,7 +139,11 @@ fn infer_file(file: &str, root: &Path) -> i32 {
     // Report the verdict in the exit status too. This arm returned a bare 0,
     // so a file full of type errors was indistinguishable from a clean one to
     // any caller that checked the status rather than reading the output.
-    if out.type_errors > 0 { 1 } else { 0 }
+    if out.type_errors > 0 {
+        1
+    } else {
+        0
+    }
 }
 
 struct Row {

@@ -248,16 +248,25 @@ fn parse_manifest(text: &str) -> Result<Vec<(String, Stanza)>, String> {
             continue;
         }
         let Some(eq) = line.find('=') else {
-            return Err(format!("config-matrix.toml:{}: not `key = value`: {line}", n + 1));
+            return Err(format!(
+                "config-matrix.toml:{}: not `key = value`: {line}",
+                n + 1
+            ));
         };
         let key = line[..eq].trim().to_string();
         let val = parse_value(line[eq + 1..].trim())
             .ok_or_else(|| format!("config-matrix.toml:{}: unparseable value: {line}", n + 1))?;
         let Some((_, st)) = out.last_mut() else {
-            return Err(format!("config-matrix.toml:{}: `{key}` before any stanza", n + 1));
+            return Err(format!(
+                "config-matrix.toml:{}: `{key}` before any stanza",
+                n + 1
+            ));
         };
         if st.insert(key.clone(), val).is_some() {
-            return Err(format!("config-matrix.toml:{}: duplicate key `{key}`", n + 1));
+            return Err(format!(
+                "config-matrix.toml:{}: duplicate key `{key}`",
+                n + 1
+            ));
         }
     }
     Ok(out)
@@ -641,14 +650,27 @@ impl Build {
 }
 
 const BUILDS: [Build; 4] = [
-    Build { toml: false, builder: false },
-    Build { toml: true, builder: false },
-    Build { toml: false, builder: true },
-    Build { toml: true, builder: true },
+    Build {
+        toml: false,
+        builder: false,
+    },
+    Build {
+        toml: true,
+        builder: false,
+    },
+    Build {
+        toml: false,
+        builder: true,
+    },
+    Build {
+        toml: true,
+        builder: true,
+    },
 ];
 
 fn sky_toml(m: &Manifest, b: Build, env_prefix: Option<&str>) -> String {
-    let mut s = String::from("name = \"cfgmatrix\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n");
+    let mut s =
+        String::from("name = \"cfgmatrix\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n");
     if let Some(p) = env_prefix {
         s.push_str(&format!("\n[env]\nprefix = \"{p}\"\n"));
     }
@@ -657,9 +679,7 @@ fn sky_toml(m: &Manifest, b: Build, env_prefix: Option<&str>) -> String {
     }
     let mut by_section: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
     for st in &m.settings {
-        if let (Some(sec), Some(key), Some(val)) =
-            (&st.toml_section, &st.toml_key, &st.set_toml)
-        {
+        if let (Some(sec), Some(key), Some(val)) = (&st.toml_section, &st.toml_key, &st.set_toml) {
             by_section.entry(sec).or_default().push((key, val));
         }
     }
@@ -820,7 +840,10 @@ fn newest_source_mtime(root: &Path) -> Result<(SystemTime, PathBuf), String> {
         return Err(format!(
             "the source walk found only {seen} files under {:?}. A walk that finds \
              nothing makes any binary look fresh.",
-            MEASURED_SOURCE_ROOTS.iter().map(|(r, _)| *r).collect::<Vec<_>>()
+            MEASURED_SOURCE_ROOTS
+                .iter()
+                .map(|(r, _)| *r)
+                .collect::<Vec<_>>()
         ));
     }
     Ok((newest, witness))
@@ -919,7 +942,10 @@ fn sky_binary(root: &Path) -> Result<PathBuf, String> {
     // outright would leave a source mutation unfalsifiable.
     build_compiler(root)?;
 
-    let Some(p) = sky_binary_candidates(root).into_iter().find(|p| p.is_file()) else {
+    let Some(p) = sky_binary_candidates(root)
+        .into_iter()
+        .find(|p| p.is_file())
+    else {
         return Err(
             "`cargo build --release -p sky` reported success and produced no binary at \
              rust/target/release/sky. A gate that cannot find what it measures has not \
@@ -1081,7 +1107,10 @@ fn port_sentinels(m: &Manifest) -> Vec<u16> {
             continue;
         }
         push(&st.expect_unset);
-        for v in [&st.set_env, &st.set_toml, &st.set_builder].into_iter().flatten() {
+        for v in [&st.set_env, &st.set_toml, &st.set_builder]
+            .into_iter()
+            .flatten()
+        {
             push(v);
         }
     }
@@ -1332,7 +1361,10 @@ fn compute(root: &Path) -> Result<Measured, String> {
         build_fixture(&sky, &dir)?;
         dirs.insert(b.name(), dir);
     }
-    let pfx_build = Build { toml: false, builder: false };
+    let pfx_build = Build {
+        toml: false,
+        builder: false,
+    };
     let pfx_dir = scratch.join("prefix");
     write_fixture(
         &pfx_dir,
@@ -1420,7 +1452,10 @@ fn compute(root: &Path) -> Result<Measured, String> {
     let mut verdicts: Map<String, Value> = Map::new();
     for st in &m.settings {
         let at = |e: bool, t: bool, bl: bool| -> Option<String> {
-            observed.get(&(e, t, bl)).and_then(|r| r.get(&st.id)).cloned()
+            observed
+                .get(&(e, t, bl))
+                .and_then(|r| r.get(&st.id))
+                .cloned()
         };
         let unset = at(false, false, false);
         let env_only = st.env_suffix.as_ref().and_then(|_| at(true, false, false));
@@ -1445,10 +1480,14 @@ fn compute(root: &Path) -> Result<Measured, String> {
         // Distinguishability. Distinct inputs that produce equal outputs mean
         // the cell cannot attribute the value to a layer.
         assertions += 1;
-        let single: Vec<(&str, &String)> = [("unset", unset.as_ref()), ("env", env_only.as_ref()), ("toml", toml_only.as_ref())]
-            .into_iter()
-            .filter_map(|(n, v)| v.map(|v| (n, v)))
-            .collect();
+        let single: Vec<(&str, &String)> = [
+            ("unset", unset.as_ref()),
+            ("env", env_only.as_ref()),
+            ("toml", toml_only.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(n, v)| v.map(|v| (n, v)))
+        .collect();
         for i in 0..single.len() {
             for j in i + 1..single.len() {
                 if single[i].1 == single[j].1 {
@@ -1462,9 +1501,11 @@ fn compute(root: &Path) -> Result<Measured, String> {
         }
 
         // builder_reaches_runtime, verified in BOTH directions.
-        if let (Some(declared), Some(b_obs), Some(u_obs)) =
-            (st.builder_reaches_runtime, builder_only.as_ref(), unset.as_ref())
-        {
+        if let (Some(declared), Some(b_obs), Some(u_obs)) = (
+            st.builder_reaches_runtime,
+            builder_only.as_ref(),
+            unset.as_ref(),
+        ) {
             assertions += 1;
             let reached = b_obs != u_obs;
             if reached != declared {
@@ -1477,7 +1518,11 @@ fn compute(root: &Path) -> Result<Measured, String> {
                     st.id,
                     st.builder.as_deref().unwrap_or(""),
                     st.set_builder.as_deref().unwrap_or(""),
-                    if reached { "IS reaching the runtime" } else { "is IGNORED" }
+                    if reached {
+                        "IS reaching the runtime"
+                    } else {
+                        "is IGNORED"
+                    }
                 ));
             }
             verdicts.insert(
@@ -1499,12 +1544,28 @@ fn compute(root: &Path) -> Result<Measured, String> {
     let mut winners: Map<String, Value> = Map::new();
     for st in &m.settings {
         let single = |e: bool, t: bool, bl: bool| -> Option<String> {
-            observed.get(&(e, t, bl)).and_then(|r| r.get(&st.id)).cloned()
+            observed
+                .get(&(e, t, bl))
+                .and_then(|r| r.get(&st.id))
+                .cloned()
         };
         let refs: Vec<(&str, Option<String>)> = vec![
-            ("env", st.env_suffix.as_ref().and_then(|_| single(true, false, false))),
-            ("toml", st.toml_key.as_ref().and_then(|_| single(false, true, false))),
-            ("builder", st.builder.as_ref().and_then(|_| single(false, false, true))),
+            (
+                "env",
+                st.env_suffix
+                    .as_ref()
+                    .and_then(|_| single(true, false, false)),
+            ),
+            (
+                "toml",
+                st.toml_key
+                    .as_ref()
+                    .and_then(|_| single(false, true, false)),
+            ),
+            (
+                "builder",
+                st.builder.as_ref().and_then(|_| single(false, false, true)),
+            ),
         ];
         let unset_obs = single(false, false, false);
         for (e, t, bl) in [
@@ -1519,10 +1580,16 @@ fn compute(root: &Path) -> Result<Measured, String> {
             {
                 continue;
             }
-            let Some(got) = single(e, t, bl) else { continue };
+            let Some(got) = single(e, t, bl) else {
+                continue;
+            };
             let mut hits: Vec<&str> = Vec::new();
             for (name, on) in [("env", e), ("toml", t), ("builder", bl)] {
-                if on && refs.iter().any(|(n, v)| *n == name && v.as_ref() == Some(&got)) {
+                if on
+                    && refs
+                        .iter()
+                        .any(|(n, v)| *n == name && v.as_ref() == Some(&got))
+                {
                     hits.push(name);
                 }
             }
@@ -1537,7 +1604,10 @@ fn compute(root: &Path) -> Result<Measured, String> {
             } else {
                 hits.join("|")
             };
-            winners.insert(format!("{}/{}", st.id, arms_name(e, t, bl)), Value::String(label));
+            winners.insert(
+                format!("{}/{}", st.id, arms_name(e, t, bl)),
+                Value::String(label),
+            );
         }
     }
 
@@ -1563,11 +1633,10 @@ fn compute(root: &Path) -> Result<Measured, String> {
             .collect();
         env.push((env_name.clone(), value.clone()));
         let o = run_fixture(&pfx_dir, &env)?;
-        let got = o
-            .listening
-            .first()
-            .cloned()
-            .ok_or_else(|| format!("prefix_check/{label}: probe `listening` matched no line"))?;
+        let got =
+            o.listening.first().cloned().ok_or_else(|| {
+                format!("prefix_check/{label}: probe `listening` matched no line")
+            })?;
         assertions += 1;
         cells.insert(format!("env.prefix/{label}"), Value::String(got.clone()));
         if got != expect {
@@ -1680,7 +1749,9 @@ fn sweep_stale_scratch() {
         let Some(pid) = name.strip_prefix(SCRATCH_PREFIX) else {
             continue;
         };
-        let Ok(pid) = pid.parse::<i32>() else { continue };
+        let Ok(pid) = pid.parse::<i32>() else {
+            continue;
+        };
         if pid == std::process::id() as i32 {
             continue;
         }
@@ -1777,8 +1848,14 @@ fn unlisted_differences(base: &Value, cur: &Value, listed: &[Listed]) -> Vec<Str
     // setting, which is the entire reason they were worth recording; a value
     // worth recording is worth failing on.
     let empty = Map::new();
-    let bs = base.get("console_subapp_store").and_then(Value::as_object).unwrap_or(&empty);
-    let cs = cur.get("console_subapp_store").and_then(Value::as_object).unwrap_or(&empty);
+    let bs = base
+        .get("console_subapp_store")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
+    let cs = cur
+        .get("console_subapp_store")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
     for (k, cval) in cs {
         let cell = format!("console_subapp_store/{k}");
         match bs.get(k) {
@@ -1810,8 +1887,14 @@ fn unlisted_differences(base: &Value, cur: &Value, listed: &[Listed]) -> Vec<Str
         }
     }
 
-    let bv = base.get("verdicts").and_then(Value::as_object).unwrap_or(&empty);
-    let cv = cur.get("verdicts").and_then(Value::as_object).unwrap_or(&empty);
+    let bv = base
+        .get("verdicts")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
+    let cv = cur
+        .get("verdicts")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
     for (k, cval) in cv {
         let before = bv.get(k);
         if before == Some(cval) {
@@ -1819,9 +1902,9 @@ fn unlisted_differences(base: &Value, cur: &Value, listed: &[Listed]) -> Vec<Str
         }
         let from = before.map(render).unwrap_or_else(|| "<absent>".into());
         let to = render(cval);
-        let listed_here = listed.iter().any(|l| {
-            l.kind == "default-changed" && l.cell == *k && l.from == from && l.to == to
-        });
+        let listed_here = listed
+            .iter()
+            .any(|l| l.kind == "default-changed" && l.cell == *k && l.from == from && l.to == to);
         if !listed_here {
             out.push(format!(
                 "VERDICT `{k}`: {from} -> {to}. A builder that started or stopped reaching \
@@ -1842,7 +1925,9 @@ fn unlisted_differences(base: &Value, cur: &Value, listed: &[Listed]) -> Vec<Str
 }
 
 fn render(v: &Value) -> String {
-    v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())
+    v.as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| v.to_string())
 }
 
 /// Counts that may FALL (progress) and may not RISE (regression).
@@ -1894,8 +1979,14 @@ fn ratchet(baseline: Option<&Value>, current: &Value, allowed: &[BucketChange]) 
     };
     let mut out = Vec::new();
     for (metric, why) in RATCHETED {
-        let b = base.get("summary").and_then(|s| s.get(metric)).and_then(Value::as_u64);
-        let c = current.get("summary").and_then(|s| s.get(metric)).and_then(Value::as_u64);
+        let b = base
+            .get("summary")
+            .and_then(|s| s.get(metric))
+            .and_then(Value::as_u64);
+        let c = current
+            .get("summary")
+            .and_then(|s| s.get(metric))
+            .and_then(Value::as_u64);
         match (b, c) {
             (Some(b), Some(c)) if c > b => {
                 let accounted = allowed
@@ -2011,7 +2102,10 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
     fails.extend(ratchet(
         baseline.as_ref(),
         &m.doc,
-        manifest.as_ref().map(|mf| mf.bucket_changes.as_slice()).unwrap_or(&[]),
+        manifest
+            .as_ref()
+            .map(|mf| mf.bucket_changes.as_slice())
+            .unwrap_or(&[]),
     ));
     match (&baseline, manifest) {
         (Some(base), Ok(mf)) => fails.extend(unlisted_differences(base, &m.doc, &mf.listed)),
@@ -2023,9 +2117,8 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
         (_, Err(e)) => fails.push(e),
     }
     if fails.is_empty() && baseline.as_ref() != Some(&m.doc) {
-        fails.push(
-            "STALE — docs/coverage/config-matrix.json does not match this tree.".to_string(),
-        );
+        fails
+            .push("STALE — docs/coverage/config-matrix.json does not match this tree.".to_string());
     }
     let detail = if fails.is_empty() {
         format!(
@@ -2071,7 +2164,10 @@ mod tests {
         for st in &m.settings {
             let mut seen: BTreeSet<&str> = BTreeSet::new();
             seen.insert(st.expect_unset.as_str());
-            for v in [&st.set_env, &st.set_toml, &st.set_builder].into_iter().flatten() {
+            for v in [&st.set_env, &st.set_toml, &st.set_builder]
+                .into_iter()
+                .flatten()
+            {
                 assert!(
                     seen.insert(v.as_str()),
                     "{}: two arms share the sentinel {v:?}",
@@ -2129,12 +2225,21 @@ mod tests {
                 *counts.entry(c.as_str()).or_default() += 1;
             }
         }
-        for c in m.prefix.census.iter().chain(&m.deferred).chain(&m.unobservable) {
+        for c in m
+            .prefix
+            .census
+            .iter()
+            .chain(&m.deferred)
+            .chain(&m.unobservable)
+        {
             *counts.entry(c.as_str()).or_default() += 1;
         }
         for c in &census {
             let n = counts.get(c.as_str()).copied().unwrap_or(0);
-            assert_eq!(n, 1, "census entry {c:?} is in {n} buckets, must be exactly 1");
+            assert_eq!(
+                n, 1,
+                "census entry {c:?} is in {n} buckets, must be exactly 1"
+            );
         }
     }
 
@@ -2159,7 +2264,10 @@ mod tests {
             builder_reaches_runtime: None,
         };
         let empty = observe("nothing to see here\n");
-        assert!(extract(&st, &empty).is_err(), "a missing probe must be an error");
+        assert!(
+            extract(&st, &empty).is_err(),
+            "a missing probe must be an error"
+        );
 
         // Present probe, absent field — a legitimate value, distinct from the
         // above, which is what stops `-` being used to paper over a broken probe.
@@ -2195,8 +2303,14 @@ mod tests {
             builder_reaches_runtime: None,
         };
         assert_eq!(extract(&mk("ttl=", ",)", "sqlite"), &o).unwrap(), "37m0s");
-        assert_eq!(extract(&mk("@ ", " ", "sqlite"), &o).unwrap(), "cfgmx_env.db");
-        assert_eq!(extract(&mk("idleEvict=", ",)", "sqlite"), &o).unwrap(), "6m0s");
+        assert_eq!(
+            extract(&mk("@ ", " ", "sqlite"), &o).unwrap(),
+            "cfgmx_env.db"
+        );
+        assert_eq!(
+            extract(&mk("idleEvict=", ",)", "sqlite"), &o).unwrap(),
+            "6m0s"
+        );
         // The console sub-app's own store is keyed separately, so print order
         // can never make one reader's answer stand in for the other's (§1.7).
         assert_eq!(extract(&mk("ttl=", ",)", "memory"), &o).unwrap(), "30m0s");
@@ -2301,26 +2415,70 @@ mod tests {
     #[test]
     fn the_toml_fixture_quotes_what_must_be_quoted() {
         let m = load_manifest(&root()).expect("manifest parses");
-        let t = sky_toml(&m, Build { toml: true, builder: false }, None);
-        assert!(t.contains("port = 19812"), "a numeric key must be bare:\n{t}");
-        assert!(t.contains("ttl = \"38m\""), "a duration must be quoted:\n{t}");
+        let t = sky_toml(
+            &m,
+            Build {
+                toml: true,
+                builder: false,
+            },
+            None,
+        );
+        assert!(
+            t.contains("port = 19812"),
+            "a numeric key must be bare:\n{t}"
+        );
+        assert!(
+            t.contains("ttl = \"38m\""),
+            "a duration must be quoted:\n{t}"
+        );
         // And the base fixture must set nothing, or the unset arm is not unset.
-        let base = sky_toml(&m, Build { toml: false, builder: false }, None);
-        assert!(!base.contains("[live]"), "the base fixture must set no keys:\n{base}");
+        let base = sky_toml(
+            &m,
+            Build {
+                toml: false,
+                builder: false,
+            },
+            None,
+        );
+        assert!(
+            !base.contains("[live]"),
+            "the base fixture must set no keys:\n{base}"
+        );
     }
 
     #[test]
     fn the_builder_fixture_calls_every_declared_builder() {
         let m = load_manifest(&root()).expect("manifest parses");
-        let src = main_sky(&m, Build { toml: false, builder: true });
+        let src = main_sky(
+            &m,
+            Build {
+                toml: false,
+                builder: true,
+            },
+        );
         for st in &m.settings {
             if let (Some(call), Some(v)) = (&st.builder, &st.set_builder) {
-                assert!(src.contains(call.as_str()), "{call} missing from the fixture:\n{src}");
-                assert!(src.contains(v.as_str()), "{v} missing from the fixture:\n{src}");
+                assert!(
+                    src.contains(call.as_str()),
+                    "{call} missing from the fixture:\n{src}"
+                );
+                assert!(
+                    src.contains(v.as_str()),
+                    "{v} missing from the fixture:\n{src}"
+                );
             }
         }
-        let base = main_sky(&m, Build { toml: false, builder: false });
-        assert!(!base.contains("|>"), "the base fixture must call no builder:\n{base}");
+        let base = main_sky(
+            &m,
+            Build {
+                toml: false,
+                builder: false,
+            },
+        );
+        assert!(
+            !base.contains("|>"),
+            "the base fixture must call no builder:\n{base}"
+        );
     }
 
     #[test]
@@ -2357,20 +2515,39 @@ mod tests {
             if st.probe != "listening" {
                 continue;
             }
-            for v in [Some(&st.expect_unset), st.set_env.as_ref(), st.set_toml.as_ref(), st.set_builder.as_ref()]
-                .into_iter()
-                .flatten()
+            for v in [
+                Some(&st.expect_unset),
+                st.set_env.as_ref(),
+                st.set_toml.as_ref(),
+                st.set_builder.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
             {
-                let p: u16 = v.parse().unwrap_or_else(|_| panic!("{}: {v:?} is not a port", st.id));
-                assert!(got.contains(&p), "{}: sentinel {p} is not preflighted", st.id);
+                let p: u16 = v
+                    .parse()
+                    .unwrap_or_else(|_| panic!("{}: {v:?} is not a port", st.id));
+                assert!(
+                    got.contains(&p),
+                    "{}: sentinel {p} is not preflighted",
+                    st.id
+                );
                 if !expected.contains(&p) {
                     expected.push(p);
                 }
             }
         }
-        for v in [&m.prefix.expect_wrong, &m.prefix.expect_right, &m.prefix.wrong_value, &m.prefix.right_value] {
+        for v in [
+            &m.prefix.expect_wrong,
+            &m.prefix.expect_right,
+            &m.prefix.wrong_value,
+            &m.prefix.right_value,
+        ] {
             let p: u16 = v.parse().expect("prefix_check port");
-            assert!(got.contains(&p), "prefix_check sentinel {p} is not preflighted");
+            assert!(
+                got.contains(&p),
+                "prefix_check sentinel {p} is not preflighted"
+            );
             if !expected.contains(&p) {
                 expected.push(p);
             }
@@ -2382,6 +2559,9 @@ mod tests {
             expected.len(),
             "preflight set {got:?} differs from the declared sentinels {expected:?}"
         );
-        assert!(!expected.is_empty(), "no sentinels — the loop asserted nothing");
+        assert!(
+            !expected.is_empty(),
+            "no sentinels — the loop asserted nothing"
+        );
     }
 }

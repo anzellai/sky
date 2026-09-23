@@ -64,7 +64,6 @@ import Std.Html exposing (Html)
 type AppConfig model msg
     = AppConfig_OPAQUE
 
-
 -- | A server route, produced by `route` / `api` and registered in a config's
 -- `routes`. Opaque — its runtime shape (`rt.liveRoute`) is an implementation
 -- detail. DECLARED (not left kernel-implicit) so a same-named local `type Route`

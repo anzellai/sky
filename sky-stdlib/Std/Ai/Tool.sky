@@ -1,11 +1,4 @@
-module Std.Ai.Tool exposing
-    ( Tool
-    , tool
-    , name
-    , describe
-    , run
-    , instructions
-    )
+module Std.Ai.Tool exposing (Tool, tool, name, describe, run, instructions)
 
 {-| `Std.Ai.Tool` — a named capability the agent can call. A `Tool` carries a
 stable name, a description the model reads, and an executor `arguments -> result`
@@ -26,13 +19,11 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Core.String as String
 
-
 type Tool
-    = Tool
-        { name : String
-        , description : String
-        , exec : String -> Task Error String
-        }
+    = Tool { name : String
+, description : String
+, exec : String -> Task Error String
+}
 
 
 {-| Define a tool: a stable `name`, a `description` the model reads, and an
@@ -62,11 +53,13 @@ error if no tool has that name. Used by the agent loop; rarely called directly.
 run : List Tool -> String -> String -> Task Error String
 run tools nm args =
     case List.filter (\(Tool t) -> t.name == nm) tools of
+
         (Tool t) :: _ ->
             t.exec args
 
         [] ->
-            Task.fail (Error.notFound |> Error.withMessage ("no tool named " ++ nm))
+            Task.fail
+                (Error.notFound |> Error.withMessage ("no tool named " ++ nm))
 
 
 {-| The tool-use instructions appended to the agent's system prompt: the tool
@@ -76,14 +69,10 @@ concern; `tools` order is preserved), so it is stable across a durable replay.
 instructions : List Tool -> String
 instructions tools =
     let
-        one (Tool t) =
-            "- " ++ t.name ++ ": " ++ t.description
-
-        listed =
-            List.map one tools |> String.join "\n"
+        one (Tool t) = "- " ++ t.name ++ ": " ++ t.description
+        listed = List.map one tools |> String.join "\n"
     in
-    "You can use these tools:\n"
-        ++ listed
-        ++ "\n\nTo use a tool, reply with ONLY a JSON object: "
-        ++ "{\"tool\": \"<name>\", \"args\": \"<input string>\"}. "
-        ++ "When you have the final answer, reply with ONLY: {\"answer\": \"<final answer>\"}."
+        "You can use these tools:\n" ++ listed
+            ++ "\n\nTo use a tool, reply with ONLY a JSON object: "
+            ++ "{\"tool\": \"<name>\", \"args\": \"<input string>\"}. "
+            ++ "When you have the final answer, reply with ONLY: {\"answer\": \"<final answer>\"}."

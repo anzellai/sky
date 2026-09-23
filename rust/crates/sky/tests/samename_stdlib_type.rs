@@ -122,7 +122,10 @@ fn project_type_alias_shadows_a_same_named_stdlib_type_in_emitted_go() {
     assert!(output.status.success(), "fixture must build:\n{log}");
 
     let go = find_main_go(&proj.join(".skyapp")).unwrap_or_default();
-    assert!(!go.is_empty(), "emitted main.go with Main_Model_R must exist:\n{log}");
+    assert!(
+        !go.is_empty(),
+        "emitted main.go with Main_Model_R must exist:\n{log}"
+    );
 
     // The collision condition must be present, or the test is vacuous: the stdlib
     // `Std_Ai_Provider_Message_R` must be in the compile set.
@@ -139,7 +142,9 @@ fn project_type_alias_shadows_a_same_named_stdlib_type_in_emitted_go() {
     let model_line = go
         .lines()
         .find(|l| l.contains("type Main_Model_R struct"))
-        .unwrap_or_else(|| panic!("emitted Go must define `type Main_Model_R struct`:\n(not found)"))
+        .unwrap_or_else(|| {
+            panic!("emitted Go must define `type Main_Model_R struct`:\n(not found)")
+        })
         .to_string();
 
     // The Model's `messages` field must use the PROJECT's own `Main_Message_R`,

@@ -111,7 +111,9 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
             if let Some(code) = shrink_check(&json) {
                 return code;
             }
-            println!("LSP GATE: PASS  (all Neovim editor-parity cases; see the per-case lines above)");
+            println!(
+                "LSP GATE: PASS  (all Neovim editor-parity cases; see the per-case lines above)"
+            );
             0
         }
         Ok(s) => {
@@ -197,7 +199,11 @@ fn shrink_check(json: &std::path::Path) -> Option<i32> {
         .split("\"total\":")
         .nth(1)
         .and_then(|rest| {
-            let digits: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
             digits.parse::<u64>().ok()
         })
         .unwrap_or(0);

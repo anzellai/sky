@@ -153,7 +153,9 @@ impl Patch {
             .map_err(|e| format!("cannot read mutation target {rel}: {e}"))?;
         // Captured before the write so the revert can put the freshness clock
         // back exactly where it was — see the field docstring.
-        let original_mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+        let original_mtime = std::fs::metadata(&path)
+            .ok()
+            .and_then(|m| m.modified().ok());
         let hits = original.matches(from).count();
         if hits != 1 {
             return Err(format!(
@@ -271,7 +273,11 @@ pub struct FalsifyOpts {
 }
 
 /// Verify one gate's declared mutations.
-pub fn verify_gate(gate: &'static Gate, opts: &FalsifyOpts, generation: &mut u64) -> Vec<FalsifyReport> {
+pub fn verify_gate(
+    gate: &'static Gate,
+    opts: &FalsifyOpts,
+    generation: &mut u64,
+) -> Vec<FalsifyReport> {
     let budget = Duration::from_secs(gate.budget_s);
     let mut out = Vec::new();
 
@@ -521,7 +527,9 @@ fn rebuild_xtask(root: &Path, budget: Duration) -> Result<(), String> {
         cmd.process_group(0);
     }
 
-    let mut child = cmd.spawn().map_err(|e| format!("cargo spawn failed: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("cargo spawn failed: {e}"))?;
     let deadline = std::time::Instant::now() + budget;
     loop {
         match child.try_wait() {

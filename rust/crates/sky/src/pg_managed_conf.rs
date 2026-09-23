@@ -180,8 +180,14 @@ mod tests {
             END,
             LegacyExtent::ManagedKeys(&keys),
         );
-        assert!(out.contains("log_min_duration_statement = 250"), "the operator's setting was eaten:\n{out}");
-        assert!(!out.contains("max_connections = 50"), "the stale value survived:\n{out}");
+        assert!(
+            out.contains("log_min_duration_statement = 250"),
+            "the operator's setting was eaten:\n{out}"
+        );
+        assert!(
+            !out.contains("max_connections = 50"),
+            "the stale value survived:\n{out}"
+        );
         assert!(out.contains("max_connections = 90"), "{out}");
         assert_eq!(out.matches(BEGIN).count(), 1, "{out}");
 
@@ -197,7 +203,13 @@ mod tests {
 
     #[test]
     fn a_file_with_no_block_gets_one_appended() {
-        let out = replace_managed_block("port = 5432", &block(90), BEGIN, END, LegacyExtent::ToEndOfFile);
+        let out = replace_managed_block(
+            "port = 5432",
+            &block(90),
+            BEGIN,
+            END,
+            LegacyExtent::ToEndOfFile,
+        );
         assert!(out.starts_with("port = 5432\n\n"), "{out}");
         assert!(out.contains(BEGIN), "{out}");
     }
@@ -218,6 +230,9 @@ mod tests {
 
     #[test]
     fn managed_keys_reads_the_block_rather_than_a_hand_list() {
-        assert_eq!(managed_keys(&block(50)), vec!["max_connections", "work_mem"]);
+        assert_eq!(
+            managed_keys(&block(50)),
+            vec!["max_connections", "work_mem"]
+        );
     }
 }

@@ -553,6 +553,18 @@ These apply to any Sky code you write or any compiler change you make:
 
 ### Engineering norms (repo work)
 
+- **Run the formatter on every file you touch — before you commit.** A change to
+  a Rust file runs `cargo fmt` (from `rust/`), a Go file `gofmt -w`, a Sky
+  (`.sky`/`.skyi`) file `sky fmt`. This is not cosmetic: drift compounds, and a
+  later blanket `cargo fmt`/`gofmt`/`sky fmt` then produces a huge diff that
+  buries real changes and, worse, can silently break a source-scanning gate. A
+  real example: an unrelated `cargo fmt` split a `cfg.extra_defaults.push(("DB_…"`
+  call across lines, the config-surface detector (which matched a CONTIGUOUS
+  literal) stopped seeing two DB env vars, they fell out of the census, and the
+  config-matrix gate went red with a failure that pointed nowhere near the edit.
+  Format-as-you-go keeps every layout-scanning gate honest and every diff small.
+  (Detectors that scan source for a literal must themselves be whitespace-robust
+  — see `xtask/src/config_surface.rs::seeded_suffixes`.)
 - **No-deferral principle.** A bug you spot — yours or pre-existing, in dev, CI,
   or a sweep — enters the pipeline immediately and is fixed in the next patch.
   "Pre-existing / defer / known issue" are not shipping excuses. The user may

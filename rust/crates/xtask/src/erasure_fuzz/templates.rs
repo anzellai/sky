@@ -237,10 +237,14 @@ impl VPos {
     fn imports(self) -> &'static [&'static str] {
         match self {
             VPos::ListMap => &["import Sky.Core.List as List"],
-            VPos::DictMap => &["import Sky.Core.List as List", "import Sky.Core.Dict as Dict"],
-            VPos::NestedMaybeList => {
-                &["import Sky.Core.List as List", "import Sky.Core.Maybe as Maybe"]
-            }
+            VPos::DictMap => &[
+                "import Sky.Core.List as List",
+                "import Sky.Core.Dict as Dict",
+            ],
+            VPos::NestedMaybeList => &[
+                "import Sky.Core.List as List",
+                "import Sky.Core.Maybe as Maybe",
+            ],
         }
     }
     /// An `Int` = the sum of `extract` applied to `value` after erasure.
@@ -427,9 +431,10 @@ impl Pos {
             Pos::ResultMap => &["import Sky.Core.Result as Result"],
             Pos::DictMap => &["import Sky.Core.Dict as Dict"],
             Pos::ContainerLit => &["import Sky.Core.List as List"],
-            Pos::NestedMaybeList => {
-                &["import Sky.Core.List as List", "import Sky.Core.Maybe as Maybe"]
-            }
+            Pos::NestedMaybeList => &[
+                "import Sky.Core.List as List",
+                "import Sky.Core.Maybe as Maybe",
+            ],
         }
     }
     /// An `Int`-valued expression that runs `to_k` over `v0`/`v1` through this

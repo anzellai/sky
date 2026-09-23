@@ -120,12 +120,18 @@ fn build_bundle(dir: &Path, bulk_mb: usize) -> PathBuf {
         b"stub",
     )
     .unwrap();
-    std::fs::write(tree.join("BUNDLE.json"), format!("{{\"postgres_version\":\"{V}\"}}")).unwrap();
+    std::fs::write(
+        tree.join("BUNDLE.json"),
+        format!("{{\"postgres_version\":\"{V}\"}}"),
+    )
+    .unwrap();
 
     if bulk_mb > 0 {
         // Incompressible, so the archive is genuinely of this size and gzip
         // cannot make the extraction instantaneous.
-        let block: Vec<u8> = (0..1024 * 1024u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        let block: Vec<u8> = (0..1024 * 1024u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+            .collect();
         for i in 0..bulk_mb {
             std::fs::write(tree.join("lib").join(format!("bulk-{i}.so")), &block).unwrap();
         }
@@ -240,7 +246,9 @@ fn serve_one(mut conn: TcpStream, dir: &Path) -> std::io::Result<()> {
             conn.write_all(&body)?;
         }
         Err(_) => {
-            conn.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")?;
+            conn.write_all(
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )?;
         }
     }
     conn.flush()
@@ -320,9 +328,16 @@ fn a_bundle_is_downloaded_verified_installed_and_pinned() {
     build_bundle(&fx.serve_dir, 0);
     let srv = Server::start(fx.serve_dir.clone());
 
-    let out = fx.sky(&["db", "provision", "--embed", "--version", V], Some(&srv.base()));
+    let out = fx.sky(
+        &["db", "provision", "--embed", "--version", V],
+        Some(&srv.base()),
+    );
     assert!(out.status.success(), "provision failed:\n{}", both(&out));
-    assert!(fx.cache_is_complete(), "the bundle is not in the cache:\n{}", both(&out));
+    assert!(
+        fx.cache_is_complete(),
+        "the bundle is not in the cache:\n{}",
+        both(&out)
+    );
 
     // The executable bit survives the install. A bundle whose `postgres` arrives
     // mode 0444 looks provisioned and cannot be run — P5a hit exactly that on the
@@ -330,15 +345,27 @@ fn a_bundle_is_downloaded_verified_installed_and_pinned() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(fx.cache_bin().join("postgres")).unwrap().permissions().mode();
-        assert!(mode & 0o111 != 0, "postgres came out non-executable (mode {mode:o})");
+        let mode = std::fs::metadata(fx.cache_bin().join("postgres"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert!(
+            mode & 0o111 != 0,
+            "postgres came out non-executable (mode {mode:o})"
+        );
     }
 
     // The pin is recorded, in the section that already owns the database config.
     let toml = fx.sky_toml();
-    assert!(toml.contains(&format!("postgresVersion = \"{V}\"")), "{toml}");
+    assert!(
+        toml.contains(&format!("postgresVersion = \"{V}\"")),
+        "{toml}"
+    );
     assert!(toml.contains("[database]"), "{toml}");
-    assert!(toml.contains("embedded = true"), "the pin clobbered the rest of sky.toml:\n{toml}");
+    assert!(
+        toml.contains("embedded = true"),
+        "the pin clobbered the rest of sky.toml:\n{toml}"
+    );
 
     // Nothing is left in scratch.
     let staging = fx.sky_home.join(".provision-tmp");
@@ -387,15 +414,29 @@ fn a_corrupted_download_is_rejected_and_nothing_is_extracted() {
     let mut bytes = std::fs::read(&archive).unwrap();
     bytes.truncate(bytes.len() / 2);
     std::fs::write(&archive, &bytes).unwrap();
-    assert_ne!(system_sha256(&archive), good, "the fixture did not actually corrupt anything");
+    assert_ne!(
+        system_sha256(&archive),
+        good,
+        "the fixture did not actually corrupt anything"
+    );
 
     let srv = Server::start(fx.serve_dir.clone());
-    let out = fx.sky(&["db", "provision", "--embed", "--version", V], Some(&srv.base()));
+    let out = fx.sky(
+        &["db", "provision", "--embed", "--version", V],
+        Some(&srv.base()),
+    );
 
-    assert!(!out.status.success(), "a corrupt bundle was accepted:\n{}", both(&out));
+    assert!(
+        !out.status.success(),
+        "a corrupt bundle was accepted:\n{}",
+        both(&out)
+    );
     let msg = stderr(&out);
     assert!(msg.contains("CHECKSUM MISMATCH"), "{msg}");
-    assert!(msg.contains(&good), "the message must name what was expected:\n{msg}");
+    assert!(
+        msg.contains(&good),
+        "the message must name what was expected:\n{msg}"
+    );
 
     // Nothing extracted, nothing staged, nothing pinned.
     assert!(
@@ -432,36 +473,72 @@ fn a_local_archive_is_verified_too_and_is_never_installed_unchecked() {
     let copied = lone.join(archive.file_name().unwrap());
     std::fs::copy(&archive, &copied).unwrap();
     let out = fx.sky(
-        &["db", "provision", "--embed", "--version", V, "--from", copied.to_str().unwrap()],
+        &[
+            "db",
+            "provision",
+            "--embed",
+            "--version",
+            V,
+            "--from",
+            copied.to_str().unwrap(),
+        ],
         None,
     );
-    assert!(!out.status.success(), "installed without any checksum:\n{}", both(&out));
+    assert!(
+        !out.status.success(),
+        "installed without any checksum:\n{}",
+        both(&out)
+    );
     assert!(stderr(&out).contains("--checksum"), "{}", stderr(&out));
     assert!(!fx.cache_is_complete());
 
     // (b) A wrong explicit checksum → refuse.
     let out = fx.sky(
         &[
-            "db", "provision", "--embed", "--version", V,
-            "--from", copied.to_str().unwrap(),
-            "--checksum", &"a".repeat(64),
+            "db",
+            "provision",
+            "--embed",
+            "--version",
+            V,
+            "--from",
+            copied.to_str().unwrap(),
+            "--checksum",
+            &"a".repeat(64),
         ],
         None,
     );
-    assert!(!out.status.success(), "installed against a wrong checksum:\n{}", both(&out));
-    assert!(stderr(&out).contains("CHECKSUM MISMATCH"), "{}", stderr(&out));
+    assert!(
+        !out.status.success(),
+        "installed against a wrong checksum:\n{}",
+        both(&out)
+    );
+    assert!(
+        stderr(&out).contains("CHECKSUM MISMATCH"),
+        "{}",
+        stderr(&out)
+    );
     assert!(!fx.cache_is_complete());
 
     // (c) The right one → installed, offline, with no server anywhere.
     let out = fx.sky(
         &[
-            "db", "provision", "--embed", "--version", V,
-            "--from", copied.to_str().unwrap(),
-            "--checksum", &good,
+            "db",
+            "provision",
+            "--embed",
+            "--version",
+            V,
+            "--from",
+            copied.to_str().unwrap(),
+            "--checksum",
+            &good,
         ],
         None,
     );
-    assert!(out.status.success(), "offline install failed:\n{}", both(&out));
+    assert!(
+        out.status.success(),
+        "offline install failed:\n{}",
+        both(&out)
+    );
     assert!(fx.cache_is_complete());
     // The local archive is the user's file and must survive being installed from.
     assert!(copied.is_file(), "--from consumed the user's archive");
@@ -475,7 +552,15 @@ fn a_sibling_sha256sums_is_enough_for_an_offline_install() {
     let fx = Fx::new("sibling");
     let archive = build_bundle(&fx.serve_dir, 0);
     let out = fx.sky(
-        &["db", "provision", "--embed", "--version", V, "--from", archive.to_str().unwrap()],
+        &[
+            "db",
+            "provision",
+            "--embed",
+            "--version",
+            V,
+            "--from",
+            archive.to_str().unwrap(),
+        ],
         None,
     );
     assert!(out.status.success(), "{}", both(&out));
@@ -500,8 +585,15 @@ fn an_extract_that_fails_partway_leaves_no_usable_cache() {
     write_sums(&fx.serve_dir, &archive, &system_sha256(&archive));
 
     let srv = Server::start(fx.serve_dir.clone());
-    let out = fx.sky(&["db", "provision", "--embed", "--version", V], Some(&srv.base()));
-    assert!(!out.status.success(), "a broken archive reported success:\n{}", both(&out));
+    let out = fx.sky(
+        &["db", "provision", "--embed", "--version", V],
+        Some(&srv.base()),
+    );
+    assert!(
+        !out.status.success(),
+        "a broken archive reported success:\n{}",
+        both(&out)
+    );
 
     assert!(
         !fx.sky_home.join("postgres").join(V).exists(),
@@ -591,7 +683,9 @@ fn a_killed_provision_never_leaves_a_half_populated_cache() {
         for e in rd.flatten() {
             let bin = e.path().join("bin");
             assert!(
-                ["initdb", "pg_ctl", "postgres"].iter().all(|b| bin.join(b).is_file()),
+                ["initdb", "pg_ctl", "postgres"]
+                    .iter()
+                    .all(|b| bin.join(b).is_file()),
                 "a partial install is visible to discovery at {}",
                 e.path().display()
             );
@@ -611,15 +705,24 @@ fn re_provisioning_is_a_no_op_that_makes_no_request() {
     build_bundle(&fx.serve_dir, 0);
     let srv = Server::start(fx.serve_dir.clone());
 
-    let first = fx.sky(&["db", "provision", "--embed", "--version", V], Some(&srv.base()));
+    let first = fx.sky(
+        &["db", "provision", "--embed", "--version", V],
+        Some(&srv.base()),
+    );
     assert!(first.status.success(), "{}", both(&first));
     let after_first = srv.hits();
-    assert!(after_first >= 2, "expected a manifest + an archive request, saw {after_first}");
+    assert!(
+        after_first >= 2,
+        "expected a manifest + an archive request, saw {after_first}"
+    );
 
     let mtime = |p: &Path| std::fs::metadata(p).unwrap().modified().unwrap();
     let before = mtime(&fx.cache_bin().join("postgres"));
 
-    let second = fx.sky(&["db", "provision", "--embed", "--version", V], Some(&srv.base()));
+    let second = fx.sky(
+        &["db", "provision", "--embed", "--version", V],
+        Some(&srv.base()),
+    );
     assert!(second.status.success(), "{}", both(&second));
     assert!(
         stdout(&second).contains("already provisioned"),
@@ -639,8 +742,15 @@ fn re_provisioning_is_a_no_op_that_makes_no_request() {
 
     // Even with the server gone entirely, it still succeeds.
     drop(srv);
-    let third = fx.sky(&["db", "provision", "--embed", "--version", V], Some("http://127.0.0.1:1"));
-    assert!(third.status.success(), "offline re-provision failed:\n{}", both(&third));
+    let third = fx.sky(
+        &["db", "provision", "--embed", "--version", V],
+        Some("http://127.0.0.1:1"),
+    );
+    assert!(
+        third.status.success(),
+        "offline re-provision failed:\n{}",
+        both(&third)
+    );
 }
 
 /// A cached tree whose binaries are not executable is NOT provisioned. It looks
@@ -661,15 +771,24 @@ fn a_non_executable_cached_bundle_is_not_mistaken_for_a_provisioned_one() {
     }
 
     let srv = Server::start(fx.serve_dir.clone());
-    let out = fx.sky(&["db", "provision", "--embed", "--version", V], Some(&srv.base()));
+    let out = fx.sky(
+        &["db", "provision", "--embed", "--version", V],
+        Some(&srv.base()),
+    );
     assert!(out.status.success(), "{}", both(&out));
     assert!(
         !stdout(&out).contains("already provisioned"),
         "an unrunnable cache was reported as provisioned:\n{}",
         stdout(&out)
     );
-    let mode = std::fs::metadata(fx.cache_bin().join("postgres")).unwrap().permissions().mode();
-    assert!(mode & 0o111 != 0, "postgres is still not executable (mode {mode:o})");
+    let mode = std::fs::metadata(fx.cache_bin().join("postgres"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert!(
+        mode & 0o111 != 0,
+        "postgres is still not executable (mode {mode:o})"
+    );
     drop(srv);
 }
 
@@ -690,11 +809,17 @@ fn a_release_without_this_platforms_bundle_is_reported_not_guessed() {
     .unwrap();
 
     let srv = Server::start(fx.serve_dir.clone());
-    let out = fx.sky(&["db", "provision", "--embed", "--version", V], Some(&srv.base()));
+    let out = fx.sky(
+        &["db", "provision", "--embed", "--version", V],
+        Some(&srv.base()),
+    );
     assert!(!out.status.success(), "{}", both(&out));
     let msg = stderr(&out);
     assert!(msg.contains("does not list"), "{msg}");
-    assert!(msg.contains(&format!("postgres-{V}-{}.tar.gz", platform())), "{msg}");
+    assert!(
+        msg.contains(&format!("postgres-{V}-{}.tar.gz", platform())),
+        "{msg}"
+    );
     assert!(!fx.cache_is_complete());
     drop(srv);
 }
@@ -711,7 +836,10 @@ fn an_unreachable_release_names_the_offline_route() {
     );
     assert!(!out.status.success());
     let msg = stderr(&out);
-    assert!(msg.contains("--from"), "the offline route is not named:\n{msg}");
+    assert!(
+        msg.contains("--from"),
+        "the offline route is not named:\n{msg}"
+    );
     assert!(msg.contains("SKY_POSTGRES_BIN"), "{msg}");
     assert!(!fx.cache_is_complete());
 }

@@ -45,8 +45,7 @@ main =
                    -- still starts (reads will surface the error per-request,
                    -- and /healthz stays DB-free), so the process never exits
                    -- on start.
-                   setupSchema db
-                       |> Task.andThen (\_ -> seed db)
+                   setupSchema db |> Task.andThen (\_ -> seed db)
                        |> Task.onError (\_ -> Task.succeed ())
                        |> Task.andThen (\_ -> startServer db))
 

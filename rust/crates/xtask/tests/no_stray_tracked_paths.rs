@@ -47,7 +47,11 @@ fn no_tracked_symlink_points_at_an_absolute_path() {
         if !meta.starts_with("120000") {
             continue;
         }
-        let target = tracked(&["cat-file", "-p", meta.split_whitespace().nth(1).unwrap_or("")]);
+        let target = tracked(&[
+            "cat-file",
+            "-p",
+            meta.split_whitespace().nth(1).unwrap_or(""),
+        ]);
         let target = target.trim();
         if target.starts_with('/') || target.contains(":\\") {
             bad.push(format!("{path} -> {target}"));
@@ -125,9 +129,8 @@ fn no_tracked_build_output_directories() {
 /// (`build-out/`, `cargo-tmp/`): the name can be anything, but the contents
 /// still look exactly like cargo's.
 fn is_cargo_artifact(path: &str) -> bool {
-    path.split('/').any(|seg| {
-        seg == "target" || seg.ends_with("-target") || seg == ".fingerprint"
-    })
+    path.split('/')
+        .any(|seg| seg == "target" || seg.ends_with("-target") || seg == ".fingerprint")
 }
 
 /// The classifier is asserted directly, so this file proves it can fail without

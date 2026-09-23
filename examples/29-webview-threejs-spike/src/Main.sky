@@ -151,9 +151,9 @@ appDef =
         , subscriptions = subscriptions
         }
         |> App.withWindow "Sky.Webview spike - three.js" 1024 720
+        |> App.withNotFound ()
         -- Single-view app (no routing); `desktop` = Live-in-a-window still
         -- requires the total-routing fallback, never actually hit here.
-        |> App.withNotFound ()
 
 
 main =

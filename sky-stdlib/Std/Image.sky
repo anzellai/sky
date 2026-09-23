@@ -37,7 +37,6 @@ input fails with a classified `Error`.
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 
-
 {-| The output image format for a resize.
 
   - `Jpeg quality` — JPEG at `quality` (1..100; a value outside that range uses
@@ -71,7 +70,9 @@ thumbnail fmt maxDim bytes =
 {-| The pixel dimensions of an image, read from its header (cheap, no full
 decode). Like the resize entries it is a `Task` — the whole module is a backend
 capability, so every function is an effect. A non-image input is an `Err`. -}
-dimensions : String -> Task Error { width : Int, height : Int }
+dimensions : String -> Task Error { width : Int
+, height : Int
+}
 dimensions =
     Ffi.kernel "Image_dimensions"
 
@@ -87,6 +88,7 @@ resize_ =
 formatName : Format -> String
 formatName fmt =
     case fmt of
+
         Jpeg _ ->
             "jpeg"
 
@@ -100,6 +102,7 @@ formatName fmt =
 formatQuality : Format -> Int
 formatQuality fmt =
     case fmt of
+
         Jpeg q ->
             q
 

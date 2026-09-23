@@ -43,7 +43,10 @@ fn fixture_partitions_into_the_expected_client_server_split() {
         .expect("analysis should succeed on a clean-typechecking fixture");
 
     assert_eq!(report.update_name.as_deref(), Some("Main.update"));
-    assert!(report.whole_update.is_none(), "per-branch must be available");
+    assert!(
+        report.whole_update.is_none(),
+        "per-branch must be available"
+    );
     assert_eq!(report.branches.len(), 4, "four Msg branches");
 
     let find = |prefix: &str| {
@@ -51,8 +54,12 @@ fn fixture_partitions_into_the_expected_client_server_split() {
             .branches
             .iter()
             .find(|b| b.msg == prefix || b.msg.starts_with(&format!("{prefix} ")))
-            .unwrap_or_else(|| panic!("branch {prefix} not found; got {:?}",
-                report.branches.iter().map(|b| &b.msg).collect::<Vec<_>>()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "branch {prefix} not found; got {:?}",
+                    report.branches.iter().map(|b| &b.msg).collect::<Vec<_>>()
+                )
+            })
     };
 
     // Pure client-local transitions.
@@ -92,7 +99,10 @@ fn compose_fixture_partitions_with_msg_constant_precision() {
             .expect("analysis should succeed on a clean-typechecking fixture");
 
     assert_eq!(report.update_name.as_deref(), Some("Main.update"));
-    assert!(report.whole_update.is_none(), "per-branch must be available");
+    assert!(
+        report.whole_update.is_none(),
+        "per-branch must be available"
+    );
     assert_eq!(report.branches.len(), 5, "five Msg branches");
 
     let find = |prefix: &str| {
@@ -159,7 +169,10 @@ fn io_fixture_derives_exact_read_and_write_sets() {
         .expect("analysis should succeed on a clean-typechecking fixture");
 
     assert_eq!(report.update_name.as_deref(), Some("Main.update"));
-    assert!(report.whole_update.is_none(), "per-branch must be available");
+    assert!(
+        report.whole_update.is_none(),
+        "per-branch must be available"
+    );
     assert_eq!(report.branches.len(), 4, "four Msg branches");
 
     let find = |prefix: &str| {
@@ -184,21 +197,45 @@ fn io_fixture_derives_exact_read_and_write_sets() {
     let save = find("Save");
     assert!(save.server, "Save must be SERVER");
     let io = save.io.as_ref().expect("SERVER branch has I/O sets");
-    assert!(!io.reads_whole_model, "Save reads a specific field, not the whole model");
-    assert_eq!(io.read_fields, vec!["seed".to_string()], "read-set = {{seed}}");
+    assert!(
+        !io.reads_whole_model,
+        "Save reads a specific field, not the whole model"
+    );
+    assert_eq!(
+        io.read_fields,
+        vec!["seed".to_string()],
+        "read-set = {{seed}}"
+    );
     assert!(io.msg_args.is_empty(), "Save binds no Msg args");
-    assert!(!io.writes_whole_model, "Save writes a specific field, not the whole model");
-    assert_eq!(io.write_fields, vec!["note".to_string()], "write-set = {{note}}");
+    assert!(
+        !io.writes_whole_model,
+        "Save writes a specific field, not the whole model"
+    );
+    assert_eq!(
+        io.write_fields,
+        vec!["note".to_string()],
+        "write-set = {{note}}"
+    );
 
     // SaveTagged tag — the Msg ARG is the RPC input; no model field is read.
     let tagged = find("SaveTagged");
     assert!(tagged.server, "SaveTagged must be SERVER");
     let io = tagged.io.as_ref().expect("SERVER branch has I/O sets");
-    assert!(!io.reads_whole_model, "SaveTagged does not read the whole model");
-    assert!(io.read_fields.is_empty(), "SaveTagged reads no model field (input is the Msg arg)");
+    assert!(
+        !io.reads_whole_model,
+        "SaveTagged does not read the whole model"
+    );
+    assert!(
+        io.read_fields.is_empty(),
+        "SaveTagged reads no model field (input is the Msg arg)"
+    );
     assert_eq!(io.msg_args, vec!["tag".to_string()], "Msg args = {{tag}}");
     assert!(!io.writes_whole_model, "SaveTagged writes a specific field");
-    assert_eq!(io.write_fields, vec!["note".to_string()], "write-set = {{note}}");
+    assert_eq!(
+        io.write_fields,
+        vec!["note".to_string()],
+        "write-set = {{note}}"
+    );
 
     // Bulk — `persistAll model` where `persistAll m = { m | note = readEnv ++
     // m.note }` is a PROVABLY field-preserving `Model -> Model` helper (reads only
@@ -215,11 +252,19 @@ fn io_fixture_derives_exact_read_and_write_sets() {
         !io.reads_whole_model,
         "`persistAll` reads only `m.note` → read-set narrows to {{note}}, not the whole model"
     );
-    assert_eq!(io.read_fields, vec!["note".to_string()], "read-set = {{note}}");
+    assert_eq!(
+        io.read_fields,
+        vec!["note".to_string()],
+        "read-set = {{note}}"
+    );
     assert!(
         !io.writes_whole_model,
         "`persistAll` is field-preserving (writes only `note`) → write-set narrows to {{note}}"
     );
-    assert_eq!(io.write_fields, vec!["note".to_string()], "write-set = {{note}}");
+    assert_eq!(
+        io.write_fields,
+        vec!["note".to_string()],
+        "write-set = {{note}}"
+    );
     assert!(io.msg_args.is_empty(), "Bulk binds no Msg args");
 }

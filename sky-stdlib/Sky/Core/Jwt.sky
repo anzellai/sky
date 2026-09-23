@@ -223,7 +223,8 @@ decode alg now token =
                 [h, p, s] ->
                     if not (verify alg (h ++ "." ++ p) s) then
                         Err
-                            (Error.unexpected "Jwt.decode: signature verification failed")
+                            (Error.unexpected
+                                "Jwt.decode: signature verification failed")
 
                     else
                         Result.andThen (validateTime now) (b64uDecode p)

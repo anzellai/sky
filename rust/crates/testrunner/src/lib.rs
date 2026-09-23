@@ -271,7 +271,6 @@ fn parse_dotenv(contents: &str) -> Vec<(String, String)> {
     out
 }
 
-
 /// A unique scratch directory under the OS temp dir for one `sky test` run.
 fn scratch_dir() -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -309,8 +308,14 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                ("DATABASE_URL".to_string(), "postgres://x:y@localhost:5433/db".to_string()),
-                ("DS_STRIPE_WEBHOOK_SECRET".to_string(), "whsec_test".to_string()),
+                (
+                    "DATABASE_URL".to_string(),
+                    "postgres://x:y@localhost:5433/db".to_string()
+                ),
+                (
+                    "DS_STRIPE_WEBHOOK_SECRET".to_string(),
+                    "whsec_test".to_string()
+                ),
                 ("QUOTED".to_string(), "single".to_string()),
                 ("SPACED".to_string(), "val".to_string()),
             ]

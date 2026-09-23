@@ -108,7 +108,10 @@ fn doctor_empty_sky_toml_is_error() {
         log.contains("sky.toml is empty"),
         "expected the specific empty-toml finding:\n{log}"
     );
-    assert!(log.contains('✗'), "empty-toml should be an Error (✗):\n{log}");
+    assert!(
+        log.contains('✗'),
+        "empty-toml should be an Error (✗):\n{log}"
+    );
     assert!(
         log.contains("errors"),
         "summary should count the error:\n{log}"
@@ -131,7 +134,10 @@ fn doctor_missing_entry_file_is_error() {
         log.contains("does not exist") && log.contains("Nope.sky"),
         "expected the entry-missing finding naming the file:\n{log}"
     );
-    assert!(log.contains('✗'), "missing-entry should be an Error (✗):\n{log}");
+    assert!(
+        log.contains('✗'),
+        "missing-entry should be an Error (✗):\n{log}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

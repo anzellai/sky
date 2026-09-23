@@ -158,7 +158,12 @@ impl Conn {
 
     /// Connect to a socket directory, the shape every administrative call in
     /// `db_shared` uses.
-    pub fn connect_socket(dir: &Path, port: u16, user: &str, database: &str) -> Result<Conn, Error> {
+    pub fn connect_socket(
+        dir: &Path,
+        port: u16,
+        user: &str,
+        database: &str,
+    ) -> Result<Conn, Error> {
         Conn::connect(&Target::Unix(dir.to_path_buf(), port), user, database, None)
     }
 
@@ -366,7 +371,11 @@ impl Conn {
 
     /// The single scalar of a single-row, single-column query.
     pub fn scalar(&mut self, sql: &str) -> Result<Option<String>, Error> {
-        Ok(self.query(sql)?.into_iter().next().and_then(|r| r.into_iter().next().flatten()))
+        Ok(self
+            .query(sql)?
+            .into_iter()
+            .next()
+            .and_then(|r| r.into_iter().next().flatten()))
     }
 
     fn send(&mut self, tag: u8, body: &[u8]) -> Result<(), Error> {
@@ -409,8 +418,12 @@ fn be_i32(b: &[u8], at: usize) -> Result<i32, Error> {
 
 fn parse_data_row(body: &[u8]) -> Result<Row, Error> {
     let n = i16::from_be_bytes([
-        *body.first().ok_or_else(|| Error::Protocol("short DataRow".into()))?,
-        *body.get(1).ok_or_else(|| Error::Protocol("short DataRow".into()))?,
+        *body
+            .first()
+            .ok_or_else(|| Error::Protocol("short DataRow".into()))?,
+        *body
+            .get(1)
+            .ok_or_else(|| Error::Protocol("short DataRow".into()))?,
     ]);
     let mut at = 2usize;
     let mut row = Vec::with_capacity(n.max(0) as usize);
@@ -442,7 +455,11 @@ pub fn parse_error(body: &[u8]) -> PgError {
     while at < body.len() && body[at] != 0 {
         let kind = body[at];
         at += 1;
-        let end = body[at..].iter().position(|b| *b == 0).map(|p| at + p).unwrap_or(body.len());
+        let end = body[at..]
+            .iter()
+            .position(|b| *b == 0)
+            .map(|p| at + p)
+            .unwrap_or(body.len());
         let value = String::from_utf8_lossy(&body[at..end]).to_string();
         match kind {
             b'S' | b'V' if e.severity.is_empty() => e.severity = value,
@@ -513,12 +530,24 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 pub fn b64_encode(data: &[u8]) -> String {
     let mut out = String::new();
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(B64[(n >> 18) as usize & 63] as char);
         out.push(B64[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { B64[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { B64[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            B64[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -587,7 +616,9 @@ pub fn random_bytes(n: usize) -> Vec<u8> {
     #[cfg(test)]
     {
         use std::os::unix::fs::MetadataExt;
-        let m = f.metadata().expect("the source of a credential must be stat-able");
+        let m = f
+            .metadata()
+            .expect("the source of a credential must be stat-able");
         RANDOM_DRAW.with(|c| c.set(Some((m.dev(), m.ino(), n))));
     }
     buf
@@ -646,7 +677,10 @@ mod tests {
             Err(e) => e,
             Ok(_) => panic!("sky accepted cleartext authentication"),
         };
-        assert!(format!("{e}").contains("CLEARTEXT"), "refused for another reason: {e}");
+        assert!(
+            format!("{e}").contains("CLEARTEXT"),
+            "refused for another reason: {e}"
+        );
 
         let on_the_wire = server.join().unwrap();
         assert!(
@@ -752,10 +786,7 @@ mod tests {
 
             // server-first. The salt is fixed; only the SECRET differs.
             let salt = *b"0123456789abcdef";
-            let server_first = format!(
-                "r={cnonce}impostor-nonce,s={},i=4096",
-                b64_encode(&salt)
-            );
+            let server_first = format!("r={cnonce}impostor-nonce,s={},i=4096", b64_encode(&salt));
             s.write_all(&auth_msg(11, server_first.as_bytes())).unwrap();
             s.flush().unwrap();
 
@@ -763,15 +794,15 @@ mod tests {
             // an impostor cannot check it either.
             let body = read_typed(&mut s);
             let client_final = String::from_utf8_lossy(&body).to_string();
-            let client_final_bare =
-                client_final[..client_final.find(",p=").unwrap()].to_string();
+            let client_final_bare = client_final[..client_final.find(",p=").unwrap()].to_string();
 
             // A correctly assembled SASLFinal for the WRONG password.
             let auth_message = format!("{bare},{server_first},{client_final_bare}");
             let salted = pbkdf2_sha256(GUESS.as_bytes(), &salt, 4096);
             let server_key = hmac_sha256(&salted, b"Server Key");
             let v = b64_encode(&hmac_sha256(&server_key, auth_message.as_bytes()));
-            s.write_all(&auth_msg(12, format!("v={v}").as_bytes())).unwrap();
+            s.write_all(&auth_msg(12, format!("v={v}").as_bytes()))
+                .unwrap();
             s.flush().unwrap();
 
             // Anything sky says after being told to trust this server. There
@@ -788,9 +819,16 @@ mod tests {
             after
         });
 
-        let e = match Conn::connect(&Target::Unix(dir.clone(), 5432), "alpha", "alpha", Some(REAL)) {
+        let e = match Conn::connect(
+            &Target::Unix(dir.clone(), 5432),
+            "alpha",
+            "alpha",
+            Some(REAL),
+        ) {
             Err(e) => e,
-            Ok(_) => panic!("sky authenticated against a server that never proved it holds the secret"),
+            Ok(_) => {
+                panic!("sky authenticated against a server that never proved it holds the secret")
+            }
         };
         assert!(
             format!("{e}").contains("SCRAM signature did not verify"),
@@ -848,7 +886,10 @@ mod tests {
             Err(e) => e,
             Ok(_) => panic!("sky accepted md5 authentication"),
         };
-        assert!(format!("{e}").contains("md5"), "refused for another reason: {e}");
+        assert!(
+            format!("{e}").contains("md5"),
+            "refused for another reason: {e}"
+        );
 
         let on_the_wire = server.join().unwrap();
         assert!(
@@ -902,8 +943,15 @@ mod tests {
         let stored = sha256(&client_key);
         let auth = format!("{client_first_bare},{server_first},{client_final_bare}");
         let sig = hmac_sha256(&stored, auth.as_bytes());
-        let proof: Vec<u8> = client_key.iter().zip(sig.iter()).map(|(a, b)| a ^ b).collect();
-        assert_eq!(b64_encode(&proof), "dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=");
+        let proof: Vec<u8> = client_key
+            .iter()
+            .zip(sig.iter())
+            .map(|(a, b)| a ^ b)
+            .collect();
+        assert_eq!(
+            b64_encode(&proof),
+            "dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ="
+        );
         let server_key = hmac_sha256(&salted, b"Server Key");
         assert_eq!(
             b64_encode(&hmac_sha256(&server_key, auth.as_bytes())),
@@ -980,7 +1028,10 @@ mod tests {
             (kernel.dev(), kernel.ino()),
             "the credential was read from a different file than {RANDOM_SOURCE}"
         );
-        assert_eq!(read, 32, "fewer bytes were read from the source than were returned");
+        assert_eq!(
+            read, 32,
+            "fewer bytes were read from the source than were returned"
+        );
 
         let draws: Vec<Vec<u8>> = (0..32).map(|_| random_bytes(32)).collect();
         let values: std::collections::BTreeSet<u8> = draws.iter().flatten().copied().collect();

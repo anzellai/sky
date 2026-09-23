@@ -122,7 +122,11 @@ fn rejects_empty_list_witness_without_annotation() {
         d.labels
     );
     // The panic it prevents is named, and the workaround offered.
-    assert!(d.message.contains("cannot decode kind interface"), "{}", d.message);
+    assert!(
+        d.message.contains("cannot decode kind interface"),
+        "{}",
+        d.message
+    );
     let sug = d.suggestion.clone().unwrap_or_default();
     assert!(sug.contains("Codec") && sug.contains("non-empty"), "{sug}");
 }

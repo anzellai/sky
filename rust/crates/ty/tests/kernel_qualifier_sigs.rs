@@ -120,7 +120,10 @@ fn assert_accepted(what: &str, body: &str) {
 
 #[test]
 fn rejected_string_left_over_applied() {
-    assert_rejected("String.left", "println (String.left 3 \"abcdef\" \"extra\")");
+    assert_rejected(
+        "String.left",
+        "println (String.left 3 \"abcdef\" \"extra\")",
+    );
 }
 
 #[test]
@@ -158,7 +161,10 @@ fn accepted_string_members_valid_uses() {
     assert_accepted("String.left", "println (String.left 3 \"abcdef\")");
     assert_accepted("String.right", "println (String.right 2 \"abcdef\")");
     assert_accepted("String.truncate", "println (String.truncate 3 \"abcdef\")");
-    assert_accepted("String.ellipsize", "println (String.ellipsize 3 \"abcdef\")");
+    assert_accepted(
+        "String.ellipsize",
+        "println (String.ellipsize 3 \"abcdef\")",
+    );
     assert_accepted("String.htmlEscape", "println (String.htmlEscape \"<b>\")");
     assert_accepted("String.slugify", "println (String.slugify \"A B\")");
     assert_accepted("String.normalize", "println (String.normalize \"a\")");

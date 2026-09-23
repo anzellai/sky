@@ -106,7 +106,10 @@ fn app_notes_as_a_spa_client_has_both_lanes_and_the_rpc_boundary() {
     assert!(out.contains("backend --> store0 : SQL"), "{out}");
     // the client crosses /_rpc into the backend, labelled with the effectful count.
     assert!(out.contains("spa --> backend : /_rpc"), "{out}");
-    assert!(out.contains("effectful"), "the /_rpc edge carries the effectful count:\n{out}");
+    assert!(
+        out.contains("effectful"),
+        "the /_rpc edge carries the effectful count:\n{out}"
+    );
 
     // The Database container lists the app's real table names — `notes` is the
     // `Store.fromCodec "notes"` table this app declares.
@@ -128,5 +131,8 @@ fn app_notes_as_a_spa_client_has_both_lanes_and_the_rpc_boundary() {
         svg.contains("Browser · untrusted") && svg.contains("/_rpc"),
         "{svg}"
     );
-    assert!(svg.contains(">notes<"), "table name listed in the Database store: {svg}");
+    assert!(
+        svg.contains(">notes<"),
+        "table name listed in the Database store: {svg}"
+    );
 }

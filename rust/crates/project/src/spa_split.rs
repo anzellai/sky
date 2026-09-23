@@ -512,9 +512,10 @@ fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
         }
         (Ty::Record(f1, _), Ty::Record(f2, _)) => {
             f1.len() == f2.len()
-                && f1.iter().zip(f2).all(|((n1, t1), (n2, t2))| {
-                    n1.as_str() == n2.as_str() && ty_matches(t1, t2)
-                })
+                && f1
+                    .iter()
+                    .zip(f2)
+                    .all(|((n1, t1), (n2, t2))| n1.as_str() == n2.as_str() && ty_matches(t1, t2))
         }
         (Ty::Var(_), Ty::Var(_)) => true,
         (Ty::Unit, Ty::Unit) => true,
@@ -576,7 +577,15 @@ fn is_server_only_module(module_path: &str) -> bool {
     let tail = module_path.rsplit('.').next().unwrap_or(module_path);
     matches!(
         tail,
-        "File" | "Db" | "System" | "Process" | "Io" | "Server" | "Auth" | "RateLimit" | "Middleware"
+        "File"
+            | "Db"
+            | "System"
+            | "Process"
+            | "Io"
+            | "Server"
+            | "Auth"
+            | "RateLimit"
+            | "Middleware"
     )
 }
 
@@ -1008,10 +1017,12 @@ fn build_wire(
     };
     for f in req.iter_mut().chain(resp.iter_mut()) {
         if f.codec.is_none() {
-            let t = f
-                .ty
-                .clone()
-                .ok_or_else(|| format!("branch `{name}` field `{}` has no recoverable type — cannot wire a codec", f.name))?;
+            let t = f.ty.clone().ok_or_else(|| {
+                format!(
+                    "branch `{name}` field `{}` has no recoverable type — cannot wire a codec",
+                    f.name
+                )
+            })?;
             let r = resolver
                 .resolve(&t)
                 .map_err(|e| format!("branch `{name}`, field `{}`: {e}", f.name))?;
@@ -1045,7 +1056,10 @@ fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> St
     for f in fields {
         // Every field is resolved by construction; the fallback is defensive.
         let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
-        out.push_str(&format!("        |> Codec.field \"{0}\" .{0} {1}\n", f.name, codec));
+        out.push_str(&format!(
+            "        |> Codec.field \"{0}\" .{0} {1}\n",
+            f.name, codec
+        ));
     }
     out.push_str("        |> Codec.buildObject\n");
     out
@@ -1301,7 +1315,8 @@ pub fn generate(
         ));
     }
 
-    let (db, entry, check_ids) = crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let (db, entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
     let proj_name = project_dir
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -1453,9 +1468,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             continue;
         }
         if b.server {
-            let io = b.io.clone().ok_or_else(|| {
-                format!("server branch `{name}` has no derived RPC I/O")
-            })?;
+            let io =
+                b.io.clone()
+                    .ok_or_else(|| format!("server branch `{name}` has no derived RPC I/O"))?;
             server.push((name.clone(), io));
             server_args.insert(name, b.msg_arg_tys.clone());
         } else {
@@ -1492,16 +1507,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         None
     } else {
         let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
-        check_ids
-            .iter()
-            .copied()
-            .filter(|m| *m != entry)
-            .find(|m| {
-                db.module_parse(*m).tree().decls().any(|d| {
-                    matches!(decl_kind(&d), DeclKind::Union)
-                        && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
-                })
+        check_ids.iter().copied().filter(|m| *m != entry).find(|m| {
+            db.module_parse(*m).tree().decls().any(|d| {
+                matches!(decl_kind(&d), DeclKind::Union)
+                    && union_variant_names(&d)
+                        .iter()
+                        .any(|v| want.contains(v.as_str()))
             })
+        })
     };
 
     // GAP-1c (bug #4c): the sibling module that declares `update` must be routed
@@ -1544,9 +1557,18 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .map(|m| db.module_name(*m).to_string())
         .collect();
     if !tainted_mods.is_empty() || !pure_sibling_mods.is_empty() {
-        let pure: Vec<String> = pure_sibling_mods.iter().map(|m| db.module_name(*m).to_string()).collect();
-        let subset: Vec<String> = subset_mods.iter().map(|m| db.module_name(*m).to_string()).collect();
-        let back: Vec<String> = no_frontend_mods.iter().map(|m| db.module_name(*m).to_string()).collect();
+        let pure: Vec<String> = pure_sibling_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        let subset: Vec<String> = subset_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        let back: Vec<String> = no_frontend_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
         notes.push(format!(
             "multi-module split (per-binding): pure module(s) {pure:?} copied to BOTH trees; server-only module(s) {back:?} routed backend-only; mixed module(s) {subset:?} split per-binding (client-safe bindings copied to the frontend; server bindings kept backend-only)."
         ));
@@ -1709,8 +1731,13 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // module that DECLARES it (only defs living in `copy_mods` are copied). Fails
     // closed if a referenced codec's closure reaches a server-tainted def — that
     // codec would drag an effect into `Shared`, so it is not eligible.
-    let copied_values_by_mod =
-        compute_value_copy(&db, &copy_mods, &registry, &resolver.needed, &tainted_by_module)?;
+    let copied_values_by_mod = compute_value_copy(
+        &db,
+        &copy_mods,
+        &registry,
+        &resolver.needed,
+        &tainted_by_module,
+    )?;
 
     // Assemble the copied declarations + `exposing` list per source module, then
     // concatenate. Each module contributes its own value + type closure, rendered
@@ -1742,7 +1769,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             .decls()
             .find(|d| {
                 matches!(decl_kind(d), DeclKind::Union)
-                    && union_variant_names(d).iter().any(|v| want.contains(v.as_str()))
+                    && union_variant_names(d)
+                        .iter()
+                        .any(|v| want.contains(v.as_str()))
             })
             .and_then(|d| decl_name(&d))
     });
@@ -1752,10 +1781,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         let mfile = mparse.tree();
         let msrc = mparse.syntax().text().to_string();
         let mtypes = project_type_decls(&mfile);
-        let mut values: BTreeSet<String> = copied_values_by_mod
-            .get(&m)
-            .cloned()
-            .unwrap_or_default();
+        let mut values: BTreeSet<String> =
+            copied_values_by_mod.get(&m).cloned().unwrap_or_default();
         // A record-alias constructor (`Codec.object Item`) resolves to a def named
         // like the type — keep those in the TYPE-copy set, never the value set.
         values.retain(|n| !mtypes.contains_key(n));
@@ -1768,8 +1795,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         // union is never in this set (it is not a wire field), and is excluded by
         // name defensively. Structural record `type alias`es keep copy-and-leave.
         for n in &types {
-            let is_union =
-                mtypes.get(n).map(|d| decl_kind(d) == DeclKind::Union).unwrap_or(false);
+            let is_union = mtypes
+                .get(n)
+                .map(|d| decl_kind(d) == DeclKind::Union)
+                .unwrap_or(false);
             if is_union && Some(n) != msg_union_name.as_ref() {
                 let mut words = vec![n.clone()];
                 if let Some(d) = mtypes.get(n) {
@@ -1889,8 +1918,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .map(|d| value_params(d))
         .map(|ps| {
             (
-                ps.first().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "msg".into()),
-                ps.get(1).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "model".into()),
+                ps.first()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "msg".into()),
+                ps.get(1)
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "model".into()),
             )
         })
         .unwrap_or_else(|| ("msg".into(), "model".into()));
@@ -2036,26 +2071,31 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // decls, so `strips_self = true`.
     let generated = generated_wire_names(&server);
     let entry_name = db.module_name(entry).to_string();
-    let entry_shared_expose =
-        shared_expose_clause(&src, &entry_name, &copied_name_source, &generated, &moved_unions, true);
+    let entry_shared_expose = shared_expose_clause(
+        &src,
+        &entry_name,
+        &copied_name_source,
+        &generated,
+        &moved_unions,
+        true,
+    );
     // STATELESS SIGNED SESSION: the BACKEND additionally imports the per-field
     // `spaSessionCodec<Field>_` bindings `Shared` exports (the frontend never
     // signs / verifies, so its clause is left unchanged — no unused import). When
     // the entry clause is the `exposing (..)` catch-all the exported codecs are
     // already in scope, so no injection is needed.
-    let backend_shared_expose = if session_projection.is_empty()
-        || entry_shared_expose.contains("exposing (..)")
-    {
-        entry_shared_expose.clone()
-    } else {
-        let extra: Vec<String> = session_projection
-            .iter()
-            .map(|p| session_codec_name(&p.name))
-            .collect();
-        let trimmed = entry_shared_expose.trim_end();
-        let base = trimmed.strip_suffix(')').unwrap_or(trimmed);
-        format!("{base}, {})", extra.join(", "))
-    };
+    let backend_shared_expose =
+        if session_projection.is_empty() || entry_shared_expose.contains("exposing (..)") {
+            entry_shared_expose.clone()
+        } else {
+            let extra: Vec<String> = session_projection
+                .iter()
+                .map(|p| session_codec_name(&p.name))
+                .collect();
+            let trimmed = entry_shared_expose.trim_end();
+            let base = trimmed.strip_suffix(')').unwrap_or(trimmed);
+            format!("{base}, {})", extra.join(", "))
+        };
     // Server-internal effect chaining: the Msgs to DROP from the frontend and the
     // server branches whose RPC handler settles a `Cmd.perform` chain server-side.
     let server_internal: HashSet<String> = report.server_internal.iter().cloned().collect();
@@ -2085,12 +2125,29 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             pairs.join(", "),
         ));
     }
-    let model_field_names: Vec<String> = report.model_fields.iter().map(|f| f.name.clone()).collect();
+    let model_field_names: Vec<String> =
+        report.model_fields.iter().map(|f| f.name.clone()).collect();
     // The static mount: the caller's override (the synth entry dropped the
     // declaration), else read from this entry + its `sky.toml`.
-    let static_mount =
-        static_mount_override.or_else(|| app_static_mount(&src, project_dir));
-    let backend_src = gen_backend(&file, &src, &imports, &server, &report.model_fields, &copied_names, &backend_shared_expose, push_mode, broker_url, &ssr_route_patterns, &init_src, &chaining_set, &client_result_map, static_mount.as_ref(), &session_projection, &mut warnings)?;
+    let static_mount = static_mount_override.or_else(|| app_static_mount(&src, project_dir));
+    let backend_src = gen_backend(
+        &file,
+        &src,
+        &imports,
+        &server,
+        &report.model_fields,
+        &copied_names,
+        &backend_shared_expose,
+        push_mode,
+        broker_url,
+        &ssr_route_patterns,
+        &init_src,
+        &chaining_set,
+        &client_result_map,
+        static_mount.as_ref(),
+        &session_projection,
+        &mut warnings,
+    )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
     // frontend so the client keeps them from the server-verified SSR seed on
     // restore (never from localStorage). Empty → the whole stored model restores.
@@ -2132,7 +2189,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .filter(|t| t.module == entry_name)
         .map(|t| (t.name.clone(), t.reason.clone()))
         .collect();
-    let frontend_src = enforce_client_builder_invariant(&frontend_src, &entry_taint_reason, &mut notes)?;
+    let frontend_src =
+        enforce_client_builder_invariant(&frontend_src, &entry_taint_reason, &mut notes)?;
 
     let mut files: Vec<String> = Vec::new();
     let write = |rel: &str, content: &str, files: &mut Vec<String>| -> Result<(), String> {
@@ -2159,12 +2217,18 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let dep_sections = emit_dep_sections(project_dir);
     write(
         "backend/sky.toml",
-        &format!("{}{dep_sections}", sky_toml(&format!("{proj_name}-backend"), "backend")),
+        &format!(
+            "{}{dep_sections}",
+            sky_toml(&format!("{proj_name}-backend"), "backend")
+        ),
         &mut files,
     )?;
     write(
         "frontend/sky.toml",
-        &format!("{}{dep_sections}", sky_toml(&format!("{proj_name}-frontend"), "frontend")),
+        &format!(
+            "{}{dep_sections}",
+            sky_toml(&format!("{proj_name}-frontend"), "frontend")
+        ),
         &mut files,
     )?;
 
@@ -2229,12 +2293,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             // `init` already gets in `gen_frontend`. (This module never declares
             // the moved union — the Msg module does — so the moved-union pass
             // below only needs to inject its `Shared` import.)
-            let stripped_init = frontend_sibling_with_stripped_init(
-                &text,
-                &mparse.tree(),
-                &no_frontend_names,
-            )
-            .unwrap_or_else(|| text.clone());
+            let stripped_init =
+                frontend_sibling_with_stripped_init(&text, &mparse.tree(), &no_frontend_names)
+                    .unwrap_or_else(|| text.clone());
             own_moved_nominals_verbatim(&mparse.tree(), &stripped_init, &moved_unions)
         } else {
             own_moved_nominals_verbatim(&mparse.tree(), &text, &moved_unions)
@@ -2366,7 +2427,8 @@ pub fn generate_diff_fuzz(
     iters: usize,
     seed: i64,
 ) -> Result<DiffFuzzReport, String> {
-    let (db, entry, check_ids) = crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let (db, entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
     let proj_name = project_dir
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -2387,7 +2449,12 @@ pub fn generate_diff_fuzz(
     let update_anno = report
         .update_module_name
         .as_deref()
-        .and_then(|un| check_ids.iter().find(|m| db.module_name(**m) == un).copied())
+        .and_then(|un| {
+            check_ids
+                .iter()
+                .find(|m| db.module_name(**m) == un)
+                .copied()
+        })
         .map(|um| {
             let p = db.module_parse(um);
             let s = p.syntax().text().to_string();
@@ -2525,7 +2592,8 @@ pub fn generate_model_fuzz(
     iters: usize,
     seed: i64,
 ) -> Result<DiffFuzzReport, String> {
-    let (db, entry, check_ids) = crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let (db, entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
     let proj_name = project_dir
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -2542,7 +2610,12 @@ pub fn generate_model_fuzz(
     let update_anno = report
         .update_module_name
         .as_deref()
-        .and_then(|un| check_ids.iter().find(|m| db.module_name(**m) == un).copied())
+        .and_then(|un| {
+            check_ids
+                .iter()
+                .find(|m| db.module_name(**m) == un)
+                .copied()
+        })
         .map(|um| {
             let p = db.module_parse(um);
             let s = p.syntax().text().to_string();
@@ -2566,11 +2639,15 @@ pub fn generate_model_fuzz(
                             .variants()
                             .into_iter()
                             .filter_map(|v| {
-                                v.name()
-                                    .map(|cn| (cn.text().to_string(), ty::variant_arg_types(v.syntax())))
+                                v.name().map(|cn| {
+                                    (cn.text().to_string(), ty::variant_arg_types(v.syntax()))
+                                })
                             })
                             .collect();
-                        tymap.insert(nm.text().to_string(), crate::spa_diff_gen::TypeDef::Union(ctors));
+                        tymap.insert(
+                            nm.text().to_string(),
+                            crate::spa_diff_gen::TypeDef::Union(ctors),
+                        );
                     }
                 }
                 syntax::ast::Decl::Alias(a) => {
@@ -2703,8 +2780,12 @@ fn extract_rpc_error_decls(entry_tree: &SourceFile, entry_src: &str) -> Option<S
         }
     }
     let spa_text = spa_text?;
-    let mut out = String::from("\n\n-- bug #4b: the withRpcError handler, copied so the sibling `update` resolves it.\n");
-    if let Some(h) = handler_name.filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
+    let mut out = String::from(
+        "\n\n-- bug #4b: the withRpcError handler, copied so the sibling `update` resolves it.\n",
+    );
+    if let Some(h) = handler_name
+        .filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+    {
         for d in entry_tree.decls() {
             if decl_name(&d).as_deref() == Some(h.as_str()) {
                 out.push_str(slice(entry_src, d.syntax()).trim_end());
@@ -2760,7 +2841,10 @@ fn import_stmt_end(src: &str, import_start: usize) -> usize {
     // `i` is the matching close paren (or end of source on an unbalanced list —
     // then the whole tail is the statement, which the caller appends after).
     let close = i.min(src.len());
-    src[close..].find('\n').map(|n| close + n).unwrap_or(src.len())
+    src[close..]
+        .find('\n')
+        .map(|n| close + n)
+        .unwrap_or(src.len())
 }
 
 /// Every string-literal argument of a `Bundle.<func>` call in `src`, matched on
@@ -2776,7 +2860,10 @@ fn scan_bundle_asset_calls(src: &str, func: &str) -> Vec<String> {
         let at = from + rel;
         from = at + func.len();
         let before_ok = at == 0 || !is_word(bytes[at - 1]);
-        let after_ok = bytes.get(at + func.len()).map(|b| !is_word(*b)).unwrap_or(true);
+        let after_ok = bytes
+            .get(at + func.len())
+            .map(|b| !is_word(*b))
+            .unwrap_or(true);
         if !before_ok || !after_ok {
             continue;
         }
@@ -2818,7 +2905,11 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 /// `sky build --target` run on `frontend/` finds and stages them. A declared
 /// path that does not exist is left for `stage_bundle_assets` to report at build
 /// time (a clearer, target-specific error than one raised here).
-fn propagate_bundle_assets(src: &str, project_dir: &Path, frontend_dir: &Path) -> Result<(), String> {
+fn propagate_bundle_assets(
+    src: &str,
+    project_dir: &Path,
+    frontend_dir: &Path,
+) -> Result<(), String> {
     for dir in scan_bundle_asset_calls(src, "withAssetDir") {
         let from = project_dir.join(&dir);
         if from.is_dir() {
@@ -2970,7 +3061,11 @@ pub fn stage_declared_static_into_dist(
     source_root: &Path,
     out_dir: &Path,
 ) -> Result<(), String> {
-    copy_static_dir(entry_src, source_root, &out_dir.join("frontend").join("dist"))
+    copy_static_dir(
+        entry_src,
+        source_root,
+        &out_dir.join("frontend").join("dist"),
+    )
 }
 
 /// The app's declared static mount `(dir, url-prefix)`, read from the ORIGINAL
@@ -3117,7 +3212,10 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId]) -> ProjectShapes {
         let classified: Vec<(String, FieldKind)> = raw
             .into_iter()
             .map(|(f, head, surface)| {
-                (f, classify_field_kind(head.as_deref(), &surface, &record_names, &union_names))
+                (
+                    f,
+                    classify_field_kind(head.as_deref(), &surface, &record_names, &union_names),
+                )
             })
             .collect();
         records.insert(name, classified);
@@ -3472,7 +3570,11 @@ fn copied_exposing_list(
             .get(t)
             .map(|d| decl_kind(d) == DeclKind::Union)
             .unwrap_or(false);
-        out.push(if is_union { format!("{t}(..)") } else { t.clone() });
+        out.push(if is_union {
+            format!("{t}(..)")
+        } else {
+            t.clone()
+        });
     }
     for v in copied_values {
         out.push(v.clone());
@@ -3674,7 +3776,9 @@ fn module_mentions_word(src: &str, word: &str) -> bool {
             let ok_before = before
                 .map(|c| !c.is_alphanumeric() && c != '_' && c != '.')
                 .unwrap_or(true);
-            let ok_after = after.map(|c| !c.is_alphanumeric() && c != '_').unwrap_or(true);
+            let ok_after = after
+                .map(|c| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(true);
             if ok_before && ok_after {
                 return true;
             }
@@ -4082,7 +4186,9 @@ fn init_pure_model_expr(src: &str, init_val: &syntax::ast::Decl) -> Option<Strin
 /// Drill `init`'s value body (through any `let … in`) to its returning
 /// `( model, cmd )` tuple and return the two element exprs. `None` when the body
 /// is not a 2-tuple.
-fn init_return_tuple(init_val: &syntax::ast::Decl) -> Option<(syntax::ast::Expr, syntax::ast::Expr)> {
+fn init_return_tuple(
+    init_val: &syntax::ast::Decl,
+) -> Option<(syntax::ast::Expr, syntax::ast::Expr)> {
     let vd = match init_val {
         syntax::ast::Decl::Value(v) => v,
         _ => return None,
@@ -4328,10 +4434,30 @@ fn gen_backend(
             lines.push(text.to_string());
         }
     };
-    add(imports, &mut import_lines, "Sky.Http.Server", "import Sky.Http.Server as Server exposing (Request, Response, Handler)");
-    add(imports, &mut import_lines, "Std.Codec", "import Std.Codec as Codec");
-    add(imports, &mut import_lines, "Sky.Core.System", "import Sky.Core.System as System");
-    add(imports, &mut import_lines, "Sky.Core.Error", "import Sky.Core.Error as Error exposing (Error)");
+    add(
+        imports,
+        &mut import_lines,
+        "Sky.Http.Server",
+        "import Sky.Http.Server as Server exposing (Request, Response, Handler)",
+    );
+    add(
+        imports,
+        &mut import_lines,
+        "Std.Codec",
+        "import Std.Codec as Codec",
+    );
+    add(
+        imports,
+        &mut import_lines,
+        "Sky.Core.System",
+        "import Sky.Core.System as System",
+    );
+    add(
+        imports,
+        &mut import_lines,
+        "Sky.Core.Error",
+        "import Sky.Core.Error as Error exposing (Error)",
+    );
     // Server-internal effect chaining: a chaining branch's handler calls the
     // `Spa_settleServerChain` kernel alias, which needs `Sky.Ffi`.
     let any_chaining = !push_mode && server.iter().any(|(n, _)| chaining.contains(n));
@@ -4339,7 +4465,12 @@ fn gen_backend(
     // `Sky.Ffi` kernel alias, so it needs `Sky.Ffi` too.
     let any_client_result = !push_mode && server.iter().any(|(n, _)| client_result.contains_key(n));
     if any_chaining || any_client_result {
-        add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
+        add(
+            imports,
+            &mut import_lines,
+            "Sky.Ffi",
+            "import Sky.Ffi as Ffi",
+        );
     }
     // SSR (design §4.1): a backend that carries `view`/`init` (≥1 server branch,
     // or push) gets an SSR `GET /{$}` route that renders the first paint. It
@@ -4444,8 +4575,18 @@ fn gen_backend(
         && has_synth_view
         && has_synth_head;
     if emit_ssr {
-        add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
-        add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
+        add(
+            imports,
+            &mut import_lines,
+            "Sky.Ffi",
+            "import Sky.Ffi as Ffi",
+        );
+        add(
+            imports,
+            &mut import_lines,
+            "Sky.Core.Task",
+            "import Sky.Core.Task as Task",
+        );
         // Fix 7: the SSR first paint embeds the WHOLE model via
         // `Codec.toJson (Codec.auto resolved)` and the client decodes it with the
         // symmetric `Codec.fromJson (Codec.auto blank)`. `Codec.auto` compiles for
@@ -4467,10 +4608,30 @@ fn gen_backend(
     }
     if push_mode {
         // Server→client PUSH machinery (docs/skyspa/auto-split.md §16).
-        add(imports, &mut import_lines, "Sky.Core.Task", "import Sky.Core.Task as Task");
-        add(imports, &mut import_lines, "Sky.Ffi", "import Sky.Ffi as Ffi");
-        add(imports, &mut import_lines, "Sky.Core.Maybe", "import Sky.Core.Maybe as Maybe");
-        add(imports, &mut import_lines, "Sky.Http.Server.Stream", "import Sky.Http.Server.Stream as Stream exposing (StreamWriter)");
+        add(
+            imports,
+            &mut import_lines,
+            "Sky.Core.Task",
+            "import Sky.Core.Task as Task",
+        );
+        add(
+            imports,
+            &mut import_lines,
+            "Sky.Ffi",
+            "import Sky.Ffi as Ffi",
+        );
+        add(
+            imports,
+            &mut import_lines,
+            "Sky.Core.Maybe",
+            "import Sky.Core.Maybe as Maybe",
+        );
+        add(
+            imports,
+            &mut import_lines,
+            "Sky.Http.Server.Stream",
+            "import Sky.Http.Server.Stream as Stream exposing (StreamWriter)",
+        );
     }
     // STATELESS SIGNED SESSION: the sign / verify path needs Std.Auth (the token
     // logic Sky.Live reuses), the `Secret` type, `Sky.Ffi` (the secret-kernel
@@ -4482,7 +4643,10 @@ fn gen_backend(
     if !session_proj.is_empty() {
         for (path, text) in [
             ("Std.Auth", "import Std.Auth as Auth"),
-            ("Sky.Core.Secret", "import Sky.Core.Secret exposing (Secret)"),
+            (
+                "Sky.Core.Secret",
+                "import Sky.Core.Secret exposing (Secret)",
+            ),
             ("Sky.Ffi", "import Sky.Ffi as Ffi"),
             ("Sky.Core.Task", "import Sky.Core.Task as Task"),
         ] {
@@ -4725,8 +4889,9 @@ fn gen_backend(
         // server session state. Only when the app declared `withRequest`; the
         // model the guard + update see is `guard_model`.
         let mut guard_model = if has_synth_on_request {
-            run_setup
-                .push_str("\n                ( mReq, _ ) =\n                    spaOnRequest_ req m\n");
+            run_setup.push_str(
+                "\n                ( mReq, _ ) =\n                    spaOnRequest_ req m\n",
+            );
             "mReq".to_string()
         } else {
             "m".to_string()
@@ -4884,16 +5049,17 @@ fn gen_backend(
              \x20       Err e ->\n\
              \x20           Task.succeed (badRequest (Error.toString e))\n\n\n"
         ));
-        routes.push(format!("        , Server.api \"POST /_rpc/{name}\" {handler}"));
+        routes.push(format!(
+            "        , Server.api \"POST /_rpc/{name}\" {handler}"
+        ));
     }
     // STATELESS SIGNED SESSION: the framework sign-out endpoint clears `sky_sid`.
     // Registered only when the projection is non-empty (its handler is emitted
     // under the same guard above), so an app with no server-trusted session gains
     // no extra route.
     if !session_proj.is_empty() {
-        routes.push(
-            "        , Server.api \"POST /_rpc/__spaSignOut\" spaSignOutHandler".to_string(),
-        );
+        routes
+            .push("        , Server.api \"POST /_rpc/__spaSignOut\" spaSignOutHandler".to_string());
     }
     if push_mode {
         // The SSE push endpoint (topic from the query string).
@@ -5060,12 +5226,16 @@ fn gen_backend(
                      \x20               Ok _ ->\n                    {settle_expr}\n\n"
                 ));
             } else {
-                lets.push_str(&format!("        resolved =\n            {settle_expr}\n\n"));
+                lets.push_str(&format!(
+                    "        resolved =\n            {settle_expr}\n\n"
+                ));
             }
         } else {
             lets.push_str(&format!("        resolved =\n            {chain}\n\n"));
         }
-        lets.push_str("        modelJson =\n            Codec.toJson (Codec.auto resolved) resolved\n");
+        lets.push_str(
+            "        modelJson =\n            Codec.toJson (Codec.auto resolved) resolved\n",
+        );
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
              -- run init, seed it from the request (withRequest), resolve the path to\n\
@@ -5144,9 +5314,7 @@ fn gen_backend(
     // dist catch-all already serves the root there.
     if let Some((dir, prefix)) = static_mount {
         if !prefix.is_empty() {
-            routes.push(format!(
-                "        , Server.static \"/{prefix}\" \"{dir}\""
-            ));
+            routes.push(format!("        , Server.static \"/{prefix}\" \"{dir}\""));
         }
     }
     if emit_ssr && has_synth_routes {
@@ -5269,7 +5437,9 @@ fn gen_frontend(
     // add Error + Shared.
     let mut import_lines: Vec<String> = imports
         .iter()
-        .filter(|i| !is_server_only_module(&i.module_path) && !backend_only.contains(&i.module_path))
+        .filter(|i| {
+            !is_server_only_module(&i.module_path) && !backend_only.contains(&i.module_path)
+        })
         // Same as the backend: a copied type/codec comes from `import Shared`, so
         // drop it from any kept import to avoid an ambiguous double-import.
         .map(|i| strip_names_from_import_exposing(&i.text, copied_names))
@@ -5430,8 +5600,17 @@ fn gen_frontend(
     // entry keeps `import <Sibling> exposing (update)` and appends nothing.
     if regen_update {
         let update_src = gen_frontend_update(
-            file, src, server, &server_ctors, msg_param, model_param, update_anno, has_rpc_error,
-            server_internal, model_field_names, client_result,
+            file,
+            src,
+            server,
+            &server_ctors,
+            msg_param,
+            model_param,
+            update_anno,
+            has_rpc_error,
+            server_internal,
+            model_field_names,
+            client_result,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -5607,7 +5786,9 @@ fn gen_frontend_update(
         if is_server {
             let m = head.unwrap();
             let io = &server.iter().find(|(n, _)| *n == m).unwrap().1;
-            let pat_text = pat.map(|p| slice(src, &p).to_string()).unwrap_or_else(|| m.clone());
+            let pat_text = pat
+                .map(|p| slice(src, &p).to_string())
+                .unwrap_or_else(|| m.clone());
             let req_codec = format!("{}ReqCodec", lower_first(&m));
             let resp_codec = format!("{}RespCodec", lower_first(&m));
             // Request payload — the shared client-leg build-req (also emitted by
@@ -5632,7 +5813,10 @@ fn gen_frontend_update(
         // with the WHOLE result value into `update`, so its client arm runs in the
         // wasm client — never decompose the `Result` into Ok/Err binders.
         let apply = if let Some(cr) = client_result.get(m) {
-            format!("            update ({} resp.result) {model_param}", cr.result_msg)
+            format!(
+                "            update ({} resp.result) {model_param}",
+                cr.result_msg
+            )
         } else {
             // Shared client-leg apply-delta (also emitted by the phase-2 fuzzer).
             emit_apply_delta(io, model_param)
@@ -5739,7 +5923,9 @@ fn render_module_client_subset(
             }
             (_, DeclKind::Union)
                 if inject_msg
-                    && union_variant_names(&d).iter().any(|v| want.contains(v.as_str())) =>
+                    && union_variant_names(&d)
+                        .iter()
+                        .any(|v| want.contains(v.as_str())) =>
             {
                 // GAP-A: splice the Applied<Msg> RPC-response variants into the
                 // Msg union whose variants ARE the app's server branches. Drop
@@ -5758,8 +5944,17 @@ fn render_module_client_subset(
     }
     if regen_update {
         let update_src = gen_frontend_update(
-            mfile, msrc, server, server_ctors, msg_param, model_param, update_anno, has_rpc_error,
-            server_internal, model_field_names, client_result,
+            mfile,
+            msrc,
+            server,
+            server_ctors,
+            msg_param,
+            model_param,
+            update_anno,
+            has_rpc_error,
+            server_internal,
+            model_field_names,
+            client_result,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -5803,7 +5998,11 @@ fn render_module_client_subset(
         out
     };
     let out = if inject_msg {
-        ensure_import_present(&out, "Sky.Core.Error", "import Sky.Core.Error exposing (Error)")
+        ensure_import_present(
+            &out,
+            "Sky.Core.Error",
+            "import Sky.Core.Error exposing (Error)",
+        )
     } else {
         out
     };
@@ -5904,7 +6103,10 @@ fn build_client_result_map(
         if let Some(result_ty) = result_ty {
             out.insert(
                 root.clone(),
-                ClientResultInfo { result_msg: result_msg.clone(), result_ty },
+                ClientResultInfo {
+                    result_msg: result_msg.clone(),
+                    result_ty,
+                },
             );
         }
     }
@@ -5981,7 +6183,9 @@ fn inject_applied_variants_into_module(
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
     let has_msg_union = mfile.decls().any(|d| {
         matches!(decl_kind(&d), DeclKind::Union)
-            && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
+            && union_variant_names(&d)
+                .iter()
+                .any(|v| want.contains(v.as_str()))
     });
     if !has_msg_union {
         return msrc.to_string();
@@ -6002,7 +6206,9 @@ fn inject_applied_variants_into_module(
             }
         }
         if matches!(decl_kind(&d), DeclKind::Union)
-            && union_variant_names(&d).iter().any(|v| want.contains(v.as_str()))
+            && union_variant_names(&d)
+                .iter()
+                .any(|v| want.contains(v.as_str()))
         {
             body.push_str(&union_text_without_variants(msrc, &d, server_internal));
             for (m, _) in server {
@@ -6019,7 +6225,11 @@ fn inject_applied_variants_into_module(
     out.push_str("\n\n\n");
     out.push_str(&body);
     let out = ensure_import_present(&out, "Shared", shared_expose);
-    ensure_import_present(&out, "Sky.Core.Error", "import Sky.Core.Error exposing (Error)")
+    ensure_import_present(
+        &out,
+        "Sky.Core.Error",
+        "import Sky.Core.Error exposing (Error)",
+    )
 }
 
 /// Ensure `import_line` is present in `src` (idempotent — no-op if `module_path`
@@ -6154,11 +6364,24 @@ mod fix7_tests {
                    import Data.Todo\n    exposing\n        ( Todo\n        , newTodo\n        )\n\n\n\
                    greet x =\n    x\n";
         let existing = vec![
-            ImportInfo { module_path: "Sky.Core.Prelude".into(), text: String::new() },
-            ImportInfo { module_path: "Sky.Core.List".into(), text: String::new() },
-            ImportInfo { module_path: "Data.Todo".into(), text: String::new() },
+            ImportInfo {
+                module_path: "Sky.Core.Prelude".into(),
+                text: String::new(),
+            },
+            ImportInfo {
+                module_path: "Sky.Core.List".into(),
+                text: String::new(),
+            },
+            ImportInfo {
+                module_path: "Data.Todo".into(),
+                text: String::new(),
+            },
         ];
-        let out = inject_harness_imports(&src, &existing, &["import Shared exposing (..)".to_string()]);
+        let out = inject_harness_imports(
+            &src,
+            &existing,
+            &["import Shared exposing (..)".to_string()],
+        );
         // The multi-line exposing list stays intact and contiguous.
         assert!(
             out.contains("        ( Todo\n        , newTodo\n        )"),
@@ -6166,7 +6389,9 @@ mod fix7_tests {
         );
         // The injected import sits AFTER the closing paren of that list, before the
         // first declaration, not inside the list.
-        let inject_at = out.find("import Shared exposing (..)").expect("import injected");
+        let inject_at = out
+            .find("import Shared exposing (..)")
+            .expect("import injected");
         let list_close = out.find("        )").expect("list close present");
         let greet_at = out.find("greet x").expect("decl present");
         assert!(
@@ -6182,9 +6407,19 @@ mod fix7_tests {
         let src = "module Domain exposing (..)\n\
                    import Sky.Core.List as List\n\n\
                    greet x =\n    x\n";
-        let existing = vec![ImportInfo { module_path: "Sky.Core.List".into(), text: String::new() }];
-        let out = inject_harness_imports(&src, &existing, &["import Shared exposing (..)".to_string()]);
-        assert!(out.contains("import Sky.Core.List as List\nimport Shared exposing (..)"), "{out}");
+        let existing = vec![ImportInfo {
+            module_path: "Sky.Core.List".into(),
+            text: String::new(),
+        }];
+        let out = inject_harness_imports(
+            &src,
+            &existing,
+            &["import Shared exposing (..)".to_string()],
+        );
+        assert!(
+            out.contains("import Sky.Core.List as List\nimport Shared exposing (..)"),
+            "{out}"
+        );
     }
 
     // `model_type_name` derives the Model type for `spaModelBlank_ : <Model>` from
@@ -6195,7 +6430,10 @@ mod fix7_tests {
     #[test]
     fn nth_arrow_segment_picks_the_right_parameter() {
         // view: model is the first param.
-        assert_eq!(nth_arrow_segment("view : Model -> Html Msg", 0).as_deref(), Some("Model"));
+        assert_eq!(
+            nth_arrow_segment("view : Model -> Html Msg", 0).as_deref(),
+            Some("Model")
+        );
         // update: model is the SECOND param (the first is Msg).
         assert_eq!(
             nth_arrow_segment("update : Msg -> Model -> ( Model, Cmd Msg )", 1).as_deref(),
@@ -6239,30 +6477,68 @@ mod fix7_tests {
     #[test]
     fn secret_and_set_are_flagged_others_are_not() {
         let flagged = |f: &ModelFieldTy| codec_auto_unencodable(f).is_some();
-        let reason = |f: &ModelFieldTy| codec_auto_unencodable(f).map(|(_, why)| why).unwrap_or_default();
+        let reason = |f: &ModelFieldTy| {
+            codec_auto_unencodable(f)
+                .map(|(_, why)| why)
+                .unwrap_or_default()
+        };
 
         // Secret — resolved folded name, bare name, and surface fallback.
-        assert!(flagged(&field("token", "Secret", Some(ty::Ty::app("Sky.Core.Secret.Secret", vec![])))));
-        assert!(flagged(&field("token", "Secret", Some(ty::Ty::app("Secret", vec![])))));
+        assert!(flagged(&field(
+            "token",
+            "Secret",
+            Some(ty::Ty::app("Sky.Core.Secret.Secret", vec![]))
+        )));
+        assert!(flagged(&field(
+            "token",
+            "Secret",
+            Some(ty::Ty::app("Secret", vec![]))
+        )));
         assert!(flagged(&field("token", "Secret", None)));
 
         // Set — top-level and via the surface fallback. Judge finding 2.
-        let set = field("tags", "Set String", Some(ty::Ty::app("Set", vec![ty::Ty::app("String", vec![])])));
+        let set = field(
+            "tags",
+            "Set String",
+            Some(ty::Ty::app("Set", vec![ty::Ty::app("String", vec![])])),
+        );
         assert!(flagged(&set));
-        assert!(reason(&set).contains("Set"), "Set reason must name Set: {}", reason(&set));
+        assert!(
+            reason(&set).contains("Set"),
+            "Set reason must name Set: {}",
+            reason(&set)
+        );
         assert!(flagged(&field("tags", "Set String", None)));
 
         // Nested Secret — inside Maybe, inside List, inside a record field.
-        assert!(flagged(&field("t", "Maybe Secret", Some(ty::Ty::app("Maybe", vec![ty::Ty::app("Secret", vec![])])))));
-        assert!(flagged(&field("t", "List Secret", Some(ty::Ty::app("List", vec![ty::Ty::app("Secret", vec![])])))));
+        assert!(flagged(&field(
+            "t",
+            "Maybe Secret",
+            Some(ty::Ty::app("Maybe", vec![ty::Ty::app("Secret", vec![])]))
+        )));
+        assert!(flagged(&field(
+            "t",
+            "List Secret",
+            Some(ty::Ty::app("List", vec![ty::Ty::app("Secret", vec![])]))
+        )));
         assert!(flagged(&field(
             "cfg",
             "{ key : Secret }",
-            Some(ty::Ty::Record(vec![(base::Name::new("key"), ty::Ty::app("Secret", vec![]))], None)),
+            Some(ty::Ty::Record(
+                vec![(base::Name::new("key"), ty::Ty::app("Secret", vec![]))],
+                None
+            )),
         )));
 
         // Nested Set — inside Maybe.
-        assert!(flagged(&field("m", "Maybe (Set Int)", Some(ty::Ty::app("Maybe", vec![ty::Ty::app("Set", vec![ty::Ty::app("Int", vec![])])])))));
+        assert!(flagged(&field(
+            "m",
+            "Maybe (Set Int)",
+            Some(ty::Ty::app(
+                "Maybe",
+                vec![ty::Ty::app("Set", vec![ty::Ty::app("Int", vec![])])]
+            ))
+        )));
 
         // Types the runtime codec round-trips must NOT be flagged.
         for (ty_name, t) in [
@@ -6270,9 +6546,21 @@ mod fix7_tests {
             ("String", ty::Ty::app("String", vec![])),
             ("Money", ty::Ty::app("Std.Money.Money", vec![])),
             ("Decimal", ty::Ty::app("Std.Decimal.Decimal", vec![])),
-            ("List Todo", ty::Ty::app("List", vec![ty::Ty::app("Todo", vec![])])),
-            ("Maybe Int", ty::Ty::app("Maybe", vec![ty::Ty::app("Int", vec![])])),
-            ("Dict String Int", ty::Ty::app("Dict", vec![ty::Ty::app("String", vec![]), ty::Ty::app("Int", vec![])])),
+            (
+                "List Todo",
+                ty::Ty::app("List", vec![ty::Ty::app("Todo", vec![])]),
+            ),
+            (
+                "Maybe Int",
+                ty::Ty::app("Maybe", vec![ty::Ty::app("Int", vec![])]),
+            ),
+            (
+                "Dict String Int",
+                ty::Ty::app(
+                    "Dict",
+                    vec![ty::Ty::app("String", vec![]), ty::Ty::app("Int", vec![])],
+                ),
+            ),
         ] {
             let f = field("f", ty_name, Some(t));
             assert!(
@@ -6290,7 +6578,11 @@ mod fix7_tests {
     //
     // RED before item 4: the Err arm was ALWAYS `( model, Cmd.none )`.
     fn gen_update_for(with_rpc_error: bool) -> String {
-        let rpc = if with_rpc_error { "\n\nspaRpcError_ =\n    (\\e -> RpcFailed e)\n" } else { "\n" };
+        let rpc = if with_rpc_error {
+            "\n\nspaRpcError_ =\n    (\\e -> RpcFailed e)\n"
+        } else {
+            "\n"
+        };
         let src = format!(
             "module Main exposing (main)\n\nupdate msg model =\n    case msg of\n        Increment ->\n            ( {{ model | count = model.count + 1 }}, Cmd.none )\n\n        Save ->\n            ( saved model, Cmd.none )\n{rpc}"
         );

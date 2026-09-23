@@ -86,7 +86,15 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         .filter(|n| root.join("examples").join(n).is_dir())
         .collect();
 
-    let rows = check_all(&worker, root, &present, seeds, no_build, verbose, jobs(args));
+    let rows = check_all(
+        &worker,
+        root,
+        &present,
+        seeds,
+        no_build,
+        verbose,
+        jobs(args),
+    );
 
     print_table(&rows, seeds);
     gate_result(&rows)
@@ -596,7 +604,11 @@ mod tests {
                 union.sort();
                 let mut expect = full.clone();
                 expect.sort();
-                assert_eq!(union.len(), expect.len(), "size={total} n={n}: overlap or drop");
+                assert_eq!(
+                    union.len(),
+                    expect.len(),
+                    "size={total} n={n}: overlap or drop"
+                );
                 assert_eq!(union, expect, "size={total} n={n}: union != corpus");
             }
         }
@@ -613,7 +625,10 @@ mod tests {
                     .collect();
                 let max = *sizes.iter().max().unwrap();
                 let min = *sizes.iter().min().unwrap();
-                assert!(max - min <= 1, "size={total} n={n}: sizes {sizes:?} unbalanced");
+                assert!(
+                    max - min <= 1,
+                    "size={total} n={n}: sizes {sizes:?} unbalanced"
+                );
             }
         }
     }
@@ -655,7 +670,11 @@ mod tests {
             builds,
             samples,
             stable,
-            first_diff: if stable { None } else { Some((3, "a vs b".into())) },
+            first_diff: if stable {
+                None
+            } else {
+                Some((3, "a vs b".into()))
+            },
             note: String::new(),
         }
     }
@@ -682,7 +701,11 @@ mod tests {
             row("stable", Some(true), 3, true),
             row("flaky", Some(true), 3, false),
         ];
-        assert_eq!(gate_result(&rows), 1, "a nondeterministic building example must FAIL");
+        assert_eq!(
+            gate_result(&rows),
+            1,
+            "a nondeterministic building example must FAIL"
+        );
     }
 
     #[test]

@@ -34,7 +34,10 @@ pub fn run(_args: &[String], repo_root: &Path) -> i32 {
     }
     // The comment-torture fixture — sharp teeth for the trailing-comment class
     // that the opinionated printer would otherwise drop.
-    collect_sky(&repo_root.join("rust/crates/xtask/fmt-fixtures"), &mut files);
+    collect_sky(
+        &repo_root.join("rust/crates/xtask/fmt-fixtures"),
+        &mut files,
+    );
     files.sort();
     files.dedup();
 
@@ -120,10 +123,7 @@ fn comment_multiset(src: &str) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for e in parsed.syntax().descendants_with_tokens() {
         if let Some(t) = e.into_token() {
-            if matches!(
-                t.kind(),
-                SyntaxKind::LineComment | SyntaxKind::BlockComment
-            ) {
+            if matches!(t.kind(), SyntaxKind::LineComment | SyntaxKind::BlockComment) {
                 *m.entry(t.text().to_string()).or_insert(0) += 1;
             }
         }
@@ -132,10 +132,7 @@ fn comment_multiset(src: &str) -> BTreeMap<String, usize> {
 }
 
 /// Human-readable +/- lines for the comments that differ between two multisets.
-fn comment_diff(
-    before: &BTreeMap<String, usize>,
-    after: &BTreeMap<String, usize>,
-) -> Vec<String> {
+fn comment_diff(before: &BTreeMap<String, usize>, after: &BTreeMap<String, usize>) -> Vec<String> {
     let mut out = Vec::new();
     for (text, &n) in before {
         let a = after.get(text).copied().unwrap_or(0);
@@ -203,8 +200,15 @@ mod tests {
         let b = comment_multiset(without);
         assert_ne!(a, b, "dropping comments must change the multiset");
         let diff = comment_diff(&a, &b);
-        assert_eq!(diff.len(), 2, "both dropped comments must be reported: {diff:?}");
-        assert!(diff.iter().all(|l| l.starts_with("- ")), "losses render as `-`: {diff:?}");
+        assert_eq!(
+            diff.len(),
+            2,
+            "both dropped comments must be reported: {diff:?}"
+        );
+        assert!(
+            diff.iter().all(|l| l.starts_with("- ")),
+            "losses render as `-`: {diff:?}"
+        );
     }
 
     #[test]

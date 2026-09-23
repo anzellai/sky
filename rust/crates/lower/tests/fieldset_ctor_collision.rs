@@ -132,10 +132,7 @@ fn partially_unknown_record_does_not_pick_an_arbitrary_colliding_alias() {
 fn lone_type_contradicting_candidate_is_not_nominalised() {
     let env = env_with_collision(false);
     let rec = Ty::Record(
-        vec![
-            field("key", app0("String")),
-            field("value", app0("String")),
-        ],
+        vec![field("key", app0("String")), field("value", app0("String"))],
         None,
     );
     assert_ne!(
@@ -154,10 +151,7 @@ fn lone_type_contradicting_candidate_is_not_nominalised() {
 fn determined_record_still_resolves_to_the_type_matching_alias() {
     let env = env_with_collision(true);
     let user = Ty::Record(
-        vec![
-            field("key", app0("String")),
-            field("value", app0("String")),
-        ],
+        vec![field("key", app0("String")), field("value", app0("String"))],
         None,
     );
     assert_eq!(

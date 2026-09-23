@@ -287,9 +287,7 @@ fn run_inspector_on(
                 Ok(o) => break o,
                 Err(e) if e.raw_os_error() == Some(26) && attempt < 10 => {
                     attempt += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(
-                        u64::from(20 * attempt),
-                    ));
+                    std::thread::sleep(std::time::Duration::from_millis(u64::from(20 * attempt)));
                 }
                 Err(e) => return Err(format!("spawn sky-ffi-inspect: {e}")),
             }
@@ -591,15 +589,16 @@ mod tests {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0)
         ));
-        assert!(super::is_writable_dir(&tmp), "fresh temp dir must be writable");
+        assert!(
+            super::is_writable_dir(&tmp),
+            "fresh temp dir must be writable"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
 
         // A path whose parent cannot be created (root is read-only on any sane CI
         // host) must probe as NOT writable, so selection falls through.
         assert!(
-            !super::is_writable_dir(std::path::Path::new(
-                "/proc/sky-cannot-create-here/nested"
-            )),
+            !super::is_writable_dir(std::path::Path::new("/proc/sky-cannot-create-here/nested")),
             "an uncreatable path must be reported unwritable"
         );
     }

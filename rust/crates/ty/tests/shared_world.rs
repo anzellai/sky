@@ -77,7 +77,8 @@ fn defid_no_leak_across_consecutive_cases() {
     let b = shared.check_case(&case_b, &["Main".to_string()]);
     assert_eq!(a.out.type_errors, 0);
     assert_eq!(
-        b.out.type_errors, 0,
+        b.out.type_errors,
+        0,
         "case B was judged against case A's `main : Int`: {:?}",
         b.out
             .diagnostics
@@ -114,11 +115,7 @@ fn defid_no_leak_across_consecutive_cases() {
         naive_world.extend_decls(&scoped, false);
         naive_world.extend_bodies(&scoped);
     }
-    let leaked = ty::check_modules_with_world(
-        &naive_db,
-        std::rc::Rc::new(naive_world),
-        &[idb],
-    );
+    let leaked = ty::check_modules_with_world(&naive_db, std::rc::Rc::new(naive_world), &[idb]);
     assert!(
         leaked.type_errors > 0,
         "the cross-case leak this gate guards is not reproducible — the \
@@ -191,7 +188,8 @@ fn shadowing_case_falls_back_and_is_counted() {
     // The shadowed `tag : Int` is what must be in force: `main : Int = tag`
     // type-checks only against the case's own Std.Log, not the base's `String`.
     assert_eq!(
-        c.out.type_errors, 0,
+        c.out.type_errors,
+        0,
         "the case was checked against the SHADOWED module's declarations: {:?}",
         c.out
             .diagnostics

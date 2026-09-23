@@ -226,7 +226,13 @@ pub fn emit_harness(
     let mut s = String::new();
     s.push_str(&gout.source);
     s.push('\n');
-    s.push_str(&emit_check_one(model_type, msg_type, model_fields, &model_field_names, &checked));
+    s.push_str(&emit_check_one(
+        model_type,
+        msg_type,
+        model_fields,
+        &model_field_names,
+        &checked,
+    ));
     s.push('\n');
     s.push_str(&emit_driver(iters, seed0));
 
@@ -264,7 +270,9 @@ fn emit_check_one(
     s.push_str("-- Differential split-fuzzer check: run each checkable branch two ways\n");
     s.push_str("-- (direct vs the Sky.Spa split plumbing) over the SAME (Model, Msg) and\n");
     s.push_str("-- assert they agree. A read/write-set drop or a Msg-arg collision diverges.\n");
-    s.push_str(&format!("spaDiffCheckOne : {model_type} -> {msg_type} -> Result String ()\n"));
+    s.push_str(&format!(
+        "spaDiffCheckOne : {model_type} -> {msg_type} -> Result String ()\n"
+    ));
     s.push_str("spaDiffCheckOne model msg =\n");
     s.push_str("    case msg of\n");
 
@@ -294,14 +302,20 @@ fn emit_check_one(
 
         s.push_str(&format!("        {pattern} ->\n"));
         s.push_str("            let\n");
-        s.push_str(&format!("                p =\n                    {build_req}\n\n"));
+        s.push_str(&format!(
+            "                p =\n                    {build_req}\n\n"
+        ));
         s.push_str(&reconstruct);
         s.push('\n');
         s.push_str(&format!(
             "                ( m2, _ ) =\n                    update {ctor_app} m\n\n"
         ));
-        s.push_str(&format!("                resp =\n                    {write_set}\n\n"));
-        s.push_str(&format!("                ( applied, _ ) =\n                    {apply}\n\n"));
+        s.push_str(&format!(
+            "                resp =\n                    {write_set}\n\n"
+        ));
+        s.push_str(&format!(
+            "                ( applied, _ ) =\n                    {apply}\n\n"
+        ));
         s.push_str("                ( direct, _ ) =\n                    update msg model\n");
         s.push_str("            in\n");
         s.push_str("            if direct == applied then\n");
@@ -399,8 +413,9 @@ pub fn emit_model_fuzz(
 
     let tail = msg_type.rsplit('.').next().unwrap_or(msg_type);
     let Some(crate::spa_diff_gen::TypeDef::Union(ctors)) = resolver.resolve(tail) else {
-        out.notes
-            .push(format!("Msg type `{msg_type}` did not resolve to a union — nothing to fuzz"));
+        out.notes.push(format!(
+            "Msg type `{msg_type}` did not resolve to a union — nothing to fuzz"
+        ));
         return out;
     };
     for (ctor, arg_tys) in &ctors {
@@ -532,13 +547,20 @@ mod tests {
             out.snippet
         );
         assert!(
-            out.snippet.contains("update (SetScaleArg p.spaMsgArg_scale) m"),
+            out.snippet
+                .contains("update (SetScaleArg p.spaMsgArg_scale) m"),
             "ctor_app must read the arg back under the renamed field:\n{}",
             out.snippet
         );
         // Both legs present.
-        assert!(out.snippet.contains("update msg model"), "direct leg missing");
-        assert!(out.snippet.contains("if direct == applied then"), "diff missing");
+        assert!(
+            out.snippet.contains("update msg model"),
+            "direct leg missing"
+        );
+        assert!(
+            out.snippet.contains("if direct == applied then"),
+            "diff missing"
+        );
         well_formed(&out.snippet);
     }
 
@@ -564,9 +586,22 @@ mod tests {
         let out = emit_harness("Model", "Msg", &model_fields, &checkable, &e, 50, 1);
         assert_eq!(out.checked, vec!["Inc".to_string()]);
         // Request built from the read field only; response from the write field.
-        assert!(out.snippet.contains("count = model.count"), "req read field:\n{}", out.snippet);
-        assert!(out.snippet.contains("( base, _ ) =\n                    init ()"), "narrow reconstruct seeds base from init:\n{}", out.snippet);
-        assert!(out.snippet.contains("count = m2.count"), "resp write field:\n{}", out.snippet);
+        assert!(
+            out.snippet.contains("count = model.count"),
+            "req read field:\n{}",
+            out.snippet
+        );
+        assert!(
+            out.snippet
+                .contains("( base, _ ) =\n                    init ()"),
+            "narrow reconstruct seeds base from init:\n{}",
+            out.snippet
+        );
+        assert!(
+            out.snippet.contains("count = m2.count"),
+            "resp write field:\n{}",
+            out.snippet
+        );
         well_formed(&out.snippet);
     }
 
@@ -618,16 +653,20 @@ mod tests {
     fn fence_selects_effect_free_server_branches_and_skips_the_rest() {
         let branches = vec![
             bv("SetRegion region", true, Some(io_args(&["region"])), false), // checkable
-            bv("Pure", false, None, false),                          // client → skip
-            bv("Loads", true, Some(io_args(&[])), true),             // forces effect → skip
-            bv("Internal", true, Some(io_args(&[])), false),         // server-internal → skip
-            bv("Chained", true, Some(io_args(&[])), false),          // chaining → skip
-            bv("ClientRoot", true, Some(io_args(&[])), false),       // client-result root → skip
-            bv("GotTodos (Ok _)", true, Some(io_args(&[])), false),  // nested pattern → skip
+            bv("Pure", false, None, false),                                  // client → skip
+            bv("Loads", true, Some(io_args(&[])), true),                     // forces effect → skip
+            bv("Internal", true, Some(io_args(&[])), false), // server-internal → skip
+            bv("Chained", true, Some(io_args(&[])), false),  // chaining → skip
+            bv("ClientRoot", true, Some(io_args(&[])), false), // client-result root → skip
+            bv("GotTodos (Ok _)", true, Some(io_args(&[])), false), // nested pattern → skip
         ];
         let (checkable, _notes) = select_checkable(&report_with(branches));
         let ctors: Vec<&str> = checkable.iter().map(|c| c.ctor.as_str()).collect();
-        assert_eq!(ctors, vec!["SetRegion"], "only the effect-free simple server branch is checkable");
+        assert_eq!(
+            ctors,
+            vec!["SetRegion"],
+            "only the effect-free simple server branch is checkable"
+        );
     }
 
     #[test]
@@ -653,7 +692,11 @@ mod tests {
         let e = env();
         let out = emit_harness("Model", "Msg", &model_fields, &[], &e, 10, 1);
         assert!(out.checked.is_empty());
-        assert!(out.notes.iter().any(|n| n.contains("withheld")), "notes: {:?}", out.notes);
+        assert!(
+            out.notes.iter().any(|n| n.contains("withheld")),
+            "notes: {:?}",
+            out.notes
+        );
     }
 
     // Bracket / paren balance, reused from spa_diff_gen's shape check.
@@ -679,7 +722,10 @@ mod tests {
                 '}' => brace -= 1,
                 _ => {}
             }
-            assert!(paren >= 0 && brack >= 0 && brace >= 0, "unbalanced close in:\n{src}");
+            assert!(
+                paren >= 0 && brack >= 0 && brace >= 0,
+                "unbalanced close in:\n{src}"
+            );
             prev = c;
         }
         assert_eq!(paren, 0, "unbalanced parens:\n{src}");

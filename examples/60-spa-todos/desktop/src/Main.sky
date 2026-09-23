@@ -20,14 +20,10 @@ import Sky.Core.System as System
 main : Task Error ()
 main =
     let
-        port =
-            System.getenvOr "TODOS_PORT" "8951"
-
-        appUrl =
-            "http://127.0.0.1:" ++ port ++ "/"
+        port = System.getenvOr "TODOS_PORT" "8951"
+        appUrl = "http://127.0.0.1:" ++ port ++ "/"
     in
-    Webview.url appUrl
-        (Webview.defaultWindow
-            |> Webview.withTitle "Sky.Spa Todos — Desktop"
-            |> Webview.withSize 480 760
-        )
+        Webview.url
+            appUrl
+            (Webview.defaultWindow |> Webview.withTitle "Sky.Spa Todos — Desktop"
+                |> Webview.withSize 480 760)

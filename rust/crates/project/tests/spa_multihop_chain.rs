@@ -28,12 +28,17 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
 fn fixture_dir(name: &str) -> PathBuf {
-    repo_root().join("rust/crates/sky/tests/fixtures").join(name)
+    repo_root()
+        .join("rust/crates/sky/tests/fixtures")
+        .join(name)
 }
 
 fn analyze(name: &str) -> spa_partition::SpaPartitionReport {

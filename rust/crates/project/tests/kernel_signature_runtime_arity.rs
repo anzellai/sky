@@ -80,9 +80,7 @@ fn arrow_count(t: &ast::Type) -> usize {
             let kids = child_types(f.syntax());
             1 + kids.get(1).map_or(0, arrow_count)
         }
-        ast::Type::Paren(p) => child_types(p.syntax())
-            .first()
-            .map_or(0, |_| 0), // a parenthesised whole-type is not a spine arrow
+        ast::Type::Paren(p) => child_types(p.syntax()).first().map_or(0, |_| 0), // a parenthesised whole-type is not a spine arrow
         _ => 0,
     }
 }
@@ -90,10 +88,7 @@ fn arrow_count(t: &ast::Type) -> usize {
 /// Is the FIRST parameter of this annotation the unit type `()`?
 fn leading_unit_param(t: &ast::Type) -> bool {
     match t {
-        ast::Type::Fun(f) => matches!(
-            child_types(f.syntax()).first(),
-            Some(ast::Type::Unit(_))
-        ),
+        ast::Type::Fun(f) => matches!(child_types(f.syntax()).first(), Some(ast::Type::Unit(_))),
         _ => false,
     }
 }
@@ -122,7 +117,9 @@ fn stdlib_aliases(root: &Path) -> BTreeMap<String, (bool, BTreeSet<String>)> {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().and_then(|x| x.to_str()) == Some("sky") {
-                let Ok(src) = fs::read_to_string(&p) else { continue };
+                let Ok(src) = fs::read_to_string(&p) else {
+                    continue;
+                };
                 let parse = syntax::parse(&src, base::FileId(0));
                 let Some(file) = ast::SourceFile::cast(parse.syntax()) else {
                     continue;

@@ -134,7 +134,9 @@ fn declared_in_module(src: &str) -> (BTreeSet<String>, BTreeSet<String>) {
         } else if let Some(l) = rest.strip_prefix("by-design:") {
             (&mut by_design, l)
         } else {
-            panic!("unrecognised declared-gaps kind in {line:?} — expected `not-yet:` or `by-design:`");
+            panic!(
+                "unrecognised declared-gaps kind in {line:?} — expected `not-yet:` or `by-design:`"
+            );
         };
         for slug in list.split(',') {
             let slug = slug.trim();
@@ -311,7 +313,8 @@ fn the_declaration_parser_is_not_vacuous() {
     );
 
     // And it reads the SHAPE, not any line containing the word.
-    let (n, b) = declared_in_module("-- declared-gaps: not-yet: a, b\n-- declared-gaps: by-design: c\n");
+    let (n, b) =
+        declared_in_module("-- declared-gaps: not-yet: a, b\n-- declared-gaps: by-design: c\n");
     assert_eq!(n, ["a", "b"].map(String::from).into_iter().collect());
     assert_eq!(b, ["c"].map(String::from).into_iter().collect());
     let (n, _) = declared_in_module("-- footnotes are not supported yet\n");

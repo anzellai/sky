@@ -9,9 +9,7 @@
 //! `docs/rust-rewrite/13-change-verification-and-edge-cases.md`.
 
 use codegen::{emit_program, render_expr, render_ty};
-use lower::ir::{
-    CoerceReason, GoExpr, GoExprKind, GoItem, GoStmt, GoTy, GoTypeDef, Prim,
-};
+use lower::ir::{CoerceReason, GoExpr, GoExprKind, GoItem, GoStmt, GoTy, GoTypeDef, Prim};
 
 // ---- small IR constructors so each test reads as its Go shape -------------
 
@@ -82,14 +80,23 @@ fn renders_row_poly_record_update_reflective() {
     let map_lit = GoExpr::new(
         GoExprKind::StructLit(
             "map[string]any".into(),
-            vec![("\"Age\"".into(), GoExpr::new(GoExprKind::Widen(Box::new(int_lit(30))), GoTy::Any))],
+            vec![(
+                "\"Age\"".into(),
+                GoExpr::new(GoExprKind::Widen(Box::new(int_lit(30))), GoTy::Any),
+            )],
         ),
         GoTy::Any,
     );
     let e = GoExpr::new(
         GoExprKind::Call(
-            Box::new(GoExpr::new(GoExprKind::Ident("rt.RecordUpdate".into()), GoTy::Any)),
-            vec![GoExpr::new(GoExprKind::Widen(Box::new(ident("r"))), GoTy::Any), map_lit],
+            Box::new(GoExpr::new(
+                GoExprKind::Ident("rt.RecordUpdate".into()),
+                GoTy::Any,
+            )),
+            vec![
+                GoExpr::new(GoExprKind::Widen(Box::new(ident("r"))), GoTy::Any),
+                map_lit,
+            ],
         ),
         GoTy::Any,
     );
@@ -115,7 +122,10 @@ fn renders_tuple_literal_and_type() {
     assert_eq!(render_expr(&tup), "rt.T2[string, int]{V0: \"x\", V1: 1}");
     // the type side
     assert_eq!(
-        render_ty(&GoTy::Tuple(vec![GoTy::Bare(Prim::Str), GoTy::Bare(Prim::Int)])),
+        render_ty(&GoTy::Tuple(vec![
+            GoTy::Bare(Prim::Str),
+            GoTy::Bare(Prim::Int)
+        ])),
         "rt.T2[string, int]"
     );
     // arity ≥ 10 → the slice-backed SkyTupleN (must match lower_tuple's split)
@@ -138,7 +148,10 @@ fn renders_coerce_generic_named() {
         },
         named("Main_Model_R"),
     );
-    assert_eq!(render_expr(&e), "/* generic erase */ rt.Coerce[Main_Model_R](x)");
+    assert_eq!(
+        render_expr(&e),
+        "/* generic erase */ rt.Coerce[Main_Model_R](x)"
+    );
 }
 
 #[test]
@@ -165,7 +178,10 @@ fn renders_coerce_dict_via_asmapt() {
         GoExprKind::Coerce {
             inner: Box::new(ident("d")),
             from: GoTy::Any,
-            to: GoTy::Map(Box::new(GoTy::Bare(Prim::Str)), Box::new(GoTy::Bare(Prim::Str))),
+            to: GoTy::Map(
+                Box::new(GoTy::Bare(Prim::Str)),
+                Box::new(GoTy::Bare(Prim::Str)),
+            ),
             reason: CoerceReason::WireDecode,
         },
         GoTy::Any,
@@ -186,10 +202,22 @@ fn renders_coerce_primitives() {
             to,
         ))
     };
-    assert_eq!(mk(GoTy::Bare(Prim::Int)), "/* primitive join */ rt.AsInt(x)");
-    assert_eq!(mk(GoTy::Bare(Prim::Str)), "/* primitive join */ rt.AsString(x)");
-    assert_eq!(mk(GoTy::Bare(Prim::Bool)), "/* primitive join */ rt.AsBool(x)");
-    assert_eq!(mk(GoTy::Bare(Prim::Float)), "/* primitive join */ rt.AsFloat(x)");
+    assert_eq!(
+        mk(GoTy::Bare(Prim::Int)),
+        "/* primitive join */ rt.AsInt(x)"
+    );
+    assert_eq!(
+        mk(GoTy::Bare(Prim::Str)),
+        "/* primitive join */ rt.AsString(x)"
+    );
+    assert_eq!(
+        mk(GoTy::Bare(Prim::Bool)),
+        "/* primitive join */ rt.AsBool(x)"
+    );
+    assert_eq!(
+        mk(GoTy::Bare(Prim::Float)),
+        "/* primitive join */ rt.AsFloat(x)"
+    );
 }
 
 #[test]
@@ -203,12 +231,18 @@ fn renders_coerce_task_result_maybe_wrappers() {
         },
         GoTy::Any,
     );
-    assert_eq!(render_expr(&task), "/* generic erase */ rt.TaskCoerceT[E, int](t)");
+    assert_eq!(
+        render_expr(&task),
+        "/* generic erase */ rt.TaskCoerceT[E, int](t)"
+    );
     let res = GoExpr::new(
         GoExprKind::Coerce {
             inner: Box::new(ident("r")),
             from: GoTy::Any,
-            to: GoTy::Named("rt.SkyResult".into(), vec![named("E"), GoTy::Bare(Prim::Str)]),
+            to: GoTy::Named(
+                "rt.SkyResult".into(),
+                vec![named("E"), GoTy::Bare(Prim::Str)],
+            ),
             reason: CoerceReason::GenericErase,
         },
         GoTy::Any,
@@ -231,7 +265,10 @@ fn renders_coerce_task_result_maybe_wrappers() {
         },
         GoTy::Any,
     );
-    assert_eq!(render_expr(&may), "/* generic erase */ rt.MaybeCoerce[int](m)");
+    assert_eq!(
+        render_expr(&may),
+        "/* generic erase */ rt.MaybeCoerce[int](m)"
+    );
 }
 
 #[test]
@@ -261,7 +298,10 @@ fn renders_widen_to_any() {
 #[test]
 fn renders_adt_variant_construction() {
     let e = GoExpr::new(
-        GoExprKind::StructLit("Main_Msg_SetName_V".into(), vec![("V0".into(), str_lit("Ada"))]),
+        GoExprKind::StructLit(
+            "Main_Msg_SetName_V".into(),
+            vec![("V0".into(), str_lit("Ada"))],
+        ),
         named("Main_Msg"),
     );
     assert_eq!(render_expr(&e), "Main_Msg_SetName_V{V0: \"Ada\"}");
@@ -310,7 +350,10 @@ fn emits_generic_record_struct_raw_and_skips_gob() {
     ];
     let out = emit_program(&items, false);
     // (a) verbatim
-    assert!(out.contains(generic_decl), "generic struct not emitted verbatim; got:\n{out}");
+    assert!(
+        out.contains(generic_decl),
+        "generic struct not emitted verbatim; got:\n{out}"
+    );
     // (b) not in the gob list; the nullary one IS.
     assert!(
         out.contains("rt.RegisterSkyGobTypes([]any{Main_Model_R{}})"),
@@ -337,8 +380,14 @@ fn emits_sealed_iface_with_variant_structs() {
         ]),
     )];
     let out = emit_program(&items, false);
-    assert!(out.contains("type Main_Msg interface {"), "iface decl missing:\n{out}");
-    assert!(out.contains("type Main_Msg_Increment_V struct {}"), "nullary variant struct:\n{out}");
+    assert!(
+        out.contains("type Main_Msg interface {"),
+        "iface decl missing:\n{out}"
+    );
+    assert!(
+        out.contains("type Main_Msg_Increment_V struct {}"),
+        "nullary variant struct:\n{out}"
+    );
     assert!(
         out.contains("type Main_Msg_SetName_V struct { V0 string }"),
         "payload variant struct with typed V0:\n{out}"

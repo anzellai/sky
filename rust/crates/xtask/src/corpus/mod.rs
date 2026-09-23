@@ -87,7 +87,11 @@ fn dump_sources(root: &Path, dir: &Path) -> i32 {
             }
         }
     }
-    println!("wrote {} case project(s) under {}", cases.len(), dir.display());
+    println!(
+        "wrote {} case project(s) under {}",
+        cases.len(),
+        dir.display()
+    );
     0
 }
 
@@ -196,7 +200,10 @@ mod tests {
         for s in axes::STRATA {
             let pin = axes::pinned_coordinate(s.name).unwrap();
             let pin_id = format!("{}/{}", s.name, pin.slug());
-            assert!(ids.contains(&pin_id), "pinned coordinate {pin_id} is not in the corpus");
+            assert!(
+                ids.contains(&pin_id),
+                "pinned coordinate {pin_id} is not in the corpus"
+            );
             for n in pin.neighbourhood(s.axes) {
                 // An inadmissible neighbour is not a gap: it is a point where
                 // the generator has nothing it can independently predict, and

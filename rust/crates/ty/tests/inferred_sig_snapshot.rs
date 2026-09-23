@@ -114,7 +114,8 @@ fn inferred_main_sigs(root: &Path, main_src: &str) -> Vec<(String, String)> {
     // program is already the accept/reject gates' job).
     let out = ty::check_modules(&db, &[mid]);
     assert_eq!(
-        out.type_errors, 0,
+        out.type_errors,
+        0,
         "snapshot fixture must type-check clean, got {} type error(s):\n{}",
         out.type_errors,
         out.diagnostics
@@ -224,7 +225,11 @@ main =
 
 #[test]
 fn snapshot_subset_record_in_ok() {
-    check_snapshot("subset-record-in-Ok", SUBSET_RECORD_IN_OK, SNAP_SUBSET_RECORD_IN_OK);
+    check_snapshot(
+        "subset-record-in-Ok",
+        SUBSET_RECORD_IN_OK,
+        SNAP_SUBSET_RECORD_IN_OK,
+    );
 }
 
 /// (c) Dict-field record — an unannotated helper reading a `Dict`-typed field
@@ -245,7 +250,11 @@ main =
 
 #[test]
 fn snapshot_dict_field_record() {
-    check_snapshot("dict-field-record", DICT_FIELD_RECORD, SNAP_DICT_FIELD_RECORD);
+    check_snapshot(
+        "dict-field-record",
+        DICT_FIELD_RECORD,
+        SNAP_DICT_FIELD_RECORD,
+    );
 }
 
 /// (d) row-var-sharing / separation — two params each read a `.x` field. The
@@ -281,14 +290,20 @@ fn snapshot_row_var_sharing() {
 /// fields flow into the result record. A narrowed result (dropped fields) or a
 /// closed `{ count : Int }` would be the #166 record-update field-drop bug.
 const SNAP_RECORD_UPDATE_IN_TUPLE: &[(&str, &str)] = &[
-    ("bump", "{ a | count : Int } -> ( { a | count : Int }, Int )"),
+    (
+        "bump",
+        "{ a | count : Int } -> ( { a | count : Int }, Int )",
+    ),
     ("main", "Task Error ()"),
 ];
 
 /// `Ok rec` carries the FULL input row `{ a | email : b }` — NOT narrowed to
 /// the accessed subset `{ email : b }` (the subset-record-in-Ok bug).
 const SNAP_SUBSET_RECORD_IN_OK: &[(&str, &str)] = &[
-    ("loadUser", "{ a | email : b } -> Result c { a | email : b }"),
+    (
+        "loadUser",
+        "{ a | email : b } -> Result c { a | email : b }",
+    ),
     ("main", "Task Error ()"),
 ];
 

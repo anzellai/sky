@@ -40,13 +40,13 @@ import Std.Durable as Durable exposing (Ctx)
 import Std.Ai.Provider as Provider exposing (Provider, Message)
 import Std.Ai.Tool as Tool exposing (Tool)
 
-
 type alias Input =
     { messages : List Message }
 
-
 type alias Output =
-    { answer : String, usage : Provider.Usage }
+    { answer : String
+    , usage : Provider.Usage
+    }
 
 
 inputCodec : Codec Input
@@ -81,18 +81,16 @@ oneShot name provider systemPrompt =
 
 body : Provider -> String -> Ctx -> Input -> Task Error Output
 body provider systemPrompt ctx input =
-    Durable.step ctx
+    Durable.step
+        ctx
         responseCodec
         "llm"
         (Provider.chat provider (Provider.system systemPrompt :: input.messages))
         |> Task.map (\r -> { answer = r.content, usage = r.usage })
 
-
 -- ---------------------------------------------------------------------------
 -- Tool-calling loop
 -- ---------------------------------------------------------------------------
-
-
 type alias ToolOutput =
     { answer : String }
 
@@ -112,52 +110,78 @@ exact.
 -}
 toolLoop : String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input ToolOutput
 toolLoop name provider systemPrompt tools maxTurns =
-    Durable.register name
+    Durable.register
+        name
         inputCodec
         toolOutputCodec
         (\ctx input ->
-            loop provider tools maxTurns ctx 0 (Provider.system (systemPrompt ++ "\n\n" ++ Tool.instructions tools) :: input.messages)
-        )
+            loop
+                provider
+                tools
+                maxTurns
+                ctx
+                0
+                (Provider.system
+                    (systemPrompt ++ "\n\n" ++ Tool.instructions tools)
+                    :: input.messages))
 
 
 loop : Provider -> List Tool -> Int -> Ctx -> Int -> List Message -> Task Error ToolOutput
 loop provider tools maxTurns ctx turn messages =
     if turn >= maxTurns then
-        Task.succeed { answer = "(reached the turn limit without a final answer)" }
+        Task.succeed
+            { answer = "(reached the turn limit without a final answer)" }
 
     else
-        Durable.step ctx responseCodec ("turn:" ++ String.fromInt turn) (Provider.chat provider messages)
+        Durable.step
+            ctx
+            responseCodec
+            ("turn:" ++ String.fromInt turn)
+            (Provider.chat provider messages)
             |> Task.andThen
-                (\resp ->
-                    case parseAction resp.content of
-                        Answer a ->
-                            Task.succeed { answer = a }
+                   (\resp ->
+                       case parseAction resp.content of
 
-                        Plain a ->
-                            Task.succeed { answer = a }
+                           Answer a ->
+                               Task.succeed { answer = a }
 
-                        UseTool toolName args ->
-                            Durable.step ctx Codec.string ("tool:" ++ String.fromInt turn) (Tool.run tools toolName args)
-                                |> Task.andThen
-                                    (\result ->
-                                        loop provider tools maxTurns ctx (turn + 1)
-                                            (messages
-                                                ++ [ Provider.assistant resp.content
-                                                   , Provider.user ("Tool " ++ toolName ++ " returned: " ++ result)
-                                                   ]
-                                            )
-                                    )
-                )
+                           Plain a ->
+                               Task.succeed { answer = a }
 
+                           UseTool toolName args ->
+                               Durable.step
+                                   ctx
+                                   Codec.string
+                                   ("tool:" ++ String.fromInt turn)
+                                   (Tool.run tools toolName args)
+                                   |> Task.andThen
+                                          (\result ->
+                                              loop
+                                                  provider
+                                                  tools
+                                                  maxTurns
+                                                  ctx
+                                                  (turn + 1)
+                                                  (messages
+                                                      ++ [ Provider.assistant
+                                                               resp.content
+                                                         , Provider.user
+                                                               ("Tool "
+                                                                   ++ toolName
+                                                                   ++ " returned: "
+                                                                   ++ result)
+                                                         ])))
 
 type Action
     = Answer String
     | UseTool String String
     | Plain String
 
-
 type alias Parsed =
-    { tool : Maybe String, args : Maybe String, answer : Maybe String }
+    { tool : Maybe String
+    , args : Maybe String
+    , answer : Maybe String
+    }
 
 
 parsedCodec : Codec Parsed
@@ -168,22 +192,26 @@ parsedCodec =
 parseAction : String -> Action
 parseAction content =
     case Codec.fromJson parsedCodec content of
+
         Ok p ->
             case p.answer of
+
                 Just a ->
                     Answer a
 
                 Nothing ->
                     case p.tool of
+
                         Just t ->
-                            UseTool t
+                            UseTool
+                                t
                                 (case p.args of
+
                                     Just x ->
                                         x
 
                                     Nothing ->
-                                        ""
-                                )
+                                        "")
 
                         Nothing ->
                             Plain content
@@ -195,8 +223,6 @@ parseAction content =
 -- ---------------------------------------------------------------------------
 -- Native tool-calling loop (OpenAI function-calling)
 -- ---------------------------------------------------------------------------
-
-
 toolRespCodec : Codec Provider.ToolResponse
 toolRespCodec =
     Codec.auto
@@ -216,13 +242,19 @@ arguments passed to the tool's `exec`.
 -}
 nativeToolLoop : String -> Provider -> String -> List Tool -> Int -> Durable.WorkflowDef Input ToolOutput
 nativeToolLoop name provider systemPrompt tools maxTurns =
-    Durable.register name
+    Durable.register
+        name
         inputCodec
         toolOutputCodec
         (\ctx input ->
-            nativeLoop provider tools maxTurns ctx 0
-                (Provider.Say (Provider.system systemPrompt) :: List.map Provider.Say input.messages)
-        )
+            nativeLoop
+                provider
+                tools
+                maxTurns
+                ctx
+                0
+                (Provider.Say (Provider.system systemPrompt)
+                    :: List.map Provider.Say input.messages))
 
 
 toolSpecsOf : List Tool -> List Provider.ToolSpec
@@ -233,23 +265,34 @@ toolSpecsOf tools =
 nativeLoop : Provider -> List Tool -> Int -> Ctx -> Int -> List Provider.Turn -> Task Error ToolOutput
 nativeLoop provider tools maxTurns ctx turn turns =
     if turn >= maxTurns then
-        Task.succeed { answer = "(reached the turn limit without a final answer)" }
+        Task.succeed
+            { answer = "(reached the turn limit without a final answer)" }
 
     else
-        Durable.step ctx toolRespCodec ("turn:" ++ String.fromInt turn) (Provider.chatTools provider turns (toolSpecsOf tools))
+        Durable.step
+            ctx
+            toolRespCodec
+            ("turn:" ++ String.fromInt turn)
+            (Provider.chatTools provider turns (toolSpecsOf tools))
             |> Task.andThen
-                (\resp ->
-                    if List.isEmpty resp.toolCalls then
-                        Task.succeed { answer = resp.content }
+                   (\resp ->
+                       if List.isEmpty resp.toolCalls then
+                           Task.succeed { answer = resp.content }
 
-                    else
-                        runCalls tools ctx turn 0 resp.toolCalls
-                            |> Task.andThen
-                                (\returned ->
-                                    nativeLoop provider tools maxTurns ctx (turn + 1)
-                                        (turns ++ (Provider.Called resp.toolCalls :: returned))
-                                )
-                )
+                       else
+                           runCalls tools ctx turn 0 resp.toolCalls
+                               |> Task.andThen
+                                      (\returned ->
+                                          nativeLoop
+                                              provider
+                                              tools
+                                              maxTurns
+                                              ctx
+                                              (turn + 1)
+                                              (turns
+                                                  ++ (Provider.Called
+                                                         resp.toolCalls
+                                                         :: returned))))
 
 
 -- Run each requested tool call as its own journalled step, in order, and collect
@@ -257,16 +300,19 @@ nativeLoop provider tools maxTurns ctx turn turns =
 runCalls : List Tool -> Ctx -> Int -> Int -> List Provider.ToolCall -> Task Error (List Provider.Turn)
 runCalls tools ctx turn idx calls =
     case calls of
+
         [] ->
             Task.succeed []
 
         call :: rest ->
-            Durable.step ctx
+            Durable.step
+                ctx
                 Codec.string
                 ("tool:" ++ String.fromInt turn ++ ":" ++ String.fromInt idx)
                 (Tool.run tools call.name call.arguments)
                 |> Task.andThen
-                    (\result ->
-                        runCalls tools ctx turn (idx + 1) rest
-                            |> Task.map (\more -> Provider.Returned call result :: more)
-                    )
+                       (\result ->
+                           runCalls tools ctx turn (idx + 1) rest
+                               |> Task.map
+                                      (\more ->
+                                          Provider.Returned call result :: more))

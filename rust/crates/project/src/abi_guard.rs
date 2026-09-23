@@ -560,7 +560,9 @@ mod tests {
         };
         // leading-fixed + variadic tail (`Http.request` shape) — scans as 2 but is
         // Sky-arity 1.
-        assert!(is_variadic("func Http_request(firstArg any, rest ...any) any {"));
+        assert!(is_variadic(
+            "func Http_request(firstArg any, rest ...any) any {"
+        ));
         // fully-variadic (`JsonEnc.list` shape) — scans as 1 but is Sky-arity 2.
         assert!(is_variadic("func JsonEnc_list(args ...any) any {"));
         assert!(is_variadic("func Db_open(args ...any) any {"));

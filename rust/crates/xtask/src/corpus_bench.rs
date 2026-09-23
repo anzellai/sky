@@ -53,7 +53,10 @@ pub fn run(args: &[String], root: &Path) -> i32 {
 
     let stdlib = crate::reject_gate::load_dir_pub(&root.join("sky-stdlib"), "sky-stdlib");
     if stdlib.is_empty() {
-        eprintln!("corpus-bench: no stdlib under {}/sky-stdlib", root.display());
+        eprintln!(
+            "corpus-bench: no stdlib under {}/sky-stdlib",
+            root.display()
+        );
         return 1;
     }
     let pool = load_pool(root);
@@ -66,7 +69,10 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     println!("  host            : {}", std::env::consts::OS);
     println!("  build           : release");
     println!("  stdlib modules  : {}", stdlib.len());
-    println!("  distinct cases  : {} (reject corpus, cycled to reach each size)", pool.len());
+    println!(
+        "  distinct cases  : {} (reject corpus, cycled to reach each size)",
+        pool.len()
+    );
     println!("  repetitions     : {reps} per size");
     println!();
 
@@ -119,9 +125,15 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     // read off two points.
     let (slope, intercept, r2) = fit(&points);
     println!();
-    println!("  FITTED MODEL (least squares over {} sizes):", points.len());
+    println!(
+        "  FITTED MODEL (least squares over {} sizes):",
+        points.len()
+    );
     println!("    total_seconds = {intercept:.3} + {:.5} * N", slope);
-    println!("    c_measured    = {:.2} ms/case   (the slope)", slope * 1000.0);
+    println!(
+        "    c_measured    = {:.2} ms/case   (the slope)",
+        slope * 1000.0
+    );
     println!("    R^2           = {r2:.5}");
 
     // --- the isolated (full-rebuild) rate ----------------------------------
@@ -155,9 +167,19 @@ pub fn run(args: &[String], root: &Path) -> i32 {
     iso.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let iso_med = iso[iso.len() / 2];
     println!();
-    println!("  ISOLATED (full-rebuild, no shared world), N={iso_n}, {} reps:", iso.len());
-    println!("    c_isolated    = {iso_med:.2} ms/case  (min {:.2}, max {:.2})", iso[0], iso[iso.len() - 1]);
-    println!("    ratio         = {:.1}x the shared rate", iso_med / (slope * 1000.0));
+    println!(
+        "  ISOLATED (full-rebuild, no shared world), N={iso_n}, {} reps:",
+        iso.len()
+    );
+    println!(
+        "    c_isolated    = {iso_med:.2} ms/case  (min {:.2}, max {:.2})",
+        iso[0],
+        iso[iso.len() - 1]
+    );
+    println!(
+        "    ratio         = {:.1}x the shared rate",
+        iso_med / (slope * 1000.0)
+    );
 
     // --- the break-even table from v2 §1.3 ---------------------------------
     let c = slope * 1000.0;
@@ -205,7 +227,11 @@ fn fit(points: &[(f64, f64)]) -> (f64, f64, f64) {
         .iter()
         .map(|p| (p.1 - (intercept + slope * p.0)).powi(2))
         .sum();
-    let r2 = if ss_tot == 0.0 { 1.0 } else { 1.0 - ss_res / ss_tot };
+    let r2 = if ss_tot == 0.0 {
+        1.0
+    } else {
+        1.0 - ss_res / ss_tot
+    };
     (slope, intercept, r2)
 }
 

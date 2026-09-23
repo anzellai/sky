@@ -100,8 +100,11 @@ main =
 /// `db_cluster_flow.rs`: Homebrew's `postgresql@N` kegs are deliberately not
 /// symlinked onto PATH, so PATH alone misses the most common macOS install.
 fn find_pg_bin() -> Option<PathBuf> {
-    let complete =
-        |d: &Path| ["initdb", "pg_ctl", "postgres"].iter().all(|b| d.join(b).is_file());
+    let complete = |d: &Path| {
+        ["initdb", "pg_ctl", "postgres"]
+            .iter()
+            .all(|b| d.join(b).is_file())
+    };
     if let Ok(v) = std::env::var("SKY_POSTGRES_BIN") {
         let d = PathBuf::from(v);
         if complete(&d) {
@@ -224,7 +227,11 @@ impl Fixture {
     /// It is every live test that needs it, not one.
     fn warm_build(&self) {
         let out = self.sky_within(&["build", "src/Main.sky"], BUILD_LIMIT);
-        assert!(out.status.success(), "warm-up build failed:\n{}", both(&out));
+        assert!(
+            out.status.success(),
+            "warm-up build failed:\n{}",
+            both(&out)
+        );
     }
 
     /// Run `sky` to completion — but never for longer than `limit`.
@@ -545,7 +552,9 @@ static ONE_LIVE_CLUSTER_AT_A_TIME: Mutex<()> = Mutex::new(());
 /// five tests failing on the lock instead of on their own claims, and the real
 /// one would be the hardest of the six to find.
 fn one_at_a_time() -> MutexGuard<'static, ()> {
-    ONE_LIVE_CLUSTER_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner())
+    ONE_LIVE_CLUSTER_AT_A_TIME
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 fn stdout(o: &Output) -> String {
@@ -599,10 +608,16 @@ fn sky_run_starts_a_cluster_injects_the_dsn_and_stops_it_on_exit() {
     assert!(status.success(), "sky run failed:\n{}", run.output());
 
     let out = run.output();
-    assert!(out.contains("embedded PostgreSQL"), "the run never announced the cluster:\n{out}");
+    assert!(
+        out.contains("embedded PostgreSQL"),
+        "the run never announced the cluster:\n{out}"
+    );
     let socket_dir = PathBuf::from(fx.entry()["socket_dir"].as_str().unwrap().to_string());
     assert!(
-        out.contains(&format!("DSN=[postgresql:///postgres?host={}]", socket_dir.display())),
+        out.contains(&format!(
+            "DSN=[postgresql:///postgres?host={}]",
+            socket_dir.display()
+        )),
         "the app was handed a different DSN than the cluster listens on:\n{out}"
     );
 
@@ -639,7 +654,9 @@ fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
     if !first.wait_for_connected("the first sky run") {
         return;
     }
-    let started_pid = fx.postmaster_pid().expect("no postmaster after the first run connected");
+    let started_pid = fx
+        .postmaster_pid()
+        .expect("no postmaster after the first run connected");
 
     let mut second = fx.spawn_run("second", 30_000);
     if !second.wait_for_connected("the second sky run") {
@@ -659,7 +676,11 @@ fn a_second_concurrent_run_keeps_its_database_when_the_first_one_exits() {
 
     // The first one exits. This is the moment the bug would happen.
     let status = first.wait_for_exit("the first sky run");
-    assert!(status.success(), "the first run failed:\n{}", first.output());
+    assert!(
+        status.success(),
+        "the first run failed:\n{}",
+        first.output()
+    );
     assert!(
         second.is_running(),
         "the second run died before the assertion could be made:\n{}",
@@ -716,7 +737,9 @@ fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
         }
         panic!("sky db start failed:\n{log}");
     }
-    let pid = fx.postmaster_pid().expect("no postmaster after `sky db start`");
+    let pid = fx
+        .postmaster_pid()
+        .expect("no postmaster after `sky db start`");
     assert_eq!(fx.entry()["explicit"].as_bool(), Some(true));
 
     let mut run = fx.spawn_run("explicit", 0);
@@ -735,8 +758,16 @@ fn a_cluster_started_by_sky_db_start_survives_a_sky_run_exiting() {
         fx.cluster_running(),
         "`sky run` stopped a cluster it did not start — `sky db start` is supposed to be persistent"
     );
-    assert_eq!(fx.postmaster_pid(), Some(pid), "the cluster was restarted, not kept");
-    assert_eq!(fx.entry()["explicit"].as_bool(), Some(true), "persistence was cleared");
+    assert_eq!(
+        fx.postmaster_pid(),
+        Some(pid),
+        "the cluster was restarted, not kept"
+    );
+    assert_eq!(
+        fx.entry()["explicit"].as_bool(),
+        Some(true),
+        "persistence was cleared"
+    );
 
     // And the explicit verb still takes it down.
     let stop = fx.sky(&["db", "stop"]);
@@ -772,7 +803,9 @@ fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
     if !doomed.wait_for_connected("the doomed sky run") {
         return;
     }
-    let pid = fx.postmaster_pid().expect("no postmaster after the doomed run connected");
+    let pid = fx
+        .postmaster_pid()
+        .expect("no postmaster after the doomed run connected");
     assert_eq!(fx.entry()["refs"].as_array().map(Vec::len), Some(1));
 
     // SIGKILL the whole tree: no release runs, and the reference is left on disk
@@ -791,7 +824,11 @@ fn a_sigkilled_run_leaves_a_stale_reference_that_does_not_pin_the_cluster() {
     // A later ordinary run must not be blocked by the corpse — it prunes it,
     // adopts the running cluster, and takes it down on the way out.
     let next = fx.sky(&["run", "src/Main.sky"]);
-    assert!(next.status.success(), "the next run failed:\n{}", both(&next));
+    assert!(
+        next.status.success(),
+        "the next run failed:\n{}",
+        both(&next)
+    );
     assert!(
         stdout(&next).contains("already running"),
         "the next run did not adopt the running cluster:\n{}",
@@ -830,10 +867,14 @@ fn sky_watch_hands_the_same_cluster_to_the_app_it_spawns() {
     if !watch.wait_for_connected("the app sky watch spawned") {
         return;
     }
-    let pid = fx.postmaster_pid().expect("no postmaster after the watched app connected");
+    let pid = fx
+        .postmaster_pid()
+        .expect("no postmaster after the watched app connected");
     let socket_dir = fx.entry()["socket_dir"].as_str().unwrap().to_string();
     assert!(
-        watch.output().contains(&format!("DSN=[postgresql:///postgres?host={socket_dir}]")),
+        watch
+            .output()
+            .contains(&format!("DSN=[postgresql:///postgres?host={socket_dir}]")),
         "the watched app was not handed the cluster's DSN:\n{}",
         watch.output()
     );
@@ -844,7 +885,10 @@ fn sky_watch_hands_the_same_cluster_to_the_app_it_spawns() {
     // able to adopt the cluster and put it away.
     let next = fx.sky(&["run", "src/Main.sky"]);
     assert!(next.status.success(), "{}", both(&next));
-    assert!(!fx.cluster_running(), "the killed watch session pinned the cluster (pid {pid})");
+    assert!(
+        !fx.cluster_running(),
+        "the killed watch session pinned the cluster (pid {pid})"
+    );
 }
 
 // ---- configuration paths (no server needed) ------------------------------
@@ -897,13 +941,23 @@ fn an_explicit_dsn_alongside_embedded_refuses_to_run() {
     let _ = std::fs::remove_dir_all(&project);
     let _ = std::fs::remove_dir_all(&home);
 
-    assert!(!out.status.success(), "an ambiguous configuration ran anyway:\n{}", both(&out));
+    assert!(
+        !out.status.success(),
+        "an ambiguous configuration ran anyway:\n{}",
+        both(&out)
+    );
     let msg = stderr(&out);
     assert!(msg.contains("sky.toml [database] url"), "{msg}");
-    assert!(msg.contains("postgres://user:pw@example.invalid/app"), "{msg}");
+    assert!(
+        msg.contains("postgres://user:pw@example.invalid/app"),
+        "{msg}"
+    );
     assert!(msg.contains("remove `embedded = true`"), "{msg}");
     // Refused BEFORE the build: no compiler output, no `sky-out`.
-    assert!(!built, "the project was built before the configuration was rejected");
+    assert!(
+        !built,
+        "the project was built before the configuration was rejected"
+    );
 
     assert!(!from_env.status.success(), "{}", both(&from_env));
     // The environment is checked FIRST: it is the more surprising of the two,
@@ -938,7 +992,11 @@ fn a_build_failure_never_starts_a_cluster() {
     .unwrap();
 
     let out = fx.sky(&["run", "src/Main.sky"]);
-    assert!(!out.status.success(), "a broken program ran:\n{}", both(&out));
+    assert!(
+        !out.status.success(),
+        "a broken program ran:\n{}",
+        both(&out)
+    );
     assert!(
         !fx.project.join(".skydata").exists(),
         "a failing build initialised a data directory:\n{}",
@@ -995,7 +1053,10 @@ fn a_project_without_the_opt_in_gets_no_cluster_at_all() {
         out.status.success(),
         "an un-opted-in project no longer runs on its own database:\n{text}"
     );
-    assert!(text.contains("ANSWER=42"), "the app never reached its own database:\n{text}");
+    assert!(
+        text.contains("ANSWER=42"),
+        "the app never reached its own database:\n{text}"
+    );
     assert!(
         !text.contains("embedded PostgreSQL") && !text.contains("SKY_POSTGRES_BIN"),
         "an un-opted-in project went looking for a cluster:\n{text}"
@@ -1004,7 +1065,10 @@ fn a_project_without_the_opt_in_gets_no_cluster_at_all() {
         !home.join("clusters.json").exists(),
         "an un-opted-in project wrote to the cluster registry"
     );
-    assert!(!project.join(".skydata").exists(), "an un-opted-in project got a data directory");
+    assert!(
+        !project.join(".skydata").exists(),
+        "an un-opted-in project got a data directory"
+    );
 
     let _ = std::fs::remove_dir_all(&project);
     let _ = std::fs::remove_dir_all(&home);

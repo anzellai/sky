@@ -123,7 +123,8 @@ fn users_ddl(db_path: &Path) -> String {
 
 #[test]
 fn committed_migration_preserves_column_constraints_and_matches_push() {
-    if !required(Need::Go, tool_on_path("go")) || !required(Need::Sqlite3, tool_on_path("sqlite3")) {
+    if !required(Need::Go, tool_on_path("go")) || !required(Need::Sqlite3, tool_on_path("sqlite3"))
+    {
         return;
     }
 
@@ -143,9 +144,18 @@ fn committed_migration_preserves_column_constraints_and_matches_push() {
         .filter_map(|e| e.ok())
         .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
         .collect::<String>();
-    assert!(mig_body.contains(r#""autoinc": true"#), "migration lost serial autoinc:\n{mig_body}");
-    assert!(mig_body.contains(r#""unique": true"#), "migration lost UNIQUE:\n{mig_body}");
-    assert!(mig_body.contains(r#""now": true"#), "migration lost DEFAULT now:\n{mig_body}");
+    assert!(
+        mig_body.contains(r#""autoinc": true"#),
+        "migration lost serial autoinc:\n{mig_body}"
+    );
+    assert!(
+        mig_body.contains(r#""unique": true"#),
+        "migration lost UNIQUE:\n{mig_body}"
+    );
+    assert!(
+        mig_body.contains(r#""now": true"#),
+        "migration lost DEFAULT now:\n{mig_body}"
+    );
 
     let (ok, log) = run_sky(&dir, &["db", "migrate"]);
     assert!(ok, "sky db migrate (apply) failed:\n{log}");

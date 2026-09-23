@@ -788,10 +788,7 @@ mod tests {
     // `func(any) any` that panics `rt.Coerce[Profile]`.
     #[test]
     fn narrow_to_multiarg_func_uncurries_boxed_source() {
-        let to = GoTy::Func(
-            vec![GoTy::Any, GoTy::Any, GoTy::Any],
-            Box::new(GoTy::Any),
-        );
+        let to = GoTy::Func(vec![GoTy::Any, GoTy::Any, GoTy::Any], Box::new(GoTy::Any));
         let g = narrow_call(&to, "boxedCtor");
         assert!(
             g.contains("_s.(func(any, any, any) any)"),
@@ -802,8 +799,7 @@ mod tests {
             "uncurry closure at the target arity missing: {g}"
         );
         assert!(
-            g.contains(".(func(any) any)(any(_a1))")
-                && g.contains(".(func(any) any)(any(_a2))"),
+            g.contains(".(func(any) any)(any(_a1))") && g.contains(".(func(any) any)(any(_a2))"),
             "curried-application chain (apply each arg through the nest) missing: {g}"
         );
         assert!(

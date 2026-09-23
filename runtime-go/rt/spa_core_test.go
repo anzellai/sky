@@ -46,8 +46,8 @@ func TestSpaIntParamNonIntegerDoesNotMatch(t *testing.T) {
 func TestSpaIntParamOrderingAndFallThrough(t *testing.T) {
 	ctorInt := func(id any) any { return map[string]any{"todo": id} }
 	routes := []spaRoute{
-		{path: "/todo/new", page: "NEW"},                       // literal first
-		{path: "/todo/:id", page: ctorInt, intParam: true},     // then the Int param
+		{path: "/todo/new", page: "NEW"},                   // literal first
+		{path: "/todo/:id", page: ctorInt, intParam: true}, // then the Int param
 	}
 
 	if p, ok := spaResolveRoutes(routes, "/todo/new"); !ok || p != "NEW" {

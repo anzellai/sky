@@ -140,8 +140,10 @@ fn emit_fingerprint(sky: &Path, dir: &Path, case: &gen::GenCase) -> Result<Strin
     let src = dir.join("src");
     std::fs::create_dir_all(&src).map_err(|e| e.to_string())?;
     for (name, source) in &case.modules {
-        let rel: std::path::PathBuf =
-            name.split('.').collect::<std::path::PathBuf>().with_extension("sky");
+        let rel: std::path::PathBuf = name
+            .split('.')
+            .collect::<std::path::PathBuf>()
+            .with_extension("sky");
         let path = src.join(&rel);
         if let Some(p) = path.parent() {
             std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
@@ -200,7 +202,11 @@ pub fn run(root: &Path) -> i32 {
 
     let seed = super::commit_seed(root);
     let n = SHARD.min(candidates.len());
-    let start = if candidates.is_empty() { 0 } else { seed % candidates.len() };
+    let start = if candidates.is_empty() {
+        0
+    } else {
+        seed % candidates.len()
+    };
 
     println!("CORPUS WITNESS GATE — v2 §4.4 (does each case witness its own axis?)");
     println!("  candidates : {}", candidates.len());
@@ -209,7 +215,10 @@ pub fn run(root: &Path) -> i32 {
         // Counted and named, never silent (v2 §5.5). An exempt stratum's
         // coverage claim is weaker, and this is where that is said out loud.
         let total: usize = exempt.iter().map(|(_, n, _)| n).sum();
-        println!("  EXEMPT     : {total} case(s) across {} stratum/strata —", exempt.len());
+        println!(
+            "  EXEMPT     : {total} case(s) across {} stratum/strata —",
+            exempt.len()
+        );
         for (name, n, reason) in &exempt {
             println!("      {name} ({n} cases): {reason}");
         }

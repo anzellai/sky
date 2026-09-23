@@ -39,9 +39,18 @@ fn emits_register_for_adt_variant_structs() {
         ]),
     )];
     let out = emit_program(&items, false);
-    assert!(out.contains("rt.RegisterSkyGobTypes("), "missing boot registration:\n{out}");
-    assert!(out.contains("Msg_Increment_V{}"), "missing nullary variant:\n{out}");
-    assert!(out.contains("Msg_SetName_V{}"), "missing payload variant:\n{out}");
+    assert!(
+        out.contains("rt.RegisterSkyGobTypes("),
+        "missing boot registration:\n{out}"
+    );
+    assert!(
+        out.contains("Msg_Increment_V{}"),
+        "missing nullary variant:\n{out}"
+    );
+    assert!(
+        out.contains("Msg_SetName_V{}"),
+        "missing payload variant:\n{out}"
+    );
 }
 
 #[test]

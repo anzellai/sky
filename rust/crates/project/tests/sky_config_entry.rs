@@ -26,7 +26,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
@@ -278,7 +281,9 @@ fn config_binding_emits_apply_config_first_in_main() {
     // Ordering: after the deferred panic guard, before the embedded-PG start —
     // so the config (a `withX` DSN, when present) is applied before the runtime
     // reads it.
-    let at_defer = body.find("defer rt.LogPanicAndExit()").expect("no panic guard");
+    let at_defer = body
+        .find("defer rt.LogPanicAndExit()")
+        .expect("no panic guard");
     let at_apply = body.find("rt.ApplyConfig(Main_config())").unwrap();
     let at_pg = body
         .find("rt.MaybeStartEmbeddedPostgres()")

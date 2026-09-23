@@ -179,11 +179,18 @@ pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
     for pt in &snapshot.tables {
         if target.table(&pt.name).is_none() {
             destructive.push(json!({ "kind": "dropTable", "table": pt.name }));
-            warnings.push(format!("table {} removed — DROP TABLE is DESTRUCTIVE (quarantined)", pt.name));
+            warnings.push(format!(
+                "table {} removed — DROP TABLE is DESTRUCTIVE (quarantined)",
+                pt.name
+            ));
         }
     }
 
-    Diff { ops, destructive, warnings }
+    Diff {
+        ops,
+        destructive,
+        warnings,
+    }
 }
 
 /// A quarantined column drop the interactive gen can reclassify. `rename_candidates`
@@ -196,7 +203,10 @@ pub struct DropDecision {
 }
 
 fn op_str(op: &Value, key: &str) -> String {
-    op.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    op.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 impl Diff {
@@ -219,7 +229,11 @@ impl Diff {
                     .map(|a| op_str(a, "column"))
                     .filter(|c| *c != drop_col)
                     .collect();
-                DropDecision { table, column: drop_col, rename_candidates: candidates }
+                DropDecision {
+                    table,
+                    column: drop_col,
+                    rename_candidates: candidates,
+                }
             })
             .collect()
     }
@@ -277,7 +291,12 @@ impl Diff {
                     .get("default")
                     .map(render_default_display)
                     .unwrap_or_default();
-                (op_str(op, "table"), op_str(op, "column"), op_str(op, "type"), disp)
+                (
+                    op_str(op, "table"),
+                    op_str(op, "column"),
+                    op_str(op, "type"),
+                    disp,
+                )
             })
             .collect()
     }
@@ -314,7 +333,11 @@ fn render_default_display(d: &Value) -> String {
 /// shape the runtime renders. `None` → keep the existing (zero) default.
 pub fn parse_default(kind: &str, input: &str) -> Option<Value> {
     match kind {
-        "int" | "bigint" => input.trim().parse::<i64>().ok().map(|n| json!({ "int": n })),
+        "int" | "bigint" => input
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .map(|n| json!({ "int": n })),
         "bool" => match input.trim().to_lowercase().as_str() {
             "true" | "1" | "yes" | "y" => Some(json!({ "bool": true })),
             "false" | "0" | "no" | "n" => Some(json!({ "bool": false })),
@@ -360,25 +383,39 @@ mod tests {
         unique: bool,
         default: Option<Value>,
     ) -> SchemaColumn {
-        SchemaColumn { name: name.into(), kind: kind.into(), nullable, autoinc, unique, default }
+        SchemaColumn {
+            name: name.into(),
+            kind: kind.into(),
+            nullable,
+            autoinc,
+            unique,
+            default,
+        }
     }
 
     #[test]
     fn new_table_and_new_columns() {
         let snapshot = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false)],
             }],
         };
         let target = Schema {
             tables: vec![
                 SchemaTable {
-                    name: "users".into(), pk: "id".into(),
-                    columns: vec![col("id", "text", false), col("age", "int", false), col("nick", "text", true)],
+                    name: "users".into(),
+                    pk: "id".into(),
+                    columns: vec![
+                        col("id", "text", false),
+                        col("age", "int", false),
+                        col("nick", "text", true),
+                    ],
                 },
                 SchemaTable {
-                    name: "orders".into(), pk: "id".into(),
+                    name: "orders".into(),
+                    pk: "id".into(),
                     columns: vec![col("id", "text", false)],
                 },
             ],
@@ -397,13 +434,15 @@ mod tests {
     fn dropped_column_is_quarantined() {
         let snapshot = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false), col("slug", "text", false)],
             }],
         };
         let target = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false)],
             }],
         };
@@ -419,13 +458,15 @@ mod tests {
         // snapshot has `slug`; target renamed it to `handle` (drop slug + add handle).
         let snapshot = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false), col("slug", "text", false)],
             }],
         };
         let target = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false), col("handle", "text", false)],
             }],
         };
@@ -434,13 +475,19 @@ mod tests {
         let decisions = d.drop_decisions();
         assert_eq!(decisions.len(), 1);
         assert_eq!(decisions[0].column, "slug");
-        assert!(decisions[0].rename_candidates.contains(&"handle".to_string()));
+        assert!(decisions[0]
+            .rename_candidates
+            .contains(&"handle".to_string()));
         // Resolve as a rename.
         d.rename("users", "slug", "handle");
         assert!(d.destructive.is_empty(), "drop removed");
         assert_eq!(d.ops.len(), 1, "add replaced by rename");
         let s = serde_json::to_string(&d.ops).unwrap();
-        assert!(s.contains("renameColumn") && s.contains(r#""from":"slug""#) && s.contains(r#""to":"handle""#));
+        assert!(
+            s.contains("renameColumn")
+                && s.contains(r#""from":"slug""#)
+                && s.contains(r#""to":"handle""#)
+        );
         assert!(d.warnings.is_empty(), "rename clears the drop warning");
     }
 
@@ -448,13 +495,15 @@ mod tests {
     fn confirm_drop_activates_it() {
         let snapshot = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false), col("legacy", "text", true)],
             }],
         };
         let target = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false)],
             }],
         };
@@ -463,20 +512,24 @@ mod tests {
         d.confirm_drop("users", "legacy");
         assert!(d.destructive.is_empty());
         assert_eq!(d.ops.len(), 1);
-        assert!(serde_json::to_string(&d.ops).unwrap().contains("dropColumn"));
+        assert!(serde_json::to_string(&d.ops)
+            .unwrap()
+            .contains("dropColumn"));
     }
 
     #[test]
     fn set_default_overrides_backfill() {
         let snapshot = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false)],
             }],
         };
         let target = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false), col("role", "text", false)],
             }],
         };
@@ -499,7 +552,14 @@ mod tests {
                 columns: vec![
                     col_full("id", "int", false, true, false, None),
                     col_full("email", "text", false, false, true, None),
-                    col_full("created_at", "int", false, false, false, Some(json!({ "now": true }))),
+                    col_full(
+                        "created_at",
+                        "int",
+                        false,
+                        false,
+                        false,
+                        Some(json!({ "now": true })),
+                    ),
                 ],
             }],
         };
@@ -507,11 +567,19 @@ mod tests {
         assert_eq!(d.ops.len(), 1);
         let cols = d.ops[0].get("columns").and_then(|c| c.as_array()).unwrap();
         let id = &cols[0];
-        assert_eq!(id.get("autoinc"), Some(&json!(true)), "serial PK autoinc carried");
+        assert_eq!(
+            id.get("autoinc"),
+            Some(&json!(true)),
+            "serial PK autoinc carried"
+        );
         let email = &cols[1];
         assert_eq!(email.get("unique"), Some(&json!(true)), "UNIQUE carried");
         let created = &cols[2];
-        assert_eq!(created.get("default"), Some(&json!({ "now": true })), "DEFAULT now carried");
+        assert_eq!(
+            created.get("default"),
+            Some(&json!({ "now": true })),
+            "DEFAULT now carried"
+        );
     }
 
     #[test]
@@ -538,7 +606,8 @@ mod tests {
     fn no_change_is_empty() {
         let s = Schema {
             tables: vec![SchemaTable {
-                name: "users".into(), pk: "id".into(),
+                name: "users".into(),
+                pk: "id".into(),
                 columns: vec![col("id", "text", false)],
             }],
         };

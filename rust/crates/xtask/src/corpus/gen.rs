@@ -310,7 +310,11 @@ fn record_update(a: &Assignment) -> (String, String, String) {
 
     // The core update expression, and the type of what `bump` returns.
     let (body, ret_ty, extract) = match position {
-        "bare" => ("{ r | a = 7 }".to_string(), "Rec".to_string(), "u".to_string()),
+        "bare" => (
+            "{ r | a = 7 }".to_string(),
+            "Rec".to_string(),
+            "u".to_string(),
+        ),
         "in_tuple" => (
             "( { r | a = 7 }, 0 )".to_string(),
             "( Rec, Int )".to_string(),
@@ -359,9 +363,7 @@ fn record_update(a: &Assignment) -> (String, String, String) {
         "via_foldl" => "List.foldl (\\x _ -> bump x) (bump base) [ base ]".to_string(),
         "via_foldr" => "List.foldr (\\x _ -> bump x) (bump base) [ base ]".to_string(),
         "via_map" => {
-            format!(
-                "List.foldl (\\x _ -> x) (bump base) (List.map bump [ base ])"
-            )
+            format!("List.foldl (\\x _ -> x) (bump base) (List.map bump [ base ])")
         }
         other => panic!("record_update: unknown carrier {other:?}"),
     };
@@ -532,9 +534,7 @@ fn fieldset_collision(a: &Assignment) -> (String, String, String) {
     // The second alias, which is where the collision lives.
     let second = match collision {
         // Identical field names, different field types — the documented collision.
-        "same_names_diff_types" => {
-            "type alias KvB =\n    { key : String, value : String }\n\n\n"
-        }
+        "same_names_diff_types" => "type alias KvB =\n    { key : String, value : String }\n\n\n",
         // A strict subset of the first's field names — the `goty.rs:186-196` path.
         "subset" => "type alias KvB =\n    { key : String }\n\n\n",
         // No collision: the neutralised twin.
@@ -549,7 +549,8 @@ fn fieldset_collision(a: &Assignment) -> (String, String, String) {
         "subset" => "b.key".to_string(),
         "none" => "b.label".to_string(),
         "shadows_stdlib" => {
-            "if b.value then\n                \"t\"\n\n            else\n                \"f\"".to_string()
+            "if b.value then\n                \"t\"\n\n            else\n                \"f\""
+                .to_string()
         }
         _ => unreachable!(),
     };
@@ -562,13 +563,19 @@ fn fieldset_collision(a: &Assignment) -> (String, String, String) {
     };
     // `shadows_stdlib` reads a Bool, so its printed form is "t"; every other
     // variant prints the String field, which the generator set to "s".
-    let b_expected = if collision == "shadows_stdlib" { "t" } else { "s" };
+    let b_expected = if collision == "shadows_stdlib" {
+        "t"
+    } else {
+        "s"
+    };
 
     // How the Int-valued record reaches its field read.
     let read_a = match erasure {
         "direct" => "a0.value".to_string(),
         "via_foldr" => "List.foldr (\\x _ -> x.value) 0 [ a0 ]".to_string(),
-        "via_let" => "let\n            a1 =\n                a0\n        in\n        a1.value".to_string(),
+        "via_let" => {
+            "let\n            a1 =\n                a0\n        in\n        a1.value".to_string()
+        }
         "via_fst_snd" => "(fst ( a0, 0 )).value".to_string(),
         "via_tuple_destructure" => {
             "let\n            ( a1, _ ) =\n                ( a0, 0 )\n        in\n        a1.value"
@@ -661,10 +668,7 @@ fn import_shape(a: &Assignment) -> (Vec<(String, String)>, String, String) {
 
     // The import line, and how `answer` is referenced.
     let (import_line, reference) = match shape {
-        "plain" => (
-            format!("import {helper_name}"),
-            "Values.answer".to_string(),
-        ),
+        "plain" => (format!("import {helper_name}"), "Values.answer".to_string()),
         "aliased" => (
             format!("import {helper_name} as Values"),
             "Values.answer".to_string(),
@@ -689,9 +693,7 @@ fn import_shape(a: &Assignment) -> (Vec<(String, String)>, String, String) {
     let extra = match collision {
         "none" => String::new(),
         // A local binding with the same bare name as the imported one.
-        "same_names_diff_types" | "subset" => {
-            "\n\nanswer2 : Int\nanswer2 =\n    0\n".to_string()
-        }
+        "same_names_diff_types" | "subset" => "\n\nanswer2 : Int\nanswer2 =\n    0\n".to_string(),
         // A local alias whose bare name matches a real stdlib module's segment.
         "shadows_stdlib" => "\n\nlabel2 : String\nlabel2 =\n    \"local\"\n".to_string(),
         other => panic!("import_shape: unknown collision {other:?}"),

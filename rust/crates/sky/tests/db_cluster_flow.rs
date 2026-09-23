@@ -92,7 +92,9 @@ const SKY_LIMIT: std::time::Duration = std::time::Duration::from_secs(300);
 /// PATH alone would miss the most common macOS install.
 fn find_pg_bin() -> Option<PathBuf> {
     let complete = |d: &Path| {
-        ["initdb", "pg_ctl", "postgres"].iter().all(|b| d.join(b).is_file())
+        ["initdb", "pg_ctl", "postgres"]
+            .iter()
+            .all(|b| d.join(b).is_file())
     };
     if let Ok(v) = std::env::var("SKY_POSTGRES_BIN") {
         let d = PathBuf::from(v);
@@ -214,8 +216,12 @@ impl Fixture {
             .stdin(std::process::Stdio::null())
             // Files, not pipes: nothing depends on a reader keeping up, and the
             // partial output survives a timeout.
-            .stdout(std::process::Stdio::from(std::fs::File::create(&out_path).unwrap()))
-            .stderr(std::process::Stdio::from(std::fs::File::create(&err_path).unwrap()))
+            .stdout(std::process::Stdio::from(
+                std::fs::File::create(&out_path).unwrap(),
+            ))
+            .stderr(std::process::Stdio::from(
+                std::fs::File::create(&err_path).unwrap(),
+            ))
             .spawn()
             .expect("failed to run sky");
         let deadline = std::time::Instant::now() + SKY_LIMIT;
@@ -321,7 +327,9 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
     let started = stdout(&out);
     assert!(started.contains("running"), "{started}");
 
-    let pid = fx.postmaster_pid().expect("no postmaster.pid after a successful start");
+    let pid = fx
+        .postmaster_pid()
+        .expect("no postmaster.pid after a successful start");
     assert!(pid > 0);
 
     // The socket really is where the hashing put it, and it really is a socket.
@@ -342,7 +350,11 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
         socket_dir.display()
     );
     let socket = socket_dir.join(SOCKET_BASENAME);
-    assert!(socket.exists(), "PostgreSQL never created {}", socket.display());
+    assert!(
+        socket.exists(),
+        "PostgreSQL never created {}",
+        socket.display()
+    );
     assert!(
         socket.as_os_str().len() <= 92,
         "socket path is {} bytes: {}",
@@ -355,8 +367,14 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
     // The cluster is tuned small, and this is the setting that decides whether N
     // idle project clusters cost tens or hundreds of megabytes.
     let conf = std::fs::read_to_string(fx.data_dir().join("postgresql.conf")).unwrap();
-    assert!(conf.contains("shared_buffers = 32MB"), "postgresql.conf was not tuned");
-    assert!(conf.contains("listen_addresses = ''"), "cluster may be listening on TCP");
+    assert!(
+        conf.contains("shared_buffers = 32MB"),
+        "postgresql.conf was not tuned"
+    );
+    assert!(
+        conf.contains("listen_addresses = ''"),
+        "cluster may be listening on TCP"
+    );
 
     // --- start again: a success no-op, not an error ---
     let again = fx.sky(&["db", "start"]);
@@ -365,8 +383,16 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
         "starting an already-running cluster must succeed:\n{}",
         both(&again)
     );
-    assert!(stdout(&again).contains("already running"), "{}", stdout(&again));
-    assert_eq!(fx.postmaster_pid(), Some(pid), "the second start spawned a new postmaster");
+    assert!(
+        stdout(&again).contains("already running"),
+        "{}",
+        stdout(&again)
+    );
+    assert_eq!(
+        fx.postmaster_pid(),
+        Some(pid),
+        "the second start spawned a new postmaster"
+    );
 
     // --- ps ---
     let ps = fx.sky(&["db", "ps"]);
@@ -377,12 +403,23 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
 
     let ps_all = fx.sky(&["db", "ps", "--all"]);
     assert!(ps_all.status.success(), "{}", both(&ps_all));
-    assert!(stdout(&ps_all).contains(&key), "--all did not list this project:\n{}", stdout(&ps_all));
+    assert!(
+        stdout(&ps_all).contains(&key),
+        "--all did not list this project:\n{}",
+        stdout(&ps_all)
+    );
 
     // --- stop ---
     let stop = fx.sky(&["db", "stop"]);
-    assert!(stop.status.success(), "sky db stop failed:\n{}", both(&stop));
-    assert!(fx.postmaster_pid().is_none(), "postmaster.pid survived a clean stop");
+    assert!(
+        stop.status.success(),
+        "sky db stop failed:\n{}",
+        both(&stop)
+    );
+    assert!(
+        fx.postmaster_pid().is_none(),
+        "postmaster.pid survived a clean stop"
+    );
     assert!(!socket.exists(), "the socket survived a clean stop");
     // PostgreSQL removes the socket file but not its directory. Without the
     // cleanup, every project ever started leaves an empty directory in /tmp that
@@ -398,7 +435,11 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
     let after = fx.registry();
     assert_eq!(after["clusters"][&key]["pid"].as_i64(), Some(0));
     let ps_after = fx.sky(&["db", "ps"]);
-    assert!(stdout(&ps_after).contains("stopped"), "{}", stdout(&ps_after));
+    assert!(
+        stdout(&ps_after).contains("stopped"),
+        "{}",
+        stdout(&ps_after)
+    );
     assert!(
         !stdout(&ps_after).contains(&pid.to_string()),
         "`ps` printed a dead pid:\n{}",
@@ -407,7 +448,11 @@ fn start_ps_stop_cycle_against_a_real_postgres_from_a_deep_project_path() {
 
     // --- stop again: idempotent ---
     let stop2 = fx.sky(&["db", "stop"]);
-    assert!(stop2.status.success(), "a second stop must be a no-op:\n{}", both(&stop2));
+    assert!(
+        stop2.status.success(),
+        "a second stop must be a no-op:\n{}",
+        both(&stop2)
+    );
 }
 
 /// A `SIGKILL`ed postmaster leaves `postmaster.pid` behind, naming a pid the
@@ -441,13 +486,24 @@ fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
     let pid = fx.postmaster_pid().expect("no postmaster.pid");
 
     // SIGKILL: no shutdown handler runs, so the pid file is left on disk.
-    let killed = Command::new("kill").args(["-9", &pid.to_string()]).status().unwrap();
+    let killed = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .unwrap();
     assert!(killed.success());
     // The children notice the postmaster's death through their end of the
     // postmaster-death pipe and exit; wait for the pid itself to go.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false) {
-        assert!(std::time::Instant::now() < deadline, "SIGKILLed postmaster never went away");
+    while Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "SIGKILLed postmaster never went away"
+        );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     let pidfile = fx.data_dir().join("postmaster.pid");
@@ -458,7 +514,9 @@ fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
 
     // Recycle the pid: a live process, not a postmaster, whose name would fool a
     // substring test.
-    let helper_bin = std::env::temp_dir().join(unique("postgres-helper")).join("postgres-helper");
+    let helper_bin = std::env::temp_dir()
+        .join(unique("postgres-helper"))
+        .join("postgres-helper");
     std::fs::create_dir_all(helper_bin.parent().unwrap()).unwrap();
     // A script, NOT a copy of /bin/sleep: on macOS a copied platform binary
     // fails its code-signature check and is killed the moment it execs, which
@@ -533,14 +591,18 @@ fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
          and boot — PostgreSQL will not, it refuses while that pid is alive:\n{}",
         both(&restart)
     );
-    let new_pid = fx.postmaster_pid().expect("no postmaster.pid after restart");
+    let new_pid = fx
+        .postmaster_pid()
+        .expect("no postmaster.pid after restart");
     assert_ne!(new_pid, pid);
     assert_ne!(new_pid, helper_pid as i32);
 
     let _ = fx.sky(&["db", "stop"]);
     // The impostor's own `sleep` child too — scoped to this test's pid, never a
     // pattern that could reach another agent's or another test's processes.
-    let _ = Command::new("pkill").args(["-P", &helper_pid.to_string()]).status();
+    let _ = Command::new("pkill")
+        .args(["-P", &helper_pid.to_string()])
+        .status();
     let _ = helper.kill();
     let _ = helper.wait();
     let _ = std::fs::remove_dir_all(helper_bin.parent().unwrap());
@@ -567,7 +629,11 @@ fn a_project_path_carrying_a_command_substitution_is_refused_not_executed() {
     // the project directory, and a directory name cannot contain a slash.
     let project = root.join("inj$(touch pwned)dir");
     std::fs::create_dir_all(project.join("src")).unwrap();
-    std::fs::write(project.join("sky.toml"), "name = \"inj\"\nentry = \"src/Main.sky\"\n").unwrap();
+    std::fs::write(
+        project.join("sky.toml"),
+        "name = \"inj\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
 
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -607,7 +673,10 @@ fn a_project_path_carrying_a_command_substitution_is_refused_not_executed() {
          while [ $# -gt 0 ]; do case \"$1\" in -D) D=$2; shift 2 ;; *) shift ;; esac; done\n\
          mkdir -p \"$D\" && echo 14 > \"$D/PG_VERSION\" && echo '# stub' > \"$D/postgresql.conf\"\n",
     );
-    exec(bin.join("postgres"), "#!/bin/sh\necho 'postgres (PostgreSQL) 14.21'\n");
+    exec(
+        bin.join("postgres"),
+        "#!/bin/sh\necho 'postgres (PostgreSQL) 14.21'\n",
+    );
 
     let home = root.join("home");
     let out = Command::new(SKY)
@@ -624,14 +693,25 @@ fn a_project_path_carrying_a_command_substitution_is_refused_not_executed() {
          pg_ctl's /bin/sh.\n{}",
         both(&out)
     );
-    assert!(!out.status.success(), "the start should have been refused:\n{}", both(&out));
+    assert!(
+        !out.status.success(),
+        "the start should have been refused:\n{}",
+        both(&out)
+    );
     let msg = stderr(&out);
     assert!(msg.contains("/bin/sh"), "the refusal must say why:\n{msg}");
-    assert!(msg.contains("$(touch pwned)"), "the refusal must name the path:\n{msg}");
+    assert!(
+        msg.contains("$(touch pwned)"),
+        "the refusal must name the path:\n{msg}"
+    );
     // Refused BEFORE initdb: a cluster that can never be started must not have
     // been created.
     assert!(
-        !project.join(".skydata").join("pg").join("PG_VERSION").exists(),
+        !project
+            .join(".skydata")
+            .join("pg")
+            .join("PG_VERSION")
+            .exists(),
         "a data directory was initialised for a cluster that can never start"
     );
 
@@ -658,17 +738,31 @@ fn a_major_version_mismatch_is_reported_and_never_attempted() {
 
     let real = std::fs::read_to_string(fx.data_dir().join("PG_VERSION")).unwrap();
     let real_major: u32 = real.trim().split('.').next().unwrap().parse().unwrap();
-    let other = if real_major > 9 { real_major - 1 } else { real_major + 1 };
+    let other = if real_major > 9 {
+        real_major - 1
+    } else {
+        real_major + 1
+    };
     std::fs::write(fx.data_dir().join("PG_VERSION"), format!("{other}\n")).unwrap();
 
     let out = fx.sky(&["db", "start"]);
-    assert!(!out.status.success(), "a version mismatch must fail:\n{}", both(&out));
+    assert!(
+        !out.status.success(),
+        "a version mismatch must fail:\n{}",
+        both(&out)
+    );
     let msg = stderr(&out);
     assert!(msg.contains("major mismatch"), "{msg}");
     assert!(msg.contains(&format!("PostgreSQL {other}")), "{msg}");
     assert!(msg.contains(&format!("PostgreSQL {real_major}")), "{msg}");
-    assert!(msg.contains("pg_upgrade"), "the message must name the way forward:\n{msg}");
-    assert!(fx.postmaster_pid().is_none(), "a mismatched cluster was started anyway");
+    assert!(
+        msg.contains("pg_upgrade"),
+        "the message must name the way forward:\n{msg}"
+    );
+    assert!(
+        fx.postmaster_pid().is_none(),
+        "a mismatched cluster was started anyway"
+    );
 
     // Restore so the fixture's Drop can clean up.
     std::fs::write(fx.data_dir().join("PG_VERSION"), real).unwrap();
@@ -739,7 +833,9 @@ fn conf_max_connections(conf: &str) -> Option<u32> {
         if !t.starts_with("max_connections") {
             continue;
         }
-        let Some((_, v)) = t.split_once('=') else { continue };
+        let Some((_, v)) = t.split_once('=') else {
+            continue;
+        };
         let v = v.split('#').next().unwrap_or("").trim();
         if let Ok(n) = v.parse::<u32>() {
             found = Some(n);
@@ -821,7 +917,9 @@ fn a_second_start_retunes_the_managed_block() {
         .lines()
         .map(|l| {
             if l.trim().starts_with("max_connections") {
-                format!("max_connections = {STALE}  # sized for the machine this data dir came from")
+                format!(
+                    "max_connections = {STALE}  # sized for the machine this data dir came from"
+                )
             } else {
                 l.to_string()
             }
@@ -838,7 +936,11 @@ fn a_second_start_retunes_the_managed_block() {
 
     // --- second start: NOT an initdb, which is the whole point ---
     let again = fx.sky(&["db", "start"]);
-    assert!(again.status.success(), "second start failed:\n{}", both(&again));
+    assert!(
+        again.status.success(),
+        "second start failed:\n{}",
+        both(&again)
+    );
 
     let after = std::fs::read_to_string(&conf_path).unwrap();
     assert_eq!(
@@ -984,8 +1086,16 @@ fn missing_binaries_produce_an_actionable_message() {
         .unwrap();
     assert!(!out.status.success());
     let msg = stderr(&out);
-    for needle in ["SKY_POSTGRES_BIN", "postgres/<version>/bin", "$PATH", "sky db provision --embed"] {
-        assert!(msg.contains(needle), "the not-found message never mentions {needle}:\n{msg}");
+    for needle in [
+        "SKY_POSTGRES_BIN",
+        "postgres/<version>/bin",
+        "$PATH",
+        "sky db provision --embed",
+    ] {
+        assert!(
+            msg.contains(needle),
+            "the not-found message never mentions {needle}:\n{msg}"
+        );
     }
 
     let _ = std::fs::remove_dir_all(fixture_root(&project));

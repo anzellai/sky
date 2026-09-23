@@ -132,11 +132,11 @@ main =
         str_pos.line, d.range
     );
     assert!(
-        d.range.start.character <= str_pos.character
-            && d.range.end.character >= str_pos.character,
+        d.range.start.character <= str_pos.character && d.range.end.character >= str_pos.character,
         "the type error range must cover the `\"str\"` literal column ({}), \
          got range {:?}",
-        str_pos.character, d.range
+        str_pos.character,
+        d.range
     );
 }
 

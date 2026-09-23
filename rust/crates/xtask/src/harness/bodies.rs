@@ -37,7 +37,7 @@ use std::process::Command;
 /// **187 since 2026-08-24**: the v0.22.0 Sky.Spa release added examples
 /// `61-app-kanban`, `62-app-notes`, `63-app-chat` and `64-app-native` (+9 `.sky`
 /// files across their `src/`); all still reprint byte-exact with zero ERROR nodes.
-pub const ROUNDTRIP_EXPECTED: u64 = 190;  // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo)
+pub const ROUNDTRIP_EXPECTED: u64 = 190; // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo)
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -84,7 +84,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 1184;  // +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs
+pub const CONFORMANCE_EXPECTED: u64 = 1184; // +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -415,7 +415,10 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
     let mut assertions = 0u64;
     for fx in FIXTURES {
         let project_dir = ctx.repo_root.join(fx);
-        let name = Path::new(fx).file_name().and_then(|s| s.to_str()).unwrap_or("fixture");
+        let name = Path::new(fx)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("fixture");
         // NOT under `scratch()` (`.skycache/…`): `sky build`'s module discovery
         // skips any path with a dot-directory segment, so a generated project
         // there fails with "no .sky under src/". Use a non-dot temp dir.
@@ -431,7 +434,9 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
             20260912,
         ) {
             Ok(r) => r,
-            Err(e) => return GateOutcome::new(false, assertions, format!("{name}: generate failed: {e}")),
+            Err(e) => {
+                return GateOutcome::new(false, assertions, format!("{name}: generate failed: {e}"))
+            }
         };
         assertions += report.checked.len() as u64;
         // BUILD the generated harness with the fresh compiler.
@@ -451,10 +456,19 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
                 return GateOutcome::new(
                     false,
                     assertions,
-                    format!("{name}: harness build failed: {}", tail.into_iter().rev().collect::<Vec<_>>().join(" | ")),
+                    format!(
+                        "{name}: harness build failed: {}",
+                        tail.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                    ),
                 );
             }
-            Err(e) => return GateOutcome::new(false, assertions, format!("{name}: harness build spawn failed: {e}")),
+            Err(e) => {
+                return GateOutcome::new(
+                    false,
+                    assertions,
+                    format!("{name}: harness build spawn failed: {e}"),
+                )
+            }
         }
         // RUN offline — a divergence is a non-zero exit.
         match Command::new(out_dir.join("sky-out/app"))
@@ -468,10 +482,19 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
                 return GateOutcome::new(
                     false,
                     assertions,
-                    format!("{name}: DIVERGENCE — {}", msg.trim().lines().next().unwrap_or("split leg != direct")),
+                    format!(
+                        "{name}: DIVERGENCE — {}",
+                        msg.trim().lines().next().unwrap_or("split leg != direct")
+                    ),
                 );
             }
-            Err(e) => return GateOutcome::new(false, assertions, format!("{name}: harness run spawn failed: {e}")),
+            Err(e) => {
+                return GateOutcome::new(
+                    false,
+                    assertions,
+                    format!("{name}: harness run spawn failed: {e}"),
+                )
+            }
         }
     }
     // EXACT — a fence change that adds/drops a checkable branch flips this.
@@ -755,7 +778,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 141;  // +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo)
+pub const SHARED_WORLD_EXPECTED: u64 = 141; // +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -971,7 +994,10 @@ pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
         GateOutcome::new(
             true,
             assertions,
-            format!("bundled Sky apps build from a wiped slate ({})", timings.join(", ")),
+            format!(
+                "bundled Sky apps build from a wiped slate ({})",
+                timings.join(", ")
+            ),
         )
     } else {
         GateOutcome::new(false, assertions, failures.join(" | "))
@@ -993,9 +1019,7 @@ pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
 pub const CLI_VERBS_EXPECTED: u64 = 10;
 
 pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
-    let suite = ctx
-        .repo_root
-        .join("rust/crates/sky/tests/cli_verb_flow.rs");
+    let suite = ctx.repo_root.join("rust/crates/sky/tests/cli_verb_flow.rs");
     let Ok(src) = std::fs::read_to_string(&suite) else {
         return GateOutcome::new(false, 0, format!("cannot read {}", suite.display()));
     };
@@ -1084,7 +1108,13 @@ pub fn apps_ffi_scale(ctx: &GateCtx) -> GateOutcome {
         .stdin(std::process::Stdio::null())
         .output();
     match install {
-        Err(e) => return GateOutcome::new(false, assertions, format!("`sky install` failed to spawn: {e}")),
+        Err(e) => {
+            return GateOutcome::new(
+                false,
+                assertions,
+                format!("`sky install` failed to spawn: {e}"),
+            )
+        }
         Ok(o) if !o.status.success() => {
             return GateOutcome::new(
                 false,
@@ -1109,7 +1139,10 @@ pub fn apps_ffi_scale(ctx: &GateCtx) -> GateOutcome {
         return GateOutcome::new(
             false,
             assertions,
-            format!("{PROJECT}: `sky build` failed:\n{}", layer2::tail(&r.log, 15)),
+            format!(
+                "{PROJECT}: `sky build` failed:\n{}",
+                layer2::tail(&r.log, 15)
+            ),
         );
     }
 
@@ -1125,7 +1158,10 @@ pub fn apps_ffi_scale(ctx: &GateCtx) -> GateOutcome {
     GateOutcome::new(
         true,
         assertions,
-        format!("76k-symbol FFI project installed and built ({:.0}s)", r.elapsed_s),
+        format!(
+            "76k-symbol FFI project installed and built ({:.0}s)",
+            r.elapsed_s
+        ),
     )
 }
 
@@ -1200,7 +1236,11 @@ pub fn apps_relay(ctx: &GateCtx) -> GateOutcome {
     };
 
     let ready = srv.wait_ready("relay: listening on", Duration::from_secs(30));
-    check!(ready.is_ok(), "{}", ready.as_ref().err().cloned().unwrap_or_default());
+    check!(
+        ready.is_ok(),
+        "{}",
+        ready.as_ref().err().cloned().unwrap_or_default()
+    );
     if ready.is_err() {
         let _ = srv.shutdown();
         return GateOutcome::new(false, a, fail.join(" | "));
@@ -1213,7 +1253,11 @@ pub fn apps_relay(ctx: &GateCtx) -> GateOutcome {
             fail.push(format!("GET /health: {e}"));
         }
         Ok(resp) => {
-            check!(resp.status == 200, "GET /health: expected 200, got {}", resp.status);
+            check!(
+                resp.status == 200,
+                "GET /health: expected 200, got {}",
+                resp.status
+            );
             check!(
                 resp.body.contains("\"service\":\"relay\""),
                 "GET /health: body does not identify the service: {}",
@@ -1238,14 +1282,12 @@ pub fn apps_relay(ctx: &GateCtx) -> GateOutcome {
 
     // A token minted by the app must then be ACCEPTED — otherwise "401 always"
     // would satisfy the assertion above.
-    let token = layer2::get(port, "/api/token?sub=gate")
-        .ok()
-        .and_then(|r| {
-            let b = r.body;
-            let i = b.find("\"token\":\"")? + 9;
-            let rest = &b[i..];
-            Some(rest[..rest.find('"')?].to_string())
-        });
+    let token = layer2::get(port, "/api/token?sub=gate").ok().and_then(|r| {
+        let b = r.body;
+        let i = b.find("\"token\":\"")? + 9;
+        let rest = &b[i..];
+        Some(rest[..rest.find('"')?].to_string())
+    });
     match token {
         None => {
             a += 1;
@@ -1459,14 +1501,20 @@ pub fn apps_fieldbook(ctx: &GateCtx) -> GateOutcome {
     // The app's own verdict, computed independently of our byte comparison.
     a += 1;
     if let Err(e) = dump(&["--dump-view", "diff"]) {
-        fail.push(format!("the app's own structural diff reported failure: {e}"));
+        fail.push(format!(
+            "the app's own structural diff reported failure: {e}"
+        ));
     }
 
     a += 1;
     match dump(&["--export"]) {
         Err(e) => fail.push(e),
         Ok(csv) => {
-            if !csv.lines().next().is_some_and(|h| h.contains("id,day,site")) {
+            if !csv
+                .lines()
+                .next()
+                .is_some_and(|h| h.contains("id,day,site"))
+            {
                 fail.push(format!(
                     "--export did not produce the expected CSV header, got {:?}",
                     csv.lines().next().unwrap_or("")
@@ -1525,7 +1573,10 @@ fn ledger_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome {
     for (verb, label) in [("migrate", "sky db migrate"), ("seed", "sky db seed")] {
         a += 1;
         let mut cmd = Command::new(&sky);
-        cmd.arg("db").arg(verb).current_dir(&dir).stdin(std::process::Stdio::null());
+        cmd.arg("db")
+            .arg(verb)
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null());
         for (k, v) in db_env(&[]) {
             cmd.env(k, v);
         }
@@ -1569,7 +1620,10 @@ fn ledger_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome {
     a += 1;
     let literals = layer2::bind_position_port_literals(&ctx.repo_root, PROJECT);
     if !literals.is_empty() {
-        fail.push(format!("bind-position port literal(s): {}", literals.join(", ")));
+        fail.push(format!(
+            "bind-position port literal(s): {}",
+            literals.join(", ")
+        ));
     }
 
     let port = match layer2::free_port() {
@@ -1606,7 +1660,10 @@ fn ledger_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome {
         Ok(resp) => {
             a += 1;
             if resp.status != 200 {
-                fail.push(format!("GET /api/health: expected 200, got {}", resp.status));
+                fail.push(format!(
+                    "GET /api/health: expected 200, got {}",
+                    resp.status
+                ));
             }
             a += 1;
             let want = format!("\"driver\":\"{expect_driver}\"");
@@ -1676,10 +1733,8 @@ fn ledger_arm(ctx: &GateCtx, expect_driver: &str, dsn: String) -> GateOutcome {
 
 /// Member A, SQLite arm (T1).
 pub fn apps_ledger(ctx: &GateCtx) -> GateOutcome {
-    let db = super::bodies::scratch(&ctx.repo_root).join(format!(
-        "ledger-gate-{}.db",
-        std::process::id()
-    ));
+    let db = super::bodies::scratch(&ctx.repo_root)
+        .join(format!("ledger-gate-{}.db", std::process::id()));
     // Remove the WAL sidecars too: deleting a SQLite file without its -wal/-shm
     // yields `disk I/O error (522)` on the next open.
     for suffix in ["", "-wal", "-shm"] {
@@ -2428,7 +2483,8 @@ pub fn apps_dispatch_destructive(ctx: &GateCtx) -> GateOutcome {
     // "schema-dump produced no output (is `db` a Store.Project?)" and the gate
     // would fail for a reason that has nothing to do with what it asserts.
     // The pid suffix keeps concurrent runs from colliding.
-    let work = std::env::temp_dir().join(format!("sky-dispatch-destructive-{}", std::process::id()));
+    let work =
+        std::env::temp_dir().join(format!("sky-dispatch-destructive-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
     if let Err(e) = copy_tree(&ctx.repo_root.join("apps/dispatch"), &work) {
         return GateOutcome::new(false, 0, format!("could not stage a copy: {e}"));
@@ -2511,8 +2567,7 @@ pub fn apps_dispatch_destructive(ctx: &GateCtx) -> GateOutcome {
         return GateOutcome::new(
             false,
             a,
-            "`sky db migrate --gen` wrote no new migration file for a schema change"
-                .to_string(),
+            "`sky db migrate --gen` wrote no new migration file for a schema change".to_string(),
         );
     };
 
@@ -2578,8 +2633,7 @@ pub fn apps_dispatch_destructive(ctx: &GateCtx) -> GateOutcome {
         GateOutcome::new(
             true,
             a,
-            "a dropped column is quarantined in `destructive` with zero active ops"
-                .to_string(),
+            "a dropped column is quarantined in `destructive` with zero active ops".to_string(),
         )
     } else {
         GateOutcome::new(false, a, fail.join(" | "))
@@ -2896,8 +2950,10 @@ pub fn sky_suites(ctx: &GateCtx) -> GateOutcome {
     let detail = if SKY_SUITES_BLOCKED.is_empty() {
         format!("{cases} cases across {suites_run} suites, all green")
     } else {
-        let names: Vec<String> =
-            SKY_SUITES_BLOCKED.iter().map(|(n, _, exp)| format!("{n} (until {exp})")).collect();
+        let names: Vec<String> = SKY_SUITES_BLOCKED
+            .iter()
+            .map(|(n, _, exp)| format!("{n} (until {exp})"))
+            .collect();
         format!(
             "{cases} cases green across {} of {suites_run} discovered suites; \
              {} suite(s) BLOCKED on compiler codegen defects and contributing ZERO cases: {}",
@@ -3082,7 +3138,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
         return GateOutcome::new(
             false,
             total,
-            format!("{} of {total} editor-parity cases failed: {}", failures.len(), failures.join(", ")),
+            format!(
+                "{} of {total} editor-parity cases failed: {}",
+                failures.len(),
+                failures.join(", ")
+            ),
         );
     }
     GateOutcome::new(
@@ -3548,7 +3608,8 @@ mod corpus_count_sync {
     fn corpus_expected_matches_the_generator() {
         let n = crate::corpus::all_cases().len() as u64;
         assert_eq!(
-            super::CORPUS_EXPECTED, n,
+            super::CORPUS_EXPECTED,
+            n,
             "CORPUS_EXPECTED = {} but the generator produces {n} case(s). A corpus \
              case was added or removed without updating the const. Set \
              CORPUS_EXPECTED = {n} in harness/bodies.rs (this is what the release \
@@ -3561,7 +3622,8 @@ mod corpus_count_sync {
     fn corpus_behavioural_expected_matches_the_generator() {
         let n = crate::corpus::behavioural_cases().len() as u64;
         assert_eq!(
-            super::CORPUS_BEHAVIOURAL_EXPECTED, n,
+            super::CORPUS_BEHAVIOURAL_EXPECTED,
+            n,
             "CORPUS_BEHAVIOURAL_EXPECTED = {} but the generator produces {n} \
              built-and-run case(s). A behavioural corpus case was added or removed \
              without updating the const — the exact drift the nightly T2 `corpus` \

@@ -6,26 +6,26 @@
 // A periodic background goroutine written the obvious way carries one or both
 // of two faults, and both fail SILENTLY and PERMANENTLY:
 //
-//	go func() {
-//	    defer func() { _ = recover() }()   // (1) recover at the TOP LEVEL
-//	    t := time.NewTicker(6 * time.Hour)
-//	    for range t.C {
-//	        _, _ = db.Exec(`DELETE ...`)    // (2) the error is DISCARDED
-//	    }
-//	}()
+//		go func() {
+//		    defer func() { _ = recover() }()   // (1) recover at the TOP LEVEL
+//		    t := time.NewTicker(6 * time.Hour)
+//		    for range t.C {
+//		        _, _ = db.Exec(`DELETE ...`)    // (2) the error is DISCARDED
+//		    }
+//		}()
 //
-//  1. The recover is scoped to the GOROUTINE, not to the cycle. A panic
-//     anywhere inside the work unwinds PAST the ticker loop, the deferred
-//     recover swallows it, and the goroutine returns. The loop is then dead
-//     for the whole process lifetime — with no log line, no metric, and no
-//     symptom until whatever the loop was maintaining has grown without bound
-//     for a day. It looks defensive and is the exact opposite: without the
-//     recover the process would at least have crashed loudly.
+//	 1. The recover is scoped to the GOROUTINE, not to the cycle. A panic
+//	    anywhere inside the work unwinds PAST the ticker loop, the deferred
+//	    recover swallows it, and the goroutine returns. The loop is then dead
+//	    for the whole process lifetime — with no log line, no metric, and no
+//	    symptom until whatever the loop was maintaining has grown without bound
+//	    for a day. It looks defensive and is the exact opposite: without the
+//	    recover the process would at least have crashed loudly.
 //
-//  2. The error is discarded, so a permissions failure, a lock timeout and a
-//     dropped table are indistinguishable from a successful zero-row delete.
-//     A loop that has never once done its job looks identical to a healthy
-//     one.
+//	 2. The error is discarded, so a permissions failure, a lock timeout and a
+//	    dropped table are indistinguishable from a successful zero-row delete.
+//	    A loop that has never once done its job looks identical to a healthy
+//	    one.
 //
 // Both were live in this runtime. `analytics_store.go` had (1) and (2);
 // `telemetry/persist.go` had (2)'s mirror image — it checked its error and had

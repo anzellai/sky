@@ -453,7 +453,8 @@ pub fn curl_failure_message(url: &str, code: Option<i32>) -> String {
              \x20                          --checksum <sha256 from the release's SHA256SUMS>\n\
              or point sky at an existing installation instead:\n\
              \x20 SKY_POSTGRES_BIN=/path/to/postgresql/bin sky db start",
-            code.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
+            code.map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".into())
         )
     } else {
         format!(
@@ -462,7 +463,8 @@ pub fn curl_failure_message(url: &str, code: Option<i32>) -> String {
              published for your platform. Check\n\
              \x20 https://github.com/anzellai/sky/releases\n\
              or install a system PostgreSQL and point SKY_POSTGRES_BIN at it.",
-            code.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
+            code.map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".into())
         )
     }
 }
@@ -481,8 +483,15 @@ pub struct Opts {
 }
 
 pub enum Outcome {
-    AlreadyPresent { version: String, bin_dir: PathBuf },
-    Installed { version: String, bin_dir: PathBuf, pinned: bool },
+    AlreadyPresent {
+        version: String,
+        bin_dir: PathBuf,
+    },
+    Installed {
+        version: String,
+        bin_dir: PathBuf,
+        pinned: bool,
+    },
 }
 
 const USAGE: &str = "usage: sky db provision --embed [--version <v>] [--from <archive.tar.gz>]\n\
@@ -524,7 +533,11 @@ pub fn cmd_provision(args: &[String]) -> ExitCode {
             );
             ExitCode::SUCCESS
         }
-        Ok(Outcome::Installed { version, bin_dir, pinned }) => {
+        Ok(Outcome::Installed {
+            version,
+            bin_dir,
+            pinned,
+        }) => {
             println!(
                 "sky db provision: PostgreSQL {version} installed.\n\
                  \x20 {}{}\n\nNext: sky db start",
@@ -659,12 +672,17 @@ pub fn bundle_runs(bin_dir: &Path) -> Result<(), String> {
                 return Err(format!(
                     "{} exited {} without reporting a version",
                     exe.display(),
-                    o.status.code().map(|c| c.to_string()).unwrap_or_else(|| "on a signal".into())
+                    o.status
+                        .code()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "on a signal".into())
                 ));
             }
             Err(e) if e.raw_os_error() == Some(ETXTBSY) => {
                 last_busy = format!("cannot run {}: {e}", exe.display());
-                std::thread::sleep(std::time::Duration::from_millis(50 * u64::from(attempt + 1)));
+                std::thread::sleep(std::time::Duration::from_millis(
+                    50 * u64::from(attempt + 1),
+                ));
             }
             Err(e) => return Err(format!("cannot run {}: {e}", exe.display())),
         }
@@ -708,8 +726,12 @@ pub fn fetch_verified_archive(
     let sums_path = parent.join(format!(".{CHECKSUM_FILE}.{}.part", std::process::id()));
     let _ = std::fs::remove_file(&sums_path);
     let sums_result = fetch(&sums_url, &sums_path, true).and_then(|()| {
-        std::fs::read_to_string(&sums_path)
-            .map_err(|e| format!("sky build --embed: cannot read {}: {e}", sums_path.display()))
+        std::fs::read_to_string(&sums_path).map_err(|e| {
+            format!(
+                "sky build --embed: cannot read {}: {e}",
+                sums_path.display()
+            )
+        })
     });
     let _ = std::fs::remove_file(&sums_path);
     let sums = sums_result.map_err(|e| {
@@ -771,8 +793,12 @@ pub fn provision(opts: &Opts) -> Result<Outcome, String> {
 
     let staging_root = home.join(STAGING_DIR);
     prune_stale_staging(&staging_root);
-    std::fs::create_dir_all(&staging_root)
-        .map_err(|e| format!("sky db provision: cannot create {}: {e}", staging_root.display()))?;
+    std::fs::create_dir_all(&staging_root).map_err(|e| {
+        format!(
+            "sky db provision: cannot create {}: {e}",
+            staging_root.display()
+        )
+    })?;
     check_free_space(&staging_root)?;
     let work = staging_root.join(format!("{version}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
@@ -805,8 +831,9 @@ pub fn provision(opts: &Opts) -> Result<Outcome, String> {
             fetch(&sums_url, &sums_path, true).map_err(|e| {
                 format!("{e}\n(the checksum manifest is fetched first — nothing is downloaded unverified)")
             })?;
-            let sums = std::fs::read_to_string(&sums_path)
-                .map_err(|e| format!("sky db provision: cannot read {}: {e}", sums_path.display()))?;
+            let sums = std::fs::read_to_string(&sums_path).map_err(|e| {
+                format!("sky db provision: cannot read {}: {e}", sums_path.display())
+            })?;
             let expected = parse_sha256sums(&sums, &asset).ok_or_else(|| {
                 format!(
                     "sky db provision: {sums_url} does not list {asset}.\n\
@@ -852,7 +879,9 @@ pub fn provision(opts: &Opts) -> Result<Outcome, String> {
             "sky db provision: could not extract {} (tar exit {}).\n\
              The cache is untouched — nothing was installed.",
             archive.display(),
-            st.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
+            st.code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".into())
         ));
     }
     if !bundle_is_complete(&tree.join("bin")) {
@@ -873,12 +902,20 @@ pub fn provision(opts: &Opts) -> Result<Outcome, String> {
     }
 
     // Atomic install: one rename, on the same filesystem.
-    std::fs::create_dir_all(home.join("postgres"))
-        .map_err(|e| format!("sky db provision: cannot create {}: {e}", home.join("postgres").display()))?;
+    std::fs::create_dir_all(home.join("postgres")).map_err(|e| {
+        format!(
+            "sky db provision: cannot create {}: {e}",
+            home.join("postgres").display()
+        )
+    })?;
     let displaced = dest.with_file_name(format!("{version}.replaced-{}", std::process::id()));
     if dest.exists() {
-        std::fs::rename(&dest, &displaced)
-            .map_err(|e| format!("sky db provision: cannot move aside {}: {e}", dest.display()))?;
+        std::fs::rename(&dest, &displaced).map_err(|e| {
+            format!(
+                "sky db provision: cannot move aside {}: {e}",
+                dest.display()
+            )
+        })?;
     }
     match std::fs::rename(&tree, &dest) {
         Ok(()) => {
@@ -906,7 +943,11 @@ pub fn provision(opts: &Opts) -> Result<Outcome, String> {
     drop(guard);
 
     let pinned = maybe_pin(opts, project.as_deref(), &version);
-    Ok(Outcome::Installed { version, bin_dir, pinned })
+    Ok(Outcome::Installed {
+        version,
+        bin_dir,
+        pinned,
+    })
 }
 
 fn env_base() -> Option<String> {
@@ -1084,7 +1125,10 @@ mod tests {
             parse_sha256sums(&text, "postgres-18.6-darwin-arm64.tar.gz"),
             Some(b)
         );
-        assert_eq!(parse_sha256sums(&text, "postgres-18.6-linux-arm64.tar.gz"), None);
+        assert_eq!(
+            parse_sha256sums(&text, "postgres-18.6-linux-arm64.tar.gz"),
+            None
+        );
     }
 
     #[test]
@@ -1100,7 +1144,10 @@ mod tests {
     #[test]
     fn a_manifest_line_that_is_not_a_digest_is_not_believed() {
         let text = "notahash  postgres-18.6-linux-amd64.tar.gz\n";
-        assert_eq!(parse_sha256sums(text, "postgres-18.6-linux-amd64.tar.gz"), None);
+        assert_eq!(
+            parse_sha256sums(text, "postgres-18.6-linux-amd64.tar.gz"),
+            None
+        );
     }
 
     // --- SHA-256 ---
@@ -1150,7 +1197,10 @@ mod tests {
     #[test]
     fn a_mismatch_message_names_both_digests_and_the_source() {
         let m = checksum_mismatch_message("http://x/a.tar.gz", "aa", "bb");
-        assert!(m.contains("http://x/a.tar.gz") && m.contains("aa") && m.contains("bb"), "{m}");
+        assert!(
+            m.contains("http://x/a.tar.gz") && m.contains("aa") && m.contains("bb"),
+            "{m}"
+        );
         assert!(m.contains("Nothing has been extracted"), "{m}");
     }
 
@@ -1170,7 +1220,10 @@ mod tests {
     fn the_pin_is_written_into_an_existing_database_section() {
         let src = "name = \"app\"\n\n[database]\nembedded = true\ndriver = \"postgres\"\n\n[live]\nport = 8000\n";
         let out = pinned_sky_toml(src, "18.6").expect("should have changed");
-        assert!(out.contains("[database]\npostgresVersion = \"18.6\"\nembedded = true"), "{out}");
+        assert!(
+            out.contains("[database]\npostgresVersion = \"18.6\"\nembedded = true"),
+            "{out}"
+        );
         assert!(out.contains("[live]\nport = 8000"), "{out}");
         // idempotent: the second write is a no-op
         assert_eq!(pinned_sky_toml(&out, "18.6"), None);
@@ -1189,7 +1242,10 @@ mod tests {
     fn a_project_with_no_database_section_gains_one() {
         let src = "name = \"app\"\nentry = \"src/Main.sky\"\n";
         let out = pinned_sky_toml(src, "18.6").unwrap();
-        assert!(out.ends_with("[database]\npostgresVersion = \"18.6\"\n"), "{out}");
+        assert!(
+            out.ends_with("[database]\npostgresVersion = \"18.6\"\n"),
+            "{out}"
+        );
         assert!(out.starts_with("name = \"app\""), "{out}");
     }
 
@@ -1276,12 +1332,18 @@ mod bundle_completeness_tests {
         for b in REQUIRED_BINS {
             put(&bin, b, b"\x7fELF", 0o755);
         }
-        assert!(bundle_is_complete(&bin), "a non-empty, executable bundle was rejected");
+        assert!(
+            bundle_is_complete(&bin),
+            "a non-empty, executable bundle was rejected"
+        );
 
         // The pre-existing arms still hold, so the length check did not replace
         // them: not executable, and missing entirely.
         put(&bin, "postgres", b"\x7fELF", 0o644);
-        assert!(!bundle_is_complete(&bin), "a non-executable postgres was accepted");
+        assert!(
+            !bundle_is_complete(&bin),
+            "a non-executable postgres was accepted"
+        );
         std::fs::remove_file(bin.join("postgres")).unwrap();
         assert!(!bundle_is_complete(&bin), "a missing postgres was accepted");
     }
@@ -1296,15 +1358,25 @@ mod bundle_completeness_tests {
         for b in REQUIRED_BINS {
             put(&bin, b, b"\x7fELF not really an executable", 0o755);
         }
-        assert!(bundle_is_complete(&bin), "the fixture should pass the cheap predicate");
+        assert!(
+            bundle_is_complete(&bin),
+            "the fixture should pass the cheap predicate"
+        );
         let e = bundle_runs(&bin).expect_err("a file of junk was reported as a working postgres");
-        assert!(e.contains("postgres"), "the refusal does not name what it tried to run:\n{e}");
+        assert!(
+            e.contains("postgres"),
+            "the refusal does not name what it tried to run:\n{e}"
+        );
 
         // A real one runs. `true` stands in for postgres: what is under test is
         // that a process which reports success is accepted, and this test must
         // not require a PostgreSQL to be installed.
         std::fs::copy("/usr/bin/true", bin.join("postgres")).unwrap();
-        std::fs::set_permissions(&bin.join("postgres"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(
+            &bin.join("postgres"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
         bundle_runs(&bin).expect("a binary that exits 0 was rejected");
     }
 }

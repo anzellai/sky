@@ -211,7 +211,11 @@ fn revocation_app_builds_and_evicts() {
     // 1. GET / establishes a session (cookie jar); its init Cmd binds the
     //    session to user "1".
     let first = curl_status_jar(port, "/", &jar, true);
-    assert_eq!(first.as_deref(), Some("200"), "first GET / should serve 200");
+    assert_eq!(
+        first.as_deref(),
+        Some("200"),
+        "first GET / should serve 200"
+    );
     // Let the async bind persist onto the session.
     std::thread::sleep(std::time::Duration::from_millis(800));
 

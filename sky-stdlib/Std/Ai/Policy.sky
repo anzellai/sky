@@ -29,7 +29,6 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.Error exposing (Error)
 
-
 type Risk
     = Low
     | Medium
@@ -39,6 +38,7 @@ type Risk
 riskLevel : Risk -> Int
 riskLevel risk =
     case risk of
+
         Low ->
             0
 
@@ -48,16 +48,17 @@ riskLevel risk =
         High ->
             2
 
-
 {-| A proposed action: a stable capability name, its arguments, and a risk tag. -}
 type alias Action =
-    { name : String, args : String, risk : Risk }
+    { name : String
+    , args : String
+    , risk : Risk
+    }
 
 
 action : String -> String -> Risk -> Action
 action name args risk =
     { name = name, args = args, risk = risk }
-
 
 {-| The firewall's verdict on an action. A `Policy` is a pure
 `Action -> Decision`. -}
@@ -65,7 +66,6 @@ type Decision
     = Allow
     | Deny String
     | NeedsApproval String
-
 
 {-| What actually happened at the gate: the effect ran (`Ran`), was refused
 (`Denied`), or is held for approval (`Pending`). -}
@@ -83,6 +83,7 @@ effect boundary.
 gate : (Action -> Decision) -> Action -> Task Error a -> Task Error (Outcome a)
 gate policy act effect =
     case policy act of
+
         Allow ->
             effect |> Task.map Ran
 
@@ -114,4 +115,6 @@ requireApprovalAbove threshold act =
         Allow
 
     else
-        NeedsApproval ("action \"" ++ act.name ++ "\" needs approval (risk above the threshold)")
+        NeedsApproval
+            ("action \"" ++ act.name
+                ++ "\" needs approval (risk above the threshold)")

@@ -408,13 +408,12 @@ impl UnionFind {
                     // Keep the QUALIFIED side as the representative so a
                     // confident identity propagates through inference variables
                     // instead of being erased by the first bare name it meets.
-                    let winner = if crate::nominal::most_specific(n1.as_str(), n2.as_str())
-                        == n1.as_str()
-                    {
-                        f1.clone()
-                    } else {
-                        f2.clone()
-                    };
+                    let winner =
+                        if crate::nominal::most_specific(n1.as_str(), n2.as_str()) == n1.as_str() {
+                            f1.clone()
+                        } else {
+                            f2.clone()
+                        };
                     self.union(ra, rb, Content::Structure(winner));
                     for (x, y) in pairs {
                         self.unify(x, y)?;
@@ -427,8 +426,8 @@ impl UnionFind {
                     // message is byte-identical — except when the two sides share
                     // a base, where the bare form would say the useless
                     // "`Shape` vs `Shape`" and the module is the whole point.
-                    let same_base = crate::nominal::base(n1.as_str())
-                        == crate::nominal::base(n2.as_str());
+                    let same_base =
+                        crate::nominal::base(n1.as_str()) == crate::nominal::base(n2.as_str());
                     let (d1, d2) = if same_base {
                         (
                             self.describe_flat_qualified(&f1, 0),

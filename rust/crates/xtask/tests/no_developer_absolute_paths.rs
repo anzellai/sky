@@ -48,7 +48,9 @@ fn is_scanned(p: &Path) -> bool {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -108,7 +110,9 @@ fn no_gate_script_hardcodes_a_developer_home_directory() {
 
     let mut offences = Vec::new();
     for f in &files {
-        let Ok(text) = fs::read_to_string(f) else { continue };
+        let Ok(text) = fs::read_to_string(f) else {
+            continue;
+        };
         for (i, line) in text.lines().enumerate() {
             if is_comment(line) {
                 continue;
@@ -150,12 +154,20 @@ fn the_scan_can_actually_fail() {
         developer_home("const ROOT = \"/home/jdoe/works/sky\";").as_deref(),
         Some("/home/jdoe"),
     );
-    assert_eq!(developer_home("  GOCACHE: /home/runner/work/sky/sky/.gocache"), None);
-    assert_eq!(developer_home("path.join(repoRoot, 'sky-out', 'sky')"), None);
+    assert_eq!(
+        developer_home("  GOCACHE: /home/runner/work/sky/sky/.gocache"),
+        None
+    );
+    assert_eq!(
+        developer_home("path.join(repoRoot, 'sky-out', 'sky')"),
+        None
+    );
     assert_eq!(developer_home("SKY=\"$ROOT/sky-out/sky\""), None);
     assert_eq!(developer_home("cd \"$HOME/.cargo\""), None);
     // A comment quoting the removed path stays legal — the fixes document
     // themselves that way.
-    assert!(is_comment("// used to be '/Users/anzel/.cargo/bin/release/sky'"));
+    assert!(is_comment(
+        "// used to be '/Users/anzel/.cargo/bin/release/sky'"
+    ));
     assert!(is_comment("# /Users/anzel/.cargo/bin"));
 }

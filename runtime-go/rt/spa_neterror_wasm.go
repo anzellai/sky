@@ -13,9 +13,9 @@ import "syscall/js"
 // it with zero app code (spaIsNetworkErr in spa_neterror.go decides when).
 
 var (
-	spaNetErrEl    js.Value  // the overlay element, created lazily and reused
-	spaNetErrBtnFn js.Func   // the Retry button's click listener (created once)
-	spaRetry       func()    // the pending retry action (re-run the failed perform)
+	spaNetErrEl    js.Value // the overlay element, created lazily and reused
+	spaNetErrBtnFn js.Func  // the Retry button's click listener (created once)
+	spaRetry       func()   // the pending retry action (re-run the failed perform)
 )
 
 // spaShowRetryOverlay displays the connection banner and arms Retry with `retry`.

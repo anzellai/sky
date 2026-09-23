@@ -20,7 +20,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
@@ -42,13 +45,21 @@ fn effect_families_are_populated_for_a_direct_kernel_branch() {
     // effect, so its families include both. This is the structured effect data
     // the `sky doc --diagram` journey/wire slices render per branch.
     let r = analyze();
-    let reload = r.branches.iter().find(|b| b.msg == "Reload").expect("no Reload branch");
+    let reload = r
+        .branches
+        .iter()
+        .find(|b| b.msg == "Reload")
+        .expect("no Reload branch");
     assert!(
         reload.effect_families.iter().any(|f| f == "File"),
         "Reload reaches File.readFile directly — effect_families must contain `File`; got {:?}",
         reload.effect_families
     );
-    let sync = r.branches.iter().find(|b| b.msg == "SyncCopy").expect("no SyncCopy branch");
+    let sync = r
+        .branches
+        .iter()
+        .find(|b| b.msg == "SyncCopy")
+        .expect("no SyncCopy branch");
     assert!(
         sync.effect_families.iter().any(|f| f == "File")
             && sync.effect_families.iter().any(|f| f == "Native"),
@@ -56,7 +67,11 @@ fn effect_families_are_populated_for_a_direct_kernel_branch() {
         sync.effect_families
     );
     // A branch that reaches no kernel directly has empty families.
-    if let Some(pure) = r.branches.iter().find(|b| !b.server && b.effect_families.is_empty()) {
+    if let Some(pure) = r
+        .branches
+        .iter()
+        .find(|b| !b.server && b.effect_families.is_empty())
+    {
         assert!(pure.effect_families.is_empty());
     }
 }
@@ -95,7 +110,11 @@ fn server_classified_continuation_via_helper_is_server_internal() {
         r.chaining_branches
     );
     // `Ship`'s response write-set must gain `note` (written by `Shipped`).
-    let ship = r.branches.iter().find(|b| b.msg == "Ship").expect("no Ship branch");
+    let ship = r
+        .branches
+        .iter()
+        .find(|b| b.msg == "Ship")
+        .expect("no Ship branch");
     let io = ship.io.as_ref().expect("Ship is a SERVER branch");
     assert!(
         io.write_fields.contains(&"note".to_string()) || io.writes_whole_model,
@@ -120,7 +139,9 @@ fn synced_and_copied_are_not_server_internal_failclosed() {
         );
     }
     assert!(
-        r.server_chain_warnings.iter().any(|w| w.contains("SyncCopy")),
+        r.server_chain_warnings
+            .iter()
+            .any(|w| w.contains("SyncCopy")),
         "the un-chained `SyncCopy` branch must emit a fail-closed warning; got {:?}",
         r.server_chain_warnings
     );
@@ -137,7 +158,10 @@ fn reload_writeset_gains_note_from_the_continuation() {
         .find(|b| b.msg == "Reload")
         .expect("no Reload branch");
     assert!(reload.server, "Reload reaches File -> SERVER");
-    let io = reload.io.as_ref().expect("Reload is a SERVER branch with I/O");
+    let io = reload
+        .io
+        .as_ref()
+        .expect("Reload is a SERVER branch with I/O");
     assert!(
         io.write_fields.contains(&"note".to_string()) || io.writes_whole_model,
         "`Reload`'s response write-set MUST gain `note` (written by the server-internal `Reloaded` \

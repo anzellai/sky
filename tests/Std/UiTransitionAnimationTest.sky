@@ -242,9 +242,10 @@ tests =
                                   , iterations = Animation.once
                                   , fillMode = Animation.forwards
                                   , respectReducedMotion = True
-                                  , keyframes = [ ( 0, [ Transform.opacity 0.0 ] )
-                                    , ( 100, [ Transform.opacity 1.0 ] )
-                                    ]
+                                  , keyframes =
+                                      [ ( 0, [ Transform.opacity 0.0 ] )
+                                      , ( 100, [ Transform.opacity 1.0 ] )
+                                      ]
                                   }
                             ]
                         entries = Ui.collectAnimations attrs

@@ -39,7 +39,15 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
     ),
     (
         "sky-stdlib/Std/Spa.sky",
-        &["app", "config", "route", "withRoutes", "withNotFound", "withOnNavigate", "withHead"],
+        &[
+            "app",
+            "config",
+            "route",
+            "withRoutes",
+            "withNotFound",
+            "withOnNavigate",
+            "withHead",
+        ],
     ),
     (
         "sky-stdlib/Std/Tui.sky",
@@ -55,11 +63,28 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
     ),
     (
         "sky-stdlib/Std/Db/Table.sky",
-        &["table", "primaryKey", "createTable", "all", "insert", "findBy", "enum", "codec"],
+        &[
+            "table",
+            "primaryKey",
+            "createTable",
+            "all",
+            "insert",
+            "findBy",
+            "enum",
+            "codec",
+        ],
     ),
     (
         "sky-stdlib/Std/Db/Store.sky",
-        &["fromCodec", "primaryKey", "create", "migrate", "insert", "all", "findBy"],
+        &[
+            "fromCodec",
+            "primaryKey",
+            "create",
+            "migrate",
+            "insert",
+            "all",
+            "findBy",
+        ],
     ),
     (
         "sky-stdlib/Std/Db/Migrate.sky",

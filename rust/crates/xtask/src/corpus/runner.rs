@@ -116,10 +116,7 @@ pub fn run_case(sky: &Path, dir: &Path, case: &GenCase) -> Verdict {
 
     // ---- build -----------------------------------------------------------
     let build = match run_bounded(
-        Command::new(sky)
-            .arg("build")
-            .arg(&entry)
-            .current_dir(dir),
+        Command::new(sky).arg("build").arg(&entry).current_dir(dir),
         CASE_BUDGET,
     ) {
         Ok(o) => o,
@@ -378,7 +375,9 @@ pub fn run_case_capture(sky: &Path, dir: &Path, case: &GenCase) -> Result<String
         .split('.')
         .collect::<PathBuf>()
         .with_extension("sky");
-    Ok(build_and_run(sky, dir, &src.join(entry_rel))?.trim().to_string())
+    Ok(build_and_run(sky, dir, &src.join(entry_rel))?
+        .trim()
+        .to_string())
 }
 
 /// Where generated case projects are materialised.
@@ -523,7 +522,10 @@ pub fn spike(root: &Path, n: usize) -> i32 {
 
     println!("CORPUS SPIKE — v2 §2.3 / §3.5 red-rate measurement");
     println!("  generated corpus (N_min) : {total}");
-    println!("  spike sample             : {} (stride {stride})", sample.len());
+    println!(
+        "  spike sample             : {} (stride {stride})",
+        sample.len()
+    );
     println!("  mode                     : build + RUN (value assertions)");
     println!("  workers                  : {}", workers());
     println!();
@@ -612,7 +614,10 @@ pub fn run_all(root: &Path) -> i32 {
 
     if !blocked_red.is_empty() {
         println!();
-        println!("  ---- {} BLOCKED (known product defect, still red) ----", blocked_red.len());
+        println!(
+            "  ---- {} BLOCKED (known product defect, still red) ----",
+            blocked_red.len()
+        );
         for (id, issue, expires) in &blocked_red {
             println!("  {id}");
             println!("      issue   {issue}");
@@ -621,7 +626,10 @@ pub fn run_all(root: &Path) -> i32 {
     }
     if !blocked_now_green.is_empty() {
         println!();
-        println!("  ---- {} BLOCKED case(s) NOW GREEN ----", blocked_now_green.len());
+        println!(
+            "  ---- {} BLOCKED case(s) NOW GREEN ----",
+            blocked_now_green.len()
+        );
         for (id, issue) in &blocked_now_green {
             println!("  {id}  [{issue}]");
         }
@@ -704,7 +712,10 @@ fn report(results: &[CaseResult], wall: Duration, total: usize) {
     }
 
     println!();
-    println!("  {:<24} {:>6} {:>6} {:>8}", "stratum", "cases", "red", "red %");
+    println!(
+        "  {:<24} {:>6} {:>6} {:>8}",
+        "stratum", "cases", "red", "red %"
+    );
     println!("  {}", "-".repeat(48));
     for (s, (n, red)) in &by_stratum {
         println!(

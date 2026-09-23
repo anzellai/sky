@@ -12,9 +12,9 @@ import (
 // sign-in credential-leak-via-GET (2026-09-11).
 func TestFormWithSubmitRendersMethodPost(t *testing.T) {
 	n := VNode{
-		Kind:  "element",
-		Tag:   "form",
-		SkyID: "r.1#form",
+		Kind:   "element",
+		Tag:    "form",
+		SkyID:  "r.1#form",
 		Events: map[string]any{"submit": "DoSignIn"},
 		Children: []VNode{
 			{Kind: "element", Tag: "input", SkyID: "r.1#form.0", Attrs: map[string]string{"type": "password", "name": "password"}},

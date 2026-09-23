@@ -134,10 +134,17 @@ pub fn state_dir_error(dir: &Path) -> Option<String> {
         ));
     }
     let s = dir.to_string_lossy().to_string();
-    let mut ephemeral: Vec<String> = ["/tmp", "/var/tmp", "/dev/shm", "/private/tmp", "/private/var/tmp", "/var/folders"]
-        .iter()
-        .map(|p| (*p).to_string())
-        .collect();
+    let mut ephemeral: Vec<String> = [
+        "/tmp",
+        "/var/tmp",
+        "/dev/shm",
+        "/private/tmp",
+        "/private/var/tmp",
+        "/var/folders",
+    ]
+    .iter()
+    .map(|p| (*p).to_string())
+    .collect();
     if let Some(t) = std::env::var_os("TMPDIR").filter(|t| !t.is_empty()) {
         ephemeral.push(t.to_string_lossy().trim_end_matches('/').to_string());
     }
@@ -207,11 +214,20 @@ pub struct HostFacts {
 /// touch and the OOM killer arrives instead of a slow query. The override is the
 /// documented way to state the budget this cluster actually has.
 pub fn detect_host() -> HostFacts {
-    let cpus = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(2);
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(2);
     let posix_fadvise = cfg!(target_os = "linux");
-    if let Some(mb) = std::env::var("SKY_PG_TUNE_MEM_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+    if let Some(mb) = std::env::var("SKY_PG_TUNE_MEM_MB")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    {
         if mb > 0 {
-            return HostFacts { mem_bytes: mb * 1024 * 1024, cpus, posix_fadvise };
+            return HostFacts {
+                mem_bytes: mb * 1024 * 1024,
+                cpus,
+                posix_fadvise,
+            };
         }
     }
     HostFacts {
@@ -223,7 +239,10 @@ pub fn detect_host() -> HostFacts {
 
 fn detect_mem_bytes() -> Option<u64> {
     if cfg!(target_os = "macos") {
-        let out = Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()?;
+        let out = Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()?;
         return String::from_utf8_lossy(&out.stdout).trim().parse().ok();
     }
     let text = std::fs::read_to_string("/proc/meminfo").ok()?;
@@ -243,7 +262,10 @@ pub struct Listen {
 
 impl Default for Listen {
     fn default() -> Self {
-        Listen { addr: None, port: DEFAULT_PORT }
+        Listen {
+            addr: None,
+            port: DEFAULT_PORT,
+        }
     }
 }
 
@@ -259,7 +281,12 @@ impl Default for Listen {
 /// journal and under launchd it is `StandardErrorPath`; turning the collector on
 /// would put the log somewhere neither service manager knows about, and
 /// `journalctl -u sky-postgres` would show nothing.
-pub fn tuning_block(h: &HostFacts, max_connections: u32, listen: &Listen, socket_dir: &Path) -> String {
+pub fn tuning_block(
+    h: &HostFacts,
+    max_connections: u32,
+    listen: &Listen,
+    socket_dir: &Path,
+) -> String {
     let mem_mb = h.mem_bytes / (1024 * 1024);
     let shared_buffers = (mem_mb / 4).clamp(128, 8192);
     let effective_cache = (mem_mb * 3 / 4).max(256);
@@ -388,8 +415,12 @@ pub fn pg_hba(superuser: &str, listen: &Listen) -> String {
              # scram-sha-256 there too — a shared cluster reachable from the network\n\
              # with a weaker method is the whole boundary gone.\n",
         );
-        s.push_str("host    all             all             127.0.0.1/32            scram-sha-256\n");
-        s.push_str("host    all             all             ::1/128                 scram-sha-256\n");
+        s.push_str(
+            "host    all             all             127.0.0.1/32            scram-sha-256\n",
+        );
+        s.push_str(
+            "host    all             all             ::1/128                 scram-sha-256\n",
+        );
     }
     s
 }
@@ -398,7 +429,15 @@ pub fn pg_hba(superuser: &str, listen: &Listen) -> String {
 
 /// Names sky will not provision, because taking them would collide with the
 /// cluster's own furniture.
-const RESERVED: &[&str] = &["postgres", "template0", "template1", "public", "sky", "root", "all"];
+const RESERVED: &[&str] = &[
+    "postgres",
+    "template0",
+    "template1",
+    "public",
+    "sky",
+    "root",
+    "all",
+];
 
 /// An app name has to be usable, unquoted, as a database name, a role name and a
 /// filename in the backup directory — so it is restricted rather than escaped.
@@ -411,7 +450,9 @@ pub fn validate_app_name(name: &str) -> Result<(), String> {
     let ok = !name.is_empty()
         && name.len() <= 48
         && name.starts_with(|c: char| c.is_ascii_lowercase())
-        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
     if !ok {
         return Err(format!(
             "sky db provision --shared --app: {name:?} is not a usable app name.\n\
@@ -499,11 +540,19 @@ pub fn generate_password() -> String {
 /// this is an address sky explicitly supports.
 pub fn app_dsn(app: &str, password: &str, socket_dir: &Path, listen: &Listen) -> String {
     match &listen.addr {
-        Some(addr) => format!("postgresql://{app}:{password}@{}:{}/{app}", uri_host(addr), listen.port),
+        Some(addr) => format!(
+            "postgresql://{app}:{password}@{}:{}/{app}",
+            uri_host(addr),
+            listen.port
+        ),
         None => format!(
             "postgresql://{app}:{password}@/{app}?host={}{}",
             socket_dir.display(),
-            if listen.port == DEFAULT_PORT { String::new() } else { format!("&port={}", listen.port) }
+            if listen.port == DEFAULT_PORT {
+                String::new()
+            } else {
+                format!("&port={}", listen.port)
+            }
         ),
     }
 }
@@ -631,7 +680,11 @@ pub fn app_regrant_sql(app: &str) -> Vec<String> {
 }
 
 pub fn rotate_sql(app: &str, password: &str) -> String {
-    format!("ALTER ROLE {} PASSWORD {}", quote_ident(app), quote_literal(password))
+    format!(
+        "ALTER ROLE {} PASSWORD {}",
+        quote_ident(app),
+        quote_literal(password)
+    )
 }
 
 // ---- service units -------------------------------------------------------
@@ -996,13 +1049,19 @@ fn plist_job(
          <plist version=\"1.0\">\n\
          <dict>\n",
     );
-    out.push_str(&format!("  <key>Label</key>\n  <string>{}</string>\n", xml_escape(label)));
+    out.push_str(&format!(
+        "  <key>Label</key>\n  <string>{}</string>\n",
+        xml_escape(label)
+    ));
     out.push_str("  <key>ProgramArguments</key>\n  <array>\n");
     for a in args {
         out.push_str(&format!("    <string>{}</string>\n", xml_escape(a)));
     }
     out.push_str("  </array>\n");
-    out.push_str(&format!("  <key>UserName</key>\n  <string>{}</string>\n", xml_escape(user)));
+    out.push_str(&format!(
+        "  <key>UserName</key>\n  <string>{}</string>\n",
+        xml_escape(user)
+    ));
     if let Some(l) = log {
         out.push_str(&format!(
             "  <key>StandardOutPath</key>\n  <string>{}</string>\n\
@@ -1020,7 +1079,9 @@ fn plist_job(
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// What the operator must run to install what was generated. Sky writes the unit
@@ -1129,7 +1190,8 @@ impl Default for Opts {
     }
 }
 
-pub const USAGE: &str = "usage: sky db provision --shared [--state-dir <dir>] [--service] [--backup]\n\
+pub const USAGE: &str =
+    "usage: sky db provision --shared [--state-dir <dir>] [--service] [--backup]\n\
      \x20                       [--start] [--listen <addr>] [--port <n>]\n\
      \x20                       [--max-connections <n>] [--backup-keep <days>]\n\
      \x20                       [--backup-at <HH:MM>] [--dry-run]\n\
@@ -1167,9 +1229,13 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
             "--start" => o.start = true,
             "--dry-run" => o.dry_run = true,
             "--rotate-password" => o.rotate = true,
-            "--state-dir" => o.state_dir = Some(PathBuf::from(it.next().ok_or("--state-dir needs a path")?)),
+            "--state-dir" => {
+                o.state_dir = Some(PathBuf::from(it.next().ok_or("--state-dir needs a path")?))
+            }
             "--app" => o.app = Some(it.next().ok_or("--app needs a name")?.clone()),
-            "--listen" => o.listen.addr = Some(it.next().ok_or("--listen needs an address")?.clone()),
+            "--listen" => {
+                o.listen.addr = Some(it.next().ok_or("--listen needs an address")?.clone())
+            }
             "--port" => {
                 o.listen.port = it
                     .next()
@@ -1249,9 +1315,15 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
 }
 
 fn parse_hh_mm(v: &str) -> Result<(u32, u32), String> {
-    let (h, m) = v.split_once(':').ok_or_else(|| format!("--backup-at wants HH:MM, got {v:?}"))?;
-    let h: u32 = h.parse().map_err(|_| format!("--backup-at wants HH:MM, got {v:?}"))?;
-    let m: u32 = m.parse().map_err(|_| format!("--backup-at wants HH:MM, got {v:?}"))?;
+    let (h, m) = v
+        .split_once(':')
+        .ok_or_else(|| format!("--backup-at wants HH:MM, got {v:?}"))?;
+    let h: u32 = h
+        .parse()
+        .map_err(|_| format!("--backup-at wants HH:MM, got {v:?}"))?;
+    let m: u32 = m
+        .parse()
+        .map_err(|_| format!("--backup-at wants HH:MM, got {v:?}"))?;
     if h > 23 || m > 59 {
         return Err(format!("--backup-at is out of range: {v:?}"));
     }
@@ -1293,10 +1365,9 @@ pub fn cmd_shared(args: &[String]) -> ExitCode {
 fn os_user() -> Result<String, String> {
     static USER: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
     USER.get_or_init(|| {
-        let out = Command::new("id")
-            .arg("-un")
-            .output()
-            .map_err(|e| format!("sky db provision --shared: cannot determine the current user: {e}"))?;
+        let out = Command::new("id").arg("-un").output().map_err(|e| {
+            format!("sky db provision --shared: cannot determine the current user: {e}")
+        })?;
         let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if name.is_empty() {
             return Err("sky db provision --shared: `id -un` returned nothing".into());
@@ -1311,14 +1382,12 @@ fn refuse_root() -> Result<(), String> {
         return Ok(());
     };
     if String::from_utf8_lossy(&out.stdout).trim() == "0" {
-        return Err(
-            "sky db provision --shared: refusing to run as root.\n\
+        return Err("sky db provision --shared: refusing to run as root.\n\
              initdb refuses too, and for the same reason: the data directory would be\n\
              owned by root and the service would run the postmaster as somebody else.\n\
              Run this as the account the cluster will run as, e.g.\n\
              \x20 sudo -u postgres sky db provision --shared"
-                .into(),
-        );
+            .into());
     }
     Ok(())
 }
@@ -1345,7 +1414,12 @@ fn spec_for(layout: &Layout, bins: &PgBins, user: &str, o: &Opts) -> ServiceSpec
 }
 
 fn mkdir(path: &Path, mode: u32) -> Result<(), String> {
-    std::fs::create_dir_all(path).map_err(|e| format!("sky db provision --shared: cannot create {}: {e}", path.display()))?;
+    std::fs::create_dir_all(path).map_err(|e| {
+        format!(
+            "sky db provision --shared: cannot create {}: {e}",
+            path.display()
+        )
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1355,8 +1429,12 @@ fn mkdir(path: &Path, mode: u32) -> Result<(), String> {
 }
 
 fn write_file(path: &Path, contents: &str, mode: u32) -> Result<(), String> {
-    std::fs::write(path, contents)
-        .map_err(|e| format!("sky db provision --shared: cannot write {}: {e}", path.display()))?;
+    std::fs::write(path, contents).map_err(|e| {
+        format!(
+            "sky db provision --shared: cannot write {}: {e}",
+            path.display()
+        )
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1366,7 +1444,10 @@ fn write_file(path: &Path, contents: &str, mode: u32) -> Result<(), String> {
 }
 
 fn cluster_running(layout: &Layout) -> bool {
-    matches!(db_cluster::probe_data_dir(&layout.data_dir), db_cluster::Liveness::Running(_))
+    matches!(
+        db_cluster::probe_data_dir(&layout.data_dir),
+        db_cluster::Liveness::Running(_)
+    )
 }
 
 /// Start the postmaster through `pg_ctl`, with the same shell-safety refusal the
@@ -1374,7 +1455,9 @@ fn cluster_running(layout: &Layout) -> bool {
 /// a single string it hands to `/bin/sh -c`.
 fn start_postmaster(bins: &PgBins, layout: &Layout) -> Result<(), String> {
     let log = layout.log_file();
-    if let Some(msg) = db_cluster::pg_ctl_shell_safety_error(&layout.data_dir, &log, &layout.socket_dir) {
+    if let Some(msg) =
+        db_cluster::pg_ctl_shell_safety_error(&layout.data_dir, &log, &layout.socket_dir)
+    {
         return Err(msg);
     }
     let out = Command::new(bins.tool("pg_ctl"))
@@ -1392,12 +1475,25 @@ fn start_postmaster(bins: &PgBins, layout: &Layout) -> Result<(), String> {
             String::from_utf8_lossy(&out.stdout)
         );
         let tail = std::fs::read_to_string(&log)
-            .map(|t| t.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"))
+            .map(|t| {
+                t.lines()
+                    .rev()
+                    .take(20)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
             .unwrap_or_default();
         return Err(format!(
             "sky db provision --shared: the cluster did not start:\n{}\n{}",
             stderr.trim(),
-            if tail.is_empty() { String::new() } else { format!("--- {} ---\n{tail}", log.display()) }
+            if tail.is_empty() {
+                String::new()
+            } else {
+                format!("--- {} ---\n{tail}", log.display())
+            }
         ));
     }
     Ok(())
@@ -1460,10 +1556,18 @@ impl Drop for TempStart<'_> {
 
 fn ensure_running<'a>(bins: &'a PgBins, layout: &'a Layout) -> Result<TempStart<'a>, String> {
     if cluster_running(layout) {
-        return Ok(TempStart { bins, layout, started_here: false });
+        return Ok(TempStart {
+            bins,
+            layout,
+            started_here: false,
+        });
     }
     start_postmaster(bins, layout)?;
-    Ok(TempStart { bins, layout, started_here: true })
+    Ok(TempStart {
+        bins,
+        layout,
+        started_here: true,
+    })
 }
 
 /// Ask the cluster, BY ATTEMPT, whether it authenticates app roles at all.
@@ -1549,7 +1653,9 @@ pub fn conf_setting(conf: &str, key: &str) -> Option<String> {
     let mut found = None;
     for line in conf.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         if k.trim() != key {
             continue;
         }
@@ -1567,7 +1673,9 @@ pub fn conf_setting(conf: &str, key: &str) -> Option<String> {
 /// appearance of success. The cluster's own `postgresql.conf` is the authority.
 fn effective_listen(layout: &Layout) -> Listen {
     let conf = std::fs::read_to_string(layout.data_dir.join("postgresql.conf")).unwrap_or_default();
-    let port = conf_setting(&conf, "port").and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT);
+    let port = conf_setting(&conf, "port")
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
     let addr = conf_setting(&conf, "listen_addresses")
         .filter(|a| !a.is_empty())
         // `*`, `0.0.0.0` and `::` say what the SERVER binds; none is an address a
@@ -1619,11 +1727,18 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
             s.push_str(&format!("\n--- {} unit ---\n", Platform::host().name()));
             s.push_str(&match Platform::host() {
                 Platform::Systemd => systemd_service(&spec),
-                Platform::Launchd => format!("{}\n--- wrapper ---\n{}", launchd_plist(&spec), launchd_wrapper(&spec)),
+                Platform::Launchd => format!(
+                    "{}\n--- wrapper ---\n{}",
+                    launchd_plist(&spec),
+                    launchd_wrapper(&spec)
+                ),
             });
         }
         if o.backup {
-            s.push_str(&format!("\n--- backup script ---\n{}", backup_script(&spec)));
+            s.push_str(&format!(
+                "\n--- backup script ---\n{}",
+                backup_script(&spec)
+            ));
         }
         return Ok(s);
     }
@@ -1643,8 +1758,9 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
     if initialised {
         let text = std::fs::read_to_string(layout.data_dir.join("PG_VERSION"))
             .map_err(|e| format!("sky db provision --shared: cannot read PG_VERSION: {e}"))?;
-        let dir_major = db_cluster::parse_pg_version_file(&text)
-            .ok_or_else(|| format!("sky db provision --shared: PG_VERSION is not a version ({text:?})"))?;
+        let dir_major = db_cluster::parse_pg_version_file(&text).ok_or_else(|| {
+            format!("sky db provision --shared: PG_VERSION is not a version ({text:?})")
+        })?;
         if dir_major != bins.major {
             return Err(db_cluster::version_mismatch_message(
                 &layout.data_dir,
@@ -1654,7 +1770,11 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
             ));
         }
     } else {
-        if layout.data_dir.exists() && std::fs::read_dir(&layout.data_dir).map(|mut r| r.next().is_some()).unwrap_or(false) {
+        if layout.data_dir.exists()
+            && std::fs::read_dir(&layout.data_dir)
+                .map(|mut r| r.next().is_some())
+                .unwrap_or(false)
+        {
             return Err(format!(
                 "sky db provision --shared: {} exists but is not a PostgreSQL data directory\n\
                  (no PG_VERSION). A previous initdb probably failed part-way; remove it and retry.",
@@ -1665,8 +1785,12 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
     }
 
     let conf_path = layout.data_dir.join("postgresql.conf");
-    let existing = std::fs::read_to_string(&conf_path)
-        .map_err(|e| format!("sky db provision --shared: cannot read {}: {e}", conf_path.display()))?;
+    let existing = std::fs::read_to_string(&conf_path).map_err(|e| {
+        format!(
+            "sky db provision --shared: cannot read {}: {e}",
+            conf_path.display()
+        )
+    })?;
     let tuned = apply_managed_block(&existing, &conf_block);
     let conf_changed = tuned != existing;
     write_file(&conf_path, &tuned, 0o600)?;
@@ -1733,14 +1857,26 @@ fn provision_cluster(o: &Opts) -> Result<String, String> {
         mkdir(&layout.service_dir, 0o755)?;
         match Platform::host() {
             Platform::Systemd => {
-                write_file(&layout.service_dir.join("sky-postgres.service"), &systemd_service(&spec), 0o644)?;
+                write_file(
+                    &layout.service_dir.join("sky-postgres.service"),
+                    &systemd_service(&spec),
+                    0o644,
+                )?;
             }
             Platform::Launchd => {
                 write_file(&spec.wrapper_path(), &launchd_wrapper(&spec), 0o755)?;
-                write_file(&layout.service_dir.join("org.sky.postgres.plist"), &launchd_plist(&spec), 0o644)?;
+                write_file(
+                    &layout.service_dir.join("org.sky.postgres.plist"),
+                    &launchd_plist(&spec),
+                    0o644,
+                )?;
             }
         }
-        out.push_str(&format!(" service: {} unit in {}\n", Platform::host().name(), layout.service_dir.display()));
+        out.push_str(&format!(
+            " service: {} unit in {}\n",
+            Platform::host().name(),
+            layout.service_dir.display()
+        ));
     }
     if o.backup {
         mkdir(&layout.service_dir, 0o755)?;
@@ -1824,7 +1960,11 @@ fn configuration_paths_agree(theirs: &str, ours: &Path) -> bool {
     }
 }
 
-fn verify_the_server_reads_skys_files(layout: &Layout, port: u16, superuser: &str) -> Result<(), String> {
+fn verify_the_server_reads_skys_files(
+    layout: &Layout,
+    port: u16,
+    superuser: &str,
+) -> Result<(), String> {
     let mut c = admin_conn(layout, port, superuser, "postgres")?;
     for (setting, ours) in [
         ("hba_file", layout.data_dir.join("pg_hba.conf")),
@@ -1894,7 +2034,11 @@ fn reload_hba(layout: &Layout, port: u16, superuser: &str) -> Result<(), String>
         // `pg_hba_file_rules` arrived in PostgreSQL 10. On anything older the
         // load-time proof below still stands on its own.
         Err(e) if e.sqlstate() == Some("42P01") => {}
-        Err(e) => return Err(format!("sky db provision --shared: cannot read pg_hba_file_rules: {e}")),
+        Err(e) => {
+            return Err(format!(
+                "sky db provision --shared: cannot read pg_hba_file_rules: {e}"
+            ))
+        }
     }
 
     c.scalar("SELECT pg_reload_conf()")
@@ -1910,7 +2054,9 @@ fn reload_hba(layout: &Layout, port: u16, superuser: &str) -> Result<(), String>
                 "SELECT pg_conf_load_time() > {}::timestamptz",
                 quote_literal(&before)
             ))
-            .map_err(|e| format!("sky db provision --shared: cannot read pg_conf_load_time: {e}"))?;
+            .map_err(|e| {
+                format!("sky db provision --shared: cannot read pg_conf_load_time: {e}")
+            })?;
         if took.as_deref() == Some("t") {
             return Ok(());
         }
@@ -2029,11 +2175,17 @@ fn provision_app_inner(
 ) -> Result<String, String> {
     let mut c = admin_conn(layout, listen.port, user, "postgres")?;
     let role_exists = c
-        .scalar(&format!("SELECT 1 FROM pg_roles WHERE rolname = {}", quote_literal(app)))
+        .scalar(&format!(
+            "SELECT 1 FROM pg_roles WHERE rolname = {}",
+            quote_literal(app)
+        ))
         .map_err(|e| format!("sky db provision --shared: cannot read pg_roles: {e}"))?
         .is_some();
     let db_exists = c
-        .scalar(&format!("SELECT 1 FROM pg_database WHERE datname = {}", quote_literal(app)))
+        .scalar(&format!(
+            "SELECT 1 FROM pg_database WHERE datname = {}",
+            quote_literal(app)
+        ))
         .map_err(|e| format!("sky db provision --shared: cannot read pg_database: {e}"))?
         .is_some();
 
@@ -2072,14 +2224,16 @@ fn provision_app_inner(
             // The role predates this run and its password is not knowable, so the
             // one that was just generated is put in place — otherwise the DSN
             // printed below would be wrong.
-            c.execute(&rotate_sql(app, &pw))
-                .map_err(|e| format!("sky db provision --shared --app {app}: cannot set the password: {e}"))?;
+            c.execute(&rotate_sql(app, &pw)).map_err(|e| {
+                format!("sky db provision --shared --app {app}: cannot set the password: {e}")
+            })?;
         }
         password = Some(pw);
     } else if o.rotate {
         let pw = generate_password();
-        c.execute(&rotate_sql(app, &pw))
-            .map_err(|e| format!("sky db provision --shared --app {app}: cannot rotate the password: {e}"))?;
+        c.execute(&rotate_sql(app, &pw)).map_err(|e| {
+            format!("sky db provision --shared --app {app}: cannot rotate the password: {e}")
+        })?;
         password = Some(pw);
     }
 
@@ -2094,8 +2248,9 @@ fn provision_app_inner(
     }
     let mut appc = admin_conn(layout, listen.port, user, app)?;
     for stmt in app_database_sql(app) {
-        appc.execute(&stmt)
-            .map_err(|e| format!("sky db provision --shared --app {app}: `{stmt}` failed in {app}: {e}"))?;
+        appc.execute(&stmt).map_err(|e| {
+            format!("sky db provision --shared --app {app}: `{stmt}` failed in {app}: {e}")
+        })?;
     }
     record_app(layout, app)?;
 
@@ -2193,7 +2348,9 @@ fn refuse_a_role_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> R
              FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid \
              WHERE m.member = {lit}::regrole"
         ))
-        .map_err(|e| format!("sky db provision --shared --app {app}: cannot read pg_auth_members: {e}"))?
+        .map_err(|e| {
+            format!("sky db provision --shared --app {app}: cannot read pg_auth_members: {e}")
+        })?
         .filter(|s| !s.is_empty());
     if let Some(roles) = granted {
         return Err(format!(
@@ -2217,7 +2374,9 @@ fn refuse_a_role_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> R
              AND shobj_description(oid, 'pg_authid') = {}",
             quote_literal(ROLE_MARKER)
         ))
-        .map_err(|e| format!("sky db provision --shared --app {app}: cannot read the role's comment: {e}"))?
+        .map_err(|e| {
+            format!("sky db provision --shared --app {app}: cannot read the role's comment: {e}")
+        })?
         .is_some();
     if !owned_by_sky && !recorded_in_apps_file(layout, app) {
         return Err(format!(
@@ -2262,7 +2421,11 @@ fn refuse_a_role_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> R
 /// as well so a cluster provisioned before the marker existed still converges.
 /// There is deliberately no attribute half here — a database has no `rolsuper`
 /// analogue, and "did sky create it" is the whole question.
-fn refuse_a_database_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) -> Result<(), String> {
+fn refuse_a_database_sky_does_not_own(
+    c: &mut Conn,
+    layout: &Layout,
+    app: &str,
+) -> Result<(), String> {
     let lit = quote_literal(app);
     let owned_by_sky = c
         .scalar(&format!(
@@ -2270,7 +2433,11 @@ fn refuse_a_database_sky_does_not_own(c: &mut Conn, layout: &Layout, app: &str) 
              AND shobj_description(oid, 'pg_database') = {}",
             quote_literal(DB_MARKER)
         ))
-        .map_err(|e| format!("sky db provision --shared --app {app}: cannot read the database's comment: {e}"))?
+        .map_err(|e| {
+            format!(
+                "sky db provision --shared --app {app}: cannot read the database's comment: {e}"
+            )
+        })?
         .is_some();
     if owned_by_sky || recorded_in_apps_file(layout, app) {
         return Ok(());

@@ -192,8 +192,6 @@ findByConditions =
 -- Use `findOneByField` / `findManyByField` / `findByConditions` (parameterised,
 -- with table and column names validated), or `unsafeFindWhere` when you
 -- genuinely need a raw clause and can carry the injection risk knowingly.
-
-
 -- | `unsafeFindWhere db table whereClause params` — raw `WHERE`
 -- with parameterised args.  The `whereClause` is appended
 -- verbatim to the SELECT — vulnerable to injection if built from

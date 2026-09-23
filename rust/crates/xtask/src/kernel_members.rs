@@ -326,7 +326,10 @@ fn compute(repo_root: &Path) -> Report {
                         .filter(|f| !candidates.contains(*f) || !is_real(m, f))
                         .cloned()
                         .collect();
-                    msg += &format!("\n      REMOVE (phantom, no runtime symbol): {}", extra.join(", "));
+                    msg += &format!(
+                        "\n      REMOVE (phantom, no runtime symbol): {}",
+                        extra.join(", ")
+                    );
                     let _ = phantoms;
                 }
                 failures.push(msg);

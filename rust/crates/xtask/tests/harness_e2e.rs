@@ -87,7 +87,8 @@ fn alive_as(pid: u32, comm: &str) -> bool {
 /// thread-based runner cannot do at all.
 #[test]
 fn a_hung_gate_is_killed_at_its_budget_and_takes_its_grandchild_with_it() {
-    let pidfile = std::env::temp_dir().join(format!("sky-harness-hang-{}.pids", std::process::id()));
+    let pidfile =
+        std::env::temp_dir().join(format!("sky-harness-hang-{}.pids", std::process::id()));
     let _ = std::fs::remove_file(&pidfile);
 
     let started = Instant::now();

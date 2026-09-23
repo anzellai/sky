@@ -401,7 +401,10 @@ fn battery(key: &str, access: &str) -> Vec<Check> {
         bo(&["Dict.member"], &c.member(k0, d), true),
         ms(
             &["Dict.insert", "Dict.get"],
-            &c.get(k0, &format!("({})", c.insert(k0, &format!("\"{INSERTED}\""), d))),
+            &c.get(
+                k0,
+                &format!("({})", c.insert(k0, &format!("\"{INSERTED}\""), d)),
+            ),
             Some(INSERTED),
         ),
         i(
@@ -449,7 +452,10 @@ fn battery(key: &str, access: &str) -> Vec<Check> {
                     "({})",
                     c.union(
                         &format!("({})", c.from_list(&format!("[ ( {k0}, \"L\" ) ]"))),
-                        &format!("({})", c.from_list(&format!("[ ( {k0}, \"R\" ), ( {k1}, \"S\" ) ]")))
+                        &format!(
+                            "({})",
+                            c.from_list(&format!("[ ( {k0}, \"R\" ), ( {k1}, \"S\" ) ]"))
+                        )
                     )
                 ),
             ),

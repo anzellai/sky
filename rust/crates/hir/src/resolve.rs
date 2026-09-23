@@ -349,9 +349,7 @@ fn settle_one(origins: &[Origin]) -> Option<Settled> {
     match distinct.len() {
         0 => None,
         1 => Some(Settled::Winner(distinct[0].res.clone())),
-        _ => Some(Settled::Ambiguous(
-            distinct.into_iter().cloned().collect(),
-        )),
+        _ => Some(Settled::Ambiguous(distinct.into_iter().cloned().collect())),
     }
 }
 
@@ -575,7 +573,10 @@ impl<'a> Resolver<'a> {
     /// revisits names with more than one origin.
     fn bind_var(&mut self, name: String, res: Res, layer: BindLayer) {
         let origin = self.origin_of(layer, res_key(&res), res.clone());
-        self.var_origins.entry(name.clone()).or_default().push(origin);
+        self.var_origins
+            .entry(name.clone())
+            .or_default()
+            .push(origin);
         self.vars.insert(name, res);
     }
 
@@ -867,13 +868,13 @@ impl<'a> Resolver<'a> {
             return;
         }
         if let Some(sp) = span {
-            if !self.reported_ambiguous.insert((name.to_string(), sp.range.0)) {
+            if !self
+                .reported_ambiguous
+                .insert((name.to_string(), sp.range.0))
+            {
                 return;
             }
-        } else if !self
-            .reported_ambiguous
-            .insert((name.to_string(), u32::MAX))
-        {
+        } else if !self.reported_ambiguous.insert((name.to_string(), u32::MAX)) {
             return;
         }
         let mods: Vec<String> = cands.iter().map(|(m, _)| format!("`{m}`")).collect();
@@ -1056,9 +1057,7 @@ impl<'a> Resolver<'a> {
         // must actually fix rather than a use site far below it.
         if let ImportSource::Foreign(pkg) = &source {
             if crate::kernel::is_reserved_sky_namespace(pkg) && self.quiet == 0 {
-                let span = imp
-                    .name()
-                    .map(|n| self.span_of(n.syntax().text_range()));
+                let span = imp.name().map(|n| self.span_of(n.syntax().text_range()));
                 let mut diag = Diagnostic::error(
                     "E1001",
                     format!(
@@ -1283,7 +1282,8 @@ impl<'a> Resolver<'a> {
                             TypeRes { con: def, arity },
                             TypeKey::Id(format!("def:{}", def.0)),
                         )
-                    } else if let Some((def, arity)) = self.chase_reexported_type(exports.module, name)
+                    } else if let Some((def, arity)) =
+                        self.chase_reexported_type(exports.module, name)
                     {
                         (
                             TypeRes { con: def, arity },
@@ -1952,14 +1952,10 @@ impl<'a> Resolver<'a> {
                     .children_with_tokens()
                     .filter_map(|e| e.into_token())
                     .take_while(|t| t.kind() != SyntaxKind::Pipe)
-                    .filter(|t| {
-                        matches!(t.kind(), SyntaxKind::UpperIdent | SyntaxKind::LowerIdent)
-                    })
+                    .filter(|t| matches!(t.kind(), SyntaxKind::UpperIdent | SyntaxKind::LowerIdent))
                     .collect();
                 let span = Some(self.span_of(ru.syntax().text_range()));
-                let has_qual = base_toks
-                    .iter()
-                    .any(|t| t.kind() == SyntaxKind::UpperIdent);
+                let has_qual = base_toks.iter().any(|t| t.kind() == SyntaxKind::UpperIdent);
                 let res = if has_qual {
                     let names: Vec<String> =
                         base_toks.iter().map(|t| t.text().to_string()).collect();
@@ -2994,7 +2990,11 @@ impl<'a> Resolver<'a> {
             if !has_surface {
                 return None; // lenient wildcard pseudo — leave resolution alone
             }
-            if self.qual_ctors.get(qual).is_some_and(|m| m.contains_key(name)) {
+            if self
+                .qual_ctors
+                .get(qual)
+                .is_some_and(|m| m.contains_key(name))
+            {
                 return None; // a type/ctor of the module, resolved elsewhere
             }
             if self.quiet == 0 {

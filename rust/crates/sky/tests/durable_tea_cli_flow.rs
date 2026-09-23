@@ -121,7 +121,10 @@ fn durable_cli_model_survives_a_restart_with_zero_annotation() {
         "durable-cli-counter should build:\n{build_log}"
     );
     let app = dir.join(".skyapp/terminal-cli/sky-out/app");
-    assert!(app.exists(), "expected built binary at {app:?}\n{build_log}");
+    assert!(
+        app.exists(),
+        "expected built binary at {app:?}\n{build_log}"
+    );
 
     // Run 1 — two bumps. Fresh db.
     let run1 = run_binary(&app, &dir, "x\nx\n");

@@ -195,9 +195,9 @@ type session struct {
 	hidSuffix string
 	hidCtxRe  *regexp.Regexp
 	sid       string
-	csrf    string
-	tab     string
-	handler string // a real data-sky-hid scraped from the served HTML
+	csrf      string
+	tab       string
+	handler   string // a real data-sky-hid scraped from the served HTML
 
 	sseCancel context.CancelFunc
 	sseFrames atomic.Int64 // frames seen on the stream (liveness evidence)

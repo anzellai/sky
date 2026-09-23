@@ -518,11 +518,15 @@ pub fn inventory(
                 .map_err(|e| format!("no api/symbols.json: {e}"))
         });
     let _ = std::fs::remove_dir_all(&tmp);
-    let json: serde_json::Value = serde_json::from_str(&manifest?)
-        .map_err(|e| format!("symbols.json is not JSON: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&manifest?).map_err(|e| format!("symbols.json is not JSON: {e}"))?;
     let mut inventory: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
         Default::default();
-    for e in json["entries"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+    for e in json["entries"]
+        .as_array()
+        .map(|a| a.as_slice())
+        .unwrap_or(&[])
+    {
         let (m, n) = (
             e["module"].as_str().unwrap_or_default(),
             e["name"].as_str().unwrap_or_default(),
@@ -920,21 +924,16 @@ pub fn report(root: &std::path::Path) -> i32 {
     let mut k_pub = 0usize;
     let mut k_gaps: Vec<(String, Vec<String>)> = Vec::new();
     println!();
-    println!(
-        "KERNEL pseudo-modules (hir::KERNEL_FUNCTIONS) — a SEPARATE denominator."
-    );
-    println!(
-        "  These members are reachable in every Sky program and appear in NO"
-    );
-    println!(
-        "  `api/symbols.json` entry: that manifest is built from `sky-stdlib/**.sky`"
-    );
-    println!(
-        "  `exposing` lists alone. Reported here so the count is stated rather than"
-    );
+    println!("KERNEL pseudo-modules (hir::KERNEL_FUNCTIONS) — a SEPARATE denominator.");
+    println!("  These members are reachable in every Sky program and appear in NO");
+    println!("  `api/symbols.json` entry: that manifest is built from `sky-stdlib/**.sky`");
+    println!("  `exposing` lists alone. Reported here so the count is stated rather than");
     println!("  silently dropped. NOT added to the stdlib totals above.");
     println!();
-    println!("  {:<26} {:>9} {:>9} {:>7}", "pseudo-module", "asserted", "advertised", "%");
+    println!(
+        "  {:<26} {:>9} {:>9} {:>7}",
+        "pseudo-module", "asserted", "advertised", "%"
+    );
     println!("  {}", "-".repeat(56));
     for (pseudo, members) in &kernel {
         let key = format!("kernel:{pseudo}");
@@ -974,7 +973,9 @@ pub fn report(root: &std::path::Path) -> i32 {
     );
     if !k_gaps.is_empty() {
         println!();
-        println!("  ---- kernel members with no Family-S assertion, in a pseudo-module we touch ----");
+        println!(
+            "  ---- kernel members with no Family-S assertion, in a pseudo-module we touch ----"
+        );
         for (m, missing) in &k_gaps {
             println!("  {m} ({}):", missing.len());
             println!("      {}", missing.join(", "));
@@ -1060,7 +1061,10 @@ mod ratchet_tests {
             inv.len()
         );
         for (m, _) in super::ITEM3_ASSERTED_COUNTS {
-            assert!(inv.contains_key(*m), "item-3 module `{m}` is not in the inventory");
+            assert!(
+                inv.contains_key(*m),
+                "item-3 module `{m}` is not in the inventory"
+            );
         }
     }
 
@@ -1068,10 +1072,15 @@ mod ratchet_tests {
     #[test]
     fn losing_a_module_is_caught() {
         let mut a = live();
-        assert!(a.remove("Std.Markdown").is_some(), "Std.Markdown must start asserted");
+        assert!(
+            a.remove("Std.Markdown").is_some(),
+            "Std.Markdown must start asserted"
+        );
         let fails = super::check_pins(&a, 87);
         assert!(
-            fails.iter().any(|f| f.contains("REGRESSION") && f.contains("Std.Markdown")),
+            fails
+                .iter()
+                .any(|f| f.contains("REGRESSION") && f.contains("Std.Markdown")),
             "a module that went dark must be reported, got: {fails:?}"
         );
     }
@@ -1084,7 +1093,9 @@ mod ratchet_tests {
         a.insert("Std.Email".to_string(), 3);
         let fails = super::check_pins(&a, 87);
         assert!(
-            fails.iter().any(|f| f.contains("STALE PIN") && f.contains("Std.Email")),
+            fails
+                .iter()
+                .any(|f| f.contains("STALE PIN") && f.contains("Std.Email")),
             "a newly covered module must demand its row, got: {fails:?}"
         );
     }
@@ -1097,7 +1108,10 @@ mod ratchet_tests {
         // real inventory so this arm does not rot when a module is added (adding
         // `Sky.Config` moved the total 87 → 88, which is exactly the ceiling
         // bump this arm must stay one ahead of).
-        let one_more = super::inventory(&repo_root()).expect("stdlib inventory").len() + 1;
+        let one_more = super::inventory(&repo_root())
+            .expect("stdlib inventory")
+            .len()
+            + 1;
         let fails = super::check_pins(&a, one_more);
         assert!(
             fails.iter().any(|f| f.contains("dark to Family S")),
@@ -1114,7 +1128,9 @@ mod ratchet_tests {
         a.insert("Std.Codec".to_string(), 1);
         let fails = super::check_pins(&a, 87);
         assert!(
-            fails.iter().any(|f| f.contains("ITEM-3 MODULE") && f.contains("Std.Codec")),
+            fails
+                .iter()
+                .any(|f| f.contains("ITEM-3 MODULE") && f.contains("Std.Codec")),
             "an item-3 module down to one assertion must be reported, got: {fails:?}"
         );
     }
@@ -1182,7 +1198,11 @@ fn bytes_battery(edge: &str) -> Vec<Check> {
             ms(&["Bytes.fromHex"], "Bytes.fromHex \"616263\"", Some("abc")),
             // RFC 4648 §4: "Hello" is SGVsbG8= — five bytes, one pad char.
             s(&["Bytes.toBase64"], "Bytes.toBase64 \"Hello\"", "SGVsbG8="),
-            ms(&["Bytes.fromBase64"], "Bytes.fromBase64 \"SGVsbG8=\"", Some("Hello")),
+            ms(
+                &["Bytes.fromBase64"],
+                "Bytes.fromBase64 \"SGVsbG8=\"",
+                Some("Hello"),
+            ),
             s(&["Bytes.append"], "Bytes.append \"a\" \"b\"", "ab"),
             // End-exclusive, byte-indexed.
             s(&["Bytes.slice"], "Bytes.slice 1 3 \"abcd\"", "bc"),
@@ -1198,13 +1218,33 @@ fn bytes_battery(edge: &str) -> Vec<Check> {
             ),
         ],
         "empty" => vec![
-            i(&["Bytes.length", "Bytes.empty"], "Bytes.length Bytes.empty", 0),
-            bo(&["Bytes.isEmpty", "Bytes.empty"], "Bytes.isEmpty Bytes.empty", true),
-            s(&["Bytes.toHex", "Bytes.empty"], "Bytes.toHex Bytes.empty", ""),
-            s(&["Bytes.toBase64", "Bytes.empty"], "Bytes.toBase64 Bytes.empty", ""),
+            i(
+                &["Bytes.length", "Bytes.empty"],
+                "Bytes.length Bytes.empty",
+                0,
+            ),
+            bo(
+                &["Bytes.isEmpty", "Bytes.empty"],
+                "Bytes.isEmpty Bytes.empty",
+                true,
+            ),
+            s(
+                &["Bytes.toHex", "Bytes.empty"],
+                "Bytes.toHex Bytes.empty",
+                "",
+            ),
+            s(
+                &["Bytes.toBase64", "Bytes.empty"],
+                "Bytes.toBase64 Bytes.empty",
+                "",
+            ),
             ms(&["Bytes.fromHex"], "Bytes.fromHex \"\"", Some("")),
             ms(&["Bytes.fromBase64"], "Bytes.fromBase64 \"\"", Some("")),
-            s(&["Bytes.append", "Bytes.empty"], "Bytes.append Bytes.empty \"a\"", "a"),
+            s(
+                &["Bytes.append", "Bytes.empty"],
+                "Bytes.append Bytes.empty \"a\"",
+                "a",
+            ),
         ],
         "boundary" => vec![
             // Negative indices count from the end (the docstring's promise).
@@ -1232,8 +1272,16 @@ fn bytes_battery(edge: &str) -> Vec<Check> {
             s(&["Bytes.toHex"], "Bytes.toHex \"世\"", "e4b896"),
             // Slicing on BYTE indices lands exactly on the first code point,
             // which `String.slice 0 3` would not.
-            ms(&["Bytes.slice", "Bytes.toString"], "Bytes.toString (Bytes.slice 0 3 \"世界\")", Some("世")),
-            i(&["Bytes.length", "Bytes.fromString"], "Bytes.length (Bytes.fromString \"🎉\")", 4),
+            ms(
+                &["Bytes.slice", "Bytes.toString"],
+                "Bytes.toString (Bytes.slice 0 3 \"世界\")",
+                Some("世"),
+            ),
+            i(
+                &["Bytes.length", "Bytes.fromString"],
+                "Bytes.length (Bytes.fromString \"🎉\")",
+                4,
+            ),
         ],
         "failure" => vec![
             // Odd length, and a non-hex character.
@@ -1380,13 +1428,33 @@ fn jwt_battery(edge: &str) -> Vec<Check> {
 fn codec_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
-            s(&["Codec.toJson", "Codec.int"], "Codec.toJson Codec.int 5", "5"),
-            s(&["Codec.toJson", "Codec.string"], "Codec.toJson Codec.string \"a\"", "\"a\""),
+            s(
+                &["Codec.toJson", "Codec.int"],
+                "Codec.toJson Codec.int 5",
+                "5",
+            ),
+            s(
+                &["Codec.toJson", "Codec.string"],
+                "Codec.toJson Codec.string \"a\"",
+                "\"a\"",
+            ),
             s(&["Codec.bool"], "Codec.toJson Codec.bool True", "true"),
             s(&["Codec.float"], "Codec.toJson Codec.float 1.5", "1.5"),
-            s(&["Codec.list"], "Codec.toJson (Codec.list Codec.int) [ 1, 2 ]", "[1,2]"),
-            s(&["Codec.maybe"], "Codec.toJson (Codec.maybe Codec.int) (Just 3)", "3"),
-            ri(&["Codec.fromJson"], "Codec.fromJson Codec.int \"5\"", Some(5)),
+            s(
+                &["Codec.list"],
+                "Codec.toJson (Codec.list Codec.int) [ 1, 2 ]",
+                "[1,2]",
+            ),
+            s(
+                &["Codec.maybe"],
+                "Codec.toJson (Codec.maybe Codec.int) (Just 3)",
+                "3",
+            ),
+            ri(
+                &["Codec.fromJson"],
+                "Codec.fromJson Codec.int \"5\"",
+                Some(5),
+            ),
             // The record path: object / field / buildObject.
             s(
                 &["Codec.object", "Codec.field", "Codec.buildObject"],
@@ -1408,21 +1476,41 @@ fn codec_battery(edge: &str) -> Vec<Check> {
                 "4",
             ),
             // `toValue` is the encoder as a plain function.
-            s(&["Codec.toValue"], "Encode.encode 0 (Codec.toValue Codec.int 7)", "7"),
+            s(
+                &["Codec.toValue"],
+                "Encode.encode 0 (Codec.toValue Codec.int 7)",
+                "7",
+            ),
         ],
         "empty" => vec![
-            s(&["Codec.list"], "Codec.toJson (Codec.list Codec.int) emptyInts", "[]"),
+            s(
+                &["Codec.list"],
+                "Codec.toJson (Codec.list Codec.int) emptyInts",
+                "[]",
+            ),
             s(&["Codec.string"], "Codec.toJson Codec.string \"\"", "\"\""),
             // `Nothing` is JSON null, not an omitted key and not "".
-            s(&["Codec.maybe"], "Codec.toJson (Codec.maybe Codec.int) Nothing", "null"),
+            s(
+                &["Codec.maybe"],
+                "Codec.toJson (Codec.maybe Codec.int) Nothing",
+                "null",
+            ),
         ],
         "boundary" => vec![
             // `fromJsonSafe` compares `String.length s > maxChars`, so an input
             // of EXACTLY `maxChars` is accepted and one over is not. Both sides
             // of the inequality, because an off-by-one here silently changes a
             // DoS guard.
-            ri(&["Codec.fromJsonSafe"], "Codec.fromJsonSafe 1 Codec.int \"5\"", Some(5)),
-            ri(&["Codec.fromJsonSafe"], "Codec.fromJsonSafe 0 Codec.int \"5\"", None),
+            ri(
+                &["Codec.fromJsonSafe"],
+                "Codec.fromJsonSafe 1 Codec.int \"5\"",
+                Some(5),
+            ),
+            ri(
+                &["Codec.fromJsonSafe"],
+                "Codec.fromJsonSafe 0 Codec.int \"5\"",
+                None,
+            ),
             // `auto` derives snake_case column / key names; `autoCamel` keeps
             // the camelCase spelling. The two differ on exactly one field, so
             // this pair is what distinguishes them.
@@ -1444,17 +1532,26 @@ fn codec_battery(edge: &str) -> Vec<Check> {
                 "List.map fst (recordCols (Codec.shape pcodec))",
                 "name,priceMinor",
             ),
-            s(&["Codec.shape", "Codec.int"], "scalarTag (Codec.shape Codec.int)", "int"),
+            s(
+                &["Codec.shape", "Codec.int"],
+                "scalarTag (Codec.shape Codec.int)",
+                "int",
+            ),
         ],
         "unicode" => vec![
-            s(&["Codec.toJson", "Codec.string"], "Codec.toJson Codec.string \"世界\"", "\"世界\""),
+            s(
+                &["Codec.toJson", "Codec.string"],
+                "Codec.toJson Codec.string \"世界\"",
+                "\"世界\"",
+            ),
             rs(
                 &["Codec.fromJson", "Codec.string"],
                 "Codec.fromJson Codec.string \"\\\"世界\\\"\"",
                 Some("世界"),
             ),
         ],
-        "failure" => vec![
+        "failure" => {
+            vec![
             // A type mismatch is an `Err`, never a zero value.
             ri(&["Codec.fromJson", "Codec.int"], "Codec.fromJson Codec.int \"\\\"x\\\"\"", None),
             ri(&["Codec.fromJson"], "Codec.fromJson Codec.int \"{\"", None),
@@ -1470,7 +1567,8 @@ fn codec_battery(edge: &str) -> Vec<Check> {
                 "Result.map colourName (Codec.fromJson colourCodec \"\\\"green\\\"\")",
                 None,
             ),
-        ],
+        ]
+        }
         _ => vec![],
     }
 }
@@ -1790,11 +1888,7 @@ fn image_battery(edge: &str) -> Vec<Check> {
                 "6x4",
             ),
             // A non-image input is a classified error, not a crash.
-            s(
-                &["Image.dimensions"],
-                "dimsRes \"not a real image\"",
-                "E",
-            ),
+            s(&["Image.dimensions"], "dimsRes \"not a real image\"", "E"),
         ],
         _ => vec![],
     }
@@ -1816,9 +1910,17 @@ fn string_battery(edge: &str) -> Vec<Check> {
             i(&["String.length"], "String.length \"abc\"", 3),
             s(&["String.append"], "String.append \"a\" \"b\"", "ab"),
             s(&["String.concat"], "String.concat [ \"a\", \"b\" ]", "ab"),
-            s(&["String.join"], "String.join \"-\" [ \"a\", \"b\" ]", "a-b"),
+            s(
+                &["String.join"],
+                "String.join \"-\" [ \"a\", \"b\" ]",
+                "a-b",
+            ),
             ls(&["String.split"], "String.split \",\" \"a,b\"", "a,b"),
-            s(&["String.replace"], "String.replace \"a\" \"b\" \"aa\"", "bb"),
+            s(
+                &["String.replace"],
+                "String.replace \"a\" \"b\" \"aa\"",
+                "bb",
+            ),
             s(&["String.slice"], "String.slice 1 3 \"abcde\"", "bc"),
             s(&["String.trim"], "String.trim \"  a  \"", "a"),
             s(&["String.trimStart"], "String.trimStart \"  a\"", "a"),
@@ -1830,26 +1932,58 @@ fn string_battery(edge: &str) -> Vec<Check> {
             s(&["String.dropRight"], "String.dropRight 1 \"abc\"", "ab"),
             s(&["String.fromInt"], "String.fromInt 42", "42"),
             s(&["String.fromChar"], "String.fromChar 'a'", "a"),
-            s(&["String.fromList"], "String.fromList (String.toList \"ab\")", "ab"),
+            s(
+                &["String.fromList"],
+                "String.fromList (String.toList \"ab\")",
+                "ab",
+            ),
             ln(&["String.toList"], "String.toList \"abc\"", 3),
             ln(&["String.words"], "String.words \"a b c\"", 3),
             ln(&["String.lines"], "String.lines \"a\\nb\"", 2),
             mi(&["String.toInt"], "String.toInt \"42\"", Some(42)),
             bo(&["String.isEmpty"], "String.isEmpty \"a\"", false),
             bo(&["String.contains"], "String.contains \"b\" \"abc\"", true),
-            bo(&["String.startsWith"], "String.startsWith \"a\" \"abc\"", true),
+            bo(
+                &["String.startsWith"],
+                "String.startsWith \"a\" \"abc\"",
+                true,
+            ),
             bo(&["String.endsWith"], "String.endsWith \"c\" \"abc\"", true),
             // The haystack-first pipeline companions. Their docstrings state
             // the exact equivalence, so the expected value is the promise.
-            bo(&["String.containsIn"], "String.containsIn \"hello world\" \"world\"", true),
-            bo(&["String.startsWithIn"], "String.startsWithIn \"/api/users\" \"/api\"", true),
-            bo(&["String.endsWithIn"], "String.endsWithIn \"image.png\" \".png\"", true),
-            bo(&["String.equalFold"], "String.equalFold \"AB\" \"ab\"", true),
+            bo(
+                &["String.containsIn"],
+                "String.containsIn \"hello world\" \"world\"",
+                true,
+            ),
+            bo(
+                &["String.startsWithIn"],
+                "String.startsWithIn \"/api/users\" \"/api\"",
+                true,
+            ),
+            bo(
+                &["String.endsWithIn"],
+                "String.endsWithIn \"image.png\" \".png\"",
+                true,
+            ),
+            bo(
+                &["String.equalFold"],
+                "String.equalFold \"AB\" \"ab\"",
+                true,
+            ),
             s(&["String.casefold"], "String.casefold \"AB\"", "ab"),
             bo(&["String.isEmail"], "String.isEmail \"a@b.com\"", true),
-            bo(&["String.isUrl"], "String.isUrl \"https://example.com\"", true),
+            bo(
+                &["String.isUrl"],
+                "String.isUrl \"https://example.com\"",
+                true,
+            ),
             f(&["String.fromFloat"], "1.5", "1.5"),
-            f(&["String.toFloat"], "Maybe.withDefault 0.0 (String.toFloat \"1.5\")", "1.5"),
+            f(
+                &["String.toFloat"],
+                "Maybe.withDefault 0.0 (String.toFloat \"1.5\")",
+                "1.5",
+            ),
         ],
         // Elm's answers on the empty string, which Sky's surface copies.
         "empty" => vec![
@@ -1873,7 +2007,11 @@ fn string_battery(edge: &str) -> Vec<Check> {
             s(&["String.fromList"], "String.fromList []", ""),
             // The empty substring is contained in, and prefixes, everything.
             bo(&["String.contains"], "String.contains \"\" \"abc\"", true),
-            bo(&["String.startsWith"], "String.startsWith \"\" \"abc\"", true),
+            bo(
+                &["String.startsWith"],
+                "String.startsWith \"\" \"abc\"",
+                true,
+            ),
             bo(&["String.endsWith"], "String.endsWith \"\" \"abc\"", true),
         ],
         // Negative and oversized counts. `dropLeft`/`dropRight` are the two
@@ -1893,7 +2031,11 @@ fn string_battery(edge: &str) -> Vec<Check> {
             s(&["String.slice"], "String.slice 2 1 \"abc\"", ""),
             s(&["String.slice"], "String.slice 0 0 \"abc\"", ""),
             // Int is 64-bit: a value past the 32-bit boundary round-trips.
-            mi(&["String.toInt"], "String.toInt \"2147483648\"", Some(2147483648)),
+            mi(
+                &["String.toInt"],
+                "String.toInt \"2147483648\"",
+                Some(2147483648),
+            ),
             s(&["String.fromInt"], "String.fromInt -7", "-7"),
         ],
         // `String` is a sequence of CODE POINTS. Every assertion here is a
@@ -1907,7 +2049,11 @@ fn string_battery(edge: &str) -> Vec<Check> {
             s(&["String.slice"], "String.slice 0 1 \"世界\"", "世"),
             ln(&["String.toList"], "String.toList \"世界\"", 2),
             s(&["String.fromChar"], "String.fromChar '世'", "世"),
-            bo(&["String.contains"], "String.contains \"界\" \"世界\"", true),
+            bo(
+                &["String.contains"],
+                "String.contains \"界\" \"世界\"",
+                true,
+            ),
             bo(&["String.equalFold"], "String.equalFold \"É\" \"é\"", true),
             s(&["String.padLeft"], "String.padLeft 3 'x' \"世\"", "xx世"),
         ],
@@ -1917,12 +2063,24 @@ fn string_battery(edge: &str) -> Vec<Check> {
             mi(&["String.toInt"], "String.toInt \"abc\"", None),
             mi(&["String.toInt"], "String.toInt \"\"", None),
             mi(&["String.toInt"], "String.toInt \"1.5\"", None),
-            f(&["String.toFloat"], "Maybe.withDefault -1.0 (String.toFloat \"abc\")", "-1"),
-            bo(&["String.isEmail"], "String.isEmail \"not-an-email\"", false),
+            f(
+                &["String.toFloat"],
+                "Maybe.withDefault -1.0 (String.toFloat \"abc\")",
+                "-1",
+            ),
+            bo(
+                &["String.isEmail"],
+                "String.isEmail \"not-an-email\"",
+                false,
+            ),
             bo(&["String.isEmail"], "String.isEmail \"\"", false),
             // A `javascript:` URL must not validate — this one is a security
             // boundary, not a nicety.
-            bo(&["String.isUrl"], "String.isUrl \"javascript:alert(1)\"", false),
+            bo(
+                &["String.isUrl"],
+                "String.isUrl \"javascript:alert(1)\"",
+                false,
+            ),
             bo(&["String.isUrl"], "String.isUrl \"/relative/path\"", false),
             bo(&["String.isUrl"], "String.isUrl \"\"", false),
         ],
@@ -2214,8 +2372,16 @@ fn set_battery(edge: &str) -> Vec<Check> {
         "nominal" => vec![
             i(&["Set.size"], "Set.size (Set.fromList [ 1, 2 ])", 2),
             bo(&["Set.member"], "Set.member 1 (Set.fromList [ 1 ])", true),
-            i(&["Set.insert"], "Set.size (Set.insert 3 (Set.fromList [ 1 ]))", 2),
-            i(&["Set.remove"], "Set.size (Set.remove 1 (Set.fromList [ 1, 2 ]))", 1),
+            i(
+                &["Set.insert"],
+                "Set.size (Set.insert 3 (Set.fromList [ 1 ]))",
+                2,
+            ),
+            i(
+                &["Set.remove"],
+                "Set.size (Set.remove 1 (Set.fromList [ 1, 2 ]))",
+                1,
+            ),
             li(&["Set.toList"], "Set.toList (Set.fromList [ 2, 1 ])", "1,2"),
             li(
                 &["Set.union"],
@@ -2239,25 +2405,65 @@ fn set_battery(edge: &str) -> Vec<Check> {
             ln(&["Set.toList"], "Set.toList emptySet", 0),
             bo(&["Set.member"], "Set.member 1 emptySet", false),
             i(&["Set.remove"], "Set.size (Set.remove 1 emptySet)", 0),
-            i(&["Set.union"], "Set.size (Set.union emptySet (Set.fromList [ 1 ]))", 1),
-            i(&["Set.intersect"], "Set.size (Set.intersect emptySet (Set.fromList [ 1 ]))", 0),
-            i(&["Set.diff"], "Set.size (Set.diff emptySet (Set.fromList [ 1 ]))", 0),
+            i(
+                &["Set.union"],
+                "Set.size (Set.union emptySet (Set.fromList [ 1 ]))",
+                1,
+            ),
+            i(
+                &["Set.intersect"],
+                "Set.size (Set.intersect emptySet (Set.fromList [ 1 ]))",
+                0,
+            ),
+            i(
+                &["Set.diff"],
+                "Set.size (Set.diff emptySet (Set.fromList [ 1 ]))",
+                0,
+            ),
         ],
         "boundary" => vec![
             // `fromList` de-duplicates; `insert` of a present element is a
             // no-op. A set that grew on a duplicate would pass every nominal
             // case.
             i(&["Set.fromList"], "Set.size (Set.fromList [ 1, 1, 1 ])", 1),
-            i(&["Set.insert"], "Set.size (Set.insert 1 (Set.fromList [ 1 ]))", 1),
-            i(&["Set.remove"], "Set.size (Set.remove 9 (Set.fromList [ 1 ]))", 1),
+            i(
+                &["Set.insert"],
+                "Set.size (Set.insert 1 (Set.fromList [ 1 ]))",
+                1,
+            ),
+            i(
+                &["Set.remove"],
+                "Set.size (Set.remove 9 (Set.fromList [ 1 ]))",
+                1,
+            ),
             // Self-operations: A ∩ A = A, A \ A = ∅, A ∪ A = A.
-            i(&["Set.intersect"], "Set.size (Set.intersect (Set.fromList [ 1, 2 ]) (Set.fromList [ 1, 2 ]))", 2),
-            i(&["Set.diff"], "Set.size (Set.diff (Set.fromList [ 1, 2 ]) (Set.fromList [ 1, 2 ]))", 0),
-            i(&["Set.union"], "Set.size (Set.union (Set.fromList [ 1 ]) (Set.fromList [ 1 ]))", 1),
+            i(
+                &["Set.intersect"],
+                "Set.size (Set.intersect (Set.fromList [ 1, 2 ]) (Set.fromList [ 1, 2 ]))",
+                2,
+            ),
+            i(
+                &["Set.diff"],
+                "Set.size (Set.diff (Set.fromList [ 1, 2 ]) (Set.fromList [ 1, 2 ]))",
+                0,
+            ),
+            i(
+                &["Set.union"],
+                "Set.size (Set.union (Set.fromList [ 1 ]) (Set.fromList [ 1 ]))",
+                1,
+            ),
         ],
         "unicode" => vec![
-            bo(&["Set.member"], "Set.member \"世\" (Set.fromList [ \"世\" ])", true),
-            i(&["Set.fromList"], "Set.size (Set.fromList [ \"é\", \"é\" ])", 1),
+            bo(
+                &["Set.member"],
+                "Set.member \"世\" (Set.fromList [ \"世\" ])",
+                true,
+            ),
+            i(
+                &["Set.fromList"],
+                "Set.size (Set.fromList [ \"é\", \"é\" ])",
+                1,
+            ),
         ],
         "failure" => vec![bo(
             &["Set.member"],
@@ -2416,9 +2622,17 @@ fn char_battery(edge: &str) -> Vec<Check> {
             s(&["Char.toUpper"], "Char.toUpper 'a'", "A"),
             s(&["Char.toLower"], "Char.toLower 'A'", "a"),
             i(&["Char.toCode"], "Char.toCode 'A'", 65),
-            s(&["Char.fromCode"], "String.fromChar (Char.fromCode 65)", "A"),
+            s(
+                &["Char.fromCode"],
+                "String.fromChar (Char.fromCode 65)",
+                "A",
+            ),
             // The round-trip the docstring promises.
-            i(&["Char.toCode", "Char.fromCode"], "Char.toCode (Char.fromCode 122)", 122),
+            i(
+                &["Char.toCode", "Char.fromCode"],
+                "Char.toCode (Char.fromCode 122)",
+                122,
+            ),
         ],
         "boundary" => vec![
             i(&["Char.toCode"], "Char.toCode '0'", 48),
@@ -2432,15 +2646,27 @@ fn char_battery(edge: &str) -> Vec<Check> {
             // U+4E16 = 19990 decimal. A byte-indexing regression cannot produce
             // this number.
             i(&["Char.toCode"], "Char.toCode '世'", 19990),
-            s(&["Char.fromCode"], "String.fromChar (Char.fromCode 19990)", "世"),
+            s(
+                &["Char.fromCode"],
+                "String.fromChar (Char.fromCode 19990)",
+                "世",
+            ),
             s(&["Char.toUpper"], "Char.toUpper 'é'", "É"),
             bo(&["Char.isAlpha"], "Char.isAlpha 'é'", true),
             bo(&["Char.isDigit"], "Char.isDigit '世'", false),
         ],
         // The module's own promise: an out-of-range code point yields U+FFFD.
         "failure" => vec![
-            s(&["Char.fromCode"], "String.fromChar (Char.fromCode -1)", "\u{fffd}"),
-            s(&["Char.fromCode"], "String.fromChar (Char.fromCode 1114112)", "\u{fffd}"),
+            s(
+                &["Char.fromCode"],
+                "String.fromChar (Char.fromCode -1)",
+                "\u{fffd}",
+            ),
+            s(
+                &["Char.fromCode"],
+                "String.fromChar (Char.fromCode 1114112)",
+                "\u{fffd}",
+            ),
         ],
         _ => vec![],
     }
@@ -2454,13 +2680,37 @@ fn char_battery(edge: &str) -> Vec<Check> {
 fn encoding_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
-            s(&["Encoding.base64Encode"], "Encoding.base64Encode \"Hello\"", "SGVsbG8="),
-            s(&["Encoding.base64Encode"], "Encoding.base64Encode \"a\"", "YQ=="),
-            s(&["Encoding.base64Encode"], "Encoding.base64Encode \"ab\"", "YWI="),
-            s(&["Encoding.base64Encode"], "Encoding.base64Encode \"abc\"", "YWJj"),
-            rs(&["Encoding.base64Decode"], "Encoding.base64Decode \"SGVsbG8=\"", Some("Hello")),
+            s(
+                &["Encoding.base64Encode"],
+                "Encoding.base64Encode \"Hello\"",
+                "SGVsbG8=",
+            ),
+            s(
+                &["Encoding.base64Encode"],
+                "Encoding.base64Encode \"a\"",
+                "YQ==",
+            ),
+            s(
+                &["Encoding.base64Encode"],
+                "Encoding.base64Encode \"ab\"",
+                "YWI=",
+            ),
+            s(
+                &["Encoding.base64Encode"],
+                "Encoding.base64Encode \"abc\"",
+                "YWJj",
+            ),
+            rs(
+                &["Encoding.base64Decode"],
+                "Encoding.base64Decode \"SGVsbG8=\"",
+                Some("Hello"),
+            ),
             s(&["Encoding.hexEncode"], "Encoding.hexEncode \"ab\"", "6162"),
-            rs(&["Encoding.hexDecode"], "Encoding.hexDecode \"6162\"", Some("ab")),
+            rs(
+                &["Encoding.hexDecode"],
+                "Encoding.hexDecode \"6162\"",
+                Some("ab"),
+            ),
             // Round-trips are independent of the escaping convention, so they
             // hold whatever `urlEncode` chooses for a space.
             rs(
@@ -2476,26 +2726,54 @@ fn encoding_battery(edge: &str) -> Vec<Check> {
         ],
         "empty" => vec![
             s(&["Encoding.base64Encode"], "Encoding.base64Encode \"\"", ""),
-            rs(&["Encoding.base64Decode"], "Encoding.base64Decode \"\"", Some("")),
+            rs(
+                &["Encoding.base64Decode"],
+                "Encoding.base64Decode \"\"",
+                Some(""),
+            ),
             s(&["Encoding.hexEncode"], "Encoding.hexEncode \"\"", ""),
             rs(&["Encoding.hexDecode"], "Encoding.hexDecode \"\"", Some("")),
             s(&["Encoding.urlEncode"], "Encoding.urlEncode \"\"", ""),
         ],
         "unicode" => vec![
             // UTF-8 of 世 is E4 B8 96; base64 of those three bytes is "5LiW".
-            s(&["Encoding.base64Encode"], "Encoding.base64Encode \"世\"", "5LiW"),
-            s(&["Encoding.hexEncode"], "Encoding.hexEncode \"世\"", "e4b896"),
-            rs(&["Encoding.base64Decode"], "Encoding.base64Decode \"5LiW\"", Some("世")),
-            rs(&["Encoding.hexDecode"], "Encoding.hexDecode \"e4b896\"", Some("世")),
+            s(
+                &["Encoding.base64Encode"],
+                "Encoding.base64Encode \"世\"",
+                "5LiW",
+            ),
+            s(
+                &["Encoding.hexEncode"],
+                "Encoding.hexEncode \"世\"",
+                "e4b896",
+            ),
+            rs(
+                &["Encoding.base64Decode"],
+                "Encoding.base64Decode \"5LiW\"",
+                Some("世"),
+            ),
+            rs(
+                &["Encoding.hexDecode"],
+                "Encoding.hexDecode \"e4b896\"",
+                Some("世"),
+            ),
             // hex is BYTE-wise: three bytes, six hex digits — while
             // `String.length "世"` is 1. The two must not agree.
-            i(&["Encoding.hexEncode"], "String.length (Encoding.hexEncode \"世\")", 6),
+            i(
+                &["Encoding.hexEncode"],
+                "String.length (Encoding.hexEncode \"世\")",
+                6,
+            ),
         ],
         "failure" => vec![
             // Odd-length hex cannot be a whole number of bytes.
             rs(&["Encoding.hexDecode"], "Encoding.hexDecode \"abc\"", None),
             rs(&["Encoding.hexDecode"], "Encoding.hexDecode \"zz\"", None),
-            rs(&["Encoding.base64Decode"], "Encoding.base64Decode \"!!!!\"", None),
+            rs(
+                &["Encoding.base64Decode"],
+                "Encoding.base64Decode \"!!!!\"",
+                None,
+            ),
         ],
         _ => vec![],
     }
@@ -2831,7 +3109,11 @@ fn path_battery(edge: &str) -> Vec<Check> {
 fn error_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
-            s(&["Error.io", "Error.toString"], "Error.toString (Error.io \"boom\")", "IO: boom"),
+            s(
+                &["Error.io", "Error.toString"],
+                "Error.toString (Error.io \"boom\")",
+                "IO: boom",
+            ),
             s(
                 &["Error.network", "Error.toString"],
                 "Error.toString (Error.network \"down\")",
@@ -2839,14 +3121,26 @@ fn error_battery(edge: &str) -> Vec<Check> {
             ),
             // `kindLabel Ffi` is "FFI", not "Ffi" — an initialism the label
             // table uppercases and the constructor name does not.
-            s(&["Error.ffi", "Error.toString"], "Error.toString (Error.ffi \"x\")", "FFI: x"),
-            s(&["Error.decode", "Error.toString"], "Error.toString (Error.decode \"d\")", "Decode: d"),
+            s(
+                &["Error.ffi", "Error.toString"],
+                "Error.toString (Error.ffi \"x\")",
+                "FFI: x",
+            ),
+            s(
+                &["Error.decode", "Error.toString"],
+                "Error.toString (Error.decode \"d\")",
+                "Decode: d",
+            ),
             s(
                 &["Error.invalidInput", "Error.toString"],
                 "Error.toString (Error.invalidInput \"i\")",
                 "InvalidInput: i",
             ),
-            s(&["Error.conflict", "Error.toString"], "Error.toString (Error.conflict \"c\")", "Conflict: c"),
+            s(
+                &["Error.conflict", "Error.toString"],
+                "Error.toString (Error.conflict \"c\")",
+                "Conflict: c",
+            ),
             s(
                 &["Error.unavailable", "Error.toString"],
                 "Error.toString (Error.unavailable \"u\")",
@@ -2871,8 +3165,16 @@ fn error_battery(edge: &str) -> Vec<Check> {
         // The three arity-0 error VALUES, which are values and not functions —
         // and whose default messages the module fixes.
         "boundary" => vec![
-            s(&["Error.timeout"], "Error.toString Error.timeout", "Timeout: operation timed out"),
-            s(&["Error.notFound"], "Error.toString Error.notFound", "NotFound: not found"),
+            s(
+                &["Error.timeout"],
+                "Error.toString Error.timeout",
+                "Timeout: operation timed out",
+            ),
+            s(
+                &["Error.notFound"],
+                "Error.toString Error.notFound",
+                "NotFound: not found",
+            ),
             s(
                 &["Error.permissionDenied"],
                 "Error.toString Error.permissionDenied",
@@ -2888,17 +3190,45 @@ fn error_battery(edge: &str) -> Vec<Check> {
             // compiler was right and the assertion was unstateable. Anchoring
             // the trailing space with a visible character makes it stateable
             // wherever the item lands in the join order.
-            s(&["Error.io"], "Error.toString (Error.io \"\") ++ \".\"", "IO: ."),
+            s(
+                &["Error.io"],
+                "Error.toString (Error.io \"\") ++ \".\"",
+                "IO: .",
+            ),
         ],
         "failure" => vec![
             // The retryable partition, both sides. A transient kind that stops
             // being retryable silently disables every caller's retry loop.
-            bo(&["Error.isRetryable"], "Error.isRetryable Error.timeout", true),
-            bo(&["Error.isRetryable"], "Error.isRetryable (Error.network \"x\")", true),
-            bo(&["Error.isRetryable"], "Error.isRetryable (Error.unavailable \"x\")", true),
-            bo(&["Error.isRetryable"], "Error.isRetryable (Error.io \"x\")", false),
-            bo(&["Error.isRetryable"], "Error.isRetryable Error.notFound", false),
-            bo(&["Error.isRetryable"], "Error.isRetryable (Error.invalidInput \"x\")", false),
+            bo(
+                &["Error.isRetryable"],
+                "Error.isRetryable Error.timeout",
+                true,
+            ),
+            bo(
+                &["Error.isRetryable"],
+                "Error.isRetryable (Error.network \"x\")",
+                true,
+            ),
+            bo(
+                &["Error.isRetryable"],
+                "Error.isRetryable (Error.unavailable \"x\")",
+                true,
+            ),
+            bo(
+                &["Error.isRetryable"],
+                "Error.isRetryable (Error.io \"x\")",
+                false,
+            ),
+            bo(
+                &["Error.isRetryable"],
+                "Error.isRetryable Error.notFound",
+                false,
+            ),
+            bo(
+                &["Error.isRetryable"],
+                "Error.isRetryable (Error.invalidInput \"x\")",
+                false,
+            ),
             // `withDetails` attaches details without disturbing the message.
             s(
                 &["Error.withDetails"],
@@ -2920,39 +3250,151 @@ fn error_battery(edge: &str) -> Vec<Check> {
 fn decimal_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
-            s(&["Decimal.fromInt", "Decimal.toString"], "Dec.toString (Dec.fromInt 5)", "5"),
-            s(&["Decimal.add"], "Dec.toString (Dec.add (Dec.fromInt 1) (Dec.fromInt 2))", "3"),
-            s(&["Decimal.sub"], "Dec.toString (Dec.sub (Dec.fromInt 3) (Dec.fromInt 1))", "2"),
-            s(&["Decimal.mul"], "Dec.toString (Dec.mul (Dec.fromInt 3) (Dec.fromInt 4))", "12"),
-            rs(&["Decimal.div"], "Result.map Dec.toString (Dec.div (Dec.fromInt 6) (Dec.fromInt 3))", Some("2")),
-            s(&["Decimal.neg"], "Dec.toString (Dec.neg (Dec.fromInt 5))", "-5"),
-            s(&["Decimal.abs"], "Dec.toString (Dec.abs (Dec.fromInt -5))", "5"),
+            s(
+                &["Decimal.fromInt", "Decimal.toString"],
+                "Dec.toString (Dec.fromInt 5)",
+                "5",
+            ),
+            s(
+                &["Decimal.add"],
+                "Dec.toString (Dec.add (Dec.fromInt 1) (Dec.fromInt 2))",
+                "3",
+            ),
+            s(
+                &["Decimal.sub"],
+                "Dec.toString (Dec.sub (Dec.fromInt 3) (Dec.fromInt 1))",
+                "2",
+            ),
+            s(
+                &["Decimal.mul"],
+                "Dec.toString (Dec.mul (Dec.fromInt 3) (Dec.fromInt 4))",
+                "12",
+            ),
+            rs(
+                &["Decimal.div"],
+                "Result.map Dec.toString (Dec.div (Dec.fromInt 6) (Dec.fromInt 3))",
+                Some("2"),
+            ),
+            s(
+                &["Decimal.neg"],
+                "Dec.toString (Dec.neg (Dec.fromInt 5))",
+                "-5",
+            ),
+            s(
+                &["Decimal.abs"],
+                "Dec.toString (Dec.abs (Dec.fromInt -5))",
+                "5",
+            ),
             // `toStringFixed` KEEPS trailing zeros; `toString` drops them.
-            s(&["Decimal.toStringFixed"], "Dec.toStringFixed 2 (Dec.fromInt 3)", "3.00"),
-            s(&["Decimal.fromMinor"], "Dec.toString (Dec.fromMinor 2 12345)", "123.45"),
-            i(&["Decimal.toMinor"], "Dec.toMinor 2 (Dec.fromMinor 2 314)", 314),
+            s(
+                &["Decimal.toStringFixed"],
+                "Dec.toStringFixed 2 (Dec.fromInt 3)",
+                "3.00",
+            ),
+            s(
+                &["Decimal.fromMinor"],
+                "Dec.toString (Dec.fromMinor 2 12345)",
+                "123.45",
+            ),
+            i(
+                &["Decimal.toMinor"],
+                "Dec.toMinor 2 (Dec.fromMinor 2 314)",
+                314,
+            ),
             i(&["Decimal.toInt"], "Dec.toInt (Dec.fromMinor 2 350)", 3),
-            i(&["Decimal.compare"], "Dec.compare (Dec.fromInt 1) (Dec.fromInt 2)", -1),
-            i(&["Decimal.compare"], "Dec.compare (Dec.fromInt 2) (Dec.fromInt 2)", 0),
-            i(&["Decimal.compare"], "Dec.compare (Dec.fromInt 3) (Dec.fromInt 2)", 1),
-            bo(&["Decimal.eq"], "Dec.eq (Dec.fromInt 2) (Dec.fromInt 2)", true),
-            bo(&["Decimal.lt"], "Dec.lt (Dec.fromInt 1) (Dec.fromInt 2)", true),
-            bo(&["Decimal.gt"], "Dec.gt (Dec.fromInt 3) (Dec.fromInt 2)", true),
-            bo(&["Decimal.gte"], "Dec.gte (Dec.fromInt 2) (Dec.fromInt 2)", true),
-            bo(&["Decimal.lte"], "Dec.lte (Dec.fromInt 2) (Dec.fromInt 2)", true),
-            bo(&["Decimal.neq"], "Dec.neq (Dec.fromInt 1) (Dec.fromInt 2)", true),
-            s(&["Decimal.min"], "Dec.toString (Dec.min (Dec.fromInt 1) (Dec.fromInt 2))", "1"),
-            s(&["Decimal.max"], "Dec.toString (Dec.max (Dec.fromInt 1) (Dec.fromInt 2))", "2"),
-            rs(&["Decimal.fromString"], "Result.map Dec.toString (Dec.fromString \"1.25\")", Some("1.25")),
-            s(&["Decimal.sum"], "Dec.toString (Dec.sum [ Dec.fromInt 1, Dec.fromInt 2 ])", "3"),
-            s(&["Decimal.percentOf"], "Dec.toString (Dec.percentOf (Dec.fromInt 20) (Dec.fromInt 100))", "20"),
-            s(&["Decimal.addPercent"], "Dec.toString (Dec.addPercent (Dec.fromInt 10) (Dec.fromInt 100))", "110"),
-            s(&["Decimal.subPercent"], "Dec.toString (Dec.subPercent (Dec.fromInt 10) (Dec.fromInt 100))", "90"),
-            s(&["Decimal.fromFloat"], "Dec.toString (Dec.fromFloat 1.5)", "1.5"),
+            i(
+                &["Decimal.compare"],
+                "Dec.compare (Dec.fromInt 1) (Dec.fromInt 2)",
+                -1,
+            ),
+            i(
+                &["Decimal.compare"],
+                "Dec.compare (Dec.fromInt 2) (Dec.fromInt 2)",
+                0,
+            ),
+            i(
+                &["Decimal.compare"],
+                "Dec.compare (Dec.fromInt 3) (Dec.fromInt 2)",
+                1,
+            ),
+            bo(
+                &["Decimal.eq"],
+                "Dec.eq (Dec.fromInt 2) (Dec.fromInt 2)",
+                true,
+            ),
+            bo(
+                &["Decimal.lt"],
+                "Dec.lt (Dec.fromInt 1) (Dec.fromInt 2)",
+                true,
+            ),
+            bo(
+                &["Decimal.gt"],
+                "Dec.gt (Dec.fromInt 3) (Dec.fromInt 2)",
+                true,
+            ),
+            bo(
+                &["Decimal.gte"],
+                "Dec.gte (Dec.fromInt 2) (Dec.fromInt 2)",
+                true,
+            ),
+            bo(
+                &["Decimal.lte"],
+                "Dec.lte (Dec.fromInt 2) (Dec.fromInt 2)",
+                true,
+            ),
+            bo(
+                &["Decimal.neq"],
+                "Dec.neq (Dec.fromInt 1) (Dec.fromInt 2)",
+                true,
+            ),
+            s(
+                &["Decimal.min"],
+                "Dec.toString (Dec.min (Dec.fromInt 1) (Dec.fromInt 2))",
+                "1",
+            ),
+            s(
+                &["Decimal.max"],
+                "Dec.toString (Dec.max (Dec.fromInt 1) (Dec.fromInt 2))",
+                "2",
+            ),
+            rs(
+                &["Decimal.fromString"],
+                "Result.map Dec.toString (Dec.fromString \"1.25\")",
+                Some("1.25"),
+            ),
+            s(
+                &["Decimal.sum"],
+                "Dec.toString (Dec.sum [ Dec.fromInt 1, Dec.fromInt 2 ])",
+                "3",
+            ),
+            s(
+                &["Decimal.percentOf"],
+                "Dec.toString (Dec.percentOf (Dec.fromInt 20) (Dec.fromInt 100))",
+                "20",
+            ),
+            s(
+                &["Decimal.addPercent"],
+                "Dec.toString (Dec.addPercent (Dec.fromInt 10) (Dec.fromInt 100))",
+                "110",
+            ),
+            s(
+                &["Decimal.subPercent"],
+                "Dec.toString (Dec.subPercent (Dec.fromInt 10) (Dec.fromInt 100))",
+                "90",
+            ),
+            s(
+                &["Decimal.fromFloat"],
+                "Dec.toString (Dec.fromFloat 1.5)",
+                "1.5",
+            ),
             f(&["Decimal.toFloat"], "Dec.toFloat (Dec.fromInt 2)", "2"),
             s(&["Decimal.zero"], "Dec.toString Dec.zero", "0"),
             s(&["Decimal.one"], "Dec.toString Dec.one", "1"),
-            s(&["Decimal.oneHundred"], "Dec.toString Dec.oneHundred", "100"),
+            s(
+                &["Decimal.oneHundred"],
+                "Dec.toString Dec.oneHundred",
+                "100",
+            ),
             s(
                 &["Decimal.formatWith"],
                 "Dec.formatWith \",\" \".\" 2 (Dec.fromMinor 2 123456789)",
@@ -2961,34 +3403,98 @@ fn decimal_battery(edge: &str) -> Vec<Check> {
         ],
         // `sum []` is the additive identity.
         "empty" => vec![
-            s(&["Decimal.sum"], "Dec.toString (Dec.sum emptyDecimals)", "0"),
+            s(
+                &["Decimal.sum"],
+                "Dec.toString (Dec.sum emptyDecimals)",
+                "0",
+            ),
             bo(&["Decimal.isZero"], "Dec.isZero Dec.zero", true),
         ],
         // The two rounding modes MUST differ at the exact half. `round` is
         // banker's (half to EVEN); `roundHalfUp` is half away from zero. A
         // money system that gets this wrong loses a cent per transaction.
         "boundary" => vec![
-            s(&["Decimal.round"], "Dec.toString (Dec.round 0 (Dec.fromMinor 1 25))", "2"),
-            s(&["Decimal.round"], "Dec.toString (Dec.round 0 (Dec.fromMinor 1 35))", "4"),
-            s(&["Decimal.roundHalfUp"], "Dec.toString (Dec.roundHalfUp 0 (Dec.fromMinor 1 25))", "3"),
-            s(&["Decimal.roundHalfUp"], "Dec.toString (Dec.roundHalfUp 0 (Dec.fromMinor 1 35))", "4"),
-            s(&["Decimal.truncate"], "Dec.toString (Dec.truncate 0 (Dec.fromMinor 1 19))", "1"),
-            s(&["Decimal.floor"], "Dec.toString (Dec.floor (Dec.fromMinor 1 19))", "1"),
-            s(&["Decimal.ceil"], "Dec.toString (Dec.ceil (Dec.fromMinor 1 11))", "2"),
-            s(&["Decimal.floor"], "Dec.toString (Dec.floor (Dec.fromMinor 1 -19))", "-2"),
-            s(&["Decimal.ceil"], "Dec.toString (Dec.ceil (Dec.fromMinor 1 -19))", "-1"),
+            s(
+                &["Decimal.round"],
+                "Dec.toString (Dec.round 0 (Dec.fromMinor 1 25))",
+                "2",
+            ),
+            s(
+                &["Decimal.round"],
+                "Dec.toString (Dec.round 0 (Dec.fromMinor 1 35))",
+                "4",
+            ),
+            s(
+                &["Decimal.roundHalfUp"],
+                "Dec.toString (Dec.roundHalfUp 0 (Dec.fromMinor 1 25))",
+                "3",
+            ),
+            s(
+                &["Decimal.roundHalfUp"],
+                "Dec.toString (Dec.roundHalfUp 0 (Dec.fromMinor 1 35))",
+                "4",
+            ),
+            s(
+                &["Decimal.truncate"],
+                "Dec.toString (Dec.truncate 0 (Dec.fromMinor 1 19))",
+                "1",
+            ),
+            s(
+                &["Decimal.floor"],
+                "Dec.toString (Dec.floor (Dec.fromMinor 1 19))",
+                "1",
+            ),
+            s(
+                &["Decimal.ceil"],
+                "Dec.toString (Dec.ceil (Dec.fromMinor 1 11))",
+                "2",
+            ),
+            s(
+                &["Decimal.floor"],
+                "Dec.toString (Dec.floor (Dec.fromMinor 1 -19))",
+                "-2",
+            ),
+            s(
+                &["Decimal.ceil"],
+                "Dec.toString (Dec.ceil (Dec.fromMinor 1 -19))",
+                "-1",
+            ),
             // Scale-insensitive equality: 2.50 == 2.5.
-            bo(&["Decimal.eq"], "Dec.eq (Dec.fromMinor 2 250) (Dec.fromMinor 1 25)", true),
+            bo(
+                &["Decimal.eq"],
+                "Dec.eq (Dec.fromMinor 2 250) (Dec.fromMinor 1 25)",
+                true,
+            ),
             bo(&["Decimal.isPositive"], "Dec.isPositive Dec.zero", false),
             bo(&["Decimal.isNegative"], "Dec.isNegative Dec.zero", false),
-            bo(&["Decimal.isNegative"], "Dec.isNegative (Dec.fromInt -1)", true),
+            bo(
+                &["Decimal.isNegative"],
+                "Dec.isNegative (Dec.fromInt -1)",
+                true,
+            ),
         ],
         "failure" => vec![
-            rs(&["Decimal.fromString"], "Result.map Dec.toString (Dec.fromString \"abc\")", None),
-            rs(&["Decimal.fromString"], "Result.map Dec.toString (Dec.fromString \"\")", None),
+            rs(
+                &["Decimal.fromString"],
+                "Result.map Dec.toString (Dec.fromString \"abc\")",
+                None,
+            ),
+            rs(
+                &["Decimal.fromString"],
+                "Result.map Dec.toString (Dec.fromString \"\")",
+                None,
+            ),
             // Division by zero is an Err, never a panic and never an infinity.
-            rs(&["Decimal.div"], "Result.map Dec.toString (Dec.div Dec.one Dec.zero)", None),
-            rs(&["Decimal.mod"], "Result.map Dec.toString (Dec.mod Dec.one Dec.zero)", None),
+            rs(
+                &["Decimal.div"],
+                "Result.map Dec.toString (Dec.div Dec.one Dec.zero)",
+                None,
+            ),
+            rs(
+                &["Decimal.mod"],
+                "Result.map Dec.toString (Dec.mod Dec.one Dec.zero)",
+                None,
+            ),
         ],
         _ => vec![],
     }
@@ -3234,14 +3740,30 @@ fn regex_battery(edge: &str) -> Vec<Check> {
             bo(&["Regex.match"], "Regex.match \"c$\" \"abc\"", true),
             ms(&["Regex.find"], "Regex.find \"b+\" \"abbbc\"", Some("bbb")),
             ln(&["Regex.findAll"], "Regex.findAll \"a\" \"aba\"", 2),
-            ls(&["Regex.findAll"], "Regex.findAll \"[0-9]+\" \"a1b22c\"", "1,22"),
-            s(&["Regex.replace"], "Regex.replace \"a\" \"X\" \"aba\"", "XbX"),
+            ls(
+                &["Regex.findAll"],
+                "Regex.findAll \"[0-9]+\" \"a1b22c\"",
+                "1,22",
+            ),
+            s(
+                &["Regex.replace"],
+                "Regex.replace \"a\" \"X\" \"aba\"",
+                "XbX",
+            ),
             // `$1` group expansion in the replacement.
-            s(&["Regex.replace"], "Regex.replace \"(a)(b)\" \"$2$1\" \"ab\"", "ba"),
+            s(
+                &["Regex.replace"],
+                "Regex.replace \"(a)(b)\" \"$2$1\" \"ab\"",
+                "ba",
+            ),
             ls(&["Regex.split"], "Regex.split \",\" \"a,b,c\"", "a,b,c"),
             ln(&["Regex.split"], "Regex.split \"[,;]\" \"a,b;c\"", 3),
             // `find` returns the WHOLE match span, never a capture group.
-            ms(&["Regex.find"], "Regex.find \"(foo)(bar)\" \"xxfoobaryy\"", Some("foobar")),
+            ms(
+                &["Regex.find"],
+                "Regex.find \"(foo)(bar)\" \"xxfoobaryy\"",
+                Some("foobar"),
+            ),
         ],
         "empty" => vec![
             ln(&["Regex.findAll"], "Regex.findAll \"a\" \"\"", 0),
@@ -3258,13 +3780,25 @@ fn regex_battery(edge: &str) -> Vec<Check> {
             ln(&["Regex.split"], "Regex.split \",\" \"a,\"", 2),
             // No match leaves the subject whole.
             ln(&["Regex.split"], "Regex.split \"z\" \"abc\"", 1),
-            s(&["Regex.replace"], "Regex.replace \"z\" \"X\" \"abc\"", "abc"),
+            s(
+                &["Regex.replace"],
+                "Regex.replace \"z\" \"X\" \"abc\"",
+                "abc",
+            ),
             ls(&["Regex.findAll"], "Regex.findAll \"a*\" \"b\"", ","),
         ],
         "unicode" => vec![
             bo(&["Regex.match"], "Regex.match \"世\" \"世界\"", true),
-            ms(&["Regex.find"], "Regex.find \"[世界]+\" \"a世界b\"", Some("世界")),
-            s(&["Regex.replace"], "Regex.replace \"世\" \"X\" \"世界\"", "X界"),
+            ms(
+                &["Regex.find"],
+                "Regex.find \"[世界]+\" \"a世界b\"",
+                Some("世界"),
+            ),
+            s(
+                &["Regex.replace"],
+                "Regex.replace \"世\" \"X\" \"世界\"",
+                "X界",
+            ),
         ],
         "failure" => vec![
             bo(&["Regex.match"], "Regex.match \"z\" \"abc\"", false),
@@ -3547,7 +4081,10 @@ fn extra_imports(slug: &str) -> &'static [&'static str] {
         "jwt" => &["Sky.Core.Secret as Secret"],
         // `Result.map` lifts a projection over a decode result, so a failure
         // stays a failure instead of being papered over by a default.
-        "codec" => &["Sky.Core.Result as Result", "Sky.Core.Json.Encode as Encode"],
+        "codec" => &[
+            "Sky.Core.Result as Result",
+            "Sky.Core.Json.Encode as Encode",
+        ],
         // `Std.Money` needs `Decimal` only through its own re-exports; the
         // battery uses the `Currency` constructors, which `Std.Money` exposes.
         _ => &[],
@@ -3660,7 +4197,14 @@ pub fn stdlib_edge(a: &Assignment) -> (Body, String) {
     );
 
     let expected: Vec<&str> = checks.iter().map(|c| c.expect.as_str()).collect();
-    (Body { imports, decls, check }, expected.join("|"))
+    (
+        Body {
+            imports,
+            decls,
+            check,
+        },
+        expected.join("|"),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -3792,10 +4336,7 @@ pub fn stdlib_import(a: &Assignment) -> ImportCase {
     // How `Sky.Core.String` enters scope, and the qualifier (or bare name) the
     // case reads `length` through.
     let (import, read_len): (String, String) = match shape {
-        "plain" => (
-            "import Sky.Core.String\n".into(),
-            "String.length".into(),
-        ),
+        "plain" => ("import Sky.Core.String\n".into(), "String.length".into()),
         "aliased" => (
             "import Sky.Core.String as Str\n".into(),
             "Str.length".into(),
@@ -3875,7 +4416,10 @@ pub fn stdlib_import(a: &Assignment) -> ImportCase {
                 "alias_not_last_segment" => "Core.length",
                 _ => "String.length",
             };
-            items.push((format!("String.fromInt ({string_len} \"abcd\")"), "4".into()));
+            items.push((
+                format!("String.fromInt ({string_len} \"abcd\")"),
+                "4".into(),
+            ));
             items.push((
                 format!("String.fromInt ({list_len} [ 1, 2, 3 ])"),
                 "3".into(),
@@ -4031,8 +4575,7 @@ mod tests {
                 "{pseudo}.{member} is declared routed-only but `lower::kernel` \
                  does not route it — the row names nothing"
             );
-            let advertised = hir::kernel_functions(pseudo)
-                .map_or(false, |ms| ms.contains(member));
+            let advertised = hir::kernel_functions(pseudo).map_or(false, |ms| ms.contains(member));
             assert!(
                 !advertised,
                 "{pseudo}.{member} IS advertised by hir::KERNEL_FUNCTIONS now — \
@@ -4062,9 +4605,14 @@ mod tests {
         }
         // And the inventory that divides them is non-empty and real.
         let inv = kernel_inventory();
-        let basics = inv.get("Basics").expect("hir advertises a `Basics` pseudo-module");
+        let basics = inv
+            .get("Basics")
+            .expect("hir advertises a `Basics` pseudo-module");
         for sym in ["toString", "modBy", "compare", "negate"] {
-            assert!(basics.contains(sym), "hir no longer advertises Basics.{sym}");
+            assert!(
+                basics.contains(sym),
+                "hir no longer advertises Basics.{sym}"
+            );
         }
     }
 

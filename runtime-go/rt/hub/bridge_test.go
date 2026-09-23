@@ -12,7 +12,7 @@ import (
 //   - inserts mixed log + span data for two distinct services,
 //   - asserts the JSON payload contains both services with the
 //     correct shape (name + status + reqsPerSec + p95Ms + errorRate
-//     + sparkRps + sparkP95).
+//   - sparkRps + sparkP95).
 //
 // This is the regression artefact for the Hub_readServiceStats
 // kernel — if the aggregator drops a service or shifts the wire

@@ -81,9 +81,9 @@ fn kernel_only_modules() -> Vec<(&'static str, &'static [&'static str])> {
 /// `Std.Live`). Returns `None` when `module_arg` names no kernel module.
 fn render_kernel_module(module_arg: &str) -> Option<String> {
     let suffix = format!(".{module_arg}");
-    let (full, funcs) = kernel_only_modules().into_iter().find(|(full, _)| {
-        *full == module_arg || full.ends_with(&suffix)
-    })?;
+    let (full, funcs) = kernel_only_modules()
+        .into_iter()
+        .find(|(full, _)| *full == module_arg || full.ends_with(&suffix))?;
     let mut out = format!("── {full} ──\n\n");
     out.push_str("Runtime-provided module (its bindings live in the Sky runtime,\n");
     out.push_str("not in Sky source). Exported bindings:\n\n");
@@ -190,13 +190,21 @@ fn render_doc_site_mode(
         } else {
             format!("/m/{}", html_escape(name))
         };
-        index.push_str(&format!("<li><a href=\"{}\">{}</a></li>", href, html_escape(name)));
+        index.push_str(&format!(
+            "<li><a href=\"{}\">{}</a></li>",
+            href,
+            html_escape(name)
+        ));
     }
     index.push_str("</ul>");
     index.push_str("<div id=\"results\" style=\"display:none\"></div>");
     index.push_str(&search_script(export));
     index.push_str("</body></html>\n");
-    let index_name = if export { "reference.html" } else { "index.html" };
+    let index_name = if export {
+        "reference.html"
+    } else {
+        "index.html"
+    };
     std::fs::write(out_dir.join(index_name), index)?;
 
     // Per-module pages + the per-symbol manifest. The manifest is shaped
@@ -221,7 +229,10 @@ fn render_doc_site_mode(
             "project"
         };
         let (nav, backlink) = if export {
-            (topnav("../", "reference"), "<a href=\"../reference.html\">&larr; all modules</a>")
+            (
+                topnav("../", "reference"),
+                "<a href=\"../reference.html\">&larr; all modules</a>",
+            )
         } else {
             (String::new(), "<a href=\"/\">&larr; all modules</a>")
         };
@@ -769,7 +780,11 @@ fn module_symbols(src: &str) -> Vec<DocSym> {
 fn module_symbols_with(src: &str, apply_exposing: bool) -> Vec<DocSym> {
     let parse = syntax::parse(src, FileId(0));
     let tree = parse.tree();
-    let exposed = if apply_exposing { exposing_set(src, &tree) } else { None };
+    let exposed = if apply_exposing {
+        exposing_set(src, &tree)
+    } else {
+        None
+    };
     let docs = doc_comments(src);
     let is_exported = |name: &str| exposed.as_ref().map(|s| s.contains(name)).unwrap_or(true);
 
@@ -947,7 +962,10 @@ fn exposing_set(
     // Peel a leading `exposing` keyword (if the node text includes it) + the
     // outer parens, leaving the comma-separated export items.
     let trimmed = raw.trim();
-    let trimmed = trimmed.strip_prefix("exposing").map(str::trim).unwrap_or(trimmed);
+    let trimmed = trimmed
+        .strip_prefix("exposing")
+        .map(str::trim)
+        .unwrap_or(trimmed);
     let inner = trimmed
         .strip_prefix('(')
         .and_then(|s| s.strip_suffix(')'))
@@ -1071,7 +1089,13 @@ mod tests {
         }
         // Std.App is the replacement, never deprecated; the front-door SUB-modules
         // (Std.Live.Console/Head) are not the front door and stay listed.
-        for m in ["Std.App", "Std.Live.Console", "Std.Live.Head", "Std.Db", "Std.Ui"] {
+        for m in [
+            "Std.App",
+            "Std.Live.Console",
+            "Std.Live.Head",
+            "Std.Db",
+            "Std.Ui",
+        ] {
             assert!(!is_deprecated_front_door(m), "{m} must NOT be deprecated");
         }
     }
@@ -1370,7 +1394,10 @@ const SITE_STYLE: &str = "<style>\
 /// `readme.html` (the guide index is generated separately).
 fn flatten_guide_name(rel_to_docs: &str) -> String {
     let stem = rel_to_docs.strip_suffix(".md").unwrap_or(rel_to_docs);
-    format!("{}.html", stem.replace('/', "-").replace(' ', "-").to_lowercase())
+    format!(
+        "{}.html",
+        stem.replace('/', "-").replace(' ', "-").to_lowercase()
+    )
 }
 
 /// Collect `*.md` under `dir` (recursively), EXCLUDING `docs/history/`, as
@@ -1406,7 +1433,9 @@ fn resolve_md_link(src_rel: &str, href: &str) -> Option<String> {
         return None;
     }
     // Resolve `path_part` relative to the source doc's PARENT directory.
-    let base = std::path::Path::new(src_rel).parent().unwrap_or(Path::new(""));
+    let base = std::path::Path::new(src_rel)
+        .parent()
+        .unwrap_or(Path::new(""));
     let mut segs: Vec<&str> = base
         .to_str()
         .unwrap_or("")
@@ -1552,8 +1581,8 @@ fn wrap_guide_page(title: &str, body: &str) -> String {
 fn guide_section(rel: &str) -> Option<&'static str> {
     // Hard excludes — not live user-facing reference.
     let excluded_exact = [
-        "README.md",                                  // replaced by the landing
-        "architecture/sky-compiler-architecture.md",  // LEGACY Haskell pipeline
+        "README.md",                                 // replaced by the landing
+        "architecture/sky-compiler-architecture.md", // LEGACY Haskell pipeline
         "conformance-findings.md",
         "rust-rewrite/12-migration-and-milestones.md",
         "skywebview/PLAN.md",
@@ -1606,7 +1635,10 @@ pub fn render_guides(repo_root: &Path, out_dir: &Path) -> std::io::Result<()> {
         let src = std::fs::read_to_string(path).unwrap_or_default();
         let title = guide_title(rel, &src);
         let body = markdown_to_html(&src, rel);
-        std::fs::write(guide_dir.join(flatten_guide_name(rel)), wrap_guide_page(&title, &body))?;
+        std::fs::write(
+            guide_dir.join(flatten_guide_name(rel)),
+            wrap_guide_page(&title, &body),
+        )?;
         groups
             .entry(section)
             .or_default()
@@ -1648,7 +1680,10 @@ pub fn render_guides(repo_root: &Path, out_dir: &Path) -> std::io::Result<()> {
         }
         inner.push_str("</ul></div>");
     }
-    std::fs::write(guide_dir.join("index.html"), wrap_guide_page("Guides & internals", &inner))?;
+    std::fs::write(
+        guide_dir.join("index.html"),
+        wrap_guide_page("Guides & internals", &inner),
+    )?;
     Ok(())
 }
 
@@ -1669,30 +1704,106 @@ struct Lesson {
 }
 
 const LEARN_TOUR: &[Lesson] = &[
-    Lesson { stem: "index", title: "Welcome", section: "Start" },
-    Lesson { stem: "01-first-app", title: "Your first app", section: "Start" },
-    Lesson { stem: "02-values-and-types", title: "Values & types", section: "The language" },
-    Lesson { stem: "03-functions", title: "Functions", section: "The language" },
-    Lesson { stem: "04-records", title: "Records", section: "The language" },
-    Lesson { stem: "05-unions-and-case", title: "Unions & case", section: "The language" },
-    Lesson { stem: "06-lists", title: "Lists", section: "The language" },
-    Lesson { stem: "07-maybe-and-result", title: "Maybe & Result", section: "The language" },
-    Lesson { stem: "08-pipelines-and-let", title: "Pipelines & let", section: "The language" },
-    Lesson { stem: "09-effects-and-task", title: "Effects & Task", section: "The language" },
-    Lesson { stem: "10-modules", title: "Modules & imports", section: "The language" },
-    Lesson { stem: "11-first-web-app", title: "Your first web app", section: "Building apps" },
-    Lesson { stem: "12-ui", title: "UI with Std.Ui", section: "Building apps" },
-    Lesson { stem: "13-forms-and-events", title: "Forms & events", section: "Building apps" },
-    Lesson { stem: "14-routing", title: "Routing & navigation", section: "Building apps" },
-    Lesson { stem: "15-data", title: "Data with Std.Db", section: "Building apps" },
-    Lesson { stem: "16-auth", title: "Auth", section: "Building apps" },
-    Lesson { stem: "17-deploying", title: "Deploying", section: "Building apps" },
+    Lesson {
+        stem: "index",
+        title: "Welcome",
+        section: "Start",
+    },
+    Lesson {
+        stem: "01-first-app",
+        title: "Your first app",
+        section: "Start",
+    },
+    Lesson {
+        stem: "02-values-and-types",
+        title: "Values & types",
+        section: "The language",
+    },
+    Lesson {
+        stem: "03-functions",
+        title: "Functions",
+        section: "The language",
+    },
+    Lesson {
+        stem: "04-records",
+        title: "Records",
+        section: "The language",
+    },
+    Lesson {
+        stem: "05-unions-and-case",
+        title: "Unions & case",
+        section: "The language",
+    },
+    Lesson {
+        stem: "06-lists",
+        title: "Lists",
+        section: "The language",
+    },
+    Lesson {
+        stem: "07-maybe-and-result",
+        title: "Maybe & Result",
+        section: "The language",
+    },
+    Lesson {
+        stem: "08-pipelines-and-let",
+        title: "Pipelines & let",
+        section: "The language",
+    },
+    Lesson {
+        stem: "09-effects-and-task",
+        title: "Effects & Task",
+        section: "The language",
+    },
+    Lesson {
+        stem: "10-modules",
+        title: "Modules & imports",
+        section: "The language",
+    },
+    Lesson {
+        stem: "11-first-web-app",
+        title: "Your first web app",
+        section: "Building apps",
+    },
+    Lesson {
+        stem: "12-ui",
+        title: "UI with Std.Ui",
+        section: "Building apps",
+    },
+    Lesson {
+        stem: "13-forms-and-events",
+        title: "Forms & events",
+        section: "Building apps",
+    },
+    Lesson {
+        stem: "14-routing",
+        title: "Routing & navigation",
+        section: "Building apps",
+    },
+    Lesson {
+        stem: "15-data",
+        title: "Data with Std.Db",
+        section: "Building apps",
+    },
+    Lesson {
+        stem: "16-auth",
+        title: "Auth",
+        section: "Building apps",
+    },
+    Lesson {
+        stem: "17-deploying",
+        title: "Deploying",
+        section: "Building apps",
+    },
     Lesson {
         stem: "18-coming-from-other-languages",
         title: "Coming from another language",
         section: "Next steps",
     },
-    Lesson { stem: "19-ai-tooling", title: "Using AI tools", section: "Next steps" },
+    Lesson {
+        stem: "19-ai-tooling",
+        title: "Using AI tools",
+        section: "Next steps",
+    },
 ];
 
 fn lesson_out_file(stem: &str) -> String {
@@ -1711,7 +1822,10 @@ fn tour_sidebar(active: usize) -> String {
     let mut num = 0u32;
     for (i, l) in LEARN_TOUR.iter().enumerate() {
         if l.section != cur_section {
-            out.push_str(&format!("<div class=\"sec\">{}</div>", html_escape(l.section)));
+            out.push_str(&format!(
+                "<div class=\"sec\">{}</div>",
+                html_escape(l.section)
+            ));
             cur_section = l.section;
         }
         let label = if l.stem == "index" {
@@ -1777,9 +1891,8 @@ pub fn render_learn_tour(repo_root: &Path, out_dir: &Path) -> std::io::Result<()
     std::fs::create_dir_all(&learn_out)?;
     for (i, l) in LEARN_TOUR.iter().enumerate() {
         let src_path = learn_src.join(format!("{}.md", l.stem));
-        let md = std::fs::read_to_string(&src_path).unwrap_or_else(|_| {
-            format!("# {}\n\n_This lesson is being written._\n", l.title)
-        });
+        let md = std::fs::read_to_string(&src_path)
+            .unwrap_or_else(|_| format!("# {}\n\n_This lesson is being written._\n", l.title));
         let body = markdown_to_html_learn(&md);
         let page = wrap_tour_page(l.title, &tour_sidebar(i), &body, &tour_prevnext(i));
         std::fs::write(learn_out.join(lesson_out_file(l.stem)), page)?;

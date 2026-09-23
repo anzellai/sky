@@ -91,8 +91,14 @@ const CONSUMED_ELSEWHERE: &[(&str, &str)] = &[(
 const ROUTE_SENTINELS: &[(&str, &str)] = &[
     ("SKY_LIVE_STORE", "skyGetenv(\"SUFFIX\") in runtime-go/rt"),
     ("ENV", "literal os.Getenv(\"NAME\") in runtime-go/rt"),
-    ("DATABASE_URL", "literal os.Getenv of a NON-SKY_ name — the class the gate used to skip"),
-    ("SKY_LIVE_TTL", "extra_defaults seeded from sky.toml by rust/crates/project/src/build.rs"),
+    (
+        "DATABASE_URL",
+        "literal os.Getenv of a NON-SKY_ name — the class the gate used to skip",
+    ),
+    (
+        "SKY_LIVE_TTL",
+        "extra_defaults seeded from sky.toml by rust/crates/project/src/build.rs",
+    ),
     (
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "runtime-go/rt/telemetry/otel.go:415 — a read one directory BELOW runtime-go/rt, \
@@ -112,7 +118,12 @@ fn is_env_token(s: &str) -> bool {
 }
 
 /// Collect every `"ARG"` that follows one of `helpers` in `src`, mapped by `f`.
-fn scan_calls(src: &str, helpers: &[&str], names: &mut BTreeSet<String>, f: impl Fn(&str) -> Option<String>) {
+fn scan_calls(
+    src: &str,
+    helpers: &[&str],
+    names: &mut BTreeSet<String>,
+    f: impl Fn(&str) -> Option<String>,
+) {
     for helper in helpers {
         for (idx, _) in src.match_indices(helper) {
             let rest = &src[idx + helper.len()..];
@@ -136,7 +147,10 @@ fn files_under(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
     };
     for entry in entries {
         let path = entry.expect("dir entry").path();
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         if name.starts_with('.') || name == "target" || name == "node_modules" {
             continue;
         }
@@ -144,7 +158,11 @@ fn files_under(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
             files_under(&path, exts, out);
             continue;
         }
-        if path.extension().and_then(|e| e.to_str()).is_some_and(|e| exts.contains(&e)) {
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| exts.contains(&e))
+        {
             out.push(path);
         }
     }
@@ -188,7 +206,12 @@ fn variables_that_are_read(root: &Path) -> BTreeSet<String> {
         );
         scan_calls(
             &src,
-            &["os.Getenv(\"", "os.LookupEnv(\"", "Getenv(\"", "LookupEnv(\""],
+            &[
+                "os.Getenv(\"",
+                "os.LookupEnv(\"",
+                "Getenv(\"",
+                "LookupEnv(\"",
+            ],
             &mut names,
             |s| is_env_token(s).then(|| s.to_string()),
         );
@@ -205,7 +228,12 @@ fn variables_that_are_read(root: &Path) -> BTreeSet<String> {
         let src = std::fs::read_to_string(path).expect("read rust source");
         scan_calls(
             &src,
-            &["env::var(\"", "env::var_os(\"", "env::remove_var(\"", "env::set_var(\""],
+            &[
+                "env::var(\"",
+                "env::var_os(\"",
+                "env::remove_var(\"",
+                "env::set_var(\"",
+            ],
             &mut names,
             |s| is_env_token(s).then(|| s.to_string()),
         );
@@ -246,7 +274,12 @@ fn sky_reads_under(dir: &Path) -> BTreeSet<String> {
         };
         scan_calls(
             &src,
-            &["System.getenv \"", "System.getenvOr \"", "getenv \"", "getenvOr \""],
+            &[
+                "System.getenv \"",
+                "System.getenvOr \"",
+                "getenv \"",
+                "getenvOr \"",
+            ],
             &mut names,
             |s| is_env_token(s).then(|| s.to_string()),
         );
@@ -360,7 +393,8 @@ fn env_examples_name_variables_that_exist() {
     );
 
     assert_eq!(
-        checked, EXPECTED_ASSIGNMENTS,
+        checked,
+        EXPECTED_ASSIGNMENTS,
         "the gate checked {checked} assignments across {} tracked .env file(s), and \
          EXPECTED_ASSIGNMENTS says {EXPECTED_ASSIGNMENTS}. If you added or removed a \
          variable, update the constant in the same commit; if you did not, a file \

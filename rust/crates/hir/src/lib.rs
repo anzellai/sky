@@ -225,7 +225,12 @@ mod tests {
         let m = db.module_by_name("Main").unwrap();
         let r = resolve(&db, m);
         let msgs = ambiguity_codes(&r);
-        assert_eq!(msgs.len(), 1, "expected one [E1012], got {:?}", r.diagnostics);
+        assert_eq!(
+            msgs.len(),
+            1,
+            "expected one [E1012], got {:?}",
+            r.diagnostics
+        );
         // The message must name BOTH modules and offer both qualified forms —
         // an ambiguity error that does not say what the alternatives are leaves
         // the user to guess which import to change.
@@ -540,7 +545,12 @@ mod tests {
         let m = db.module_by_name("Main").unwrap();
         let r = resolve(&db, m);
         let msgs = ambiguity_codes(&r);
-        assert_eq!(msgs.len(), 1, "expected one [E1012], got {:?}", r.diagnostics);
+        assert_eq!(
+            msgs.len(),
+            1,
+            "expected one [E1012], got {:?}",
+            r.diagnostics
+        );
         assert!(msgs[0].contains("Ambig.Alpha"), "{}", msgs[0]);
         assert!(msgs[0].contains("Ambig.Beta"), "{}", msgs[0]);
         assert!(msgs[0].contains("type"), "{}", msgs[0]);
@@ -758,7 +768,12 @@ mod tests {
         let m = db.module_by_name("Main").unwrap();
         let r = resolve(&db, m);
         let msgs = ambiguity_codes(&r);
-        assert_eq!(msgs.len(), 1, "expected one [E1012], got {:?}", r.diagnostics);
+        assert_eq!(
+            msgs.len(),
+            1,
+            "expected one [E1012], got {:?}",
+            r.diagnostics
+        );
     }
 
     #[test]
@@ -784,7 +799,11 @@ mod tests {
                     dec : Decoder -> Int\n\
                     dec _d =\n    1\n\n\
                     main =\n    println \"x\"\n";
-        let db = db_with(&[("Codec.Wrap", wrap), ("Db.Phantom", phantom), ("Main", main)]);
+        let db = db_with(&[
+            ("Codec.Wrap", wrap),
+            ("Db.Phantom", phantom),
+            ("Main", main),
+        ]);
         let m = db.module_by_name("Main").unwrap();
         let r = resolve(&db, m);
         assert_eq!(

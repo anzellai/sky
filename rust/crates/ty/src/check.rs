@@ -607,7 +607,10 @@ mod migration_hint_tests {
         let h = secret_migration_hint("type mismatch: `Secret` vs `String`")
             .expect("Secret/String mismatch must produce a migration hint");
         assert!(h.contains("Secret.fromEnv"), "hint names the fix: {h}");
-        assert!(h.contains("Secret.reveal"), "hint names the escape hatch: {h}");
+        assert!(
+            h.contains("Secret.reveal"),
+            "hint names the escape hatch: {h}"
+        );
         // order-independent: String-vs-Secret must also fire.
         assert!(secret_migration_hint("type mismatch: `String` vs `Secret`").is_some());
     }

@@ -120,7 +120,10 @@ pub fn prove_isolation_needed(root: &Path) -> i32 {
     println!("  comment at :256-258 records that same-name/different-type records");
     println!("  collide there. This runs the experiment rather than asserting it.");
     println!();
-    println!("  forbidden-family cases with a batchable body : {}", forbidden.len());
+    println!(
+        "  forbidden-family cases with a batchable body : {}",
+        forbidden.len()
+    );
     println!();
 
     if forbidden.is_empty() {
@@ -149,14 +152,21 @@ pub fn prove_isolation_needed(root: &Path) -> i32 {
     let mut diverged = Vec::new();
     for c in &forbidden {
         let a = alone.get(&c.id).cloned().unwrap_or_default();
-        let b = batched.get(&c.id).cloned().unwrap_or_else(|| "<missing>".into());
+        let b = batched
+            .get(&c.id)
+            .cloned()
+            .unwrap_or_else(|| "<missing>".into());
         if a != b {
             diverged.push((c.id.clone(), a, b));
         }
     }
     let _ = std::fs::remove_dir_all(&scratch);
 
-    println!("  diverged when batched : {}/{}", diverged.len(), forbidden.len());
+    println!(
+        "  diverged when batched : {}/{}",
+        diverged.len(),
+        forbidden.len()
+    );
     for (id, a, b) in &diverged {
         println!("    {id}");
         println!("        alone   {a:?}");
@@ -170,7 +180,10 @@ pub fn prove_isolation_needed(root: &Path) -> i32 {
         println!("  neighbour CAN capture the fieldset/Model selection), but this probe did");
         println!("  not exhibit it. Reported as measured, not as assumed.");
     } else {
-        println!("PROBE RESULT: batching CHANGED {} verdict(s). The isolation requirement", diverged.len());
+        println!(
+            "PROBE RESULT: batching CHANGED {} verdict(s). The isolation requirement",
+            diverged.len()
+        );
         println!("  is load-bearing and the `unit` marking is doing real work.");
     }
     0
@@ -193,7 +206,11 @@ pub fn run(root: &Path) -> i32 {
     let seed = super::commit_seed(root);
 
     let n = SAMPLE.min(batchable.len());
-    let start = if batchable.is_empty() { 0 } else { seed % batchable.len() };
+    let start = if batchable.is_empty() {
+        0
+    } else {
+        seed % batchable.len()
+    };
     let members: Vec<(usize, String, Body)> = (0..n)
         .map(|i| {
             let c = &batchable[(start + i) % batchable.len()];
@@ -266,8 +283,14 @@ pub fn run(root: &Path) -> i32 {
     let mut divergences = Vec::new();
     for (_, id, _) in &members {
         let a = alone.get(id).cloned().unwrap_or_else(|| "<missing>".into());
-        let b = in_batch.get(id).cloned().unwrap_or_else(|| "<missing>".into());
-        let c = shuffled.get(id).cloned().unwrap_or_else(|| "<missing>".into());
+        let b = in_batch
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| "<missing>".into());
+        let c = shuffled
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| "<missing>".into());
         if a != b || a != c {
             divergences.push((id.clone(), a, b, c));
         }

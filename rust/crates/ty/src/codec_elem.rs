@@ -266,7 +266,10 @@ mod tests {
 
     #[test]
     fn set_maybe_and_dict_value_fire() {
-        assert_eq!(first_undeterminable(&Ty::app("Set", vec![flex()])), Some("Set"));
+        assert_eq!(
+            first_undeterminable(&Ty::app("Set", vec![flex()])),
+            Some("Set")
+        );
         assert_eq!(
             first_undeterminable(&Ty::app("Maybe", vec![flex()])),
             Some("Maybe")

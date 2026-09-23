@@ -37,9 +37,9 @@ func SkyNewSize(w any, h any) any {
 	return fyne.NewSize(float32(w.(int)), float32(h.(int)))
 }
 
-func StopwatchDisplay() any { swOnce.Do(initStopwatch); return swDisplay }
+func StopwatchDisplay() any   { swOnce.Do(initStopwatch); return swDisplay }
 func StopwatchToggleBtn() any { swOnce.Do(initStopwatch); return swToggleBtn }
-func StopwatchResetBtn() any { swOnce.Do(initStopwatch); return swResetBtn }
+func StopwatchResetBtn() any  { swOnce.Do(initStopwatch); return swResetBtn }
 
 // ── Timer logic ────────────────────────────────────────────────
 

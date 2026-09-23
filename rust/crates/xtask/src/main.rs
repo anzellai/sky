@@ -81,9 +81,7 @@ const GATES: &[(&str, GateFn)] = &[
     ("shared-world", |args| {
         shared_world_gate::run(args, &repo_root())
     }),
-    ("corpus-bench", |args| {
-        corpus_bench::run(args, &repo_root())
-    }),
+    ("corpus-bench", |args| corpus_bench::run(args, &repo_root())),
     ("corpus", |args| corpus::run(args, &repo_root())),
     ("denominators", |args| {
         denominators_gate::run(args, &repo_root())

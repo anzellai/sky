@@ -145,8 +145,11 @@ fn have_go() -> bool {
 /// `postgresql@N` kegs are not symlinked onto PATH, so PATH alone misses the
 /// most common macOS install.
 fn find_pg_bin() -> Option<PathBuf> {
-    let complete =
-        |d: &Path| ["initdb", "pg_ctl", "postgres"].iter().all(|b| d.join(b).is_file());
+    let complete = |d: &Path| {
+        ["initdb", "pg_ctl", "postgres"]
+            .iter()
+            .all(|b| d.join(b).is_file())
+    };
     if let Ok(v) = std::env::var("SKY_POSTGRES_BIN") {
         let d = PathBuf::from(v);
         if complete(&d) {
@@ -215,7 +218,11 @@ impl Cluster {
         )
         .unwrap();
         let sky_home = std::env::temp_dir().join(unique("xrcluster-home"));
-        let cl = Cluster { project, sky_home, pg_bin };
+        let cl = Cluster {
+            project,
+            sky_home,
+            pg_bin,
+        };
 
         let out = cl.sky_db(&["db", "start"]);
         if !out.status.success() {
@@ -261,10 +268,14 @@ impl Cluster {
         let reg: serde_json::Value =
             serde_json::from_str(&text).expect("registry is not valid JSON");
         let key = self.project.canonicalize().unwrap().display().to_string();
-        let entry = reg["clusters"].get(&key).unwrap_or_else(|| {
-            panic!("no registry entry for {key}; registry was:\n{reg:#}")
-        });
-        PathBuf::from(entry["socket_dir"].as_str().expect("socket_dir missing from registry entry"))
+        let entry = reg["clusters"]
+            .get(&key)
+            .unwrap_or_else(|| panic!("no registry entry for {key}; registry was:\n{reg:#}"));
+        PathBuf::from(
+            entry["socket_dir"]
+                .as_str()
+                .expect("socket_dir missing from registry entry"),
+        )
     }
 }
 
@@ -301,7 +312,9 @@ impl App {
         std::fs::write(project.join("src").join("Main.sky"), APP_SRC).unwrap();
 
         let build = run_bounded(
-            Command::new(SKY).args(["build", "src/Main.sky"]).current_dir(&project),
+            Command::new(SKY)
+                .args(["build", "src/Main.sky"])
+                .current_dir(&project),
             "sky build src/Main.sky",
         );
         assert!(
@@ -337,7 +350,11 @@ impl App {
             .stderr(log)
             .spawn()
             .unwrap_or_else(|e| panic!("failed to spawn replica {tag} on :{port}: {e}"));
-        let mut r = Replica { child, port, log_path };
+        let mut r = Replica {
+            child,
+            port,
+            log_path,
+        };
         if !r.wait_for_listening(60) {
             let log = r.read_log();
             panic!("replica {tag} never reported listening on :{port}\nlog:\n{log}");
@@ -349,8 +366,10 @@ impl App {
         // per-process memory store can never masquerade as continuity.
         if !r.wait_for_log("session store: postgres", 60) {
             let log = r.read_log();
-            panic!("replica {tag} did not bring up the POSTGRES session store — a \
-                    memory fallback would make this gate vacuous\nlog:\n{log}");
+            panic!(
+                "replica {tag} did not bring up the POSTGRES session store — a \
+                    memory fallback would make this gate vacuous\nlog:\n{log}"
+            );
         }
         r
     }
@@ -463,14 +482,22 @@ fn both(o: &Output) -> String {
 /// `-b jar` always sends them.
 fn curl_get(port: u16, path: &str, jar: &Path, save: bool) -> String {
     let url = format!("http://127.0.0.1:{port}{path}");
-    let mut args: Vec<String> =
-        vec!["-s".into(), "--max-time".into(), "30".into(), "-b".into(), jar.display().to_string()];
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "--max-time".into(),
+        "30".into(),
+        "-b".into(),
+        jar.display().to_string(),
+    ];
     if save {
         args.push("-c".into());
         args.push(jar.display().to_string());
     }
     args.push(url);
-    let out = Command::new("curl").args(&args).output().expect("run curl GET");
+    let out = Command::new("curl")
+        .args(&args)
+        .output()
+        .expect("run curl GET");
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
@@ -489,7 +516,8 @@ fn curl_get_fresh(port: u16, path: &str) -> String {
 /// the HTTP status code.
 fn curl_post_event(port: u16, jar: &Path, csrf: &str, handler_id: &str) -> String {
     let url = format!("http://127.0.0.1:{port}/_sky/event");
-    let body = format!("{{\"sessionId\":\"\",\"msg\":\"\",\"args\":[],\"handlerId\":\"{handler_id}\"}}");
+    let body =
+        format!("{{\"sessionId\":\"\",\"msg\":\"\",\"args\":[],\"handlerId\":\"{handler_id}\"}}");
     let out = Command::new("curl")
         .args([
             "-s",
@@ -589,10 +617,13 @@ fn a_session_moves_from_replica_a_to_replica_b_over_a_shared_postgres_store() {
     let init_count = rendered_count(&initial).unwrap_or_else(|| {
         panic!("replica A's initial GET / did not render an XRCOUNT marker:\n{initial}")
     });
-    assert_eq!(init_count, 0, "a fresh session should start at the init value (0)");
+    assert_eq!(
+        init_count, 0,
+        "a fresh session should start at the init value (0)"
+    );
 
-    let sid = cookie_from_jar(&jar, "sky_sid")
-        .expect("replica A's GET / did not set an sky_sid cookie");
+    let sid =
+        cookie_from_jar(&jar, "sky_sid").expect("replica A's GET / did not set an sky_sid cookie");
     let csrf = cookie_from_jar(&jar, "__sky_csrf")
         .expect("replica A's GET / did not set a __sky_csrf cookie");
     let handler_id = button_handler_id(&initial)
@@ -605,7 +636,8 @@ fn a_session_moves_from_replica_a_to_replica_b_over_a_shared_postgres_store() {
     for i in 1..=TARGET {
         let status = curl_post_event(replica_a.port, &jar, &csrf, &handler_id);
         assert_eq!(
-            status, "200",
+            status,
+            "200",
             "event #{i} to replica A returned HTTP {status}, not 200 — the dispatch \
              did not reach the handler (session/CSRF/handler-id mismatch)\nreplica A log:\n{}",
             replica_a.read_log(),
@@ -633,7 +665,8 @@ fn a_session_moves_from_replica_a_to_replica_b_over_a_shared_postgres_store() {
         )
     });
     assert_eq!(
-        b_count, TARGET,
+        b_count,
+        TARGET,
         "CROSS-REPLICA CONTINUITY BROKEN: replica A mutated the session (sid={sid}) to \
          {TARGET} and persisted it to the shared Postgres store, but replica B — a \
          separate process, cache-cold for this sid — rendered {b_count}. A session that \

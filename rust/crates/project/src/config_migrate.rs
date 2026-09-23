@@ -197,10 +197,11 @@ pub fn run(project_dir: &Path, mode: Mode) -> Result<Outcome, MigrateError> {
         Mode::Apply => {
             let mut wrote = false;
             if plan.toml_changed {
-                std::fs::write(project_dir.join("sky.toml"), &plan.sky_toml_new)
-                    .map_err(|e| MigrateError::Unsupported {
+                std::fs::write(project_dir.join("sky.toml"), &plan.sky_toml_new).map_err(|e| {
+                    MigrateError::Unsupported {
                         detail: format!("cannot write sky.toml: {e}"),
-                    })?;
+                    }
+                })?;
                 wrote = true;
             }
             if plan.main_changed {
@@ -228,7 +229,8 @@ pub fn plan(project_dir: &Path) -> Result<MigratePlan, MigrateError> {
     let sky_toml_old = std::fs::read_to_string(&sky_toml_path)
         .map_err(|_| MigrateError::NoSkyToml(sky_toml_path.clone()))?;
 
-    let entry_rel = entry_from_sky_toml(&sky_toml_old).unwrap_or_else(|| "src/Main.sky".to_string());
+    let entry_rel =
+        entry_from_sky_toml(&sky_toml_old).unwrap_or_else(|| "src/Main.sky".to_string());
     let entry_path = project_dir.join(&entry_rel);
 
     // The recognised runtime-config keys present, from the ONE parser.
@@ -285,8 +287,10 @@ pub fn plan(project_dir: &Path) -> Result<MigratePlan, MigrateError> {
 
     // Rewrite sky.toml: remove every migratable key line; drop an emptied
     // runtime section header.
-    let removals: BTreeSet<(String, String)> =
-        legacy.iter().map(|l| (l.section.clone(), l.key.clone())).collect();
+    let removals: BTreeSet<(String, String)> = legacy
+        .iter()
+        .map(|l| (l.section.clone(), l.key.clone()))
+        .collect();
     // Defence in depth: every removal must be a declared move.
     verify_removals(&removals.iter().cloned().collect::<Vec<_>>())?;
     let sky_toml_new = rewrite_sky_toml(&sky_toml_old, &removals);
@@ -386,7 +390,8 @@ pub fn generate(legacy: &[Legacy], live_alias: &str) -> Result<Generated, Migrat
                 })
             }
         };
-        g.config_calls.push(format!("|> Config.withLog {fmt_ctor} {lvl_ctor}"));
+        g.config_calls
+            .push(format!("|> Config.withLog {fmt_ctor} {lvl_ctor}"));
         g.config_ctor_groups.insert("LogFormat(..)");
         g.config_ctor_groups.insert("LogLevel(..)");
         g.produced.insert("LOG_FORMAT".into(), fmt_env.into());
@@ -400,12 +405,14 @@ pub fn generate(legacy: &[Legacy], live_alias: &str) -> Result<Generated, Migrat
         });
     }
     if let Some(p) = get("database", "path") {
-        g.config_calls.push(format!("|> Config.withDatabase (Sqlite {})", quote(p)));
+        g.config_calls
+            .push(format!("|> Config.withDatabase (Sqlite {})", quote(p)));
         g.config_ctor_groups.insert("Database(..)");
         g.produced.insert("DB_PATH".into(), p.into());
     }
     if let Some(u) = get("database", "url") {
-        g.config_calls.push(format!("|> Config.withDatabase (Postgres {})", quote(u)));
+        g.config_calls
+            .push(format!("|> Config.withDatabase (Postgres {})", quote(u)));
         g.config_ctor_groups.insert("Database(..)");
         g.produced.insert("DATABASE_URL".into(), u.into());
     }
@@ -418,9 +425,11 @@ pub fn generate(legacy: &[Legacy], live_alias: &str) -> Result<Generated, Migrat
         })?;
         let path = get("live", "storePath").unwrap_or("");
         let ctor = sessions_ctor(store, path)?;
-        g.config_calls.push(format!("|> Config.withSessions {ctor}"));
+        g.config_calls
+            .push(format!("|> Config.withSessions {ctor}"));
         g.config_ctor_groups.insert("Sessions(..)");
-        g.produced.insert("LIVE_STORE".into(), store_kind_env(store).into());
+        g.produced
+            .insert("LIVE_STORE".into(), store_kind_env(store).into());
         if !path.is_empty() {
             g.produced.insert("LIVE_STORE_PATH".into(), path.into());
         }
@@ -435,11 +444,14 @@ pub fn generate(legacy: &[Legacy], live_alias: &str) -> Result<Generated, Migrat
             detail: "[jobs] store path without [jobs] store — cannot pick a JobStore constructor"
                 .into(),
         })?;
-        let path = get("jobs", "storePath").or_else(|| get("jobs", "store_path")).unwrap_or("");
+        let path = get("jobs", "storePath")
+            .or_else(|| get("jobs", "store_path"))
+            .unwrap_or("");
         let ctor = jobs_ctor(store, path)?;
         g.config_calls.push(format!("|> Config.withJobs {ctor}"));
         g.config_ctor_groups.insert("JobStore(..)");
-        g.produced.insert("JOBS_STORE".into(), store_kind_env(store).into());
+        g.produced
+            .insert("JOBS_STORE".into(), store_kind_env(store).into());
         if !path.is_empty() {
             g.produced.insert("JOBS_STORE_PATH".into(), path.into());
         }
@@ -448,14 +460,19 @@ pub fn generate(legacy: &[Legacy], live_alias: &str) -> Result<Generated, Migrat
     // ── [security] csrf → Config.withCsrf Bool.
     if let Some(v) = get("security", "csrf") {
         let on = !matches!(v.to_ascii_lowercase().as_str(), "false" | "off" | "0");
-        g.config_calls.push(format!("|> Config.withCsrf {}", if on { "True" } else { "False" }));
-        g.produced.insert("CSRF".into(), if on { "on" } else { "off" }.into());
+        g.config_calls.push(format!(
+            "|> Config.withCsrf {}",
+            if on { "True" } else { "False" }
+        ));
+        g.produced
+            .insert("CSRF".into(), if on { "on" } else { "off" }.into());
     }
 
     // ── app-shape [live] builders → <alias>.withX (into the Live.config pipeline).
     let a = live_alias;
     if let Some(v) = get("live", "port") {
-        g.live_calls.push(format!("|> {a}.withPort {}", int_arg(v)?));
+        g.live_calls
+            .push(format!("|> {a}.withPort {}", int_arg(v)?));
         g.produced.insert("LIVE_PORT".into(), v.into());
     }
     if let Some(v) = get("live", "static") {
@@ -471,7 +488,8 @@ pub fn generate(legacy: &[Legacy], live_alias: &str) -> Result<Generated, Migrat
         g.produced.insert("LIVE_INPUT_MODE".into(), v.into());
     }
     if let Some(v) = get("live", "maxBodyBytes") {
-        g.live_calls.push(format!("|> {a}.withMaxBodyBytes {}", int_arg(v)?));
+        g.live_calls
+            .push(format!("|> {a}.withMaxBodyBytes {}", int_arg(v)?));
         g.produced.insert("LIVE_MAX_BODY_BYTES".into(), v.into());
     }
 
@@ -502,7 +520,8 @@ fn jobs_ctor(store: &str, path: &str) -> Result<String, MigrateError> {
         "postgres" if path.is_empty() => Ok("JobsSharedWithDatabase".into()),
         "postgres" => Err(MigrateError::Unsupported {
             detail: "[jobs] store = \"postgres\" with an explicit store path cannot be a typed \
-                     JobStore value".into(),
+                     JobStore value"
+                .into(),
         }),
         other => Err(MigrateError::Unsupported {
             detail: format!("[jobs] store = \"{other}\" is not memory|sqlite|postgres"),
@@ -554,7 +573,8 @@ pub fn intended_env(legacy: &[Legacy]) -> BTreeMap<String, String> {
         }
     }
     if touched_log {
-        m.entry("LOG_FORMAT".into()).or_insert_with(|| "text".into());
+        m.entry("LOG_FORMAT".into())
+            .or_insert_with(|| "text".into());
         m.entry("LOG_LEVEL".into()).or_insert_with(|| "info".into());
     }
     normalize(&mut m);
@@ -588,9 +608,9 @@ fn oracle_mismatch(
     let keys: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
     for k in keys {
         match (a.get(k), b.get(k)) {
-            (Some(x), Some(y)) if x != y => {
-                diffs.push(format!("{k}: sky.toml has {x:?}, the generated config produces {y:?}"))
-            }
+            (Some(x), Some(y)) if x != y => diffs.push(format!(
+                "{k}: sky.toml has {x:?}, the generated config produces {y:?}"
+            )),
             (Some(x), None) => diffs.push(format!(
                 "{k}: sky.toml has {x:?} but the generated config produces nothing (a dropped key)"
             )),
@@ -679,9 +699,7 @@ fn rewrite_sky_toml(text: &str, removals: &BTreeSet<(String, String)>) -> String
     }
 
     // Which sections we may drop wholesale when emptied.
-    let droppable = |name: &str| {
-        matches!(name, "live" | "log" | "jobs" | "security" | "auth")
-    };
+    let droppable = |name: &str| matches!(name, "live" | "log" | "jobs" | "security" | "auth");
 
     let mut out: Vec<String> = Vec::new();
     for sec in &sections {
@@ -958,7 +976,10 @@ fn ensure_config_import(text: &str, gen: &Generated) -> String {
     };
     let import_line = format!("import Sky.Config as Config{exposing}");
 
-    if text.lines().any(|l| l.trim_start().starts_with("import Sky.Config ")) {
+    if text
+        .lines()
+        .any(|l| l.trim_start().starts_with("import Sky.Config "))
+    {
         // Already imported — trust the existing line (a hand-written one may
         // expose more). Leave it; the ctors we need are a subset of the common
         // `exposing (..)` idioms, and re-writing a user's import risks churn.
@@ -967,7 +988,9 @@ fn ensure_config_import(text: &str, gen: &Generated) -> String {
 
     // Insert after the last `import ` line; else after the module header.
     let lines: Vec<&str> = text.lines().collect();
-    let last_import = lines.iter().rposition(|l| l.trim_start().starts_with("import "));
+    let last_import = lines
+        .iter()
+        .rposition(|l| l.trim_start().starts_with("import "));
     let insert_at = match last_import {
         Some(i) => i + 1,
         None => lines
@@ -1083,7 +1106,10 @@ pub fn diff_text(plan: &MigratePlan) -> String {
     if plan.main_changed {
         out.push_str(&format!(
             "--- {} ---\n",
-            plan.entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("Main.sky")
+            plan.entry_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Main.sky")
         ));
         out.push_str(&line_diff(&plan.main_old, &plan.main_new));
     }
@@ -1194,15 +1220,39 @@ mod tests {
             leg("live", "input", "debounce"),
         ];
         let g = generate(&legacy, "Live").expect("generates");
-        assert!(g.config_calls.iter().any(|c| c == "|> Config.withLog Json Warn"), "{:?}", g.config_calls);
-        assert!(g.config_calls.iter().any(|c| c == "|> Config.withDatabase (Sqlite \"app.db\")"));
-        assert!(g.config_calls.iter().any(|c| c == "|> Config.withSessions (SessionsSqlite \"sessions.db\")"));
-        assert!(g.config_calls.iter().any(|c| c == "|> Config.withCsrf False"));
+        assert!(
+            g.config_calls
+                .iter()
+                .any(|c| c == "|> Config.withLog Json Warn"),
+            "{:?}",
+            g.config_calls
+        );
+        assert!(g
+            .config_calls
+            .iter()
+            .any(|c| c == "|> Config.withDatabase (Sqlite \"app.db\")"));
+        assert!(g
+            .config_calls
+            .iter()
+            .any(|c| c == "|> Config.withSessions (SessionsSqlite \"sessions.db\")"));
+        assert!(g
+            .config_calls
+            .iter()
+            .any(|c| c == "|> Config.withCsrf False"));
         assert!(g.live_calls.iter().any(|c| c == "|> Live.withPort 8000"));
-        assert!(g.live_calls.iter().any(|c| c == "|> Live.withInput \"debounce\""));
+        assert!(g
+            .live_calls
+            .iter()
+            .any(|c| c == "|> Live.withInput \"debounce\""));
         assert!(g.config_ctor_groups.contains("Sessions(..)"));
-        assert_eq!(g.produced.get("LOG_FORMAT").map(String::as_str), Some("json"));
-        assert_eq!(g.produced.get("LIVE_STORE_PATH").map(String::as_str), Some("sessions.db"));
+        assert_eq!(
+            g.produced.get("LOG_FORMAT").map(String::as_str),
+            Some("json")
+        );
+        assert_eq!(
+            g.produced.get("LIVE_STORE_PATH").map(String::as_str),
+            Some("sessions.db")
+        );
         // CSRF false → produced "off".
         assert_eq!(g.produced.get("CSRF").map(String::as_str), Some("off"));
     }
@@ -1228,8 +1278,9 @@ mod tests {
 
     #[test]
     fn oracle_catches_a_dropped_target() {
-        let intended: BTreeMap<String, String> =
-            [("LIVE_STORE".to_string(), "sqlite".to_string())].into_iter().collect();
+        let intended: BTreeMap<String, String> = [("LIVE_STORE".to_string(), "sqlite".to_string())]
+            .into_iter()
+            .collect();
         let produced: BTreeMap<String, String> = BTreeMap::new();
         let m = oracle_mismatch(&intended, &produced).expect("must flag a dropped target");
         assert!(m.contains("LIVE_STORE"), "{m}");
@@ -1241,7 +1292,10 @@ mod tests {
         let err = verify_removals(&[("database".into(), "maxOpenConns".into())]).unwrap_err();
         assert_eq!(
             err,
-            MigrateError::Undeclared { section: "database".into(), key: "maxOpenConns".into() }
+            MigrateError::Undeclared {
+                section: "database".into(),
+                key: "maxOpenConns".into()
+            }
         );
         // A real move passes.
         verify_removals(&[("live".into(), "store".into())]).unwrap();
@@ -1261,11 +1315,20 @@ mod tests {
         .into_iter()
         .collect();
         let out = rewrite_sky_toml(src, &removals);
-        assert!(!out.contains("[live]"), "emptied [live] header must drop:\n{out}");
+        assert!(
+            !out.contains("[live]"),
+            "emptied [live] header must drop:\n{out}"
+        );
         assert!(!out.contains("port ="), "{out}");
-        assert!(out.contains("[database]"), "[database] keeps its residual driver:\n{out}");
+        assert!(
+            out.contains("[database]"),
+            "[database] keeps its residual driver:\n{out}"
+        );
         assert!(out.contains("driver = \"sqlite\""), "{out}");
-        assert!(!out.contains("path = \"app.db\""), "migrated path must drop:\n{out}");
+        assert!(
+            !out.contains("path = \"app.db\""),
+            "migrated path must drop:\n{out}"
+        );
         // Zero migratable keys remain.
         assert!(migratable_keys_in(&out).is_empty(), "{out}");
     }
@@ -1276,14 +1339,23 @@ mod tests {
                     import Std.Live as Live\n\n\
                     main =\n    Live.app\n        (Live.config { init = init, view = view })\n";
         let out = insert_live_calls(main, &["|> Live.withPort 8000".to_string()]).unwrap();
-        assert!(out.contains("{ init = init, view = view }"), "record kept:\n{out}");
-        assert!(out.contains("|> Live.withPort 8000"), "call inserted:\n{out}");
+        assert!(
+            out.contains("{ init = init, view = view }"),
+            "record kept:\n{out}"
+        );
+        assert!(
+            out.contains("|> Live.withPort 8000"),
+            "call inserted:\n{out}"
+        );
         // The pipe is spliced between the record `}` and the `)` closing the
         // `Live.app` argument: `Live.config {…} |> Live.withPort 8000)`.
         let brace = out.find("view = view }").unwrap();
         let call = out.find("Live.withPort").unwrap();
         let close_paren = out.rfind(')').unwrap();
-        assert!(brace < call && call < close_paren, "order must be }} < |> < ):\n{out}");
+        assert!(
+            brace < call && call < close_paren,
+            "order must be }} < |> < ):\n{out}"
+        );
     }
 
     #[test]
@@ -1294,8 +1366,14 @@ mod tests {
         g.config_ctor_groups.insert("LogFormat(..)");
         g.config_ctor_groups.insert("LogLevel(..)");
         let out = upsert_config_binding(main, &g).unwrap();
-        assert!(out.contains("module Main exposing (main, config)"), "config exposed:\n{out}");
-        assert!(out.contains("import Sky.Config as Config exposing (LogFormat(..), LogLevel(..))"), "{out}");
+        assert!(
+            out.contains("module Main exposing (main, config)"),
+            "config exposed:\n{out}"
+        );
+        assert!(
+            out.contains("import Sky.Config as Config exposing (LogFormat(..), LogLevel(..))"),
+            "{out}"
+        );
         assert!(out.contains("config : Config.Config"), "{out}");
         assert!(out.contains("    Config.default"), "{out}");
         assert!(out.contains("        |> Config.withLog Json Warn"), "{out}");
@@ -1310,8 +1388,14 @@ mod tests {
         let mut g = Generated::default();
         g.config_calls.push("|> Config.withCsrf False".into());
         let out = upsert_config_binding(main, &g).unwrap();
-        assert!(out.contains("|> Config.withDatabase (Sqlite \"a.db\")"), "existing kept:\n{out}");
-        assert!(out.contains("        |> Config.withCsrf False"), "appended:\n{out}");
+        assert!(
+            out.contains("|> Config.withDatabase (Sqlite \"a.db\")"),
+            "existing kept:\n{out}"
+        );
+        assert!(
+            out.contains("        |> Config.withCsrf False"),
+            "appended:\n{out}"
+        );
         // Not duplicated / re-imported.
         assert_eq!(out.matches("config : Config.Config").count(), 1, "{out}");
     }

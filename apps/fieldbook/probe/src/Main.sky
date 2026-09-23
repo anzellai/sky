@@ -35,7 +35,6 @@ import Std.Log exposing (println)
 import Std.Ui as Ui
 import Std.Ui.Events as Events
 
-
 type Msg
     = Typed String
     | Bare

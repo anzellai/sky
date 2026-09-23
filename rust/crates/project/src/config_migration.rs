@@ -291,9 +291,7 @@ pub const MIGRATIONS: &[MigrationEntry] = &[
 
 /// Look up the migration row for a legacy `(section, key)`, if any.
 pub fn lookup(section: &str, key: &str) -> Option<&'static MigrationEntry> {
-    MIGRATIONS
-        .iter()
-        .find(|e| e.from == Some((section, key)))
+    MIGRATIONS.iter().find(|e| e.from == Some((section, key)))
 }
 
 /// Render the migration LIST for the legacy runtime keys actually present in a

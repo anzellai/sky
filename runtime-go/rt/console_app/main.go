@@ -1970,7 +1970,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(rt.List_lengthT[State_TraceRow_R](spans_2)))) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_e1 State_TraceRow_R) Std_Ui_Element {
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent()), Std_Ui_Background_color(View_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(rt.List_lengthT[State_TraceRow_R](spans_2)))) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_e1 State_TraceRow_R) Std_Ui_Element {
 			_p0 := _e1
 			_ = _p0
 			return View_spanRowView(v_0 /* FFI return */, rt.Coerce[State_TraceRow_R](_p0))
@@ -2328,7 +2328,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(TracesTab_borderSoft())} /* FFI return */, rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(rt.List_lengthT[State_TraceRow_R](spans_2)))) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_e1 State_TraceRow_R) Std_Ui_Element {
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(TracesTab_borderSoft())}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(8), Std_Ui_paddingXY(0, 2)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_accent()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_paddingXY(6, 2), Std_Ui_Border_rounded(3)}, Std_Ui_text(("trace " + shortId_3))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(TracesTab_textSecondary())}, Std_Ui_text((rootName_4 + (" · " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(rt.List_lengthT[State_TraceRow_R](spans_2)))) + " spans")))))})), any(rt.List_mapT[State_TraceRow_R, Std_Ui_Element](func(_e1 State_TraceRow_R) Std_Ui_Element {
 			_p0 := _e1
 			_ = _p0
 			return TracesTab_spanRowView(v_0 /* FFI return */, rt.Coerce[State_TraceRow_R](_p0))
@@ -3485,12 +3485,14 @@ func Std_Ui_Chart_plotInset() struct {
 		Left   int
 		Right  int
 		Top    int
-	} { return struct {
-		Bottom int
-		Left   int
-		Right  int
-		Top    int
-	}{Left: 32, Right: 8, Top: 24, Bottom: 24} })
+	} {
+		return struct {
+			Bottom int
+			Left   int
+			Right  int
+			Top    int
+		}{Left: 32, Right: 8, Top: 24, Bottom: 24}
+	})
 }
 
 func Std_Ui_Chart_gridLines(v_0 Std_Ui_Chart_Cfg_R) []Std_Html_Html {

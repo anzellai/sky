@@ -100,7 +100,9 @@ fn stage_like_build_rs(repo: &Path, dest: &Path) {
 /// Every file under `dir`, as `/`-separated paths relative to `dir`, sorted.
 fn rel_files(dir: &Path) -> Vec<String> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -176,7 +178,9 @@ fn is_frozen(rel: &str) -> bool {
 /// the current consumers are written in.
 fn scripts() -> Vec<(String, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
@@ -205,7 +209,11 @@ fn scripts() -> Vec<(String, String)> {
     files
         .into_iter()
         .filter_map(|p| {
-            let rel = p.strip_prefix(&root).ok()?.to_string_lossy().replace('\\', "/");
+            let rel = p
+                .strip_prefix(&root)
+                .ok()?
+                .to_string_lossy()
+                .replace('\\', "/");
             let text = std::fs::read_to_string(&p).ok()?;
             Some((rel, text))
         })
@@ -332,9 +340,9 @@ fn every_script_that_calls_the_check_sources_the_library() {
         if !calls {
             continue;
         }
-        let sources = text
-            .lines()
-            .any(|l| !is_comment(l) && (l.contains("fresh-compiler.sh") || l.contains("fresh-compiler.mjs")));
+        let sources = text.lines().any(|l| {
+            !is_comment(l) && (l.contains("fresh-compiler.sh") || l.contains("fresh-compiler.mjs"))
+        });
         if !sources {
             offenders.push(rel);
         }
@@ -389,7 +397,9 @@ fn every_shell_script_parses() {
         if !out.status.success() {
             offenders.push(format!(
                 "{rel}: {}",
-                String::from_utf8_lossy(&out.stderr).trim().replace('\n', "\n    ")
+                String::from_utf8_lossy(&out.stderr)
+                    .trim()
+                    .replace('\n', "\n    ")
             ));
         }
     }
@@ -481,7 +491,11 @@ fn every_declared_source_root_contributes_files() {
             _ => continue,
         };
         let dir = root.join(rel);
-        assert!(dir.is_dir(), "declared source root '{rel}' does not exist at {}", dir.display());
+        assert!(
+            dir.is_dir(),
+            "declared source root '{rel}' does not exist at {}",
+            dir.display()
+        );
 
         // Ask the library itself, so this counts exactly what the check counts.
         let out = Command::new("/bin/bash")
@@ -493,7 +507,10 @@ fn every_declared_source_root_contributes_files() {
             ))
             .output()
             .expect("count the inputs under one root");
-        let n: usize = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0);
+        let n: usize = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0);
         let min: usize = min.parse().unwrap_or(0);
         if n < min {
             empty.push(format!("{rel}: {n} file(s), floor is {min}"));
@@ -541,7 +558,10 @@ fn synthetic_tree(tag: &str) -> PathBuf {
     write("rust/Cargo.toml", "[workspace]\n");
     write("rust/Cargo.lock", "version = 3\n");
     for i in 0..60 {
-        write(&format!("sky-stdlib/Std/M{i}.sky", ), "module M exposing (..)\n");
+        write(
+            &format!("sky-stdlib/Std/M{i}.sky",),
+            "module M exposing (..)\n",
+        );
     }
     write("runtime-go/go.mod", "module sky-app\n");
     for i in 0..60 {
@@ -550,7 +570,10 @@ fn synthetic_tree(tag: &str) -> PathBuf {
     write("runtime-go/cmd/sky-hub/main.go", "package main\n");
     write("templates/CLAUDE.md", "# template\n");
     for i in 0..6 {
-        write(&format!("sky-bundled/console/src/M{i}.sky"), "module M exposing (..)\n");
+        write(
+            &format!("sky-bundled/console/src/M{i}.sky"),
+            "module M exposing (..)\n",
+        );
     }
     write("tools/sky-ffi-inspect/main.go", "package main\n");
 
@@ -559,7 +582,9 @@ fn synthetic_tree(tag: &str) -> PathBuf {
     // filesystem's timestamp granularity — a test that is green by luck is the
     // thing this file exists to refuse.
     fn age_all(dir: &Path, t: std::time::SystemTime) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -569,7 +594,10 @@ fn synthetic_tree(tag: &str) -> PathBuf {
             }
         }
     }
-    age_all(&dir, std::time::SystemTime::now() - std::time::Duration::from_secs(600));
+    age_all(
+        &dir,
+        std::time::SystemTime::now() - std::time::Duration::from_secs(600),
+    );
 
     // The library resolves the repo root from its own path when the caller does
     // not pass one; these tests always pass one, so a copy is not needed.
@@ -598,7 +626,10 @@ fn touch_at(p: &Path, secs_ago: u64) {
         std::fs::write(p, "#!/bin/sh\nexit 0\n").expect("write");
     }
     let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago);
-    let f = std::fs::File::options().write(true).open(p).expect("open to set mtime");
+    let f = std::fs::File::options()
+        .write(true)
+        .open(p)
+        .expect("open to set mtime");
     f.set_modified(t).expect("set mtime");
     #[cfg(unix)]
     {
@@ -648,7 +679,10 @@ fn a_source_edit_with_no_rebuild_fails_and_names_the_fix() {
     // And green again once the binary is rebuilt.
     touch_at(&bin, 0);
     let (after, stderr) = run_check(&bin, &tree);
-    assert_eq!(after, 0, "a rebuilt binary must pass again. stderr:\n{stderr}");
+    assert_eq!(
+        after, 0,
+        "a rebuilt binary must pass again. stderr:\n{stderr}"
+    );
     let _ = std::fs::remove_dir_all(&tree);
 }
 
@@ -688,7 +722,10 @@ fn the_failure_is_visible_to_a_consumer_running_under_set_e() {
     )
     .expect("write consumer");
 
-    let out = Command::new("/bin/bash").arg(&consumer).output().expect("run consumer");
+    let out = Command::new("/bin/bash")
+        .arg(&consumer)
+        .output()
+        .expect("run consumer");
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
 
@@ -823,7 +860,10 @@ fn staging_never_embeds_hidden_files_or_dirs() {
     };
     // The real incident, plus the neighbours of its class.
     plant("sky-bundled/console/.sky/console-token", "SECRET-TOKEN\n");
-    plant("sky-bundled/console/.env", "DATABASE_URL=postgres://secret\n");
+    plant(
+        "sky-bundled/console/.env",
+        "DATABASE_URL=postgres://secret\n",
+    );
     plant("runtime-go/rt/.skydata/kv.db", "runtime state\n");
     plant("sky-stdlib/.DS_Store", "junk");
 
@@ -965,8 +1005,8 @@ fn parse_staged_roots(build_rs: &str) -> Vec<String> {
 /// call would let the drift recur, so prove on a doctored copy that it does.
 #[test]
 fn the_stage_call_parser_detects_a_new_root() {
-    let real = std::fs::read_to_string(repo().join("rust/crates/ffi/build.rs"))
-        .expect("read build.rs");
+    let real =
+        std::fs::read_to_string(repo().join("rust/crates/ffi/build.rs")).expect("read build.rs");
     let baseline = parse_staged_roots(&real);
     assert_eq!(
         baseline,
@@ -1052,8 +1092,12 @@ fn config_matrix_ext_filters_cover_every_staged_file() {
     let mut exts_by_root: Vec<(String, Vec<String>)> = Vec::new();
     for l in block.lines() {
         let l = l.trim();
-        let Some(rest) = l.strip_prefix("(\"") else { continue };
-        let Some(name) = rest.split('"').next() else { continue };
+        let Some(rest) = l.strip_prefix("(\"") else {
+            continue;
+        };
+        let Some(name) = rest.split('"').next() else {
+            continue;
+        };
         let exts: Vec<String> = rest
             .split('[')
             .nth(1)
@@ -1068,7 +1112,10 @@ fn config_matrix_ext_filters_cover_every_staged_file() {
             .unwrap_or_default();
         exts_by_root.push((name.to_string(), exts));
     }
-    assert!(!exts_by_root.is_empty(), "parsed no roots from config_matrix.rs");
+    assert!(
+        !exts_by_root.is_empty(),
+        "parsed no roots from config_matrix.rs"
+    );
 
     let dest = std::env::temp_dir().join(format!(
         "sky-embed-extcover-{}-{}",
@@ -1089,7 +1136,9 @@ fn config_matrix_ext_filters_cover_every_staged_file() {
             rel.split('/').next().unwrap_or("")
         };
         let Some((_, exts)) = exts_by_root.iter().find(|(r, _)| r == staged_root) else {
-            uncovered.push(format!("{rel}: staged root '{staged_root}' is not in MEASURED_SOURCE_ROOTS"));
+            uncovered.push(format!(
+                "{rel}: staged root '{staged_root}' is not in MEASURED_SOURCE_ROOTS"
+            ));
             continue;
         };
         let ext = Path::new(&rel).extension().and_then(|e| e.to_str());
@@ -1234,8 +1283,11 @@ fn a_prebuilt_binary_with_matching_embed_content_passes_despite_mtimes() {
     );
 
     // THE MUTATION: the content now genuinely differs.
-    std::fs::write(tree.join("sky-stdlib/Std/M1.sky"), "module M exposing (changed)\n")
-        .expect("edit source");
+    std::fs::write(
+        tree.join("sky-stdlib/Std/M1.sky"),
+        "module M exposing (changed)\n",
+    )
+    .expect("edit source");
     let (status, stderr) = run_check(&bin, &tree);
     assert_eq!(
         status, 1,

@@ -135,8 +135,10 @@ impl Ty {
                 format!("( {} )", inner.join(", "))
             }
             Ty::Record(fs) => {
-                let inner: Vec<String> =
-                    fs.iter().map(|(n, t)| format!("{n} : {}", t.render())).collect();
+                let inner: Vec<String> = fs
+                    .iter()
+                    .map(|(n, t)| format!("{n} : {}", t.render()))
+                    .collect();
                 format!("{{ {} }}", inner.join(", "))
             }
             Ty::Adt(n) => n.clone(),
@@ -268,11 +270,7 @@ impl Gen {
             let n_params = self.rng.below(3); // 0..2 params
             let params: Vec<Ty> = (0..n_params).map(|_| self.gen_ty(2)).collect();
             let ret = self.gen_ty(2);
-            self.helpers.push(Helper {
-                name,
-                params,
-                ret,
-            });
+            self.helpers.push(Helper { name, params, ret });
         }
 
         let mut out = String::new();
@@ -284,7 +282,10 @@ impl Gen {
             let mut decl = format!("type {} =", a.name);
             for (i, (cn, args)) in a.ctors.iter().enumerate() {
                 let sep = if i == 0 { " " } else { " | " };
-                let argstr: String = args.iter().map(|t| format!(" {}", t.render_arg())).collect();
+                let argstr: String = args
+                    .iter()
+                    .map(|t| format!(" {}", t.render_arg()))
+                    .collect();
                 decl.push_str(&format!("{sep}{cn}{argstr}"));
             }
             out.push_str(&decl);
@@ -293,8 +294,12 @@ impl Gen {
 
         // Emit helper definitions (annotated → type known by construction).
         for h in self.helpers.clone() {
-            let sig_parts: Vec<String> =
-                h.params.iter().chain(std::iter::once(&h.ret)).map(|t| t.render()).collect();
+            let sig_parts: Vec<String> = h
+                .params
+                .iter()
+                .chain(std::iter::once(&h.ret))
+                .map(|t| t.render())
+                .collect();
             out.push_str(&format!("{} : {}\n", h.name, sig_parts.join(" -> ")));
             let mut env: Vec<(String, Ty)> = Vec::new();
             let mut params_src = String::new();
@@ -304,7 +309,12 @@ impl Gen {
                 env.push((pn, pty.clone()));
             }
             let body = self.gen_body(&h.ret, &env);
-            out.push_str(&format!("{}{} =\n    {}\n\n", h.name, params_src, indent_cont(&body)));
+            out.push_str(&format!(
+                "{}{} =\n    {}\n\n",
+                h.name,
+                params_src,
+                indent_cont(&body)
+            ));
         }
 
         // main : a concrete scalar expression.
@@ -320,16 +330,23 @@ impl Gen {
     fn gen_expr(&mut self, ty: &Ty, depth: u32, env: &[(String, Ty)]) -> String {
         // Prefer an in-scope variable of exactly this type sometimes (variable use
         // coverage) — always available even at depth 0.
-        let in_scope: Vec<&String> =
-            env.iter().filter(|(_, t)| t == ty).map(|(n, _)| n).collect();
+        let in_scope: Vec<&String> = env
+            .iter()
+            .filter(|(_, t)| t == ty)
+            .map(|(n, _)| n)
+            .collect();
         if !in_scope.is_empty() && self.rng.chance(1, 3) {
             return in_scope[self.rng.below(in_scope.len())].clone();
         }
 
         // A helper call whose return type matches — composition coverage.
         if depth > 0 && self.rng.chance(1, 5) {
-            let candidates: Vec<Helper> =
-                self.helpers.iter().filter(|h| &h.ret == ty).cloned().collect();
+            let candidates: Vec<Helper> = self
+                .helpers
+                .iter()
+                .filter(|h| &h.ret == ty)
+                .cloned()
+                .collect();
             if !candidates.is_empty() {
                 let h = candidates[self.rng.below(candidates.len())].clone();
                 let args: Vec<String> = h
@@ -349,7 +366,12 @@ impl Gen {
             let c = self.gen_expr(&Ty::Bool, depth - 1, env);
             let a = self.gen_expr(ty, depth - 1, env);
             let b = self.gen_expr(ty, depth - 1, env);
-            return format!("if {} then {} else {}", paren_if_app(&c), paren_if_app(&a), paren_if_app(&b));
+            return format!(
+                "if {} then {} else {}",
+                paren_if_app(&c),
+                paren_if_app(&a),
+                paren_if_app(&b)
+            );
         }
         // A generic single-line `let … in …` wrapper occasionally.
         if depth > 1 && self.rng.chance(1, 8) {
@@ -429,11 +451,21 @@ impl Gen {
                     self.gen_int(depth - 1, env)
                 )
             }
-            2 => format!("(modBy {} {})", 1 + self.rng.below(9), self.gen_int(depth - 1, env)),
-            3 => format!("(String.length {})", paren_if_app(&self.gen_str(depth - 1, env))),
+            2 => format!(
+                "(modBy {} {})",
+                1 + self.rng.below(9),
+                self.gen_int(depth - 1, env)
+            ),
+            3 => format!(
+                "(String.length {})",
+                paren_if_app(&self.gen_str(depth - 1, env))
+            ),
             4 => {
                 let et = self.gen_ty(1);
-                format!("(List.length {})", paren_if_app(&self.gen_list(&et, depth - 1, env)))
+                format!(
+                    "(List.length {})",
+                    paren_if_app(&self.gen_list(&et, depth - 1, env))
+                )
             }
             5 => format!(
                 "(Maybe.withDefault {} {})",
@@ -490,7 +522,9 @@ impl Gen {
             ),
             2 => format!("(String.fromInt {})", self.gen_int(depth - 1, env)),
             3 => {
-                let f = *self.rng.pick(&["String.toUpper", "String.toLower", "String.reverse"]);
+                let f = *self
+                    .rng
+                    .pick(&["String.toUpper", "String.toLower", "String.reverse"]);
                 format!("({f} {})", paren_if_app(&self.gen_str(depth - 1, env)))
             }
             4 => format!(
@@ -558,8 +592,9 @@ impl Gen {
             0 => "[]".to_string(),
             1 => {
                 let n = 1 + self.rng.below(3);
-                let parts: Vec<String> =
-                    (0..n).map(|_| self.gen_expr(elem, depth - 1, env)).collect();
+                let parts: Vec<String> = (0..n)
+                    .map(|_| self.gen_expr(elem, depth - 1, env))
+                    .collect();
                 format!("[ {} ]", parts.join(", "))
             }
             2 => format!(
@@ -567,7 +602,10 @@ impl Gen {
                 self.gen_expr(elem, depth - 1, env),
                 paren_if_app(&self.gen_list(elem, depth - 1, env))
             ),
-            3 => format!("(List.reverse {})", paren_if_app(&self.gen_list(elem, depth - 1, env))),
+            3 => format!(
+                "(List.reverse {})",
+                paren_if_app(&self.gen_list(elem, depth - 1, env))
+            ),
             4 => format!(
                 "(List.append {} {})",
                 paren_if_app(&self.gen_list(elem, depth - 1, env)),
@@ -595,8 +633,14 @@ impl Gen {
         }
         match self.rng.below(4) {
             0 => "Nothing".to_string(),
-            1 => format!("(Just {})", paren_if_app(&self.gen_expr(inner, depth - 1, env))),
-            2 => format!("(List.head {})", paren_if_app(&self.gen_list(inner, depth - 1, env))),
+            1 => format!(
+                "(Just {})",
+                paren_if_app(&self.gen_expr(inner, depth - 1, env))
+            ),
+            2 => format!(
+                "(List.head {})",
+                paren_if_app(&self.gen_list(inner, depth - 1, env))
+            ),
             _ => {
                 // Maybe.map (\p -> body:inner) (m : Maybe src)
                 let src = self.gen_ty(1);
@@ -629,7 +673,10 @@ impl Gen {
             let parts: Vec<String> = fs
                 .iter()
                 .map(|(n, t)| {
-                    format!("{n} = {}", paren_if_app(&g.gen_expr(t, depth.saturating_sub(1), env)))
+                    format!(
+                        "{n} = {}",
+                        paren_if_app(&g.gen_expr(t, depth.saturating_sub(1), env))
+                    )
                 })
                 .collect();
             format!("{{ {} }}", parts.join(", "))
@@ -733,7 +780,9 @@ fn balanced_outer(t: &str) -> bool {
         b'(' => (b'(', b')'),
         b'[' => (b'[', b']'),
         b'{' => (b'{', b'}'),
-        b'"' => return t.len() >= 2 && bytes[t.len() - 1] == b'"' && !t[1..t.len() - 1].contains('"'),
+        b'"' => {
+            return t.len() >= 2 && bytes[t.len() - 1] == b'"' && !t[1..t.len() - 1].contains('"')
+        }
         _ => return false,
     };
     let mut depth = 0i32;
@@ -815,9 +864,12 @@ fn run_check(bin: &Path, workdir: &Path, accept_marker: &str) -> (Verdict, Strin
 
     // Merge stdout + stderr onto one channel of lines.
     let (tx, rx) = mpsc::channel::<String>();
-    for stream in [child.stdout.take().map(Stream::Out), child.stderr.take().map(Stream::Err)]
-        .into_iter()
-        .flatten()
+    for stream in [
+        child.stdout.take().map(Stream::Out),
+        child.stderr.take().map(Stream::Err),
+    ]
+    .into_iter()
+    .flatten()
     {
         let tx = tx.clone();
         std::thread::spawn(move || match stream {
@@ -923,7 +975,11 @@ fn find_oracle_bin(root: &Path) -> Option<PathBuf> {
 
 fn read_dirs(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.is_dir())
+                .collect()
+        })
         .unwrap_or_default();
     v.sort();
     v
@@ -941,7 +997,11 @@ fn ledger_ids(root: &Path) -> Vec<String> {
     text.lines()
         .filter_map(|l| {
             let t = l.trim_start();
-            let rest = t.strip_prefix("id")?.trim_start().strip_prefix('=')?.trim_start();
+            let rest = t
+                .strip_prefix("id")?
+                .trim_start()
+                .strip_prefix('=')?
+                .trim_start();
             let rest = rest.strip_prefix('"')?;
             let end = rest.find('"')?;
             Some(rest[..end].to_string())
@@ -985,7 +1045,9 @@ pub fn run(args: &[String], root: &Path) -> i32 {
             (seed, Gen::new(seed).gen_program())
         })
         .collect();
-    let programs2: Vec<String> = (0..count).map(|i| Gen::new(prog_seed(i)).gen_program()).collect();
+    let programs2: Vec<String> = (0..count)
+        .map(|i| Gen::new(prog_seed(i)).gen_program())
+        .collect();
     let det_ok = programs.iter().map(|(_, p)| p).eq(programs2.iter());
     println!(
         "determinism: same seed → identical program text over {count} programs = {}",
@@ -1057,7 +1119,11 @@ pub fn run(args: &[String], root: &Path) -> i32 {
             // Timeouts are infrastructure noise, not a parity claim — record but
             // do not treat a lone TIMEOUT-vs-verdict as a divergence bug.
             let is_timeout = rv == Verdict::Timeout || ov == Verdict::Timeout;
-            let rejecting_output = if rv == Verdict::Reject { String::new() } else { oo.clone() };
+            let rejecting_output = if rv == Verdict::Reject {
+                String::new()
+            } else {
+                oo.clone()
+            };
             let div = Divergence {
                 index: i,
                 seed: *seed,
@@ -1067,7 +1133,11 @@ pub fn run(args: &[String], root: &Path) -> i32 {
                 rejecting_output,
             };
             if is_timeout {
-                eprintln!("  · #{i}: TIMEOUT (rust={} oracle={}) — infra, not a parity bug", rv.short(), ov.short());
+                eprintln!(
+                    "  · #{i}: TIMEOUT (rust={} oracle={}) — infra, not a parity bug",
+                    rv.short(),
+                    ov.short()
+                );
             } else {
                 divergences.push(div);
             }
@@ -1092,9 +1162,7 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         "checked {count} well-typed programs in {:.1}s",
         elapsed.as_secs_f64()
     );
-    println!(
-        "agreement: {agree}/{count}  (both-accept {both_accept}, both-reject {both_reject})"
-    );
+    println!("agreement: {agree}/{count}  (both-accept {both_accept}, both-reject {both_reject})");
     println!("divergences (non-ledgered): {}", divergences.len());
     println!("{}", "-".repeat(72));
 

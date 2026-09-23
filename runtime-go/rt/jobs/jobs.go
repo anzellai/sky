@@ -67,14 +67,14 @@ type HandlerFunc func(payload []byte) error
 // metadata. Backends serialise this struct into their storage
 // (memory: in-process map; sqlite: row in `_sky_jobs` table).
 type JobRecord struct {
-	ID          JobID
-	Queue       string
-	Name        string    // handler name (registered via Define)
-	Payload     []byte    // JSON-encoded user data
-	Attempts    int       // 0 on first enqueue; bumps each retry
-	NextRunAt   time.Time // when the worker should pick this up
-	EnqueuedAt  time.Time
-	LastError   string // last attempt's error message (nil on first attempt)
+	ID         JobID
+	Queue      string
+	Name       string    // handler name (registered via Define)
+	Payload    []byte    // JSON-encoded user data
+	Attempts   int       // 0 on first enqueue; bumps each retry
+	NextRunAt  time.Time // when the worker should pick this up
+	EnqueuedAt time.Time
+	LastError  string // last attempt's error message (nil on first attempt)
 }
 
 // Store is the persistence interface. Implementations:

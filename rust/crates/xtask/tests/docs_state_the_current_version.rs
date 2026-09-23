@@ -91,7 +91,9 @@ fn docs_that_state_a_current_version_state_the_current_one() {
             .collect();
         let found = format!("v{found}");
         if !(found == expected || found == format!("v{maj}.{min}")) {
-            stale.push(format!("  {file}: says `{found}`, current line is `{expected}`"));
+            stale.push(format!(
+                "  {file}: says `{found}`, current line is `{expected}`"
+            ));
         }
     }
 

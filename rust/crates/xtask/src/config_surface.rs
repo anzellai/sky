@@ -302,7 +302,9 @@ fn str_consts(src: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for (idx, _) in src.match_indices("const ") {
         let rest = &src[idx + "const ".len()..];
-        let Some(colon) = rest.find(':') else { continue };
+        let Some(colon) = rest.find(':') else {
+            continue;
+        };
         let name = rest[..colon].trim();
         if name.is_empty() || !name.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
             continue;
@@ -376,13 +378,14 @@ fn in_any(ranges: &[(usize, usize)], idx: usize) -> bool {
 /// preceding top-level `fn` declaration.
 fn enclosing_fn(src: &str, idx: usize) -> Option<&str> {
     let head = &src[..idx];
-    let at = head.rfind("\nfn ").map(|p| p + 4).into_iter().chain(
-        head.rfind("\npub fn ").map(|p| p + 8),
-    ).chain(
-        head.rfind("\n    fn ").map(|p| p + 8),
-    ).chain(
-        head.rfind("\n    pub fn ").map(|p| p + 12),
-    ).max()?;
+    let at = head
+        .rfind("\nfn ")
+        .map(|p| p + 4)
+        .into_iter()
+        .chain(head.rfind("\npub fn ").map(|p| p + 8))
+        .chain(head.rfind("\n    fn ").map(|p| p + 8))
+        .chain(head.rfind("\n    pub fn ").map(|p| p + 12))
+        .max()?;
     let rest = &src[at..];
     let end = rest.find(|c: char| !(c.is_alphanumeric() || c == '_'))?;
     Some(&rest[..end])
@@ -551,13 +554,17 @@ fn accepted_keys(root: &Path) -> Result<BTreeSet<String>, String> {
     // Arms look like:  "live" => &["port", "static", …],
     for (idx, _) in body.match_indices("=> &[") {
         let head = &body[..idx];
-        let Some(qend) = head.rfind('"') else { continue };
+        let Some(qend) = head.rfind('"') else {
+            continue;
+        };
         let Some(qstart) = head[..qend].rfind('"') else {
             continue;
         };
         let section = &head[qstart + 1..qend];
         let tail = &body[idx + "=> &[".len()..];
-        let Some(close) = tail.find(']') else { continue };
+        let Some(close) = tail.find(']') else {
+            continue;
+        };
         for lit in tail[..close].split('"').skip(1).step_by(2) {
             out.insert(format!("{section}.{lit}"));
         }
@@ -580,14 +587,33 @@ fn accepted_keys(root: &Path) -> Result<BTreeSet<String>, String> {
 fn seeded_suffixes(root: &Path) -> Result<BTreeSet<String>, String> {
     let mut out = BTreeSet::new();
 
+    // Match the seeded env-var name AFTER an anchor, tolerating any whitespace
+    // between the anchor and each of `steps` and before the opening quote.
+    // `cargo fmt` splits a long call across lines
+    // (`cfg\n    .extra_defaults\n    .push((\n        "DB_CONN_MAX_LIFETIME".into(),`),
+    // so a detector that required a CONTIGUOUS `extra_defaults.push(("` literal
+    // silently dropped every reformatted site — which is how DB_CONN_MAX_LIFETIME
+    // / DB_CONN_MAX_IDLE_TIME fell out of the census and turned the config-matrix
+    // gate red after an unrelated `cargo fmt`. Skipping whitespace at every step
+    // makes the derivation independent of layout.
+    fn tokens_after(rest: &str, steps: &[&str]) -> Option<String> {
+        let mut rest = rest;
+        for step in steps {
+            rest = rest.trim_start().strip_prefix(step)?;
+        }
+        let rest = rest.trim_start().strip_prefix('"')?;
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    }
+
     let build_rs = root.join("rust/crates/project/src/build.rs");
     let src = std::fs::read_to_string(&build_rs)
         .map_err(|e| format!("cannot read {}: {e}", build_rs.display()))?;
-    for (idx, _) in src.match_indices("extra_defaults.push((\"") {
-        let rest = &src[idx + "extra_defaults.push((\"".len()..];
-        if let Some(end) = rest.find('"') {
-            if is_env_token(&rest[..end]) {
-                out.insert(rest[..end].to_string());
+    for (idx, _) in src.match_indices("extra_defaults") {
+        let rest = &src[idx + "extra_defaults".len()..];
+        if let Some(tok) = tokens_after(rest, &[".push(("]) {
+            if is_env_token(&tok) {
+                out.insert(tok);
             }
         }
     }
@@ -595,11 +621,11 @@ fn seeded_suffixes(root: &Path) -> Result<BTreeSet<String>, String> {
     let lower_rs = root.join("rust/crates/lower/src/lower.rs");
     let src = std::fs::read_to_string(&lower_rs)
         .map_err(|e| format!("cannot read {}: {e}", lower_rs.display()))?;
-    for (idx, _) in src.match_indices("\"rt.SetSkyDefault\", &[\"") {
-        let rest = &src[idx + "\"rt.SetSkyDefault\", &[\"".len()..];
-        if let Some(end) = rest.find('"') {
-            if is_env_token(&rest[..end]) {
-                out.insert(rest[..end].to_string());
+    for (idx, _) in src.match_indices("\"rt.SetSkyDefault\"") {
+        let rest = &src[idx + "\"rt.SetSkyDefault\"".len()..];
+        if let Some(tok) = tokens_after(rest, &[",", "&["]) {
+            if is_env_token(&tok) {
+                out.insert(tok);
             }
         }
     }
@@ -724,7 +750,16 @@ fn names_used_outside_docs(root: &Path) -> Result<BTreeSet<String>, String> {
     let out = std::process::Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["grep", "-h", "-oI", "-E", "SKY_[A-Z0-9_]+", "--", ".", ":!docs/"])
+        .args([
+            "grep",
+            "-h",
+            "-oI",
+            "-E",
+            "SKY_[A-Z0-9_]+",
+            "--",
+            ".",
+            ":!docs/",
+        ])
         .output()
         .map_err(|e| format!("git grep failed to spawn: {e}"))?;
     // `git grep` exits 1 when it matches nothing, which here would mean the
@@ -1040,34 +1075,36 @@ fn parse_authorised_rises(text: &str) -> Result<Vec<AuthorisedRise>, String> {
     let mut in_stanza = false;
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
 
-    let finish = |fields: &BTreeMap<String, String>,
-                  out: &mut Vec<AuthorisedRise>|
-     -> Result<(), String> {
-        if fields.is_empty() {
-            return Ok(());
-        }
-        for required in ["metric", "from", "to", "reason", "owner", "commit"] {
-            let v = fields.get(required).map(String::as_str).unwrap_or("");
-            if v.is_empty() {
-                return Err(format!(
-                    "a [[config-surface-rise]] stanza is missing `{required}`. All six \
+    let finish =
+        |fields: &BTreeMap<String, String>, out: &mut Vec<AuthorisedRise>| -> Result<(), String> {
+            if fields.is_empty() {
+                return Ok(());
+            }
+            for required in ["metric", "from", "to", "reason", "owner", "commit"] {
+                let v = fields.get(required).map(String::as_str).unwrap_or("");
+                if v.is_empty() {
+                    return Err(format!(
+                        "a [[config-surface-rise]] stanza is missing `{required}`. All six \
                      fields are required — an empty stanza would buy a free rise, which \
                      is exactly what this ledger exists to prevent. Stanza so far: {fields:?}"
-                ));
+                    ));
+                }
             }
-        }
-        let parse = |k: &str| -> Result<u64, String> {
-            fields[k]
-                .parse::<u64>()
-                .map_err(|_| format!("[[config-surface-rise]] `{k}` is not a number: {}", fields[k]))
+            let parse = |k: &str| -> Result<u64, String> {
+                fields[k].parse::<u64>().map_err(|_| {
+                    format!(
+                        "[[config-surface-rise]] `{k}` is not a number: {}",
+                        fields[k]
+                    )
+                })
+            };
+            out.push(AuthorisedRise {
+                metric: fields["metric"].clone(),
+                from: parse("from")?,
+                to: parse("to")?,
+            });
+            Ok(())
         };
-        out.push(AuthorisedRise {
-            metric: fields["metric"].clone(),
-            from: parse("from")?,
-            to: parse("to")?,
-        });
-        Ok(())
-    };
 
     for raw in text.lines() {
         let line = raw.trim();
@@ -1092,7 +1129,11 @@ fn parse_authorised_rises(text: &str) -> Result<Vec<AuthorisedRise>, String> {
     Ok(out)
 }
 
-fn ratchet(baseline: Option<&Value>, current: &Value, authorised: &[AuthorisedRise]) -> Vec<String> {
+fn ratchet(
+    baseline: Option<&Value>,
+    current: &Value,
+    authorised: &[AuthorisedRise],
+) -> Vec<String> {
     let Some(base) = baseline else {
         return Vec::new();
     };
@@ -1109,9 +1150,9 @@ fn ratchet(baseline: Option<&Value>, current: &Value, authorised: &[AuthorisedRi
         match (b, c) {
             (Some(b), Some(c))
                 if c > b
-                    && !authorised.iter().any(|a| {
-                        a.metric == *metric && a.from == b && a.to == c
-                    }) =>
+                    && !authorised
+                        .iter()
+                        .any(|a| a.metric == *metric && a.from == b && a.to == c) =>
             {
                 fails.push(format!(
                     "RATCHET — `{metric}` rose {b} -> {c}.\n  Why this is gated: {why}.\n  \
@@ -1404,7 +1445,10 @@ pub fn pinned_version(d: &Path) -> Option<String> {
 }
 "#;
         let consts = str_consts(src);
-        assert_eq!(consts.get("PIN_KEY").map(String::as_str), Some("postgresVersion"));
+        assert_eq!(
+            consts.get("PIN_KEY").map(String::as_str),
+            Some("postgresVersion")
+        );
         let args = args_of(src, "sky_toml_section_key(");
         assert_eq!(
             resolve_arg(&args[2], &consts).as_deref(),
@@ -1425,7 +1469,10 @@ pub fn pinned_version(d: &Path) -> Option<String> {
         let real = src.find("\"database\"").unwrap();
         let fake = src.find("\"nosuch\"").unwrap();
         assert!(!in_any(&ranges, real), "a real read must not be excluded");
-        assert!(in_any(&ranges, fake), "a #[cfg(test)] read must be excluded");
+        assert!(
+            in_any(&ranges, fake),
+            "a #[cfg(test)] read must be excluded"
+        );
     }
 
     #[test]
@@ -1548,7 +1595,8 @@ pub fn pinned_version(d: &Path) -> Option<String> {
 
     #[test]
     fn an_incomplete_rise_stanza_is_refused() {
-        let text = "[[config-surface-rise]]\nmetric = \"pre_binary_surfaces\"\nfrom = 12\nto = 14\n";
+        let text =
+            "[[config-surface-rise]]\nmetric = \"pre_binary_surfaces\"\nfrom = 12\nto = 14\n";
         let err = parse_authorised_rises(text).unwrap_err();
         assert!(
             err.contains("reason"),

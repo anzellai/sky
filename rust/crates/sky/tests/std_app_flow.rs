@@ -302,7 +302,11 @@ fn copy_fixture_to_temp(fixture: PathBuf, tag: &str) -> PathBuf {
         .arg(&dst)
         .status()
         .expect("cp -R fixture");
-    assert!(status.success(), "failed to stage fixture to {}", dst.display());
+    assert!(
+        status.success(),
+        "failed to stage fixture to {}",
+        dst.display()
+    );
     dst
 }
 
@@ -413,7 +417,10 @@ fn web_without_a_fallback_gives_a_clean_error_not_a_phantom_leak() {
         String::from_utf8_lossy(&out.stderr)
     );
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(!out.status.success(), "web build without a fallback must fail");
+    assert!(
+        !out.status.success(),
+        "web build without a fallback must fail"
+    );
     assert!(
         combined.contains("requires a fallback page") && combined.contains("withNotFound"),
         "expected the clean fallback hint:\n{combined}"
@@ -489,7 +496,10 @@ fn a_dispatched_entry_builds_terminal_cli_and_dce_prunes_other_backends() {
     let go = std::fs::read_to_string(&main_go)
         .unwrap_or_else(|e| panic!("read {}: {e}", main_go.display()));
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(go.contains("rt.Cli_program"), "terminal:cli must link runCli");
+    assert!(
+        go.contains("rt.Cli_program"),
+        "terminal:cli must link runCli"
+    );
     for pruned in ["rt.Webview_app", "rt.Spa_app", "rt.Live_app", "syscall/js"] {
         assert!(
             !go.contains(pruned),

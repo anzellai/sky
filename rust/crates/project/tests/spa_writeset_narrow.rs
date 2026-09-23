@@ -22,7 +22,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
@@ -39,10 +42,12 @@ fn analyze() -> Vec<BranchVerdict> {
 }
 
 fn branch<'a>(branches: &'a [BranchVerdict], msg: &str) -> &'a BranchVerdict {
-    branches
-        .iter()
-        .find(|b| b.msg == msg)
-        .unwrap_or_else(|| panic!("no `{msg}` branch in {:?}", branches.iter().map(|b| &b.msg).collect::<Vec<_>>()))
+    branches.iter().find(|b| b.msg == msg).unwrap_or_else(|| {
+        panic!(
+            "no `{msg}` branch in {:?}",
+            branches.iter().map(|b| &b.msg).collect::<Vec<_>>()
+        )
+    })
 }
 
 fn io<'a>(branches: &'a [BranchVerdict], msg: &str) -> &'a BranchIo {
@@ -56,7 +61,11 @@ fn io<'a>(branches: &'a [BranchVerdict], msg: &str) -> &'a BranchIo {
 fn client_arm_is_not_a_server_branch() {
     let bs = analyze();
     let b = branch(&bs, "Bump");
-    assert!(!b.server, "Bump is pure/client, must not be SERVER: {}", b.reason);
+    assert!(
+        !b.server,
+        "Bump is pure/client, must not be SERVER: {}",
+        b.reason
+    );
     assert!(b.io.is_none(), "a CLIENT branch carries no RPC I/O");
 }
 

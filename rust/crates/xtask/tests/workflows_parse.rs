@@ -24,14 +24,20 @@
 use std::path::PathBuf;
 
 fn workflows() -> Vec<PathBuf> {
-    let dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../.github/workflows"));
+    let dir = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/workflows"
+    ));
     let mut out: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| matches!(p.extension().and_then(|x| x.to_str()), Some("yml" | "yaml")))
         .collect();
     out.sort();
-    assert!(!out.is_empty(), "no workflows found — the glob is wrong, not the repo");
+    assert!(
+        !out.is_empty(),
+        "no workflows found — the glob is wrong, not the repo"
+    );
     out
 }
 
@@ -60,7 +66,9 @@ fn every_workflow_declares_jobs_with_steps() {
     for path in workflows() {
         let text = std::fs::read_to_string(&path).expect("read workflow");
         let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parsed above");
-        let jobs = doc.get("jobs").unwrap_or_else(|| panic!("{}: no `jobs`", path.display()));
+        let jobs = doc
+            .get("jobs")
+            .unwrap_or_else(|| panic!("{}: no `jobs`", path.display()));
         let map = jobs
             .as_mapping()
             .unwrap_or_else(|| panic!("{}: `jobs` is not a mapping", path.display()));
@@ -68,7 +76,10 @@ fn every_workflow_declares_jobs_with_steps() {
         for (name, job) in map {
             let name = name.as_str().unwrap_or("<non-string>");
             // A job either runs steps or delegates to a reusable workflow.
-            let has_steps = job.get("steps").and_then(|s| s.as_sequence()).is_some_and(|s| !s.is_empty());
+            let has_steps = job
+                .get("steps")
+                .and_then(|s| s.as_sequence())
+                .is_some_and(|s| !s.is_empty());
             let has_uses = job.get("uses").is_some();
             assert!(
                 has_steps || has_uses,
@@ -125,7 +136,10 @@ fn ci_green_needs_every_other_job_in_its_workflow() {
     ));
     let text = std::fs::read_to_string(&path).expect("read rust-ci.yml");
     let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("rust-ci.yml parses");
-    let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).expect("`jobs` mapping");
+    let jobs = doc
+        .get("jobs")
+        .and_then(|j| j.as_mapping())
+        .expect("`jobs` mapping");
 
     let all: Vec<String> = jobs
         .keys()
@@ -145,9 +159,11 @@ fn ci_green_needs_every_other_job_in_its_workflow() {
         .and_then(|g| g.get("needs"))
         .expect("ci-green declares `needs`");
     let declared: Vec<String> = match needs {
-        serde_yaml::Value::Sequence(s) => {
-            s.iter().filter_map(|v| v.as_str()).map(str::to_string).collect()
-        }
+        serde_yaml::Value::Sequence(s) => s
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(str::to_string)
+            .collect(),
         serde_yaml::Value::String(s) => vec![s.clone()],
         other => panic!("ci-green `needs` is neither a list nor a string: {other:?}"),
     };
@@ -475,8 +491,13 @@ const NO_JOB_LEVEL_KEY_MAY_USE: [&str; 4] = ["runner", "steps", "job", "env"];
 
 /// Job-level keys evaluated BEFORE the job has a runner, a step or an
 /// environment — so an expression in one of them cannot name those.
-const JOB_LEVEL_KEYS: [&str; 5] =
-    ["env", "if", "runs-on", "timeout-minutes", "continue-on-error"];
+const JOB_LEVEL_KEYS: [&str; 5] = [
+    "env",
+    "if",
+    "runs-on",
+    "timeout-minutes",
+    "continue-on-error",
+];
 
 /// Every `${{ … }}` span in a string, inner text only.
 fn expressions(text: &str) -> Vec<&str> {
@@ -506,7 +527,9 @@ fn contexts_used(expr: &str) -> Vec<String> {
     while i < bytes.len() {
         if bytes[i].is_ascii_alphabetic() || bytes[i] == '_' {
             let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == '_' || bytes[i] == '-') {
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == '_' || bytes[i] == '-')
+            {
                 i += 1;
             }
             if i < bytes.len() && bytes[i] == '.' {
@@ -538,7 +561,9 @@ fn job_level_keys_name_only_contexts_that_exist_yet() {
     for path in workflows() {
         let text = std::fs::read_to_string(&path).expect("read workflow");
         let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parsed above");
-        let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else { continue };
+        let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else {
+            continue;
+        };
         for (job_name, job) in jobs {
             let job_name = job_name.as_str().unwrap_or("<non-string>");
             for key in JOB_LEVEL_KEYS {
@@ -593,7 +618,11 @@ fn the_job_level_context_check_catches_the_shape_that_broke_nightly_sweep() {
         .flat_map(contexts_used)
         .filter(|c| NO_JOB_LEVEL_KEY_MAY_USE.contains(&c.as_str()))
         .collect();
-    assert_eq!(found, vec!["runner".to_string()], "the check no longer sees the original defect");
+    assert_eq!(
+        found,
+        vec!["runner".to_string()],
+        "the check no longer sees the original defect"
+    );
 
     // …and does not fire on the expressions the workflows legitimately use.
     for ok in [
@@ -663,7 +692,10 @@ fn the_census_and_ratchet_gates_run_on_a_pull_request() {
     ));
     let text = std::fs::read_to_string(&path).expect("read rust-ci.yml");
     let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("rust-ci.yml parses");
-    let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).expect("`jobs` mapping");
+    let jobs = doc
+        .get("jobs")
+        .and_then(|j| j.as_mapping())
+        .expect("`jobs` mapping");
 
     // Only jobs the required check fans in count: a step in a job `ci-green`
     // does not need can go red while the merge proceeds.
@@ -671,7 +703,12 @@ fn the_census_and_ratchet_gates_run_on_a_pull_request() {
         .get(serde_yaml::Value::from("ci-green"))
         .and_then(|g| g.get("needs"))
         .and_then(|n| n.as_sequence())
-        .map(|s| s.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+        .map(|s| {
+            s.iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect()
+        })
         .expect("ci-green declares a `needs` list");
     assert!(
         fanned.len() > 5,
@@ -889,7 +926,8 @@ fn release_gate_installs_the_compiler_before_build_run() {
         .find(|p| p.file_name().and_then(|n| n.to_str()) == Some("release.yml"))
         .expect("release.yml must exist");
     let text = std::fs::read_to_string(&path).expect("read release.yml");
-    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("release.yml is parseable YAML");
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(&text).expect("release.yml is parseable YAML");
     let jobs = doc
         .get("jobs")
         .and_then(|j| j.as_mapping())

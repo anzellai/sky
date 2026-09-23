@@ -1015,12 +1015,12 @@ type liveApp struct {
 	// nil when the app is not durable (byte-identical to before). When set, the
 	// live loop restores the session model on first mount (keyed by the session
 	// id) and snapshots it after each update. See durable_tea.go.
-	durable           *durableCtx
-	api               []apiRoute    // REST-style custom handlers alongside Live pages
-	staticDir         string        // Serves files from this directory under /static/…
-	staticURL         string        // URL mount prefix (default "/static")
-	store             SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
-	sessionTTL        time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
+	durable    *durableCtx
+	api        []apiRoute    // REST-style custom handlers alongside Live pages
+	staticDir  string        // Serves files from this directory under /static/…
+	staticURL  string        // URL mount prefix (default "/static")
+	store      SessionStore  // sessionID -> *liveSession (memory, sqlite, or postgres)
+	sessionTTL time.Duration // session cookie MaxAge — kept in lock-step with the store TTL
 	// maxBodyBytes — upper bound on a single TEA event request body, resolved
 	// once at startup through `configLayers` (operator env > Live.withMaxBodyBytes
 	// > seeded [live] maxBodyBytes > 5 MiB). handleEvent reads this instead of

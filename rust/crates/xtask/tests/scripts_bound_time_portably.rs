@@ -90,7 +90,9 @@ fn repo() -> PathBuf {
 /// shell script in YAML), as (repo-relative path, contents).
 fn shell_scripts() -> Vec<(String, String)> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
@@ -99,8 +101,10 @@ fn shell_scripts() -> Vec<(String, String)> {
                 // `.git` is not source. Everything else is in scope, which is
                 // how `apps/fieldbook/verify.sh` and `tools/probe-sweep.sh`
                 // were found after `scripts/` looked finished.
-                let skip = matches!(name.as_str(), "target" | "node_modules" | "sky-out" | "local-target")
-                    || name.starts_with('.');
+                let skip = matches!(
+                    name.as_str(),
+                    "target" | "node_modules" | "sky-out" | "local-target"
+                ) || name.starts_with('.');
                 if !skip {
                     walk(&p, out);
                 }
@@ -120,7 +124,10 @@ fn shell_scripts() -> Vec<(String, String)> {
     if let Ok(rd) = std::fs::read_dir(root.join(".github/workflows")) {
         for e in rd.flatten() {
             let p = e.path();
-            if matches!(p.extension().and_then(|x| x.to_str()), Some("yml") | Some("yaml")) {
+            if matches!(
+                p.extension().and_then(|x| x.to_str()),
+                Some("yml") | Some("yaml")
+            ) {
                 files.push(p);
             }
         }
@@ -129,7 +136,11 @@ fn shell_scripts() -> Vec<(String, String)> {
     files
         .into_iter()
         .filter_map(|p| {
-            let rel = p.strip_prefix(&root).ok()?.to_string_lossy().replace('\\', "/");
+            let rel = p
+                .strip_prefix(&root)
+                .ok()?
+                .to_string_lossy()
+                .replace('\\', "/");
             let text = std::fs::read_to_string(&p).ok()?;
             Some((rel, text))
         })
@@ -306,7 +317,10 @@ fn the_scanner_sees_the_shapes_this_repository_actually_contains() {
         r#"          run: timeout 900 cargo test --workspace"#,
     ];
     for line in must_flag {
-        assert!(invokes_timeout(line), "should have been flagged as a bare timeout: {line}");
+        assert!(
+            invokes_timeout(line),
+            "should have been flagged as a bare timeout: {line}"
+        );
     }
 
     let must_not_flag = [
@@ -322,7 +336,10 @@ fn the_scanner_sees_the_shapes_this_repository_actually_contains() {
         r#"SKY_HTTP_CLIENT_TIMEOUT=5s with_timeout 10 "$bin""#,
     ];
     for line in must_not_flag {
-        assert!(!invokes_timeout(line), "should NOT have been flagged: {line}");
+        assert!(
+            !invokes_timeout(line),
+            "should NOT have been flagged: {line}"
+        );
     }
 }
 
@@ -459,7 +476,9 @@ fn path_dir_with(name: &str, tools: &[&str]) -> PathBuf {
 
 fn which(tool: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|d| d.join(tool)).find(|c| c.is_file())
+    std::env::split_paths(&path)
+        .map(|d| d.join(tool))
+        .find(|c| c.is_file())
 }
 
 /// Run `script` in bash with PATH set to `path_dir` and nothing else.
@@ -495,21 +514,33 @@ fn the_shim_works_with_no_timeout_binary_on_path() {
     // Exit status passes through unchanged. A shim that swallowed a non-zero
     // exit would recreate the reported bug one layer down.
     let (rc, out) = bash_with_path(&dir, &format!("{src}; with_timeout 5 /bin/sh -c 'exit 7'"));
-    assert_eq!(rc, 7, "non-zero exit must pass through unchanged, got {rc}: {out}");
+    assert_eq!(
+        rc, 7,
+        "non-zero exit must pass through unchanged, got {rc}: {out}"
+    );
 
     let (rc, out) = bash_with_path(&dir, &format!("{src}; with_timeout 5 /bin/sh -c 'exit 0'"));
-    assert_eq!(rc, 0, "zero exit must pass through unchanged, got {rc}: {out}");
+    assert_eq!(
+        rc, 0,
+        "zero exit must pass through unchanged, got {rc}: {out}"
+    );
 
     // The command actually runs, and its stdout reaches the caller.
     let (rc, out) = bash_with_path(&dir, &format!("{src}; with_timeout 5 /bin/echo RAN"));
     assert_eq!(rc, 0, "{out}");
-    assert!(out.contains("RAN"), "the command's stdout must reach the caller: {out}");
+    assert!(
+        out.contains("RAN"),
+        "the command's stdout must reach the caller: {out}"
+    );
 
     // Expiry: 124, and the sleep is genuinely killed rather than waited out.
     let started = std::time::Instant::now();
     let (rc, out) = bash_with_path(&dir, &format!("{src}; with_timeout 1 /bin/sleep 30"));
     let elapsed = started.elapsed();
-    assert_eq!(rc, 124, "expiry must report 124 (GNU's convention), got {rc}: {out}");
+    assert_eq!(
+        rc, 124,
+        "expiry must report 124 (GNU's convention), got {rc}: {out}"
+    );
     assert!(
         elapsed < std::time::Duration::from_secs(10),
         "expiry must KILL, not wait: /bin/sleep 30 bounded at 1s took {elapsed:?}"
@@ -536,7 +567,10 @@ fn the_shim_refuses_rather_than_running_unbounded_or_pretending() {
     // Naming the fix is the difference between a red run somebody can act on
     // and a red run somebody reruns.
     for expected in ["no 'timeout'", "coreutils", "perl"] {
-        assert!(out.contains(expected), "failure must name what to install ({expected:?}): {out}");
+        assert!(
+            out.contains(expected),
+            "failure must name what to install ({expected:?}): {out}"
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -708,23 +742,37 @@ fn the_shim_honours_its_contract_in_every_shell_present() {
             shell,
             &format!(". {SHIM}; with_timeout 5 /bin/sh -c 'exit 42'"),
         );
-        assert_eq!(rc, 42, "{shell}: exit status must pass through unchanged.\n{out}");
+        assert_eq!(
+            rc, 42,
+            "{shell}: exit status must pass through unchanged.\n{out}"
+        );
 
         let (rc, out) = shell_script(shell, &format!(". {SHIM}; with_timeout 1 sleep 30"));
         assert_eq!(rc, 124, "{shell}: expiry must report 124.\n{out}");
 
-        let (rc, out) =
-            shell_script(shell, &format!(". {SHIM}; with_timeout 5 /bin/sh -c 'exit 0'"));
+        let (rc, out) = shell_script(
+            shell,
+            &format!(". {SHIM}; with_timeout 5 /bin/sh -c 'exit 0'"),
+        );
         assert_eq!(rc, 0, "{shell}: success must report 0.\n{out}");
     }
-    assert!(ran > 0, "no shell was found to probe, so this gate proved nothing");
+    assert!(
+        ran > 0,
+        "no shell was found to probe, so this gate proved nothing"
+    );
 }
 
 #[test]
 fn the_shim_exists_and_this_gate_names_it_correctly() {
     // A rule whose subject has moved is a rule that passes vacuously.
-    assert!(repo().join(SHIM).is_file(), "{SHIM} is missing — the rules above have no subject");
-    assert!(repo().join(SELF).is_file(), "{SELF} does not name this file");
+    assert!(
+        repo().join(SHIM).is_file(),
+        "{SHIM} is missing — the rules above have no subject"
+    );
+    assert!(
+        repo().join(SELF).is_file(),
+        "{SELF} does not name this file"
+    );
     assert!(
         !shell_scripts().is_empty(),
         "the scan found no shell scripts at all, so every rule above passed vacuously"

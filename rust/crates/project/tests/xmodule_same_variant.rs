@@ -25,7 +25,10 @@ fn repo_root() -> PathBuf {
         if dir.join("sky-stdlib").is_dir() {
             return dir;
         }
-        assert!(dir.pop(), "could not locate repo root (no sky-stdlib ancestor)");
+        assert!(
+            dir.pop(),
+            "could not locate repo root (no sky-stdlib ancestor)"
+        );
     }
 }
 
@@ -96,8 +99,8 @@ fn cross_module_same_named_adt_case_pins_correct_variant() {
         ],
     );
 
-    let source = emit_example_source(&repo, &project)
-        .unwrap_or_else(|e| panic!("emit failed: {e}"));
+    let source =
+        emit_example_source(&repo, &project).unwrap_or_else(|e| panic!("emit failed: {e}"));
     cleanup(&project);
 
     // Both modules' variant structs must be exercised by the `case` arms.

@@ -323,7 +323,7 @@ checkbox attrs cfg =
                 (if cfg.checked then
                     "true"
 
-                 else
+                else
                     "false")
                 checkedAttrs
         iconEl = cfg.icon cfg.checked

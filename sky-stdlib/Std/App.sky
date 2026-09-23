@@ -361,7 +361,6 @@ type App fallback seed page model msg key
 , durable : DurableWiring model
 }
 
-
 -- | The durability wiring carried to the backend loop by `withDurable`. The
 -- runtime calls `restore` at session/app start (swapping in the loaded model via
 -- `applyRestore`) and `persist` after each update. Built from the shipped
@@ -552,21 +551,21 @@ no session). Two apps sharing a run id + database share durable state. -}
 withDurableId : String -> Db -> Codec model -> App fallback seed page model msg key -> App fallback seed page model msg key
 withDurableId rid dbHandle codec (App a) =
     App
-        { a
-            | durable =
-                { enabled = True
-                , setup = Durable.setup dbHandle
-                , restore = \r -> Durable.loadSnapshot dbHandle r codec
-                , persist = \r m -> Durable.saveSnapshotAuto dbHandle r codec m
-                , applyRestore = applyRestoreDefault
-                , runId = rid
-                }
+        { a | durable =
+            { enabled = True
+            , setup = Durable.setup dbHandle
+            , restore = \r -> Durable.loadSnapshot dbHandle r codec
+            , persist = \r m -> Durable.saveSnapshotAuto dbHandle r codec m
+            , applyRestore = applyRestoreDefault
+            , runId = rid
+            }
         }
 
 
 applyRestoreDefault : Result Error (Maybe model) -> model -> model
 applyRestoreDefault res initModel =
     case res of
+
         Ok (Just m) ->
             m
 
@@ -1059,6 +1058,7 @@ runLiveBoot_ (App a) =
                 withDur_ =
                     if a.durable.enabled then
                         Live.withDurable a.durable withNav_
+
                     else
                         withNav_
             in
@@ -1156,6 +1156,7 @@ runTuiBoot_ (App a) =
                 withDur_ =
                     if a.durable.enabled then
                         Tui.withDurable a.durable withGuard_
+
                     else
                         withGuard_
             in
@@ -1194,6 +1195,7 @@ runTuiBoot_ (App a) =
                 withDur_ =
                     if a.durable.enabled then
                         Tui.withDurable a.durable withGuard_
+
                     else
                         withGuard_
             in
@@ -1235,10 +1237,10 @@ runCliBoot_ (App a) =
 
                         Nothing ->
                             base
-
                 withDur =
                     if a.durable.enabled then
                         Cli.withDurable a.durable withLine
+
                     else
                         withLine
             in
@@ -1263,10 +1265,10 @@ runCliBoot_ (App a) =
 
                         Nothing ->
                             base
-
                 withDur =
                     if a.durable.enabled then
                         Cli.withDurable a.durable withLine
+
                     else
                         withLine
             in
@@ -1321,7 +1323,6 @@ runLiveWindow (App a) =
     let
         d = findDesktop a.configs
         w = findWeb a.configs
-    in
         -- The Live server runs on a SPAWNED goroutine; the webview opens on THIS
         -- (the caller's) goroutine. On macOS the native webview must be created on
         -- the process main thread, and the app's `main` runs this task on that
@@ -1332,12 +1333,12 @@ runLiveWindow (App a) =
         -- The window navigates to the SAME port the Live server binds (`findWeb`),
         -- not a hardcoded one — otherwise the webview loads an empty page on the
         -- wrong port and the window renders blank.
+    in
         Task.andThen
             (\_ ->
                 openLiveWindow_
                     w.port
-                    { title = d.title, size = ( d.width, d.height ) }
-            )
+                    { title = d.title, size = ( d.width, d.height ) })
             (Task.spawn (runLive (App a)))
 
 
@@ -1368,18 +1369,19 @@ waitForServer_ port attempts =
     else
         let
             retry =
-                Task.andThen (\_ -> waitForServer_ port (attempts - 1)) (Time.sleep 250)
+                Task.andThen
+                    (\_ -> waitForServer_ port (attempts - 1))
+                    (Time.sleep 250)
         in
-        Http.get ("http://localhost:" ++ String.fromInt port ++ "/")
-            |> Task.andThen
-                (\resp ->
-                    if resp.status >= 200 && resp.status < 400 then
-                        Task.succeed ()
+            Http.get ("http://localhost:" ++ String.fromInt port ++ "/")
+                |> Task.andThen
+                       (\resp ->
+                           if resp.status >= 200 && resp.status < 400 then
+                               Task.succeed ()
 
-                    else
-                        retry
-                )
-            |> Task.onError (\_ -> retry)
+                           else
+                               retry)
+                |> Task.onError (\_ -> retry)
 
 
 -- ─── Element → text (best-effort, for terminal:cli) ───

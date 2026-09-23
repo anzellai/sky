@@ -144,7 +144,9 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
     println!(
         "erasure-fuzz: {} generated cases{}\n",
         cases.len(),
-        shard.map(|(i, n)| format!(" (shard {i}/{n})")).unwrap_or_default()
+        shard
+            .map(|(i, n)| format!(" (shard {i}/{n})"))
+            .unwrap_or_default()
     );
 
     let scratch = repo_root.join("target/erasure-fuzz");
@@ -207,7 +209,10 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
                 })
             })
             .collect();
-        handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect()
     });
     results.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -235,11 +240,17 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
             }
             _ if is_bug => match case.expect {
                 Expect::MustPass => {
-                    println!("  BUG   {}  ({})\n        {:?}", case.id, case.note, outcome);
+                    println!(
+                        "  BUG   {}  ({})\n        {:?}",
+                        case.id, case.note, outcome
+                    );
                     bugs.push((case.id.clone(), outcome));
                 }
                 Expect::KnownOpen => {
-                    println!("  OPEN  {} — known-open class manifests ({})", case.id, case.note);
+                    println!(
+                        "  OPEN  {} — known-open class manifests ({})",
+                        case.id, case.note
+                    );
                     expected_open.push(case.id.clone());
                 }
             },
@@ -249,7 +260,10 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
     // Count how many known-open probes CURRENTLY PASS — when this reaches the
     // total number of known-open probes, the class is fixed and every one should
     // be promoted to `MustPass`.
-    let known_open_total = cases.iter().filter(|c| c.expect == Expect::KnownOpen).count();
+    let known_open_total = cases
+        .iter()
+        .filter(|c| c.expect == Expect::KnownOpen)
+        .count();
     let known_open_manifesting = expected_open.len();
 
     println!("\n─────────────────────────────────────────────");
@@ -335,7 +349,9 @@ fn evaluate_once(sky: &Path, dir: &Path, expect_stdout: Option<&str>) -> Outcome
         return Outcome::IllTyped(out);
     }
     match built {
-        BuildResult::Timeout => return Outcome::Timeout(format!("build timed out\n{}", tail(&out))),
+        BuildResult::Timeout => {
+            return Outcome::Timeout(format!("build timed out\n{}", tail(&out)))
+        }
         BuildResult::Failed => {
             // Type-check passed (we saw the marker) but the whole build did not:
             // the failure is in codegen / `go build`. THE bug class.
@@ -394,7 +410,10 @@ fn build(sky: &Path, dir: &Path) -> (BuildResult, String) {
 
 fn run_binary(bin: &Path, expect_stdout: Option<&str>) -> Outcome {
     if !bin.exists() {
-        return Outcome::CodegenBug(format!("build reported success but {} is absent", bin.display()));
+        return Outcome::CodegenBug(format!(
+            "build reported success but {} is absent",
+            bin.display()
+        ));
     }
     let child = Command::new(bin)
         .stdin(Stdio::null())
@@ -434,7 +453,9 @@ fn run_binary(bin: &Path, expect_stdout: Option<&str>) -> Outcome {
                         .find(|l| !l.is_empty())
                         .unwrap_or("");
                     if printed != exp {
-                        return Outcome::WrongValue(format!("expected {exp:?}, printed {printed:?}"));
+                        return Outcome::WrongValue(format!(
+                            "expected {exp:?}, printed {printed:?}"
+                        ));
                     }
                 }
                 // A clean non-zero exit without a panic is not our class (the
@@ -465,7 +486,10 @@ fn find_sky_bin(root: &Path) -> Option<PathBuf> {
             return Some(p);
         }
     }
-    for c in [root.join("sky-out/sky"), root.join("rust/target/release/sky")] {
+    for c in [
+        root.join("sky-out/sky"),
+        root.join("rust/target/release/sky"),
+    ] {
         if c.exists() {
             return Some(c);
         }
@@ -478,7 +502,10 @@ fn write_case(dir: &Path, case: &Case) -> std::io::Result<()> {
     std::fs::create_dir_all(&src)?;
     std::fs::write(
         dir.join("sky.toml"),
-        format!("name = \"{}\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n", case.id),
+        format!(
+            "name = \"{}\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+            case.id
+        ),
     )?;
     for (rel, content) in &case.files {
         std::fs::write(src.join(rel), content)?;
@@ -510,7 +537,10 @@ fn first_line(s: &str) -> &str {
 
 fn indent(s: &str, n: usize) -> String {
     let pad = " ".repeat(n);
-    s.lines().map(|l| format!("{pad}{l}")).collect::<Vec<_>>().join("\n")
+    s.lines()
+        .map(|l| format!("{pad}{l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // ── the templates (generation is in erasure_fuzz/templates.rs) ───────────────
@@ -545,7 +575,11 @@ mod tests {
                     assert!(union.insert(id.clone()), "case {id} appears in two shards");
                 }
             }
-            assert_eq!(total, all.len(), "shard sizes do not sum to the whole set (n={n})");
+            assert_eq!(
+                total,
+                all.len(),
+                "shard sizes do not sum to the whole set (n={n})"
+            );
             assert_eq!(
                 union.len(),
                 whole.len(),

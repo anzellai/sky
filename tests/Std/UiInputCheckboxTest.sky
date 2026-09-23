@@ -28,7 +28,6 @@ import Std.Ui as Ui
 import Std.Ui.Input as Input
 import Sky.Test as Test exposing (Test)
 
-
 type Msg
     = Toggled Bool
 
@@ -46,9 +45,7 @@ renderCheckbox isChecked =
                 , icon = \_ -> Ui.text ""
                 , checked = isChecked
                 , label = Input.labelHidden "Agree"
-                }
-            )
-        )
+                }))
 
 
 tests : List Test
@@ -60,21 +57,20 @@ tests =
                 (\_ ->
                     Test.equal
                         True
-                        (String.contains "checked" (renderCheckbox True))
-                )
+                        (String.contains "checked" (renderCheckbox True)))
           , Test.test
                 "checked = False omits the checked attribute"
                 (\_ ->
                     Test.equal
                         False
-                        (String.contains "checked" (renderCheckbox False))
-                )
+                        (String.contains "checked" (renderCheckbox False)))
           , Test.test
                 "the rendered control is still an input of type checkbox"
                 (\_ ->
                     Test.equal
                         True
-                        (String.contains "type=\"checkbox\"" (renderCheckbox True))
-                )
+                        (String.contains
+                            "type=\"checkbox\""
+                            (renderCheckbox True)))
           ]
     ]

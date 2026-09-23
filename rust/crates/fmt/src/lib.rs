@@ -268,7 +268,8 @@ mod tests {
         // interpolation expressions could drop a paren UNDETECTED by the gate. A
         // dropped paren changes meaning (`String.fromInt (a + 1)` vs
         // `String.fromInt a + 1`) or breaks compilation, so assert it directly.
-        let src = "greet a =\n    \"\"\"n={{String.fromInt (a + 1)}} r={{(a)}} lit=\\{{keep}}\"\"\"\n";
+        let src =
+            "greet a =\n    \"\"\"n={{String.fromInt (a + 1)}} r={{(a)}} lit=\\{{keep}}\"\"\"\n";
         let out = format_source(src);
         assert!(
             out.contains("{{String.fromInt (a + 1)}}"),

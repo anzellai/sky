@@ -13,8 +13,6 @@ mod live_gate;
 
 use live_gate::{mode_from, required_in, Mode, Need};
 
-
-
 #[test]
 fn an_available_need_runs_the_test() {
     assert!(required_in(Mode::Require, Need::Postgres, true));
@@ -134,7 +132,10 @@ fn only_an_environment_that_cannot_start_a_postmaster_classifies_as_unavailable(
                DETAIL:  Failed system call was shmget(key=496079915, size=56, 03600).";
     let why = live_gate::postgres_cannot_start(shm).expect("shmget ENOSPC is the environment");
     assert!(
-        why.lines().next().unwrap_or_default().contains("could not create shared memory segment"),
+        why.lines()
+            .next()
+            .unwrap_or_default()
+            .contains("could not create shared memory segment"),
         "the MATCHED line must lead, or a one-line marker says `initdb failed:` — true \
          and useless. Got: {why}"
     );

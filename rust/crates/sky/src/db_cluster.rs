@@ -188,7 +188,11 @@ pub fn socket_dir_for_data_dir(
 /// fourteen bytes, which is exactly the size of the mistake that makes this fail
 /// on someone else's machine and not on yours.
 pub fn socket_path_len(socket_dir: &Path) -> usize {
-    socket_dir.join(SOCKET_BASENAME).as_os_str().as_encoded_bytes().len()
+    socket_dir
+        .join(SOCKET_BASENAME)
+        .as_os_str()
+        .as_encoded_bytes()
+        .len()
 }
 
 /// The project-shaped entry point: `sky db start` / `sky run` know a project,
@@ -316,7 +320,10 @@ pub struct Registry {
 
 impl Default for Registry {
     fn default() -> Self {
-        Registry { version: 1, clusters: BTreeMap::new() }
+        Registry {
+            version: 1,
+            clusters: BTreeMap::new(),
+        }
     }
 }
 
@@ -430,7 +437,11 @@ fn acquire_registry_lock(sky_home: &Path) -> Result<RegistryLock, String> {
     let path = sky_home.join(LOCK_FILE);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(_) => return Ok(RegistryLock { path }),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 // A process that was SIGKILLed while holding the lock leaves the
@@ -543,7 +554,10 @@ fn version_key(v: &str) -> Vec<u32> {
 
 /// The first candidate that holds every required binary. Split from
 /// [`bin_dir_candidates`] so precedence can be tested against a fake filesystem.
-pub fn pick_bin_dir(candidates: &[PathBuf], has_required: &dyn Fn(&Path) -> bool) -> Option<PathBuf> {
+pub fn pick_bin_dir(
+    candidates: &[PathBuf],
+    has_required: &dyn Fn(&Path) -> bool,
+) -> Option<PathBuf> {
     candidates.iter().find(|d| has_required(d)).cloned()
 }
 
@@ -631,7 +645,11 @@ pub fn discover_pg_bins() -> Result<PgBins, String> {
     // An explicit override that does not hold the binaries is a typo, not a
     // reason to silently fall through to a different PostgreSQL — that would
     // hand the user a cluster from an installation they did not choose.
-    if let Some(o) = env_override.as_deref().map(str::trim).filter(|o| !o.is_empty()) {
+    if let Some(o) = env_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|o| !o.is_empty())
+    {
         if !dir_has_required_bins(Path::new(o)) {
             return Err(format!(
                 "sky db: SKY_POSTGRES_BIN={o} does not contain {}.\n\
@@ -656,7 +674,11 @@ pub fn discover_pg_bins() -> Result<PgBins, String> {
             text.trim()
         )
     })?;
-    Ok(PgBins { bin_dir, version, major })
+    Ok(PgBins {
+        bin_dir,
+        version,
+        major,
+    })
 }
 
 /// `"pg_ctl (PostgreSQL) 14.21 (Homebrew)"` → `("14.21", 14)`.
@@ -668,7 +690,10 @@ pub fn parse_pg_version(out: &str) -> Option<(String, u32)> {
     // trimming leaves `18beta1` and `17rc1` intact (the `1` is a digit), and the
     // parse then fails — a pre-release server would be rejected with a message
     // about an unparseable version rather than simply working.
-    let tok: String = tok.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let tok: String = tok
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
     let tok = tok.trim_end_matches('.');
     let major = tok.split('.').next()?.parse().ok()?;
     Some((tok.to_string(), major))
@@ -683,7 +708,12 @@ pub fn parse_pg_version_file(text: &str) -> Option<u32> {
 /// Refuse rather than attempt. A postmaster pointed at a data directory from a
 /// different major does not migrate it, and the raw refusal ("database files are
 /// incompatible with server") names neither the two versions nor the way out.
-pub fn version_mismatch_message(data_dir: &Path, dir_major: u32, bin_major: u32, bin_dir: &Path) -> String {
+pub fn version_mismatch_message(
+    data_dir: &Path,
+    dir_major: u32,
+    bin_major: u32,
+    bin_dir: &Path,
+) -> String {
     format!(
         "sky db: PostgreSQL major mismatch — this cluster cannot be started.\n\
          \n\
@@ -814,7 +844,9 @@ pub fn probe_data_dir(data_dir: &Path) -> Liveness {
 /// the app's `Db.connect` pool plus the runtime's analytics, session and
 /// telemetry pools. See [`crate::db_pool_sizing`].
 pub fn sky_conf_block(project: Option<&Path>) -> String {
-    let cpus = std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(2);
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(2);
     sky_conf_block_for(&crate::db_pool_sizing::PoolInputs::resolve(cpus, project))
 }
 
@@ -915,9 +947,15 @@ pub fn ensure_sky_conf(conf: &str, block: &str) -> Option<String> {
 /// does not say which data directory, and gives no command to run next. Anything
 /// unrecognised returns `None` and is surfaced verbatim — inventing a friendly
 /// message for an error we have not classified would hide it.
-pub fn translate_pg_start_error(stderr: &str, data_dir: &Path, socket_dir: &Path) -> Option<String> {
+pub fn translate_pg_start_error(
+    stderr: &str,
+    data_dir: &Path,
+    socket_dir: &Path,
+) -> Option<String> {
     let s = stderr.to_ascii_lowercase();
-    if s.contains("another server might be running") || s.contains("lock file") && s.contains("postmaster.pid") {
+    if s.contains("another server might be running")
+        || s.contains("lock file") && s.contains("postmaster.pid")
+    {
         return Some(format!(
             "sky db start: another PostgreSQL server is already using this data directory.\n\
              \x20 data directory: {}\n\
@@ -961,7 +999,8 @@ pub fn translate_pg_start_error(stderr: &str, data_dir: &Path, socket_dir: &Path
 /// The project whose cluster a bare `sky db start` refers to: the nearest
 /// ancestor of the cwd holding a `sky.toml`, else the cwd itself.
 fn current_project_dir() -> Result<PathBuf, String> {
-    let cwd = std::env::current_dir().map_err(|e| format!("sky db: cannot read the working directory: {e}"))?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| format!("sky db: cannot read the working directory: {e}"))?;
     let dir = project::project_dir_for(&cwd.join("_"));
     // Canonicalised because it is the registry key AND the hash input: `/tmp/x`
     // and `/private/tmp/x` are the same project on macOS and must not produce two
@@ -1047,7 +1086,9 @@ pub struct Started {
 /// (explicit and persistent, or ephemeral and ref-counted).
 fn start_cluster(project: &Path) -> Result<Started, String> {
     if project::is_compiler_repo_root(project) {
-        return Err("sky db: refusing to run a cluster from the Sky compiler repo root".to_string());
+        return Err(
+            "sky db: refusing to run a cluster from the Sky compiler repo root".to_string(),
+        );
     }
     let bins = discover_pg_bins()?;
     let data_dir = data_dir_for(project);
@@ -1072,8 +1113,12 @@ fn start_cluster(project: &Path) -> Result<Started, String> {
     }
 
     if data_dir.join("PG_VERSION").is_file() {
-        let text = std::fs::read_to_string(data_dir.join("PG_VERSION"))
-            .map_err(|e| format!("sky db start: cannot read {}: {e}", data_dir.join("PG_VERSION").display()))?;
+        let text = std::fs::read_to_string(data_dir.join("PG_VERSION")).map_err(|e| {
+            format!(
+                "sky db start: cannot read {}: {e}",
+                data_dir.join("PG_VERSION").display()
+            )
+        })?;
         let dir_major = parse_pg_version_file(&text).ok_or_else(|| {
             format!(
                 "sky db start: {} is not a PostgreSQL version ({text:?}).\n\
@@ -1083,7 +1128,12 @@ fn start_cluster(project: &Path) -> Result<Started, String> {
             )
         })?;
         if dir_major != bins.major {
-            return Err(version_mismatch_message(&data_dir, dir_major, bins.major, &bins.bin_dir));
+            return Err(version_mismatch_message(
+                &data_dir,
+                dir_major,
+                bins.major,
+                &bins.bin_dir,
+            ));
         }
         // Initialised, not running, and the pid file survives → the postmaster was
         // killed rather than stopped. Clearing it here is what turns the next start
@@ -1160,7 +1210,9 @@ pub fn dsn_for_socket_dir(socket_dir: &Path) -> String {
 }
 
 fn dir_is_nonempty(dir: &Path) -> bool {
-    std::fs::read_dir(dir).map(|mut r| r.next().is_some()).unwrap_or(false)
+    std::fs::read_dir(dir)
+        .map(|mut r| r.next().is_some())
+        .unwrap_or(false)
 }
 
 /// Remove a `postmaster.pid` left behind by a `SIGKILL`.
@@ -1184,8 +1236,12 @@ fn clear_stale_pidfile(data_dir: &Path) -> Result<(), String> {
             data_dir.display()
         ));
     }
-    std::fs::remove_file(&pidfile)
-        .map_err(|e| format!("sky db start: cannot clear the stale pid file {}: {e}", pidfile.display()))?;
+    std::fs::remove_file(&pidfile).map_err(|e| {
+        format!(
+            "sky db start: cannot clear the stale pid file {}: {e}",
+            pidfile.display()
+        )
+    })?;
     eprintln!("sky db start: cleared a stale postmaster.pid (pid {pid} is gone)");
     Ok(())
 }
@@ -1200,7 +1256,11 @@ fn run_initdb(bins: &PgBins, data_dir: &Path) -> Result<(), String> {
     }
     // Verb-neutral: `sky run` reaches this too, and a progress line announcing a
     // command the user did not type reads as a bug in the tool.
-    println!("sky db: initialising a PostgreSQL {} cluster in {}", bins.major, data_dir.display());
+    println!(
+        "sky db: initialising a PostgreSQL {} cluster in {}",
+        bins.major,
+        data_dir.display()
+    );
     let out = Command::new(bins.tool("initdb"))
         .arg("-D")
         .arg(data_dir)
@@ -1242,8 +1302,9 @@ fn tune_conf(project: &Path, data_dir: &Path) -> Result<(), String> {
 /// either break the start or execute something. Rejecting it is the only honest
 /// option; quoting cannot make it safe.
 pub fn socket_dir_is_shell_safe(dir: &Path) -> bool {
-    !dir.to_string_lossy()
-        .contains(['\'', '"', '`', '$', '\\', ' ', '\t', '\n', ';', '&', '|', '(', ')', '<', '>', '*', '?'])
+    !dir.to_string_lossy().contains([
+        '\'', '"', '`', '$', '\\', ' ', '\t', '\n', ';', '&', '|', '(', ')', '<', '>', '*', '?',
+    ])
 }
 
 /// The socket directory is NOT the only argument that goes through that shell.
@@ -1335,15 +1396,17 @@ fn prepare_socket_dir(socket_dir: &Path) -> Result<(), String> {
         // failing (a directory owned by someone else, on a filesystem that does
         // not carry modes) used to be swallowed, which is the one case where
         // this matters and the one case where it said nothing.
-        std::fs::set_permissions(socket_dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
-            format!(
-                "sky db start: cannot make the socket directory {} private: {e}\n\
+        std::fs::set_permissions(socket_dir, std::fs::Permissions::from_mode(0o700)).map_err(
+            |e| {
+                format!(
+                    "sky db start: cannot make the socket directory {} private: {e}\n\
                  Local connections authenticate with `trust`, so anything that can reach the\n\
                  socket is the database's superuser. Sky will not start a cluster it cannot\n\
                  put behind a 0700 directory.",
-                socket_dir.display()
-            )
-        })?;
+                    socket_dir.display()
+                )
+            },
+        )?;
         let mode = std::fs::metadata(socket_dir)
             .map_err(|e| {
                 format!(
@@ -1377,7 +1440,12 @@ fn prepare_socket_dir(socket_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_pg_ctl_start(bins: &PgBins, project: &Path, data_dir: &Path, socket_dir: &Path) -> Result<i32, String> {
+fn run_pg_ctl_start(
+    bins: &PgBins,
+    project: &Path,
+    data_dir: &Path,
+    socket_dir: &Path,
+) -> Result<i32, String> {
     let log = log_path_for(project);
     // The guarantee belongs at the call site, not only at the caller that happens
     // to reach it today: this is the one place a path crosses into `/bin/sh`.
@@ -1411,12 +1479,25 @@ fn run_pg_ctl_start(bins: &PgBins, project: &Path, data_dir: &Path, socket_dir: 
             return Err(msg);
         }
         let tail = std::fs::read_to_string(&log)
-            .map(|t| t.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"))
+            .map(|t| {
+                t.lines()
+                    .rev()
+                    .take(20)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
             .unwrap_or_default();
         return Err(format!(
             "sky db start: pg_ctl start failed:\n{}\n{}",
             stderr.trim(),
-            if tail.is_empty() { String::new() } else { format!("--- {} ---\n{tail}", log.display()) }
+            if tail.is_empty() {
+                String::new()
+            } else {
+                format!("--- {} ---\n{tail}", log.display())
+            }
         ));
     }
     read_postmaster_pid(data_dir).ok_or_else(|| {
@@ -1652,7 +1733,10 @@ pub fn check_run_config(project: &Path, verb: &str) -> Result<bool, String> {
         // Not namespaced: `rt.Db_connect` falls back to a bare `DATABASE_URL`
         // whatever the prefix, so it is just as capable of pointing the app
         // somewhere else.
-        ("DATABASE_URL".to_string(), std::env::var("DATABASE_URL").ok()),
+        (
+            "DATABASE_URL".to_string(),
+            std::env::var("DATABASE_URL").ok(),
+        ),
         (
             "sky.toml [database] path".to_string(),
             project::sky_toml_section_key(project, "database", "path"),
@@ -1699,7 +1783,10 @@ impl RunLease {
 /// disconnect and turns a stop into a hang.
 pub fn cmd_stop(args: &[String]) -> ExitCode {
     let all = args.iter().any(|a| a == "--all");
-    if let Some(unknown) = args.iter().find(|a| a.starts_with('-') && a.as_str() != "--all") {
+    if let Some(unknown) = args
+        .iter()
+        .find(|a| a.starts_with('-') && a.as_str() != "--all")
+    {
         eprintln!("usage: sky db stop [--all]\nunknown flag: {unknown}");
         return ExitCode::from(2);
     }
@@ -1747,7 +1834,10 @@ fn stop_impl(all: bool) -> Result<String, String> {
             // already went down.
             _ => {
                 reg.save(&home)?;
-                return Ok(format!("sky db stop: no cluster running for {}", project.display()));
+                return Ok(format!(
+                    "sky db stop: no cluster running for {}",
+                    project.display()
+                ));
             }
         }
     };
@@ -1801,7 +1891,11 @@ fn stop_impl(all: bool) -> Result<String, String> {
     Ok(format!(
         "sky db stop: stopped {} cluster(s):\n{}",
         stopped.len(),
-        stopped.iter().map(|p| format!("  {p}")).collect::<Vec<_>>().join("\n")
+        stopped
+            .iter()
+            .map(|p| format!("  {p}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     ))
 }
 
@@ -1820,7 +1914,10 @@ fn remove_socket_dir_if_empty(socket_dir: &Path) {
 /// registry with the machine.
 pub fn cmd_ps(args: &[String]) -> ExitCode {
     let all = args.iter().any(|a| a == "--all");
-    if let Some(unknown) = args.iter().find(|a| a.starts_with('-') && a.as_str() != "--all") {
+    if let Some(unknown) = args
+        .iter()
+        .find(|a| a.starts_with('-') && a.as_str() != "--all")
+    {
         eprintln!("usage: sky db ps [--all]\nunknown flag: {unknown}");
         return ExitCode::from(2);
     }
@@ -1901,7 +1998,11 @@ fn render_table(rows: &[(String, ClusterEntry, Liveness)]) -> String {
         w3 = widths[3]
     ));
     for (p, e, l) in rows {
-        let ver = if e.pg_version.is_empty() { "-" } else { &e.pg_version };
+        let ver = if e.pg_version.is_empty() {
+            "-"
+        } else {
+            &e.pg_version
+        };
         out.push_str(&format!(
             "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}\n",
             p,
@@ -1988,7 +2089,10 @@ mod tests {
         let via_real = socket_dir_for_data_dir(&real.join("pg"), None, Path::new("/tmp"));
         let _ = std::fs::remove_file(&link);
         let _ = std::fs::remove_dir_all(&real);
-        assert_eq!(via_link, via_real, "a symlinked data dir hashed differently");
+        assert_eq!(
+            via_link, via_real,
+            "a symlinked data dir hashed differently"
+        );
     }
 
     /// `.skydata/pg` does not exist until the first `initdb`, so the resolver
@@ -2013,7 +2117,11 @@ mod tests {
     /// ambiguity check inspects the wrong variable into the bargain.
     #[test]
     fn the_injected_dsn_variable_follows_the_projects_env_prefix() {
-        let dir = std::env::temp_dir().join(format!("sky-p5b-prefix-{}-{}", std::process::id(), now_secs()));
+        let dir = std::env::temp_dir().join(format!(
+            "sky-p5b-prefix-{}-{}",
+            std::process::id(),
+            now_secs()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
 
         std::fs::write(dir.join("sky.toml"), "[database]\nembedded = true\n").unwrap();
@@ -2062,7 +2170,11 @@ mod tests {
             let d = socket_dir_for_project(p, xdg, Path::new("/tmp"));
             // String prefix, not `Path::starts_with`: the latter compares whole
             // components, so `/tmp/sky-abc` does NOT start with `/tmp/sky-`.
-            assert!(d.to_string_lossy().starts_with("/tmp/sky-"), "{xdg:?} → {}", d.display());
+            assert!(
+                d.to_string_lossy().starts_with("/tmp/sky-"),
+                "{xdg:?} → {}",
+                d.display()
+            );
         }
     }
 
@@ -2071,7 +2183,11 @@ mod tests {
         // A real shape: a per-session runtime dir on a host with a long hostname.
         let xdg = format!("/run/user/1000/{}", "verylongsessiondirectory".repeat(4));
         let d = socket_dir_for_project(Path::new("/Users/dev/app"), Some(&xdg), Path::new("/tmp"));
-        assert!(d.to_string_lossy().starts_with("/tmp/sky-"), "{}", d.display());
+        assert!(
+            d.to_string_lossy().starts_with("/tmp/sky-"),
+            "{}",
+            d.display()
+        );
         assert!(socket_path_len(&d) <= MAX_SOCKET_PATH);
     }
 
@@ -2101,7 +2217,9 @@ mod tests {
                 d.join(SOCKET_BASENAME).display()
             );
             // And it is still specific to this project, not a shared bucket.
-            assert!(d.to_string_lossy().contains(&path_hash(&data_dir_for(&deep))));
+            assert!(d
+                .to_string_lossy()
+                .contains(&path_hash(&data_dir_for(&deep))));
         }
     }
 
@@ -2182,7 +2300,10 @@ mod tests {
         )));
         let base = &scratch.0;
 
-        for (case, pre) in [("a fresh directory", None), ("a directory left at 0777", Some(0o777))] {
+        for (case, pre) in [
+            ("a fresh directory", None),
+            ("a directory left at 0777", Some(0o777)),
+        ] {
             let dir = base.join(case.replace(' ', "-"));
             let _ = std::fs::remove_dir_all(&dir);
             if let Some(mode) = pre {
@@ -2212,8 +2333,12 @@ mod tests {
     #[test]
     fn a_shell_hostile_socket_dir_is_rejected_rather_than_quoted() {
         // The paths this module derives are always safe.
-        assert!(socket_dir_is_shell_safe(Path::new("/tmp/sky-0123456789abcdef")));
-        assert!(socket_dir_is_shell_safe(Path::new("/run/user/1000/sky/0123456789abcdef")));
+        assert!(socket_dir_is_shell_safe(Path::new(
+            "/tmp/sky-0123456789abcdef"
+        )));
+        assert!(socket_dir_is_shell_safe(Path::new(
+            "/run/user/1000/sky/0123456789abcdef"
+        )));
         // A user-supplied XDG_RUNTIME_DIR is not.
         for hostile in [
             "/run/user/$(whoami)/sky/abc",
@@ -2221,7 +2346,10 @@ mod tests {
             "/run/it's/sky/abc",
             "/run/a;rm -rf ~/sky/abc",
         ] {
-            assert!(!socket_dir_is_shell_safe(Path::new(hostile)), "accepted {hostile}");
+            assert!(
+                !socket_dir_is_shell_safe(Path::new(hostile)),
+                "accepted {hostile}"
+            );
         }
     }
 
@@ -2252,7 +2380,10 @@ mod tests {
     #[test]
     fn socket_path_len_measures_the_socket_file_not_the_directory() {
         let d = Path::new("/tmp/sky-0123456789abcdef");
-        assert_eq!(socket_path_len(d), d.as_os_str().len() + 1 + SOCKET_BASENAME.len());
+        assert_eq!(
+            socket_path_len(d),
+            d.as_os_str().len() + 1 + SOCKET_BASENAME.len()
+        );
     }
 
     // --- registry ---
@@ -2270,14 +2401,20 @@ mod tests {
     }
 
     fn run_ref(pid: i32, cmd: &str) -> RunRef {
-        RunRef { pid, cmd: cmd.to_string(), since: 1_700_000_000 }
+        RunRef {
+            pid,
+            cmd: cmd.to_string(),
+            since: 1_700_000_000,
+        }
     }
 
     #[test]
     fn registry_round_trips_through_json() {
         let mut reg = Registry::default();
-        reg.clusters.insert("/p/alpha".into(), entry("/p/alpha/.skydata/pg", 4242));
-        reg.clusters.insert("/p/beta".into(), entry("/p/beta/.skydata/pg", 4343));
+        reg.clusters
+            .insert("/p/alpha".into(), entry("/p/alpha/.skydata/pg", 4242));
+        reg.clusters
+            .insert("/p/beta".into(), entry("/p/beta/.skydata/pg", 4343));
         let json = serde_json::to_string(&reg).unwrap();
         let back: Registry = serde_json::from_str(&json).unwrap();
         assert_eq!(reg, back);
@@ -2285,9 +2422,11 @@ mod tests {
 
     #[test]
     fn registry_round_trips_through_a_real_file() {
-        let dir = std::env::temp_dir().join(format!("sky-reg-{}-{}", std::process::id(), now_secs()));
+        let dir =
+            std::env::temp_dir().join(format!("sky-reg-{}-{}", std::process::id(), now_secs()));
         let mut reg = Registry::default();
-        reg.clusters.insert("/p/alpha".into(), entry("/p/alpha/.skydata/pg", 4242));
+        reg.clusters
+            .insert("/p/alpha".into(), entry("/p/alpha/.skydata/pg", 4242));
         reg.save(&dir).unwrap();
         assert_eq!(Registry::load(&dir), reg);
         // No leftover temp file beside it.
@@ -2310,7 +2449,8 @@ mod tests {
 
     #[test]
     fn a_corrupt_registry_loads_as_empty_rather_than_bricking_the_verb() {
-        let dir = std::env::temp_dir().join(format!("sky-reg-bad-{}-{}", std::process::id(), now_secs()));
+        let dir =
+            std::env::temp_dir().join(format!("sky-reg-bad-{}-{}", std::process::id(), now_secs()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(REGISTRY_FILE), "{ this is not json").unwrap();
         assert_eq!(Registry::load(&dir), Registry::default());
@@ -2320,11 +2460,15 @@ mod tests {
     #[test]
     fn reap_drops_vanished_clears_dead_pids_and_adopts_live_ones() {
         let mut reg = Registry::default();
-        reg.clusters.insert("/p/live".into(), entry("/p/live/.skydata/pg", 100));
-        reg.clusters.insert("/p/dead".into(), entry("/p/dead/.skydata/pg", 200));
-        reg.clusters.insert("/p/gone".into(), entry("/p/gone/.skydata/pg", 300));
+        reg.clusters
+            .insert("/p/live".into(), entry("/p/live/.skydata/pg", 100));
+        reg.clusters
+            .insert("/p/dead".into(), entry("/p/dead/.skydata/pg", 200));
+        reg.clusters
+            .insert("/p/gone".into(), entry("/p/gone/.skydata/pg", 300));
         // A cluster restarted outside sky: alive, but at a pid the registry never saw.
-        reg.clusters.insert("/p/moved".into(), entry("/p/moved/.skydata/pg", 400));
+        reg.clusters
+            .insert("/p/moved".into(), entry("/p/moved/.skydata/pg", 400));
 
         let rows = reg.reap_with(&|project, e| match project {
             "/p/live" => Liveness::Running(e.pid),
@@ -2333,7 +2477,10 @@ mod tests {
             _ => Liveness::Running(999),
         });
 
-        assert!(!reg.clusters.contains_key("/p/gone"), "a vanished data dir must be dropped");
+        assert!(
+            !reg.clusters.contains_key("/p/gone"),
+            "a vanished data dir must be dropped"
+        );
         assert_eq!(reg.clusters["/p/live"].pid, 100);
         // The load-bearing assertion: a dead pid is ERASED, so nothing downstream
         // can print it as a running process.
@@ -2354,11 +2501,15 @@ mod tests {
     #[test]
     fn reaped_registry_never_reports_a_stale_pid_as_running() {
         let mut reg = Registry::default();
-        reg.clusters.insert("/p/killed".into(), entry("/p/killed/.skydata/pg", 31337));
+        reg.clusters
+            .insert("/p/killed".into(), entry("/p/killed/.skydata/pg", 31337));
         let rows = reg.reap_with(&|_, _| Liveness::Stopped);
         let table = render_table(&rows);
         assert!(table.contains("stopped"), "{table}");
-        assert!(!table.contains("31337"), "a reaped pid leaked into `ps` output:\n{table}");
+        assert!(
+            !table.contains("31337"),
+            "a reaped pid leaked into `ps` output:\n{table}"
+        );
     }
 
     // --- run references (the `sky run` ref count) ---
@@ -2369,7 +2520,10 @@ mod tests {
     #[test]
     fn a_second_runs_ref_survives_the_first_runs_exit() {
         let mut e = entry("/p/app/.skydata/pg", 4242);
-        e.refs = vec![run_ref(101, "sky run src/Main.sky"), run_ref(202, "sky run src/Main.sky")];
+        e.refs = vec![
+            run_ref(101, "sky run src/Main.sky"),
+            run_ref(202, "sky run src/Main.sky"),
+        ];
 
         // pid 101 exits: prune (both still alive) then drop its own ref.
         let remaining: Vec<RunRef> = prune_refs(&e.refs, &|_| true)
@@ -2377,7 +2531,11 @@ mod tests {
             .filter(|r| r.pid != 101)
             .collect();
 
-        assert_eq!(remaining.len(), 1, "the second run's reference was lost: {remaining:?}");
+        assert_eq!(
+            remaining.len(),
+            1,
+            "the second run's reference was lost: {remaining:?}"
+        );
         assert_eq!(remaining[0].pid, 202);
         assert!(
             !(e.explicit || remaining.is_empty()),
@@ -2396,7 +2554,10 @@ mod tests {
             .filter(|r| r.pid != 202)
             .collect();
         assert!(remaining.is_empty());
-        assert!(!e.explicit && remaining.is_empty(), "nothing is holding it: it must stop");
+        assert!(
+            !e.explicit && remaining.is_empty(),
+            "nothing is holding it: it must stop"
+        );
     }
 
     /// A cluster a user asked for by name stays up whatever `sky run` does with
@@ -2449,7 +2610,10 @@ mod tests {
     #[test]
     fn the_real_liveness_predicate_checks_identity_and_not_just_the_pid() {
         // This process, recorded as it actually is: a reference that must hold.
-        assert!(ref_is_live(&self_ref()), "a live holder's own reference was dropped");
+        assert!(
+            ref_is_live(&self_ref()),
+            "a live holder's own reference was dropped"
+        );
         // Same pid, different program — the recycled-pid case, forged by
         // recording a command line this process does not have.
         let impostor = RunRef {
@@ -2461,7 +2625,10 @@ mod tests {
             !ref_is_live(&impostor) || process_command(impostor.pid).is_none(),
             "a recycled pid counted as a live reference; only aliveness was checked"
         );
-        assert!(!ref_is_live(&run_ref(0, "sky run")), "pid 0 is never a reference");
+        assert!(
+            !ref_is_live(&run_ref(0, "sky run")),
+            "pid 0 is never a reference"
+        );
         assert!(!ref_is_live(&run_ref(-1, "sky run")));
     }
 
@@ -2484,7 +2651,10 @@ mod tests {
         let reg: Registry = serde_json::from_str(json).expect("a P2 registry must still load");
         let e = &reg.clusters["/p/app"];
         assert_eq!(e.pid, 4242);
-        assert!(!e.explicit, "an entry with no recorded intent must not be treated as persistent");
+        assert!(
+            !e.explicit,
+            "an entry with no recorded intent must not be treated as persistent"
+        );
         assert!(e.refs.is_empty());
     }
 
@@ -2504,15 +2674,25 @@ mod tests {
     fn an_explicit_dsn_alongside_embedded_is_refused_and_names_its_source() {
         let sources = vec![
             ("SKY_DB_PATH".to_string(), None),
-            ("DATABASE_URL".to_string(), Some("postgres://prod/db".to_string())),
-            ("sky.toml [database] path".to_string(), Some("./app.db".to_string())),
+            (
+                "DATABASE_URL".to_string(),
+                Some("postgres://prod/db".to_string()),
+            ),
+            (
+                "sky.toml [database] path".to_string(),
+                Some("./app.db".to_string()),
+            ),
         ];
-        let m = embedded_dsn_conflict("sky run", &sources).expect("an explicit DSN must be refused");
+        let m =
+            embedded_dsn_conflict("sky run", &sources).expect("an explicit DSN must be refused");
         assert!(m.starts_with("sky run:"), "{m}");
         // The FIRST set source, and only it: four complaints about one mistake
         // are harder to act on than one.
         assert!(m.contains("DATABASE_URL = postgres://prod/db"), "{m}");
-        assert!(!m.contains("./app.db"), "every source was reported at once:\n{m}");
+        assert!(
+            !m.contains("./app.db"),
+            "every source was reported at once:\n{m}"
+        );
         // Both ways out are named, because either may be the intended one.
         assert!(m.contains("remove `embedded = true`"), "{m}");
         assert!(m.contains("unset DATABASE_URL"), "{m}");
@@ -2639,7 +2819,13 @@ mod tests {
 
     #[test]
     fn an_absent_override_and_empty_cache_leave_only_path() {
-        let cands = bin_dir_candidates(Some("   "), &[], Path::new("/h/.sky"), Some("/usr/bin"), None);
+        let cands = bin_dir_candidates(
+            Some("   "),
+            &[],
+            Path::new("/h/.sky"),
+            Some("/usr/bin"),
+            None,
+        );
         assert_eq!(cands, vec![PathBuf::from("/usr/bin")]);
     }
 
@@ -2696,24 +2882,48 @@ mod tests {
             "sky db provision --embed",
             "pg_ctl",
         ] {
-            assert!(m.contains(needle), "the not-found message never mentions {needle}:\n{m}");
+            assert!(
+                m.contains(needle),
+                "the not-found message never mentions {needle}:\n{m}"
+            );
         }
     }
 
     #[test]
     fn pg_version_strings_parse_across_distributions() {
-        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 14.21 (Homebrew)"), Some(("14.21".into(), 14)));
-        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 18.2"), Some(("18.2".into(), 18)));
-        assert_eq!(parse_pg_version("initdb (PostgreSQL) 9.6.24"), Some(("9.6.24".into(), 9)));
-        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 16.3 (Debian 16.3-1.pgdg120+1)"), Some(("16.3".into(), 16)));
+        assert_eq!(
+            parse_pg_version("pg_ctl (PostgreSQL) 14.21 (Homebrew)"),
+            Some(("14.21".into(), 14))
+        );
+        assert_eq!(
+            parse_pg_version("pg_ctl (PostgreSQL) 18.2"),
+            Some(("18.2".into(), 18))
+        );
+        assert_eq!(
+            parse_pg_version("initdb (PostgreSQL) 9.6.24"),
+            Some(("9.6.24".into(), 9))
+        );
+        assert_eq!(
+            parse_pg_version("pg_ctl (PostgreSQL) 16.3 (Debian 16.3-1.pgdg120+1)"),
+            Some(("16.3".into(), 16))
+        );
         assert_eq!(parse_pg_version("pg_ctl: command not found"), None);
         // Pre-releases. Trimming the TRAILING non-digits leaves `18beta1` whole
         // (its last character is a digit) and the parse then fails, so anyone
         // testing against a beta got "sky cannot parse this version" instead of a
         // working cluster.
-        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 18beta1"), Some(("18".into(), 18)));
-        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 17rc1"), Some(("17".into(), 17)));
-        assert_eq!(parse_pg_version("pg_ctl (PostgreSQL) 16.3-1.pgdg120+1"), Some(("16.3".into(), 16)));
+        assert_eq!(
+            parse_pg_version("pg_ctl (PostgreSQL) 18beta1"),
+            Some(("18".into(), 18))
+        );
+        assert_eq!(
+            parse_pg_version("pg_ctl (PostgreSQL) 17rc1"),
+            Some(("17".into(), 17))
+        );
+        assert_eq!(
+            parse_pg_version("pg_ctl (PostgreSQL) 16.3-1.pgdg120+1"),
+            Some(("16.3".into(), 16))
+        );
     }
 
     #[test]
@@ -2727,7 +2937,12 @@ mod tests {
 
     #[test]
     fn the_version_mismatch_message_names_both_versions_and_never_suggests_starting() {
-        let m = version_mismatch_message(Path::new("/p/.skydata/pg"), 14, 16, Path::new("/opt/pg16/bin"));
+        let m = version_mismatch_message(
+            Path::new("/p/.skydata/pg"),
+            14,
+            16,
+            Path::new("/opt/pg16/bin"),
+        );
         assert!(m.contains("PostgreSQL 14"));
         assert!(m.contains("PostgreSQL 16"));
         assert!(m.contains("pg_upgrade"));
@@ -2740,8 +2955,14 @@ mod tests {
     fn the_tuning_block_keeps_a_development_cluster_small() {
         let b = sky_conf_block(None);
         assert!(b.contains("shared_buffers = 32MB"), "{b}");
-        assert!(b.contains("listen_addresses = ''"), "nothing may be exposed on TCP:\n{b}");
-        assert!(!b.contains("unix_socket_directories"), "the socket dir is passed per start, not frozen:\n{b}");
+        assert!(
+            b.contains("listen_addresses = ''"),
+            "nothing may be exposed on TCP:\n{b}"
+        );
+        assert!(
+            !b.contains("unix_socket_directories"),
+            "the socket dir is passed per start, not frozen:\n{b}"
+        );
     }
 
     /// The development profile's rule: nothing here may change what a query
@@ -2752,7 +2973,12 @@ mod tests {
     fn the_development_tuning_block_sets_no_semantic_setting() {
         for cpus in [1u32, 2, 8, 64] {
             let b = sky_conf_block_for(&crate::db_pool_sizing::PoolInputs::derived(cpus));
-            for forbidden in ["fsync", "synchronous_commit", "wal_level", "full_page_writes"] {
+            for forbidden in [
+                "fsync",
+                "synchronous_commit",
+                "wal_level",
+                "full_page_writes",
+            ] {
                 assert!(
                     !b.contains(forbidden),
                     "cpus={cpus}: `{forbidden}` changes what a query means — a development cluster \
@@ -2778,8 +3004,18 @@ mod tests {
         // is what let the app term stop following the documented knob while
         // every gate in this file stayed green.
         for cpus in 1u32..=64 {
-            for knob in [None, Some("1"), Some("23"), Some("64"), Some("200"), Some("0")] {
-                let i = PoolInputs { cpus, app_max_open: knob.map(str::to_string) };
+            for knob in [
+                None,
+                Some("1"),
+                Some("23"),
+                Some("64"),
+                Some("200"),
+                Some("0"),
+            ] {
+                let i = PoolInputs {
+                    cpus,
+                    app_max_open: knob.map(str::to_string),
+                };
                 let b = sky_conf_block_for(&i);
                 let want = dev_cluster_max_connections(&i);
                 assert!(
@@ -2829,7 +3065,10 @@ mod tests {
 
         // Half two: a DIFFERENT block must land, and replace rather than stack.
         let large = sky_conf_block_for(&PoolInputs::derived(16));
-        assert_ne!(small, large, "the fixture is not exercising a change in sizing");
+        assert_ne!(
+            small, large,
+            "the fixture is not exercising a change in sizing"
+        );
         let grown = ensure_sky_conf(&once, &large)
             .expect("the host grew from 1 to 16 cores and the block did not change");
         assert_eq!(
@@ -2838,8 +3077,14 @@ mod tests {
             "the retune stacked a second block:\n{grown}"
         );
         assert_eq!(grown.matches("shared_buffers").count(), 1);
-        for line in small.lines().filter(|l| l.trim().starts_with("max_connections")) {
-            assert!(!grown.contains(line), "the stale sizing survived the retune:\n{grown}");
+        for line in small
+            .lines()
+            .filter(|l| l.trim().starts_with("max_connections"))
+        {
+            assert!(
+                !grown.contains(line),
+                "the stale sizing survived the retune:\n{grown}"
+            );
         }
         // …and it is a fixed point.
         assert_eq!(ensure_sky_conf(&grown, &large), None);
@@ -2863,9 +3108,18 @@ mod tests {
         );
         let out = ensure_sky_conf(&legacy, &sky_conf_block_for(&PoolInputs::derived(16)))
             .expect("a legacy block was not retuned");
-        assert!(out.contains(MINE), "the retune ate the operator's setting:\n{out}");
-        assert!(out.contains("# stock"), "the stock conf above the block was deleted:\n{out}");
-        assert!(!out.contains("max_connections = 50"), "the stale value survived:\n{out}");
+        assert!(
+            out.contains(MINE),
+            "the retune ate the operator's setting:\n{out}"
+        );
+        assert!(
+            out.contains("# stock"),
+            "the stock conf above the block was deleted:\n{out}"
+        );
+        assert!(
+            !out.contains("max_connections = 50"),
+            "the stale value survived:\n{out}"
+        );
         assert_eq!(out.matches(SKY_CONF_MARKER).count(), 1, "{out}");
     }
 
@@ -2878,8 +3132,14 @@ mod tests {
         let m = translate_pg_start_error(raw, Path::new("/p/.skydata/pg"), Path::new("/tmp/sky-a"))
             .expect("a double start must be translated, not passed through raw");
         assert!(m.starts_with("sky db start:"), "{m}");
-        assert!(m.contains("/p/.skydata/pg"), "the message must name the data directory:\n{m}");
-        assert!(m.contains("sky db stop"), "the message must offer the way out:\n{m}");
+        assert!(
+            m.contains("/p/.skydata/pg"),
+            "the message must name the data directory:\n{m}"
+        );
+        assert!(
+            m.contains("sky db stop"),
+            "the message must offer the way out:\n{m}"
+        );
     }
 
     #[test]
@@ -2902,7 +3162,11 @@ mod tests {
         // Passing `None` is what makes the caller surface the raw text. Inventing a
         // friendly message for an unclassified failure would bury it.
         assert_eq!(
-            translate_pg_start_error("FATAL: the disk is on fire", Path::new("/p"), Path::new("/tmp/s")),
+            translate_pg_start_error(
+                "FATAL: the disk is on fire",
+                Path::new("/p"),
+                Path::new("/tmp/s")
+            ),
             None
         );
     }
@@ -2912,8 +3176,16 @@ mod tests {
     #[test]
     fn the_ps_table_aligns_and_marks_a_stopped_cluster() {
         let rows = vec![
-            ("/p/alpha".to_string(), entry("/p/alpha/.skydata/pg", 1234), Liveness::Running(1234)),
-            ("/p/a-much-longer-project-path".to_string(), entry("/p/b/.skydata/pg", 0), Liveness::Stopped),
+            (
+                "/p/alpha".to_string(),
+                entry("/p/alpha/.skydata/pg", 1234),
+                Liveness::Running(1234),
+            ),
+            (
+                "/p/a-much-longer-project-path".to_string(),
+                entry("/p/b/.skydata/pg", 0),
+                Liveness::Stopped,
+            ),
         ];
         let t = render_table(&rows);
         let lines: Vec<&str> = t.lines().collect();
@@ -2923,7 +3195,10 @@ mod tests {
         // Columns line up: every row is padded to the same header offsets.
         let socket_col = lines[0].find("SOCKET").unwrap();
         for l in &lines[1..] {
-            assert!(l.len() > socket_col, "row shorter than the SOCKET column: {l:?}");
+            assert!(
+                l.len() > socket_col,
+                "row shorter than the SOCKET column: {l:?}"
+            );
         }
     }
 }

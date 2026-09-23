@@ -110,8 +110,8 @@ fn manual_split_names(root: &Path) -> BTreeSet<String> {
 /// `:`. Bounded to the array region (`EXAMPLES=(` → the closing `)` on its own
 /// line) so unrelated quoted strings elsewhere in the script are not miscounted.
 fn example_sweep_names(root: &Path) -> BTreeSet<String> {
-    let src =
-        std::fs::read_to_string(root.join("scripts/example-sweep.sh")).expect("read example-sweep.sh");
+    let src = std::fs::read_to_string(root.join("scripts/example-sweep.sh"))
+        .expect("read example-sweep.sh");
     let start = src
         .find("EXAMPLES=(")
         .expect("EXAMPLES=( array in example-sweep.sh");

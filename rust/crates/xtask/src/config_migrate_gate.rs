@@ -87,13 +87,27 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
     if std::fs::write(dir.join("sky.toml"), FIXTURE_TOML).is_err()
         || std::fs::write(dir.join("src/Main.sky"), FIXTURE_MAIN).is_err()
     {
-        return (false, 0, format!("could not write the fixture under {}", dir.display()));
+        return (
+            false,
+            0,
+            format!("could not write the fixture under {}", dir.display()),
+        );
     }
 
     match config_migrate::run(&dir, Mode::Check) {
         Ok(o) => {
-            check(!o.clean, "fixture must start with legacy keys", &mut a, &mut fails);
-            check(o.legacy_count == 7, "fixture must have 7 legacy keys", &mut a, &mut fails);
+            check(
+                !o.clean,
+                "fixture must start with legacy keys",
+                &mut a,
+                &mut fails,
+            );
+            check(
+                o.legacy_count == 7,
+                "fixture must have 7 legacy keys",
+                &mut a,
+                &mut fails,
+            );
         }
         Err(e) => {
             let _ = std::fs::remove_dir_all(&dir);
@@ -122,22 +136,87 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
         &mut a,
         &mut fails,
     );
-    check(new_toml.contains("maxOpenConns = 25"), "residual pool knob must survive", &mut a, &mut fails);
-    check(new_toml.contains("driver = \"sqlite\""), "residual driver must survive", &mut a, &mut fails);
-    check(!new_toml.contains("[live]"), "emptied [live] must drop", &mut a, &mut fails);
-    check(new_toml.contains("[database]"), "[database] with residuals must stay", &mut a, &mut fails);
+    check(
+        new_toml.contains("maxOpenConns = 25"),
+        "residual pool knob must survive",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_toml.contains("driver = \"sqlite\""),
+        "residual driver must survive",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        !new_toml.contains("[live]"),
+        "emptied [live] must drop",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_toml.contains("[database]"),
+        "[database] with residuals must stay",
+        &mut a,
+        &mut fails,
+    );
 
-    check(new_main.contains("module Main exposing (main, config)"), "config must be exposed", &mut a, &mut fails);
-    check(new_main.contains("import Sky.Config as Config exposing ("), "Sky.Config must be imported", &mut a, &mut fails);
-    check(new_main.contains("config : Config.Config"), "a config binding must be created", &mut a, &mut fails);
-    check(new_main.contains("|> Config.withLog Json Warn"), "withLog must be generated", &mut a, &mut fails);
-    check(new_main.contains("|> Config.withSessions (SessionsSqlite \"sessions.db\")"), "withSessions must carry the path", &mut a, &mut fails);
-    check(new_main.contains("|> Config.withDatabase (Sqlite \"shop.db\")"), "withDatabase must be generated", &mut a, &mut fails);
-    check(new_main.contains("|> Config.withCsrf False"), "withCsrf must be generated", &mut a, &mut fails);
-    check(new_main.contains("|> Live.withPort 8000"), "Live.withPort must land in the pipeline", &mut a, &mut fails);
+    check(
+        new_main.contains("module Main exposing (main, config)"),
+        "config must be exposed",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_main.contains("import Sky.Config as Config exposing ("),
+        "Sky.Config must be imported",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_main.contains("config : Config.Config"),
+        "a config binding must be created",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_main.contains("|> Config.withLog Json Warn"),
+        "withLog must be generated",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_main.contains("|> Config.withSessions (SessionsSqlite \"sessions.db\")"),
+        "withSessions must carry the path",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_main.contains("|> Config.withDatabase (Sqlite \"shop.db\")"),
+        "withDatabase must be generated",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_main.contains("|> Config.withCsrf False"),
+        "withCsrf must be generated",
+        &mut a,
+        &mut fails,
+    );
+    check(
+        new_main.contains("|> Live.withPort 8000"),
+        "Live.withPort must land in the pipeline",
+        &mut a,
+        &mut fails,
+    );
 
     match config_migrate::run(&dir, Mode::Check) {
-        Ok(o) => check(o.clean, "a re-check after apply must be clean", &mut a, &mut fails),
+        Ok(o) => check(
+            o.clean,
+            "a re-check after apply must be clean",
+            &mut a,
+            &mut fails,
+        ),
         Err(e) => fails.push(format!("re-check failed: {e}")),
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -188,7 +267,12 @@ pub fn check_body(root: &Path) -> (bool, u64, String) {
             );
             // Dry planning writes nothing.
             let toml_after = std::fs::read_to_string(copy.join("sky.toml")).unwrap_or_default();
-            check(toml_before == toml_after, "planning must not write", &mut a, &mut fails);
+            check(
+                toml_before == toml_after,
+                "planning must not write",
+                &mut a,
+                &mut fails,
+            );
         }
         Err(e) => {
             a += 1;
@@ -239,6 +323,9 @@ mod tests {
     fn the_checked_in_tree_passes() {
         let (passed, assertions, detail) = check_body(&repo_root());
         assert!(passed, "config-migrate must pass on the tree:\n{detail}");
-        assert!(assertions > 0, "a passing gate that asserted nothing is vacuous");
+        assert!(
+            assertions > 0,
+            "a passing gate that asserted nothing is vacuous"
+        );
     }
 }

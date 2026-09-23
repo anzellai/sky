@@ -402,8 +402,11 @@ fn have_go() -> bool {
 /// Mirrors `db_run_cluster_flow.rs`: Homebrew's `postgresql@N` kegs are not
 /// symlinked onto PATH, so PATH alone misses the most common macOS install.
 fn find_pg_bin() -> Option<PathBuf> {
-    let complete =
-        |d: &Path| ["initdb", "pg_ctl", "postgres"].iter().all(|b| d.join(b).is_file());
+    let complete = |d: &Path| {
+        ["initdb", "pg_ctl", "postgres"]
+            .iter()
+            .all(|b| d.join(b).is_file())
+    };
     if let Ok(v) = std::env::var("SKY_POSTGRES_BIN") {
         let d = PathBuf::from(v);
         if complete(&d) {
@@ -554,10 +557,7 @@ impl Drop for Fixture {
 fn assert_all_checks(combined: &str, expected: &[&str], done_marker: &str) {
     // A `=FAIL` anywhere is a real access/persistence property that did not
     // hold — surface it directly.
-    let fails: Vec<&str> = combined
-        .lines()
-        .filter(|l| l.contains("=FAIL"))
-        .collect();
+    let fails: Vec<&str> = combined.lines().filter(|l| l.contains("=FAIL")).collect();
     assert!(
         fails.is_empty(),
         "flow reported failing checks:\n{}\n\n--- full output ---\n{combined}",

@@ -11,15 +11,13 @@ import Sky.Core.Task as Task
 import Sky.Core.String as String
 import Widget
 
-
 type Msg
     = SubmitClicked Widget.Form
     | CheckClicked
     | DismissCheck
 
-
-type Page = HomePage
-
+type Page
+    = HomePage
 
 type alias Model =
     { counter : Int }
@@ -31,6 +29,7 @@ init _ =
 
 update msg model =
     case msg of
+
         SubmitClicked _ ->
             ( { model | counter = model.counter + 1 }, Cmd.none )
 

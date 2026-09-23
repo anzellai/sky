@@ -138,10 +138,14 @@ fn point_free_kernel_alias_is_not_emitted_as_a_bare_runtime_symbol() {
     let log = build(&dir);
     let src = emitted_go(&dir, &log);
 
-    for (def, sym) in [("Main_joinStr", "rt.String_append"), ("Main_tickle", "rt.String_toUpper")] {
+    for (def, sym) in [
+        ("Main_joinStr", "rt.String_append"),
+        ("Main_tickle", "rt.String_toUpper"),
+    ] {
         let body = func_body(&src, def);
         assert!(
-            !body.contains(&format!("return {sym}\n")) && !body.contains(&format!("{{ return {sym} }}")),
+            !body.contains(&format!("return {sym}\n"))
+                && !body.contains(&format!("{{ return {sym} }}")),
             "{def} must not return the bare `any`-based kernel symbol {sym} — it is a \
              func(any…) any and the slot is a concretely-typed Go func, which `go build` \
              rejects. Emitted:\n{body}"
@@ -327,10 +331,17 @@ fn guard_boundary_shapes_still_build_and_behave() {
         "the already-correct kernel-value shapes must keep building. Log:\n{log}"
     );
 
-    let out = Command::new(&bin).current_dir(&dir).output().expect("run app");
+    let out = Command::new(&bin)
+        .current_dir(&dir)
+        .output()
+        .expect("run app");
     let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
     combined.push_str(&String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(0), "boundary app must run. Output:\n{combined}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "boundary app must run. Output:\n{combined}"
+    );
     for want in ["ab", "ident", "X,Y", "1"] {
         assert!(
             combined.contains(want),
@@ -372,7 +383,10 @@ fn kernel_value_slots_behave_at_runtime() {
     let bin = dir.join("sky-out").join("app");
     assert!(bin.is_file(), "project must build (log:\n{log})");
 
-    let out = Command::new(&bin).current_dir(&dir).output().expect("run app");
+    let out = Command::new(&bin)
+        .current_dir(&dir)
+        .output()
+        .expect("run app");
     let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
     combined.push_str(&String::from_utf8_lossy(&out.stderr));
 
@@ -476,10 +490,17 @@ fn ctor_into_container_runs_correctly() {
     let log = build(&dir);
     let bin = dir.join("sky-out").join("app");
     assert!(bin.is_file(), "project must build (log:\n{log})");
-    let out = Command::new(&bin).current_dir(&dir).output().expect("run app");
+    let out = Command::new(&bin)
+        .current_dir(&dir)
+        .output()
+        .expect("run app");
     let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
     combined.push_str(&String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(0), "app must run cleanly. Output:\n{combined}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "app must run cleanly. Output:\n{combined}"
+    );
     assert!(
         combined.contains("home/road"),
         "the bridged constructors must dispatch: apply inJust = \"home\", applyR inOk = \

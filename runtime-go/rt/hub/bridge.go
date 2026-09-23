@@ -329,15 +329,15 @@ const statsBucketCount = 30
 //
 // Aggregation strategy:
 //   - req/s        : count of telemetry_log rows in the window /
-//                    window-seconds. Logs are the cheapest signal
-//                    that's always populated; metrics/spans not
-//                    every service emits.
+//     window-seconds. Logs are the cheapest signal
+//     that's always populated; metrics/spans not
+//     every service emits.
 //   - p95          : sorted "latency_ms" / "duration_ms" attrs
-//                    from spans + logs, take the 95th percentile.
-//                    Zero when no latency observations recorded.
+//     from spans + logs, take the 95th percentile.
+//     Zero when no latency observations recorded.
 //   - error rate   : ratio of error-level log rows over total log
-//                    rows in the window. Same denominator as req/s
-//                    so the rate is comparable.
+//     rows in the window. Same denominator as req/s
+//     so the rate is comparable.
 //   - sparkRps/P95 : bucketed series, oldest → newest.
 //
 // One round-trip per call — a handful of indexed queries over the

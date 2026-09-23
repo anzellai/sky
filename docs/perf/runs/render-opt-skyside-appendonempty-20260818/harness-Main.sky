@@ -12,7 +12,6 @@ import Std.Ui.Transition as Transition
 import Std.Ui.Animation as Animation
 import Std.Ui.Transform as Transform
 
-
 type Msg
     = Noop
 
@@ -40,7 +39,6 @@ white =
 --   allAttrs (extraAttrs empty), attrList (pseudo/transition/animation
 --   empty vs present), renderedChildren (nearby empty vs present),
 --   collectTransitions (empty vs present).
-
 emptyEl : Element Msg
 emptyEl =
     Ui.el [] (Ui.text "empty")
@@ -68,11 +66,7 @@ manyStyle =
 
 withHtmlAttrs : Element Msg
 withHtmlAttrs =
-    Ui.el
-        [ Ui.class "card primary"
-        , Ui.padding 8
-        ]
-        (Ui.text "html-attrs")
+    Ui.el [ Ui.class "card primary", Ui.padding 8 ] (Ui.text "html-attrs")
 
 
 container : Element Msg
@@ -90,8 +84,8 @@ fillContainer =
     Ui.column
         [ Ui.width Ui.fill, Ui.height (Ui.px 180) ]
         [ Ui.el
-            [ Ui.width Ui.fill, Ui.height Ui.fill, Background.color blue ]
-            (Ui.el [ Font.color white ] (Ui.text "fill-child"))
+              [ Ui.width Ui.fill, Ui.height Ui.fill, Background.color blue ]
+              (Ui.el [ Font.color white ] (Ui.text "fill-child"))
         ]
 
 
@@ -121,10 +115,10 @@ withTransition =
         [ Ui.padding 8
         , Background.color blue
         , Transition.attribute
-            [ Transition.property "background-color"
-            , Transition.duration 200
-            , Transition.easing Transition.easeInOut
-            ]
+              [ Transition.property "background-color"
+              , Transition.duration 200
+              , Transition.easing Transition.easeInOut
+              ]
         ]
         (Ui.text "transition")
 
@@ -134,12 +128,11 @@ withAnimation =
     Ui.el
         [ Ui.padding 8
         , Animation.attribute
-            (Animation.withKeyframes
-                [ ( 0, [ Transform.opacity 0.0 ] )
-                , ( 100, [ Transform.opacity 1.0 ] )
-                ]
-                (Animation.defaultSpec "fade")
-            )
+              (Animation.withKeyframes
+                  [ ( 0, [ Transform.opacity 0.0 ] )
+                  , ( 100, [ Transform.opacity 1.0 ] )
+                  ]
+                  (Animation.defaultSpec "fade"))
         ]
         (Ui.text "anim")
 
@@ -154,13 +147,12 @@ kitchenSink =
         , Ui.class "sink"
         , Ui.inFront (Ui.el [ Ui.padding 2 ] (Ui.text "overlay"))
         , Background.hoverColor white
-        , Transition.attribute [ Transition.property "opacity", Transition.duration 150 ]
+        , Transition.attribute
+              [ Transition.property "opacity", Transition.duration 150 ]
         ]
         [ withHtmlAttrs
         , manyStyle
-        , Ui.row
-            [ Ui.spacing 4 ]
-            [ oneStyle, withNearby, withPseudo ]
+        , Ui.row [ Ui.spacing 4 ] [ oneStyle, withNearby, withPseudo ]
         ]
 
 
@@ -190,20 +182,24 @@ postRow i =
     Ui.row
         [ Ui.width Ui.fill, Ui.spacing 8, Ui.padding 8 ]
         [ Ui.column
-            [ Ui.spacing 2 ]
-            [ Ui.el [ Ui.class "up" ] (Ui.text "▲")
-            , Ui.el [ Ui.class "score" ] (Ui.text (String.fromInt i))
-            , Ui.el [ Ui.class "down" ] (Ui.text "▼")
-            ]
+              [ Ui.spacing 2 ]
+              [ Ui.el [ Ui.class "up" ] (Ui.text "▲")
+              , Ui.el [ Ui.class "score" ] (Ui.text (String.fromInt i))
+              , Ui.el [ Ui.class "down" ] (Ui.text "▼")
+              ]
         , Ui.column
-            [ Ui.width Ui.fill, Ui.spacing 4 ]
-            [ Ui.el [ Ui.class "title", Font.size 16 ] (Ui.text ("Post " ++ String.fromInt i))
-            , Ui.row
-                [ Ui.spacing 6 ]
-                [ Ui.el [ Ui.class "meta" ] (Ui.text ("by user" ++ String.fromInt i))
-                , Ui.el [ Ui.class "meta" ] (Ui.text "• 3h ago")
-                ]
-            ]
+              [ Ui.width Ui.fill, Ui.spacing 4 ]
+              [ Ui.el
+                    [ Ui.class "title", Font.size 16 ]
+                    (Ui.text ("Post " ++ String.fromInt i))
+              , Ui.row
+                    [ Ui.spacing 6 ]
+                    [ Ui.el
+                          [ Ui.class "meta" ]
+                          (Ui.text ("by user" ++ String.fromInt i))
+                    , Ui.el [ Ui.class "meta" ] (Ui.text "• 3h ago")
+                    ]
+              ]
         ]
 
 
@@ -234,7 +230,6 @@ main =
         -- Force `renderForum`/`forumView`/`postRow` into the call graph so
         -- codegen emits them for the Go allocation benchmark. Rendering an
         -- empty forum (range 1 0 = []) adds nothing to stdout.
-        _ =
-            String.length (renderForum 0)
+        _ = String.length (renderForum 0)
     in
         println (String.join "\n" (List.map renderCase corpus))

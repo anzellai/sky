@@ -168,7 +168,10 @@ fn metadata_service_charts_its_http_endpoint_map() {
 
     let md = render_wire(&r, Format::Md);
     // The HTTP endpoint table (now with a Kind column), not the /_rpc table.
-    assert!(md.contains("| Method | Path | Handler / page | Kind |"), "{md}");
+    assert!(
+        md.contains("| Method | Path | Handler / page | Kind |"),
+        "{md}"
+    );
     assert!(md.contains("| GET | / | handleRoot | http |"), "{md}");
     assert!(
         !md.contains("| Endpoint |"),

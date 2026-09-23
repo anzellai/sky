@@ -28,7 +28,6 @@ import Std.Sub as Sub
 import Std.Db as Db exposing (Db)
 import Std.Codec as Codec exposing (Codec)
 
-
 type alias Model =
     { count : Int }
 
@@ -36,7 +35,6 @@ type alias Model =
 modelCodec : Codec Model
 modelCodec =
     Codec.auto { count = 0 }
-
 
 type Msg
     = Bump
@@ -54,12 +52,18 @@ update _ model =
 
 view : Model -> String
 view model =
-    "count: " ++ String.fromInt model.count ++ " (press Enter to bump, Ctrl-D to quit)\n"
+    "count: " ++ String.fromInt model.count
+        ++ " (press Enter to bump, Ctrl-D to quit)\n"
 
 
 mkApp : Db -> App.App App.NoFallback () () Model Msg ()
 mkApp db =
-    App.cli { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+    App.cli
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
         |> App.withInput (\_ -> Bump)
         |> App.withDurable db modelCodec
 

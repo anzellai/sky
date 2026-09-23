@@ -2205,7 +2205,9 @@ impl<'a> Ctx<'a> {
             return None;
         }
         let key_ty = match self.sky_ty_of(args[dict_arg])? {
-            Ty::App(dict, dargs) if ty::nominal::base(dict.as_str()) == "Dict" && dargs.len() == 2 => {
+            Ty::App(dict, dargs)
+                if ty::nominal::base(dict.as_str()) == "Dict" && dargs.len() == 2 =>
+            {
                 dargs[0].clone()
             }
             _ => return None,
@@ -2252,7 +2254,13 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn lower_def(&mut self, name: &str, module: &str, sig: Option<&Ty>, is_main: bool) -> Vec<GoItem> {
+    fn lower_def(
+        &mut self,
+        name: &str,
+        module: &str,
+        sig: Option<&Ty>,
+        is_main: bool,
+    ) -> Vec<GoItem> {
         // bind params
         let param_pats: Vec<PatId> = self.body.params.clone();
         let mut params = Vec::new();
@@ -2901,8 +2909,9 @@ impl<'a> Ctx<'a> {
                 *counts.entry(name.clone()).or_insert(0) += 1;
             }
         }
-        let is_rp =
-            |t: Option<&Ty>| record_ext_name(t).is_some_and(|n| counts.get(n).copied().unwrap_or(0) >= 2);
+        let is_rp = |t: Option<&Ty>| {
+            record_ext_name(t).is_some_and(|n| counts.get(n).copied().unwrap_or(0) >= 2)
+        };
         let pflags = param_tys.iter().map(|t| is_rp(t.as_ref())).collect();
         let rflag = is_rp(result_ty.as_ref());
         (pflags, rflag)
@@ -3138,10 +3147,7 @@ impl<'a> Ctx<'a> {
         }
 
         // ── Source is a symbol: wrap it. ──────────────────────────────────
-        if !matches!(
-            &x.kind,
-            GoExprKind::Ident(_) | GoExprKind::Selector(_, _)
-        ) {
+        if !matches!(&x.kind, GoExprKind::Ident(_) | GoExprKind::Selector(_, _)) {
             return None;
         }
         let mut gparams: Vec<GoParam> = Vec::new();
@@ -3156,10 +3162,7 @@ impl<'a> Ctx<'a> {
             let a = GoExpr::new(GoExprKind::Ident(fresh), to_p.clone());
             args.push(self.eta_narrow(a, &from_ps[i]));
         }
-        let call = GoExpr::new(
-            GoExprKind::Call(Box::new(x.clone()), args),
-            from_r.clone(),
-        );
+        let call = GoExpr::new(GoExprKind::Call(Box::new(x.clone()), args), from_r.clone());
         let ret = self.eta_narrow(call, &to_r);
         Some(GoExpr::new(
             GoExprKind::FuncLit(gparams, to_r, vec![GoStmt::Return(Some(ret))]),
@@ -3524,9 +3527,7 @@ impl<'a> Ctx<'a> {
                         let callee_mod = e.module_name.clone();
                         let real_params: Option<Vec<GoTy>> =
                             self.def_param_tys.get(&d).cloned().map(|ptys| {
-                                ptys.iter()
-                                    .map(|t| self.goty_in(t, &callee_mod))
-                                    .collect()
+                                ptys.iter().map(|t| self.goty_in(t, &callee_mod)).collect()
                             });
                         let real_ret = self
                             .def_result_tys
@@ -3858,8 +3859,7 @@ impl<'a> Ctx<'a> {
     fn box_func_value(&mut self, e: GoExpr) -> GoExpr {
         let (ps, r) = match &e.ty {
             GoTy::Func(ps, r)
-                if !ps.is_empty()
-                    && !(ps.iter().all(|p| *p == GoTy::Any) && **r == GoTy::Any) =>
+                if !ps.is_empty() && !(ps.iter().all(|p| *p == GoTy::Any) && **r == GoTy::Any) =>
             {
                 (ps.clone(), (**r).clone())
             }
@@ -5194,7 +5194,10 @@ impl<'a> Ctx<'a> {
             );
             (
                 GoTy::Named("rt.SkyTuple2".into(), vec![]),
-                vec![GoStmt::Short("p".into(), call), GoStmt::Return(Some(repack))],
+                vec![
+                    GoStmt::Short("p".into(), call),
+                    GoStmt::Return(Some(repack)),
+                ],
             )
         } else {
             (GoTy::Any, vec![GoStmt::Return(Some(self.widen(call)))])
@@ -5400,8 +5403,11 @@ impl<'a> Ctx<'a> {
         xs: GoExpr,
         actual: &GoTy,
     ) -> GoExpr {
-        let erased =
-            |s: &mut Self, f: GoExpr, xs: GoExpr| { let wf = s.widen(f); let wx = s.widen(xs); s.kernel_call_lowered(go, vec![wf, wx], actual) };
+        let erased = |s: &mut Self, f: GoExpr, xs: GoExpr| {
+            let wf = s.widen(f);
+            let wx = s.widen(xs);
+            s.kernel_call_lowered(go, vec![wf, wx], actual)
+        };
 
         // The element type comes from the LIST, whose lowered slice type is the
         // one Go will index. `make_partial` hard-codes its remaining params to
@@ -5433,7 +5439,8 @@ impl<'a> Ctx<'a> {
         // reflect dispatch for one widen and one narrow per element, but that is
         // a coercion this does not currently emit, and the rule for an unproven
         // site is to leave it exactly as it was.
-        if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.") || n.starts_with("skyffi.")) {
+        if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.") || n.starts_with("skyffi."))
+        {
             return erased(self, f, xs);
         }
         let elem = (*elem).clone();
@@ -5810,7 +5817,11 @@ impl<'a> Ctx<'a> {
                 // (`lower_expr`) coerces to the expected `[]T` via `rt.AsListT`.
                 // Typing it `[]T` here would suppress that coercion and feed an
                 // `any` value into a `[]T` slot (`go build` rejects it).
-                call_rt("rt.List_cons", vec![self.widen(l), self.widen(r)], GoTy::Any)
+                call_rt(
+                    "rt.List_cons",
+                    vec![self.widen(l), self.widen(r)],
+                    GoTy::Any,
+                )
             }
             "|>" => {
                 // a |> f  ==  f a. Flatten when `f` is a partial application
@@ -6781,10 +6792,7 @@ impl<'a> Ctx<'a> {
         }
         // arity ≥10 → `rt.SkyTupleN{ Vs: []any{…} }` (slice-backed, heterogeneous).
         let vs = GoExpr::new(
-            GoExprKind::SliceLit(
-                GoTy::Any,
-                args.into_iter().map(|a| self.widen(a)).collect(),
-            ),
+            GoExprKind::SliceLit(GoTy::Any, args.into_iter().map(|a| self.widen(a)).collect()),
             GoTy::Any,
         );
         GoExpr::new(
@@ -6888,35 +6896,36 @@ impl<'a> Ctx<'a> {
             // reads `.Primary`. Emitting a field read on a struct that lacks the
             // field is a GUARANTEED `go build` failure, so widening here can never
             // regress a program that currently compiles.
-            let widen_param = if let (Pattern::Var(pid), GoTy::Struct(sfields)) =
-                (&self.body.pats[*p], &ty)
-            {
-                let pid = *pid;
-                let present: HashSet<String> =
-                    sfields.iter().map(|(n, _)| n.as_str().to_string()).collect();
-                let mut read: HashSet<String> = HashSet::new();
-                self.fields_read_on_local(body, pid, &mut read);
-                let capf = |s: &str| -> String {
-                    let mut ch = s.chars();
-                    match ch.next() {
-                        Some(c) => c.to_ascii_uppercase().to_string() + ch.as_str(),
-                        None => String::new(),
-                    }
-                };
-                // Widen when the body reads a field the subset struct lacks, OR
-                // when the param is the base of a record-UPDATE. An anonymous
-                // subset `struct{…}` cannot soundly carry `{ r | f = v }`: the
-                // update yields the FULL record, but a struct-typed slot drops
-                // the un-updated fields (physically), so a later consumer that
-                // reads them hits `reflect: struct{F} as struct{G}`. Widening to
-                // `any` routes the update through the reflective rt.RecordUpdate
-                // path, which preserves every field. The ROOT fix for the
-                // record-update-narrowing panic class (DarraghStudio bug #2) —
-                // covers map-chains ([]any element), foldl accumulators, and any
-                // source whose concrete element type isn't recoverable. A param
-                // pinned to a concrete Named record is NOT a `struct{…}` here, so
-                // it keeps the fast typed path.
-                read.iter().any(|f| !present.contains(&capf(f)))
+            let widen_param =
+                if let (Pattern::Var(pid), GoTy::Struct(sfields)) = (&self.body.pats[*p], &ty) {
+                    let pid = *pid;
+                    let present: HashSet<String> = sfields
+                        .iter()
+                        .map(|(n, _)| n.as_str().to_string())
+                        .collect();
+                    let mut read: HashSet<String> = HashSet::new();
+                    self.fields_read_on_local(body, pid, &mut read);
+                    let capf = |s: &str| -> String {
+                        let mut ch = s.chars();
+                        match ch.next() {
+                            Some(c) => c.to_ascii_uppercase().to_string() + ch.as_str(),
+                            None => String::new(),
+                        }
+                    };
+                    // Widen when the body reads a field the subset struct lacks, OR
+                    // when the param is the base of a record-UPDATE. An anonymous
+                    // subset `struct{…}` cannot soundly carry `{ r | f = v }`: the
+                    // update yields the FULL record, but a struct-typed slot drops
+                    // the un-updated fields (physically), so a later consumer that
+                    // reads them hits `reflect: struct{F} as struct{G}`. Widening to
+                    // `any` routes the update through the reflective rt.RecordUpdate
+                    // path, which preserves every field. The ROOT fix for the
+                    // record-update-narrowing panic class (DarraghStudio bug #2) —
+                    // covers map-chains ([]any element), foldl accumulators, and any
+                    // source whose concrete element type isn't recoverable. A param
+                    // pinned to a concrete Named record is NOT a `struct{…}` here, so
+                    // it keeps the fast typed path.
+                    read.iter().any(|f| !present.contains(&capf(f)))
                     // Update-base widening ONLY when the param was NOT pinned to
                     // the source list's real element (`!elem_pinned`). A pinned
                     // subset struct IS the honest runtime element (a genuinely
@@ -6927,9 +6936,9 @@ impl<'a> Ctx<'a> {
                     // true value is a full record — THAT is the unsound case to
                     // widen (map-chains, caseD).
                     || (!elem_pinned && self.param_is_updated(body, pid))
-            } else {
-                false
-            };
+                } else {
+                    false
+                };
             if widen_param {
                 ty = GoTy::Any;
             }
@@ -7437,10 +7446,7 @@ impl<'a> Ctx<'a> {
                                 )
                             } else {
                                 GoExpr::new(
-                                    GoExprKind::Selector(
-                                        Box::new(subj.clone()),
-                                        format!("V{i}"),
-                                    ),
+                                    GoExprKind::Selector(Box::new(subj.clone()), format!("V{i}")),
                                     ety.clone(),
                                 )
                             };
@@ -7509,12 +7515,14 @@ impl<'a> Ctx<'a> {
                     let name = self.fresh_local_named(*lid, Some(fname.as_str()));
                     self.local_tys.insert(*lid, fty.clone());
                     let read = if reflective {
-                        let cap_lit =
-                            GoExpr::new(GoExprKind::StrLit(cap), GoTy::Bare(Prim::Str));
+                        let cap_lit = GoExpr::new(GoExprKind::StrLit(cap), GoTy::Bare(Prim::Str));
                         let raw = call_rt("rt.Field", vec![subj.clone(), cap_lit], GoTy::Any);
                         self.coerce_if_needed(raw, &fty)
                     } else {
-                        GoExpr::new(GoExprKind::Selector(Box::new(subj.clone()), cap), fty.clone())
+                        GoExpr::new(
+                            GoExprKind::Selector(Box::new(subj.clone()), cap),
+                            fty.clone(),
+                        )
                     };
                     binds.push(GoStmt::Short(name, read));
                 }
@@ -8022,10 +8030,7 @@ fn entry_task_run(expr: GoExpr, out: &mut Vec<GoStmt>) {
                 vec![entry_ref()],
                 GoTy::Bare(Prim::Int),
             )),
-            Box::new(GoExpr::new(
-                GoExprKind::IntLit(1),
-                GoTy::Bare(Prim::Int),
-            )),
+            Box::new(GoExpr::new(GoExprKind::IntLit(1), GoTy::Bare(Prim::Int))),
         ),
         GoTy::Bare(Prim::Bool),
     );
@@ -8119,7 +8124,6 @@ fn call_rt(name: &str, args: Vec<GoExpr>, ty: GoTy) -> GoExpr {
         ty,
     )
 }
-
 
 /// The PURE-SKY `Sky.Core.List` HOFs that have a fully-typed runtime twin a
 /// provable call site can be re-pointed at.
@@ -8507,7 +8511,7 @@ mod memoised_effect_lint_tests {
         assert!(is_store_read_kernel("Db", "getById"));
         assert!(is_store_read_kernel("Db", "findManyByField"));
         assert!(is_store_read_kernel("Std.Db", "getById")); // fully-qualified alias
-        // The blessed memoised-HANDLE kernels must NOT be reads.
+                                                            // The blessed memoised-HANDLE kernels must NOT be reads.
         assert!(!is_store_read_kernel("Db", "connect"));
         assert!(!is_store_read_kernel("Db", "open"));
         assert!(!is_store_read_kernel("Db", "close"));
@@ -8542,14 +8546,17 @@ mod memoised_effect_lint_tests {
         // Result/Task wrapping DATA is transparent → still fire-eligible.
         assert!(is_stale_data_result(&Ty::app(
             "Result",
-            vec![Ty::app("Error", vec![]), Ty::app("List", vec![Ty::app("Post", vec![])])]
+            vec![
+                Ty::app("Error", vec![]),
+                Ty::app("List", vec![Ty::app("Post", vec![])])
+            ]
         )));
 
         // Handles / config descriptors → suppressed.
         assert!(!is_stale_data_result(&Ty::app("Db", vec![])));
         assert!(!is_stale_data_result(&Ty::app("Pool", vec![])));
         assert!(!is_stale_data_result(&Ty::app("Std.Db.Db", vec![]))); // qualified
-        // FP1: `products : Store Product` — a table/config descriptor.
+                                                                       // FP1: `products : Store Product` — a table/config descriptor.
         assert!(!is_stale_data_result(&Ty::app(
             "Store",
             vec![Ty::app("Product", vec![])]

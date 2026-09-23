@@ -108,7 +108,10 @@ pub struct PoolInputs {
 impl PoolInputs {
     /// The inputs with the knob unset — what sky DERIVES from the machine.
     pub fn derived(cpus: u32) -> Self {
-        PoolInputs { cpus, app_max_open: None }
+        PoolInputs {
+            cpus,
+            app_max_open: None,
+        }
     }
 
     /// The inputs a project's app process will see.
@@ -117,13 +120,18 @@ impl PoolInputs {
     /// cluster that serves no single project (`sky db provision --shared`),
     /// where only the process environment is knowable.
     pub fn resolve(cpus: u32, project: Option<&Path>) -> Self {
-        PoolInputs { cpus, app_max_open: resolve_max_open_conns(project) }
+        PoolInputs {
+            cpus,
+            app_max_open: resolve_max_open_conns(project),
+        }
     }
 }
 
 /// Read the pool knob the way the app's own runtime will.
 fn resolve_max_open_conns(project: Option<&Path>) -> Option<String> {
-    let toml = project.map(|p| read_text(&p.join("sky.toml"))).unwrap_or_default();
+    let toml = project
+        .map(|p| read_text(&p.join("sky.toml")))
+        .unwrap_or_default();
     let name = format!("{}_{MAX_OPEN_CONNS_SUFFIX}", env_prefix(&toml));
 
     // 1. The process environment. PRESENCE decides, not emptiness: `rt`'s
@@ -153,7 +161,11 @@ fn env_prefix(toml: &str) -> String {
     match toml_value(toml, "env", "prefix") {
         Some(p) => {
             let p = p.trim_end_matches('_');
-            if p.is_empty() { "SKY".to_string() } else { p.to_string() }
+            if p.is_empty() {
+                "SKY".to_string()
+            } else {
+                p.to_string()
+            }
         }
         None => "SKY".to_string(),
     }
@@ -178,7 +190,9 @@ fn toml_value(toml: &str, section: &str, key: &str) -> Option<String> {
                 continue;
             }
         }
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         if current == section && k.trim() == key {
             return Some(parse_toml_scalar(v));
         }
@@ -206,13 +220,16 @@ fn dotenv_value(text: &str, name: &str) -> Option<String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         if k.trim() != name {
             continue;
         }
         let v = v.trim();
         let v = if v.len() >= 2
-            && ((v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\'')))
+            && ((v.starts_with('"') && v.ends_with('"'))
+                || (v.starts_with('\'') && v.ends_with('\'')))
         {
             &v[1..v.len() - 1]
         } else {
@@ -346,12 +363,16 @@ pub fn default_app_pool_size(cpus: u32) -> u32 {
 /// so in the file it generates rather than printing a claim that cannot be true.
 pub fn app_pool_size_resolved(i: &PoolInputs) -> (u32, bool) {
     let default = default_app_pool_size(i.cpus);
-    let Some(raw) = i.app_max_open.as_deref() else { return (default, false) };
+    let Some(raw) = i.app_max_open.as_deref() else {
+        return (default, false);
+    };
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return (default, false);
     }
-    let Ok(n) = trimmed.parse::<i64>() else { return (default, false) };
+    let Ok(n) = trimmed.parse::<i64>() else {
+        return (default, false);
+    };
     if n <= 0 {
         return (default, true);
     }
@@ -401,7 +422,10 @@ pub fn telemetry_pool_size(_app: u32) -> u32 {
 ///
 /// Mirrors `dbProcessConnectionDemandFrom(app)`.
 pub fn process_connection_demand_from(app: u32) -> u32 {
-    app + AUX_POOL_CONSUMERS.iter().map(|c| (c.max_open)(app)).sum::<u32>()
+    app + AUX_POOL_CONSUMERS
+        .iter()
+        .map(|c| (c.max_open)(app))
+        .sum::<u32>()
 }
 
 /// The demand for a set of inputs. Mirrors `dbProcessConnectionDemand`.
@@ -466,8 +490,11 @@ pub fn shared_cluster_max_connections(i: &PoolInputs) -> u32 {
     let n = derived_process_connection_demand(i.cpus) * apps * RESTART_OVERLAP_FACTOR
         + SUPERUSER_RESERVED
         + OPERATOR_HEADROOM;
-    clamp(n, SHARED_MAX_CONNECTIONS_FLOOR, SHARED_MAX_CONNECTIONS_CEILING)
-        + operator_excess(i) * apps * RESTART_OVERLAP_FACTOR
+    clamp(
+        n,
+        SHARED_MAX_CONNECTIONS_FLOOR,
+        SHARED_MAX_CONNECTIONS_CEILING,
+    ) + operator_excess(i) * apps * RESTART_OVERLAP_FACTOR
 }
 
 /// The `max_connections` for a DEVELOPMENT cluster (`sky db start`).
@@ -512,7 +539,10 @@ mod tests {
     const CPUS: std::ops::RangeInclusive<u32> = 1..=64;
 
     fn inputs(cpus: u32, knob: Option<&str>) -> PoolInputs {
-        PoolInputs { cpus, app_max_open: knob.map(str::to_string) }
+        PoolInputs {
+            cpus,
+            app_max_open: knob.map(str::to_string),
+        }
     }
 
     // ---- the historical formulas, kept as witnesses -----------------------
@@ -540,7 +570,10 @@ mod tests {
     fn historical_knob_blind_demand(i: &PoolInputs) -> u32 {
         let app = app_pool_size(i);
         default_app_pool_size(i.cpus)
-            + AUX_POOL_CONSUMERS.iter().map(|c| (c.max_open)(app)).sum::<u32>()
+            + AUX_POOL_CONSUMERS
+                .iter()
+                .map(|c| (c.max_open)(app))
+                .sum::<u32>()
     }
 
     // ---- gate 1: the dev cluster covers its one process --------------------
@@ -612,8 +645,7 @@ mod tests {
                     AUX_POOL_CONSUMERS.len(),
                     aux_pool_consumer_names().join(", "),
                 );
-                let per_consumer: u32 =
-                    AUX_POOL_CONSUMERS.iter().map(|c| (c.max_open)(app)).sum();
+                let per_consumer: u32 = AUX_POOL_CONSUMERS.iter().map(|c| (c.max_open)(app)).sum();
                 assert_eq!(
                     demand,
                     app + per_consumer,
@@ -721,9 +753,12 @@ mod tests {
         if col == "-" {
             return None;
         }
-        let inner = col.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or_else(|| {
-            panic!("the knob column {col:?} is neither `-` nor a Go-quoted string")
-        });
+        let inner = col
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or_else(|| {
+                panic!("the knob column {col:?} is neither `-` nor a Go-quoted string")
+            });
         let mut out = String::with_capacity(inner.len());
         let mut chars = inner.chars();
         while let Some(c) = chars.next() {
@@ -798,7 +833,10 @@ mod tests {
             if !knobs_seen.contains(&knob) {
                 knobs_seen.push(knob.clone());
             }
-            let i = PoolInputs { cpus, app_max_open: knob.clone() };
+            let i = PoolInputs {
+                cpus,
+                app_max_open: knob.clone(),
+            };
 
             let (got_app, got_unlimited) = app_pool_size_resolved(&i);
             assert_eq!(got_app, app, "cpus={cpus} knob={knob:?}: app pool");
@@ -842,8 +880,7 @@ mod tests {
             saw_consumers,
             "the fixture carries no consumer list — it is not the file this gate expects"
         );
-        let want_knobs: Vec<Option<String>> =
-            KNOBS.iter().map(|k| k.map(str::to_string)).collect();
+        let want_knobs: Vec<Option<String>> = KNOBS.iter().map(|k| k.map(str::to_string)).collect();
         assert_eq!(
             knobs_seen, want_knobs,
             "the fixture sweeps a different set of pool-knob values than this module's gates do — \
@@ -908,8 +945,15 @@ mod tests {
         );
 
         // `.env` outranks sky.toml, as rt's loader does.
-        std::fs::write(dir.join(".env"), "# comment\nSKY_DB_MAX_OPEN_CONNS=\"55\"\n").unwrap();
-        assert_eq!(PoolInputs::resolve(4, Some(&dir)).app_max_open.as_deref(), Some("55"));
+        std::fs::write(
+            dir.join(".env"),
+            "# comment\nSKY_DB_MAX_OPEN_CONNS=\"55\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            PoolInputs::resolve(4, Some(&dir)).app_max_open.as_deref(),
+            Some("55")
+        );
 
         // A custom [env] prefix renames the variable the runtime reads, so the
         // `.env` line above stops matching.
@@ -925,11 +969,17 @@ mod tests {
              naming SKY_DB_MAX_OPEN_CONNS is not the knob this process will read"
         );
         std::fs::write(dir.join(".env"), "FENCE_DB_MAX_OPEN_CONNS=55\n").unwrap();
-        assert_eq!(PoolInputs::resolve(4, Some(&dir)).app_max_open.as_deref(), Some("55"));
+        assert_eq!(
+            PoolInputs::resolve(4, Some(&dir)).app_max_open.as_deref(),
+            Some("55")
+        );
 
         // No project at all (`sky db provision --shared`) → the process
         // environment only, and nothing invented from a file that is not there.
-        assert_eq!(PoolInputs::resolve(4, None).app_max_open, resolve_max_open_conns(None));
+        assert_eq!(
+            PoolInputs::resolve(4, None).app_max_open,
+            resolve_max_open_conns(None)
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -944,10 +994,26 @@ mod tests {
         assert_eq!(at(None), (8, false), "unset → the 4-per-CPU default");
         assert_eq!(at(Some("")), (8, false), "empty → unset");
         assert_eq!(at(Some("   ")), (8, false), "whitespace → unset");
-        assert_eq!(at(Some(" 12 ")), (12, false), "trimmed, as strconv.Atoi requires");
-        assert_eq!(at(Some("lots")), (8, false), "unparseable → the default, with a warning");
+        assert_eq!(
+            at(Some(" 12 ")),
+            (12, false),
+            "trimmed, as strconv.Atoi requires"
+        );
+        assert_eq!(
+            at(Some("lots")),
+            (8, false),
+            "unparseable → the default, with a warning"
+        );
         assert_eq!(at(Some("0")), (8, true), "0 is database/sql for UNLIMITED");
-        assert_eq!(at(Some("-4")), (8, true), "negative is folded to 0 by the resolver");
-        assert_eq!(at(Some("1")), (1, false), "an explicit 1 is honoured, not floored");
+        assert_eq!(
+            at(Some("-4")),
+            (8, true),
+            "negative is folded to 0 by the resolver"
+        );
+        assert_eq!(
+            at(Some("1")),
+            (1, false),
+            "an explicit 1 is honoured, not floored"
+        );
     }
 }

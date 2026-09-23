@@ -634,9 +634,9 @@ impl<'a> Infer<'a> {
                         Expr::Var(Res::Local(id)) => {
                             let id = *id;
                             if let Some(def) = self.self_def {
-                                let pidx = body.params.iter().position(|p| {
-                                    matches!(&body.pats[*p], Pattern::Var(pid) if *pid == id)
-                                });
+                                let pidx = body.params.iter().position(
+                                    |p| matches!(&body.pats[*p], Pattern::Var(pid) if *pid == id),
+                                );
                                 if let Some(idx) = pidx {
                                     // The param's full record comes from EITHER the
                                     // declared sig (annotated) OR the concrete
@@ -681,7 +681,8 @@ impl<'a> Infer<'a> {
                                                 .get(&def)
                                                 .and_then(|v| v.get(idx))
                                                 .and_then(|o| o.clone())
-                                        });                                    if let Some(rec) = param_record {
+                                        });
+                                    if let Some(rec) = param_record {
                                         let mut sub: HashMap<String, TyVarId> = HashMap::new();
                                         let av = self.ty_to_var(&rec, &mut sub);
                                         self.unify(tb, av);

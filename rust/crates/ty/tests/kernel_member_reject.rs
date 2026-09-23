@@ -125,7 +125,9 @@ fn unknown_member_list_sum_rejected_e1001() {
 
 #[test]
 fn unknown_member_basics_remainderby_rejected_e1001() {
-    let codes = error_codes(&ambient("println (String.fromInt (Basics.remainderBy 2 7))"));
+    let codes = error_codes(&ambient(
+        "println (String.fromInt (Basics.remainderBy 2 7))",
+    ));
     assert!(
         codes.iter().any(|c| c == "E1001"),
         "`Basics.remainderBy` must be rejected with [E1001]; got {codes:?}"

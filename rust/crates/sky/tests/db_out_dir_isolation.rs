@@ -102,16 +102,14 @@ fn run_sky(dir: &Path, args: &[&str]) -> (i32, String) {
 fn assert_project_untouched(dir: &Path, verb: &str, log: &str) {
     let app = std::fs::read(dir.join("sky-out").join("app")).unwrap_or_default();
     assert_eq!(
-        app,
-        b"SENTINEL-REAL-APP-BINARY",
+        app, b"SENTINEL-REAL-APP-BINARY",
         "`sky db {verb}` overwrote the project's built binary at sky-out/app. \
          A db verb must build its helper entry into a scratch dir \
          (BuildOptions::out_dir_abs), never the project's real output. Log:\n{log}"
     );
     let main_go = std::fs::read(dir.join("sky-out").join("main.go")).unwrap_or_default();
     assert_eq!(
-        main_go,
-        b"// SENTINEL-REAL-APP-SOURCE",
+        main_go, b"// SENTINEL-REAL-APP-SOURCE",
         "`sky db {verb}` overwrote the project's emitted sky-out/main.go. Log:\n{log}"
     );
 
@@ -144,6 +142,11 @@ db_verb_isolation!(db_status_does_not_clobber_sky_out, "status", "status");
 db_verb_isolation!(db_seed_does_not_clobber_sky_out, "seed", "seed");
 db_verb_isolation!(db_push_does_not_clobber_sky_out, "push", "push");
 db_verb_isolation!(db_migrate_does_not_clobber_sky_out, "migrate", "migrate");
-db_verb_isolation!(db_migrate_gen_does_not_clobber_sky_out, "gen", "migrate", "--gen");
+db_verb_isolation!(
+    db_migrate_gen_does_not_clobber_sky_out,
+    "gen",
+    "migrate",
+    "--gen"
+);
 db_verb_isolation!(db_reset_does_not_clobber_sky_out, "reset", "reset");
 db_verb_isolation!(db_drop_does_not_clobber_sky_out, "drop", "drop");

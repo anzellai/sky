@@ -99,8 +99,10 @@ fn mangle(t: &ty::Ty) -> String {
             format!("Tup{}_{}", xs.len(), inner.join("_"))
         }
         ty::Ty::Record(fs, _) => {
-            let inner: Vec<String> =
-                fs.iter().map(|(n, t)| format!("{}_{}", n.as_str(), mangle(t))).collect();
+            let inner: Vec<String> = fs
+                .iter()
+                .map(|(n, t)| format!("{}_{}", n.as_str(), mangle(t)))
+                .collect();
             format!("Rec_{}", inner.join("_"))
         }
         ty::Ty::Unit => "Unit".to_string(),
@@ -119,8 +121,7 @@ fn sky_ty(t: &ty::Ty) -> Option<String> {
             if args.is_empty() {
                 Some(tl.to_string())
             } else {
-                let inner: Vec<String> =
-                    args.iter().map(sky_ty_arg).collect::<Option<_>>()?;
+                let inner: Vec<String> = args.iter().map(sky_ty_arg).collect::<Option<_>>()?;
                 Some(format!("{tl} {}", inner.join(" ")))
             }
         }
@@ -316,15 +317,16 @@ impl<'a> GenModule<'a> {
     /// Emit `spaGenD_<m> : Int -> Seed -> (T, Seed)` (depth worker) and
     /// `spaGen_<m> : Seed -> (T, Seed)` (public wrapper).
     fn emit_worker(&mut self, ty: &ty::Ty, m: &str) -> Result<(), String> {
-        let sky = sky_ty(ty)
-            .ok_or_else(|| format!("cannot render Sky type for `{m}`"))?;
+        let sky = sky_ty(ty).ok_or_else(|| format!("cannot render Sky type for `{m}`"))?;
         let worker = format!("spaGenD_{m}");
         let body = self.worker_body(ty)?; // uses `d` and `s0`; returns `( value, sN )`
         let mut def = String::new();
         def.push_str(&format!("{worker} : Int -> Seed -> ( {sky}, Seed )\n"));
         def.push_str(&format!("{worker} d s0 =\n{body}\n\n"));
         def.push_str(&format!("spaGen_{m} : Seed -> ( {sky}, Seed )\n"));
-        def.push_str(&format!("spaGen_{m} s =\n    spaGenD_{m} spaGenCap s\n\n\n"));
+        def.push_str(&format!(
+            "spaGen_{m} s =\n    spaGenD_{m} spaGenCap s\n\n\n"
+        ));
         self.defs.push(def);
         Ok(())
     }
@@ -351,8 +353,10 @@ impl<'a> GenModule<'a> {
             }
             ty::Ty::Tuple(xs) => self.tuple_body(xs),
             ty::Ty::Record(fs, _) => {
-                let fs: Vec<(String, ty::Ty)> =
-                    fs.iter().map(|(n, t)| (n.as_str().to_string(), t.clone())).collect();
+                let fs: Vec<(String, ty::Ty)> = fs
+                    .iter()
+                    .map(|(n, t)| (n.as_str().to_string(), t.clone()))
+                    .collect();
                 self.record_body(&fs)
             }
             _ => Err(format!("no worker body for `{}`", mangle(ty))),
@@ -859,7 +863,10 @@ mod tests {
                 '}' => brace -= 1,
                 _ => {}
             }
-            assert!(paren >= 0 && brack >= 0 && brace >= 0, "unbalanced close in:\n{src}");
+            assert!(
+                paren >= 0 && brack >= 0 && brace >= 0,
+                "unbalanced close in:\n{src}"
+            );
             prev = c;
         }
         assert_eq!(paren, 0, "unbalanced parens in:\n{src}");
@@ -908,11 +915,21 @@ mod tests {
         assert!(out.emitted_model);
         assert!(out.notes.is_empty(), "unexpected notes: {:?}", out.notes);
         // The Todo record generator, the List and Maybe workers, and genModel.
-        assert!(out.source.contains("spaGenD_Todo : Int -> Seed -> ( Todo, Seed )"));
-        assert!(out.source.contains("spaGenD_List_Todo : Int -> Seed -> ( List Todo, Seed )"));
-        assert!(out.source.contains("spaGenD_Maybe_String : Int -> Seed -> ( Maybe String, Seed )"));
+        assert!(out
+            .source
+            .contains("spaGenD_Todo : Int -> Seed -> ( Todo, Seed )"));
+        assert!(out
+            .source
+            .contains("spaGenD_List_Todo : Int -> Seed -> ( List Todo, Seed )"));
+        assert!(out
+            .source
+            .contains("spaGenD_Maybe_String : Int -> Seed -> ( Maybe String, Seed )"));
         // The Todo record is built field-by-field: `{ id = f0, label = f1 }`.
-        assert!(out.source.contains("{ id = f0, label = f1 }"), "todo record body:\n{}", out.source);
+        assert!(
+            out.source.contains("{ id = f0, label = f1 }"),
+            "todo record body:\n{}",
+            out.source
+        );
         well_formed(&out.source);
     }
 
@@ -931,8 +948,13 @@ mod tests {
         assert!(g.emit_msg("Msg", "Reset", &[]));
         g.emit_msg_dispatch();
         let out = g.finish();
-        assert_eq!(out.emitted_msgs, vec!["SetCount".to_string(), "Reset".to_string()]);
-        assert!(out.source.contains("genMsg_SetCount : Seed -> ( Msg, Seed )"));
+        assert_eq!(
+            out.emitted_msgs,
+            vec!["SetCount".to_string(), "Reset".to_string()]
+        );
+        assert!(out
+            .source
+            .contains("genMsg_SetCount : Seed -> ( Msg, Seed )"));
         assert!(out.source.contains("( SetCount a0, s1 )"));
         assert!(out.source.contains("genMsg_Reset s0 =\n    ( Reset, s0 )"));
         assert!(out.source.contains("genMsg : Seed -> ( Msg, Seed )"));
@@ -954,7 +976,9 @@ mod tests {
         assert!(g.emit_model("Model", &[field("shape", Some(app("Shape")))]));
         let out = g.finish();
         assert!(out.emitted_model);
-        assert!(out.source.contains("spaGenD_Shape : Int -> Seed -> ( Shape, Seed )"));
+        assert!(out
+            .source
+            .contains("spaGenD_Shape : Int -> Seed -> ( Shape, Seed )"));
         assert!(out.source.contains("( Circle c0, "));
         assert!(out.source.contains("( Rect c0 c1, "));
         well_formed(&out.source);
@@ -975,7 +999,9 @@ mod tests {
         assert!(g.emit_msg("Msg", "SetTree", &[field("t", Some(app("Tree")))]));
         let out = g.finish();
         assert_eq!(out.emitted_msgs, vec!["SetTree".to_string()]);
-        assert!(out.source.contains("spaGenD_Tree : Int -> Seed -> ( Tree, Seed )"));
+        assert!(out
+            .source
+            .contains("spaGenD_Tree : Int -> Seed -> ( Tree, Seed )"));
         // The recursive arm threads the decremented depth into the same worker.
         assert!(out.source.contains("spaGenD_Tree (spaDec d)"));
         // The depth-0 branch builds the nullary base ctor.
@@ -995,7 +1021,10 @@ mod tests {
         assert!(!ok, "a base-case-free recursive type must be refused");
         let out = g.finish();
         assert!(!out.emitted_model);
-        assert!(out.notes.iter().any(|n| n.contains("Bad") && n.contains("no finite value")));
+        assert!(out
+            .notes
+            .iter()
+            .any(|n| n.contains("Bad") && n.contains("no finite value")));
     }
 
     #[test]
@@ -1009,7 +1038,10 @@ mod tests {
         assert!(!ok);
         let out = g.finish();
         assert!(!out.emitted_model);
-        assert!(out.notes.iter().any(|n| n.contains("mystery") && n.contains("None")));
+        assert!(out
+            .notes
+            .iter()
+            .any(|n| n.contains("mystery") && n.contains("None")));
     }
 
     #[test]
@@ -1035,11 +1067,18 @@ mod tests {
         )]);
         let build = || {
             let mut g = GenModule::new(&e);
-            g.emit_model("Model", &[field("todos", Some(ty::Ty::app("List", vec![app("Todo")])))]);
+            g.emit_model(
+                "Model",
+                &[field("todos", Some(ty::Ty::app("List", vec![app("Todo")])))],
+            );
             g.emit_msg("Msg", "Add", &[field("label", Some(app("String")))]);
             g.emit_msg_dispatch();
             g.finish().source
         };
-        assert_eq!(build(), build(), "emission must be a pure function of its input");
+        assert_eq!(
+            build(),
+            build(),
+            "emission must be a pure function of its input"
+        );
     }
 }

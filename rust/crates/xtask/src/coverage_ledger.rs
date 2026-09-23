@@ -524,13 +524,22 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     // `observability.console` because the Analytics tab IS part of the console
     // surface — an unbounded query there is a console defect that lands on the
     // session store.
-    ("analytics-retention-survives-a-panic", &["observability.analytics-store"]),
-    ("analytics-prune-errors-are-reported", &["observability.analytics-store"]),
+    (
+        "analytics-retention-survives-a-panic",
+        &["observability.analytics-store"],
+    ),
+    (
+        "analytics-prune-errors-are-reported",
+        &["observability.analytics-store"],
+    ),
     (
         "console-analytics-queries-are-bounded",
         &["observability.analytics-store", "observability.console"],
     ),
-    ("erasure-path-uses-an-index", &["observability.analytics-store"]),
+    (
+        "erasure-path-uses-an-index",
+        &["observability.analytics-store"],
+    ),
     // The periodic-goroutine gates. The AST audit owns the CLASS — it is the
     // one that fails on the next instance; the other two own the highest-cost
     // individual instances. The Time.every gate also touches
@@ -558,7 +567,10 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ),
     ("verify-cli", &["ui.tui", "config.sky-toml"]),
     ("sky-verify", &["compiler.fmt", "lang.constructs"]),
-    ("shared-world", &["compiler.shared-world", "compiler.resolve"]),
+    (
+        "shared-world",
+        &["compiler.shared-world", "compiler.resolve"],
+    ),
     ("coverage-ledger", &["meta.coverage-accounting"]),
     ("config-surface", &["meta.config-surface"]),
     ("kernel-members", &["meta.kernel-members"]),
@@ -651,7 +663,10 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
             "stdlib.Std.Image",
         ],
     ),
-    ("corpus-isolation", &["compiler.shared-world", "lang.constructs"]),
+    (
+        "corpus-isolation",
+        &["compiler.shared-world", "lang.constructs"],
+    ),
     (
         "corpus-witness",
         &["compiler.codegen-determinism", "compiler.lower-emit-shape"],
@@ -1082,8 +1097,12 @@ struct FileImports {
 
 fn is_module_name(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        && s.chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false)
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
 }
 
 /// Parse `import M`, `import M as A`, `import M exposing (a, b)`,
@@ -1225,7 +1244,12 @@ struct Surfaces {
 }
 
 /// Fold one file's references into `q` (strict) and `g` (generous).
-fn refs_of_file(src: &str, s: &Surfaces, q: &mut BTreeSet<(String, String)>, g: &mut BTreeSet<(String, String)>) {
+fn refs_of_file(
+    src: &str,
+    s: &Surfaces,
+    q: &mut BTreeSet<(String, String)>,
+    g: &mut BTreeSet<(String, String)>,
+) {
     let clean = strip_noise(src);
     let fi = parse_imports(&clean);
     let tk = tokenize(&clean);
@@ -1517,7 +1541,11 @@ fn stale_proof_violations(proofs: &BTreeMap<String, RecordedProof>) -> Vec<Strin
              evidence with it. Re-establish it with \
              `cargo run --release -p xtask -- harness --verify-falsifiers --only {gate}`, \
              then regenerate the ledger.",
-            if p.mutation.is_empty() { "(none recorded)" } else { p.mutation.as_str() },
+            if p.mutation.is_empty() {
+                "(none recorded)"
+            } else {
+                p.mutation.as_str()
+            },
             if declared.is_empty() {
                 "(the gate is not in the registry at all)".to_string()
             } else {
@@ -1729,9 +1757,7 @@ fn derive_cli_verbs(repo_root: &Path) -> Result<CliVerbs, String> {
         if verb.is_empty()
             || verb.starts_with("--")
             || verb.starts_with("__")
-            || !verb
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c == '-')
+            || !verb.chars().all(|c| c.is_ascii_lowercase() || c == '-')
         {
             continue;
         }
@@ -1764,11 +1790,7 @@ fn derive_cli_verbs(repo_root: &Path) -> Result<CliVerbs, String> {
 
     let undocumented: Vec<String> = dispatched.difference(&documented).cloned().collect();
     let undispatched: Vec<String> = documented.difference(&dispatched).cloned().collect();
-    Ok((
-        dispatched.into_iter().collect(),
-        undocumented,
-        undispatched,
-    ))
+    Ok((dispatched.into_iter().collect(), undocumented, undispatched))
 }
 
 // --------------------------------------------------------------- computation
@@ -1814,10 +1836,7 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
         surf.modules.insert(m.clone());
         surf.symbols.insert((m.clone(), n.clone()));
         surf.by_name.entry(n.clone()).or_default().insert(m.clone());
-        bucket_of.insert(
-            (m, n),
-            e["bucket"].as_str().unwrap_or_default().to_string(),
-        );
+        bucket_of.insert((m, n), e["bucket"].as_str().unwrap_or_default().to_string());
     }
 
     // ---- 2. the denominator contract: ONE denominator, not two ------------
@@ -1882,7 +1901,10 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                 }
                 Role::Conformance => {
                     today.push(Ev::new(
-                        format!("{} (scripts/conformance.sh: counted Sky.Test assertions)", u.id),
+                        format!(
+                            "{} (scripts/conformance.sh: counted Sky.Test assertions)",
+                            u.id
+                        ),
                         Strength::Asserted,
                     ));
                 }
@@ -1950,7 +1972,10 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                         ));
                     } else {
                         new.push(Ev::new(
-                            format!("{} (retained; built + run by gate `build-run` + the sweep)", u.id),
+                            format!(
+                                "{} (retained; built + run by gate `build-run` + the sweep)",
+                                u.id
+                            ),
                             Strength::Runs,
                         ));
                     }
@@ -2199,10 +2224,8 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
             .collect();
         (Value::Object(obj), missing.len())
     };
-    let missing_q: BTreeSet<(String, String)> =
-        surf.symbols.difference(&all_q).cloned().collect();
-    let missing_g: BTreeSet<(String, String)> =
-        surf.symbols.difference(&all_g).cloned().collect();
+    let missing_q: BTreeSet<(String, String)> = surf.symbols.difference(&all_q).cloned().collect();
+    let missing_g: BTreeSet<(String, String)> = surf.symbols.difference(&all_g).cloned().collect();
     let (bq, nq) = breakdown(&missing_q);
     let (bg, ng) = breakdown(&missing_g);
 
@@ -2223,7 +2246,10 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
         .filter(|s| s.verdict() == "weaker")
         .map(|s| s.id.clone())
         .collect();
-    let stronger = surfaces.iter().filter(|s| s.verdict() == "stronger").count();
+    let stronger = surfaces
+        .iter()
+        .filter(|s| s.verdict() == "stronger")
+        .count();
     let equal = surfaces.iter().filter(|s| s.verdict() == "equal").count();
 
     let mut by_role: BTreeMap<String, usize> = BTreeMap::new();
@@ -2428,12 +2454,12 @@ fn enumerate_units(repo_root: &Path, surf: &Surfaces) -> Result<Vec<Unit>, Strin
     let mut units: Vec<Unit> = Vec::new();
 
     let build = |id: String,
-                     role: Role,
-                     path_key: String,
-                     gate: Option<String>,
-                     files: Vec<PathBuf>,
-                     toml: Option<PathBuf>,
-                     has_assertions: bool|
+                 role: Role,
+                 path_key: String,
+                 gate: Option<String>,
+                 files: Vec<PathBuf>,
+                 toml: Option<PathBuf>,
+                 has_assertions: bool|
      -> Unit {
         let mut imports = BTreeSet::new();
         let mut qualified = BTreeSet::new();
@@ -2791,8 +2817,7 @@ fn baseline_weaker(base: Option<&Value>) -> Option<BTreeSet<String>> {
 /// verdict must be `weaker`. A stanza that is absent from the ledger, or whose
 /// surface is now `equal`/`stronger`, is stale and must be removed.
 fn stale_weakening_violations(surfaces: &[Surface], weakenings: &BTreeSet<String>) -> Vec<String> {
-    let by_id: BTreeMap<&str, &Surface> =
-        surfaces.iter().map(|s| (s.id.as_str(), s)).collect();
+    let by_id: BTreeMap<&str, &Surface> = surfaces.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut stale: Vec<String> = Vec::new();
     for w in weakenings {
         match by_id.get(w.as_str()) {
@@ -2944,16 +2969,21 @@ fn print_report(led: &Ledger) {
     println!("xtask coverage-ledger — docs/ci-test-architecture-v2.md §9.2");
     println!("============================================================");
     println!("\nSURFACES");
-    println!("  total ............................... {}", g(&["summary", "surfaces_total"]));
+    println!(
+        "  total ............................... {}",
+        g(&["summary", "surfaces_total"])
+    );
     println!(
         "  covered by the new corpus (>= Asserted)  {}  ({:.1}%)",
         g(&["summary", "surfaces_covered"]),
         d["summary"]["surfaces_covered_pct"].as_f64().unwrap_or(0.0)
     );
-    println!("  stronger / equal / weaker ........... {} / {} / {}",
+    println!(
+        "  stronger / equal / weaker ........... {} / {} / {}",
         g(&["summary", "surfaces_stronger"]),
         g(&["summary", "surfaces_equal"]),
-        g(&["summary", "surfaces_weaker"]));
+        g(&["summary", "surfaces_weaker"])
+    );
 
     let mut by_cat: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for s in &led.surfaces {
@@ -3023,8 +3053,16 @@ fn print_report(led: &Ledger) {
     );
     println!(
         "  LOST IF examples/ RETIRED — modules {} · config sections {}",
-        count(&["sole_ownership", "lost_if_examples_retired", "stdlib_modules"]),
-        count(&["sole_ownership", "lost_if_examples_retired", "config_sections"])
+        count(&[
+            "sole_ownership",
+            "lost_if_examples_retired",
+            "stdlib_modules"
+        ]),
+        count(&[
+            "sole_ownership",
+            "lost_if_examples_retired",
+            "config_sections"
+        ])
     );
 
     println!("\nUNCOVERED  (denominators from docs/coverage/denominators.json)");
@@ -3038,7 +3076,11 @@ fn print_report(led: &Ledger) {
     );
     println!(
         "  imported ONLY by a root tests/ suite ........ {}",
-        g(&["uncovered", "modules_imported_only_by_root_test_suites", "count"])
+        g(&[
+            "uncovered",
+            "modules_imported_only_by_root_test_suites",
+            "count"
+        ])
     );
     println!(
         "  symbols with ZERO qualified refs (STRICT) ... {} of {}  ({:.1}%)",
@@ -3088,7 +3130,11 @@ fn render_markdown(led: &Ledger) -> String {
     for (n, label, meaning) in [
         (0, "None", "nothing covers it"),
         (1, "Builds", "something compiles it, nothing runs it"),
-        (2, "Runs", "something builds AND runs it; verdict = exit status only"),
+        (
+            2,
+            "Runs",
+            "something builds AND runs it; verdict = exit status only",
+        ),
         (3, "Asserted", "explicit counted assertions"),
         (
             4,
@@ -3102,7 +3148,10 @@ fn render_markdown(led: &Ledger) -> String {
     s.push_str("\n## Summary\n\n| metric | value |\n|---|---|\n");
     for (k, label) in [
         ("surfaces_total", "surfaces"),
-        ("surfaces_covered", "covered by the new corpus (>= Asserted)"),
+        (
+            "surfaces_covered",
+            "covered by the new corpus (>= Asserted)",
+        ),
         ("surfaces_stronger", "verdict `stronger`"),
         ("surfaces_equal", "verdict `equal`"),
         ("surfaces_weaker", "verdict `weaker`"),
@@ -3184,11 +3233,19 @@ fn render_markdown(led: &Ledger) -> String {
     ));
     s.push_str(&format!(
         "| **lost if `examples/` retired** — modules | **{}** |\n",
-        obj_len(&["sole_ownership", "lost_if_examples_retired", "stdlib_modules"])
+        obj_len(&[
+            "sole_ownership",
+            "lost_if_examples_retired",
+            "stdlib_modules"
+        ])
     ));
     s.push_str(&format!(
         "| **lost if `examples/` retired** — config sections | **{}** |\n",
-        obj_len(&["sole_ownership", "lost_if_examples_retired", "config_sections"])
+        obj_len(&[
+            "sole_ownership",
+            "lost_if_examples_retired",
+            "config_sections"
+        ])
     ));
 
     if let Some(map) = d["sole_ownership"]["lost_if_examples_retired"]["stdlib_modules"].as_object()
@@ -3196,7 +3253,10 @@ fn render_markdown(led: &Ledger) -> String {
         if !map.is_empty() {
             s.push_str("\n### Modules lost if `examples/` is retired\n\n| module | sole owner |\n|---|---|\n");
             for (m, owner) in map {
-                s.push_str(&format!("| `{m}` | `{}` |\n", owner.as_str().unwrap_or("?")));
+                s.push_str(&format!(
+                    "| `{m}` | `{}` |\n",
+                    owner.as_str().unwrap_or("?")
+                ));
             }
         }
     }
@@ -3243,7 +3303,9 @@ fn render_markdown(led: &Ledger) -> String {
         }
     }
 
-    s.push_str("\n## Surfaces\n\n| surface | category | today | new | verdict |\n|---|---|---|---|---|\n");
+    s.push_str(
+        "\n## Surfaces\n\n| surface | category | today | new | verdict |\n|---|---|---|---|---|\n",
+    );
     for x in &led.surfaces {
         s.push_str(&format!(
             "| `{}` | {} | {} | {} | {} |\n",
@@ -3371,16 +3433,25 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
 
     if let Some(parent) = json_path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("xtask coverage-ledger: cannot create {}: {e}", parent.display());
+            eprintln!(
+                "xtask coverage-ledger: cannot create {}: {e}",
+                parent.display()
+            );
             return 1;
         }
     }
     if let Err(e) = std::fs::write(&json_path, text) {
-        eprintln!("xtask coverage-ledger: cannot write {}: {e}", json_path.display());
+        eprintln!(
+            "xtask coverage-ledger: cannot write {}: {e}",
+            json_path.display()
+        );
         return 1;
     }
     if let Err(e) = std::fs::write(&md_path, render_markdown(&led)) {
-        eprintln!("xtask coverage-ledger: cannot write {}: {e}", md_path.display());
+        eprintln!(
+            "xtask coverage-ledger: cannot write {}: {e}",
+            md_path.display()
+        );
         return 1;
     }
     println!(
@@ -3412,7 +3483,10 @@ fn stale_diff(base: &Value, cur: &Value) -> String {
             lines.push(format!("  summary.{k}: {b} -> {c}"));
         }
     }
-    let (bs, cs) = (baseline_surface_strengths(base), baseline_surface_strengths(cur));
+    let (bs, cs) = (
+        baseline_surface_strengths(base),
+        baseline_surface_strengths(cur),
+    );
     for (id, c) in &cs {
         match bs.get(id) {
             Some(b) if b != c => lines.push(format!(
@@ -3476,7 +3550,8 @@ fn gate_field_diffs(base: &Value, cur: &Value) -> Vec<String> {
                         // move is the actionable, common case and reads cleanly.
                         if cf.is_array() || cf.is_object() {
                             if bo.get(field) != Some(cf) {
-                                lines.push(format!("  gates.{name}.{field}: (list/object changed)"));
+                                lines
+                                    .push(format!("  gates.{name}.{field}: (list/object changed)"));
                             }
                             continue;
                         }
@@ -3614,8 +3689,7 @@ mod tests {
     #[test]
     fn every_ci_invoked_xtask_subcommand_declares_its_surfaces() {
         let root = repo_root();
-        let (refs, unresolved) =
-            crate::ci_scan::scan_xtask_refs(&root, &workflow_roots(&root));
+        let (refs, unresolved) = crate::ci_scan::scan_xtask_refs(&root, &workflow_roots(&root));
         assert!(unresolved.is_empty(), "{unresolved:?}");
         assert!(
             !refs.is_empty(),
@@ -3710,7 +3784,10 @@ mod tests {
             .and_then(|g| g.mutations.as_slice().first())
             .map(|m| m.id.to_string())
             .unwrap_or_default();
-        RecordedProof { proven: true, mutation }
+        RecordedProof {
+            proven: true,
+            mutation,
+        }
     }
 
     #[test]
@@ -3741,7 +3818,9 @@ mod tests {
             .find(|n| crate::harness::registry::block_for(n).is_none())
             .expect("some gate is unblocked");
         let proven: BTreeMap<String, RecordedProof> =
-            [(unblocked.to_string(), live_proof(unblocked))].into_iter().collect();
+            [(unblocked.to_string(), live_proof(unblocked))]
+                .into_iter()
+                .collect();
         assert_eq!(gate_strength(unblocked, &proven), Strength::Falsified);
     }
 
@@ -3785,7 +3864,11 @@ mod tests {
             "a proof naming a retired mutation still scored as Falsified"
         );
         let v = stale_proof_violations(&dead);
-        assert_eq!(v.len(), 1, "expected exactly one STALE PROOF violation, got {v:?}");
+        assert_eq!(
+            v.len(),
+            1,
+            "expected exactly one STALE PROOF violation, got {v:?}"
+        );
         assert!(v[0].contains("THIS-MUTATION-NEVER-EXISTED"), "{}", v[0]);
         assert!(v[0].contains(gate), "{}", v[0]);
     }
@@ -3852,7 +3935,11 @@ mod tests {
         // Drift the pattern out of the file → the proof is dead → one violation.
         std::fs::write(&full, "the pattern is gone\n").unwrap();
         let v = inapplicable_proof_violations(&proofs, &root);
-        assert_eq!(v.len(), 1, "expected exactly one INAPPLICABLE PROOF, got {v:?}");
+        assert_eq!(
+            v.len(),
+            1,
+            "expected exactly one INAPPLICABLE PROOF, got {v:?}"
+        );
         assert!(v[0].contains("INAPPLICABLE PROOF"), "{}", v[0]);
         assert!(v[0].contains("occurs 0x"), "{}", v[0]);
         assert!(v[0].contains(gate), "{}", v[0]);
@@ -3907,7 +3994,10 @@ mod tests {
         });
         let diff = stale_diff(&base, &cur);
         assert!(diff.contains("gates.new-gate: (new gate)"), "got:\n{diff}");
-        assert!(diff.contains("gates.old-gate: (gate removed)"), "got:\n{diff}");
+        assert!(
+            diff.contains("gates.old-gate: (gate removed)"),
+            "got:\n{diff}"
+        );
     }
 
     /// The file-level form on the real tree: every checked-in PROVEN proof names
@@ -3958,7 +4048,10 @@ mod tests {
         assert!(Strength::Asserted < Strength::Falsified);
         assert_eq!(max_strength(&[]), Strength::None);
         assert_eq!(
-            max_strength(&[Ev::new("a", Strength::Builds), Ev::new("b", Strength::Asserted)]),
+            max_strength(&[
+                Ev::new("a", Strength::Builds),
+                Ev::new("b", Strength::Asserted)
+            ]),
             Strength::Asserted
         );
     }
@@ -3973,10 +4066,7 @@ mod tests {
              import Std.Ui exposing (..)\n",
         );
         assert_eq!(fi.alias.get("L").map(String::as_str), Some("Sky.Core.List"));
-        assert_eq!(
-            fi.alias.get("Std.Log").map(String::as_str),
-            Some("Std.Log")
-        );
+        assert_eq!(fi.alias.get("Std.Log").map(String::as_str), Some("Std.Log"));
         assert!(fi.exposed["Std.Db"].contains("query"));
         assert!(fi.exposing_all.contains("Std.Ui"));
         // Prelude is auto-imported; a file that never names it still uses it.
@@ -4016,7 +4106,12 @@ mod tests {
 
         let mut q = BTreeSet::new();
         let mut g = BTreeSet::new();
-        refs_of_file("import Std.Log\nmain = Std.Log.println \"hi\"\n", &surf, &mut q, &mut g);
+        refs_of_file(
+            "import Std.Log\nmain = Std.Log.println \"hi\"\n",
+            &surf,
+            &mut q,
+            &mut g,
+        );
         assert_eq!(q.len(), 1, "qualified token must count as STRICT");
         assert_eq!(g.len(), 1);
 
@@ -4034,7 +4129,12 @@ mod tests {
         // An alias resolves for the strict rule too.
         let mut q3 = BTreeSet::new();
         let mut g3 = BTreeSet::new();
-        refs_of_file("import Std.Log as L\nmain = L.println \"hi\"\n", &surf, &mut q3, &mut g3);
+        refs_of_file(
+            "import Std.Log as L\nmain = L.println \"hi\"\n",
+            &surf,
+            &mut q3,
+            &mut g3,
+        );
         assert_eq!(q3.len(), 1);
     }
 
@@ -4055,14 +4155,18 @@ mod tests {
         assert!(parse_weakenings(&p).unwrap().contains("stdlib.Std.Csv"));
 
         std::fs::write(&p, "[[weakening]]\nsurface = \"stdlib.Std.Csv\"\n").unwrap();
-        assert!(parse_weakenings(&p).unwrap_err().contains("missing `reason`"));
+        assert!(parse_weakenings(&p)
+            .unwrap_err()
+            .contains("missing `reason`"));
 
         std::fs::write(
             &p,
             "[[weakening]]\nsurface = \"x\"\nreason = \"\"\nowner = \"o\"\ncommit = \"c\"\n",
         )
         .unwrap();
-        assert!(parse_weakenings(&p).unwrap_err().contains("missing `reason`"));
+        assert!(parse_weakenings(&p)
+            .unwrap_err()
+            .contains("missing `reason`"));
 
         // A [[removal]] stanza is NOT a weakening and must not be counted as one.
         std::fs::write(
@@ -4308,8 +4412,9 @@ mod tests {
         assert!(stale_weakening_violations(&surfaces, &ok).is_empty());
 
         // A stanza for a surface that does not exist: stale (the audit's case).
-        let ghost: BTreeSet<String> =
-            ["surface.that.never.existed".to_string()].into_iter().collect();
+        let ghost: BTreeSet<String> = ["surface.that.never.existed".to_string()]
+            .into_iter()
+            .collect();
         let v = stale_weakening_violations(&surfaces, &ghost);
         assert_eq!(v.len(), 1, "{v:?}");
         assert!(v[0].contains("STALE WEAKENING"), "{}", v[0]);
@@ -4332,8 +4437,7 @@ mod tests {
     /// broader glob, the ledger's claim becomes false and this test says so.
     #[test]
     fn conformance_runner_still_only_globs_the_conformance_project() {
-        let src =
-            std::fs::read_to_string(repo_root().join("scripts/conformance.sh")).unwrap();
+        let src = std::fs::read_to_string(repo_root().join("scripts/conformance.sh")).unwrap();
         assert!(
             src.contains("PROJ=\"$ROOT/tests/conformance\""),
             "conformance.sh no longer pins PROJ to tests/conformance"

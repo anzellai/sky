@@ -58,13 +58,25 @@ fn a_legacy_project_lists_each_replacement() {
     );
     // Each legacy key is named with its literal `[section] key = "value"` form.
     assert!(hint.contains("[live] store = \"postgres\""), "{hint}");
-    assert!(hint.contains("[live] storePath = \"sessions.db\""), "{hint}");
+    assert!(
+        hint.contains("[live] storePath = \"sessions.db\""),
+        "{hint}"
+    );
     assert!(hint.contains("[log] format = \"json\""), "{hint}");
     assert!(hint.contains("[database] path = \"app.db\""), "{hint}");
     // Each names its `withX` replacement — the thing the user acts on.
-    assert!(hint.contains("Sky.Config.withSessions"), "store→withSessions:\n{hint}");
-    assert!(hint.contains("Sky.Config.withLog"), "format→withLog:\n{hint}");
-    assert!(hint.contains("Sky.Config.withDatabase"), "path→withDatabase:\n{hint}");
+    assert!(
+        hint.contains("Sky.Config.withSessions"),
+        "store→withSessions:\n{hint}"
+    );
+    assert!(
+        hint.contains("Sky.Config.withLog"),
+        "format→withLog:\n{hint}"
+    );
+    assert!(
+        hint.contains("Sky.Config.withDatabase"),
+        "path→withDatabase:\n{hint}"
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -114,7 +126,10 @@ fn moved_removed_and_changed_are_distinct() {
     );
     let hint = project::migration_hint_for(&dir).expect("mixed keys present");
 
-    assert!(hint.contains("moved into typed app config"), "moved block:\n{hint}");
+    assert!(
+        hint.contains("moved into typed app config"),
+        "moved block:\n{hint}"
+    );
     assert!(hint.contains("CHANGED BEHAVIOUR"), "changed block:\n{hint}");
     assert!(hint.contains("no longer"), "removed block:\n{hint}");
     // The removed key must be told to delete, not migrate to a builder.

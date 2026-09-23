@@ -59,7 +59,6 @@ appDef =
     App.app
         { init = init
         , update = update
-
         -- App.app (Std.Ui family) takes a bare `Element` view directly; the
         -- Std.App runner supplies the `Ui.layout` document shell. Wrapping in
         -- `Ui.layout` here returns an `Html` document into an `Element` slot

@@ -144,7 +144,9 @@ const FIXED_NAME_READS: &[(&str, &str)] = &[
 ];
 
 fn walk_go(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -218,7 +220,9 @@ fn prefix_affected_env_reads_go_through_sky_getenv() {
     let allowed: BTreeSet<&str> = FIXED_NAME_READS.iter().map(|(n, _)| *n).collect();
 
     for f in &files {
-        let Ok(src) = fs::read_to_string(f) else { continue };
+        let Ok(src) = fs::read_to_string(f) else {
+            continue;
+        };
         for (i, line) in src.lines().enumerate() {
             if is_comment(line) {
                 continue;
@@ -263,7 +267,9 @@ fn prefix_affected_env_reads_go_through_sky_getenv() {
     // reads any more looks like coverage and is not.
     let mut read_names: BTreeSet<String> = BTreeSet::new();
     for f in &files {
-        let Ok(src) = fs::read_to_string(f) else { continue };
+        let Ok(src) = fs::read_to_string(f) else {
+            continue;
+        };
         for line in src.lines() {
             if !is_comment(line) {
                 read_names.extend(env_names(line));

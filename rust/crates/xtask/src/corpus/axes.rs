@@ -57,10 +57,7 @@ pub const POSITION: Axis = Axis::new(
 
 /// The higher-order context the expression is reached through. #171 moved along
 /// this axis: correct directly, dropped fields through `foldl`/`foldr`.
-pub const CARRIER: Axis = Axis::new(
-    "carrier",
-    &["direct", "via_foldl", "via_foldr", "via_map"],
-);
+pub const CARRIER: Axis = Axis::new("carrier", &["direct", "via_foldl", "via_foldr", "via_map"]);
 
 /// Whether the enclosing definition carries a type annotation. #166's fix landed
 /// for annotated params first; the unannotated edge is where it lingered.
@@ -156,9 +153,32 @@ pub const COLLIDER: Axis = Axis::new("collider", &["local", "stdlib_eventprop"])
 pub const SURFACE: Axis = Axis::new(
     "surface",
     &[
-        "string", "list", "dict", "set", "maybe", "result", "char", "encoding", "crypto", "math",
-        "basics", "tostring", "path", "error", "decimal", "money", "csv", "regex", "json", "bytes",
-        "jwt", "codec", "markdown", "compression", "secret", "image",
+        "string",
+        "list",
+        "dict",
+        "set",
+        "maybe",
+        "result",
+        "char",
+        "encoding",
+        "crypto",
+        "math",
+        "basics",
+        "tostring",
+        "path",
+        "error",
+        "decimal",
+        "money",
+        "csv",
+        "regex",
+        "json",
+        "bytes",
+        "jwt",
+        "codec",
+        "markdown",
+        "compression",
+        "secret",
+        "image",
     ],
 );
 
@@ -213,10 +233,7 @@ pub const DICT_KEY: Axis = Axis::new("dict_key", &["string", "int", "float", "ch
 /// have read green in between. `poly_value` adds the second hop and the
 /// first-class-value application, the two shapes the fix's own commit message
 /// records that neither dictionary-passing nor monomorphisation would close.
-pub const DICT_ACCESS: Axis = Axis::new(
-    "dict_access",
-    &["direct", "poly_helper", "poly_value"],
-);
+pub const DICT_ACCESS: Axis = Axis::new("dict_access", &["direct", "poly_helper", "poly_value"]);
 
 /// **What competes with the imported name.**
 ///
@@ -314,11 +331,7 @@ impl Assignment {
 
     /// A stable, human-legible slug for the case id.
     pub fn slug(&self) -> String {
-        self.0
-            .values()
-            .copied()
-            .collect::<Vec<_>>()
-            .join("-")
+        self.0.values().copied().collect::<Vec<_>>().join("-")
     }
 }
 
@@ -608,11 +621,7 @@ mod tests {
         for s in STRATA {
             let pin = pinned_coordinate(s.name).unwrap();
             for n in pin.neighbourhood(s.axes) {
-                let differing = s
-                    .axes
-                    .iter()
-                    .filter(|a| pin.get(**a) != n.get(**a))
-                    .count();
+                let differing = s.axes.iter().filter(|a| pin.get(**a) != n.get(**a)).count();
                 assert_eq!(
                     differing, 1,
                     "neighbour {n} of {pin} differs in {differing} axes, not 1"

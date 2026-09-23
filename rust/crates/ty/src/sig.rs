@@ -297,7 +297,8 @@ impl World {
                         let slot = collected.entry(f).or_default();
                         while slot.len() <= i {
                             slot.push(None);
-                        }                        match &slot[i] {
+                        }
+                        match &slot[i] {
                             None if !conflict.contains(&(f, i)) => slot[i] = Some(t),
                             Some(prev) if *prev != t => {
                                 slot[i] = None;
@@ -491,7 +492,9 @@ impl World {
             for decl in tree.decls() {
                 if let ast::Decl::Union(u) = &decl {
                     if let Some(name) = u.name().map(|t| t.text().to_string()) {
-                        world.union_keys.insert(crate::nominal::qualify(&mname, &name));
+                        world
+                            .union_keys
+                            .insert(crate::nominal::qualify(&mname, &name));
                     }
                 }
                 if let ast::Decl::Alias(a) = &decl {
@@ -525,13 +528,10 @@ impl World {
                         // (`fallback_reason` → `BareAliasCollision`) and rebuilds,
                         // so it never depends on the overwrite either.)
                         let body_bare = a.ty().map(|t| ast_type_to_ty(&t)).unwrap_or(Ty::Error);
-                        world
-                            .aliases
-                            .entry(name.clone())
-                            .or_insert(AliasDef {
-                                params: params.clone(),
-                                body: body_bare,
-                            });
+                        world.aliases.entry(name.clone()).or_insert(AliasDef {
+                            params: params.clone(),
+                            body: body_bare,
+                        });
                         world.alias_keys.insert(format!("{mname}.{name}"));
                         if let Some(t) = a.ty() {
                             alias_stash.push((m, name, params, t));
@@ -1213,7 +1213,14 @@ impl World {
             };
             let arg_tys: Vec<Ty> = child_types(var.syntax())
                 .iter()
-                .map(|t| self.expand(&resolve_type_names(db, m, t, self.type_keys()), 0, protect, None))
+                .map(|t| {
+                    self.expand(
+                        &resolve_type_names(db, m, t, self.type_keys()),
+                        0,
+                        protect,
+                        None,
+                    )
+                })
                 .collect();
             let ty = arg_tys
                 .into_iter()
