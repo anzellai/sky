@@ -11,6 +11,21 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.15 — build the Sky.Spa two legs serially to fit a small CI runner (2026-09-23)
+
+A patch over v0.25.14. `sky upgrade` is safe from any v0.25.x — a dev-tooling
+addition, no source-breaking change and no change to emitted code.
+
+Adds `SKY_BUILD_SERIAL` for Sky.Spa builds. A `sky build --target web:app` builds
+the backend and frontend legs concurrently. Each leg is a whole `sky build` (a
+large Sky front-end plus the Go toolchain), so the concurrent peak is roughly the
+sum of the two — enough to OOM-kill the build on a small hosted CI runner (2
+cores / 7 GB), while it passes on a laptop. Set `SKY_BUILD_SERIAL=1` to build the
+legs one after the other, trading wall-clock for a memory peak of the larger leg
+instead of their sum. The default is unchanged (concurrent); only the environment
+variable opts into serial. Use it where a private-repo CI runner cannot hold the
+concurrent build.
+
 ## v0.25.14 — a tuple built in a lambda no longer panics; a clear error for an un-derivable Codec.auto (2026-09-23)
 
 A patch over v0.25.13. `sky upgrade` is safe from any v0.25.x. Two fixes, both
