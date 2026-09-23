@@ -113,6 +113,7 @@ func spaRun(cfg any) any {
 	spaRpcQ = newSpaRpcQueue(spaRpcNonce())
 	spaModelEncoder = Field(cfg, "ModelEncoder")
 	spaPersistProt = spaStringList(Field(cfg, "PersistProtectedFields"))
+	spaPersistSeed = spaStringList(Field(cfg, "PersistSeedFields"))
 
 	doc := js.Global().Get("document")
 	spaRoot = doc.Call("getElementById", "app")
@@ -172,10 +173,10 @@ func spaRun(cfg any) any {
 	// server's seed markup but never patch its text/attrs/children, so the restored
 	// scratch state (a message list, a cart) would never appear on first paint.
 	seedModel := spaModel
+	// The restore does NOT cancel init's command: an SSR-settled init already
+	// cleared cmd0 above, and any other app's init command still runs — it is
+	// what re-reads the server data the restored scratch state sits beside.
 	restored := spaRestoreFromStorage(cfg, doc)
-	if restored {
-		cmd0 = nil
-	}
 	restoredModel := spaModel
 
 	// Deep-link (applied per render below): resolve the initial URL and set the

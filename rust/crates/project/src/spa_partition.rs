@@ -732,6 +732,13 @@ pub struct BranchVerdict {
     /// The RPC read-set / write-set — `Some` for SERVER branches (the derived
     /// RPC I/O), `None` for CLIENT branches (no round-trip, so no I/O sets).
     pub io: Option<BranchIo>,
+    /// The write-set of a CLIENT branch (what the pure arm writes locally) —
+    /// `Some` only where the arm was analysed (the main `case msg of` walk);
+    /// `None` for SERVER branches and for a client branch whose writes are
+    /// unknown. The split uses it to find the fields ONLY server branches write
+    /// (their reload value comes from the SSR seed, not localStorage — K5); an
+    /// unknown client write-set disables that (every field restores).
+    pub client_io: Option<BranchIo>,
     /// The Msg args this branch's pattern binds, with their **types** (parallel
     /// to `io.msg_args` by name+order) — the raw material the `spa-split`
     /// generator uses to give each Msg-arg Req field a real codec. Empty for a
@@ -2131,6 +2138,7 @@ fn classify_case_arms(
                     src,
                 )),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
+                client_io: None,
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
             });
@@ -2148,6 +2156,7 @@ fn classify_case_arms(
                     src,
                 )),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
+                client_io: None,
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
             });
@@ -2161,6 +2170,14 @@ fn classify_case_arms(
                 server: false,
                 reason,
                 io: None,
+                client_io: Some(compute_branch_io(
+                    db,
+                    body,
+                    arms[i].body,
+                    arms[i].pat,
+                    model_local,
+                    src,
+                )),
                 msg_arg_tys: Vec::new(),
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
@@ -4459,6 +4476,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             server: true,
             reason,
             io: None,
+            client_io: None,
             msg_arg_tys: Vec::new(),
             // Whole-update path: io is None → never phase-2 checkable regardless.
             forces_effect: acc.inline_force,
@@ -4488,6 +4506,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             server: true,
             reason: format!("references {cn} ({origin})"),
             io: None,
+            client_io: None,
             msg_arg_tys: Vec::new(),
             forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
             effect_families: graph.families_for(acc),
@@ -4503,6 +4522,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         server: false,
         reason,
         io: None,
+        client_io: None,
         msg_arg_tys: Vec::new(),
         forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
         effect_families: graph.families_for(acc),

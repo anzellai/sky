@@ -613,6 +613,7 @@ mod tests {
             server,
             reason: String::new(),
             io,
+            client_io: None,
             msg_arg_tys: vec![],
             forces_effect: forces,
             effect_families: vec![],

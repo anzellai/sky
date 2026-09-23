@@ -85,6 +85,8 @@ module Std.Spa exposing
     , withModelDecoder
     , withModelEncoder
     , withPersistProtectedFields
+    , withPersistDecoder
+    , withPersistSeedFields
     , getJson
     , postJson
     , rpc
@@ -251,6 +253,25 @@ withModelEncoder =
 withPersistProtectedFields : List String -> AppConfig model msg -> AppConfig model msg
 withPersistProtectedFields =
     Ffi.kernel "Spa_withPersistProtectedFields"
+
+
+-- | Set the decoder the client uses ONLY to restore its localStorage copy of the
+-- model on a reload. Unlike `withModelDecoder` it does not make the client boot
+-- from the SSR-embedded model and skip `init`'s command, so an app whose `init`
+-- is not a server-settled read keeps running its own `init` command. The
+-- auto-split wires it for every client build whose `init` model is derivable.
+withPersistDecoder : (String -> Result Error model) -> AppConfig model msg -> AppConfig model msg
+withPersistDecoder =
+    Ffi.kernel "Spa_withPersistDecoder"
+
+
+-- | Set the model fields that ONLY server branches write. On a reload the client
+-- takes these from the SSR seed (server truth, rendered fresh from the real
+-- request) and restores every other field from localStorage. The auto-split
+-- derives the list from the server write-sets.
+withPersistSeedFields : List String -> AppConfig model msg -> AppConfig model msg
+withPersistSeedFields =
+    Ffi.kernel "Spa_withPersistSeedFields"
 
 
 -- | `getJson codec url toMsg` — GET `url` from the stateless backend and decode

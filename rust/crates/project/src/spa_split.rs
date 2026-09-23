@@ -2061,7 +2061,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `init`'s PURE model expr — the client SSR model decoder is derived from it
     // (`Codec.fromJson (Codec.auto <model>)`). Read from whichever module
     // declares `init`, so the decoder is emitted for a sibling init too.
-    let init_pure_model: Option<String> = if strip_init_cmd {
+    //
+    // SPA-8: the SAME pure model expr also derives the client PERSISTENCE codec
+    // (`Codec.auto <model>`), so it is computed for EVERY app — not only one
+    // whose init is a GET-safe server read — and a reload restores the client
+    // scratch state on every web:app build, as Sky.Live keeps its session. It is
+    // dropped only when the expr itself names a server-tainted binding (it could
+    // not compile in the client tree).
+    let init_pure_model: Option<String> = {
         let iparse = db.module_parse(init_mod);
         let isrc = iparse.syntax().text().to_string();
         iparse
@@ -2069,8 +2076,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             .decls()
             .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))
             .and_then(|d| init_pure_model_expr(&isrc, &d))
-    } else {
-        None
+            .filter(|m| !tainted_names.iter().any(|t| references_word(m, t)))
     };
 
     // ---- write the three trees ----
@@ -2189,6 +2195,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // restore (never from localStorage). Empty → the whole stored model restores.
     let session_field_names: Vec<String> =
         session_projection.iter().map(|p| p.name.clone()).collect();
+    // K5 (USER DECISION): on a reload, a field that ONLY server branches write is
+    // server truth — its value comes from the SSR seed (which the backend renders
+    // from the real request), never from a stale localStorage copy; every other
+    // field (client scratch state) is restored from localStorage.
+    let seed_field_names = server_only_written_fields(&report.branches, &model_field_names)
+        .into_iter()
+        .filter(|f| !session_field_names.contains(f))
+        .collect::<Vec<_>>();
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -2212,6 +2226,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &model_field_names,
         &client_result_map,
         &session_field_names,
+        &seed_field_names,
     )?;
 
     // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
@@ -4177,8 +4192,13 @@ fn import_referenceable_names(rest: &str) -> Vec<String> {
 /// unused, never a compile break). `session_fields` is the projection field-name
 /// list (empty for a client-only / no-auth app → `[]`, i.e. restore the whole
 /// stored model as-is).
-fn inject_model_decoder_into_main(main_text: &str, session_fields: &[String]) -> String {
-    if main_text.contains("Spa.withModelDecoder") {
+fn inject_model_decoder_into_main(
+    main_text: &str,
+    session_fields: &[String],
+    seed_fields: &[String],
+    ssr_boot: bool,
+) -> String {
+    if main_text.contains("Spa.withModelDecoder") || main_text.contains("Spa.withPersistDecoder") {
         return main_text.to_string();
     }
     // The builder chain lives in the VALUE decl (`main = Spa.app (Spa.config …)`),
@@ -4193,20 +4213,68 @@ fn inject_model_decoder_into_main(main_text: &str, session_fields: &[String]) ->
     };
     // Start of the line that holds the closing paren.
     let line_start = main_text[..close].rfind('\n').map(|n| n + 1).unwrap_or(0);
-    let fields_lit = if session_fields.is_empty() {
-        "[]".to_string()
+    let lit = |fs: &[String]| {
+        if fs.is_empty() {
+            "[]".to_string()
+        } else {
+            let quoted: Vec<String> = fs.iter().map(|f| format!("\"{f}\"")).collect();
+            format!("[ {} ]", quoted.join(", "))
+        }
+    };
+    let fields_lit = lit(session_fields);
+    let seed_lit = lit(seed_fields);
+    // An SSR-settled init boots from the seed (`withModelDecoder`); any other
+    // app uses the decoder only to restore localStorage (`withPersistDecoder`)
+    // and keeps running its own init command.
+    let decoder_line = if ssr_boot {
+        "Spa.withModelDecoder spaModelDecoder_"
     } else {
-        let quoted: Vec<String> = session_fields.iter().map(|f| format!("\"{f}\"")).collect();
-        format!("[ {} ]", quoted.join(", "))
+        "Spa.withPersistDecoder spaModelDecoder_"
     };
     let block = format!(
-        "            |> Spa.withModelDecoder spaModelDecoder_\n\
+        "            |> {decoder_line}\n\
          \x20           |> Spa.withModelEncoder spaModelEncoder_\n\
-         \x20           |> Spa.withPersistProtectedFields {fields_lit}\n"
+         \x20           |> Spa.withPersistProtectedFields {fields_lit}\n\
+         \x20           |> Spa.withPersistSeedFields {seed_lit}\n"
     );
     let mut out = main_text.to_string();
     out.insert_str(line_start, &block);
     out
+}
+
+/// K5: the model fields that ONLY server branches write. On a reload these are
+/// server truth: the client keeps them from the SSR seed and restores every
+/// other field from localStorage. A server branch writing the whole model
+/// contributes every field; a CLIENT branch with an unknown write-set (or one
+/// writing the whole model) claims every field, so nothing is seed-only — the
+/// safe direction (client scratch state is never replaced by the seed).
+fn server_only_written_fields(
+    branches: &[spa_partition::BranchVerdict],
+    model_fields: &[String],
+) -> Vec<String> {
+    let mut server: BTreeSet<String> = BTreeSet::new();
+    let mut client: BTreeSet<String> = BTreeSet::new();
+    for b in branches {
+        if b.server {
+            match &b.io {
+                Some(io) if io.writes_whole_model => server.extend(model_fields.iter().cloned()),
+                Some(io) => server.extend(io.write_fields.iter().cloned()),
+                None => {}
+            }
+        } else {
+            match &b.client_io {
+                Some(io) if !io.writes_whole_model => {
+                    client.extend(io.write_fields.iter().cloned())
+                }
+                _ => return Vec::new(),
+            }
+        }
+    }
+    model_fields
+        .iter()
+        .filter(|f| server.contains(*f) && !client.contains(*f))
+        .cloned()
+        .collect()
 }
 
 /// Insert one `|> Spa.with… ` builder line into the synthesised `main`'s config
@@ -5488,6 +5556,9 @@ fn gen_frontend(
     // localStorage (the signed-cookie precedence rule). Empty for a client-only /
     // no-auth app — the whole stored model is then restored as-is.
     session_fields: &[String],
+    // K5: the fields ONLY server branches write — kept from the SSR seed on a
+    // reload (see `server_only_written_fields`).
+    seed_fields: &[String],
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -5534,11 +5605,12 @@ fn gen_frontend(
     // App→Spa synthesis) so the decoder is never seen by the taint analysis as
     // reaching `db`. The pure model expr comes from init's DECLARING module (entry
     // or sibling), resolved by the caller, so a sibling init gets a decoder too.
-    let decoder_blank = if init_strip {
-        init_pure_model.map(|s| s.to_string())
-    } else {
-        None
-    };
+    // SPA-8: the model codec is emitted for EVERY app with a derivable pure init
+    // model — persistence is not tied to the SSR-settled init any more. Only an
+    // `init_strip` app boots from the SSR seed (`withModelDecoder`); the others
+    // get the decoder for the localStorage restore alone (`withPersistDecoder`)
+    // and still run their own init command.
+    let decoder_blank = init_pure_model.map(|s| s.to_string());
     if decoder_blank.is_some() && !has_module(imports, "Std.Codec") {
         import_lines.push("import Std.Codec as Codec".to_string());
     }
@@ -5566,7 +5638,12 @@ fn gen_frontend(
                 // driver can boot from `#sky-model` (design §4.5).
                 let main_text = slice(src, d.syntax());
                 let main_text = if decoder_blank.is_some() {
-                    inject_model_decoder_into_main(main_text, session_fields)
+                    inject_model_decoder_into_main(
+                        main_text,
+                        session_fields,
+                        seed_fields,
+                        init_strip,
+                    )
                 } else {
                     main_text.to_string()
                 };

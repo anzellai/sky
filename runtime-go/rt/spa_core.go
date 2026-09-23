@@ -180,6 +180,22 @@ func Spa_withPersistProtectedFields(fields, cfg any) any {
 	return spaCfgSet(cfg, "PersistProtectedFields", fields)
 }
 
+// Spa_withPersistDecoder stores the `String -> Result Error model` decoder the
+// client uses ONLY to restore its localStorage copy on a reload (SPA-8). Unlike
+// ModelDecoder it does NOT make the client boot from the SSR `#sky-model` blob
+// and skip init's command: an app whose init is not a GET-safe server read
+// still runs its own init command. The server IGNORES it.
+func Spa_withPersistDecoder(fn, cfg any) any { return spaCfgSet(cfg, "PersistDecoder", fn) }
+
+// Spa_withPersistSeedFields stores the names of the model fields that ONLY
+// server branches write (K5). On a reload the client takes these from the SSR
+// seed — server truth, rendered fresh from the real request — and restores
+// every other field from localStorage. Unlike PersistProtectedFields they play
+// no part in the sign-out check. The server IGNORES it.
+func Spa_withPersistSeedFields(fields, cfg any) any {
+	return spaCfgSet(cfg, "PersistSeedFields", fields)
+}
+
 // Spa_withGuard stores the `msg -> model -> Result Error ()` guard under
 // "Guard". The wasm client runs it before `update` for every Msg the app
 // dispatches (clicks, keystrokes, timer ticks, follow-ups), exactly as Sky.Live
