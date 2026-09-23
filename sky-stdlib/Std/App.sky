@@ -562,6 +562,10 @@ withDurableId rid dbHandle codec (App a) =
         }
 
 
+-- The runtime only calls this for `Ok`: a restore that FAILS (a snapshot the
+-- current codec cannot decode, or a read error) is intercepted in Go
+-- (`durable_tea.go`), logged as `DurableRestoreFailed`, and the run boots from
+-- `init` without ever writing a snapshot, so the stored one is kept.
 applyRestoreDefault : Result Error (Maybe model) -> model -> model
 applyRestoreDefault res initModel =
     case res of
@@ -585,7 +589,10 @@ withWindow title width height (App a) =
 
 
 -- | Wire a line/text input handler (terminal targets). The payload is the
--- entered line; a terminal renderer maps its input to it.
+-- entered line. `terminal:cli` reads stdin lines; `terminal:tui` shows a
+-- one-line prompt under the view and sends it on Enter — so the same source
+-- takes the same lines on both. Without it, `terminal:cli` reads no input: it
+-- runs `init`, its Cmds and its timers, and exits 0 when nothing is left.
 withInput : (String -> msg) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withInput onLine (App a) =
     App { a | onInput = Just onLine }
@@ -710,15 +717,16 @@ withHead headFor (App a) =
 
 
 -- | Attach a per-Msg guard — `guard msg model` returns `Err` to reject the
--- message before `update` runs (web + terminal targets → `Live.withGuard` /
--- `Tui.withGuard`).
+-- message before `update` runs, on EVERY target (`Live.withGuard` /
+-- `Tui.withGuard` for both terminal:tui views / `Cli.withGuard`).
 withGuard : (msg -> model -> Result Error ()) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withGuard guard (App a) =
     App { a | guard = Just guard }
 
 
 -- | Attach a raw key-event handler (terminal target → `Tui.withOnKey`). The
--- key-event type is whatever the handler declares.
+-- key-event type is whatever the handler declares. Optional: without it a
+-- terminal app quits on `q`. Ctrl-C always quits and never reaches the handler.
 withOnKey : (key -> msg) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withOnKey onKey (App a) =
     App { a | onKey = Just onKey }
@@ -1145,14 +1153,22 @@ runTuiBoot_ (App a) =
 
                         Nothing ->
                             withH_
+                withLine_ =
+                    case a.onInput of
+
+                        Just onLine ->
+                            Tui.withOnLine onLine withKey_
+
+                        Nothing ->
+                            withKey_
                 withGuard_ =
                     case a.guard of
 
                         Just g ->
-                            Tui.withGuard g withKey_
+                            Tui.withGuard g withLine_
 
                         Nothing ->
-                            withKey_
+                            withLine_
                 withDur_ =
                     if a.durable.enabled then
                         Tui.withDurable a.durable withGuard_
@@ -1184,14 +1200,22 @@ runTuiBoot_ (App a) =
 
                         Nothing ->
                             withH_
+                withLine_ =
+                    case a.onInput of
+
+                        Just onLine ->
+                            Tui.withOnLine onLine withKey_
+
+                        Nothing ->
+                            withKey_
                 withGuard_ =
                     case a.guard of
 
                         Just g ->
-                            Tui.withGuard g withKey_
+                            Tui.withGuard g withLine_
 
                         Nothing ->
-                            withKey_
+                            withLine_
                 withDur_ =
                     if a.durable.enabled then
                         Tui.withDurable a.durable withGuard_
@@ -1226,7 +1250,7 @@ runCliBoot_ (App a) =
                     Cli.config
                         { init = a.init
                         , update = a.update
-                        , view = \model -> elementToText (v model)
+                        , view = \model -> elementToText (v model) ++ "\n"
                         , subscriptions = a.subscriptions
                         }
                 withLine =
@@ -1237,12 +1261,20 @@ runCliBoot_ (App a) =
 
                         Nothing ->
                             base
+                withGuard =
+                    case a.guard of
+
+                        Just g ->
+                            Cli.withGuard g withLine
+
+                        Nothing ->
+                            withLine
                 withDur =
                     if a.durable.enabled then
-                        Cli.withDurable a.durable withLine
+                        Cli.withDurable a.durable withGuard
 
                     else
-                        withLine
+                        withGuard
             in
                 Cli.program withDur
 
@@ -1265,12 +1297,20 @@ runCliBoot_ (App a) =
 
                         Nothing ->
                             base
+                withGuard =
+                    case a.guard of
+
+                        Just g ->
+                            Cli.withGuard g withLine
+
+                        Nothing ->
+                            withLine
                 withDur =
                     if a.durable.enabled then
-                        Cli.withDurable a.durable withLine
+                        Cli.withDurable a.durable withGuard
 
                     else
-                        withLine
+                        withGuard
             in
                 Cli.program withDur
 
@@ -1330,16 +1370,24 @@ runLiveWindow (App a) =
         -- `Task.parallel [server, window]` put BOTH on child goroutines, so
         -- `webview.New` faulted during cgo. `Task.spawn` keeps the caller free.
         --
-        -- The window navigates to the SAME port the Live server binds (`findWeb`),
-        -- not a hardcoded one — otherwise the webview loads an empty page on the
-        -- wrong port and the window renders blank.
+        -- The window navigates to the port the Live server ACTUALLY binds:
+        -- `livePort_` runs Live's own resolver over `findWeb`'s port, so an
+        -- operator's `SKY_LIVE_PORT` override moves the window with the server
+        -- instead of leaving it on the WebOpts port (a blank window).
     in
         Task.andThen
             (\_ ->
                 openLiveWindow_
-                    w.port
+                    (livePort_ w.port)
                     { title = d.title, size = ( d.width, d.height ) })
             (Task.spawn (runLive (App a)))
+
+
+-- | The port Sky.Live binds for a `Live.withPort p` config (env override,
+-- then the builder, then sky.toml) — the same resolver `Live.app` runs.
+livePort_ : Int -> Int
+livePort_ =
+    Ffi.kernel "Std_App_livePort"
 
 
 openLiveWindow_ : Int -> { title : String
@@ -1358,13 +1406,18 @@ openLiveWindow_ port window =
 -- | Poll `http://localhost:port/` until it answers with a SUCCESS status (2xx or
 -- 3xx), backing off 250ms between tries. A 4xx/5xx (e.g. the frontend bundle is
 -- not staged yet, so `/` is a transient 404) is treated as "not ready" and
--- retried, so the window never opens onto a transient error page. Gives up after
--- `attempts` and navigates anyway, so a genuinely dead server still opens a
--- window (which then shows the browser's own error) rather than hanging forever.
+-- retried, so the window never opens onto a transient error page. When the
+-- server never answers within `attempts`, the task FAILS (an `Unavailable`
+-- error naming the port) and no window opens: a window onto a dead port is a
+-- blank page that hides the real failure.
 waitForServer_ : Int -> Int -> Task Error ()
 waitForServer_ port attempts =
     if attempts <= 0 then
-        Task.succeed ()
+        Task.fail
+            (Error.unavailable
+                ("desktop window: the Sky.Live server never answered on http://localhost:"
+                    ++ String.fromInt port
+                    ++ "/ — the window is not opened (check the server log above, and SKY_LIVE_PORT)"))
 
     else
         let
@@ -1372,16 +1425,20 @@ waitForServer_ port attempts =
                 Task.andThen
                     (\_ -> waitForServer_ port (attempts - 1))
                     (Time.sleep 250)
+            -- Only the probe's own failure means "not ready yet"; a failure of
+            -- the retry chain (the final give-up) must propagate, not re-enter
+            -- the retry.
         in
             Http.get ("http://localhost:" ++ String.fromInt port ++ "/")
+                |> Task.map (\resp -> resp.status >= 200 && resp.status < 400)
+                |> Task.onError (\_ -> Task.succeed False)
                 |> Task.andThen
-                       (\resp ->
-                           if resp.status >= 200 && resp.status < 400 then
+                       (\ready ->
+                           if ready then
                                Task.succeed ()
 
                            else
                                retry)
-                |> Task.onError (\_ -> retry)
 
 
 -- ─── Element → text (best-effort, for terminal:cli) ───

@@ -2,6 +2,11 @@
 
 package rt
 
+import (
+	"fmt"
+	"sync"
+)
+
 // Zero-annotation durable TEA. `Std.App.withDurable` threads a durable wiring
 // record (setup / restore / persist / applyRestore / runId, built from the pure-
 // Sky Std.Durable snapshot primitives) into a backend loop's config. The loop
@@ -17,6 +22,13 @@ package rt
 type durableCtx struct {
 	wiring any
 	runId  string
+	// suspended holds the run ids whose stored snapshot failed to restore
+	// (the Model no longer decodes it, or the read failed). Such a run
+	// boots from init and NEVER writes a snapshot, so the stored one is
+	// kept byte-for-byte until the operator migrates or removes it. A
+	// silent reset-and-overwrite would destroy the only copy of the
+	// user's state.
+	suspended sync.Map
 }
 
 // durableCtxOf builds a ctx from a config's "Durable" field, or nil when the app
@@ -52,6 +64,11 @@ func (d *durableCtx) boot(runId string, initModel any) any {
 	// applyRestore adapter turn the Result into the model (Go never inspects a
 	// Result/Maybe itself).
 	res := sky_call(SkyCall(restoreFn, runId), nil)
+	if isErrResult(res) {
+		d.suspended.Store(runId, true)
+		durableReportRestoreFailure(runId, fmt.Sprintf("%v", extractErrResultValue(res)))
+		return initModel
+	}
 	return SkyCall(applyFn, res, initModel)
 }
 
@@ -71,6 +88,9 @@ func (d *durableCtx) persistFixed(model any) {
 	if d == nil {
 		return
 	}
+	if d.isSuspended(d.runId) {
+		return
+	}
 	persistFn := Field(d.wiring, "Persist")
 	if persistFn == nil {
 		return
@@ -84,10 +104,29 @@ func (d *durableCtx) persist(runId string, model any) {
 	if d == nil {
 		return
 	}
+	if d.isSuspended(runId) {
+		return
+	}
 	persistFn := Field(d.wiring, "Persist")
 	if persistFn == nil {
 		return
 	}
 	task := SkyCall(persistFn, runId, model)
 	safeGo("Durable.persist", func() { sky_call(task, nil) })
+}
+
+func (d *durableCtx) isSuspended(runId string) bool {
+	_, ok := d.suspended.Load(runId)
+	return ok
+}
+
+// durableReportRestoreFailure logs the classified DurableRestoreFailed error
+// (and queues it for a terminal app's exit summary, since the alternate
+// screen hides a log line written while it is up).
+func durableReportRestoreFailure(runId, reason string) {
+	msg := fmt.Sprintf("DurableRestoreFailed: the durable snapshot for run %q could not be restored (%s). "+
+		"Booting from init. The stored snapshot is kept unchanged, and this run does not write snapshots "+
+		"until the snapshot is migrated or removed.", runId, reason)
+	logEmit(logLevelError, "error", msg, map[string]any{"class": "DurableRestoreFailed", "runId": runId})
+	tuiWarn("durable", msg)
 }

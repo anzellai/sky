@@ -28,6 +28,7 @@ package rt
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -60,23 +61,24 @@ func cliProgramRun(cfg any) any {
 	viewFn := Field(cfg, "View")
 	onLineFn := Field(cfg, "OnLine")
 	subsFn := Field(cfg, "Subscriptions")
+	guardFn := Field(cfg, "Guard")
 	dur := durableCtxOf(Field(cfg, "Durable"))
-	if initFn == nil || updateFn == nil || viewFn == nil || onLineFn == nil {
+	if initFn == nil || updateFn == nil || viewFn == nil {
 		return Err[any, any](ErrInvalidInput(
-			"Cli.program: cfg must define init / update / view / onLine"))
+			"Cli.program: cfg must define init / update / view"))
 	}
 
-	// Single dispatch channel for both stdin lines (turned into Msgs via
-	// onLine) and Cmd.perform results (already Msgs). The main loop
-	// reads from this channel and serialises updates.
-	msgCh := make(chan any, 16)
-	doneCh := make(chan struct{})
+	// Single dispatch channel for stdin lines (turned into Msgs via
+	// onLine), Cmd.perform results, published payloads and Sub.every
+	// ticks. The main loop serialises every update.
+	msgCh := make(chan any, 64)
+	loop := newTeaLoop(msgCh, updateFn, guardFn, dur)
 
 	// Sky.Cli doesn't modify terminal state (no raw mode, no alt-
 	// screen) so there's nothing to teardown — but we still install
 	// the empty state + signal handler so a SIGTERM / SIGHUP runs
-	// our normal cleanup path (subMgr.stopAll, stdout flush) instead
-	// of crashing without running any defer at all.
+	// our normal cleanup path (subscriptions stopped, stdout flush)
+	// instead of crashing without running any defer at all.
 	tuiInstallState(&tuiState{})
 	cleanShutdown := installCleanShutdown()
 	defer func() {
@@ -84,24 +86,37 @@ func cliProgramRun(cfg any) any {
 		close(cleanShutdown)
 	}()
 
-	// Stdin reader goroutine. EOF closes doneCh which terminates the loop.
-	safeGo("Cli stdin reader", func() {
-		reader := bufio.NewReader(os.Stdin)
-		for {
-			line, err := reader.ReadString('\n')
-			line = strings.TrimRight(line, "\r\n")
-			if line != "" || err == nil {
-				msg := SkyCall(onLineFn, line)
-				if msg != nil {
-					msgCh <- msg
+	// Input. With an onLine handler the program reads stdin line by
+	// line until EOF. WITHOUT one (an App.app / App.cli that never
+	// called withInput) there is no input source at all: the program
+	// runs init, its Cmds and its subscriptions, and exits 0 once
+	// nothing is left to happen (no queued Msg, no in-flight Cmd, no
+	// Sub.every requested).
+	var inputDone <-chan struct{}
+	inputClosed := true
+	if onLineFn != nil {
+		doneCh := make(chan struct{})
+		inputDone = doneCh
+		inputClosed = false
+		safeGo("Cli stdin reader", func() {
+			reader := bufio.NewReader(os.Stdin)
+			for {
+				line, err := reader.ReadString('\n')
+				line = strings.TrimRight(line, "\r\n")
+				if line != "" || err == nil {
+					if msg := SkyCall(onLineFn, line); msg != nil {
+						// Sent BEFORE doneCh closes, so a line read
+						// just ahead of EOF is always processed.
+						loop.send(msg)
+					}
+				}
+				if err != nil {
+					close(doneCh)
+					return
 				}
 			}
-			if err != nil {
-				close(doneCh)
-				return
-			}
-		}
-	})
+		})
+	}
 
 	// Initial state — call init () and fire startup cmd if any.
 	initRes := SkyCall(initFn, struct{}{})
@@ -109,60 +124,46 @@ func cliProgramRun(cfg any) any {
 	// Durable: restore the persisted model (if any) before the first render.
 	model = dur.bootFixed(model)
 	if cmd := tupleSecond(initRes); cmd != nil {
-		cliRunCmd(cmd, msgCh)
+		loop.runCmd(cmd)
 	}
 
-	// Subscription manager — tracks the active ticker(s) so we can
-	// tear them down when subscriptions(model) returns a different
-	// shape. nil-tolerant: a program without `subscriptions` keyword
-	// in cfg just gets an empty list every tick.
-	subMgr := newSubManager(msgCh)
+	subMgr := loop.subs
 	subMgr.update(subsFn, model)
+	defer subMgr.stopAll()
 
 	// Render the initial prompt before waiting for input.
 	cliPrintView(viewFn, model)
 
-	// Main update loop. Each Msg → update → maybe Cmd → re-render prompt.
-	// Always drain pending msgs BEFORE honouring an EOF signal — Go's
-	// select picks ready cases at random, so a piped stdin can close
-	// doneCh while the channel still holds queued msgs. We do a
-	// non-blocking msgCh peek first; only when there's nothing to
-	// process do we wait for either source.
 	for {
-		select {
-		case msg := <-msgCh:
-			model = cliApplyUpdate(updateFn, msg, model, msgCh, dur)
-			subMgr.update(subsFn, model)
-			cliPrintView(viewFn, model)
-			continue
-		default:
+		// Exit rule. Input is closed (EOF, or no input handler) and
+		// nothing is queued or in flight: an in-flight Cmd.perform
+		// still lands and renders before the program exits. A program
+		// with no input handler additionally stays alive while it
+		// requests a Sub.every (a timer-driven job runs until its
+		// subscriptions return Sub.none).
+		if inputClosed && loop.idle() && (onLineFn != nil || !subMgr.hasTimers()) {
+			fmt.Fprintln(cliOut)
+			return Ok[any, any](struct{}{})
 		}
 		select {
 		case msg := <-msgCh:
-			model = cliApplyUpdate(updateFn, msg, model, msgCh, dur)
+			appMsg, ok := loop.resolve(msg)
+			if !ok {
+				continue
+			}
+			model = loop.apply(appMsg, model)
 			subMgr.update(subsFn, model)
 			cliPrintView(viewFn, model)
-		case <-doneCh:
-			subMgr.stopAll()
-			fmt.Println()
-			return Ok[any, any](struct{}{})
+		case <-inputDone:
+			inputClosed = true
+			inputDone = nil
+		case <-loop.wake:
 		}
 	}
 }
 
-// cliApplyUpdate calls update(msg, model), runs any resulting cmd,
-// and returns the new model. update is expected to be a curried
-// 2-arg Sky function returning a tuple (newModel, cmd).
-func cliApplyUpdate(updateFn, msg, model any, msgCh chan<- any, dur *durableCtx) any {
-	res := SkyCall(updateFn, msg, model)
-	newModel := tupleFirst(res)
-	if cmd := tupleSecond(res); cmd != nil {
-		cliRunCmd(cmd, msgCh)
-	}
-	// Durable: snapshot the new model after each update (fire-and-forget).
-	dur.persistFixed(newModel)
-	return newModel
-}
+// cliOut is where Sky.Cli writes its frames (stdout; tests capture it).
+var cliOut io.Writer = os.Stdout
 
 // cliPrintView calls the user's view(model) → String and writes the
 // result to stdout without a trailing newline (the user's prompt
@@ -170,9 +171,9 @@ func cliApplyUpdate(updateFn, msg, model any, msgCh chan<- any, dur *durableCtx)
 func cliPrintView(viewFn, model any) {
 	out := SkyCall(viewFn, model)
 	if s, ok := out.(string); ok {
-		fmt.Print(s)
+		fmt.Fprint(cliOut, s)
 	} else if out != nil {
-		fmt.Print(out)
+		fmt.Fprint(cliOut, out)
 	}
 }
 
@@ -213,42 +214,5 @@ func Cli_readPassword(_ any) any {
 			return Err[any, any](ErrIo("readPassword: " + err.Error()))
 		}
 		return Ok[any, any](Secret{v: string(bytes)})
-	}
-}
-
-// cliRunCmd processes a Cmd value, spawning goroutines for Cmd.perform.
-// Each goroutine pushes its (toMsg result) into msgCh so the main loop
-// can fold it into the next update.
-func cliRunCmd(cmd any, msgCh chan<- any) {
-	c, ok := cmd.(cmdT)
-	if !ok {
-		return
-	}
-	switch c.kind {
-	case "none":
-		return
-	case "batch":
-		for _, sub := range c.batch {
-			cliRunCmd(sub, msgCh)
-		}
-	case "perform":
-		// safeGo: a panic inside the user's Task or its toMsg handler
-		// won't bypass the deferred terminal restore. Without this,
-		// any Cmd.perform that crashes leaves Tui's terminal stuck
-		// in raw mode + alt-screen forever. Sky.Cli has no such
-		// state to undo, but the recover still gives users a useful
-		// error message instead of a bare goroutine stack-dump.
-		safeGo("Cmd.perform task", func() {
-			result := sky_call(c.task, nil)
-			msg := sky_call(c.toMsg, result)
-			if msg != nil {
-				// Defensive: msgCh may be closed if the main loop
-				// exited between the task spawning and finishing.
-				// recover-on-closed-send catches the panic via
-				// safeGo's wrapper.
-				defer func() { _ = recover() }()
-				msgCh <- msg
-			}
-		})
 	}
 }

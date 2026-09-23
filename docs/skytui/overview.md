@@ -158,6 +158,29 @@ The runtime restores the terminal in every exit path: panic, signal
 (SIGTERM/HUP/QUIT/INT), `System.exit`, normal `Quit` Msg. mosh
 sessions don't end up with a corrupted readline.
 
+## The terminal loop contract
+
+The terminal backends (`terminal:tui` Element and String views,
+`terminal:cli`) share one update core (`runtime-go/rt/tea_loop.go`), so
+these rules hold on all of them:
+
+| Concern | Rule |
+|---|---|
+| Quitting | **Ctrl-C always quits** and is never delivered to `onKey` (raw mode turns SIGINT into a byte only the runtime can act on). Without an `onKey` handler, `q` also quits, unless it is typed into an input. Stdin EOF quits. |
+| No handlers | `App.tui` without `withOnKey` runs (quit with `q` / Ctrl-C). `terminal:cli` without `withInput` reads no input: it runs `init`, its Cmds and its `Sub.every` timers, and exits 0 when nothing is left to happen. |
+| `App.withInput` | `terminal:cli` reads stdin lines. `terminal:tui` shows a one-line prompt under the view (Element and String views); Enter sends the line and clears the prompt. The same source takes the same lines on both targets. |
+| Stdin EOF (cli) | The program exits only after every in-flight `Cmd.perform` has landed and rendered. |
+| `App.withGuard` | Runs before `update` on every terminal target, as on the web. |
+| `App.withDurable` | Restores the model at start and snapshots it after each update, on every terminal target. A stored snapshot that no longer decodes is logged as `DurableRestoreFailed`; the app boots from `init` and does NOT write snapshots for that run, so the stored one is kept until it is migrated or removed. |
+| `Sub.every` | Every `Sub.every` is honoured. A timer whose interval is still requested keeps running (and its phase) across updates, so a slow timer fires under a stream of faster Msgs. Two subscriptions on one interval both dispatch. |
+| `Cmd.publish` / `Sub.subscribeTopic` | In-process bus: a publish is delivered to the app's own subscriber on that topic (echo by default, as on Sky.Live). `Cmd.publishNoEcho` has no other subscriber to reach in a single program. |
+| Keys | A read can split a UTF-8 rune, an escape sequence or the bracketed-paste end marker; the decoder keeps the tail across reads (a lone ESC is the Escape key after 50 ms). ESC + key is Alt+key (`alt = True`). Ctrl- and Alt-keys bypass a focused text input so global hotkeys reach `onKey`. |
+| Focus (Element view) | Focus follows the element, not its tab index: identity is the `id` attribute, else the tag, events and text. Keys queued behind a Msg act on the repainted frame. |
+| Forms (Element view) | A `Ui.form` with `onSubmit` is not a tab stop. Enter in one of its single-line inputs (or a `type="submit"` button) submits it: named controls (`Ui.name`) fill the handler's record (String / Int / Float / Bool fields). A field that does not decode is a classified `InvalidInput` in `notification` and the exit summary, never a zero-filled record. `onEnter` fires on Enter first. |
+| Inputs | `Input.multiline` is an editable textarea (Enter inserts a newline). A slider shows its value between `min` and `max`; Left / Right step it by `step`, Home / End jump to the ends. |
+| Layout | A `fill` height inside a content-sized parent sizes to its content (so `Ui.width` on an `Input`, which hoists a fill to the control, keeps it one row). A root `height fill` fills the viewport. |
+| String views | Line breaks are written as CR LF, so each line starts at column 0 in raw mode. |
+
 ## Logical-pixel canvas
 
 Attach a logical-pixel canvas via a `TerminalConfig` passed to
@@ -189,8 +212,9 @@ The `App.withGuard` builder attaches a guard —
 update and (if your model has `notification` / `notificationType`
 fields) writes the rejection into them for the view to render. The
 same guard function works under every backend (the runner maps it to
-`Tui.withGuard` on the terminal and `Live.withGuard` on the web), so
-authentication logic stays portable.
+`Tui.withGuard` on both `terminal:tui` views, `Cli.withGuard` on
+`terminal:cli` and `Live.withGuard` on the web), so authentication logic
+stays portable.
 
 ## Sky.Cli — line-oriented TEA (`--target terminal:cli`)
 

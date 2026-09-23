@@ -92,8 +92,14 @@ mix-and-match — pre-inject whatever your targets need:
 - `App.withRoutes [ App.route path page ]` + `App.withNotFound page` — routing
   (`App.route` / `App.routeParam` / `App.api` build the `Route` values; you never
   pass a raw `( path, page )` tuple).
-- `App.withWindow title width height` — desktop window.
-- `App.withInput onLine` — a terminal line/text input handler.
+- `App.withWindow title width height` — desktop window. The `desktop` target
+  opens the window on the port Sky.Live actually binds (a `SKY_LIVE_PORT`
+  override included), once the server answers; when the server never answers,
+  the run fails with an `Unavailable` error and no blank window opens.
+- `App.withInput onLine` — a terminal line/text input handler: stdin lines on
+  `terminal:cli`, a one-line prompt under the view on `terminal:tui`. Without it
+  a `terminal:cli` app reads no input and exits 0 once its Cmds and timers are
+  done. See the terminal loop contract in `docs/skytui/overview.md`.
 
 **`notFound` is mandatory for `web`, enforced by the type.** `App.withNotFound`
 flips a phantom capability flag on the `App` (`NoFallback` → `HasFallback`), and
@@ -227,6 +233,13 @@ to the last completed `update` survives a process restart:
 
 The Model must be `Codec`-serialisable data (no function fields — the same rule as
 an Elm port). Build the codec with `Codec.auto <blank model>`.
+
+**A snapshot that no longer decodes is never overwritten.** When the Model shape
+changes without a migration, the stored snapshot fails to decode
+(`Durable.loadSnapshot` returns a `Decode` error, not `Nothing`). The backend logs
+a classified `DurableRestoreFailed` error, boots that run (terminal) or session
+(web) from `init`, and writes NO snapshot for it, so the old state stays in the
+database until you migrate or remove it.
 
 Durability of the Model is separate from exactly-once EFFECTS. The snapshot
 guarantees the state up to the last completed `update`; an effect in flight at the

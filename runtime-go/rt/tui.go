@@ -74,7 +74,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"reflect"
+	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -105,8 +108,15 @@ type keyEvent struct {
 }
 
 // Tui_program is the Task-shaped entry point. Calling it returns a
-// thunk; Task.run forces it and the program runs until the user
-// dispatches a Msg that exits (typically via Cmd.perform System.exit).
+// thunk; Task.run forces it and the program runs until it quits.
+//
+// Quitting (the documented rule, shared with Tui.app): Ctrl-C ALWAYS
+// exits a terminal program and restores the terminal. It is never
+// delivered to onKey — raw mode turns the terminal's SIGINT into a
+// 0x03 byte, so the runtime is the only thing that can honour it, and
+// an app that forwards every key to onKey (a total `\key -> ...`)
+// could otherwise never be interrupted. A program with NO onKey handler
+// and no line input also quits on `q`. Stdin EOF exits too.
 func Tui_program(cfg any) any {
 	return func() any {
 		return tuiProgramRun(cfg)
@@ -118,11 +128,13 @@ func tuiProgramRun(cfg any) any {
 	updateFn := Field(cfg, "Update")
 	viewFn := Field(cfg, "View")
 	onKeyFn := Field(cfg, "OnKey")
+	onLineFn := Field(cfg, "OnLine")
 	subsFn := Field(cfg, "Subscriptions")
+	guardFn := Field(cfg, "Guard")
 	dur := durableCtxOf(Field(cfg, "Durable"))
-	if initFn == nil || updateFn == nil || viewFn == nil || onKeyFn == nil {
+	if initFn == nil || updateFn == nil || viewFn == nil {
 		return Err[any, any](ErrInvalidInput(
-			"Tui.program: cfg must define init / update / view / onKey"))
+			"Tui.program: cfg must define init / update / view"))
 	}
 
 	// Stdin must be a TTY for raw mode. Piped stdin (e.g. testing) is
@@ -146,10 +158,13 @@ func tuiProgramRun(cfg any) any {
 	state := &tuiState{fd: fd, raw: true, oldState: oldState}
 	tuiInstallState(state)
 	cleanShutdown := installCleanShutdown()
+	quitCh := make(chan struct{})
 	defer func() {
+		close(quitCh)
 		tuiTeardown()
 		tuiUninstallState()
 		close(cleanShutdown)
+		tuiFlushWarnings()
 	}()
 
 	fmt.Print(tuiAltScreenEnter)
@@ -159,16 +174,24 @@ func tuiProgramRun(cfg any) any {
 	fmt.Print(tuiClearScreen)
 	fmt.Print(tuiCursorHome)
 
-	// Channels: msgCh is the unified Msg pipe (keys, sub ticks,
-	// Cmd.perform results). doneCh signals stdin EOF / fatal error.
-	msgCh := make(chan any, 32)
-	doneCh := make(chan struct{})
+	// msgCh is the unified Msg pipe (keys, sub ticks, Cmd results,
+	// published payloads, resizes). eofCh signals stdin EOF / error.
+	msgCh := make(chan any, 64)
+	eofCh := make(chan struct{})
+	loop := newTeaLoop(msgCh, updateFn, guardFn, dur)
 
-	// Key reader goroutine. Reads bytes, decodes into keyEvents, and
-	// translates to Sky Key values pushed to msgCh via onKey.
 	safeGo("Tui.program key reader", func() {
-		tuiReadKeys(stdin, onKeyFn, msgCh, doneCh)
+		defer close(eofCh)
+		tuiRunKeyReader(stdin, func(ev keyEvent) bool {
+			select {
+			case msgCh <- tuiKeyMsg{ev: ev}:
+				return true
+			case <-quitCh:
+				return false
+			}
+		})
 	})
+	tuiWatchResize(msgCh, quitCh)
 
 	// Initial state.
 	initRes := SkyCall(initFn, struct{}{})
@@ -176,44 +199,139 @@ func tuiProgramRun(cfg any) any {
 	// Durable: restore the persisted model (if any) before the first render.
 	model = dur.bootFixed(model)
 	if cmd := tupleSecond(initRes); cmd != nil {
-		cliRunCmd(cmd, msgCh)
+		loop.runCmd(cmd)
 	}
 
-	subMgr := newSubManager(msgCh)
+	subMgr := loop.subs
 	subMgr.update(subsFn, model)
+	defer subMgr.stopAll()
 
-	tuiRender(viewFn, model)
+	// Line input (App.withInput on a String-view TUI): the runtime owns
+	// a one-line prompt on the bottom row; Enter dispatches onLine.
+	var line []rune
+	render := func() {
+		_, rows := tuiTermSize(fd)
+		tuiRenderProgram(viewFn, model, onLineFn != nil, line, rows)
+	}
+	render()
 
 	for {
+		var raw any
 		select {
-		case msg := <-msgCh:
-			model = cliApplyUpdate(updateFn, msg, model, msgCh, dur)
-			subMgr.update(subsFn, model)
-			tuiRender(viewFn, model)
-			continue
-		default:
-		}
-		select {
-		case msg := <-msgCh:
-			model = cliApplyUpdate(updateFn, msg, model, msgCh, dur)
-			subMgr.update(subsFn, model)
-			tuiRender(viewFn, model)
-		case <-doneCh:
-			subMgr.stopAll()
+		case raw = <-msgCh:
+		case <-eofCh:
 			return Ok[any, any](struct{}{})
 		}
+		var appMsg any
+		switch m := raw.(type) {
+		case tuiResizeMsg:
+			render()
+			continue
+		case tuiKeyMsg:
+			ev := m.ev
+			if ev.kind == "ctrl" && ev.value == "c" {
+				return Ok[any, any](struct{}{})
+			}
+			if onLineFn != nil {
+				handled, submitted, text := tuiLineEdit(&line, ev)
+				if submitted {
+					appMsg = SkyCall(onLineFn, text)
+				} else if handled {
+					render()
+					continue
+				}
+			}
+			if appMsg == nil {
+				if onKeyFn == nil {
+					if onLineFn == nil && ev.kind == "char" && ev.value == "q" && !ev.alt {
+						return Ok[any, any](struct{}{})
+					}
+					continue
+				}
+				appMsg = SkyCall(onKeyFn, tuiKeyToSky(onKeyFn, ev))
+			}
+			if appMsg == nil {
+				continue
+			}
+		default:
+			var ok bool
+			if appMsg, ok = loop.resolve(raw); !ok {
+				continue
+			}
+		}
+		model = loop.apply(appMsg, model)
+		subMgr.update(subsFn, model)
+		render()
 	}
 }
 
-// tuiRender clears the alt-screen and writes the user's view(model)
-// to the top-left. We re-paint the whole screen each frame; ANSI's
-// alt-screen + clear keeps the user's real shell scrollback untouched.
-//
-// Future work: keyed VTree-style diffing to update only changed
-// regions. Worth doing for very wide / busy views; not for stopwatch-
-// class apps (the redraw cost is tiny compared to the terminal's own
-// frame rate).
-func tuiRender(viewFn, model any) {
+// tuiLineEdit applies one key to the runtime-owned input line. It
+// returns handled=true when the key belongs to the line editor, and
+// submitted=true (with the text) when Enter completes the line.
+func tuiLineEdit(line *[]rune, ev keyEvent) (handled, submitted bool, text string) {
+	switch ev.kind {
+	case "char":
+		if ev.alt {
+			return false, false, ""
+		}
+		*line = append(*line, []rune(ev.value)...)
+		return true, false, ""
+	case "space":
+		*line = append(*line, ' ')
+		return true, false, ""
+	case "paste":
+		body := strings.NewReplacer("\n", " ", "\t", " ").Replace(sanitiseString(ev.value))
+		*line = append(*line, []rune(body)...)
+		return true, false, ""
+	case "backspace":
+		if n := len(*line); n > 0 {
+			*line = (*line)[:n-1]
+		}
+		return true, false, ""
+	case "enter":
+		text = string(*line)
+		*line = (*line)[:0]
+		return true, true, text
+	}
+	return false, false, ""
+}
+
+// tuiWatchResize pushes a tuiResizeMsg into msgCh on every SIGWINCH until
+// quitCh closes.
+func tuiWatchResize(msgCh chan<- any, quitCh <-chan struct{}) {
+	winchCh := make(chan os.Signal, 1)
+	signal.Notify(winchCh, syscall.SIGWINCH)
+	safeGo("SIGWINCH watcher", func() {
+		defer signal.Stop(winchCh)
+		for {
+			select {
+			case <-quitCh:
+				return
+			case <-winchCh:
+				select {
+				case msgCh <- tuiResizeMsg{}:
+				case <-quitCh:
+					return
+				}
+			}
+		}
+	})
+}
+
+// tuiCRLF converts a view's line breaks to CR LF. Raw mode turns off the
+// terminal's output post-processing (OPOST), so a bare "\n" moves down
+// WITHOUT returning to column 0 and a multi-line String view staircases
+// across the screen.
+func tuiCRLF(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\n", "\r\n")
+}
+
+// tuiRenderProgram clears the alt-screen and writes the user's
+// view(model) to the top-left. With a line prompt it also draws
+// "> <line>" on the bottom row. We re-paint the whole screen each frame;
+// ANSI's alt-screen + clear keeps the user's shell scrollback untouched.
+func tuiRenderProgram(viewFn, model any, prompt bool, line []rune, rows int) {
 	out := SkyCall(viewFn, model)
 	s := ""
 	switch v := out.(type) {
@@ -222,49 +340,15 @@ func tuiRender(viewFn, model any) {
 	default:
 		s = fmt.Sprintf("%v", out)
 	}
-	fmt.Print(tuiCursorHome)
-	fmt.Print(tuiClearScreen)
-	fmt.Print(tuiCursorHome)
-	fmt.Print(s)
-}
-
-// tuiReadKeys is the key reader goroutine. Reads raw bytes from the
-// terminal in raw mode, decodes ANSI escape sequences for arrow / fn
-// keys, and dispatches each decoded keypress as a Msg via onKey(key).
-//
-// Decoding is intentionally minimal — covers the keys most TUI apps
-// need. Anything we don't recognise lands as KeyOther <raw> so the
-// program can decide how to handle it (typically: ignore).
-func tuiReadKeys(stdin *os.File, onKeyFn any, msgCh chan<- any, doneCh chan<- struct{}) {
-	buf := make([]byte, 64)
-	for {
-		n, err := stdin.Read(buf)
-		if err != nil {
-			close(doneCh)
-			return
-		}
-		if n == 0 {
-			continue
-		}
-		// Decode buf[:n] into one or more keyEvents and dispatch each.
-		i := 0
-		for i < n {
-			ev, consumed := tuiDecodeKey(buf[i:n])
-			if consumed == 0 {
-				// shouldn't happen — defensive
-				break
-			}
-			i += consumed
-			key := tuiKeyToSky(onKeyFn, ev)
-			if key == nil {
-				continue
-			}
-			msg := SkyCall(onKeyFn, key)
-			if msg != nil {
-				msgCh <- msg
-			}
-		}
+	var b strings.Builder
+	b.WriteString(tuiCursorHome)
+	b.WriteString(tuiClearScreen)
+	b.WriteString(tuiCursorHome)
+	b.WriteString(tuiCRLF(s))
+	if prompt {
+		fmt.Fprintf(&b, "\x1b[%d;1H\x1b[2K> %s", rows, sanitiseString(string(line)))
 	}
+	fmt.Print(b.String())
 }
 
 // tuiDecodeKey reads one keypress from buf. Returns the keyEvent and
@@ -465,8 +549,17 @@ func tuiDecodeKey(buf []byte) (keyEvent, int) {
 			}
 			return keyEvent{kind: "other", value: string(buf[:3])}, 3
 		}
-		// Just an Esc with stray bytes — treat as solo Esc, leave
-		// the rest for the next decode.
+		// ESC followed by a plain key is how terminals send Alt+<key>
+		// (Meta sends ESC prefix). Decode the key after the ESC and set
+		// the alt flag. ESC ESC stays a lone Escape (the second ESC
+		// starts the next key).
+		if buf[1] != 0x1b {
+			inner, n := tuiDecodeKey(buf[1:])
+			if n > 0 {
+				inner.alt = true
+				return inner, 1 + n
+			}
+		}
 		return keyEvent{kind: "escape"}, 1
 	case b >= 0x01 && b <= 0x1a:
 		// Ctrl-A .. Ctrl-Z (excluding Tab, LF, CR which we handled

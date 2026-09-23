@@ -1,0 +1,175 @@
+module Main exposing (main)
+
+{-| Fixture for scripts/tui-e2e.sh — one Std.App Element view on terminal:tui,
+driven through a real pty. Each scenario in the script exercises one terminal
+loop contract: queued keys act on the current frame, a fill-sized input stays
+one row tall, split reads decode whole keys, a slow Sub.every fires under fast
+ticks, Cmd.publish reaches the app's own subscriber, Alt+key reaches onKey,
+Ctrl-C quits with onKey set, and withDurable restores the model.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Db as Db exposing (Db)
+import Std.Codec as Codec exposing (Codec)
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Input as Input
+
+type alias Model =
+    { items : List String
+    , name : String
+    , fast : Int
+    , slow : Int
+    , heard : String
+    , bumps : Int
+    }
+
+type alias KeyEvent =
+    { kind : String
+    , value : String
+    , alt : Bool
+    }
+
+
+modelCodec : Codec Model
+modelCodec =
+    Codec.auto
+        { items = [ "x" ]
+        , name = ""
+        , fast = 0
+        , slow = 0
+        , heard = ""
+        , bumps = 0
+        }
+
+type Msg
+    = Del String
+    | SetName String
+    | Fast
+    | Slow
+    | Publish
+    | Heard String
+    | Bump
+    | Noop
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { items = [ "A", "B", "C" ]
+      , name = ""
+      , fast = 0
+      , slow = 0
+      , heard = ""
+      , bumps = 0
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Del it ->
+            ( { model | items = List.filter (\x -> x /= it) model.items }
+            , Cmd.none
+            )
+
+        SetName s ->
+            ( { model | name = s }, Cmd.none )
+
+        Fast ->
+            ( { model | fast = model.fast + 1 }, Cmd.none )
+
+        Slow ->
+            ( { model | slow = model.slow + 1 }, Cmd.none )
+
+        Publish ->
+            ( model, Cmd.publish "room" "ping" )
+
+        Heard s ->
+            ( { model | heard = s }, Cmd.none )
+
+        Bump ->
+            ( { model | bumps = model.bumps + 1 }, Cmd.none )
+
+        Noop ->
+            ( model, Cmd.none )
+
+
+onKey : KeyEvent -> Msg
+onKey k =
+    if k.alt && k.value == "b" then
+        Bump
+
+    else
+        Noop
+
+
+delButton : String -> Element Msg
+delButton it =
+    Ui.button
+        [ Ui.paddingXY 16 0 ]
+        { onPress = Just (Del it), label = Ui.text ("Del " ++ it) }
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8 ]
+        [ Ui.text ("items=" ++ String.join "," model.items)
+        , Ui.row [ Ui.spacing 16 ] (List.map delButton model.items)
+        , Ui.text ("name=" ++ model.name)
+        , Input.text
+              [ Ui.width (Ui.px 300) ]
+              { onChange = SetName
+              , text = model.name
+              , placeholder = Nothing
+              , label = Input.labelHidden "name"
+              }
+        , Ui.text
+              ("slowOk="
+                  ++ (if model.slow > 0 then
+                         "yes"
+
+                     else
+                         "no"))
+        , Ui.button
+              [ Ui.paddingXY 16 0 ]
+              { onPress = Just Publish, label = Ui.text "Send" }
+        , Ui.text ("heard=" ++ model.heard)
+        , Ui.text ("bumps=" ++ String.fromInt model.bumps)
+        , Ui.text "END"
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.batch
+        [ Sub.every 100 Fast
+        , Sub.every 700 Slow
+        , Sub.subscribeTopic "room" Heard
+        ]
+
+
+mkApp db =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withOnKey onKey
+        |> App.withDurable db modelCodec
+
+
+main : Task Error ()
+main =
+    Db.connect () |> Task.andThen (\db -> App.run (mkApp db))

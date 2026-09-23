@@ -40,3 +40,7 @@ func Cli_withOnLine(fn, cfg any) any { return cliCfgSet(cfg, "OnLine", fn) }
 // Cli_withDurable — the durable wiring record (restore/persist/setup/runId);
 // Cli_program restores the model at start and snapshots it after each update.
 func Cli_withDurable(d, cfg any) any { return cliCfgSet(cfg, "Durable", d) }
+
+// Cli_withGuard attaches a `msg -> model -> Result Error ()` guard. It runs
+// before update on every Msg, exactly as on Sky.Tui and Sky.Live.
+func Cli_withGuard(fn, cfg any) any { return cliCfgSet(cfg, "Guard", fn) }

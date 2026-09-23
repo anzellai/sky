@@ -48,6 +48,10 @@ func Tui_withOnKey(fn, cfg any) any { return tuiCfgSet(cfg, "OnKey", fn) }
 // restores the model at start (fixed run id) and snapshots it after each update.
 func Tui_withDurable(d, cfg any) any { return tuiCfgSet(cfg, "Durable", d) }
 
+// Tui_withOnLine attaches a line-input handler (App.withInput on
+// terminal:tui): a runtime prompt whose Enter dispatches onLine(line).
+func Tui_withOnLine(fn, cfg any) any { return tuiCfgSet(cfg, "OnLine", fn) }
+
 // Tui_withGuard — `guard : msg -> model -> Result Error ()` per-Msg gate.
 func Tui_withGuard(fn, cfg any) any { return tuiCfgSet(cfg, "Guard", fn) }
 

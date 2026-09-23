@@ -26,11 +26,11 @@ package rt
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"os"
-	"os/signal"
+	"strconv"
 	"strings"
-	"syscall"
 
 	"golang.org/x/term"
 )
@@ -99,12 +99,36 @@ type tuiColor struct {
 // "change" fires when an input loses focus / receives Enter.
 type focusable struct {
 	events       []any
-	isInput      bool   // tag=="input" — needs editor handling
+	isInput      bool   // an editable control (tag input / textarea)
 	inputType    string // "text" | "password" | "checkbox" | "radio" | "range" | "textarea" | …
-	initialValue string // from AttrAttribute "value", first-render only
+	initialValue string // from AttrAttribute "value"
 	placeholder  string // from AttrAttribute "placeholder", shown on empty buffer
 	row, col     int    // top-left corner of the focused element's box
 	w, h         int
+	// key is the element's stable identity across renders (tuiFocusKey):
+	// focus and editor state follow the ELEMENT, not its position in the
+	// tab order, so a list that shrinks in the background does not move
+	// focus onto a different item.
+	key      string
+	tag      string
+	name     string   // AttrAttribute "name" — the form field it feeds
+	min, max string   // range inputs
+	step     string   // range inputs
+	form     *tuiForm // enclosing Ui.form with an onSubmit, if any
+}
+
+// tuiForm is one Ui.form with an onSubmit handler, collected during paint.
+// fields lists its named controls in document order.
+type tuiForm struct {
+	submit any // eventPair{name: "submit", msg: handler}
+	fields []tuiFormField
+}
+
+type tuiFormField struct {
+	name      string
+	key       string
+	inputType string
+	valueAttr string
 }
 
 // isMultilineInput returns true if this focusable is a textarea-typed
@@ -131,92 +155,49 @@ type tuiInput struct {
 	lastValueAttr string // detect user-driven resets (model.draft = "")
 }
 
-// inputRegistry maps focus index → input state. Keyed by tab-order
-// position, which is stable as long as the user doesn't add/remove
-// focusable elements between renders. For dynamic forms, users should
-// (one day) provide stable IDs via AttrAttribute "id" — for v1 this is
-// good enough for the demo.
+// inputRegistry maps a focusable's stable identity (focusable.key) to its
+// editor state, so a buffer stays with its input when other elements are
+// added or removed. It also carries the per-frame paint context: the
+// identity occurrence counter and the stack of enclosing forms.
 type inputRegistry struct {
-	inputs map[int]*tuiInput
+	inputs   map[string]*tuiInput
+	keyCount map[string]int
+	forms    []*tuiForm
 }
 
 func newInputRegistry() *inputRegistry {
-	return &inputRegistry{inputs: map[int]*tuiInput{}}
+	return &inputRegistry{inputs: map[string]*tuiInput{}, keyCount: map[string]int{}}
 }
 
-func (r *inputRegistry) get(idx int) *tuiInput {
-	if r.inputs[idx] == nil {
-		r.inputs[idx] = &tuiInput{}
+func (r *inputRegistry) get(key string) *tuiInput {
+	if r.inputs[key] == nil {
+		r.inputs[key] = &tuiInput{}
 	}
-	return r.inputs[idx]
+	return r.inputs[key]
 }
 
-// tuiScroll is per-scroll-region offset state, persisted across renders.
-type tuiScroll struct {
-	offsetY int // rows scrolled down
-	offsetX int // cols scrolled right
+// beginFrame resets the per-frame paint context.
+func (r *inputRegistry) beginFrame() {
+	r.keyCount = map[string]int{}
+	r.forms = nil
 }
 
-// scrollRegistry: same key strategy as inputRegistry (focus index in
-// the tab order). Persistent so scrollY survives re-renders.
-type scrollRegistry struct {
-	regions map[int]*tuiScroll
+// nextKey returns identity + an occurrence suffix, so two identical
+// elements in one frame still get distinct, order-stable keys.
+func (r *inputRegistry) nextKey(identity string) string {
+	n := r.keyCount[identity]
+	r.keyCount[identity] = n + 1
+	return fmt.Sprintf("%s#%d", identity, n)
 }
 
-func newScrollRegistry() *scrollRegistry {
-	return &scrollRegistry{regions: map[int]*tuiScroll{}}
-}
-
-func (r *scrollRegistry) get(idx int) *tuiScroll {
-	if r.regions[idx] == nil {
-		r.regions[idx] = &tuiScroll{}
+func (r *inputRegistry) currentForm() *tuiForm {
+	if len(r.forms) == 0 {
+		return nil
 	}
-	return r.regions[idx]
+	return r.forms[len(r.forms)-1]
 }
 
 // ─── Main loop ──────────────────────────────────────────────────────
-
-// tuiApplyUpdate runs the user's guard (if defined) before dispatch.
-// Mirrors Sky.Live's guard semantics so the same auth-check function
-// works under both runtimes:
-//
-//	guard : Msg -> Model -> Result Error ()
-//
-//	Ok ()       → dispatch the msg through update normally
-//	Err reason  → SKIP update and stamp model.Notification = reason
-//	              + model.NotificationType = "error" (if those
-//	              fields exist on the user's record). The view
-//	              inspects the notification field to render an
-//	              in-app banner / toast / status line.
-//
-// Use case: auth-gated screens. e.g. user model has session field,
-// guard rejects every Msg except Login until session is Just _.
-//
-// If guard isn't defined, the msg goes straight to update — zero
-// overhead for the common case.
-func tuiApplyUpdate(guardFn, updateFn, msg, model any, msgCh chan<- any) any {
-	if guardFn != nil && isFunc(guardFn) {
-		g := sky_call2(guardFn, msg, model)
-		if isErrResult(g) {
-			reason := extractErrResultValue(g)
-			// RecordUpdate is a no-op when the field doesn't exist on
-			// the model (graceful degradation — user opts in by adding
-			// notification fields). When the user model lacks both,
-			// guard rejection just silently drops the msg.
-			return RecordUpdate(model, map[string]any{
-				"Notification":     reason,
-				"NotificationType": "error",
-			})
-		}
-	}
-	// Tier-1 auto-trace: wrap the TEA update in a Msg span. A Tui app
-	// has no HTTP request, so this span is the ROOT of its trace —
-	// each keypress→update is one interaction. DB / Http / File
-	// kernels called inside `update` nest under it.
-	return WithMsgSpan(msgDisplayName(msg), func() any {
-		return cliApplyUpdate(updateFn, msg, model, msgCh, nil)
-	})
-}
 
 func tuiAppRun(cfg any) any {
 	initFn := Field(cfg, "Init")
@@ -321,489 +302,7 @@ func tuiAppRun(cfg any) any {
 	fmt.Print("\x1b[?2004h")
 	state.bracketedPaste = true
 
-	msgCh := make(chan any, 32)
-	doneCh := make(chan struct{})
-
-	// Initial state.
-	initRes := SkyCall(initFn, struct{}{})
-	model := tupleFirst(initRes)
-	if cmd := tupleSecond(initRes); cmd != nil {
-		cliRunCmd(cmd, msgCh)
-	}
-
-	subMgr := newSubManager(msgCh)
-	subMgr.update(subsFn, model)
-
-	// Focus state — runtime-managed, hidden from user code.
-	focusIdx := 0
-	inputs := newInputRegistry()
-
-	// First render. Track the cell grid as `prev` so subsequent renders
-	// can diff against it and emit only changed cells. nil prev signals
-	// "first frame, paint everything".
-	cols, rows := tuiTermSize(fd)
-	var prev [][]tuiCell
-	scrollY := 0
-	grid, focusables, contentH := renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-	tuiPaint(paintDiff(prev, grid))
-	prev = grid
-	focusIdx = clampFocus(focusIdx, len(focusables))
-	scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
-
-	// Key reader goroutine. Categories of keys:
-	//   - Tab / Shift-Tab    → focus navigation (handled by runtime)
-	//   - Enter on focused   → dispatch focused element's onClick
-	//   - paste-start..end   → aggregated into a single "paste" event
-	//                          so multi-line paste into a single-line
-	//                          input doesn't fire N spurious submits
-	//   - Anything else      → forward to user's onKey if defined
-	safeGo("Tui key reader", func() {
-		buf := make([]byte, 4096) // larger buffer — bracketed paste of
-		// large text snippets fits in fewer reads
-		var pasting bool
-		var pasteBuf []rune
-		for {
-			n, err := stdin.Read(buf)
-			if err != nil {
-				close(doneCh)
-				return
-			}
-			if n == 0 {
-				continue
-			}
-			i := 0
-			for i < n {
-				ev, consumed := tuiDecodeKey(buf[i:n])
-				if consumed == 0 {
-					break
-				}
-				i += consumed
-				// Bracketed paste aggregation. While in paste mode every
-				// decoded char goes into pasteBuf; on paste-end we flush
-				// as a single event. \r and \n inside paste become
-				// literal characters (not Enter keypresses) so a
-				// multi-line paste into a text input lands as text,
-				// not as N submits.
-				if pasting {
-					if ev.kind == "paste-end" {
-						pasting = false
-						msg := tuiKeyMsg{ev: keyEvent{kind: "paste", value: string(pasteBuf)}}
-						pasteBuf = pasteBuf[:0]
-						select {
-						case msgCh <- msg:
-						case <-doneCh:
-							return
-						}
-						continue
-					}
-					switch ev.kind {
-					case "char":
-						for _, r := range ev.value {
-							pasteBuf = append(pasteBuf, r)
-						}
-					case "enter":
-						pasteBuf = append(pasteBuf, '\n')
-					case "tab":
-						pasteBuf = append(pasteBuf, '\t')
-					case "space":
-						pasteBuf = append(pasteBuf, ' ')
-					}
-					// Cap paste size to prevent memory exhaustion from a
-					// runaway paste (a malicious or accidental flood).
-					if len(pasteBuf) > 1<<20 { // 1 MiB of runes
-						pasting = false
-						msg := tuiKeyMsg{ev: keyEvent{kind: "paste", value: string(pasteBuf)}}
-						pasteBuf = pasteBuf[:0]
-						select {
-						case msgCh <- msg:
-						case <-doneCh:
-							return
-						}
-					}
-					continue
-				}
-				if ev.kind == "paste-start" {
-					pasting = true
-					continue
-				}
-				select {
-				case msgCh <- tuiKeyMsg{ev: ev}:
-				case <-doneCh:
-					return
-				}
-			}
-		}
-	})
-
-	// SIGWINCH watcher — push a tuiResizeMsg into the same Msg pipe so
-	// the main loop sees it serialised with everything else (no race
-	// with in-flight key/Tick handling). On non-Unix platforms where
-	// SIGWINCH isn't a thing, signal.Notify silently never fires —
-	// the main loop's per-render tuiTermSize() catches resize on the
-	// NEXT Msg that comes through.
-	winchCh := make(chan os.Signal, 1)
-	signal.Notify(winchCh, syscall.SIGWINCH)
-	safeGo("SIGWINCH watcher", func() {
-		for {
-			select {
-			case <-doneCh:
-				signal.Stop(winchCh)
-				return
-			case <-winchCh:
-				select {
-				case msgCh <- tuiResizeMsg{}:
-				case <-doneCh:
-					return
-				}
-			}
-		}
-	})
-
-	for {
-		var msg any
-		select {
-		case msg = <-msgCh:
-		case <-doneCh:
-			subMgr.stopAll()
-			return Ok[any, any](struct{}{})
-		}
-
-		// Intercept tuiResizeMsg — terminal was resized. Re-query the
-		// terminal size, invalidate prev so paintDiff does a full
-		// paint at the new dims, re-render. Doesn't go through the
-		// user's update — pure runtime concern.
-		if _, ok := msg.(tuiResizeMsg); ok {
-			cols, rows = tuiTermSize(fd)
-			prev = nil
-			grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-			tuiPaint(paintDiff(prev, grid))
-			prev = grid
-			focusIdx = clampFocus(focusIdx, len(focusables))
-			scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
-			continue
-		}
-
-	processMsg:
-		// Intercept tuiKeyMsg before dispatching to update — Tab /
-		// Shift-Tab handle focus locally, Enter activates focused
-		// element, mouse clicks find a focusable + activate it,
-		// editing keys flow into focused inputs, anything else falls
-		// through to user's onKey.
-		if km, ok := msg.(tuiKeyMsg); ok {
-			// Hard exit on Ctrl-C if the user hasn't wired an onKey
-			// handler. Without this, an app that doesn't define
-			// onKey leaves the user stuck — raw mode swallows the
-			// terminal's normal SIGINT delivery, so Ctrl-C is just
-			// a 0x03 byte the runtime has to act on. With onKey
-			// defined, fall through and let user code handle it
-			// (the focused-input editor used to swallow ctrl keys
-			// before this fix; the bypass below ensures onKey
-			// always sees them).
-			if km.ev.kind == "ctrl" && km.ev.value == "c" && onKeyFn == nil {
-				close(doneCh)
-				subMgr.stopAll()
-				// defer in Tui_app restores TTY + alt-screen.
-				return Ok[any, any](struct{}{})
-			}
-			// Mouse: SGR encoded as "<button>;<col>;<row>:<M|m>".
-			//
-			// v0.12 surface:
-			//   * Left press (button==0, isPress=true) → focus
-			//     change + onClick dispatch (the v1 path).
-			//   * Wheel up   (button==64) → scroll viewport up.
-			//   * Wheel down (button==65) → scroll viewport down.
-			//
-			// Deliberately NOT yet wired:
-			//   * Release events (`m` suffix) — v1 callers only care
-			//     about press; release would require splitting
-			//     onMouseDown / onMouseUp surface area, which we
-			//     don't expose.
-			//   * Drag (button>=32 with `M` suffix) — slider drag
-			//     is on the roadmap; for now sliders take values
-			//     via keyboard arrows.
-			//   * Middle / right click (button==1 / 2) — uncommon
-			//     in TUI; user `onKey` can still dispatch on them
-			//     via `kind == "mouse"` if they extend this code.
-			if km.ev.kind == "mouse" {
-				button, col1, row1, isPress, ok := parseMouseEvent(km.ev.value)
-				if !ok {
-					continue
-				}
-				// Wheel events: SGR 1006 encodes scroll-up as
-				// button 64, scroll-down as 65 (with the `M`
-				// suffix; SGR doesn't emit a release for wheel).
-				// Scroll the viewport by 3 lines per notch — same
-				// step PgUp / PgDn use, feels natural with a
-				// trackpad's two-finger scroll.
-				if isPress && (button == 64 || button == 65) {
-					step := 3
-					if button == 64 {
-						scrollY = max(0, scrollY-step)
-					} else {
-						scrollY = min(max(0, contentH-rows), scrollY+step)
-					}
-					grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-					tuiPaint(paintDiff(prev, grid))
-					prev = grid
-					continue
-				}
-				if isPress && button == 0 {
-					if hit := hitTestFocusables(focusables, col1-1, row1-1); hit >= 0 {
-						oldFocus := focusIdx
-						focusIdx = hit
-						if oldFocus != focusIdx {
-							tuiDispatchFocusChange(focusables, oldFocus, focusIdx, msgCh)
-						}
-						if !focusables[hit].isInput {
-							if clickEvt := focusableEvent(focusables[hit], "click"); clickEvt != nil {
-								if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
-									msg = clickMsg
-									goto applyMsg
-								}
-							}
-						}
-						// Either focus-changed or input-clicked: re-render.
-						grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-						scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
-						grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-						tuiPaint(paintDiff(prev, grid))
-						prev = grid
-					}
-				}
-				continue
-			}
-
-			// Tab navigation always handled locally. Arrow keys on a
-			// non-input focus also navigate the focus order — Down is
-			// Tab semantics, Up is Shift-Tab. This makes the keyboard
-			// feel native: you can walk the focusables with the arrow
-			// keys without first reaching for Tab. ensureFocusVisible
-			// (called below) auto-scrolls to keep the new focus on
-			// screen, so a long page just scrolls naturally as you
-			// navigate. PgUp / PgDn / Home / End remain pure viewport
-			// scrolls (handled by the viewport block below) for
-			// reading content with no focusable in reach.
-			//
-			// On an input we let arrows fall through to the editor
-			// (cursor movement, multi-line up/down) — focus only
-			// changes via Tab / Shift-Tab there.
-			focusedInputForArrow := focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput
-			handled := false
-			oldFocus := focusIdx
-			switch km.ev.kind {
-			case "tab":
-				if len(focusables) > 0 {
-					focusIdx = (focusIdx + 1) % len(focusables)
-					handled = true
-				}
-			case "down":
-				if !focusedInputForArrow && len(focusables) > 0 {
-					focusIdx = (focusIdx + 1) % len(focusables)
-					handled = true
-				}
-			case "up":
-				if !focusedInputForArrow && len(focusables) > 0 {
-					focusIdx = (focusIdx - 1 + len(focusables)) % len(focusables)
-					handled = true
-				}
-			case "other":
-				if km.ev.value == "\x1b[Z" { // Shift-Tab
-					if len(focusables) > 0 {
-						focusIdx = (focusIdx - 1 + len(focusables)) % len(focusables)
-						handled = true
-					}
-				}
-			}
-			if handled && oldFocus != focusIdx {
-				tuiDispatchFocusChange(focusables, oldFocus, focusIdx, msgCh)
-			}
-			if handled {
-				grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-				focusIdx = clampFocus(focusIdx, len(focusables))
-				scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
-				grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-				tuiPaint(paintDiff(prev, grid))
-				prev = grid
-				continue
-			}
-
-			// Viewport scroll keys when focus is NOT on an input. Lets
-			// users navigate content taller than the terminal viewport
-			// (the kitchen sink hits this — many sections, mosh / SSH
-			// has no native scrollback). Up / Down move by one row,
-			// PgUp / PgDn by a viewport, Home / End jump to extremes.
-			focusedInput := focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput
-			if !focusedInput {
-				maxScroll := contentH - rows
-				if maxScroll < 0 {
-					maxScroll = 0
-				}
-				scrolled := false
-				switch km.ev.kind {
-				case "up":
-					if scrollY > 0 {
-						scrollY--
-						scrolled = true
-					}
-				case "down":
-					if scrollY < maxScroll {
-						scrollY++
-						scrolled = true
-					}
-				case "pageup":
-					scrollY -= rows
-					if scrollY < 0 {
-						scrollY = 0
-					}
-					scrolled = true
-				case "pagedown":
-					scrollY += rows
-					if scrollY > maxScroll {
-						scrollY = maxScroll
-					}
-					scrolled = true
-				case "home":
-					if scrollY != 0 {
-						scrollY = 0
-						scrolled = true
-					}
-				case "end":
-					if scrollY != maxScroll {
-						scrollY = maxScroll
-						scrolled = true
-					}
-				}
-				if scrolled {
-					grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-					tuiPaint(paintDiff(prev, grid))
-					prev = grid
-					continue
-				}
-			}
-
-			// Focused-input editor path. Checkbox / radio respond to
-			// Space and Enter by firing their onClick (same Msg the
-			// HTML side dispatches when the box is clicked) instead
-			// of acting as a text editor.
-			//
-			// Ctrl-<letter> events bypass the editor entirely so an
-			// app's global hotkeys (Ctrl-C / Ctrl-D / Ctrl-Q to quit,
-			// Ctrl-S to save, etc.) reach the user's onKey even
-			// when an input has focus. Without this bypass,
-			// tuiEditInput's switch silently swallows ctrl events
-			// and apps look "frozen" while editing a field.
-			if km.ev.kind != "ctrl" && focusIdx >= 0 && focusIdx < len(focusables) && focusables[focusIdx].isInput {
-				if isCheckboxOrRadio(focusables[focusIdx]) && (km.ev.kind == "space" || km.ev.kind == "enter") {
-					if clickEvt := focusableEvent(focusables[focusIdx], "click"); clickEvt != nil {
-						if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
-							msg = clickMsg
-							goto applyMsg
-						}
-					}
-					continue
-				}
-				st := inputs.get(focusIdx)
-				editorChanged, dispatchMsg := tuiEditInput(st, km.ev, focusables[focusIdx])
-				if dispatchMsg != nil {
-					msg = dispatchMsg
-					goto applyMsg
-				}
-				if editorChanged {
-					// Sync lastValueAttr so the next render's "did
-					// the model reset?" check doesn't undo the edit.
-					st.lastValueAttr = st.buffer
-					grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-					tuiPaint(paintDiff(prev, grid))
-					prev = grid
-					continue
-				}
-				// Editor swallowed but didn't change state — drop the key.
-				continue
-			}
-
-			// Enter or Space on a focusable button activates its
-			// onClick. Matches the browser convention (<button>
-			// activates on both keys) and prevents a global "space →
-			// toggle" hotkey from firing the wrong msg when focus is
-			// on a different button — the keypress is consumed here
-			// before reaching the user's onKey.
-			if (km.ev.kind == "enter" || km.ev.kind == "space") && focusIdx >= 0 && focusIdx < len(focusables) {
-				if clickEvt := focusableEvent(focusables[focusIdx], "click"); clickEvt != nil {
-					if clickMsg := tuiExtractClickMsg(clickEvt); clickMsg != nil {
-						msg = clickMsg
-						goto applyMsg
-					}
-				}
-			}
-
-			// Otherwise, forward to user's onKey if any.
-			if onKeyFn != nil {
-				key := tuiKeyToSky(onKeyFn, km.ev)
-				if key != nil {
-					if userMsg := SkyCall(onKeyFn, key); userMsg != nil {
-						msg = userMsg
-						goto applyMsg
-					}
-				}
-			}
-			continue
-		}
-
-	applyMsg:
-		model = tuiApplyUpdate(guardFn, updateFn, msg, model, msgCh)
-		subMgr.update(subsFn, model)
-
-		// Drain any other messages already queued (fast typing, batched
-		// Cmd Tick fires, mouse-move bursts). Apply them all against
-		// the same model before rendering once at the end. Without this
-		// drain, every keystroke costs one full layout+paint pass even
-		// when 3-4 chars arrived inside one frame window — the user
-		// sees per-character lag scale linearly with type rate.
-		//
-		// Cap the drain so a runaway Cmd loop (sub that re-emits Tick
-		// on every tick) doesn't starve the render path forever.
-		for drained := 0; drained < 64; drained++ {
-			select {
-			case nextMsg := <-msgCh:
-				// A queued key msg must go through the same focus /
-				// onKey interception the main loop applies — it must
-				// never be dispatched raw to update, which expects
-				// the app's Msg ADT, not a tuiKeyMsg (issue #64).
-				if _, isKey := nextMsg.(tuiKeyMsg); isKey {
-					msg = nextMsg
-					goto processMsg
-				}
-				model = tuiApplyUpdate(guardFn, updateFn, nextMsg, model, msgCh)
-				subMgr.update(subsFn, model)
-			default:
-				goto rendering
-			}
-		}
-
-	rendering:
-
-		// On resize, recompute terminal dims; the grid-size mismatch
-		// against prev forces a full repaint inside paintDiff.
-		newCols, newRows := tuiTermSize(fd)
-		if newCols != cols || newRows != rows {
-			cols, rows = newCols, newRows
-			prev = nil // trigger full repaint
-		}
-
-		// First layout pass — discovers focusables + contentH so we
-		// can clamp focusIdx and adjust scrollY if the focused element
-		// scrolled out of view. Skip the second redundant render unless
-		// scrollY actually moved.
-		prevScrollY := scrollY
-		grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-		focusIdx = clampFocus(focusIdx, len(focusables))
-		scrollY = ensureFocusVisible(focusables, focusIdx, scrollY, rows, contentH)
-		if scrollY != prevScrollY {
-			grid, focusables, contentH = renderElementFrameScroll(viewFn, model, cols, rows, canvas, focusIdx, inputs, scrollY)
-		}
-		tuiPaint(paintDiff(prev, grid))
-		prev = grid
-	}
+	return tuiAppLoop(cfg, fd, canvas, initFn, updateFn, viewFn, subsFn, onKeyFn, guardFn)
 }
 
 // ensureFocusVisible adjusts scrollY so the focused element is within
@@ -922,33 +421,29 @@ func hitTestFocusables(focusables []focusable, col, row int) int {
 	return -1
 }
 
-// tuiDispatchFocusChange fires onBlur for the old focused element + onFocus
-// for the new one (when those events are bound). Both Msgs land on msgCh
-// so they flow through the same update sequence as everything else.
-func tuiDispatchFocusChange(focusables []focusable, oldIdx, newIdx int, msgCh chan<- any) {
+// tuiFocusChangeMsgs returns the onBlur Msg of the old focused element and
+// the onFocus Msg of the new one (when bound), in that order. The loop
+// queues them locally, so a busy Msg channel can never drop them.
+func tuiFocusChangeMsgs(focusables []focusable, oldIdx, newIdx int) []any {
 	if oldIdx == newIdx {
-		return
+		return nil
 	}
+	var out []any
 	if oldIdx >= 0 && oldIdx < len(focusables) {
 		if blurEvt := focusableEvent(focusables[oldIdx], "blur"); blurEvt != nil {
 			if msg := tuiExtractClickMsg(blurEvt); msg != nil {
-				select {
-				case msgCh <- msg:
-				default: // channel full — drop rather than block the focus path
-				}
+				out = append(out, msg)
 			}
 		}
 	}
 	if newIdx >= 0 && newIdx < len(focusables) {
 		if focusEvt := focusableEvent(focusables[newIdx], "focus"); focusEvt != nil {
 			if msg := tuiExtractClickMsg(focusEvt); msg != nil {
-				select {
-				case msgCh <- msg:
-				default:
-				}
+				out = append(out, msg)
 			}
 		}
 	}
+	return out
 }
 
 // focusableEvent returns the eventPair on `f` matching the given name
@@ -1187,15 +682,10 @@ func tuiEditInput(st *tuiInput, ev keyEvent, f focusable) (bool, any) {
 	if !changed {
 		return false, nil
 	}
-	// Sync lastValueAttr to the new buffer so the next render's
-	// "did the model reset?" check (in paintInputBufferAdvanced)
-	// doesn't undo the local edit by snapping the cursor to the end
-	// of buffer. Without this sync, mid-string edits (eg typing
-	// between two existing lines of a multiline input) get
-	// reset every keystroke because the dispatch Msg path bypasses
-	// the post-edit sync that the editorChanged-no-dispatch path
-	// already does.
-	st.lastValueAttr = st.buffer
+	// No lastValueAttr sync here: paintBox only adopts a value attr that
+	// CHANGED and differs from the buffer (see the input branch there),
+	// so the edit survives both the model's echo and an uncontrolled
+	// input whose value attr never changes.
 	// Dispatch onInput Msg with the new buffer.
 	if inputEvt := focusableEvent(f, "input"); inputEvt != nil {
 		if msg := tuiExtractInputMsg(inputEvt, st.buffer); msg != nil {
@@ -1281,6 +771,10 @@ func renderElementFrameScroll(viewFn, model any, cols, rows int, canvas tuiCanva
 		rows:       rows,
 		pxPerCellX: pxPerCellX,
 		pxPerCellY: pxPerCellY,
+		// The view scrolls, so the root's height is content-sized; a
+		// root `height fill` fills the viewport (rootFillH).
+		indefH:    true,
+		rootFillH: rows,
 	}
 	// Layout with generous maxH so content can grow taller than the
 	// terminal viewport. We discover the actual content height via
@@ -1307,6 +801,7 @@ func renderElementFrameScroll(viewFn, model any, cols, rows int, canvas tuiCanva
 	}
 	fullGrid := newCellGrid(cols, contentH)
 	var focusables []focusable
+	inputs.beginFrame()
 	paintBox(fullGrid, box, 0, 0, cols, contentH, focusIdx, &focusables, inputs, textStyle{}, layoutAxisColumn, 0)
 
 	// Window the full grid down to the visible viewport. When
@@ -1331,6 +826,35 @@ func renderElementFrameScroll(viewFn, model any, cols, rows int, canvas tuiCanva
 type tuiLayoutCtx struct {
 	cols, rows             int
 	pxPerCellX, pxPerCellY float64
+	// indefH marks the available height as NOT definite: the parent is
+	// sized by its content (no explicit height), or this is the root of a
+	// scrollable view. A vertical `fill` then resolves to the content
+	// height, as elm-ui / CSS resolve fill inside an auto-height parent.
+	// Pre-fix a fill height claimed the whole 50,000-row layout budget
+	// (Ui.width on an Input hoists an implicit fill to the control).
+	indefH bool
+	// rootFillH is the definite height a `fill` height resolves to at the
+	// ROOT element only: the terminal viewport, so a full-screen layout
+	// (`column [height fill] [header, body fill, footer]`) fills the
+	// screen. It is zero for every element below the root.
+	rootFillH int
+}
+
+// lengthIsFill reports a Fill length, bare or wrapped in Min / Max.
+func lengthIsFill(v any) bool {
+	_, tag, fields, ok := unwrapADTShape(v)
+	if !ok {
+		return false
+	}
+	switch tag {
+	case 2:
+		return true
+	case 3, 4:
+		if len(fields) >= 2 {
+			return lengthIsFill(fields[1])
+		}
+	}
+	return false
 }
 
 type layoutAxis int
@@ -1364,6 +888,10 @@ type layoutBox struct {
 	valueAttr   string // for inputs: initial value from AttrAttribute "value"
 	placeholder string // for inputs: shown when buffer is empty
 	nameAttr    string // for inputs in forms: form field name
+	idAttr      string // AttrAttribute "id" — a stable focus identity
+	minAttr     string // range inputs: AttrAttribute "min"
+	maxAttr     string // range inputs: AttrAttribute "max"
+	stepAttr    string // range inputs: AttrAttribute "step"
 	inputType   string // "text" | "password" | "checkbox" | "radio" | "range" | "textarea" | …
 	children    []layoutBox
 	wrapped     bool      // wrappedRow flag — children break into rows
@@ -1428,6 +956,9 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 
 	// Walk attrs to extract layout-relevant values.
 	la := walkAttrs(attrsList, ctx)
+	if tag == "textarea" && la.inputType == "" {
+		la.inputType = "textarea"
+	}
 
 	// Determine axis (row vs column from sentinel attrs).
 	axis := layoutAxisColumn
@@ -1464,13 +995,39 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 
 	// Resolve explicit width/height first.
 	width, hasExplicitW := resolveLengthCells(la.width, "x", innerMaxW, ctx)
-	height, hasExplicitH := resolveLengthCells(la.height, "y", innerMaxH, ctx)
+	var height int
+	var hasExplicitH bool
+	if ctx.indefH && lengthIsFill(la.height) {
+		if ctx.rootFillH > 0 {
+			// Root: fill the terminal viewport.
+			avail := ctx.rootFillH - la.padding[0] - la.padding[2] - la.borderWidth[0] - la.borderWidth[2]
+			if avail > innerMaxH {
+				avail = innerMaxH
+			}
+			if avail < 0 {
+				avail = 0
+			}
+			height, hasExplicitH = resolveLengthCells(la.height, "y", avail, ctx)
+		} else {
+			// Fill inside a content-sized parent: size to content. A
+			// `Min n fill` still honours its floor.
+			if _, ltag, lfields, ok := unwrapADTShape(la.height); ok && ltag == 3 && len(lfields) >= 1 {
+				height, hasExplicitH = intOf(lfields[0]), true
+			}
+		}
+	} else {
+		height, hasExplicitH = resolveLengthCells(la.height, "y", innerMaxH, ctx)
+	}
 	if !hasExplicitW {
 		width = innerMaxW
 	}
 	if !hasExplicitH {
 		height = innerMaxH
 	}
+	// Children see a definite height only when this node's height is
+	// explicit (a length, or a fill resolved against a definite parent).
+	ctx.indefH = !hasExplicitH
+	ctx.rootFillH = 0
 
 	// Paragraph / textColumn: collapse children's text content into
 	// word-wrapped text lines fitting `width`. v1 simplification: we
@@ -1543,6 +1100,10 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 			alignY:      la.alignY,
 			events:      la.events,
 			nameAttr:    la.nameAttr,
+			idAttr:      la.idAttr,
+			minAttr:     la.minAttr,
+			maxAttr:     la.maxAttr,
+			stepAttr:    la.stepAttr,
 			inputType:   la.inputType,
 			paragraph:   la.isParagraph,
 			textColumn:  la.isTextColumn,
@@ -1623,6 +1184,10 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 			alignY:      la.alignY,
 			events:      la.events,
 			nameAttr:    la.nameAttr,
+			idAttr:      la.idAttr,
+			minAttr:     la.minAttr,
+			maxAttr:     la.maxAttr,
+			stepAttr:    la.stepAttr,
 			inputType:   la.inputType,
 			gridLayout:  true,
 			gridColumns: numCols,
@@ -1663,7 +1228,7 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 		// pad. Without this, a `Ui.input` with no explicit width
 		// renders as 0 cells and the checkbox / radio glyph is
 		// invisible.
-		if tag == "input" {
+		if isInputTag(tag) {
 			switch la.inputType {
 			case "checkbox", "radio":
 				if intrinsic < 1 { // single-glyph render: ☐/☑/○/●
@@ -1701,7 +1266,7 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 		}
 		// Inputs need at least 1 cell of height to render their
 		// glyph; textarea defaults to 3 rows for a useful editor.
-		if tag == "input" {
+		if isInputTag(tag) {
 			if la.inputType == "textarea" {
 				if intrinsic < 3 {
 					intrinsic = 3
@@ -1750,6 +1315,10 @@ func layoutNode(tag string, fields []any, ctx tuiLayoutCtx, maxW, maxH int, pare
 		valueAttr:   la.valueAttr,
 		placeholder: la.placeholder,
 		nameAttr:    la.nameAttr,
+		idAttr:      la.idAttr,
+		minAttr:     la.minAttr,
+		maxAttr:     la.maxAttr,
+		stepAttr:    la.stepAttr,
 		inputType:   la.inputType,
 		wrapped:     la.isWrappedRow,
 		paragraph:   la.isParagraph,
@@ -1812,6 +1381,11 @@ func layoutChildren(children []any, ctx tuiLayoutCtx, availW, availH int, axis l
 		// having claimed it; finer grain comes when AttrFill is wired
 		// via a flag in walkAttrs (see TODO in walkAttrs).
 		fillN := childFillPortion(c, axis)
+		if axis == layoutAxisColumn && ctx.indefH {
+			// A content-sized column has no spare height to hand out:
+			// its fill children are sized by their content.
+			fillN = 0
+		}
 		entries[i] = entry{idx: i, fillN: fillN, box: box}
 		if fillN > 0 {
 			totalFill += fillN
@@ -1960,6 +1534,10 @@ type walkedAttrs struct {
 	clip         [2]bool       // [clipX, clipY]
 	overflow     [2]string     // [x, y] — "", "clip", "scrollbars"
 	nameAttr     string        // AttrAttribute "name" — for form-submit collection
+	idAttr       string        // AttrAttribute "id"
+	minAttr      string        // AttrAttribute "min" (range)
+	maxAttr      string        // AttrAttribute "max" (range)
+	stepAttr     string        // AttrAttribute "step" (range)
 	inputType    string        // AttrAttribute "type" — text/password/checkbox/radio/range/textarea/etc.
 	nearby       []nearbyEntry // captured AttrNearby items
 	events       []any         // every AttrEvent payload
@@ -2148,7 +1726,15 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					out.nameAttr = v
 				case "type":
 					out.inputType = v
-				case "id", "for", "rows", "cols", "min", "max", "step",
+				case "id":
+					out.idAttr = v
+				case "min":
+					out.minAttr = v
+				case "max":
+					out.maxAttr = v
+				case "step":
+					out.stepAttr = v
+				case "for", "rows", "cols", "spellcheck", "aria-label",
 					"required", "disabled", "checked", "readonly", "autofocus",
 					"autocomplete", "minlength", "maxlength", "pattern",
 					"href", "target", "src", "alt", "accept", "multiple", "selected",
@@ -2502,7 +2088,7 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 	// against neighbouring text. The track shading inside the
 	// input (paintInputBufferAdvanced) communicates bounds; the
 	// reverse-cursor + ☑ / ● glyphs communicate state.
-	if box.tag != "input" && box.borderWidth[0]+box.borderWidth[1]+box.borderWidth[2]+box.borderWidth[3] > 0 {
+	if !isInputTag(box.tag) && box.borderWidth[0]+box.borderWidth[1]+box.borderWidth[2]+box.borderWidth[3] > 0 {
 		drawBorder(grid, col0, row0, w, h, box.borderWidth, box.borderColor, box.borderStyle)
 	}
 
@@ -2511,19 +2097,42 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 	// HTML's intrinsic tab-stop behaviour — `Ui.link` carries no
 	// events but should still join the focus order so users can
 	// reach it by arrow / Tab and see the focused-link underline).
-	isInput := box.tag == "input"
+	isInput := isInputTag(box.tag)
 	isLink := box.tag == "a"
+	// A Ui.form carrying onSubmit is NOT a tab stop: its submit fires
+	// from Enter in one of its single-line inputs or from a
+	// type="submit" button inside it (the browser's implicit
+	// submission). It opens a form context its named controls join.
+	if box.tag == "form" {
+		if sub := tuiEventNamed(box.events, "submit"); sub != nil {
+			inputs.forms = append(inputs.forms, &tuiForm{submit: sub})
+			defer func() { inputs.forms = inputs.forms[:len(inputs.forms)-1] }()
+		}
+	}
 	thisFocusIdx := -1
-	if len(box.events) > 0 || isInput || isLink {
+	if tuiHasFocusEvents(box) || isInput || isLink {
 		thisFocusIdx = len(*focusables)
-		*focusables = append(*focusables, focusable{
+		f := focusable{
 			events:       box.events,
 			isInput:      isInput,
 			inputType:    box.inputType,
 			initialValue: box.valueAttr,
 			placeholder:  box.placeholder,
 			row:          row0, col: col0, w: w, h: h,
-		})
+			key:  inputs.nextKey(tuiFocusIdentity(box)),
+			tag:  box.tag,
+			name: box.nameAttr,
+			min:  box.minAttr,
+			max:  box.maxAttr,
+			step: box.stepAttr,
+			form: inputs.currentForm(),
+		}
+		if f.form != nil && isInput && f.name != "" {
+			f.form.fields = append(f.form.fields, tuiFormField{
+				name: f.name, key: f.key, inputType: f.inputType, valueAttr: box.valueAttr,
+			})
+		}
+		*focusables = append(*focusables, f)
 	}
 
 	// Recurse into content area (after padding + border). Inputs
@@ -2532,7 +2141,7 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 	// border inset — otherwise an input with `Border.width 1`
 	// would still consume cells for an invisible border.
 	bw := box.borderWidth
-	if box.tag == "input" {
+	if isInput {
 		bw = [4]int{}
 	}
 	innerCol := col0 + box.padding[3] + bw[3]
@@ -2562,7 +2171,7 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 		//   radio    → ◉ / ○  same way
 		//   range    → ──●── slider
 		//   textarea → multi-line editor
-		if box.tag == "input" {
+		if isInput {
 			focIdx := len(*focusables) - 1
 			focused := focIdx == focusIdx
 			switch box.inputType {
@@ -2573,10 +2182,18 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 			case "range":
 				paintSlider(grid, box, innerCol, innerRow, innerW, style, focused)
 			default:
-				st := inputs.get(focIdx)
+				st := inputs.get((*focusables)[focIdx].key)
+				// The model changed the value attr. Adopt it unless it is
+				// the model echoing the local edit (value == buffer), so
+				// the cursor stays put while typing mid-string. An input
+				// whose value attr never changes (uncontrolled, or a
+				// frame painted before the edit's Msg is applied) keeps
+				// the user's buffer.
 				if box.valueAttr != st.lastValueAttr {
-					st.buffer = box.valueAttr
-					st.cursor = runeLen(st.buffer)
+					if box.valueAttr != st.buffer {
+						st.buffer = box.valueAttr
+						st.cursor = runeLen(st.buffer)
+					}
 					st.lastValueAttr = box.valueAttr
 				}
 				masked := box.inputType == "password"
@@ -2952,34 +2569,74 @@ func paintRadio(grid [][]tuiCell, box layoutBox, col, row, w int, style textStyl
 	}
 }
 
-// paintSlider renders ──●── with the thumb (●) positioned proportional
-// to value within [min, max]. Min/max/step are in box.* (read from
-// AttrAttribute "min"/"max"/"step"; not yet wired — for v1 the slider
-// renders at midpoint).
+// paintSlider renders ├──●──┤ with the thumb (●) positioned proportional
+// to value within [min, max] (AttrAttribute "value" / "min" / "max",
+// defaults 0..100 as in HTML).
 func paintSlider(grid [][]tuiCell, box layoutBox, col, row, w int, style textStyle, focused bool) {
-	// v1: render a fixed midpoint thumb. min/max parsing is a polish
-	// pass; the user sees a slider widget that responds to focus and
-	// arrow keys (handled in main loop) without precise value mapping.
 	if w < 3 {
 		paintInputLine(grid, "●", col, row, w, style, false)
 		return
 	}
-	thumb := w / 2
+	lo, hi, _ := tuiRangeBounds(box.minAttr, box.maxAttr, box.stepAttr)
+	v := tuiRangeValue(box.valueAttr, lo, hi)
+	thumb := 0
+	if hi > lo {
+		thumb = int(math.Round((v - lo) / (hi - lo) * float64(w-1)))
+	}
 	for i := 0; i < w; i++ {
 		ch := "─"
-		if i == thumb {
-			ch = "●"
-		}
-		if i == 0 {
+		switch {
+		case i == thumb:
+			ch = "●" // the thumb wins over the end caps
+		case i == 0:
 			ch = "├"
-		} else if i == w-1 {
+		case i == w-1:
 			ch = "┤"
 		}
 		paintInputLine(grid, ch, col+i, row, 1, style, false)
 	}
-	if focused {
-		paintInputLine(grid, "▸", col, row, 1, style, false)
+	// Focus: reverse video on the thumb (the arrow keys move it).
+	if focused && row >= 0 && row < len(grid) && col+thumb >= 0 && col+thumb < len(grid[row]) {
+		grid[row][col+thumb].reverse = true
 	}
+}
+
+// tuiRangeBounds parses a range input's min / max / step with the HTML
+// defaults (0, 100, 1).
+func tuiRangeBounds(minS, maxS, stepS string) (lo, hi, step float64) {
+	lo, hi, step = 0, 100, 1
+	if v, err := strconv.ParseFloat(strings.TrimSpace(minS), 64); err == nil {
+		lo = v
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(maxS), 64); err == nil {
+		hi = v
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(stepS), 64); err == nil && v > 0 {
+		step = v
+	}
+	if hi < lo {
+		hi = lo
+	}
+	return lo, hi, step
+}
+
+// tuiRangeValue parses a range value, clamped to [lo, hi]; an unparsable
+// value sits at the midpoint (the HTML default).
+func tuiRangeValue(s string, lo, hi float64) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		v = lo + (hi-lo)/2
+	}
+	return math.Max(lo, math.Min(hi, v))
+}
+
+// tuiFormatRange prints a range value the way the browser reports it:
+// integers without a decimal point.
+func tuiFormatRange(v float64) string {
+	if v == math.Trunc(v) && math.Abs(v) < 1e15 {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 // mergeStyle layers a node's own style on top of inherited parent style.
@@ -3388,14 +3045,21 @@ func applyFocusIndicator(grid [][]tuiCell, box layoutBox, col, row, w, h int) {
 			return
 		}
 		rowCells := grid[innerRow]
-		if innerCol >= 0 && innerCol < len(rowCells) {
-			rowCells[innerCol].ch = "▸"
-			rowCells[innerCol].bold = true
+		left, right := innerCol, innerCol+innerW-1
+		// The markers may only take BLANK cells. When the label reaches
+		// the edge (a button without horizontal padding) a marker would
+		// overwrite a label character — or half of a wide glyph, whose
+		// continuation cell is "" — so fall back to reverse video, which
+		// keeps every label cell intact.
+		blank := func(c int) bool { return c >= 0 && c < len(rowCells) && rowCells[c].ch == " " }
+		if !blank(left) || !blank(right) {
+			applyReverse(grid, col, row, w, h)
+			return
 		}
-		if innerCol+innerW-1 >= 0 && innerCol+innerW-1 < len(rowCells) {
-			rowCells[innerCol+innerW-1].ch = "◂"
-			rowCells[innerCol+innerW-1].bold = true
-		}
+		rowCells[left].ch = "▸"
+		rowCells[left].bold = true
+		rowCells[right].ch = "◂"
+		rowCells[right].bold = true
 	case "a":
 		// Underline the entire content row (links already use underline
 		// semantically, this just makes focus state extra-clear).
@@ -3562,5 +3226,8 @@ func cellStyleSGR(c tuiCell) string {
 }
 
 func tuiPaint(frame string) {
-	fmt.Print(frame)
+	fmt.Fprint(tuiOut, frame)
 }
+
+// tuiOut is where frames are written (the terminal; tests discard it).
+var tuiOut io.Writer = os.Stdout

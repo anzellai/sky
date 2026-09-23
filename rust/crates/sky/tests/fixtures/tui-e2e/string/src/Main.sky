@@ -1,0 +1,40 @@
+module Main exposing (main)
+
+{-| Fixture for scripts/tui-e2e.sh — an App.tui String view with NO onKey
+handler. It must start (no exit 1), draw each view line at column 0 in raw
+mode, and quit on `q`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+
+init : () -> ( Int, Cmd () )
+init _ =
+    ( 0, Cmd.none )
+
+
+update : () -> Int -> ( Int, Cmd () )
+update _ n =
+    ( n + 1, Cmd.none )
+
+
+view : Int -> String
+view n =
+    "line one\nline two\ncount=" ++ String.fromInt n
+
+
+main : Task Error ()
+main =
+    App.run
+        (App.tui
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            })

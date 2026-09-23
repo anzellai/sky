@@ -1,0 +1,96 @@
+module Main exposing (main)
+
+{-| Fixture for scripts/tui-e2e.sh — an App.app on terminal:cli WITHOUT
+App.withInput. It must run init, its Cmds and its subscriptions, then exit 0:
+the slow Cmd.perform lands before the exit, Cmd.publish reaches the app's own
+Sub.subscribeTopic, and App.withGuard rejects the `Reveal` Msg.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Error as Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+
+type alias Model =
+    { loaded : Bool
+    , heard : String
+    , secret : String
+    }
+
+type Msg
+    = Loaded
+    | Heard String
+    | Reveal
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { loaded = False, heard = "", secret = "hidden" }
+    , Cmd.batch
+          [ Cmd.perform (Time.sleep 300) (\_ -> Loaded)
+          , Cmd.publish "room" "hello"
+          ]
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Loaded ->
+            ( { model | loaded = True }
+            , Cmd.perform (Task.succeed ()) (\_ -> Reveal)
+            )
+
+        Heard s ->
+            ( { model | heard = s }, Cmd.none )
+
+        Reveal ->
+            ( { model | secret = "REVEALED" }, Cmd.none )
+
+
+guard : Msg -> Model -> Result Error ()
+guard msg _ =
+    case msg of
+
+        Reveal ->
+            Err (Error.permissionDenied)
+
+        _ ->
+            Ok ()
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text
+              ("loaded="
+                  ++ (if model.loaded then
+                         "yes"
+
+                     else
+                         "no")
+                  ++ " heard="
+                  ++ model.heard
+                  ++ " secret="
+                  ++ model.secret)
+        ]
+
+
+main : Task Error ()
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.subscribeTopic "room" Heard
+            }
+            |> App.withGuard guard)

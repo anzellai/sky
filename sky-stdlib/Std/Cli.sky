@@ -25,7 +25,15 @@
 --         )
 --         |> Task.run
 -- ```
-module Std.Cli exposing (AppConfig, program, config, withOnLine, withDurable, readPassword)
+module Std.Cli exposing
+    ( AppConfig
+    , program
+    , config
+    , withOnLine
+    , withGuard
+    , withDurable
+    , readPassword
+    )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
@@ -55,9 +63,22 @@ program =
 
 
 -- | Attach a stdin-line handler — `onLine line` yields a `msg` per line read.
+-- The program reads stdin until EOF, then exits once every in-flight
+-- `Cmd.perform` has landed. WITHOUT a line handler the program reads no input:
+-- it runs `init`, its Cmds and its `Sub.every` timers, and exits 0 when nothing
+-- is left to happen.
 withOnLine : (String -> msg) -> AppConfig model msg -> AppConfig model msg
 withOnLine =
     Ffi.kernel "Cli_withOnLine"
+
+
+-- | Attach a per-Msg guard — `guard msg model` returns `Err` to reject the
+-- message before `update` runs (same contract as `Tui.withGuard` and
+-- Sky.Live: a rejected Msg sets `notification` / `notificationType` on the
+-- model when it has those fields).
+withGuard : (msg -> model -> Result Error ()) -> AppConfig model msg -> AppConfig model msg
+withGuard =
+    Ffi.kernel "Cli_withGuard"
 
 
 -- | Attach durable wiring (from `Std.App.withDurable`); the runtime restores the

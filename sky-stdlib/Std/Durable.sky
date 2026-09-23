@@ -835,8 +835,12 @@ saveSnapshot db runId codec seq model =
 
 
 {-| Load the last snapshot for `runId`, decoded with `codec`. `Nothing` if the run
-has no snapshot (a fresh run — start from your `init` Model) or the stored JSON
-does not decode under `codec` (a Model shape change without a migration).
+has no snapshot (a fresh run — start from your `init` Model). A stored snapshot
+that does NOT decode under `codec` (a Model shape change without a migration) is
+a `Decode` error, never `Nothing`: treating it as "no snapshot" would let the next
+save overwrite the only copy of the old state. `App.withDurable` reacts to the
+error by booting from `init` WITHOUT writing snapshots for that run, so the stored
+one is kept until it is migrated or removed.
 -}
 loadSnapshot : Db -> String -> Codec a -> Task Error (Maybe a)
 loadSnapshot db runId codec =
@@ -844,7 +848,7 @@ loadSnapshot db runId codec =
         db
         "SELECT model_json FROM _sky_durable_snapshot WHERE run_id = ?"
         [ SqlString runId ]
-        |> Task.map
+        |> Task.andThen
                (\rows ->
                    case List.head rows of
 
@@ -852,13 +856,19 @@ loadSnapshot db runId codec =
                            case Codec.fromJson codec (dictGet "model_json" row) of
 
                                Ok m ->
-                                   Just m
+                                   Task.succeed (Just m)
 
-                               Err _ ->
-                                   Nothing
+                               Err e ->
+                                   Task.fail
+                                       (Error.decode
+                                           ("Durable.loadSnapshot: the snapshot for run "
+                                               ++ runId
+                                               ++ " does not decode under the current codec ("
+                                               ++ Error.toString e
+                                               ++ ")"))
 
                        Nothing ->
-                           Nothing)
+                           Task.succeed Nothing)
 
 
 {-| Like `saveSnapshot`, but the caller does not manage the `seq` — it is

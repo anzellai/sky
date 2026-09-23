@@ -12,8 +12,8 @@
 -- `Tui.config { init, update, view, subscriptions }` produces an opaque
 -- `AppConfig`; attach the optional key handler / guard / canvas size with the
 -- `withX` builders. Two entry points share the one config: `app` (the
--- Std.Ui-rendered full-screen app) and `program` (a lighter loop that
--- requires an `onKey` handler). Every binding is an `Ffi.kernel` alias
+-- Std.Ui-rendered full-screen app) and `program` (a lighter loop over a
+-- `String` view). Every binding is an `Ffi.kernel` alias
 -- carrying its real HM signature, so the type-checker, LSP hover, and
 -- `sky doc` all read this ONE file.
 --
@@ -34,6 +34,7 @@ module Std.Tui exposing
     , program
     , config
     , withOnKey
+    , withOnLine
     , withGuard
     , withDurable
     , withCanvasWidth
@@ -67,8 +68,9 @@ app =
     Ffi.kernel "Tui_app"
 
 
--- | Run the lighter terminal loop (string `view`); requires an `onKey`
--- handler attached via `withOnKey`.
+-- | Run the lighter terminal loop (string `view`). `onKey` is optional:
+-- without it the program quits on `q`. Ctrl-C always quits (both entry
+-- points), and is never delivered to `onKey`.
 program : AppConfig model msg -> Task Error ()
 program =
     Ffi.kernel "Tui_program"
@@ -80,6 +82,15 @@ program =
 withOnKey : (key -> msg) -> AppConfig model msg -> AppConfig model msg
 withOnKey =
     Ffi.kernel "Tui_withOnKey"
+
+
+-- | Attach a line-input handler (what `App.withInput` wires on
+-- `terminal:tui`). The runtime adds a one-line prompt under the view; Enter
+-- dispatches `onLine line` and clears the prompt — the same contract as
+-- `Cli.withOnLine`, so one source behaves the same on both terminal targets.
+withOnLine : (String -> msg) -> AppConfig model msg -> AppConfig model msg
+withOnLine =
+    Ffi.kernel "Tui_withOnLine"
 
 
 -- | Attach durable wiring (from `Std.App.withDurable`); the runtime restores the

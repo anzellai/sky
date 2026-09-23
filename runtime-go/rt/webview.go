@@ -302,8 +302,11 @@ func webviewAppRun(cfg any) any {
 	// Initial state: call init () to get (model, cmd).
 	initRes := SkyCall(initFn, struct{}{})
 	model := tupleFirst(initRes)
+	// Shared TEA core: Cmd.perform / Cmd.publish + the reconciled
+	// subscription manager (tea_loop.go / tea_subs.go).
+	loop := newTeaLoop(msgCh, updateFn, nil, nil)
 	if cmd := tupleSecond(initRes); cmd != nil {
-		cliRunCmd(cmd, msgCh)
+		loop.runCmd(cmd)
 	}
 
 	// First render: VNode tree → HTML body → SetHtml/Navigate.
@@ -351,7 +354,7 @@ func webviewAppRun(cfg any) any {
 
 	// Subscription manager. Same shape as Sky.Tui / Sky.Cli — pushes
 	// Sub.every ticks into msgCh.
-	subMgr := newSubManager(msgCh)
+	subMgr := loop.subs
 	subMgr.update(subsFn, model)
 
 	// Update loop on a background goroutine — `webview.Run()` owns
@@ -366,8 +369,11 @@ func webviewAppRun(cfg any) any {
 				if !ok {
 					return
 				}
-				newModel := cliApplyUpdate(updateFn, msg, model, msgCh, nil)
-				model = newModel
+				appMsg, ok := loop.resolve(msg)
+				if !ok {
+					continue
+				}
+				model = loop.apply(appMsg, model)
 				subMgr.update(subsFn, model)
 
 				// Compute new tree + diff. Render once to populate
