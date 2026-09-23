@@ -190,7 +190,7 @@ func TestWriteEventJSONNoPatchesEmitsEmptyArray(t *testing.T) {
 
 func TestWriteEventHTMLSetsProtocolHeaders(t *testing.T) {
 	rr := httptest.NewRecorder()
-	writeEventHTML(rr, 99, map[string]int64{"r.0#input:q": 5}, "<p>ok</p>")
+	writeEventHTML(rr, 99, map[string]int64{"r.0#input:q": 5}, "<p>ok</p>", "")
 	if rr.Header().Get("Content-Type") != "text/html" {
 		t.Errorf("content-type = %q", rr.Header().Get("Content-Type"))
 	}
@@ -211,7 +211,7 @@ func TestWriteEventHTMLSetsProtocolHeaders(t *testing.T) {
 
 func TestWriteEventHTMLOmitsEmptyAck(t *testing.T) {
 	rr := httptest.NewRecorder()
-	writeEventHTML(rr, 5, nil, "<p>ok</p>")
+	writeEventHTML(rr, 5, nil, "<p>ok</p>", "")
 	if got := rr.Header().Get("X-Sky-Ack-Inputs"); got != "" {
 		t.Errorf("ack header should be absent when map is empty, got %q", got)
 	}

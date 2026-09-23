@@ -355,6 +355,85 @@ onInput (\s -> SetName s)  -- serialises as "SetName@<slot>"
 
 The server stores a per-session event-handler table. When the client posts a tagged event, the server looks up the handler closure and applies it to the decoded payload (input value, form data, etc.).
 
+## Event dispatch — handler ids and view identity
+
+**One handler id per event.** A handler id is `<sky-id>.<event>` and the
+client derives it for each event from the element's `sky-id`. An element with
+several handlers (`onChange` + `onEnter`, `onClick` + `onMouseOver`) sends each
+event to its own handler. The element still carries one `data-sky-hid` (its
+first event, sorted) for tools that scrape a handler id from a page; dispatch
+does not read it. An unnamed handler (a closure) renders `sky-<event>="_"`,
+never `""`, because a patch value of `""` means "remove the attribute".
+
+**Every event the view declares is bound.** The client reads the event names
+from the `sky-<event>` attributes in the DOM (not from a fixed list), so
+`contextmenu`, `scroll`, `reset`, `select`, `load`, `error` and custom events
+dispatch. `Ui.onFile` / `Ui.onImage` dispatch by handler id too.
+
+**A click resolves against the render it was made on.** Every render has a
+content id (`view`, a hash of the body, `live_view_version.go`). The page and
+every reply carry it; every event carries the id of the body the DOM showed
+when the user acted. The server keeps the handler maps of the last 16 distinct
+renders and resolves the handler id in THAT render. A click on row b made
+before the reply to a click on row a arrived deletes b, not the row that now
+sits where b was. An id the session no longer holds is a desync (the client is
+refreshed, the action dropped), never a different Msg. The same applies to
+the unload beacon and the retry queue. Because the id is a content hash, it
+survives a restart and a replica move: the rebuilt render of the same model has
+the same id. A request with no `view` (older clients) resolves against the
+current render, as before.
+
+**Delta frames name their base.** A `patches` frame and a JSON event reply
+carry `base` (the render the diff was computed against) and `view` (the render
+it produces). The client applies a delta only on top of its base. A delta that
+overtakes its predecessor is held and applied in order when the predecessor
+lands; if the base never arrives within 1.5 s the client asks for a resync
+(`__skyResync`, a full body, no Msg). Out-of-order frames are no longer
+dropped.
+
+**Events are sent in order.** Event POSTs are serialised (each waits for the
+previous reply), and a pending debounced input is sent before any other event,
+so `update` sees the typed text before the Enter or click that follows it.
+
+**Input authority is seq/ack based, not focus based.** A tracked input (one
+with an input handler) is dirty while it has keystrokes waiting for their
+debounce, keystrokes the server has not acked, or an IME composition in
+progress. Once acked, a model value applies even while the input has focus (a
+clear, a normalisation). An untracked input stays protected while it has focus
+and the user has typed into it. Removing `value` / `checked` / `selected` /
+`disabled` also resets the DOM property. When `update` rejects or normalises an
+edit, the reply carries a `value` patch for every reported input whose model
+value differs (the render did not change, so the diff alone was silent). A
+checkbox or radio the user toggled converges to the model after the reply
+(`data-sky-checked`, which `Std.Ui`'s checkbox and radio emit in both states,
+or the `checked` attribute). A number field sends its text, so a cleared field
+sends `""`. During an IME composition no input Msg is sent; the committed text
+is sent once on `compositionend`.
+
+**Tabs of one session.** A tab's SSE sends its URL path only when its document
+was loaded (first open, bfcache restore); a reconnect after a network blip is
+not a navigation and does not re-route the session's shared page under the
+other tabs. Those tabs' clicks resolve against the render they show.
+
+**Every dispatch path persists.** A Cmd.perform completion, the beacon batch,
+a Sub.every tick, pub/sub, stream and WebSocket deliveries write the session
+to its store, not only user events. A session restored from a store resumes
+its seq above a wall-clock floor (Unix ms x 1000), so a browser that applied
+frames from the previous process does not drop the new ones; the SSE `hello`
+carries a process epoch (`pe`) and the client resets its broadcast guard when
+it changes.
+
+**Subscriptions.** Every `Sub.every` leaf runs, reconciled by interval: a
+timer still requested keeps running with its phase across dispatches. After a
+restart or a replica move, the SSE connect re-establishes the session's
+subscriptions. A dispatch sets up subscriptions before it runs the Cmds, so a
+`Cmd.publish` reaches a subscription the same update opened.
+
+**Not found and failures.** An app with `withNotFound` renders its not-found
+page on every request, not only the first request of a session. A classified
+panic in `update` shows a small runtime banner on every tab of the session,
+whether or not the model has a `Notification` field.
+
 ## Session store interface
 
 ```go

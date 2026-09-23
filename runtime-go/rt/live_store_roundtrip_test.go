@@ -137,7 +137,10 @@ func TestValidateSessionValue_RejectsNestedFunc(t *testing.T) {
 // in-memory liveSession field has been renamed to `localSeq`.
 func TestEncodeSession_OutSeqRoundTrips(t *testing.T) {
 	sess := buildSess(map[string]any{"x": 1})
-	sess.localSeq = 47
+	// Above the wall-clock floor a restored session is lifted to (L7), so
+	// the persisted value is what comes back.
+	want := liveSeqFloor() + 1_000_000_000
+	sess.localSeq = want
 	blob, err := encodeSession(sess)
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
@@ -146,13 +149,13 @@ func TestEncodeSession_OutSeqRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
-	if decoded.localSeq != 47 {
-		t.Fatalf("localSeq did not round-trip: got %d, want 47", decoded.localSeq)
+	if decoded.localSeq != want {
+		t.Fatalf("localSeq did not round-trip: got %d, want %d", decoded.localSeq, want)
 	}
 	// nextLocalSeq must continue from the loaded value, not from zero.
 	next := decoded.nextLocalSeq()
-	if next != 48 {
-		t.Fatalf("nextLocalSeq after restart: got %d, want 48", next)
+	if next != want+1 {
+		t.Fatalf("nextLocalSeq after restart: got %d, want %d", next, want+1)
 	}
 }
 
@@ -164,5 +167,29 @@ func TestValidateSessionValue_AcceptsTypedNil(t *testing.T) {
 	v := map[string]any{"maybe": nilPtr}
 	if err := validateSessionValue(v, "root"); err != nil {
 		t.Fatalf("typed-nil pointer should be accepted: %v", err)
+	}
+}
+
+// TestDecodeSession_StaleOutSeqLiftedToFloor pins L7: a persisted OutSeq
+// can be OLDER than the seq the browser last applied (the store kept an
+// earlier write), and the client drops every frame at or below what it has
+// applied. The restored session must resume above the wall-clock floor,
+// which is above any seq an earlier process issued.
+func TestDecodeSession_StaleOutSeqLiftedToFloor(t *testing.T) {
+	sess := buildSess(map[string]any{"x": 1})
+	sess.localSeq = 3 // what an old process last persisted
+	blob, err := encodeSession(sess)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+	before := liveSeqFloor()
+	decoded, err := decodeSession(blob)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if decoded.localSeq < before {
+		t.Fatalf("restored localSeq %d is below the wall-clock floor %d: a browser "+
+			"that applied frames from the previous process would drop every fresh frame",
+			decoded.localSeq, before)
 	}
 }

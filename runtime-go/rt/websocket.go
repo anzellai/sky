@@ -957,11 +957,13 @@ func (app *liveApp) dispatchOneWsSub(sess *liveSession, reg *wsSubReg, ev wsEven
 		snap = sess.prepareFrameSnapshot(body)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
-			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
 		}
 		haveFrame = true
 	}
 	sess.mu.Unlock()
+	// L7: persist the model this delivery changed.
+	app.persistSession(sess)
 	if !haveFrame {
 		return
 	}

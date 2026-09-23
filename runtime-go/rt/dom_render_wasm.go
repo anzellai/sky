@@ -508,9 +508,9 @@ func spaNoteEventTarget(this js.Value) {
 //
 //   - text-like input / textarea / select: controlled when the VNode has a
 //     `value`; .value is rewritten when it differs (caret kept, clamped).
-//   - checkbox / radio: controlled when the VNode has `checked` or declares
-//     `data-sky-ctl="checked"` (Std.Ui's checkbox and radio, and
-//     Html.Attributes.checked False); .checked follows the VNode.
+//   - checkbox / radio: controlled when the VNode has `checked` or states
+//     `data-sky-checked` (Std.Ui's checkbox and radio, and
+//     Html.Attributes.checked); .checked follows the model value.
 //   - a file input is never touched.
 func spaReconcileControlled(root *VNode) {
 	el := spaEventTarget
@@ -535,10 +535,14 @@ func spaReconcileControlled(root *VNode) {
 		return
 	case "checkbox", "radio":
 		_, has := nv.Attrs["checked"]
-		if !has && nv.Attrs["data-sky-ctl"] != "checked" {
+		marker, marked := nv.Attrs["data-sky-checked"]
+		if !has && !marked {
 			return
 		}
 		want := has && boolAttr(nv.Attrs["checked"])
+		if marked {
+			want = marker == "true"
+		}
 		if el.Get("checked").Truthy() != want {
 			el.Set("checked", want)
 		}

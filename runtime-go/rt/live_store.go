@@ -1770,8 +1770,12 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		// Cycle 3 P36 / Gap C4: provision the terminal-teardown
 		// channel so persistent-store rehydrates can also be cleanly
 		// stopped by markDone when the session is later evicted.
-		done:     make(chan struct{}),
-		localSeq: st.OutSeq,
+		done: make(chan struct{}),
+		// L7: resume above the wall-clock floor, not at the persisted
+		// value alone — the persisted OutSeq can be older than the seq the
+		// browser last applied, and the client drops any frame at or below
+		// that (live_view_version.go, liveSeqFloor).
+		localSeq: restoredLocalSeq(st.OutSeq),
 	}
 	// Task #326: lastSeen is now an atomic.Int64 — can't be set in a
 	// struct literal, so seed it after construction.

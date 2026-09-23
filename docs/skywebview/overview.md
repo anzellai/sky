@@ -168,10 +168,13 @@ Bird's-eye view:
 1. **First render.** `view model` → `Std.Ui.Element` → HTML body
    via the Sky.Live renderer. The body lands inside
    `<div id="sky-root">` via `webview.SetHtml`.
-2. **Event dispatch.** Every DOM event (`click`, `input`, `submit`,
-   …) carries a `data-sky-hid` attribute identifying the handler
-   in the renderer-built map. The JS shim's `__skyBindEvents`
-   wires native listeners that forward `(handlerId, args)` to the
+2. **Event dispatch.** Every event an element declares (a
+   `sky-<event>` attribute: `click`, `input`, `submit`,
+   `contextmenu`, custom events, …) is bound. Its handler id is
+   `<sky-id>.<event>`, derived per event, so an element with
+   several handlers sends each event to its own handler. The JS
+   shim's `__skyBindEvents` wires native listeners that forward
+   `(handlerId, args)` to the
    Go-side `__skyDispatch` Bind callback. The bound function looks
    up the Msg ctor and pushes it onto a bounded `msgCh`.
 3. **Update loop.** A goroutine drains `msgCh`, runs

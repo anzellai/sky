@@ -271,9 +271,15 @@ When `__skyApplyPatches` processes a patch `p` targeting an element that is an i
 entry = __skyInputs[p.id]
 el    = querySelector([sky-id=p.id])
 
-if entry exists AND (el is focused OR entry.pendingDebounceId != null):
+if entry exists AND (entry.pendingDebounceId != null
+                    OR entry.lastSentSeq > entry.lastAckedSeq
+                    OR el is in an IME composition):
     DROP the value/checked/selected keys from p.attrs
     // apply the rest of the patch (class, style, aria-*, etc.)
+    // Focus alone does NOT make a tracked input dirty: once the user's
+    // keystrokes are acked, a model value (a clear, a normalisation)
+    // applies to the focused input. Only an UNTRACKED input (no input
+    // handler) is protected by focus + "typed since focus".
 
 else if entry exists AND p.attrs.value == entry.liveValue:
     DROP (server is echoing our own value — no-op)
@@ -309,16 +315,16 @@ The rule, per applier, for the control the event came from:
    `value` attribute. Write `.value` when it differs; keep the caret (clamped
    to the new length).
 3. `checkbox` / `radio`: controlled when the VNode has `checked`, or declares
-   `data-sky-ctl="checked"` (Std.Ui's checkbox and radio always do;
-   `Html.Attributes.checked False` renders it too, since "no `checked`" alone
-   cannot tell "unticked" from "uncontrolled"). Set `.checked` to whether the
-   VNode has `checked`.
+   states `data-sky-checked="true|false"` (Std.Ui's checkbox and radio always
+   do, in both states; `Html.Attributes.checked` renders it too, since "no
+   `checked`" alone cannot tell "unticked" from "uncontrolled"). Set `.checked`
+   to the stated model value.
 4. Never touch a `file` input, or a field with an open IME composition (the
    composition owns it; see below).
 
 Sky.Spa implements this in `spaReconcileControlled` (`dom_render_wasm.go`),
-run by `renderCurrent` after every patch set. A Sky.Live applier mirrors it
-for the element the event came from once the event's reply is applied.
+run by `renderCurrent` after every patch set. Sky.Live implements it as
+described below.
 
 **IME composition.** While a composition is open (`compositionstart` to
 `compositionend`, or `event.isComposing`), `input` events carry pre-edit text
@@ -326,6 +332,17 @@ and are NOT dispatched, and no `value` patch is written to that field. On
 `compositionend` the committed text is dispatched once (a following
 non-composing `input` event with the same value is not dispatched again). An
 Enter that confirms a composition does not fire `Ui.onEnter`.
+
+**Convergence rule (rejected or normalised edits).** The structural diff
+compares the new render with the previous render, so when `update` rejects or
+normalises an edit the render does not change and no patch is emitted. The
+event reply therefore also carries a `value` patch for every input reported in
+`inputState` whose rendered model value differs from what the client reported
+(`reconcileControlledInputs`). The client applies it once the input is no
+longer dirty, so the DOM converges to the model. A checkbox or radio the user
+toggled converges after the reply to its event, from `data-sky-checked` (both
+states) or the `checked` attribute. Removing `value` / `checked` / `selected`
+resets the DOM property as well as the attribute.
 
 ## Server state
 

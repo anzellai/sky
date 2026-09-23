@@ -310,12 +310,17 @@ checkbox attrs cfg =
         layoutAndControl = splitLayoutAttrs attrs
         layoutAttrs = fst layoutAndControl
         controlAttrs = snd layoutAndControl
+        -- `data-sky-checked` states the model in BOTH states, so a client
+        -- can tell a controlled unchecked box from an uncontrolled one and
+        -- converge the box to the model when `update` ignores a toggle.
         checkedAttrs =
             if cfg.checked then
-                [ Ui.htmlAttribute "checked" "checked", controlledChecked ]
+                [ Ui.htmlAttribute "checked" "checked"
+                , Ui.htmlAttribute "data-sky-checked" "true"
+                ]
 
             else
-                [ controlledChecked ]
+                [ Ui.htmlAttribute "data-sky-checked" "false" ]
         checkInput =
             inputElementWith
                 "checkbox"
@@ -457,10 +462,12 @@ renderRadioOption onChange selected RadioOption value labelEl =
         isChecked = value == selected
         checkedAttr =
             if isChecked then
-                [ Ui.htmlAttribute "checked" "checked", controlledChecked ]
+                [ Ui.htmlAttribute "checked" "checked"
+                , Ui.htmlAttribute "data-sky-checked" "true"
+                ]
 
             else
-                [ controlledChecked ]
+                [ Ui.htmlAttribute "data-sky-checked" "false" ]
         radioInput =
             Ui.input
                 ([ Ui.htmlAttribute "type" "radio"
@@ -600,15 +607,6 @@ implicitFillIfHoisted layoutAttrs =
 
     else
         [ Ui.width Ui.fill, Ui.height Ui.fill ]
-
-
--- The checked state of a Std.Ui checkbox / radio follows the model. The
--- marker tells the renderers so: after a click that update rejects, the
--- control is put back to what the model says (docs/skylive/
--- input-authority-protocol.md, "User-event reconcile").
-controlledChecked : Attribute msg
-controlledChecked =
-    Ui.htmlAttribute "data-sky-ctl" "checked"
 
 
 rowLayout : Attribute msg

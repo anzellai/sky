@@ -819,7 +819,19 @@ const webviewSharedJS = `
         var valueChanged = false;
         for (var j = 0; j < keys.length; j++) {
           var k = keys[j], v = p.attrs[k];
-          if (v === "") { el.removeAttribute(k); }
+          if (v === "") {
+            el.removeAttribute(k);
+            // Removing the attribute does not reset the DOM property the
+            // user may have changed (same rule as Sky.Live's applier): a
+            // model reset to "" must clear the field, a radio the model
+            // no longer picks must uncheck.
+            if (k === "value" && ("value" in el) && el.tagName !== "SELECT") {
+              if (el.value !== "") { el.value = ""; valueChanged = true; }
+            }
+            if (k === "checked") el.checked = false;
+            if (k === "selected") el.selected = false;
+            if (k === "disabled") el.disabled = false;
+          }
           else {
             el.setAttribute(k, v);
             if (k === "value" && ("value" in el)) {
@@ -829,6 +841,7 @@ const webviewSharedJS = `
             if (k === "checked") el.checked = v !== "" && v !== "false";
             if (k === "selected") el.selected = v !== "" && v !== "false";
             if (k === "disabled") el.disabled = v !== "" && v !== "false";
+            if (k === "data-sky-checked") el.checked = v === "true";
           }
         }
         if (hadFocus && valueChanged && savedSelStart !== null &&
@@ -853,20 +866,25 @@ const webviewSharedJS = `
   // Re-run after every patch because new sky-* attrs may have
   // appeared.
   var __skyBoundSentinel = "__skySkyBound";
+  // Every event the view declares is bound: the set is read from the
+  // sky-<event> attributes in the DOM, not from a fixed list (dblclick,
+  // mousedown, mouseup, contextmenu, scroll, custom events all work).
+  var __skyNonEventAttrs = {"sky-id": 1, "sky-nav": 1, "sky-key": 1, "sky-enter": 1};
   function __skyBindEvents(root) {
     root = root || document;
-    var events = ["click", "input", "change", "submit", "focus", "blur",
-                  "keydown", "keyup", "keypress", "mouseover", "mouseout"];
-    for (var ei = 0; ei < events.length; ei++) {
-      var ev = events[ei];
-      var sel = "[sky-" + ev + "]";
-      var nodes = root.querySelectorAll(sel);
-      for (var ni = 0; ni < nodes.length; ni++) {
-        var n = nodes[ni];
-        var key = __skyBoundSentinel + "_" + ev;
-        if (n[key]) continue;
-        n[key] = true;
-        n.addEventListener(ev, makeHandler(ev));
+    var all = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    for (var i = 0; i < all.length; i++) {
+      var n = all[i];
+      var attrs = n.attributes;
+      for (var j = 0; j < attrs.length; j++) {
+        var name = attrs[j].name;
+        if (name.length > 4 && name.lastIndexOf("sky-", 0) === 0 && !__skyNonEventAttrs[name]) {
+          var ev = name.slice(4);
+          var key = __skyBoundSentinel + "_" + ev;
+          if (n[key]) continue;
+          n[key] = true;
+          n.addEventListener(ev, makeHandler(ev));
+        }
       }
     }
     // Synthetic "enter" event (Ui.onEnter): the DOM has no "enter" event, so
@@ -880,25 +898,28 @@ const webviewSharedJS = `
       if (en[ekey]) continue;
       en[ekey] = true;
       en.addEventListener("keydown", function (e) {
-        if (e.key !== "Enter" || e.shiftKey) return;
-        var hid = e.currentTarget.getAttribute("data-sky-hid");
-        if (!hid) return;
+        if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+        if (!e.currentTarget.hasAttribute("sky-enter")) return;
         e.preventDefault();
-        try { window.__skyDispatch(hid, []); }
+        try { window.__skyDispatch(__skyHid(e.currentTarget, "enter"), []); }
         catch (err) { __skyWarn("__skyDispatch failed: " + err); }
       });
     }
   }
 
+  // __skyHid: the handler id the Go side registered for this element's
+  // handler of ev (<sky-id>.<event>). Derived per event: an element with
+  // several handlers dispatches each event to its own handler (the old
+  // single data-sky-hid attribute sent every event to the first one).
+  function __skyHid(el, ev) {
+    return (el.getAttribute("sky-id") || "") + "." + ev;
+  }
+
   function makeHandler(ev) {
     return function (e) {
       var t = e.currentTarget;
-      // data-sky-hid carries the handler id (sky-id.event); the
-      // Go-side handlers map looks up the actual Msg ctor from
-      // this. sky-<event> still holds the display name for
-      // debugging — but it's NOT the dispatch key.
-      var hid = t.getAttribute("data-sky-hid");
-      if (!hid) return;
+      if (!t.hasAttribute("sky-" + ev)) return; // handler removed by a patch
+      var hid = __skyHid(t, ev);
       var args = [];
       switch (ev) {
         case "submit":
@@ -910,12 +931,13 @@ const webviewSharedJS = `
           break;
         case "input":
         case "change":
+          if (ev === "input" && (e.isComposing || t.__skyComposing)) return;
           if (t.type === "checkbox" || t.type === "radio") {
             args = [t.checked];
-          } else if (t.type === "number" || t.type === "range") {
-            args = [parseFloat(t.value)];
           } else {
-            args = [t.value];
+            // number / range send the field text: a cleared number field
+            // is "" (it used to be NaN, dispatched as a number).
+            args = [t.value == null ? "" : String(t.value)];
           }
           break;
         case "keydown":
@@ -928,6 +950,20 @@ const webviewSharedJS = `
       catch (err) { __skyWarn("__skyDispatch failed: " + err); }
     };
   }
+
+  // IME composition: no Msg for a pre-edit; one on compositionend.
+  document.addEventListener("compositionstart", function (e) {
+    if (e.target) e.target.__skyComposing = true;
+  }, true);
+  document.addEventListener("compositionend", function (e) {
+    var t = e.target;
+    if (!t || !t.getAttribute) return;
+    t.__skyComposing = false;
+    if (t.hasAttribute("sky-input")) {
+      try { window.__skyDispatch(__skyHid(t, "input"), [t.value == null ? "" : String(t.value)]); }
+      catch (err) { __skyWarn("__skyDispatch failed: " + err); }
+    }
+  }, true);
 
   // Initial bind after the document is ready. SetHtml's body lands
   // synchronously so DOMContentLoaded has already fired by the time

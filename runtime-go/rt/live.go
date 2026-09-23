@@ -193,6 +193,22 @@ type liveSession struct {
 	model     any
 	handlers  map[string]any
 	prevTree  *VNode // Last rendered tree; used by the diff protocol.
+	// viewID — content id of the last committed body (liveViewID).
+	// handlerGens — the handler maps of the last liveHandlerHistory
+	// distinct bodies, newest first, so an event is resolved against the
+	// render the user clicked on (live_view_version.go). dispatchBase —
+	// viewID at the start of the current dispatch: the `base` a delta
+	// frame of this dispatch was diffed against. All under sess.mu.
+	viewID       string
+	handlerGens  []handlerGen
+	dispatchBase string
+	// lastDispatchErr — ref of the last classified dispatch panic, read
+	// (and cleared) by handleEvent so the acting tab shows a banner.
+	lastDispatchErr string
+	// everyRegs — the running Sub.every timers keyed by interval
+	// (applyEverySubsDiff). Guarded by everyMu, not sess.mu.
+	everyRegs map[string]*everyReg
+	everyMu   sync.Mutex
 	// View-body bookkeeping for the SSE no-op suppression contract
 	// (Cycle 3 P39 / Gap C2 — split out from the historical single
 	// `prevBody` field whose dual meaning had bitten v0.15.14).
@@ -491,6 +507,9 @@ func (s *liveSession) markDone() {
 			s.done = make(chan struct{})
 		}
 		close(s.done)
+		// Sub.every timers also select on `done`; stopping them here
+		// releases their registry entries at once.
+		s.stopAllEvery()
 		// Cycle 3 P46 + P48: release every pub/sub subscription
 		// bound to this session so its refcount on the broker
 		// drops to zero. Each cancel is idempotent (sync.Once on
@@ -601,6 +620,11 @@ func (s *liveSession) nextLocalSeq() int64 {
 func (s *liveSession) commitRender(vn *VNode, body string) {
 	s.prevTree = vn
 	s.lastComputedBody = body
+	// Register this render's handler map under the body's content id,
+	// so an event stamped with that id resolves here even after newer
+	// renders (live_view_version.go).
+	s.viewID = liveViewID(body)
+	s.recordRenderGeneration(s.viewID)
 	// Only ever grow the hint. A dispatch that renders an empty or error
 	// body (the panic-rollback path commits the PREVIOUS body back) would
 	// otherwise shrink the hint to nothing and hand the next full render
@@ -725,6 +749,12 @@ type frameSnapshot struct {
 	globalSeq int64
 	body      string
 	ackInputs map[string]int64
+	// view — content id of `body` (the render this frame brings the DOM
+	// to). base — content id of the render a `patches` frame was diffed
+	// against; the client applies the delta only on top of that render
+	// and buffers it otherwise (live_view_version.go).
+	view string
+	base string
 }
 
 // prepareFrameSnapshot captures (seq, body, ackInputs) under sess.mu so
@@ -751,6 +781,8 @@ func (s *liveSession) prepareFrameSnapshot(body string) frameSnapshot {
 		seq:       s.nextLocalSeq(),
 		body:      body,
 		ackInputs: ackInputsForPrevTree(s),
+		view:      s.viewID,
+		base:      s.dispatchBase,
 	}
 }
 
@@ -773,6 +805,8 @@ func (s *liveSession) prepareFrameSnapshotWithGlobalSeq(body string, globalSeq i
 		globalSeq: globalSeq,
 		body:      body,
 		ackInputs: ackInputsForPrevTree(s),
+		view:      s.viewID,
+		base:      s.dispatchBase,
 	}
 }
 
@@ -795,6 +829,9 @@ func encodeSSEFrameFromSnapshot(snap frameSnapshot) string {
 	}
 	if snap.ackInputs != nil {
 		frame["ackInputs"] = snap.ackInputs
+	}
+	if snap.view != "" {
+		frame["view"] = snap.view
 	}
 	b, err := json.Marshal(frame)
 	if err != nil {
@@ -883,6 +920,8 @@ type patchesEventEnvelope struct {
 	GlobalSeq int64            `json:"globalSeq,omitempty"`
 	AckInputs map[string]int64 `json:"ackInputs,omitempty"`
 	Patches   []Patch          `json:"patches"`
+	View      string           `json:"view,omitempty"`
+	Base      string           `json:"base,omitempty"`
 }
 
 // encodePatchesEventFromSnapshot serialises a frameSnapshot + patches
@@ -910,6 +949,8 @@ func encodePatchesEventFromSnapshot(snap frameSnapshot, patches []Patch) string 
 		GlobalSeq: snap.globalSeq,
 		AckInputs: snap.ackInputs,
 		Patches:   patches,
+		View:      snap.view,
+		Base:      snap.base,
 	}
 	b, err := json.Marshal(env)
 	if err != nil {
@@ -2394,7 +2435,14 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// If the URL doesn't match any registered route AND we already have
 	// a live session, 404 without touching it — prevents an unknown
 	// path wiping sess.handlers and breaking the next event POST.
-	if !routed && existing && sess != nil && sess.model != nil {
+	//
+	// L10: an app that declared `withNotFound` renders its not-found
+	// page on EVERY request, not only on the first request of a
+	// session (a bare Go 404 replaced the whole tab and dropped the
+	// runtime). Rendering it is safe for the session's other tabs: their
+	// events resolve against the render they clicked on, which the
+	// handler history keeps (live_view_version.go).
+	if !routed && existing && sess != nil && sess.model != nil && app.notFound == nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -2544,10 +2592,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	sess.model = model
 	sess.handlers = map[string]any{}
 
+	// Subscriptions first (L8): an init Cmd.publish must reach the topic
+	// this session subscribes to.
+	app.setupSubscriptions(sess)
 	if cmd != nil {
 		app.runCmd(sess, cmd)
 	}
-	app.setupSubscriptions(sess)
 
 	vn, _ := app.safeViewCall(model)
 	assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
@@ -2577,11 +2627,15 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		mirrorFrame = sseFrame{event: "patch", data: encodeSSEFrame(sess, body)}
 		mirror = true
 	}
+	initialView := sess.viewID
 	app.store.Set(sid, sess)
 	sess.mu.Unlock()
 	if mirror {
 		sess.fanOutFrame(mirrorFrame, navTab)
 	}
+	// The render id of this body: a sky-nav / popstate fetch adopts it
+	// from the header, a full page load from the inline script below.
+	w.Header().Set("X-Sky-View", initialView)
 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2634,7 +2688,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// override in the app's head. Empty string when app didn't
 	// supply `head` — byte-identical to pre-v0.15.58 output.
 	headExtra := renderAppHead(app.head, model)
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", baseMeta, headExtra, liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrfWithBase(sid, app.bannerCfg, csrfToken, app.basePath))
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", baseMeta, headExtra, liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrfWithBaseView(sid, app.bannerCfg, csrfToken, app.basePath, initialView))
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html
@@ -2766,6 +2820,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// originating tab (it already applied the patch on this HTTP
 		// response). Empty for pre-Phase-1 clients — seq-dedup covers it.
 		Tab string `json:"tab,omitempty"`
+		// View — content id of the render the client's DOM showed when
+		// the user acted (live_view_version.go). HandlerID resolves
+		// against THAT render's handlers, never a newer one. Empty for
+		// clients that predate view ids: the current render answers.
+		View string `json:"view,omitempty"`
 	}
 	// Bound event payload. Default 5 MiB (was 1 MiB hardcoded) —
 	// tiny JSON envelopes need almost nothing, but `Event.onFile` /
@@ -2848,6 +2907,9 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		for _, ev := range req.Batch {
 			app.dispatchBatched(sess, ev)
 		}
+		// L7: the beacon batch mutates the model like any event; persist
+		// it so a persistent store keeps the final keystrokes.
+		app.persistSession(sess)
 		// sendBeacon can't read the response — 204 just signals OK.
 		// X-Sky-Live header is harmless here (sendBeacon ignores it) but
 		// keeps the response signature consistent across all _sky/event
@@ -2876,7 +2938,28 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		// prior process (or prior dispatch) had written.
 		sess.commitRender(&vn, body)
 	}
-	msg, ok := sess.handlers[req.HandlerID]
+	// Resync request: the client holds delta frames it cannot place (a
+	// gap it waited out). Answer with the current view as a full body;
+	// no Msg is dispatched.
+	if req.Msg == "__skyResync" && req.HandlerID == "" {
+		body := sess.lastComputedBody
+		if body == "" || sess.prevTree == nil {
+			vn, _ := app.safeViewCall(sess.model)
+			assignSkyIDs(&vn, app.skyIDPrefixOrDefault())
+			applyStyleInjections(&vn)
+			sess.handlers = map[string]any{}
+			body = sess.renderBody(vn)
+			sess.commitRender(&vn, body)
+		}
+		sess.lastShippedBody = body
+		respSeq := sess.nextLocalSeq()
+		respAck := ackInputsForPrevTree(sess)
+		view := sess.viewID
+		sess.mu.Unlock()
+		writeEventHTML(w, respSeq, respAck, body, view)
+		return
+	}
+	msg, ok := sess.resolveHandler(req.View, req.HandlerID)
 	if !ok && req.Msg != "" && req.HandlerID == "" {
 		// Direct-send path: the frontend called __sky_send("MsgName", args)
 		// without a handler ID (e.g. Firebase auth callback, subscription
@@ -2948,9 +3031,10 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		sess.lastShippedBody = body
 		respSeq := sess.nextLocalSeq()
 		respAck := ackInputsForPrevTree(sess)
+		view := sess.viewID
 		sess.mu.Unlock()
 		w.Header().Set("X-Sky-Status", "desync")
-		writeEventHTML(w, respSeq, respAck, body) // also sets X-Sky-Live: 1
+		writeEventHTML(w, respSeq, respAck, body, view) // also sets X-Sky-Live: 1
 		return
 	}
 	// TEA application: if msg is a curried constructor (for onInput /
@@ -2967,8 +3051,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	sess.ingestInputState(req.InputState)
 	// Keep a reference to the previous tree BEFORE dispatch mutates it.
 	prev := sess.prevTree
+	baseView := sess.viewID
 	body2 := app.dispatch(sess, msg)
 	newTree := sess.prevTree
+	newView := sess.viewID
+	dispatchErr := sess.takeDispatchError()
 	// /_sky/event ships its reply directly down the POST response
 	// (writeEventJSON / writeEventHTML below), so for the suppression
 	// contract this counts as "the client received the new body".
@@ -3016,9 +3103,9 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if body2 != "" && sess.hasSSEConnOtherThan(req.Tab) {
 		var bpatches []Patch
 		if prev != nil && newTree != nil {
-			bpatches = diffTrees(prev, newTree, nil)
+			bpatches = liveDiff(prev, newTree, nil)
 		}
-		bsnap := frameSnapshot{seq: respSeq, body: body2}
+		bsnap := frameSnapshot{seq: respSeq, body: body2, view: newView, base: baseView}
 		sess.fanOutFrame(chooseSSEFrame(bsnap, prev, bpatches), req.Tab)
 	}
 
@@ -3027,7 +3114,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// client acknowledges the event without the server shipping a
 	// redundant HTML frame.
 	if body2 == "" {
-		writeEventJSON(w, respSeq, req.Seq, respAck, nil)
+		writeEventJSONView(w, respSeq, req.Seq, respAck, nil, newView, baseView, dispatchErr)
 		return
 	}
 	// When we have a prior tree we can reply with a minimal patch set
@@ -3049,13 +3136,17 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// `patchesAreFullReplace([])` returns false (length-1 check), so
 	// empty patches pass through to writeEventJSON.
 	if prev != nil && newTree != nil {
-		patches := diffTrees(prev, newTree, clientStateFromRequest(req.InputState))
+		patches := liveDiff(prev, newTree, clientStateFromRequest(req.InputState))
 		if !patchesAreFullReplace(patches) {
-			writeEventJSON(w, respSeq, req.Seq, respAck, patches)
+			// UF-5: an edit `update` rejected or normalised leaves the
+			// render unchanged, so the diff is silent; converge the
+			// reported inputs to the model.
+			patches = reconcileControlledInputs(newTree, req.InputState, patches)
+			writeEventJSONView(w, respSeq, req.Seq, respAck, patches, newView, baseView, dispatchErr)
 			return
 		}
 	}
-	writeEventHTML(w, respSeq, respAck, body2)
+	writeEventHTML(w, respSeq, respAck, body2, newView)
 }
 
 // writeEventJSON emits the structured /_sky/event response envelope:
@@ -3063,6 +3154,15 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 // The three protocol fields survive alongside the legacy `patches` key
 // so pre-upgrade clients continue to deserialise cleanly.
 func writeEventJSON(w http.ResponseWriter, seq, respondingTo int64, ackInputs map[string]int64, patches []Patch) {
+	writeEventJSONView(w, seq, respondingTo, ackInputs, patches, "", "", "")
+}
+
+// writeEventJSONView is writeEventJSON plus the view identity of the
+// reply: `view` is the content id of the render the patches bring the
+// DOM to, `base` the id they were diffed against (the client applies
+// them only on top of that render). errRef, when set, is the ref of a
+// classified dispatch panic the client shows as a banner (L12).
+func writeEventJSONView(w http.ResponseWriter, seq, respondingTo int64, ackInputs map[string]int64, patches []Patch, view, base, errRef string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Sky-Live", "1")
 	payload := map[string]any{
@@ -3078,6 +3178,15 @@ func writeEventJSON(w http.ResponseWriter, seq, respondingTo int64, ackInputs ma
 	if ackInputs != nil {
 		payload["ackInputs"] = ackInputs
 	}
+	if view != "" {
+		payload["view"] = view
+	}
+	if base != "" {
+		payload["base"] = base
+	}
+	if errRef != "" {
+		payload["error"] = errRef
+	}
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
@@ -3085,8 +3194,11 @@ func writeEventJSON(w http.ResponseWriter, seq, respondingTo int64, ackInputs ma
 // in headers so the client can update its seq bookkeeping without
 // parsing the HTML — X-Sky-Seq (single counter) and X-Sky-Ack-Inputs
 // (JSON-encoded map, absent when empty).
-func writeEventHTML(w http.ResponseWriter, seq int64, ackInputs map[string]int64, body string) {
+func writeEventHTML(w http.ResponseWriter, seq int64, ackInputs map[string]int64, body string, view string) {
 	h := w.Header()
+	if view != "" {
+		h.Set("X-Sky-View", view)
+	}
 	h.Set("Content-Type", "text/html")
 	h.Set("X-Sky-Live", "1")
 	h.Set("X-Sky-Seq", strconv.FormatInt(seq, 10))
@@ -3118,7 +3230,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		// handleEvent rebuild above.
 		sess.commitRender(&vn, body)
 	}
-	msg, ok := sess.handlers[ev.HandlerID]
+	msg, ok := sess.resolveHandler(ev.View, ev.HandlerID)
 	if !ok && ev.Msg != "" && ev.HandlerID == "" {
 		// v0.17 sealed-iface dispatch (mirrors handleEvent above).
 		localTag := -1
@@ -3188,7 +3300,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 			// from the now-unloading tab; observers in OTHER tabs
 			// rely on __skyApplyPatches' dirty-input authority
 			// filter to preserve their own in-flight typing.
-			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
 		}
 		haveFrame = true
 	}
@@ -3296,6 +3408,11 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// at whatever the last successful SSE emission set it to.
 	prevTreeOnEntry := sess.prevTree
 	prevComputedOnEntry := sess.lastComputedBody
+	handlersOnEntry := sess.handlers
+	gensOnEntry := sess.handlerGens
+	// The render this dispatch's delta frames are diffed against.
+	sess.dispatchBase = sess.viewID
+	sess.lastDispatchErr = ""
 	defer func() {
 		if r := recover(); r != nil {
 			// L8: a recovered dispatch panic used to write ONLY to stderr — an
@@ -3330,6 +3447,10 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 					"NotificationType": "error",
 				})
 			}()
+			// L12: the Notification field above only exists when the app
+			// declared one. Tell every tab of the session directly, so the
+			// user always sees that the action failed.
+			sess.pushDispatchError(errId)
 			body = ""
 			dispatchErr = fmt.Errorf("dispatch panic (ref %s): %v", errId, r)
 			// Roll back the view invariants. The current dispatch has
@@ -3338,6 +3459,8 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 			// suppression and diff baseline. Route through commitRender
 			// (Cycle 3 P40 / Gap C7) so the rollback path follows the
 			// same atomic-pair contract as every other write site.
+			sess.handlers = handlersOnEntry
+			sess.handlerGens = gensOnEntry
 			sess.commitRender(prevTreeOnEntry, prevComputedOnEntry)
 		}
 		ObserveMsgLog(msgLogCtx, sess.model, finalCmd, dispatchErr)
@@ -3429,10 +3552,12 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// compare against the last value the client actually received,
 	// not against this just-computed value.
 	sess.commitRender(&vn, body)
+	// Re-evaluate subscriptions based on the new model BEFORE running
+	// the Cmds (L8): a Cmd.publish in this update must reach a topic
+	// subscription this same update opened (the sender's own echo).
+	app.setupSubscriptions(sess)
 	// Process Cmds (may spawn goroutines)
 	app.runCmd(sess, cmd)
-	// Re-evaluate subscriptions based on new model
-	app.setupSubscriptions(sess)
 	return body
 }
 
@@ -3867,11 +3992,13 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 			// value/checked/selected attrs on dirty inputs, so
 			// in-flight typing is preserved without server-side
 			// clientState alignment.
-			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
 		}
 		haveFrame = true
 	}
 	sess.mu.Unlock()
+	// L7: a Cmd.perform completion mutates the model; persist it.
+	app.persistSession(sess)
 	if !haveFrame {
 		return
 	}
@@ -3979,16 +4106,15 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 		// previously active (e.g. user returned Sub.subscribeTopic
 		// last dispatch, returns Sub.none / no subscriptions fn now).
 		app.applyTopicSubsDiff(sess, nil)
+		app.applyEverySubsDiff(sess, nil)
 		return
 	}
 	subResult := sky_call(app.subscriptions, sess.model)
 	leaves := flattenSubs(subResult, nil)
 
-	// Partition leaves by kind. We honour ONE Sub.every per dispatch
-	// (the existing contract — see Sub_batch doc); any number of
-	// Sub.subscribeTopic entries; any number of Sub.subscribeStream
-	// entries (one per active Http.Stream).
-	var everyLeaf *subT
+	// Partition leaves by kind: every Sub.every (SA-4 — all of them, not
+	// only the first), any number of Sub.subscribeTopic entries, any
+	// number of Sub.subscribeStream entries (one per active Http.Stream).
 	desired := map[string]subT{}
 	desiredStreams := map[int64]subT{}
 	// v0.15.46: WebSocket subs keyed by `<socketID>:<wsKind>` so the
@@ -3998,10 +4124,6 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	for i := range leaves {
 		leaf := leaves[i]
 		switch leaf.kind {
-		case "every":
-			if everyLeaf == nil {
-				everyLeaf = &leaves[i]
-			}
 		case "subscribeTopic":
 			// Last-write-wins per topic — a user binding two decoders
 			// to the same topic in one dispatch is a misuse; we take
@@ -4016,42 +4138,18 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 		}
 	}
 
-	// Apply pub/sub diff BEFORE spawning the Time.every goroutine
-	// so a single dispatch's worth of work touches the registry
-	// once + lands on a coherent activeSubs map.
+	// Apply pub/sub diff BEFORE the Time.every reconcile so a single
+	// dispatch's worth of work touches the registry once + lands on a
+	// coherent activeSubs map.
 	app.applyTopicSubsDiff(sess, desired)
 	app.applyStreamSubsDiff(sess, desiredStreams)
 	app.applyWsSubsDiff(sess, desiredWs)
 
-	// Time.every — keep the existing goroutine shape verbatim.
-	if everyLeaf == nil {
-		return
-	}
-	sub := *everyLeaf
-	interval := time.Duration(sub.ms) * time.Millisecond
-	if interval <= 0 {
-		return
-	}
-	// Bug #339: read sess.cancelSub under the same mutex that
-	// guards its mutation. Without this the race detector flags a
-	// read/write race between this snapshot and a concurrent
-	// setupSubscriptions's close+reassign. The captured `cancel`
-	// is local to the goroutine for the rest of its lifetime, so
-	// the lock can be released immediately after the load.
-	sess.cancelSubMu.Lock()
-	cancel := sess.cancelSub
-	sess.cancelSubMu.Unlock()
-	// Cycle 3 P36 / Gap C4: also listen on the session-wide terminal
-	// `done` channel so the Tick goroutine exits when the session is
-	// evicted from its Store. `cancelSub` alone is insufficient
-	// because it's recreated by every setupSubscriptions call — a
-	// session deleted BETWEEN dispatches kept this goroutine alive
-	// pushing to an unread `sseCh` for the lifetime of the process.
-	// A `nil` done (test-constructed sessions that never enter a Store)
-	// is safe: select on a nil channel blocks forever.
-	done := sess.done
-	toMsg := sub.toMsg
-	go app.runTimeEvery(sess, toMsg, interval, cancel, done)
+	// Time.every — reconciled by interval (K4): a timer still requested
+	// keeps running with its phase across dispatches, instead of being
+	// cancelled and restarted by every update (which starved a slow
+	// timer whenever a faster event arrived more often than it fired).
+	app.applyEverySubsDiff(sess, leaves)
 }
 
 // runTimeEvery is the Time.every ticker loop. Split out of
@@ -4068,6 +4166,14 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 // nothing in the logs. See timeEveryTick for the lock discipline that makes a
 // recovered tick safe.
 func (app *liveApp) runTimeEvery(sess *liveSession, toMsg any, interval time.Duration, cancel, done <-chan struct{}) {
+	reg := &everyReg{}
+	reg.toMsg.Store(everyToMsg{fn: toMsg})
+	app.runTimeEveryReg(sess, reg, interval, cancel, done)
+}
+
+// runTimeEveryReg is runTimeEvery for a reconciled timer: each tick
+// reads the Msg constructor the LATEST `subscriptions` result supplied.
+func (app *liveApp) runTimeEveryReg(sess *liveSession, reg *everyReg, interval time.Duration, cancel, done <-chan struct{}) {
 	periodic.Every(periodic.Config{
 		Name:     "live.time-every",
 		Interval: interval,
@@ -4075,7 +4181,7 @@ func (app *liveApp) runTimeEvery(sess *liveSession, toMsg any, interval time.Dur
 		AlsoStop: done,
 		Report:   periodicReport,
 		Work: func(t time.Time) error {
-			app.timeEveryTick(sess, toMsg, t)
+			app.timeEveryTick(sess, reg.currentToMsg(), t)
 			return nil
 		},
 	})
@@ -4099,6 +4205,8 @@ func (app *liveApp) runTimeEvery(sess *liveSession, toMsg any, interval time.Dur
 // the assertion that matters most in this file.
 func (app *liveApp) timeEveryTick(sess *liveSession, toMsg any, t time.Time) {
 	snap, patches, prevTree, haveFrame := app.timeEveryDispatch(sess, toMsg, t)
+	// L7: a tick mutates the model; a persistent store must see it.
+	app.persistSession(sess)
 	// Suppress SSE write when the tick didn't change the view — prevents
 	// Time.every from pushing an identical HTML frame every interval.
 	if !haveFrame {
@@ -4157,7 +4265,7 @@ func (app *liveApp) timeEveryDispatch(sess *liveSession, toMsg any, t time.Time)
 			// interaction so server-driven body shipping previously hit every
 			// connected session at every interval. clientState nil: the SSE
 			// tick has no fresh inputState from the client.
-			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
 		}
 		haveFrame = true
 	}
@@ -4366,11 +4474,13 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 		snap = sess.prepareFrameSnapshotWithGlobalSeq(body, ev.GlobalSeq)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
-			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
 		}
 		haveFrame = true
 	}
 	sess.mu.Unlock()
+	// L7: persist the model this delivery changed.
+	app.persistSession(sess)
 	if !haveFrame {
 		return
 	}
@@ -4580,11 +4690,13 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 		snap = sess.prepareFrameSnapshot(body)
 		sess.lastShippedBody = body
 		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
-			patches = diffTrees(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
+			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
 		}
 		haveFrame = true
 	}
 	sess.mu.Unlock()
+	// L7: persist the model this delivery changed.
+	app.persistSession(sess)
 	if !haveFrame {
 		return
 	}
@@ -4685,6 +4797,11 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		"v":   1,
 		"sid": sid,
 		"ts":  time.Now().UnixMilli(),
+		// pe — this process's epoch. The broadcast counter (globalSeq)
+		// restarts at 1 in a new process; a client whose last applied
+		// broadcast came from an EARLIER process resets its guard when
+		// pe changes, instead of dropping every new broadcast (L7).
+		"pe": liveProcessEpoch,
 	})
 	if _, err := fmt.Fprintf(w, "event: hello\ndata: %s\n\n", helloPayload); err != nil {
 		return
@@ -4767,6 +4884,20 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			sess.lastShippedBody = body
 			snap = sess.prepareFrameSnapshot(body)
 			haveSnap = true
+		}()
+		// L8: a session restored from a store after a restart (or
+		// moved from another replica) has no running Sub.every timer
+		// and no topic/stream subscription — they lived in the old
+		// process. Re-establish them on every connection. The
+		// reconciliation is idempotent, so a same-process reconnect
+		// keeps the running timers and subscriptions as they are.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					LogRecoveredPanic("sky.live", "subscriptions on SSE connect", r)
+				}
+			}()
+			app.setupSubscriptions(sess)
 		}()
 		sess.mu.Unlock()
 		if haveSnap {
@@ -5529,9 +5660,17 @@ func liveJSWithCfgAndCsrf(sid string, cfg liveBannerConfig, csrfToken string) st
 }
 
 func liveJSWithCfgAndCsrfWithBase(sid string, cfg liveBannerConfig, csrfToken, basePath string) string {
+	return liveJSWithCfgAndCsrfWithBaseView(sid, cfg, csrfToken, basePath, "")
+}
+
+// liveJSWithCfgAndCsrfWithBaseView is the full client script; `view` is
+// the content id of the body the page was served with ("" when unknown:
+// the client then applies the first frame unconditionally).
+func liveJSWithCfgAndCsrfWithBaseView(sid string, cfg liveBannerConfig, csrfToken, basePath, view string) string {
 	return fmt.Sprintf(`
 var __skySid = %q;
 var __skyBase = %q;
+var __skyView = %q;
 // __skyTabId — a per-PAGE id generated once on load (Phase 1 multi-tab
 // fan-out). Sent on the SSE query (?tab=) so the server can address this
 // connection, and on every event POST so the server excludes THIS tab
@@ -5574,6 +5713,21 @@ var __skyClientSeq = 0;       // monotonic, client-owned; bumped on every __skyS
 var __skyLastAppliedSeq = 0;  // server-owned; largest local seq already applied
 var __skyLastGlobalSeq = 0;   // server-owned; largest broadcast globalSeq already applied (P47)
 var __skyInputs = {};         // sky-id → InputEntry (populated by __skyBindOne)
+
+// ── View identity (runtime-go/rt/live_view_version.go) ────────────
+// __skyView is the content id of the body the DOM shows. Every event
+// carries it, so the server resolves the handler against THAT render and
+// never against a newer one (a click on row b made before the reply to a
+// click on row a arrived must delete b). Delta frames name the render
+// they were diffed against (base): one that arrives before its base is
+// HELD until the base lands, then applied in order — or, if the base
+// never arrives, a resync replaces the DOM. Out-of-order frames are no
+// longer dropped for good (the stuck "loading" state).
+var __skyPendingFrames = [];
+var __skyGapTimer = null;
+var __skyGapWaitMs = 1500;
+var __skyProcEpoch = null;   // server process epoch from the SSE hello
+var __skySrcBySeq = {};      // event seq -> checkbox/radio that sent it
 
 function __skyInputEntry(sid) {
   var e = __skyInputs[sid];
@@ -5619,15 +5773,25 @@ function __skyIsDirty(el) {
   if (!el || el.nodeType !== 1) return false;
   var tag = el.tagName;
   if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return false;
-  if (el === document.activeElement) return true;
-  var hid = el.getAttribute && el.getAttribute("data-sky-hid");
-  if (hid && __skyInputPending[hid]) return true;
+  // IME composition in progress: the value is the pre-edit, never the
+  // user's final text.
+  if (el.__skyComposing) return true;
   var sid = el.getAttribute && el.getAttribute("sky-id");
   if (sid) {
+    // Keystrokes waiting for their debounce.
+    if (__skyInputPending[__skyHid(el, "input")]) return true;
+    // Keystrokes sent but not yet acked by the server.
     var e = __skyInputs[sid];
     if (e && e.lastSentSeq > e.lastAckedSeq) return true;
+    // A tracked input the server has acked is NOT dirty, even while it
+    // has focus: a programmatic model value (a clear, a normalisation)
+    // applies once the user's own keystrokes are acknowledged.
+    if (e) return false;
   }
-  return false;
+  // An input without a tracked handler (no sky-input): the server never
+  // hears its keystrokes, so the only evidence of typing is focus plus
+  // an edit since it took focus.
+  return el === document.activeElement && !!el.__skyTyped;
 }
 
 function __skyIngestSeq(seq, ackInputs, globalSeq) {
@@ -5668,15 +5832,124 @@ function __skyIngestSeq(seq, ackInputs, globalSeq) {
 // passed it; the localSeq guard alone suffices for the legacy
 // non-broadcast case (globalSeq omitted / 0 → broadcast guard always
 // passes).
-function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq) {
+//
+// View identity: "view" is the render the frame brings the DOM to;
+// "delta" frames (patch lists) also name their "base" render and apply
+// only on top of it — see __skyHoldFrame.
+function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq, view, base, delta) {
   if (typeof seq === "number" && seq > 0 && seq <= __skyLastAppliedSeq) {
     return; // stale — a newer local-seq frame already landed
   }
   if (typeof globalSeq === "number" && globalSeq > 0 && globalSeq <= __skyLastGlobalSeq) {
     return; // stale — a newer broadcast frame already landed
   }
+  if (delta && base && __skyView && base !== __skyView) {
+    // A delta computed against a render this DOM does not show yet (a
+    // frame overtook an earlier one). Hold it; applying it now would
+    // corrupt the DOM, dropping it would lose the change for good.
+    __skyHoldFrame({seq: seq, ackInputs: ackInputs, apply: applyFn,
+                    globalSeq: globalSeq, view: view, base: base});
+    return;
+  }
   __skyIngestSeq(seq, ackInputs, globalSeq);
   applyFn();
+  if (view) __skyView = view;
+  __skyReleaseHeld();
+}
+
+function __skyHoldFrame(f) {
+  __skyPendingFrames.push(f);
+  __skyPendingFrames.sort(function(a, b) { return (a.seq || 0) - (b.seq || 0); });
+  if (__skyPendingFrames.length > 32) __skyPendingFrames.shift();
+  if (__skyGapTimer === null) {
+    __skyGapTimer = setTimeout(function() {
+      __skyGapTimer = null;
+      if (__skyPendingFrames.length > 0) __skyRequestResync();
+    }, __skyGapWaitMs);
+  }
+}
+
+// __skyReleaseHeld applies every held delta whose base the DOM now
+// shows, in seq order, and discards held frames a newer frame superseded.
+function __skyReleaseHeld() {
+  var progressed = true;
+  while (progressed && __skyPendingFrames.length > 0) {
+    progressed = false;
+    for (var i = 0; i < __skyPendingFrames.length; i++) {
+      var f = __skyPendingFrames[i];
+      if (typeof f.seq === "number" && f.seq > 0 && f.seq <= __skyLastAppliedSeq) {
+        __skyPendingFrames.splice(i, 1);
+        i--;
+        continue;
+      }
+      if (!f.base || f.base === __skyView) {
+        __skyPendingFrames.splice(i, 1);
+        __skyIngestSeq(f.seq, f.ackInputs, f.globalSeq);
+        f.apply();
+        if (f.view) __skyView = f.view;
+        progressed = true;
+        break;
+      }
+    }
+  }
+  if (__skyPendingFrames.length === 0 && __skyGapTimer !== null) {
+    clearTimeout(__skyGapTimer);
+    __skyGapTimer = null;
+  }
+}
+
+// __skyRequestResync asks for the current view as a full body. Used when
+// a held delta's base never arrived. No Msg is dispatched.
+function __skyRequestResync() {
+  __skyClientSeq++;
+  __skyPostEvent({sessionId: __skySid, seq: __skyClientSeq, msg: "__skyResync",
+                  args: [], handlerId: "", tab: __skyTabId});
+}
+
+// __skyAfterEvent runs once the reply to event "seq" is applied. A
+// checkbox / radio the user toggled converges to the model: when update
+// rejected the toggle, no patch arrives, and the browser kept the box
+// ticked while the model said otherwise.
+function __skyAfterEvent(seq) {
+  var src = __skySrcBySeq[seq];
+  if (!src) return;
+  delete __skySrcBySeq[seq];
+  if (!src.isConnected || __skyIsDirty(src)) return;
+  var want = null;
+  if (src.hasAttribute("data-sky-checked")) {
+    want = src.getAttribute("data-sky-checked") === "true";
+  } else if (src.hasAttribute("checked") || src.__skyCheckedCtl) {
+    want = src.hasAttribute("checked");
+  }
+  if (want !== null && src.checked !== want) src.checked = want;
+}
+
+// __skyShowError: a small runtime banner for a classified update panic,
+// shown whether or not the app's model has a Notification field.
+var __skyErrorEl = null;
+var __skyErrorTimer = null;
+function __skyShowError(ref) {
+  if (!document.body) return;
+  if (!__skyErrorEl) {
+    __skyErrorEl = document.createElement("div");
+    __skyErrorEl.id = "__sky-error";
+    __skyErrorEl.setAttribute("role", "alert");
+    __skyErrorEl.style.cssText = [
+      "position:fixed", "left:50%%", "top:16px", "transform:translateX(-50%%)",
+      "padding:8px 16px", "border-radius:6px",
+      "font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+      "color:#fff", "background:#b91c1c", "box-shadow:0 2px 8px rgba(0,0,0,0.25)",
+      "z-index:2147483647", "pointer-events:none"
+    ].join(";");
+    document.body.appendChild(__skyErrorEl);
+  }
+  __skyErrorEl.textContent = "Something went wrong" + (ref ? " (ref " + ref + ")" : "") +
+      ". Your last action was not applied.";
+  __skyErrorEl.style.display = "block";
+  clearTimeout(__skyErrorTimer);
+  __skyErrorTimer = setTimeout(function() {
+    if (__skyErrorEl) __skyErrorEl.style.display = "none";
+  }, 8000);
 }
 
 // ── Focus preservation via node identity ────────────────────
@@ -5841,6 +6114,22 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     // attrs the user drives. The user's .value / .checked /
     // .selected DOM property survives untouched.
     __skyCopyAttrsExceptAuthority(placeholder, live);
+    // F9: the focused input keeps its node, but when the user's
+    // keystrokes are all acknowledged its value follows the model like
+    // any other patch (a clear / normalisation must show).
+    if (isFocused && !__skyIsDirty(live)) {
+      var pv = null;
+      if (live.tagName === "TEXTAREA") {
+        if (!__skyPlaceholderUncontrolled(placeholder)) pv = placeholder.value;
+      } else if (live.tagName === "INPUT" && placeholder.hasAttribute("value") &&
+                 live.type !== "checkbox" && live.type !== "radio" && live.type !== "file") {
+        pv = placeholder.getAttribute("value");
+      }
+      if (pv !== null && live.value !== pv) {
+        live.value = pv;
+        __skyNoteServerValue(live, pv);
+      }
+    }
     // Splice: replace the placeholder in tmp with the live node.
     // After this, the live node lives in tmp at the placeholder's
     // slot; the container still references it too (until the swap
@@ -6115,13 +6404,17 @@ function __skyLoaderEnd() {
 // ── Debounce ─────────────────────────────────────────────────
 var __skyInputTimers = {};
 var __skyInputPending = {};
-function __skyDebouncedSend(msgName, args, hid, delay) {
+function __skyDebouncedSend(msgName, args, hid, delay, src) {
   var key = hid || msgName;
   clearTimeout(__skyInputTimers[key]);
-  __skyInputPending[key] = { msgName: msgName, args: args, hid: hid };
+  // The view is captured NOW: the handler id belongs to the render the
+  // user typed into, whatever renders land before the debounce fires.
+  __skyInputPending[key] = { msgName: msgName, args: args, hid: hid, view: __skyView, src: src };
   __skyInputTimers[key] = setTimeout(function() {
+    var p = __skyInputPending[key];
     delete __skyInputPending[key];
-    __skySend(msgName, args, hid, { noLoader: true });
+    if (!p) return;
+    __skySend(p.msgName, p.args, p.hid, { noLoader: true, view: p.view, fromFlush: true, src: p.src });
   }, delay);
 }
 // Flush pending debounced input on blur (tab away / click elsewhere).
@@ -6129,14 +6422,42 @@ function __skyDebouncedSend(msgName, args, hid, delay) {
 // because the debounce hasn't fired yet.
 document.addEventListener("focusout", function(ev) {
   var t = ev.target;
-  if (!t) return;
-  var hid = t.getAttribute("data-sky-hid");
-  var key = hid || t.getAttribute("sky-input");
-  if (key && __skyInputPending[key]) {
+  if (!t || !t.getAttribute) return;
+  t.__skyTyped = false;
+  var key = __skyHid(t, "input");
+  if (__skyInputPending[key]) {
     clearTimeout(__skyInputTimers[key]);
     var p = __skyInputPending[key];
     delete __skyInputPending[key];
-    __skySend(p.msgName, p.args, p.hid, { noLoader: true });
+    __skySend(p.msgName, p.args, p.hid, { noLoader: true, view: p.view, fromFlush: true, src: p.src });
+  }
+}, true);
+// Any user edit, handled or not: an untracked focused input counts as
+// dirty once the user has typed into it (see __skyIsDirty).
+document.addEventListener("input", function(ev) {
+  var t = ev.target;
+  if (!t || !ev.isTrusted) return;
+  // A toggle is not typing: checkbox / radio state converges through
+  // __skyAfterEvent, and a file input has no text to protect.
+  if (t.type === "checkbox" || t.type === "radio" || t.type === "file") return;
+  t.__skyTyped = true;
+}, true);
+
+// ── IME composition (UF-11) ──────────────────────────────────────
+// While a composition is in progress the field holds the pre-edit
+// ("k", "かな"), not the user's text. No input Msg is sent and no server
+// value is written into the field until compositionend; then the
+// committed text is sent once.
+document.addEventListener("compositionstart", function(ev) {
+  if (ev.target) ev.target.__skyComposing = true;
+}, true);
+document.addEventListener("compositionend", function(ev) {
+  var t = ev.target;
+  if (!t || !t.getAttribute) return;
+  t.__skyComposing = false;
+  if (t.hasAttribute("sky-input")) {
+    __skyDispatchInput(t, t.getAttribute("sky-input"), __skyHid(t, "input"),
+                       [t.value == null ? "" : String(t.value)]);
   }
 }, true);
 
@@ -6166,7 +6487,8 @@ function __skyCollectPendingBatch() {
       seq: __skyClientSeq,
       msg: p.msgName || "",
       args: p.args || [],
-      handlerId: p.hid || ""
+      handlerId: p.hid || "",
+      view: p.view || ""
     });
   }
   return batch;
@@ -6209,7 +6531,7 @@ function __skyFlushPendingSync() {
   if (!batch) return;
   for (var i = 0; i < batch.length; i++) {
     var b = batch[i];
-    __skySend(b.msg, b.args, b.handlerId, {noLoader: true});
+    __skySend(b.msg, b.args, b.handlerId, {noLoader: true, view: b.view, fromFlush: true});
   }
 }
 
@@ -6256,7 +6578,10 @@ window.addEventListener("pagehide", function() {
 });
 // bfcache restore (Back/Forward): the SSE was closed on pagehide, so reopen it.
 window.addEventListener("pageshow", function(e) {
-  if (e.persisted && __skySSE === null && __skySseReopenTimer === null) { __skyOpenSSE(); }
+  if (e.persisted && __skySSE === null && __skySseReopenTimer === null) {
+    __skySsePathNext = true;
+    __skyOpenSSE();
+  }
 });
 
 // ── Core send ────────────────────────────────────────────────
@@ -6269,9 +6594,14 @@ window.addEventListener("pageshow", function(e) {
 //     before emitting patches.
 function __skySend(msgName, args, handlerId, opts) {
   opts = opts || {};
+  // L6: a pending debounced input is an EARLIER user action than this
+  // one. Send it first, so update sees the typed text before the Enter /
+  // click that follows it (it used to see an empty draft).
+  if (!opts.fromFlush) __skyFlushPendingSync();
   if (!opts.noLoader) __skyLoaderStart();
   __skyClientSeq++;
   var mySeq = __skyClientSeq;
+  if (opts.src) __skySrcBySeq[mySeq] = opts.src;
   // Stamp every currently-dirty input with this seq. The server's
   // ack (for a future response) will clear them back to parity.
   var dirtyIds = Object.keys(__skyInputs);
@@ -6288,7 +6618,9 @@ function __skySend(msgName, args, handlerId, opts) {
     msg: msgName || "",
     args: args || [],
     handlerId: handlerId || "",
-    tab: __skyTabId
+    tab: __skyTabId,
+    // The render the user acted on (L2): handlerId resolves against it.
+    view: (opts.view !== undefined && opts.view !== null) ? opts.view : __skyView
   };
   if (snapshot) body.inputState = snapshot;
   __skyPostEvent(body);
@@ -6310,7 +6642,22 @@ var __skyRetryAttempts = 0;
 // __skyEventQueueMax are templated at the top of this script from
 // the SKY_LIVE_RETRY_* / SKY_LIVE_QUEUE_MAX env vars (see
 // loadLiveBannerConfig).
+// Event POSTs are SERIALISED: each waits for the previous reply. Two
+// clicks in flight at once could reach the server in either order (and
+// a flushed debounce could land after the Enter that followed it). While
+// events wait in the retry queue, a new event queues behind them for the
+// same reason.
+var __skyPostChain = Promise.resolve();
+var __skyDraining = false;
 function __skyPostEvent(body) {
+  if (__skyEventQueue.length > 0 && !__skyDraining) {
+    __skyEventQueue.push(body);
+    return;
+  }
+  var run = function() { return __skyPostEventNow(body); };
+  __skyPostChain = __skyPostChain.then(run, run);
+}
+function __skyPostEventNow(body) {
   // Phase 1.2 — attach the per-session CSRF token. The server-side
   // middleware (runtime-go/rt/csrf_middleware.go) rejects POSTs
   // without a matching X-Sky-Csrf / __sky_csrf cookie pair. Empty
@@ -6318,7 +6665,7 @@ function __skyPostEvent(body) {
   // [security] csrf = false) — header omitted, middleware skipped.
   var headers = {"Content-Type":"application/json"};
   if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
-  fetch(__skyBase + "/_sky/event", {
+  return fetch(__skyBase + "/_sky/event", {
     method: "POST",
     headers: headers,
     body: JSON.stringify(body),
@@ -6373,7 +6720,8 @@ function __skyPostEvent(body) {
         var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
         var ack = null;
         if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
-        __skyHandleResponse(seq, ack, function() { __skyPatch(t); });
+        __skyHandleResponse(seq, ack, function() { __skyPatch(t); __skyAfterEvent(body.seq); },
+                            undefined, r.headers.get("X-Sky-View"), "", false);
       });
     }
     __skyConsecutiveResync = 0; // a normal response — reset the desync backstop
@@ -6408,7 +6756,9 @@ function __skyPostEvent(body) {
         if (!data) return;
         __skyHandleResponse(data.seq, data.ackInputs, function() {
           if (data.patches) __skyApplyPatches(data.patches);
-        }, data.globalSeq);
+          __skyAfterEvent(body.seq);
+        }, data.globalSeq, data.view, data.base, true);
+        if (data.error) __skyShowError(data.error);
       });
     }
     return r.text().then(function(t) {
@@ -6419,7 +6769,8 @@ function __skyPostEvent(body) {
       var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
       var ack = null;
       if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
-      __skyHandleResponse(seq, ack, function() { __skyPatch(t); });
+      __skyHandleResponse(seq, ack, function() { __skyPatch(t); __skyAfterEvent(body.seq); },
+                          undefined, r.headers.get("X-Sky-View"), "", false);
     });
   }).catch(function() {
     __skyLoaderEnd();
@@ -6494,7 +6845,8 @@ function __skyDrainQueue() {
   // back in. Order is preserved (FIFO) — the server's seq matching
   // tolerates late deliveries via __skyHandleResponse.
   var head = __skyEventQueue.shift();
-  __skyPostEvent(head);
+  __skyDraining = true;
+  try { __skyPostEvent(head); } finally { __skyDraining = false; }
 }
 
 // Apply a list of sky-id addressed patches with input authority (I1):
@@ -6606,10 +6958,25 @@ function __skyApplyPatches(patches) {
         // field, so the server's proposed value/checked/selected
         // would stomp in-flight keystrokes. Drop them and let the
         // next event round-trip settle the state.
-        if (dirty && (k === "value" || k === "checked" || k === "selected")) {
+        if (dirty && (k === "value" || k === "checked" || k === "selected" ||
+                      k === "data-sky-checked")) {
           continue;
         }
-        if (v === "") { el.removeAttribute(k); }
+        if (v === "") {
+          el.removeAttribute(k);
+          // F2/F3: value / checked / selected / disabled are DOM
+          // PROPERTIES once the user has touched the control; removing the
+          // attribute does not reset them. A model reset to "" left the
+          // old text on screen, and a radio group showed every option the
+          // user had ever picked as checked.
+          if (k === "value" && ("value" in el) && el.tagName !== "SELECT") {
+            if (el.value !== "") { el.value = ""; valueChanged = true; }
+            __skyNoteServerValue(el, "");
+          }
+          if (k === "checked") el.checked = false;
+          if (k === "selected") el.selected = false;
+          if (k === "disabled") el.disabled = false;
+        }
         else {
           // Idempotent setAttribute (#568): some elements re-fetch or
           // re-navigate on ANY assignment to certain attributes, even
@@ -6629,8 +6996,13 @@ function __skyApplyPatches(patches) {
           if (k === "value" && ("value" in el)) {
             el.value = v;
             valueChanged = true;
+            __skyNoteServerValue(el, v);
           }
-          if (k === "checked") el.checked = v !== "" && v !== "false";
+          if (k === "checked") {
+            el.checked = v !== "" && v !== "false";
+            el.__skyCheckedCtl = true;
+          }
+          if (k === "data-sky-checked") el.checked = v === "true";
           if (k === "selected") el.selected = v !== "" && v !== "false";
           if (k === "disabled") el.disabled = v !== "" && v !== "false";
         }
@@ -6788,6 +7160,15 @@ function __skyReplaceElement(el, html) {
   parent.replaceChild(__skyParseInto(parent, html), el);
 }
 
+// __skyNoteServerValue records a value the SERVER wrote into a tracked
+// input, so the next inputState snapshot reports what the field shows
+// rather than the user's last typed value (the server's I5 alignment
+// compares against it).
+function __skyNoteServerValue(el, v) {
+  var sid = el.getAttribute && el.getAttribute("sky-id");
+  if (sid && __skyInputs[sid]) __skyInputs[sid].liveValue = v;
+}
+
 function __skyContainsFocusedInput(el) {
   var a = document.activeElement;
   if (!a || a === document.body) return false;
@@ -6806,15 +7187,36 @@ function __skyEscapeHTML(s) {
 // Walks the DOM for sky-<event> attributes and binds a native listener
 // that extracts args and dispatches through the TEA update cycle.
 // Re-run after every DOM patch because new sky-* attrs may have appeared.
+// F12: every event the view declares is bound — the set is read from the
+// DOM (each sky-<event> attribute), not from a fixed list, so
+// contextmenu / scroll / reset / select / load / error / custom events
+// dispatch like click does.
+var __skyNonEventAttrs = {"sky-id": 1, "sky-nav": 1, "sky-key": 1, "sky-enter": 1};
 function __skyBindEvents(root) {
   root = root || document;
-  var events = ["click", "dblclick", "input", "change", "submit", "focus", "blur",
-                "keydown", "keyup", "keypress", "mouseover", "mouseout",
-                "mousedown", "mouseup"];
-  for (var i = 0; i < events.length; i++) {
-    __skyBindOne(root, events[i]);
+  var all = root.querySelectorAll ? root.querySelectorAll("*") : [];
+  for (var i = 0; i < all.length; i++) {
+    var el = all[i];
+    var attrs = el.attributes;
+    for (var j = 0; j < attrs.length; j++) {
+      var n = attrs[j].name;
+      if (n.length > 4 && n.lastIndexOf("sky-", 0) === 0 && !__skyNonEventAttrs[n]) {
+        __skyBindOneEl(el, n.slice(4));
+      }
+    }
+    if (el.hasAttribute("checked") && (el.type === "checkbox" || el.type === "radio")) {
+      el.__skyCheckedCtl = true;
+    }
   }
   __skyBindEnter(root);
+}
+
+// __skyHid is the handler id of el's handler for evName: the key the
+// server registered at render time (<sky-id>.<event>). Derived per event:
+// an element with several handlers (onChange + onEnter, onClick +
+// onMouseOver) resolves each event to its OWN handler.
+function __skyHid(el, evName) {
+  return ((el.getAttribute && el.getAttribute("sky-id")) || "") + "." + evName;
 }
 
 // Synthetic "enter" event (Ui.onEnter): the DOM has no "enter" event, so bind
@@ -6830,13 +7232,11 @@ function __skyBindEnter(root) {
     if (el["__sky_enter"]) continue;
     el["__sky_enter"] = true;
     el.addEventListener("keydown", function(ev) {
-      if (ev.key !== "Enter" || ev.shiftKey) return;
+      if (ev.key !== "Enter" || ev.shiftKey || ev.isComposing) return;
       var target = ev.currentTarget;
-      var msgName = target.getAttribute("sky-enter");
-      var hid     = target.getAttribute("data-sky-hid");
-      if (!msgName && !hid) return;
+      if (!target.hasAttribute("sky-enter")) return;
       ev.preventDefault();
-      __skySend(msgName, [], hid);
+      __skySend(target.getAttribute("sky-enter"), [], __skyHid(target, "enter"));
     });
   }
 }
@@ -6899,36 +7299,44 @@ function __skyRunPaths(root, push) {
 }
 
 function __skyBindOne(root, eventName) {
-  var selector = "[sky-" + eventName + "]";
-  var nodes = root.querySelectorAll(selector);
-  for (var i = 0; i < nodes.length; i++) {
-    var el = nodes[i];
-    if (el["__sky_" + eventName]) continue;
-    el["__sky_" + eventName] = true;
-    el.addEventListener(eventName, function(ev) {
-      var target = ev.currentTarget;
-      var msgName = target.getAttribute("sky-" + ev.type);
-      var hid     = target.getAttribute("data-sky-hid");
-      if (!msgName && !hid) return;
-      // Some events want preventDefault (submit, form-link navigation);
-      // click doesn't (we only intercept when the attribute is set).
-      if (ev.type === "submit") ev.preventDefault();
-      var args = __skyExtractArgs(ev);
-      if (ev.type === "input") {
-        // Track live value against sky-id so the snapshot bundled in
-        // the next __skySend reflects the user's actual DOM state,
-        // and so Step 3's patch filter can recognise dirty inputs.
-        var sid = target.getAttribute("sky-id");
-        if (sid) {
-          var e = __skyInputEntry(sid);
-          e.liveValue = args && args.length > 0 ? String(args[0]) : "";
-        }
-        __skyDebouncedSend(msgName, args, hid, 150);
-        return;
-      }
-      __skySend(msgName, args, hid);
-    });
+  var nodes = root.querySelectorAll("[sky-" + eventName + "]");
+  for (var i = 0; i < nodes.length; i++) __skyBindOneEl(nodes[i], eventName);
+}
+
+function __skyBindOneEl(el, eventName) {
+  if (el["__sky_" + eventName]) return;
+  el["__sky_" + eventName] = true;
+  el.addEventListener(eventName, function(ev) {
+    var target = ev.currentTarget;
+    // A patch can remove the handler after the listener was attached.
+    if (!target.hasAttribute("sky-" + ev.type)) return;
+    var msgName = target.getAttribute("sky-" + ev.type);
+    var hid = __skyHid(target, ev.type);
+    // Some events want preventDefault (submit, form-link navigation);
+    // click doesn't (we only intercept when the attribute is set).
+    if (ev.type === "submit") ev.preventDefault();
+    var args = __skyExtractArgs(ev);
+    var src = (target.type === "checkbox" || target.type === "radio") ? target : null;
+    if (ev.type === "input") {
+      // UF-11: no Msg for an IME pre-edit; compositionend sends the text.
+      if (ev.isComposing || target.__skyComposing) return;
+      __skyDispatchInput(target, msgName, hid, args, src);
+      return;
+    }
+    __skySend(msgName, args, hid, src ? {src: src} : undefined);
+  });
+}
+
+// __skyDispatchInput: record the live value against the input's sky-id
+// (so the snapshot bundled with the next send reflects the DOM, and the
+// patch filter recognises the input as dirty) and debounce the send.
+function __skyDispatchInput(target, msgName, hid, args, src) {
+  var sid = target.getAttribute("sky-id");
+  if (sid) {
+    var e = __skyInputEntry(sid);
+    e.liveValue = args && args.length > 0 ? String(args[0]) : "";
   }
+  __skyDebouncedSend(msgName, args, hid, 150, src);
 }
 
 // Extract the args array for a DOM event following the legacy Sky.Live
@@ -6944,7 +7352,9 @@ function __skyExtractArgs(ev) {
     case "change":
       if (!t) return [""];
       if (t.type === "checkbox" || t.type === "radio") return [t.checked];
-      if (t.type === "number" || t.type === "range") return [t.valueAsNumber || 0];
+      // UF-8: number / range send the field's TEXT. valueAsNumber is NaN
+      // for a cleared or partial ("-") number field and used to be sent
+      // as 0, so the model read 0 while the box was empty.
       return [t.value == null ? "" : String(t.value)];
     case "submit":
       // Form-data assembly. Two non-obvious rules:
@@ -7005,8 +7415,12 @@ function __skyExtractArgs(ev) {
 document.addEventListener("change", function(ev) {
   var el = ev.target;
   if (!el || el.tagName !== "INPUT" || el.type !== "file") return;
-  var fileId  = el.getAttribute("data-sky-ev-sky-file");
-  var imageId = el.getAttribute("data-sky-ev-sky-image");
+  // UF-3: the attribute VALUE is the Msg's display name, which is "_"
+  // (formerly "") for a function handler (Ui.onFile GotFile); test for
+  // presence and dispatch by handler id like every other event.
+  var hasFile  = el.hasAttribute("data-sky-ev-sky-file");
+  var hasImage = el.hasAttribute("data-sky-ev-sky-image");
+  if (!hasFile && !hasImage) return;
   var f = el.files && el.files[0];
   if (!f) return;
   // Client-side size guard via fileMaxSize. Saves the round-trip when
@@ -7025,21 +7439,23 @@ document.addEventListener("change", function(ev) {
     el.value = "";  // clear the input so the user can pick another
     return;
   }
-  if (fileId) {
+  if (hasFile) {
     var r = new FileReader();
     // __skySend's args param is List a on the wire (server expects
     // []json.RawMessage); a bare string would unmarshal-fail. Wrap
     // the data URL in a single-element array — the Sky-side Msg
     // constructor declared as 'String -> Msg' reads args[0].
-    r.onload = function(e) { __skySend(fileId, [e.target.result]); };
+    r.onload = function(e) {
+      __skySend(el.getAttribute("data-sky-ev-sky-file"), [e.target.result], __skyHid(el, "sky-file"));
+    };
     r.readAsDataURL(f);
   }
-  if (imageId) {
+  if (hasImage) {
     var maxW = parseInt(el.getAttribute("data-sky-ev-sky-file-max-width")  || "1200");
     var maxH = parseInt(el.getAttribute("data-sky-ev-sky-file-max-height") || "1200");
     __skyResizeImage(f, maxW, maxH, function(dataUrl) {
       // Same wire-format reason as the onFile branch — wrap in array.
-      __skySend(imageId, [dataUrl]);
+      __skySend(el.getAttribute("data-sky-ev-sky-image"), [dataUrl], __skyHid(el, "sky-image"));
     });
   }
 });
@@ -7106,6 +7522,8 @@ document.addEventListener("click", function(ev) {
         // handler see a matching pathname and replaceState (a no-op) instead.
         window.history.pushState({}, "", href);
         __skyPatch(t);
+        var nv = r.headers.get("X-Sky-View");
+        if (nv) __skyView = nv;
       });
     })
     .catch(function() { window.location.href = href; });
@@ -7117,7 +7535,11 @@ window.addEventListener("popstate", function() {
       // Back/Forward to a URL after the server lost our session
       // renders the 404 body as the whole page.
       if (!r.ok) { window.location.href = window.location.href; return; }
-      return r.text().then(__skyPatch);
+      return r.text().then(function(t) {
+        __skyPatch(t);
+        var nv = r.headers.get("X-Sky-View");
+        if (nv) __skyView = nv;
+      });
     })
     .catch(function() { /* Back/Forward fetch failed; leave URL alone. */ });
 });
@@ -7215,6 +7637,12 @@ var __skyHelloOk = false;     // server sent its handshake this connection
 var __skyWatchdogTimer = null;
 var __skySseReopenTimer = null;
 var __skyForcedClose = false; // true while we're tearing down to reopen
+// L3: "path" goes on the SSE URL only when THIS document was loaded
+// (first open, bfcache restore) — the server applies it as a
+// navigation. A reconnect after a network blip is not a navigation, so
+// it must not re-route the session's shared page under the user's other
+// tabs.
+var __skySsePathNext = true;
 function __skyOpenSSE() {
   __skyForcedClose = false;
   __skyHelloOk = false;
@@ -7233,7 +7661,10 @@ function __skyOpenSSE() {
   // WITHOUT a route-running GET; without the path the resync would push
   // the last-navigated page over the restored DOM). Re-read on every
   // (re)open so a bfcache restore sends the restored page's path.
-  __skySSE = new EventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId + "&path=" + encodeURIComponent(location.pathname));
+  var withPath = __skySsePathNext;
+  __skySsePathNext = false;
+  __skySSE = new EventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId +
+      (withPath ? "&path=" + encodeURIComponent(location.pathname) : ""));
   __skySSE.addEventListener("hello", function(e) {
     // Handshake received — we know we hit a real Sky.Live v2 server,
     // not a proxy that intercepted with a generic 200. Anything
@@ -7244,6 +7675,15 @@ function __skyOpenSSE() {
     __skyServerSpeaksV2 = true;
     __skyHelloOk = true;
     __skyLastSseAt = Date.now();
+    // L7: a new server process restarts its broadcast counter; reset the
+    // broadcast guard when the process epoch changes, or every broadcast
+    // of the new process would be dropped as already seen.
+    var hp = null;
+    try { hp = JSON.parse(e.data); } catch (_) {}
+    if (hp && hp.pe) {
+      if (__skyProcEpoch !== null && hp.pe !== __skyProcEpoch) __skyLastGlobalSeq = 0;
+      __skyProcEpoch = hp.pe;
+    }
     if (__skyStatusGraceTimer !== null) {
       clearTimeout(__skyStatusGraceTimer);
       __skyStatusGraceTimer = null;
@@ -7299,7 +7739,7 @@ function __skyOpenSSE() {
       __skyHandleResponse(frame.seq, frame.ackInputs, function() {
         if (document.activeElement && document.activeElement.tagName === "SELECT") return;
         if (frame.body) __skyPatch(frame.body.replace(/\\n/g, "\n"));
-      }, frame.globalSeq);
+      }, frame.globalSeq, frame.view, "", false);
     }
   });
   // Cycle 3 P50b / Gap C11 — structural-patches SSE event.
@@ -7360,7 +7800,14 @@ function __skyOpenSSE() {
     if (!frame || typeof frame !== "object" || !frame.patches) return;
     __skyHandleResponse(frame.seq, frame.ackInputs, function() {
       __skyApplyPatches(frame.patches);
-    }, frame.globalSeq);
+    }, frame.globalSeq, frame.view, frame.base, true);
+  });
+  // L12: a classified update panic in any dispatch path of this session.
+  __skySSE.addEventListener("skyerror", function(e) {
+    __skyLastSseAt = Date.now();
+    var d = null;
+    try { d = JSON.parse(e.data); } catch (_) {}
+    __skyShowError(d && d.ref ? d.ref : "");
   });
   __skySSE.addEventListener("open", function() {
     // EventSource fired open — but we don't trust this alone, since a
@@ -7587,7 +8034,7 @@ if (document.readyState === "loading") {
   __skyInit();
 }
 `,
-		sid, basePath, csrfToken, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax,
+		sid, basePath, view, csrfToken, cfg.Enabled, cfg.BaseMs, cfg.MaxMs, cfg.MaxAttempts, cfg.QueueMax,
 		jsString(cfg.Reconnecting), jsString(cfg.Offline),
 		cfg.HelloTimeoutMs, cfg.HeartbeatTtlMs,
 	)

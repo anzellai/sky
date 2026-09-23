@@ -67,8 +67,10 @@ func TestWebviewSharedJSContract(t *testing.T) {
 		"function __skyReplaceHTMLPreservingFocus",
 		// Bridge into Go via webview.Bind.
 		"window.__skyDispatch(hid, args)",
-		// data-sky-hid is the dispatch key (NOT msgName).
-		`getAttribute("data-sky-hid")`,
+		// The dispatch key is the per-event handler id <sky-id>.<event>
+		// (NOT msgName, and NOT the element's single data-sky-hid, which
+		// names only its first event).
+		`return (el.getAttribute("sky-id") || "") + "." + ev;`,
 	} {
 		if !strings.Contains(webviewSharedJS, want) {
 			t.Errorf("webviewSharedJS missing %q", want)
