@@ -4249,10 +4249,11 @@ func (app *liveApp) applyTopicSubsDiff(sess *liveSession, desired map[string]sub
 				gDoneOnce.Do(func() { close(gDone) })
 			}
 			reg := &subRegistration{
-				topic:  topic,
-				ch:     ch,
-				cancel: wrappedCancel,
-				toMsg:  leaf.toMsg,
+				topic:       topic,
+				ch:          ch,
+				cancel:      wrappedCancel,
+				toMsg:       leaf.toMsg,
+				payloadKind: leaf.payloadKind,
 			}
 			sess.activeSubs[topic] = reg
 			spawn = append(spawn, spawnEntry{reg: reg, gDone: gDone})
@@ -4319,7 +4320,7 @@ func (app *liveApp) runSubscriberLoop(sess *liveSession, reg *subRegistration, g
 				if !open {
 					return
 				}
-				app.runSubscriberDispatch(sess, reg.toMsg, ev)
+				app.runSubscriberDispatch(sess, TypedTopicDecoder(reg.payloadKind, reg.toMsg), ev)
 			}
 		}
 	})
@@ -4343,7 +4344,16 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 				msg = nil
 			}
 		}()
-		msg = sky_call(toMsg, ev.Payload)
+		var derr *TopicDecodeError
+		msg, derr = decodeTopicPayload(ev.Topic, toMsg, ev.Payload)
+		if derr != nil {
+			// A payload the subscriber's decoder cannot take: classified,
+			// logged once, event dropped, model untouched.
+			fmt.Fprintf(os.Stderr,
+				"[sky.live] pub/sub decode error (TopicDecode): %s. The event is dropped.\n",
+				derr.Error())
+			msg = nil
+		}
 	}()
 	if msg == nil {
 		return

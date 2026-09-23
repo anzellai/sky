@@ -200,6 +200,11 @@ jobs:
           command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
           scripts/spa-restore-e2e.sh
           scripts/spa-stale-handler-e2e.sh
+      # Ui.onKeyDown renders + dispatches, typed Ui.onSubmit decodes strictly
+      # (a bad field drops the submit with a FormDecode error), and a
+      # literal-topic pub/sub delivers — on Sky.Live AND Sky.Spa.
+      - name: Gate — Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
+        run: scripts/ui-forms-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported
       # "binary missing" for two examples and "N% pixels exceed" for nine

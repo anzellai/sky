@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -1878,6 +1879,11 @@ type subT struct {
 	batch []any
 	// Pub/sub field (kind = "subscribeTopic"). Cycle 3 P46.
 	topic string
+	// payloadKind is the primitive kind the decoder takes ("String", "Int",
+	// "Float", "Bool"), or "" when the lowerer could not tag it
+	// (topic_decode.go). A payload of another kind is a classified decode
+	// error, not a lenient narrowing.
+	payloadKind string
 	// Streaming-HTTP field (kind = "subscribeStream"). Cycle 4 HS.
 	streamID int64
 	// WebSocket fields (kind = "subscribeWebSocket"). v0.15.46.
@@ -1970,10 +1976,12 @@ func Cmd_publishNoEcho(topic, payload any) SkyCmd {
 // goroutine (P48) calls it with each incoming SessionEvent.Payload
 // to produce a Msg for `update`.
 func Sub_subscribeTopic(topic, toMsg any) SkySub {
+	fn, kind := topicDecoderParts(toMsg)
 	return subT{
-		kind:  "subscribeTopic",
-		topic: fmt.Sprintf("%v", topic),
-		toMsg: toMsg,
+		kind:        "subscribeTopic",
+		topic:       fmt.Sprintf("%v", topic),
+		toMsg:       fn,
+		payloadKind: kind,
 	}
 }
 
@@ -2022,6 +2030,9 @@ func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 	cur := msg
 	for _, raw := range args {
 		v := decodeMsgArg(cur, raw)
+		if _, bad := v.(msgDecodeError); bad {
+			return v
+		}
 		if !argAssignableToFunc(cur, v) {
 			logMsgDecodeError(cur, v, raw)
 			return msgDecodeError{}
@@ -2061,6 +2072,31 @@ func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 // already in scope at the dispatch boundary.
 func decodeMsgArg(fn any, raw json.RawMessage) any {
 	rv := reflect.ValueOf(fn)
+	// A JSON object is a form submit (the only event whose payload is an
+	// object — see __skyExtractArgs). It decodes strictly into the handler's
+	// record (form_decode.go): a typed record parameter is built here, and an
+	// `any` parameter receives FormFields, which the handler's own rt.Coerce
+	// decodes with the same rules. A Dict-typed handler keeps the plain map
+	// decode below.
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' &&
+		rv.Kind() == reflect.Func && rv.Type().NumIn() > 0 {
+		paramT := rv.Type().In(0)
+		if paramT.Kind() == reflect.Struct || paramT.Kind() == reflect.Interface {
+			var m map[string]any
+			if err := json.Unmarshal(trimmed, &m); err == nil {
+				fields := NewFormFields(m)
+				if paramT.Kind() == reflect.Interface {
+					return fields
+				}
+				rec, derr := decodeFormRecord(fields, paramT)
+				if derr != nil {
+					logFormDecodeError(derr.(*FormDecodeError))
+					return msgDecodeError{}
+				}
+				return rec.Interface()
+			}
+		}
+	}
 	if rv.Kind() == reflect.Func && rv.Type().NumIn() > 0 {
 		paramT := rv.Type().In(0)
 		if paramT.Kind() != reflect.Interface {
@@ -2314,6 +2350,11 @@ func argAssignableToFunc(fn any, arg any) bool {
 func safeSkyCall(fn any, arg any) (result any) {
 	defer func() {
 		if r := recover(); r != nil {
+			if fe, ok := asFormDecodeError(r); ok {
+				logFormDecodeError(fe)
+				result = msgDecodeError{}
+				return
+			}
 			fmt.Fprintf(os.Stderr,
 				"[sky.live] Msg dispatch recovered from panic: %v "+
 					"(fn kind=%s, arg=%T %v)\n",

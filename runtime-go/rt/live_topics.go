@@ -376,6 +376,8 @@ type subRegistration struct {
 	ch     <-chan SessionEvent
 	cancel func()
 	toMsg  any
+	// payloadKind: see subT.payloadKind (topic_decode.go).
+	payloadKind string
 }
 
 // diffSubscriptions computes the (added, removed) topic sets between

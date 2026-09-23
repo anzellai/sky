@@ -19,7 +19,6 @@ import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes as Attr
-import Std.Html.Events as Events
 import Std.Css as Css
 
 
@@ -996,8 +995,6 @@ noteViewPage email note =
                                   , Attr.action ("/notes/delete?id=" ++ noteId)
                                   , Attr.style
                                         (Css.styles [ Css.display Css.Inline ])
-                                  , Events.onSubmit
-                                        "return confirm('Delete this note?')"
                                   ]
                                   [ button
                                         [ Attr.type_ "submit"

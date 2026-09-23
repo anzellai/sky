@@ -145,6 +145,8 @@ fn code_title(code: &str) -> &'static str {
         // E2008 is the first free code in the type-error band.
         "E2008" => "UNSUPPORTED DICT KEY",
         "E2009" => "UN-DERIVABLE CODEC ELEMENT",
+        "E2010" => "FORM SUBMIT HANDLER",
+        "E2011" => "PUB/SUB PAYLOAD MISMATCH",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",
         _ => "ERROR",
