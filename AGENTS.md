@@ -321,8 +321,9 @@ The build rewrites `App.run` → the target's `run<Backend>` (DCE prunes the res
 and, for the Spa targets, **synthesises a `Spa.app` from your `App.app`** and feeds
 the existing auto-split — so client targets need **no** separate `Std.Spa` entry.
 `web` requires `App.withNotFound` (compile-enforced). Invalid combos are rejected
-at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` type-checks
-the core (target-scoped for a specific backend). For a `Std.Html` view use
+at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` checks
+the same target a bare `sky build` builds (`--target`, else `[app] target`, else
+`web`), so check ≡ build. For a `Std.Html` view use
 `App.web` instead of `App.app` (same builders, HTML family only); for a
 hand-authored terminal `view : model -> String` use **`App.cli`** (line-oriented)
 or **`App.tui`** (full-screen) — terminal-only, so pin the backend with `[app]

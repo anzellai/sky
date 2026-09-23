@@ -1,0 +1,116 @@
+-- SA-1 regression fixture: `App.withGuard` is attached through a LOCAL HELPER
+-- (`|> secured`, `secured a = a |> App.withGuard guard`). On `--target web:app`
+-- the guard must reach the generated backend, so `/_rpc/Reveal` answers 403.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { flag : String
+    , secret : String
+    , log : String
+    }
+
+type Msg
+    = Line String
+    | Admin
+    | Reveal
+    | Revealed (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { flag = "none", secret = "hidden", log = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Line l ->
+            ( { model | log = model.log ++ l }, Cmd.none )
+
+        Admin ->
+            ( { model | flag = "ADMIN" }, Cmd.none )
+
+        Reveal ->
+            ( model, Cmd.perform (System.getenv "HOME") Revealed )
+
+        Revealed (Ok s) ->
+            ( { model | secret = s }, Cmd.none )
+
+        Revealed (Err e) ->
+            ( { model | secret = "err " ++ Error.toString e }, Cmd.none )
+
+
+guard : Msg -> Model -> Result Error ()
+guard msg _ =
+    case msg of
+
+        Admin ->
+            Err (Error.invalidInput "admin denied")
+
+        Reveal ->
+            Err (Error.invalidInput "reveal denied")
+
+        _ ->
+            Ok ()
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "flag" ]
+              (Ui.text ("flag=" ++ model.flag))
+        , Ui.el
+              [ Ui.htmlAttribute "id" "secret" ]
+              (Ui.text ("secret=" ++ model.secret))
+        , Ui.button
+              [ Ui.htmlAttribute "id" "admin" ]
+              { onPress = Just Admin, label = Ui.text "admin" }
+        , Ui.button
+              [ Ui.htmlAttribute "id" "reveal" ]
+              { onPress = Just Reveal, label = Ui.text "reveal" }
+        ]
+
+
+onLine : String -> Msg
+onLine l =
+    if l == "admin" then
+        Admin
+
+    else if l == "reveal" then
+        Reveal
+
+    else
+        Line l
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.withInput onLine
+        |> secured
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 9232 })
+
+
+secured a =
+    a |> App.withGuard guard
+
+
+main =
+    App.run appDef

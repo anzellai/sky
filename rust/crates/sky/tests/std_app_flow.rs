@@ -59,6 +59,10 @@ fn ui_layout_any_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-ui-layout-any")
 }
 
+fn guard_helper_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-guard-helper")
+}
+
 fn web_any_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-web-any")
 }
@@ -336,9 +340,9 @@ fn all_five_runners_typecheck_and_build_off_one_app_value() {
 
 #[test]
 fn a_dispatched_entry_checks_target_scoped() {
-    // Bare `sky check` on a dispatched entry (exposes `app`, no `main`) checks
-    // the three view-adapter runners (runTui/runCli/runSpa) — none of which force
-    // a capability — so a well-formed app passes without a fallback page.
+    // Bare `sky check` on a dispatched entry checks the target a bare `sky
+    // build` builds (`web` here); the fixture declares `withNotFound`, so it
+    // passes.
     if !required(Need::Go, have_go()) {
         return;
     }
@@ -358,15 +362,25 @@ fn a_dispatched_entry_checks_target_scoped() {
     );
 }
 
+/// Pin the persisted `[app] target` of a staged fixture copy.
+fn pin_app_target(dir: &std::path::Path, target: &str) {
+    let toml = dir.join("sky.toml");
+    let mut s = std::fs::read_to_string(&toml).expect("read sky.toml");
+    s.push_str(&format!("\n[app]\ntarget = \"{target}\"\n"));
+    std::fs::write(&toml, s).expect("write sky.toml");
+}
+
 #[test]
 fn a_terminal_only_app_checks_and_builds_without_a_fallback() {
     // The phantom capability model must NOT force `notFound` on an app that never
-    // targets web. A NoFallback app: bare check passes; terminal:cli builds.
+    // targets web. A NoFallback app that pins its terminal backend in sky.toml:
+    // bare check passes (it checks the pinned target); terminal:cli builds.
     if !required(Need::Go, have_go()) {
         return;
     }
     let _build_guard = BUILD_LOCK.lock().unwrap();
     let dir = copy_fixture_to_temp(terminal_fixture_dir(), "term");
+    pin_app_target(&dir, "terminal:cli");
     let checked = Command::new(SKY)
         .arg("check")
         .arg(dir.join("src/Main.sky"))
@@ -392,6 +406,48 @@ fn a_terminal_only_app_checks_and_builds_without_a_fallback() {
         "terminal-only (NoFallback) app must build for terminal:cli:\n{}\n{}",
         String::from_utf8_lossy(&built.stdout),
         String::from_utf8_lossy(&built.stderr)
+    );
+}
+
+/// SA-13 — `sky check` ≡ `sky build`. A bare `sky check` used to verify the
+/// any-capability `runTui` adapter, so an app with no `withNotFound` (and no
+/// pinned target) PASSED a bare check while a bare `sky build` (which builds
+/// `web`) rejected it. A bare check must verify the same target a bare build
+/// builds, and fail the same way.
+#[test]
+fn bare_check_verifies_the_target_a_bare_build_builds() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
+    let dir = copy_fixture_to_temp(terminal_fixture_dir(), "checkeqbuild");
+    let run = |verb: &str| {
+        let out = Command::new(SKY)
+            .arg(verb)
+            .arg(dir.join("src/Main.sky"))
+            .output()
+            .expect("run sky");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    };
+    let (check_ok, check_text) = run("check");
+    let (build_ok, build_text) = run("build");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !build_ok,
+        "precondition: a bare build (web) of a no-fallback app fails:\n{build_text}"
+    );
+    assert!(
+        !check_ok,
+        "a bare `sky check` must fail where a bare `sky build` fails (check ≡ build):\n{check_text}"
+    );
+    assert!(
+        check_text.contains("requires a fallback page"),
+        "check must report the same fallback hint as the build:\n{check_text}"
     );
 }
 
@@ -532,5 +588,100 @@ fn a_dispatched_entry_defaults_to_web_without_a_target() {
     assert!(
         out.status.success() && combined.contains("--target web"),
         "a dispatched entry with no --target should default to web:\n{combined}"
+    );
+}
+
+/// SA-1 (security) — a guard attached through a LOCAL HELPER (`|> secured`,
+/// `secured a = a |> App.withGuard guard`) must be enforced by the generated
+/// `web:app` backend. The line-based App→Spa reader only saw `|> App.withGuard`
+/// written inline in the pipeline, so the helper's guard was silently dropped
+/// and `POST /_rpc/Reveal` ran the guarded effect and returned its result. The
+/// structural reader follows the helper; the backend must answer 403 and never
+/// run the effect.
+#[test]
+fn a_guard_attached_via_a_local_helper_is_enforced_on_web_app() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
+    let dir = copy_fixture_to_temp(guard_helper_fixture_dir(), "guardhelper");
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app"])
+        .arg(dir.join("src/Main.sky"))
+        .output()
+        .expect("sky build --target web:app");
+    let backend_dir = dir.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    if !(out.status.success() && app_bin.is_file()) {
+        let _ = std::fs::remove_dir_all(&dir);
+        panic!(
+            "web:app build of the guard-helper fixture failed:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let port = 9231u16;
+    let log_path = backend_dir.join("server.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .env("ENV", "production")
+        .env("SKY_CONSOLE_AUTH", "off")
+        .env("HOME", "/sky-guard-secret-home")
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .expect("spawn the web:app backend");
+    let mut ready = false;
+    for _ in 0..240 {
+        let probe = Command::new("curl")
+            .args(["-s", "-o", "/dev/null", "-w", "%{http_code}"])
+            .arg(format!("http://127.0.0.1:{port}/"))
+            .output();
+        if let Ok(o) = probe {
+            let code = String::from_utf8_lossy(&o.stdout).to_string();
+            if !code.is_empty() && code != "000" {
+                ready = true;
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    let resp = if ready {
+        Command::new("curl")
+            .args([
+                "-s",
+                "-w",
+                "\nHTTP %{http_code}",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-H",
+                "Authorization: Bearer test",
+                "-d",
+                "{\"flag\":\"none\",\"secret\":\"hidden\",\"log\":\"\"}",
+            ])
+            .arg(format!("http://127.0.0.1:{port}/_rpc/Reveal"))
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    } else {
+        None
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    let resp =
+        resp.unwrap_or_else(|| panic!("backend never answered on :{port}\nlog:\n{log_text}"));
+    assert!(
+        resp.contains("HTTP 403"),
+        "the helper-attached guard must reject Reveal with 403:\n{resp}\nlog:\n{log_text}"
+    );
+    assert!(
+        !resp.contains("sky-guard-secret-home"),
+        "the guarded effect must not run:\n{resp}"
     );
 }
