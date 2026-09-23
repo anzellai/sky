@@ -732,6 +732,13 @@ pub struct BranchVerdict {
     /// The RPC read-set / write-set — `Some` for SERVER branches (the derived
     /// RPC I/O), `None` for CLIENT branches (no round-trip, so no I/O sets).
     pub io: Option<BranchIo>,
+    /// The write-set of a CLIENT branch (what the pure arm writes locally) —
+    /// `Some` only where the arm was analysed (the main `case msg of` walk);
+    /// `None` for SERVER branches and for a client branch whose writes are
+    /// unknown. The split uses it to find the fields ONLY server branches write
+    /// (their reload value comes from the SSR seed, not localStorage — K5); an
+    /// unknown client write-set disables that (every field restores).
+    pub client_io: Option<BranchIo>,
     /// The Msg args this branch's pattern binds, with their **types** (parallel
     /// to `io.msg_args` by name+order) — the raw material the `spa-split`
     /// generator uses to give each Msg-arg Req field a real codec. Empty for a
@@ -927,6 +934,25 @@ pub struct SpaPartitionReport {
     /// continuation, or an opaque command). The follow-up runs nowhere; surfaced
     /// prominently by the `spa-split` CLI.
     pub server_chain_warnings: Vec<String>,
+    /// SPA-3 follow-up branches: a SERVER branch whose returned command holds
+    /// `Cmd.perform` leaves the analysis did not settle server-side (not a
+    /// chaining root, not a client-result root). Its RPC runs every server
+    /// perform leaf, returns the resulting follow-up Msgs, and the client
+    /// dispatches them; a `Std.Native` leaf (`native`) runs in the client.
+    pub follow_up: Vec<FollowUpBranch>,
+}
+
+/// One SPA-3 follow-up branch (see [`SpaPartitionReport::follow_up`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FollowUpBranch {
+    /// The server branch's Msg constructor.
+    pub branch: String,
+    /// The follow-up Msg constructors its perform leaves can produce, when every
+    /// leaf's `toMsg` resolves to a constructor; `None` when any cannot be read
+    /// (the wire then covers every Msg constructor).
+    pub ctors: Option<Vec<String>>,
+    /// A perform leaf reaches a `Std.Native` client effect.
+    pub native: bool,
 }
 
 impl SpaPartitionReport {
@@ -1151,6 +1177,7 @@ pub fn analyze_loaded(
     let mut chaining_branches: Vec<String> = Vec::new();
     let mut client_result: Vec<(String, String)> = Vec::new();
     let mut server_chain_warnings: Vec<String> = Vec::new();
+    let mut follow_up: Vec<FollowUpBranch> = Vec::new();
 
     match update_field {
         UpdateField::Def(update_def) => {
@@ -1188,6 +1215,7 @@ pub fn analyze_loaded(
                 chaining_branches = chaining.chaining_branches;
                 client_result = chaining.client_result;
                 server_chain_warnings = chaining.warnings;
+                follow_up = chaining.follow_up;
             } else {
                 return Err("update def has no body".into());
             }
@@ -1272,6 +1300,7 @@ pub fn analyze_loaded(
         chaining_branches,
         client_result,
         server_chain_warnings,
+        follow_up,
     })
 }
 
@@ -1475,6 +1504,50 @@ pub fn find_config_field_def(
         }
     }
     None
+}
+
+/// What the synthesised `spaGuard_` (the carried `App.withGuard`) reads of its
+/// MODEL argument. The generated backend runs the guard on the model it
+/// rebuilds from the request, so every field the guard reads must ride every
+/// server-branch request — else the guard sees `init ()`'s default and rejects
+/// (or admits) on a value the client never had (SPA-4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardReads {
+    /// The app declares no guard.
+    NoGuard,
+    /// The guard reads exactly these model fields (precise `model.field` uses).
+    Fields(BTreeSet<String>),
+    /// The guard uses the model opaquely (or could not be resolved): send the
+    /// whole model — the sound over-approximation.
+    Whole,
+}
+
+/// Resolve [`GuardReads`] for the entry's `spaGuard_` binding. `spaGuard_ =
+/// (guard)` aliases the user's guard function; a guard written inline (a
+/// lambda) or anything else that cannot be read precisely is `Whole`.
+pub fn guard_readset(db: &skydb::SkyDatabase, entry: ModuleId) -> GuardReads {
+    let resolved = db.resolve(entry);
+    let Some(td) = resolved
+        .top_defs
+        .iter()
+        .find(|t| t.name.as_str() == "spaGuard_")
+    else {
+        return GuardReads::NoGuard;
+    };
+    let def = td.def;
+    let target = resolved.bodies.get(&def).and_then(|body| {
+        if body.params.len() >= 2 {
+            return Some(def);
+        }
+        match &body.exprs[body.root?] {
+            Expr::Var(Res::Def(d)) => Some(*d),
+            _ => None,
+        }
+    });
+    match target.and_then(|f| helper_readset(db, f, 1, 0)) {
+        Some(fields) => GuardReads::Fields(fields),
+        None => GuardReads::Whole,
+    }
 }
 
 /// Search the app modules for the `Spa.config { … }` call and read its `update`
@@ -2087,6 +2160,7 @@ fn classify_case_arms(
                     src,
                 )),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
+                client_io: None,
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
             });
@@ -2104,6 +2178,7 @@ fn classify_case_arms(
                     src,
                 )),
                 msg_arg_tys: msg_arg_field_tys(body, arms[i].pat, src, locals),
+                client_io: None,
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
             });
@@ -2117,6 +2192,14 @@ fn classify_case_arms(
                 server: false,
                 reason,
                 io: None,
+                client_io: Some(compute_branch_io(
+                    db,
+                    body,
+                    arms[i].body,
+                    arms[i].pat,
+                    model_local,
+                    src,
+                )),
                 msg_arg_tys: Vec::new(),
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
@@ -2145,6 +2228,8 @@ pub struct ServerChaining {
     /// G5 fail-closed warnings — a branch with a `Cmd.perform` the analysis
     /// refused to chain (client effect, ambiguous ownership, opaque command).
     pub warnings: Vec<String>,
+    /// SPA-3 follow-up branches (see [`SpaPartitionReport::follow_up`]).
+    pub follow_up: Vec<FollowUpBranch>,
 }
 
 /// One leaf of a statically-resolved `Cmd` tree returned by an `update` arm.
@@ -2903,9 +2988,9 @@ fn compute_server_chaining(
         }
         let clean = !hi.dirty && hi.clean_conts.iter().all(|c| settleable.contains(c));
         if !clean {
-            out.warnings.push(format!(
-                "server branch `{bn}` returns a `Cmd.perform` the auto-split could NOT chain server-side (a client `Std.Native` effect, an ambiguous continuation also dispatched on the client, or an opaque command shape). Its follow-up effect runs NOWHERE — keep the branch to a single server round, or split the follow-up into its own explicit RPC."
-            ));
+            // SPA-3: not settled server-side — a FOLLOW-UP branch (below): its
+            // RPC runs the command's server performs and returns the follow-up
+            // Msgs for the client to dispatch. No discard floor.
             continue;
         }
         // Chainable root: BFS its clean continuations (all in `settleable`),
@@ -3096,15 +3181,85 @@ fn compute_server_chaining(
         // client would run that server effect in the wasm client — forbidden. Keep
         // today's behaviour and warn.
         if server_head_set.contains(&rm) {
-            out.warnings.push(format!(
-                "server branch `{bn}` performs a server task whose result Msg `{rm}` is ALSO a server arm (it reaches a Db/File/… effect) — a deeper chain the auto-split does not settle. Its follow-up effect runs NOWHERE. Split `{rm}`'s server work into its own explicit RPC, or keep `{bn}` to a single server round."
-            ));
+            // SPA-3: a deeper chain — the FOLLOW-UP path returns `rm result` to
+            // the client, whose `rm` arm then runs as its own RPC.
             continue;
         }
         out.client_result.push((bn.clone(), rm));
     }
     out.client_result.sort();
     out.client_result.dedup();
+
+    // SPA-3 FOLLOW-UP branches: every wire server head whose command holds a
+    // `Cmd.perform` leaf and that neither pattern-1 (chaining) nor pattern-2
+    // (client-result) owns. Its RPC must still RUN that command (Sky.Live does):
+    // the generated handler runs each server perform leaf and returns the
+    // follow-up Msgs; a `Std.Native` leaf runs in the client. The follow-up
+    // constructor set is read from each leaf's `toMsg` when resolvable.
+    let owned: HashSet<String> = out
+        .chaining_branches
+        .iter()
+        .cloned()
+        .chain(server_internal.iter().cloned())
+        .chain(out.client_result.iter().map(|(r, _)| r.clone()))
+        .collect();
+    let mut heads: Vec<&String> = server_head_set.iter().collect();
+    heads.sort();
+    for bn in heads {
+        if owned.contains(bn) {
+            continue;
+        }
+        let Some(idxs) = arms_by_ctor.get(bn) else {
+            continue;
+        };
+        let mut ctors: Option<BTreeSet<String>> = Some(BTreeSet::new());
+        let mut has_perform = false;
+        let mut native = false;
+        for &ai in idxs {
+            let mut leaves: Vec<(CmdLeaf, bool)> = Vec::new();
+            let mut visited: HashSet<DefId> = HashSet::new();
+            collect_tail_cmd_leaves_tagged(
+                db,
+                body,
+                arms[ai].body,
+                false,
+                &mut leaves,
+                0,
+                &mut visited,
+            );
+            for (leaf, _) in leaves {
+                match leaf {
+                    CmdLeaf::Perform {
+                        to_msg,
+                        task_client_effect,
+                    } => {
+                        has_perform = true;
+                        native |= task_client_effect;
+                        match (to_msg, ctors.as_mut()) {
+                            (Some(m), Some(set)) => {
+                                set.insert(m);
+                            }
+                            _ => ctors = None,
+                        }
+                    }
+                    // An opaque command may hold performs: treat it as one whose
+                    // follow-up constructors are unknown.
+                    CmdLeaf::Unresolvable => {
+                        has_perform = true;
+                        ctors = None;
+                    }
+                    CmdLeaf::NoneCmd | CmdLeaf::Publish => {}
+                }
+            }
+        }
+        if has_perform {
+            out.follow_up.push(FollowUpBranch {
+                branch: bn.clone(),
+                ctors: ctors.map(|s| s.into_iter().collect()),
+                native,
+            });
+        }
+    }
 
     out.server_internal = server_internal.into_iter().collect();
     out.chaining_branches.sort();
@@ -4415,6 +4570,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             server: true,
             reason,
             io: None,
+            client_io: None,
             msg_arg_tys: Vec::new(),
             // Whole-update path: io is None → never phase-2 checkable regardless.
             forces_effect: acc.inline_force,
@@ -4444,6 +4600,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             server: true,
             reason: format!("references {cn} ({origin})"),
             io: None,
+            client_io: None,
             msg_arg_tys: Vec::new(),
             forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
             effect_families: graph.families_for(acc),
@@ -4459,6 +4616,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         server: false,
         reason,
         io: None,
+        client_io: None,
         msg_arg_tys: Vec::new(),
         forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
         effect_families: graph.families_for(acc),

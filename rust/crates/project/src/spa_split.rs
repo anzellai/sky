@@ -250,6 +250,14 @@ impl<'a> CodecResolver<'a> {
                 });
             }
         }
+        // (a') Unit `()` — a follow-up Msg such as `Stashed (Result Error ())`
+        // carries it. No payload: encode as `0`, decode any number back to `()`.
+        if matches!(t, ty::Ty::Unit) {
+            return Ok(ResolvedCodec {
+                codec: "(Codec.map (\\_ -> ()) (\\_ -> 0) Codec.int)".to_string(),
+                surface: "()".to_string(),
+            });
+        }
         // (b) List X / Maybe X built from the inner codec.
         if let ty::Ty::App(name, args) = t {
             let tail = tail_seg(name.as_str());
@@ -745,6 +753,468 @@ struct ClientResultInfo {
     result_ty: ty::Ty,
 }
 
+/// SPA-3: what the split needs to make a server branch's returned command RUN.
+/// A follow-up branch's RPC runs every server `Cmd.perform` leaf of the command
+/// its `update` returns (runtime `Spa_collectFollowUps`), encodes the resulting
+/// follow-up Msgs (one `SpaFollow<Ctor>Req` wire record per constructor) into
+/// the `spaFollow_` response field, and the client decodes them and dispatches
+/// them through its own `update` (`Spa.followUps`). A `Std.Native` leaf runs in
+/// the client when the RPC is sent (`Spa.rpcWith` residual).
+pub(crate) struct FollowCtx {
+    /// Follow-up branch → whether one of its perform leaves is a `Std.Native`
+    /// client effect.
+    branches: HashMap<String, bool>,
+    /// Every follow-up Msg constructor the wire covers, with its arity.
+    ctors: Vec<(String, usize)>,
+    /// How many constructors the Msg union has (a `_` arm is emitted only when
+    /// the covered set is smaller — a redundant arm is rejected).
+    all_ctors: usize,
+    /// The Msg union's name and declaring module.
+    msg_ty: String,
+    msg_module: ModuleId,
+    msg_module_name: String,
+    /// The `Std.Native` import alias of each module that declares a follow-up
+    /// arm (the residual extraction looks for `<alias>.` in a command leaf).
+    native_alias: HashMap<ModuleId, String>,
+}
+
+impl FollowCtx {
+    /// The qualifier for Msg constructor / type references emitted into module
+    /// `here`: none when `here` declares the Msg union, else the dedicated
+    /// `SpaMsgMod_` alias (see [`FollowCtx::import_for`]).
+    fn q(&self, here: ModuleId) -> &'static str {
+        if here == self.msg_module {
+            ""
+        } else {
+            "SpaMsgMod_."
+        }
+    }
+    /// The import line a module needs for qualifier `q` (none for a bare `q`).
+    fn import_for_q(&self, q: &str) -> Option<String> {
+        (!q.is_empty()).then(|| format!("import {} as SpaMsgMod_", self.msg_module_name))
+    }
+}
+
+/// Build the [`FollowCtx`] for the follow-up branches that are wire (`server`)
+/// branches, adding their wires: `spaFollow_ : String` on each follow-up
+/// branch's response, and one `SpaFollow<Ctor>Req` record per follow-up Msg
+/// constructor (its arguments `a0`, `a1`, …). A constructor whose argument has
+/// no codec FAILS the build, naming it — a follow-up is never silently dropped.
+#[allow(clippy::too_many_arguments)]
+fn build_follow_ctx(
+    db: &SkyDatabase,
+    check_ids: &[ModuleId],
+    server: &[(String, BranchIo)],
+    follow_up: &[spa_partition::FollowUpBranch],
+    wires: &mut Vec<Wire>,
+    resolver: &mut CodecResolver,
+    // Server-internal Msgs never reach the client (no client arm, pruned from
+    // the client `Msg`), so they are never a client follow-up.
+    server_internal: &HashSet<String>,
+) -> Result<Option<FollowCtx>, String> {
+    let wire_names: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
+    let fu: Vec<&spa_partition::FollowUpBranch> = follow_up
+        .iter()
+        .filter(|f| wire_names.contains(f.branch.as_str()))
+        .collect();
+    if fu.is_empty() {
+        return Ok(None);
+    }
+    // The Msg union: the union whose variants include the follow-up branches.
+    let want: HashSet<&str> = fu.iter().map(|f| f.branch.as_str()).collect();
+    let mut found: Option<(ModuleId, syntax::ast::Decl)> = None;
+    'mods: for m in check_ids {
+        for d in db.module_parse(*m).tree().decls() {
+            if matches!(decl_kind(&d), DeclKind::Union)
+                && union_variant_names(&d)
+                    .iter()
+                    .any(|v| want.contains(v.as_str()))
+            {
+                found = Some((*m, d));
+                break 'mods;
+            }
+        }
+    }
+    let (msg_module, msg_decl) = found.ok_or_else(|| {
+        "sky.spa: cannot find the Msg union of the follow-up branches".to_string()
+    })?;
+    let msg_ty = decl_name(&msg_decl).unwrap_or_else(|| "Msg".to_string());
+    let all_variants = union_variant_names(&msg_decl);
+    let mut ctor_set: BTreeSet<String> = BTreeSet::new();
+    for f in &fu {
+        match &f.ctors {
+            Some(cs) => ctor_set.extend(cs.iter().cloned()),
+            None => ctor_set.extend(all_variants.iter().cloned()),
+        }
+    }
+    ctor_set.retain(|c| !server_internal.contains(c));
+    let branch_list = fu
+        .iter()
+        .map(|f| format!("`{}`", f.branch))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut ctors: Vec<(String, usize)> = Vec::new();
+    for c in &ctor_set {
+        let args = union_variant_arg_types(&msg_decl, c).ok_or_else(|| {
+            format!("sky.spa: follow-up Msg `{c}` of server branch(es) {branch_list} is not a constructor of `{msg_ty}`")
+        })?;
+        let mut fields: Vec<ModelFieldTy> = Vec::new();
+        for (i, t) in args.iter().enumerate() {
+            let r = resolver.resolve(t).map_err(|e| {
+                format!(
+                    "sky.spa: server branch(es) {branch_list} return a command whose follow-up Msg `{c}` \
+                     cannot cross to the client — argument {} has no wire codec: {e}. Give the argument a \
+                     codec-able type (a record, a List, a Result Error, a primitive), or run the follow-up \
+                     from a client arm.",
+                    i + 1
+                )
+            })?;
+            fields.push(ModelFieldTy {
+                name: format!("a{i}"),
+                ty_name: r.surface,
+                codec: Some(r.codec),
+                ty: Some(t.clone()),
+            });
+        }
+        ctors.push((c.clone(), args.len()));
+        wires.push(Wire {
+            name: format!("SpaFollow{c}"),
+            req_fields: fields,
+            resp_fields: Vec::new(),
+        });
+    }
+    for w in wires.iter_mut() {
+        if fu.iter().any(|f| f.branch == w.name) {
+            w.resp_fields.push(ModelFieldTy {
+                name: "spaFollow_".to_string(),
+                ty_name: "String".to_string(),
+                codec: Some("Codec.string".to_string()),
+                ty: None,
+            });
+        }
+    }
+    let mut native_alias: HashMap<ModuleId, String> = HashMap::new();
+    for m in check_ids {
+        let parse = db.module_parse(*m);
+        let msrc = parse.syntax().text().to_string();
+        for i in collect_imports(&parse.tree(), &msrc) {
+            if i.module_path == "Std.Native" {
+                let alias = i
+                    .text
+                    .split_whitespace()
+                    .skip_while(|w| *w != "as")
+                    .nth(1)
+                    .unwrap_or("Std.Native")
+                    .to_string();
+                native_alias.insert(*m, alias);
+            }
+        }
+    }
+    Ok(Some(FollowCtx {
+        branches: fu.iter().map(|f| (f.branch.clone(), f.native)).collect(),
+        all_ctors: all_variants.len(),
+        ctors,
+        msg_ty,
+        msg_module,
+        msg_module_name: db.module_name(msg_module).to_string(),
+        native_alias,
+    }))
+}
+
+/// The backend half of SPA-3: the kernel alias that runs a command's server
+/// performs and returns the follow-up Msgs, plus the encoder that writes them
+/// as the `spaFollow_` JSON (`[[tag, body], …]`, each body a `SpaFollow<Ctor>Req`
+/// record). Emitted into the backend ENTRY; `q` qualifies Msg references.
+fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
+    let mut arms = String::new();
+    for (c, n) in &fc.ctors {
+        let binders: Vec<String> = (0..*n).map(|i| format!("a{i}_")).collect();
+        let pat = if binders.is_empty() {
+            format!("{q}{c}")
+        } else {
+            format!("{q}{c} {}", binders.join(" "))
+        };
+        let rec = if *n == 0 {
+            "{}".to_string()
+        } else {
+            format!(
+                "{{ {} }}",
+                (0..*n)
+                    .map(|i| format!("a{i} = a{i}_"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        arms.push_str(&format!(
+            "        {pat} ->\n            [ \"{c}\", Codec.toJson spaFollow{c}ReqCodec {rec} ]\n\n"
+        ));
+    }
+    // A constructor the analysis proved is never a follow-up encodes as an
+    // empty tag, which the client rejects LOUDLY (never a silent drop). Only
+    // when the covered set is smaller than the union (else `_` is redundant).
+    let wildcard = if fc.ctors.len() < fc.all_ctors {
+        "        _ ->\n            [ \"\", \"\" ]\n\n"
+    } else {
+        ""
+    };
+    format!(
+        "-- SPA-3: a server branch's returned command RUNS. `spaFollowUps_` runs every\n\
+         -- server perform leaf and returns the follow-up Msgs (runtime-go\n\
+         -- spa_followups_notjs.go); the client dispatches them through `update`.\n\
+         spaFollowUps_ : any -> List {q}{ty}\n\
+         spaFollowUps_ =\n\
+         \x20   Ffi.kernel \"Spa_collectFollowUps\"\n\n\n\
+         spaEncodeFollows_ : List {q}{ty} -> String\n\
+         spaEncodeFollows_ msgs_ =\n\
+         \x20   Codec.toJson (Codec.list (Codec.list Codec.string)) (spaEncodeFollowList_ msgs_)\n\n\n\
+         spaEncodeFollowList_ : List {q}{ty} -> List (List String)\n\
+         spaEncodeFollowList_ msgs_ =\n\
+         \x20   case msgs_ of\n\
+         \x20       [] ->\n\
+         \x20           []\n\n\
+         \x20       m_ :: rest_ ->\n\
+         \x20           spaEncodeFollow_ m_ :: spaEncodeFollowList_ rest_\n\n\n\
+         spaEncodeFollow_ : {q}{ty} -> List String\n\
+         spaEncodeFollow_ m_ =\n\
+         \x20   case m_ of\n\
+         {arms}{wildcard}\n",
+        ty = fc.msg_ty,
+    )
+}
+
+/// The client half of SPA-3: decode `spaFollow_` back into typed Msgs. Emitted
+/// after the regenerated `update` (in whichever module declares it); `q`
+/// qualifies Msg references there.
+fn render_follow_frontend(fc: &FollowCtx, q: &str) -> String {
+    let mut chain = String::new();
+    for (i, (c, n)) in fc.ctors.iter().enumerate() {
+        let kw = if i == 0 { "if" } else { "else if" };
+        let build = if *n == 0 {
+            format!("{q}{c}")
+        } else {
+            format!(
+                "{q}{c} {}",
+                (0..*n)
+                    .map(|k| format!("r_.a{k}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        chain.push_str(&format!(
+            "\x20           {kw} tag_ == \"{c}\" then\n\
+             \x20               case Codec.fromJson spaFollow{c}ReqCodec body_ of\n\
+             \x20                   Ok r_ ->\n\
+             \x20                       Ok ({build})\n\n\
+             \x20                   Err e_ ->\n\
+             \x20                       Err e_\n\n"
+        ));
+    }
+    let open_else = if fc.ctors.is_empty() {
+        ""
+    } else {
+        "else\n                "
+    };
+    format!(
+        "-- SPA-3: decode the follow-up Msgs a server branch's command produced on\n\
+         -- the backend (`spaFollow_`), for `Spa.followUps` to dispatch in order.\n\
+         spaDecodeFollows_ : String -> Result Error (List {q}{ty})\n\
+         spaDecodeFollows_ json_ =\n\
+         \x20   case Codec.fromJson (Codec.list (Codec.list Codec.string)) json_ of\n\
+         \x20       Ok items_ ->\n\
+         \x20           spaDecodeFollowList_ items_\n\n\
+         \x20       Err e_ ->\n\
+         \x20           Err e_\n\n\n\
+         spaDecodeFollowList_ : List (List String) -> Result Error (List {q}{ty})\n\
+         spaDecodeFollowList_ items_ =\n\
+         \x20   case items_ of\n\
+         \x20       [] ->\n\
+         \x20           Ok []\n\n\
+         \x20       item_ :: rest_ ->\n\
+         \x20           case spaDecodeFollow_ item_ of\n\
+         \x20               Ok m_ ->\n\
+         \x20                   case spaDecodeFollowList_ rest_ of\n\
+         \x20                       Ok ms_ ->\n\
+         \x20                           Ok (m_ :: ms_)\n\n\
+         \x20                       Err e_ ->\n\
+         \x20                           Err e_\n\n\
+         \x20               Err e_ ->\n\
+         \x20                   Err e_\n\n\n\
+         spaDecodeFollow_ : List String -> Result Error {q}{ty}\n\
+         spaDecodeFollow_ item_ =\n\
+         \x20   case item_ of\n\
+         \x20       tag_ :: body_ :: [] ->\n\
+         {chain}\
+         \x20           {open_else}Err (Error.unexpected (\"sky.spa: unknown follow-up Msg \" ++ tag_))\n\n\
+         \x20       _ ->\n\
+         \x20           Err (Error.unexpected \"sky.spa: malformed follow-up\")\n\n\n",
+        ty = fc.msg_ty,
+    )
+}
+
+/// Add `line` after the last import unless that exact line is already present.
+fn ensure_import_line(src: &str, line: &str) -> String {
+    if src.lines().any(|l| l.trim() == line) {
+        return src.to_string();
+    }
+    let lines: Vec<&str> = src.lines().collect();
+    let last = lines
+        .iter()
+        .rposition(|l| l.trim_start().starts_with("import "));
+    let mut out = String::with_capacity(src.len() + line.len() + 1);
+    match last {
+        Some(li) => {
+            for (i, l) in lines.iter().enumerate() {
+                out.push_str(l);
+                out.push('\n');
+                if i == li {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        None => {
+            out.push_str(line);
+            out.push('\n');
+            out.push_str(src);
+        }
+    }
+    out
+}
+
+/// Flatten a (possibly multi-line) expression's source to one line, dropping
+/// each line's `--` comment first (a comment must not swallow folded code).
+fn flatten_expr_text(t: &str) -> String {
+    t.lines()
+        .map(|l| strip_line_comment(l.trim()).trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A `--` line-comment strip that ignores `--` inside a string literal.
+fn strip_line_comment(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut in_str = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+        } else if c == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            return &s[..i];
+        } else if c == b'"' {
+            in_str = true;
+        }
+        i += 1;
+    }
+    s
+}
+
+/// SPA-3, the CLIENT residual of a server arm: the `Std.Native` leaves of the
+/// command the arm returns (a client-only effect the backend cannot run). They
+/// are sliced from the arm's `( model, cmd )` tuple and run by the client when
+/// the RPC is sent, bound to the same model snapshot. FAIL-CLOSED: a leaf that
+/// names a `let`-bound local of the arm, or a server-tainted binding, cannot be
+/// moved to the client, so the build stops with a message naming it.
+fn native_residual(
+    arm: &syntax::SyntaxNode,
+    src: &str,
+    native_alias: &str,
+    tainted: &HashSet<String>,
+    branch: &str,
+) -> Result<String, String> {
+    use syntax::ast::Expr as E;
+    let tuple = arm
+        .descendants()
+        .find(|n| n.kind() == SyntaxKind::TupleExpr)
+        .ok_or_else(|| format!("sky.spa: server branch `{branch}` returns a Std.Native client effect, but its `( model, cmd )` result could not be read; return the tuple directly"))?;
+    let elems: Vec<syntax::SyntaxNode> = tuple
+        .children()
+        .filter_map(E::cast)
+        .map(|e| e.syntax().clone())
+        .collect();
+    let cmd = elems.get(1).ok_or_else(|| {
+        format!("sky.spa: server branch `{branch}`: its result tuple has no command")
+    })?;
+    let mut leaves: Vec<syntax::SyntaxNode> = Vec::new();
+    let head = cmd.children().filter_map(E::cast).next();
+    let is_batch = cmd.kind() == SyntaxKind::CallExpr
+        && head
+            .as_ref()
+            .map(|h| slice(src, h.syntax()).trim().ends_with("Cmd.batch"))
+            .unwrap_or(false);
+    if is_batch {
+        if let Some(list) = cmd.descendants().find(|n| n.kind() == SyntaxKind::ListExpr) {
+            leaves.extend(
+                list.children()
+                    .filter_map(E::cast)
+                    .map(|e| e.syntax().clone()),
+            );
+        }
+    } else {
+        leaves.push(cmd.clone());
+    }
+    let needle = format!("{native_alias}.");
+    let native: Vec<String> = leaves
+        .iter()
+        .map(|l| slice(src, l).to_string())
+        .filter(|t| t.contains(&needle))
+        .collect();
+    if native.is_empty() {
+        return Err(format!(
+            "sky.spa: server branch `{branch}` returns a Std.Native client effect the split could not isolate; put the `Cmd.perform ({native_alias}.…)` directly in the branch's `Cmd.batch [ … ]`"
+        ));
+    }
+    // Names the client cannot see: the arm's own `let` bindings, server-tainted
+    // bindings.
+    let mut locals: HashSet<String> = HashSet::new();
+    for le in arm
+        .descendants()
+        .filter(|n| n.kind() == SyntaxKind::LetExpr)
+    {
+        let t = slice(src, &le).to_string();
+        let body_start = t.find("\n").unwrap_or(0);
+        for line in t[body_start..].lines() {
+            let l = line.trim();
+            if l.starts_with("in") {
+                break;
+            }
+            if let Some((lhs, _)) = l.split_once('=') {
+                for w in lhs.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+                    if !w.is_empty() && w.chars().next().is_some_and(|c| c.is_lowercase()) {
+                        locals.insert(w.to_string());
+                    }
+                }
+            }
+        }
+    }
+    for t in &native {
+        for n in locals.iter().chain(tainted.iter()) {
+            if references_word(t, n) {
+                return Err(format!(
+                    "sky.spa: server branch `{branch}` returns the client effect `{}` that uses `{n}`, a value only the server has. The client runs a Std.Native effect itself, so it may use only the model and the Msg's arguments — move `{n}` into the model, or run the effect from the result Msg's client arm.",
+                    flatten_expr_text(t)
+                ));
+            }
+        }
+    }
+    Ok(format!(
+        "Cmd.batch [ {} ]",
+        native
+            .iter()
+            .map(|t| flatten_expr_text(t))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
 /// The wire field name for a Msg argument in the generated RPC request.
 ///
 /// A Msg arg whose source name collides with a Model field name — e.g.
@@ -828,6 +1298,10 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
         )
     }
 }
+
+/// The lambda parameter the frontend's `Spa.rpc` request builder binds: the
+/// model snapshot the client passes when it SENDS the request.
+pub(crate) const SPA_RPC_MODEL: &str = "spaM_";
 
 /// SHARED WIRE EMIT — client leg: build the RPC `Req` value from the client
 /// model + Msg args. The exact inverse of [`emit_reconstruct`]'s read-set — what
@@ -1324,12 +1798,24 @@ pub fn generate(
     let report: SpaPartitionReport =
         spa_partition::analyze_loaded(&db, entry, &check_ids, proj_name.clone())?;
 
-    // The generator needs a per-branch `case msg of` split.
-    if report.whole_update.is_some() || report.branches.is_empty() {
-        return Err(
-            "cannot auto-split: `update` has no resolvable `case msg of` (per-branch analysis unavailable)".into(),
-        );
-    }
+    // The generator needs a per-branch `case msg of` split — EXCEPT for an
+    // `update` with no `case` that is entirely PURE: every Msg then runs in the
+    // client and `update` is kept verbatim (there is nothing to route to the
+    // server). An `update` that reaches an effect without a per-Msg `case` gets
+    // a precise error naming the change.
+    let upd_name = report
+        .update_name
+        .clone()
+        .unwrap_or_else(|| "update".to_string());
+    let no_case_msg = format!(
+        "cannot auto-split: `{upd_name}` has no top-level `case msg of`, and it reaches a server effect, so the split cannot tell which Msgs run in the client and which must run on the server. Write it as `update msg model = case msg of …` with one arm per Msg constructor (a single-constructor `update (Line l) model = …` becomes `update msg model = case msg of Line l -> …`), or move the effect into a `Cmd.perform`."
+    );
+    let pure_whole_update = match &report.whole_update {
+        Some(w) if w.server => return Err(no_case_msg),
+        Some(_) => true,
+        None if report.branches.is_empty() => return Err(no_case_msg),
+        None => false,
+    };
 
     // G5: `init`'s returned MODEL embeds a server read the wasm client cannot
     // reproduce. Emitting a frontend would either reference the backend-only read
@@ -1488,6 +1974,30 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     if server.is_empty() {
         notes.push("no SERVER branches — the frontend is fully client-local and the backend only serves static assets.".into());
     }
+    // SPA-4: the backend runs the `App.withGuard` guard on the model it REBUILDS
+    // from each request (`init ()` + the request fields). A field the guard reads
+    // that the branch itself does not read would arrive as `init ()`'s default,
+    // so the guard would decide on a value the client never had (a false 403, or
+    // a false allow). Add the guard's read-set to EVERY server branch's request
+    // (the whole model when the guard's reads cannot be read precisely).
+    match spa_partition::guard_readset(&db, entry) {
+        spa_partition::GuardReads::NoGuard => {}
+        spa_partition::GuardReads::Whole => {
+            for (_, io) in server.iter_mut() {
+                io.reads_whole_model = true;
+            }
+            notes.push(
+                "App.withGuard: the guard's model reads could not be read precisely; every server-branch request carries the whole model so the server guard sees the client's values.".into(),
+            );
+        }
+        spa_partition::GuardReads::Fields(fields) => {
+            for (_, io) in server.iter_mut() {
+                let mut all: BTreeSet<String> = io.read_fields.iter().cloned().collect();
+                all.extend(fields.iter().cloned());
+                io.read_fields = all.into_iter().collect();
+            }
+        }
+    }
 
     // ---- GAP-A: resolve the module that DECLARES the `Msg` union ----
     // The generated frontend `update` references the `Applied<Msg>` RPC-response
@@ -1617,6 +2127,21 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             client_result_map.get(name),
         )?);
     }
+    // SPA-3: follow-up wires (built before the codec copy / seed passes read
+    // `resolver` + `wires`).
+    let follow_ctx = build_follow_ctx(
+        &db,
+        &check_ids,
+        &server,
+        &report.follow_up,
+        &mut wires,
+        &mut resolver,
+        &report
+            .server_internal
+            .iter()
+            .cloned()
+            .collect::<HashSet<String>>(),
+    )?;
     // STATELESS SIGNED SESSION (security): the identity projection the backend
     // signs into an httpOnly `sky_sid` cookie and verifies on every RPC + SSR. A
     // model field whose type is nominally `Session` / `Maybe Session` AND which
@@ -1940,6 +2465,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let has_rpc_error = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaRpcError_"));
+    // SPA-4: a guard that reaches a server effect (an env read, a DB lookup)
+    // cannot run in the wasm client. The backend still enforces it on every
+    // server branch; client-local branches then run unguarded, so say so.
+    if tainted_names.iter().any(|t| t == "spaGuard_") {
+        warnings.push(
+            "warning [sky.spa]: `App.withGuard`'s guard reaches a server effect, so it cannot run in the wasm client. The backend enforces it on every server branch; client-local Msgs are NOT guarded. Keep the guard pure (read only the model) to guard every Msg like Sky.Live.".into(),
+        );
+    }
 
     // ---- literal SSR route patterns, across EVERY project module (§4.1) ----
     // The per-route SSR registration needs each route's literal URL pattern so
@@ -2025,7 +2558,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `init`'s PURE model expr — the client SSR model decoder is derived from it
     // (`Codec.fromJson (Codec.auto <model>)`). Read from whichever module
     // declares `init`, so the decoder is emitted for a sibling init too.
-    let init_pure_model: Option<String> = if strip_init_cmd {
+    //
+    // SPA-8: the SAME pure model expr also derives the client PERSISTENCE codec
+    // (`Codec.auto <model>`), so it is computed for EVERY app — not only one
+    // whose init is a GET-safe server read — and a reload restores the client
+    // scratch state on every web:app build, as Sky.Live keeps its session. It is
+    // dropped only when the expr itself names a server-tainted binding (it could
+    // not compile in the client tree).
+    let init_pure_model: Option<String> = {
         let iparse = db.module_parse(init_mod);
         let isrc = iparse.syntax().text().to_string();
         iparse
@@ -2033,8 +2573,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             .decls()
             .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))
             .and_then(|d| init_pure_model_expr(&isrc, &d))
-    } else {
-        None
+            .filter(|m| !tainted_names.iter().any(|t| references_word(m, t)))
     };
 
     // ---- write the three trees ----
@@ -2069,7 +2608,15 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `exposing (..)` origin (which would be an ambiguous double-import — the
     // failure mode of the co-located Msg shape). The ENTRY strips its own copied
     // decls, so `strips_self = true`.
-    let generated = generated_wire_names(&server);
+    let mut generated = generated_wire_names(&server);
+    if let Some(fc) = &follow_ctx {
+        for (c, _) in &fc.ctors {
+            generated.push(format!("SpaFollow{c}Req"));
+            generated.push(format!("spaFollow{c}ReqCodec"));
+            generated.push(format!("SpaFollow{c}Resp"));
+            generated.push(format!("spaFollow{c}RespCodec"));
+        }
+    }
     let entry_name = db.module_name(entry).to_string();
     let entry_shared_expose = shared_expose_clause(
         &src,
@@ -2130,6 +2677,18 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // The static mount: the caller's override (the synth entry dropped the
     // declaration), else read from this entry + its `sky.toml`.
     let static_mount = static_mount_override.or_else(|| app_static_mount(&src, project_dir));
+    // SPA-3: the follow-up context seen from one module (its Msg qualifier, its
+    // Std.Native alias) + the tainted names a client residual may not use.
+    let tainted_set: HashSet<String> = tainted_names.iter().cloned().collect();
+    let fc_q = |fc: &FollowCtx, m: ModuleId| -> &'static str { fc.q(m) };
+    let follow_here = |m: ModuleId| -> Option<FollowHere<'_>> {
+        follow_ctx.as_ref().map(|fc| FollowHere {
+            ctx: fc,
+            q: fc.q(m),
+            native_alias: fc.native_alias.get(&m).map(|s| s.as_str()),
+            tainted: &tainted_set,
+        })
+    };
     let backend_src = gen_backend(
         &file,
         &src,
@@ -2147,12 +2706,21 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         static_mount.as_ref(),
         &session_projection,
         &mut warnings,
+        follow_ctx.as_ref().map(|fc| (fc, fc_q(fc, entry))),
     )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
     // frontend so the client keeps them from the server-verified SSR seed on
     // restore (never from localStorage). Empty → the whole stored model restores.
     let session_field_names: Vec<String> =
         session_projection.iter().map(|p| p.name.clone()).collect();
+    // K5 (USER DECISION): on a reload, a field that ONLY server branches write is
+    // server truth — its value comes from the SSR seed (which the backend renders
+    // from the real request), never from a stale localStorage copy; every other
+    // field (client scratch state) is restored from localStorage.
+    let seed_field_names = server_only_written_fields(&report.branches, &model_field_names)
+        .into_iter()
+        .filter(|f| !session_field_names.contains(f))
+        .collect::<Vec<_>>();
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -2170,12 +2738,15 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         strip_init_cmd,
         init_in_entry,
         init_pure_model.as_deref(),
-        update_in_entry,
+        update_in_entry && !pure_whole_update,
         has_rpc_error,
         &server_internal,
         &model_field_names,
         &client_result_map,
         &session_field_names,
+        &seed_field_names,
+        follow_here(entry),
+        pure_whole_update && update_in_entry,
     )?;
 
     // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
@@ -2318,7 +2889,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             let mname = db.module_name(*m).to_string();
             let empty = HashSet::new();
             let tainted_here = tainted_by_module.get(&mname).unwrap_or(&empty);
-            let regen_here = *m == update_module && !update_in_entry;
+            let regen_here = *m == update_module && !update_in_entry && !pure_whole_update;
             let inject_here = Some(*m) == msg_module;
             // A tainted subset STRIPS its own copied decls, so it re-reads them
             // from `Shared` (`strips_self = true`); a copied name it still gets
@@ -2350,6 +2921,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &server_internal,
                 &model_field_names,
                 &client_result_map,
+                follow_here(*m),
             )?;
             // Bug #4b: a regenerated SIBLING `update` references `spaRpcError_`,
             // which the synthesis placed in the ENTRY. The sibling cannot import
@@ -4141,8 +4713,13 @@ fn import_referenceable_names(rest: &str) -> Vec<String> {
 /// unused, never a compile break). `session_fields` is the projection field-name
 /// list (empty for a client-only / no-auth app → `[]`, i.e. restore the whole
 /// stored model as-is).
-fn inject_model_decoder_into_main(main_text: &str, session_fields: &[String]) -> String {
-    if main_text.contains("Spa.withModelDecoder") {
+fn inject_model_decoder_into_main(
+    main_text: &str,
+    session_fields: &[String],
+    seed_fields: &[String],
+    ssr_boot: bool,
+) -> String {
+    if main_text.contains("Spa.withModelDecoder") || main_text.contains("Spa.withPersistDecoder") {
         return main_text.to_string();
     }
     // The builder chain lives in the VALUE decl (`main = Spa.app (Spa.config …)`),
@@ -4157,19 +4734,101 @@ fn inject_model_decoder_into_main(main_text: &str, session_fields: &[String]) ->
     };
     // Start of the line that holds the closing paren.
     let line_start = main_text[..close].rfind('\n').map(|n| n + 1).unwrap_or(0);
-    let fields_lit = if session_fields.is_empty() {
-        "[]".to_string()
+    let lit = |fs: &[String]| {
+        if fs.is_empty() {
+            "[]".to_string()
+        } else {
+            let quoted: Vec<String> = fs.iter().map(|f| format!("\"{f}\"")).collect();
+            format!("[ {} ]", quoted.join(", "))
+        }
+    };
+    let fields_lit = lit(session_fields);
+    let seed_lit = lit(seed_fields);
+    // An SSR-settled init boots from the seed (`withModelDecoder`); any other
+    // app uses the decoder only to restore localStorage (`withPersistDecoder`)
+    // and keeps running its own init command.
+    let decoder_line = if ssr_boot {
+        "Spa.withModelDecoder spaModelDecoder_"
     } else {
-        let quoted: Vec<String> = session_fields.iter().map(|f| format!("\"{f}\"")).collect();
-        format!("[ {} ]", quoted.join(", "))
+        "Spa.withPersistDecoder spaModelDecoder_"
     };
     let block = format!(
-        "            |> Spa.withModelDecoder spaModelDecoder_\n\
+        "            |> {decoder_line}\n\
          \x20           |> Spa.withModelEncoder spaModelEncoder_\n\
-         \x20           |> Spa.withPersistProtectedFields {fields_lit}\n"
+         \x20           |> Spa.withPersistProtectedFields {fields_lit}\n\
+         \x20           |> Spa.withPersistSeedFields {seed_lit}\n"
     );
     let mut out = main_text.to_string();
-    out.insert_str(line_start, &block);
+    insert_before_closing_paren(&mut out, line_start, close, &block);
+    out
+}
+
+/// K5: the model fields that ONLY server branches write. On a reload these are
+/// server truth: the client keeps them from the SSR seed and restores every
+/// other field from localStorage. A server branch writing the whole model
+/// contributes every field; a CLIENT branch with an unknown write-set (or one
+/// writing the whole model) claims every field, so nothing is seed-only — the
+/// safe direction (client scratch state is never replaced by the seed).
+fn server_only_written_fields(
+    branches: &[spa_partition::BranchVerdict],
+    model_fields: &[String],
+) -> Vec<String> {
+    let mut server: BTreeSet<String> = BTreeSet::new();
+    let mut client: BTreeSet<String> = BTreeSet::new();
+    for b in branches {
+        if b.server {
+            match &b.io {
+                Some(io) if io.writes_whole_model => server.extend(model_fields.iter().cloned()),
+                Some(io) => server.extend(io.write_fields.iter().cloned()),
+                None => {}
+            }
+        } else {
+            match &b.client_io {
+                Some(io) if !io.writes_whole_model => {
+                    client.extend(io.write_fields.iter().cloned())
+                }
+                _ => return Vec::new(),
+            }
+        }
+    }
+    model_fields
+        .iter()
+        .filter(|f| server.contains(*f) && !client.contains(*f))
+        .cloned()
+        .collect()
+}
+
+/// Insert builder `lines` (each ending in `\n`) before the paren at `close` that
+/// ends the `Spa.app` argument. When that paren opens its own line (the
+/// synthesised form) the lines go before it; when it shares a line with the
+/// config record (`… })`, a hand-written entry) they go after a line break at
+/// the paren, so the record's closing brace is never split from its fields.
+fn insert_before_closing_paren(out: &mut String, line_start: usize, close: usize, lines: &str) {
+    if out[line_start..close].trim().is_empty() {
+        out.insert_str(line_start, lines);
+    } else {
+        out.insert_str(close, &format!("\n{lines}        "));
+    }
+}
+
+/// Insert one `|> Spa.with… ` builder line into the synthesised `main`'s config
+/// chain, immediately before the line that closes the `Spa.app` argument (the
+/// same placement as [`inject_model_decoder_into_main`]). Idempotent on
+/// `marker`; a `main` that is not the app builder is returned unchanged.
+fn inject_config_builder_into_main(main_text: &str, marker: &str, line: &str) -> String {
+    if main_text.contains(marker) {
+        return main_text.to_string();
+    }
+    if !main_text.contains("Spa.app") && !main_text.contains("Spa.config") {
+        return main_text.to_string();
+    }
+    let close = match main_text.rfind(')') {
+        Some(i) => i,
+        None => return main_text.to_string(),
+    };
+    let line_start = main_text[..close].rfind('\n').map(|n| n + 1).unwrap_or(0);
+    let mut out = main_text.to_string();
+    insert_before_closing_paren(&mut out, line_start, close, line);
     out
 }
 
@@ -4418,6 +5077,8 @@ fn gen_backend(
     // `sky_sid` cookie and verifies on every RPC + SSR (empty → nothing emitted).
     session_proj: &[SessionProjField],
     warnings: &mut Vec<String>,
+    // SPA-3: the follow-up context + the Msg qualifier for the backend entry.
+    follow: Option<(&FollowCtx, &str)>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -4464,13 +5125,21 @@ fn gen_backend(
     // PATTERN-2: a client-result root's handler runs `spaRunPerform_`, a
     // `Sky.Ffi` kernel alias, so it needs `Sky.Ffi` too.
     let any_client_result = !push_mode && server.iter().any(|(n, _)| client_result.contains_key(n));
-    if any_chaining || any_client_result {
+    let any_follow = follow
+        .map(|(fc, _)| server.iter().any(|(n, _)| fc.branches.contains_key(n)))
+        .unwrap_or(false);
+    if any_chaining || any_client_result || any_follow {
         add(
             imports,
             &mut import_lines,
             "Sky.Ffi",
             "import Sky.Ffi as Ffi",
         );
+    }
+    if let Some((fc, q)) = follow {
+        if any_follow && !q.is_empty() {
+            import_lines.push(format!("import {} as SpaMsgMod_", fc.msg_module_name));
+        }
     }
     // SSR (design §4.1): a backend that carries `view`/`init` (≥1 server branch,
     // or push) gets an SSR `GET /{$}` route that renders the first paint. It
@@ -4737,6 +5406,11 @@ fn gen_backend(
     // through `update` (runtime-go/rt/spa_perform_notjs.go). The result type
     // `result` is a plain type variable — the concrete `Result Error T` binds it
     // at the call site (`result = spaRunPerform_ cmd`).
+    if let Some((fc, q)) = follow {
+        if any_follow {
+            handlers.push_str(&render_follow_backend(fc, q));
+        }
+    }
     if any_client_result {
         handlers.push_str(
             "-- Client-result perform: run the server task in the branch's command\n\
@@ -4943,12 +5617,26 @@ fn gen_backend(
         // (the write-set is applied by the result Msg's own client arm), so the
         // write-set model-read below is skipped.
         let is_client_result = !push_mode && client_result.contains_key(name);
+        // SPA-3: a follow-up branch RUNS its returned command — the server
+        // performs run here and the follow-up Msgs ride the response.
+        let is_follow = !is_chaining
+            && !is_client_result
+            && follow
+                .map(|(fc, _)| fc.branches.contains_key(name))
+                .unwrap_or(false);
         // The model the response reads from: the chain's final model when
         // chaining, else the branch's own updated model.
         let result_model = if is_chaining { "mFinal" } else { "m2" };
         // The response value.
         let resp_val = if is_client_result {
             "{ result = result }".to_string()
+        } else if is_follow {
+            let mut parts: Vec<String> = resp_field_names
+                .iter()
+                .map(|f| format!("{f} = {result_model}.{f}"))
+                .collect();
+            parts.push("spaFollow_ = follow_".to_string());
+            format!("{{ {} }}", parts.join(", "))
         } else {
             // Shared server-leg write-set encode (also emitted by the phase-2 fuzzer).
             emit_write_set_encode(io, &resp_field_names, result_model)
@@ -4985,7 +5673,7 @@ fn gen_backend(
                      \x20                       |> Task.andThen (\\_ -> Task.succeed ({json_resp}))"
                 ),
             )
-        } else if is_chaining || is_client_result {
+        } else if is_chaining || is_client_result || is_follow {
             ("cmd", format!("Task.succeed ({json_resp})"))
         } else {
             ("_", format!("Task.succeed ({json_resp})"))
@@ -4999,6 +5687,8 @@ fn gen_backend(
                 format!("\n{indent}( mFinal, _ ) =\n{indent}    spaChainSettle_ m2 cmd update\n")
             } else if is_client_result {
                 format!("\n{indent}result =\n{indent}    spaRunPerform_ cmd\n")
+            } else if is_follow {
+                format!("\n{indent}follow_ =\n{indent}    spaEncodeFollows_ (spaFollowUps_ cmd)\n")
             } else {
                 String::new()
             }
@@ -5431,6 +6121,14 @@ fn gen_frontend(
     // localStorage (the signed-cookie precedence rule). Empty for a client-only /
     // no-auth app — the whole stored model is then restored as-is.
     session_fields: &[String],
+    // K5: the fields ONLY server branches write — kept from the SSR seed on a
+    // reload (see `server_only_written_fields`).
+    seed_fields: &[String],
+    // SPA-3: the follow-up context seen from the entry.
+    follow: Option<FollowHere<'_>>,
+    // A wholly PURE `update` with no `case msg of` (SA-12): it runs in the
+    // client as written, so it is copied verbatim instead of regenerated.
+    keep_update_verbatim: bool,
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -5477,13 +6175,26 @@ fn gen_frontend(
     // App→Spa synthesis) so the decoder is never seen by the taint analysis as
     // reaching `db`. The pure model expr comes from init's DECLARING module (entry
     // or sibling), resolved by the caller, so a sibling init gets a decoder too.
-    let decoder_blank = if init_strip {
-        init_pure_model.map(|s| s.to_string())
-    } else {
-        None
-    };
-    if decoder_blank.is_some() && !has_module(imports, "Std.Codec") {
+    // SPA-8: the model codec is emitted for EVERY app with a derivable pure init
+    // model — persistence is not tied to the SSR-settled init any more. Only an
+    // `init_strip` app boots from the SSR seed (`withModelDecoder`); the others
+    // get the decoder for the localStorage restore alone (`withPersistDecoder`)
+    // and still run their own init command.
+    let decoder_blank = init_pure_model.map(|s| s.to_string());
+    let follow_here = regen_update
+        && follow
+            .as_ref()
+            .map(|f| server.iter().any(|(n, _)| f.ctx.branches.contains_key(n)))
+            .unwrap_or(false);
+    if (decoder_blank.is_some() || follow_here) && !has_module(imports, "Std.Codec") {
         import_lines.push("import Std.Codec as Codec".to_string());
+    }
+    if follow_here {
+        if let Some(f) = &follow {
+            if !f.q.is_empty() {
+                import_lines.push(format!("import {} as SpaMsgMod_", f.ctx.msg_module_name));
+            }
+        }
     }
 
     // Decls: handle by name/kind.
@@ -5509,14 +6220,37 @@ fn gen_frontend(
                 // driver can boot from `#sky-model` (design §4.5).
                 let main_text = slice(src, d.syntax());
                 let main_text = if decoder_blank.is_some() {
-                    inject_model_decoder_into_main(main_text, session_fields)
+                    inject_model_decoder_into_main(
+                        main_text,
+                        session_fields,
+                        seed_fields,
+                        init_strip,
+                    )
                 } else {
                     main_text.to_string()
+                };
+                // SPA-4: the client runs `App.withGuard` before `update` for
+                // every Msg, exactly like Sky.Live (the backend still re-checks
+                // every server branch — the trusted check). Only when the
+                // synthesised `spaGuard_` survives into the client (it is not
+                // server-tainted); a tainted guard is reported by `generate`.
+                let has_client_guard = file
+                    .decls()
+                    .any(|g| decl_name(&g).as_deref() == Some("spaGuard_"))
+                    && !tainted.iter().any(|t| t == "spaGuard_");
+                let main_text = if has_client_guard {
+                    inject_config_builder_into_main(
+                        &main_text,
+                        "Spa.withGuard",
+                        "            |> Spa.withGuard spaGuard_\n",
+                    )
+                } else {
+                    main_text
                 };
                 body.push_str(main_text.trim_end());
                 body.push_str("\n\n\n");
             }
-            (Some("update"), _) => {
+            (Some("update"), _) if !keep_update_verbatim => {
                 // Regenerated below; skip both annotation + value.
             }
             (Some("init"), DeclKind::Value) if strip_entry_init => {
@@ -5611,6 +6345,7 @@ fn gen_frontend(
             server_internal,
             model_field_names,
             client_result,
+            follow,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -5747,6 +6482,10 @@ fn gen_frontend_update(
     // apply arm dispatches `info.result_msg resp.result` into `update` instead of
     // applying a write-set.
     client_result: &HashMap<String, ClientResultInfo>,
+    // SPA-3: the follow-up context, for THIS module (Msg qualifier + its
+    // `Std.Native` import alias) + the server-tainted names (a client residual
+    // may not use them).
+    follow: Option<FollowHere<'_>>,
 ) -> Result<String, String> {
     // Find update's ValueDecl → its `case msg of`.
     let update_val = file
@@ -5794,9 +6533,40 @@ fn gen_frontend_update(
             // Request payload — the shared client-leg build-req (also emitted by
             // the phase-2 differential fuzzer). The inverse of the backend's
             // reconstruct: what is sent is what is reconstructed.
-            let payload = emit_build_req(io, model_param, model_field_names);
+            //
+            // SPA-1/SPA-2: the payload is a FUNCTION of the model (`\spaM_ ->
+            // …`), not a value built now. `Spa.rpc` queues the call; the client
+            // runs one RPC at a time in dispatch order and builds each request
+            // from the model current when it is SENT (a second `Inc` then reads
+            // the first `Inc`'s result), and rebases the response onto that
+            // snapshot with every later Msg replayed on top (runtime-go
+            // spa_rpcqueue.go) — Sky.Live's order. Msg args are captured by the
+            // closure, so they keep their dispatch-time values.
+            let payload = emit_build_req(io, SPA_RPC_MODEL, model_field_names);
+            // SPA-3: a follow-up branch whose command holds a `Std.Native`
+            // client effect sends it with `Spa.rpcWith`: the client runs that
+            // residual from the send-time snapshot (bound to the arm's model
+            // name), the server runs the rest.
+            let native = follow
+                .as_ref()
+                .and_then(|f| f.ctx.branches.get(&m).copied())
+                .unwrap_or(false);
+            let call = if native {
+                let f = follow.as_ref().expect("native implies follow");
+                let alias = f.native_alias.ok_or_else(|| {
+                    format!("sky.spa: server branch `{m}` returns a Std.Native client effect, but its module does not import Std.Native")
+                })?;
+                let residual = native_residual(arm.syntax(), src, alias, f.tainted, &m)?;
+                format!(
+                    "Spa.rpcWith {req_codec} {resp_codec} \"/_rpc/{m}\" (\\{SPA_RPC_MODEL} -> {payload}) (\\{model_param} -> {residual}) Applied{m}"
+                )
+            } else {
+                format!(
+                    "Spa.rpc {req_codec} {resp_codec} \"/_rpc/{m}\" (\\{SPA_RPC_MODEL} -> {payload}) Applied{m}"
+                )
+            };
             arms_out.push_str(&format!(
-                "        {pat_text} ->\n            ( {model_param}\n            , Spa.postJson {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m}\n            )\n\n"
+                "        {pat_text} ->\n            ( {model_param}\n            , {call}\n            )\n\n"
             ));
         } else {
             // Pure client-local branch — verbatim.
@@ -5816,6 +6586,32 @@ fn gen_frontend_update(
             format!(
                 "            update ({} resp.result) {model_param}",
                 cr.result_msg
+            )
+        } else if follow
+            .as_ref()
+            .map(|f| f.ctx.branches.contains_key(m))
+            .unwrap_or(false)
+        {
+            // SPA-3: apply the write-set, then dispatch the follow-up Msgs the
+            // server branch's command produced, in order. A follow-up that cannot
+            // be decoded is reported (App.withRpcError, else the console) — never
+            // silently dropped.
+            let inner = emit_apply_delta(io, model_param).trim().to_string();
+            let err_body = if has_rpc_error {
+                format!("update (spaRpcError_ e_) {model_param}")
+            } else {
+                format!("( {model_param}, Spa.reportError e_ )")
+            };
+            format!(
+                "            case spaDecodeFollows_ resp.spaFollow_ of\n\
+                 \x20               Ok spaFollows_ ->\n\
+                 \x20                   let\n\
+                 \x20                       ( spaM1_, spaC1_ ) =\n\
+                 \x20                           {inner}\n\
+                 \x20                   in\n\
+                 \x20                   ( spaM1_, Cmd.batch [ spaC1_, Spa.followUps spaFollows_ ] )\n\n\
+                 \x20               Err e_ ->\n\
+                 \x20                   {err_body}"
             )
         } else {
             // Shared client-leg apply-delta (also emitted by the phase-2 fuzzer).
@@ -5843,10 +6639,27 @@ fn gen_frontend_update(
         ));
     }
 
+    // SPA-3: the follow-up decoder, next to the `update` that uses it.
+    let follow_decls = match &follow {
+        Some(f) if server.iter().any(|(n, _)| f.ctx.branches.contains_key(n)) => {
+            format!("\n\n\n{}", render_follow_frontend(f.ctx, f.q).trim_end())
+        }
+        _ => String::new(),
+    };
     Ok(format!(
-        "{update_anno}\nupdate {msg_param} {model_param} =\n    case {msg_param} of\n{}",
+        "{update_anno}\nupdate {msg_param} {model_param} =\n    case {msg_param} of\n{}{follow_decls}",
         arms_out.trim_end()
     ))
+}
+
+/// SPA-3: the [`FollowCtx`] seen from ONE module — its Msg qualifier, its
+/// `Std.Native` import alias, and the server-tainted names.
+#[derive(Clone, Copy)]
+pub(crate) struct FollowHere<'a> {
+    ctx: &'a FollowCtx,
+    q: &'a str,
+    native_alias: Option<&'a str>,
+    tainted: &'a HashSet<String>,
 }
 
 /// GAP-1 + GAP-2: render a tainted (MIXED) module's FRONTEND subset — every
@@ -5897,6 +6710,8 @@ fn render_module_client_subset(
     // PATTERN-2 (client-result perform): `root → info` (threaded to the sibling
     // module's regenerated `update`).
     client_result: &HashMap<String, ClientResultInfo>,
+    // SPA-3: the follow-up context seen from THIS module.
+    follow: Option<FollowHere<'_>>,
 ) -> Result<String, String> {
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
@@ -5955,6 +6770,7 @@ fn render_module_client_subset(
             server_internal,
             model_field_names,
             client_result,
+            follow,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -5983,6 +6799,23 @@ fn render_module_client_subset(
         ensure_import_present(&out, "Std.Spa", "import Std.Spa as Spa")
     } else {
         out
+    };
+    // SPA-3: the follow-up decoder next to a regenerated sibling `update` needs
+    // the codec + error modules, and the Msg module under its fixed alias.
+    let out = match &follow {
+        Some(f) if regen_update && server.iter().any(|(n, _)| f.ctx.branches.contains_key(n)) => {
+            let o = ensure_import_present(&out, "Std.Codec", "import Std.Codec as Codec");
+            let o = ensure_import_present(
+                &o,
+                "Sky.Core.Error",
+                "import Sky.Core.Error as Error exposing (Error)",
+            );
+            match f.ctx.import_for_q(f.q) {
+                Some(line) => ensure_import_line(&o, &line),
+                None => o,
+            }
+        }
+        _ => out,
     };
     // The subset needs `import Shared` when it references the wire codecs (a
     // regenerated `update` / injected `Applied<Msg>` variants) OR when a copied
@@ -6611,6 +7444,7 @@ mod fix7_tests {
             &HashSet::new(),
             &[],
             &HashMap::new(),
+            None,
         )
         .expect("gen_frontend_update")
     }

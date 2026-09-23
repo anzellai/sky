@@ -69,8 +69,12 @@ func spaMergeStoredOverSeed(storedJSON, seedJSON string, protectedFields []strin
 		return "", false
 	}
 	for _, f := range protectedFields {
-		if v, ok := seed[f]; ok {
-			stored[f] = v
+		// The model codec (`Codec.auto`) writes snake_case keys, so a camelCase
+		// field `userName` is `user_name` in both blobs; accept either spelling.
+		for _, k := range spaFieldKeys(f) {
+			if v, ok := seed[k]; ok {
+				stored[k] = v
+			}
 		}
 	}
 	out, err := json.Marshal(stored)
@@ -78,6 +82,26 @@ func spaMergeStoredOverSeed(storedJSON, seedJSON string, protectedFields []strin
 		return "", false
 	}
 	return string(out), true
+}
+
+// spaFieldKeys returns the JSON keys a model field may be stored under: its Sky
+// name and the snake_case key `Codec.auto` derives from it.
+func spaFieldKeys(f string) []string {
+	s := camelToSnake(f)
+	if s == f {
+		return []string{f}
+	}
+	return []string{f, s}
+}
+
+// spaSeedWinsFields is the set of fields a reload takes from the SSR seed
+// rather than localStorage: the protected (session) fields plus the fields ONLY
+// server branches write (K5 — server truth, which the seed renders fresh from
+// the real request; a stale local copy must never paint over it).
+func spaSeedWinsFields(protected, serverOnly []string) []string {
+	out := make([]string, 0, len(protected)+len(serverOnly))
+	out = append(out, protected...)
+	return append(out, serverOnly...)
 }
 
 // spaFirstPaintPlan decides how an SSR first paint proceeds after a localStorage

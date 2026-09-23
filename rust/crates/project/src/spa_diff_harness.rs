@@ -613,6 +613,7 @@ mod tests {
             server,
             reason: String::new(),
             io,
+            client_io: None,
             msg_arg_tys: vec![],
             forces_effect: forces,
             effect_families: vec![],
@@ -636,6 +637,7 @@ mod tests {
             chaining_branches: vec!["Chained".into()],
             client_result: vec![("ClientRoot".into(), "GotIt".into())],
             server_chain_warnings: vec![],
+            follow_up: vec![],
         }
     }
     fn io_args(args: &[&str]) -> BranchIo {

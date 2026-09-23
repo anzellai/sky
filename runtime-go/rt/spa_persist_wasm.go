@@ -20,6 +20,9 @@ import "syscall/js"
 var (
 	spaModelEncoder any
 	spaPersistProt  []string
+	// spaPersistSeed are the fields ONLY server branches write: kept from the
+	// SSR seed on a reload, never from localStorage (K5).
+	spaPersistSeed []string
 )
 
 // spaEncodeModel applies the wired encoder to a model, returning the JSON string.
@@ -124,7 +127,10 @@ func spaRestoreFromStorage(cfg any, doc js.Value) bool {
 	if spaModelEncoder == nil {
 		return false
 	}
-	decoder := Field(cfg, "ModelDecoder")
+	decoder := Field(cfg, "PersistDecoder")
+	if decoder == nil {
+		decoder = Field(cfg, "ModelDecoder")
+	}
 	if decoder == nil {
 		return false
 	}
@@ -133,7 +139,7 @@ func spaRestoreFromStorage(cfg any, doc js.Value) bool {
 		return false
 	}
 	seed := spaReadSeedBlob(doc)
-	merged, useIt := spaMergeStoredOverSeed(stored, seed, spaPersistProt, spaPersistMaxBytes)
+	merged, useIt := spaMergeStoredOverSeed(stored, seed, spaSeedWinsFields(spaPersistProt, spaPersistSeed), spaPersistMaxBytes)
 	if !useIt {
 		return false
 	}

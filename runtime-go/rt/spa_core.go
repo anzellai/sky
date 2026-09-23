@@ -180,6 +180,61 @@ func Spa_withPersistProtectedFields(fields, cfg any) any {
 	return spaCfgSet(cfg, "PersistProtectedFields", fields)
 }
 
+// Spa_withPersistDecoder stores the `String -> Result Error model` decoder the
+// client uses ONLY to restore its localStorage copy on a reload (SPA-8). Unlike
+// ModelDecoder it does NOT make the client boot from the SSR `#sky-model` blob
+// and skip init's command: an app whose init is not a GET-safe server read
+// still runs its own init command. The server IGNORES it.
+func Spa_withPersistDecoder(fn, cfg any) any { return spaCfgSet(cfg, "PersistDecoder", fn) }
+
+// Spa_withPersistSeedFields stores the names of the model fields that ONLY
+// server branches write (K5). On a reload the client takes these from the SSR
+// seed — server truth, rendered fresh from the real request — and restores
+// every other field from localStorage. Unlike PersistProtectedFields they play
+// no part in the sign-out check. The server IGNORES it.
+func Spa_withPersistSeedFields(fields, cfg any) any {
+	return spaCfgSet(cfg, "PersistSeedFields", fields)
+}
+
+// Spa_withGuard stores the `msg -> model -> Result Error ()` guard under
+// "Guard". The wasm client runs it before `update` for every Msg the app
+// dispatches (clicks, keystrokes, timer ticks, follow-ups), exactly as Sky.Live
+// runs `Live.withGuard` before every update: a rejected Msg keeps the model and
+// runs no Cmd. The generated backend re-checks every server branch (the TRUSTED
+// check — the client is untrusted); this gives the client-local branches the
+// same behaviour. An RPC result (Applied<Msg>) is runtime-internal and is not
+// guarded.
+func Spa_withGuard(fn, cfg any) any { return spaCfgSet(cfg, "Guard", fn) }
+
+// Spa_rpc is the auto-split's server-branch RPC Cmd (`Spa.rpc`). `mk` is
+// `model -> String -> Task Error a`: given the model SNAPSHOT at send time and
+// the request id, it builds the request task (read-set + Msg args encoded with
+// the shared codec, POSTed to `/_rpc/<Msg>?rid=<id>`). The wasm client queues
+// it (spa_rpcqueue.go): one RPC in flight per client, each request built when it
+// is sent, each response rebased onto its snapshot. `to` maps the Result to the
+// generated Applied<Msg> constructor.
+func Spa_rpc(mk, to any) SkyCmd { return cmdT{kind: "rpc", task: mk, toMsg: to} }
+
+// Spa_rpcWith is Spa_rpc plus a CLIENT residual (`model -> Cmd msg`): the part
+// of the server branch's command that can only run in the client (a
+// `Std.Native` effect). The client runs `residual snapshot` when it SENDS the
+// RPC, from the same model snapshot the request is built from, so the effect
+// sees the model the server branch sees (SPA-3). Carried in `payload`.
+func Spa_rpcWith(mk, residual, to any) SkyCmd {
+	return cmdT{kind: "rpc", task: mk, toMsg: to, payload: residual}
+}
+
+// Spa_followUps dispatches a list of Msgs, in order, through the client
+// `update` — the follow-up Msgs a server branch's command produced on the
+// backend (Spa_collectFollowUps) and returned with its RPC response (SPA-3).
+func Spa_followUps(msgs any) SkyCmd { return cmdT{kind: "followUps", payload: msgs} }
+
+// Spa_reportError reports an Error loudly on the client console (the wasm
+// client has no Std.Log) without dispatching anything — used when a server
+// branch's follow-up Msgs cannot be decoded and the app declared no
+// `App.withRpcError` handler. Never a silent drop.
+func Spa_reportError(err any) SkyCmd { return cmdT{kind: "spaError", payload: err} }
+
 // ── Route matching (portable pure helpers) ──────────────────────────
 //
 // Reimplements Sky.Live's matchRoute / splitPath algorithm (live.go:1600-1624)

@@ -1,0 +1,56 @@
+module Main exposing (main)
+
+-- A row-polymorphic lambda bound to a top-level name (a CAF), or to a `let`,
+-- whose record parameter's OPEN row has the same field names as an unrelated
+-- nominal record (`Other = { server }`). The lambda must keep every field of
+-- the record it is given: `count` stays 5 / 7, it is never reset to 0.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+type alias Model =
+    { count : Int
+    , server : String
+    }
+
+type alias Other =
+    { server : String }
+
+
+other : Other
+other =
+    { server = "o" }
+
+
+onReq =
+    \_ model -> ( { model | server = "s" }, 0 )
+
+
+onReqApplied r m =
+    (\_ model -> ( { model | server = "u" }, 0 )) r m
+
+
+onReqDef _ model =
+    ( { model | server = "s" }, 0 )
+
+
+main =
+    let
+        onReqLet = \_ model -> ( { model | server = "t" }, 0 )
+        ( m, _ ) = onReq () { count = 5, server = "" }
+        ( m2, _ ) = onReqDef () { count = 6, server = "" }
+        ( m3, _ ) = onReqLet () { count = 7, server = "" }
+        ( m4, _ ) = onReqApplied () { count = 8, server = "" }
+    in
+        println
+            (String.fromInt m.count ++ " " ++ String.fromInt m2.count ++ " "
+                ++ String.fromInt m3.count
+                ++ " "
+                ++ String.fromInt m4.count
+                ++ " "
+                ++ other.server
+                ++ m.server
+                ++ m2.server
+                ++ m3.server
+                ++ m4.server)

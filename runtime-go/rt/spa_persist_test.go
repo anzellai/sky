@@ -72,6 +72,29 @@ func TestSpaMergeStoredOverSeed(t *testing.T) {
 			t.Errorf("merged = %s, want the whole stored model (no field protected)", merged)
 		}
 	})
+
+	// K5: a field ONLY server branches write comes from the SSR seed on a
+	// reload (server truth), every other field from localStorage. The model
+	// codec writes snake_case keys, so a camelCase field matches its snake key.
+	t.Run("server-only fields come from the seed, client fields from storage", func(t *testing.T) {
+		stored := `{"note":"kept","server_value":"stale","session":"old"}`
+		seed := `{"note":"","server_value":"fresh","session":"srv"}`
+		wins := spaSeedWinsFields([]string{"session"}, []string{"serverValue"})
+		merged, useIt := spaMergeStoredOverSeed(stored, seed, wins, cap)
+		if !useIt {
+			t.Fatalf("useIt = false, want true")
+		}
+		fields := decodeObj(t, merged)
+		if string(fields["note"]) != `"kept"` {
+			t.Errorf("client field not restored: %s", merged)
+		}
+		if string(fields["server_value"]) != `"fresh"` {
+			t.Errorf("server-only field not taken from the seed: %s", merged)
+		}
+		if string(fields["session"]) != `"srv"` {
+			t.Errorf("session not taken from the seed: %s", merged)
+		}
+	})
 }
 
 // TestSpaSessionClearedByStep covers the sign-out signal (spa_persist.go): a

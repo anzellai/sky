@@ -1,0 +1,63 @@
+module Main exposing (main)
+
+-- Auto-split INPUT whose `update` has no `case msg of` but reaches a server effect: the split
+-- cannot route it per Msg, so it fails with a message naming the change (SA-12).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Sky.Core.Result as Result
+import Sky.Core.Task as Task
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+type alias Model =
+    { log : String }
+
+type Msg
+    = Line String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { log = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update (Line l) model =
+    ( { model | log =
+          model.log ++ l
+              ++ Result.withDefault "" (Task.run (File.readFile "x.txt"))
+      }
+    , Cmd.none
+    )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text ("log = " ++ model.log)
+            , Ui.button [] { onPress = Just (Line "a"), label = Ui.text "a" }
+            ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })
