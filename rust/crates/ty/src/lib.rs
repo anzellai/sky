@@ -14,6 +14,7 @@
 use base::Name;
 
 mod check;
+pub mod codec_elem;
 mod db;
 pub mod dictkey;
 mod exhaustive;

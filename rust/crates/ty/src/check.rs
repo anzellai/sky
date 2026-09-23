@@ -2,6 +2,7 @@
 //! Produces the type-error diagnostics + per-def type table (the "per-region
 //! type map output (name → inferred type)" the lowerer will consume).
 
+use crate::codec_elem;
 use crate::db::TyDb;
 use crate::dictkey;
 use crate::exhaustive;
@@ -431,6 +432,10 @@ pub fn check_modules_with_world(
             .map(|(_, s)| annotation_type_spans(&sky.module_parse(mid), s.file))
             .unwrap_or_default();
         let mut dict_keys = DictKeyScan::default();
+        // `[E2009]` state, accumulated across the WHOLE module (same per-module
+        // dedup as `[E2008]`: one offending `Codec.auto`-family call, one
+        // diagnostic).
+        let mut codec_elems = codec_elem::CodecElemScan::default();
 
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
@@ -499,9 +504,28 @@ pub fn check_modules_with_world(
             if let Some(scheme) = world.value_sigs.get(def) {
                 dict_keys.add(&scheme.ty, &dname, anno_spans.get(&dname).copied(), true);
             }
-            for (e, ty) in infer.recorded_expr_types() {
-                dict_keys.add(&ty, &dname, body.expr_span(e), false);
+            // Read the solved per-expression types ONCE (the accessor `mem::take`s
+            // its buffer, so a second call returns empty): the `[E2008]` scan
+            // iterates them in arena order (deterministic dedup), then the
+            // `[E2009]` scan indexes them by `ExprId` to type each `Codec.auto`
+            // witness.
+            let recorded = infer.recorded_expr_types();
+            for (e, ty) in &recorded {
+                dict_keys.add(ty, &dname, body.expr_span(*e), false);
             }
+
+            // ---- [E2009] un-derivable codec element ---------------------
+            //
+            // `Codec.auto` derives a codec by reflecting over a witness record
+            // VALUE's Go type. A `List <Rec>` field whose witness list is EMPTY,
+            // with no `: Codec T` annotation pinning the element, lowers to Go
+            // `[]any` and PANICS at decode (`Codec.auto: cannot decode kind
+            // interface`) from a program that passed `sky check`. Fire only when
+            // the witness's collection element is a genuinely-free inference var
+            // (concrete / rigid-quantifier elements are silent — see
+            // `codec_elem.rs`).
+            let expr_ty: HashMap<ExprId, Ty> = recorded.into_iter().collect();
+            codec_elem::scan_body(body, &expr_ty, sky, &dname, &mut codec_elems);
 
             // exhaustiveness (warnings, not type errors)
             let warns = exhaustive::check_body(body, &world);
@@ -542,6 +566,26 @@ pub fn check_modules_with_world(
                     })
                     .unwrap_or_default(),
                 suggestion: Some(dictkey::suggestion()),
+            });
+        }
+
+        // One `[E2009]` per offending `Codec.auto`-family call in this module.
+        for f in &codec_elems.found {
+            out.type_errors += 1;
+            out.diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: Code("E2009".to_string()),
+                message: format!("[{}] {}", f.def_name, codec_elem::message(f.container)),
+                labels: f
+                    .span
+                    .map(|s| {
+                        vec![diagnostics::Label {
+                            span: trim_leading_ws(&module_src, s),
+                            message: "this codec witness".into(),
+                        }]
+                    })
+                    .unwrap_or_default(),
+                suggestion: Some(codec_elem::suggestion()),
             });
         }
     }

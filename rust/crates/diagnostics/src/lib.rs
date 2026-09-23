@@ -144,6 +144,7 @@ fn code_title(code: &str) -> &'static str {
         // (`legacy-haskell-compiler/src/Sky/Reporting/Diagnostic.hs:183-206`);
         // E2008 is the first free code in the type-error band.
         "E2008" => "UNSUPPORTED DICT KEY",
+        "E2009" => "UN-DERIVABLE CODEC ELEMENT",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",
         _ => "ERROR",
