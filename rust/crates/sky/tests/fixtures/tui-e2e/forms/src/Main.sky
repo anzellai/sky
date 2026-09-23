@@ -1,0 +1,193 @@
+module Main exposing (main)
+
+{-| Fixture for scripts/tui-e2e.sh — the Std.Ui controls of a terminal:tui
+Element view: a label-width button keeps its label when focused, focus follows
+an element across a background removal, Input.multiline edits, a Ui.form
+submits its named fields into a record, a slider steps with the arrow keys,
+onEnter fires, and App.withInput takes a line from the runtime prompt.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Input as Input
+
+type alias SignIn =
+    { email : String
+    , age : Int
+    }
+
+type alias Model =
+    { items : List String
+    , armed : Bool
+    , note : String
+    , sent : String
+    , vol : String
+    , chat : String
+    , line : String
+    }
+
+type Msg
+    = Noop
+    | Arm
+    | RemoveFirst
+    | Del String
+    | SetNote String
+    | FormEdit String
+    | Submit SignIn
+    | SetVol String
+    | SetChat String
+    | ChatSend
+    | Line String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { items = [ "D1", "D2", "D3", "D4" ]
+      , armed = False
+      , note = ""
+      , sent = ""
+      , vol = "10"
+      , chat = ""
+      , line = ""
+      }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Noop ->
+            ( model, Cmd.none )
+
+        Arm ->
+            ( { model | armed = True }, Cmd.none )
+
+        RemoveFirst ->
+            ( { model | armed = False, items = List.drop 1 model.items }
+            , Cmd.none
+            )
+
+        Del it ->
+            ( { model | items = List.filter (\x -> x /= it) model.items }
+            , Cmd.none
+            )
+
+        SetNote s ->
+            ( { model | note = s }, Cmd.none )
+
+        FormEdit _ ->
+            ( model, Cmd.none )
+
+        Submit f ->
+            ( { model | sent = f.email ++ "/" ++ String.fromInt f.age }
+            , Cmd.none
+            )
+
+        SetVol v ->
+            ( { model | vol = v }, Cmd.none )
+
+        SetChat s ->
+            ( { model | chat = s }, Cmd.none )
+
+        ChatSend ->
+            ( { model | chat = "sent" }, Cmd.none )
+
+        Line s ->
+            ( { model | line = s }, Cmd.none )
+
+
+delButton : String -> Element Msg
+delButton it =
+    Ui.button
+        [ Ui.paddingXY 16 0 ]
+        { onPress = Just (Del it), label = Ui.text ("Del " ++ it) }
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8 ]
+        [ Ui.button [] { onPress = Just Noop, label = Ui.text "OK" }
+        , Ui.button
+              [ Ui.paddingXY 16 0 ]
+              { onPress = Just Arm, label = Ui.text "Arm" }
+        , Ui.text ("items=" ++ String.join "," model.items)
+        , Ui.row [ Ui.spacing 16 ] (List.map delButton model.items)
+        , Input.multiline
+              []
+              { onChange = SetNote
+              , text = model.note
+              , placeholder = Nothing
+              , label = Input.labelHidden "note"
+              , spellcheck = False
+              }
+        , Ui.text ("note=" ++ String.replace "\n" "|" model.note)
+        , Ui.form
+              [ Ui.onSubmit Submit ]
+              [ Input.text
+                    [ Ui.name "email" ]
+                    { onChange = FormEdit
+                    , text = ""
+                    , placeholder = Nothing
+                    , label = Input.labelHidden "email"
+                    }
+              , Input.text
+                    [ Ui.name "age" ]
+                    { onChange = FormEdit
+                    , text = ""
+                    , placeholder = Nothing
+                    , label = Input.labelHidden "age"
+                    }
+              ]
+        , Ui.text ("sent=" ++ model.sent)
+        , Input.slider
+              [ Ui.width (Ui.px 300) ]
+              { onChange = SetVol
+              , value = model.vol
+              , min = "0"
+              , max = "20"
+              , step = "1"
+              , label = Input.labelHidden "vol"
+              }
+        , Ui.text ("vol=" ++ model.vol)
+        , Input.text
+              [ Ui.onEnter ChatSend ]
+              { onChange = SetChat
+              , text = model.chat
+              , placeholder = Nothing
+              , label = Input.labelHidden "chat"
+              }
+        , Ui.text ("chat=" ++ model.chat)
+        , Ui.text ("line=" ++ model.line)
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    if model.armed then
+        Sub.every 2000 RemoveFirst
+
+    else
+        Sub.none
+
+
+main : Task Error ()
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withInput Line)

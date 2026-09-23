@@ -3,14 +3,16 @@
 # scripts/tui-e2e.sh — pty e2e regression for the terminal TEA loops
 # (terminal:tui Element + String views, terminal:cli).
 #
-# Builds the three fixtures under rust/crates/sky/tests/fixtures/tui-e2e and:
-#   * drives the two terminal:tui apps in a real pseudo-terminal through
+# Builds the four fixtures under rust/crates/sky/tests/fixtures/tui-e2e and:
+#   * drives the three terminal:tui apps in a real pseudo-terminal through
 #     scripts/tui-e2e-drive.py (pyte reads the screen back): queued keys act on
 #     the current frame, a Ui.width input stays one row, split UTF-8 / escape /
 #     bracketed-paste reads decode whole keys, a slow Sub.every fires under
 #     fast ticks, Cmd.publish reaches Sub.subscribeTopic, Alt+key reaches
 #     onKey, Ctrl-C quits with onKey set, withDurable restores the model, an
-#     App.tui String view draws at column 0 and quits on q;
+#     App.tui String view draws at column 0 and quits on q, and the Std.Ui
+#     controls work (focus by identity, textarea, form submit, slider,
+#     onEnter, the App.withInput line prompt);
 #   * runs the terminal:cli app with no input handler: it must exit 0 after
 #     its slow Cmd.perform landed, with the published payload delivered and
 #     the guarded Msg rejected.
@@ -47,7 +49,7 @@ if ! python3 -c 'import pyte' >/dev/null 2>&1; then
   PY="$WORK/venv/bin/python"
 fi
 
-for fx in app string cli; do
+for fx in app string forms cli; do
   mkdir -p "$WORK/$fx"
   cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/tui-e2e/$fx/." "$WORK/$fx/"
   echo "==> building the tui-e2e $fx fixture"
@@ -63,10 +65,12 @@ bin_of() {
 }
 APP_BIN="$(bin_of "$WORK/app" terminal-tui)"
 STR_BIN="$(bin_of "$WORK/string" terminal-tui)"
+FORMS_BIN="$(bin_of "$WORK/forms" terminal-tui)"
 CLI_BIN="$(bin_of "$WORK/cli" terminal-cli)"
 
 echo "==> driving the terminal:tui fixtures in a pty"
-with_timeout 180 "$PY" "$ROOT/scripts/tui-e2e-drive.py" "$WORK/app" "$APP_BIN" "$WORK/string" "$STR_BIN"
+with_timeout 300 "$PY" "$ROOT/scripts/tui-e2e-drive.py" "$WORK/app" "$APP_BIN" "$WORK/string" "$STR_BIN" \
+  "$WORK/forms" "$FORMS_BIN"
 
 echo "==> running the terminal:cli fixture without an input handler"
 set +e

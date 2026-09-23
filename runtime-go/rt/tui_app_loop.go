@@ -24,8 +24,6 @@ package rt
 import (
 	"fmt"
 	"os"
-	"reflect"
-	"strconv"
 	"strings"
 )
 
@@ -548,104 +546,6 @@ func tuiRangeStep(f focusable, key string) []any {
 		return []any{msg}
 	}
 	return nil
-}
-
-// tuiDecodeFormSubmit builds the onSubmit Msg from the submitted fields.
-// The handler is a plain Msg (returned as is) or a constructor taking the
-// form record: each record field is filled from the control with the same
-// name (case-insensitive), converted to the field's type (String / Int /
-// Float / Bool). A missing field (other than a Bool, which an unchecked
-// checkbox leaves out) or a value that does not parse is an error — never
-// a zero-filled record.
-func tuiDecodeFormSubmit(handler any, fields map[string]string) (any, error) {
-	if handler == nil {
-		return nil, nil
-	}
-	if !isFunc(handler) {
-		return handler, nil
-	}
-	rv := reflect.ValueOf(handler)
-	if rv.Kind() != reflect.Func || rv.Type().NumIn() == 0 {
-		return sky_call(handler, nil), nil
-	}
-	pt := rv.Type().In(0)
-	lookup := func(name string) (string, bool) {
-		if v, ok := fields[name]; ok {
-			return v, true
-		}
-		for k, v := range fields {
-			if strings.EqualFold(k, name) {
-				return v, true
-			}
-		}
-		return "", false
-	}
-	var arg reflect.Value
-	switch pt.Kind() {
-	case reflect.Interface:
-		m := make(map[string]any, len(fields))
-		for k, v := range fields {
-			m[k] = v
-		}
-		return sky_call(handler, m), nil
-	case reflect.Map:
-		if pt.Key().Kind() != reflect.String || pt.Elem().Kind() != reflect.String {
-			return nil, fmt.Errorf("the onSubmit handler takes %s; a form submits String fields", pt)
-		}
-		arg = reflect.MakeMapWithSize(pt, len(fields))
-		for k, v := range fields {
-			arg.SetMapIndex(reflect.ValueOf(k).Convert(pt.Key()), reflect.ValueOf(v).Convert(pt.Elem()))
-		}
-	case reflect.Struct:
-		arg = reflect.New(pt).Elem()
-		for i := 0; i < pt.NumField(); i++ {
-			sf := pt.Field(i)
-			if !sf.IsExported() {
-				continue
-			}
-			raw, present := lookup(sf.Name)
-			fv := arg.Field(i)
-			switch sf.Type.Kind() {
-			case reflect.String:
-				if !present {
-					return nil, fmt.Errorf("field %q is missing (give its input Ui.name %q)", strings.ToLower(sf.Name[:1])+sf.Name[1:], strings.ToLower(sf.Name[:1])+sf.Name[1:])
-				}
-				fv.SetString(raw)
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				if !present {
-					return nil, fmt.Errorf("field %q is missing", sf.Name)
-				}
-				n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-				if err != nil {
-					return nil, fmt.Errorf("field %q: %q is not an Int", sf.Name, raw)
-				}
-				fv.SetInt(n)
-			case reflect.Float32, reflect.Float64:
-				if !present {
-					return nil, fmt.Errorf("field %q is missing", sf.Name)
-				}
-				f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-				if err != nil {
-					return nil, fmt.Errorf("field %q: %q is not a Float", sf.Name, raw)
-				}
-				fv.SetFloat(f)
-			case reflect.Bool:
-				switch strings.ToLower(strings.TrimSpace(raw)) {
-				case "true", "on", "checked", "1", "yes":
-					fv.SetBool(true)
-				case "", "false", "off", "0", "no":
-					fv.SetBool(false)
-				default:
-					return nil, fmt.Errorf("field %q: %q is not a Bool", sf.Name, raw)
-				}
-			default:
-				return nil, fmt.Errorf("field %q has type %s, which a form cannot fill (use String, Int, Float or Bool)", sf.Name, sf.Type)
-			}
-		}
-	default:
-		return nil, fmt.Errorf("the onSubmit handler takes %s; a form submits a record of String / Int / Float / Bool fields", pt)
-	}
-	return rv.Call([]reflect.Value{arg})[0].Interface(), nil
 }
 
 // tuiLinePromptElement is the runtime-owned one-line input shown under the

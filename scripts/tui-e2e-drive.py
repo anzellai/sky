@@ -2,6 +2,7 @@
 """scripts/tui-e2e-drive.py — drive the tui-e2e fixtures in a real pty.
 
 usage: tui-e2e-drive.py <app-dir> <app-binary> <string-dir> <string-binary>
+                        <forms-dir> <forms-binary>
 
 Each scenario starts the binary under a pseudo-terminal, writes key bytes
 (some deliberately split across writes), and reads the screen back through
@@ -179,10 +180,13 @@ def main():
 
     # 3b. A snapshot the codec can no longer decode is NOT silently replaced
     #     (SA-8): the app boots from init and never overwrites the stored row.
-    db = sqlite3.connect(os.path.join(app_dir, "e2e.db"))
-    db.execute("UPDATE _sky_durable_snapshot SET model_json = ?", ('{"legacy":1}',))
-    db.commit()
-    db.close()
+    try:
+        db = sqlite3.connect(os.path.join(app_dir, "e2e.db"))
+        db.execute("UPDATE _sky_durable_snapshot SET model_json = ?", ('{"legacy":1}',))
+        db.commit()
+        db.close()
+    except sqlite3.Error as e:
+        check("durable snapshot table exists", False, str(e))
     p = Pty(app_dir, app_bin)
     try:
         check("undecodable snapshot boots from init (bumps=0)", p.wait_for("bumps=0", 4), p.text())
@@ -193,9 +197,12 @@ def main():
         p.wait_exit(3)
     finally:
         p.close()
-    db = sqlite3.connect(os.path.join(app_dir, "e2e.db"))
-    rows = [r[0] for r in db.execute("SELECT model_json FROM _sky_durable_snapshot")]
-    db.close()
+    try:
+        db = sqlite3.connect(os.path.join(app_dir, "e2e.db"))
+        rows = [r[0] for r in db.execute("SELECT model_json FROM _sky_durable_snapshot")]
+        db.close()
+    except sqlite3.Error as e:
+        rows = ["<%s>" % e]
     check("undecodable snapshot kept unchanged after updates", rows == ['{"legacy":1}'], "rows: %r" % rows)
 
     # 4. App.tui String view, no onKey: starts, draws lines at column 0 in raw
@@ -213,6 +220,75 @@ def main():
         check("q quits an App.tui without onKey (exit 0)", rc == 0, p.text())
     finally:
         p.close()
+
+    # 5. The Std.Ui controls (forms fixture). Focus order: OK, Arm, Del D1..D4,
+    #    textarea, email, age, slider, chat, line prompt; the prompt starts
+    #    focused, so n Tabs land on element n-1.
+    forms_dir, forms_bin = sys.argv[5:7]
+
+    def forms(scenario):
+        p = Pty(forms_dir, forms_bin)
+        try:
+            if not p.wait_for("items=D1,D2,D3,D4", 4):
+                check("forms app starts", False, p.text())
+                return
+            scenario(p)
+            p.write(b"\x03")
+            p.wait_exit(3)
+        finally:
+            p.close()
+
+    def tabs(p, n):
+        for _ in range(n):
+            p.write(b"\t", settle=0.08)
+
+    def focus_and_identity(p):
+        tabs(p, 1)
+        first = p.text().splitlines()[0]
+        check("focused label-width button keeps its label (OK)", first.startswith("OK"), p.text())
+        tabs(p, 1)
+        p.write(b"\r")  # Arm: removes D1 in the background after 2 s
+        tabs(p, 3)      # Del D3
+        removed = p.wait_for("items=D2,D3,D4", 4)
+        p.write(b"\r")
+        check("focus follows the element across a background removal (Del D3)",
+              removed and p.wait_for("items=D2,D4", 3), p.text())
+
+    def textarea(p):
+        tabs(p, 7)
+        p.write(b"a")
+        p.write(b"\r")
+        p.write(b"b")
+        check("Input.multiline is editable, Enter inserts a newline", p.wait_for("note=a|b", 3), p.text())
+
+    def form_submit(p):
+        tabs(p, 8)
+        p.write(b"x@y")
+        p.write(b"\t")
+        p.write(b"42")
+        p.write(b"\r")
+        check("Ui.form onSubmit collects named fields into the record", p.wait_for("sent=x@y/42", 3), p.text())
+
+    def slider(p):
+        tabs(p, 10)
+        p.write(b"\x1b[C")
+        p.write(b"\x1b[C")
+        check("slider steps with the arrow keys (vol=12)", p.wait_for("vol=12", 3), p.text())
+
+    def on_enter(p):
+        tabs(p, 11)
+        p.write(b"hi")
+        p.wait_for("chat=hi", 2)
+        p.write(b"\r")
+        check("onEnter fires on Enter in a text input", p.wait_for("chat=sent", 3), p.text())
+
+    def line_prompt(p):
+        p.write(b"hello")
+        p.write(b"\r")
+        check("App.withInput on terminal:tui takes a line from the prompt", p.wait_for("line=hello", 3), p.text())
+
+    for sc in (focus_and_identity, textarea, form_submit, slider, on_enter, line_prompt):
+        forms(sc)
 
     if failures:
         print("tui-e2e-drive: %d check(s) FAILED" % len(failures))

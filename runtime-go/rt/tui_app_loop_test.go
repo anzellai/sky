@@ -267,6 +267,33 @@ func TestTuiForm_DecodeErrorIsClassified(t *testing.T) {
 	}
 }
 
+type skyRec struct {
+	Email string `sky:"email,string"`
+	Age   int    `sky:"age,int"`
+}
+type submitV struct{ V0 skyRec }
+
+// The typed codegen wraps the constructor as func(any) any narrowing its
+// argument; the record type is probed from the Msg, so "42" decodes as the
+// Int 42 and a non-Int is an error — never the zero the narrowing of a
+// string map would produce.
+func TestTuiForm_AnyTypedHandlerDecodesIntoProbedRecord(t *testing.T) {
+	handler := func(p any) any {
+		r, _ := p.(skyRec) // what rt.Coerce of a string map would zero-fill
+		return submitV{V0: r}
+	}
+	msg, err := tuiDecodeFormSubmit(handler, map[string]string{"email": "a@b", "age": "42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := msg.(submitV).V0; got.Email != "a@b" || got.Age != 42 {
+		t.Fatalf("record = %+v, want {a@b 42}", got)
+	}
+	if _, err := tuiDecodeFormSubmit(handler, map[string]string{"email": "a@b", "age": "x"}); err == nil {
+		t.Fatalf("age \"x\" decoded without an error")
+	}
+}
+
 // onEnter fires on Enter in a single-line input (the chat composer).
 func TestTuiInput_OnEnterFires(t *testing.T) {
 	var got any
