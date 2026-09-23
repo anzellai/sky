@@ -950,10 +950,16 @@ onClick msg =
 --     `Ui.onSubmit DoSignOut`
 --   * a typed-record-arg constructor — e.g.
 --     `Ui.onSubmit DoSignIn` where `DoSignIn : LoginForm -> Msg`.
---     Sky.Live decodes the wire formData (`{name: value, ...}`)
---     into the typed record at dispatch time via case-insensitive
---     `json.Unmarshal` — input `name` attributes map to record
---     fields by name.
+--     The runtime decodes the submitted fields (`{name: text, ...}`)
+--     into the typed record STRICTLY (runtime-go/rt/form_decode.go):
+--     input `name` attributes map to record fields by name, Int /
+--     Float / Bool / Maybe fields are parsed from the text, and a
+--     missing or unparsable field drops the submit with a logged
+--     FormDecode error (never a zero value).
+--
+-- The checker rejects an argument no form submit can produce ([E2010]):
+-- a non-Msg value, a handler of more than one argument, or a record
+-- field that is not String / Int / Float / Bool / Maybe of those.
 --
 -- The signature `(a -> Attribute b)` is intentionally permissive
 -- in `a` (the runtime accepts both plain Msg values and Msg
@@ -996,9 +1002,13 @@ onMouseOut msg =
     AttrEvent (Event.onMouseOut msg)
 
 
+-- Fire a Msg on every keydown. It is a bare-Msg event (like onFocus): the key
+-- is not carried. `Std.Html.Events.onKeyDown` is the key-carrying form
+-- (`(String -> msg) -> Attribute msg`); passing a bare Msg to it failed on
+-- every render, so this binds the keydown event with a plain Msg instead.
 onKeyDown : msg -> Attribute msg
 onKeyDown msg =
-    AttrEvent (Event.onKeyDown msg)
+    AttrEvent (Attr.EventAttr (Attr.OnMsg "keydown" msg))
 
 
 -- Fire a Msg on a plain Enter (no Shift); Shift-Enter inserts a newline.
