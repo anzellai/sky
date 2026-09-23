@@ -519,7 +519,7 @@ func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 		evKeys = append(evKeys, ev)
 	}
 	sort.Strings(evKeys)
-	for _, ev := range evKeys {
+	for evIdx, ev := range evKeys {
 		msg := n.Events[ev]
 		// Sky.Live TEA protocol:
 		//   * Every event attribute is `sky-<event>="<MsgName>"` —
@@ -541,7 +541,7 @@ func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 		if handlers != nil {
 			handlers[id] = msg
 		}
-		msgName := msgDisplayName(msg)
+		msgName := liveEventAttrValue(msg)
 		// Event names starting with `sky-` are side-channel meta-events
 		// (onImage, onFile) — not real DOM events that __skyBindOne
 		// would addEventListener on. Render them as `data-sky-ev-<name>`
@@ -563,9 +563,20 @@ func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 		sb.WriteString(ev)
 		sb.WriteString(`="`)
 		sb.WriteString(html.EscapeString(msgName))
-		sb.WriteString(`" data-sky-hid="`)
-		sb.WriteString(id)
 		sb.WriteString(`"`)
+		// ONE data-sky-hid per element. It used to be written once PER
+		// EVENT, so an element with two handlers carried the attribute
+		// twice; the HTML parser keeps the first, and every event of the
+		// element dispatched the first event's handler (onChange+onEnter
+		// sent Send on each keystroke). The clients now derive each
+		// event's handler id from `sky-id` + "." + event name, which is
+		// exactly the key registered above. The attribute stays (first
+		// event, sorted) for tools that scrape a handler id from a page.
+		if evIdx == 0 {
+			sb.WriteString(` data-sky-hid="`)
+			sb.WriteString(id)
+			sb.WriteString(`"`)
+		}
 	}
 	// SECURITY (defense-in-depth): a <form> with a submit handler is
 	// intercepted by the client (live.go's `if (ev.type === "submit")
@@ -718,6 +729,20 @@ func msgDisplayName(msg any) string {
 		return name
 	}
 	return ""
+}
+
+// liveEventAttrValue is the value of an element's `sky-<event>`
+// attribute: the Msg constructor name, or "_" when the handler has no
+// name (a closure, e.g. an eta-expanded `onSubmit SendMessage`). It is
+// never "": a patch attribute value of "" means "remove the attribute",
+// so an element GAINING an unnamed handler used to have the attribute
+// removed instead of added, and the event was never bound (F7). The
+// value is informational; dispatch goes by the handler id.
+func liveEventAttrValue(msg any) string {
+	if name := msgDisplayName(msg); name != "" {
+		return name
+	}
+	return "_"
 }
 
 // isDOMEventName: true when `ev` is a plain lowercase identifier safe
@@ -1612,6 +1637,9 @@ type batchedEvent struct {
 	Args      []json.RawMessage `json:"args"`
 	HandlerID string            `json:"handlerId,omitempty"`
 	Value     string            `json:"value,omitempty"`
+	// View — content id of the render the entry's handler id belongs to
+	// (captured when the keystroke happened). See live_view_version.go.
+	View string `json:"view,omitempty"`
 }
 
 // diffTrees: produce patches to transform `old` into `new_`. If either
@@ -1695,23 +1723,19 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	// attribute; v0.15.13's Tick suppression + v0.15.14's runPerform
 	// suppression both peeled away that safety net and exposed the
 	// genuine diff bug.
+	evChanged := false
 	for ev, newMsg := range new_.Events {
 		attrName := "sky-" + ev
 		if strings.HasPrefix(ev, "sky-") {
 			attrName = "data-sky-ev-" + ev
 		}
-		newMsgName := msgDisplayName(newMsg)
-		if oldMsg, ok := old.Events[ev]; !ok || msgDisplayName(oldMsg) != newMsgName {
+		newMsgName := liveEventAttrValue(newMsg)
+		if oldMsg, ok := old.Events[ev]; !ok || liveEventAttrValue(oldMsg) != newMsgName {
 			if attrChanges == nil {
 				attrChanges = map[string]string{}
 			}
 			attrChanges[attrName] = newMsgName
-			// data-sky-hid encodes the sky-id + event suffix the runtime
-			// expects when routing the user gesture back to its handler.
-			// Re-emit it on any event change so a stale hid (from a
-			// previous render that bound a different handler) can't
-			// outlive the new wiring.
-			attrChanges["data-sky-hid"] = new_.SkyID + "." + ev
+			evChanged = true
 		}
 	}
 	for ev := range old.Events {
@@ -1724,16 +1748,18 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 				attrChanges = map[string]string{}
 			}
 			attrChanges[attrName] = ""
-			// If the element has lost ALL its events the data-sky-hid
-			// companion is now stale; clear it. When other events
-			// remain, the new_.Events loop above will have rewritten
-			// data-sky-hid to one of them already (last-write wins,
-			// matching renderVNode's HTML emission order over the
-			// sorted event keys).
-			if len(new_.Events) == 0 {
-				attrChanges["data-sky-hid"] = ""
-			}
+			evChanged = true
 		}
+	}
+	// data-sky-hid mirrors renderVNodeInto: the FIRST event (sorted) of
+	// the element, or absent when it has none. Dispatch no longer reads
+	// it (clients derive each event's id from sky-id), so it only has to
+	// match what a fresh render of the element would carry.
+	if hid := firstEventHID(new_); evChanged && (hid != "" || firstEventHID(old) != "") {
+		if attrChanges == nil {
+			attrChanges = map[string]string{}
+		}
+		attrChanges["data-sky-hid"] = hid
 	}
 	if attrChanges != nil && old.SkyID != "" {
 		*out = append(*out, Patch{ID: old.SkyID, Attrs: attrChanges})
@@ -1795,6 +1821,21 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 		}
 		diffNodes(oc, nc, clientState, out)
 	}
+}
+
+// firstEventHID is the handler id renderVNodeInto writes as the
+// element's data-sky-hid: its first event in sorted order, or "".
+func firstEventHID(n *VNode) string {
+	first := ""
+	for ev := range n.Events {
+		if first == "" || ev < first {
+			first = ev
+		}
+	}
+	if first == "" {
+		return ""
+	}
+	return n.SkyID + "." + first
 }
 
 // isFormInputTag — tags whose value/checked/selected attrs are
@@ -1910,11 +1951,10 @@ func Sub_every(ms any, to any) SkySub {
 // Sub_batch combines a list of Sub values into one. Used by Sky.Tui /
 // Sky.Cli when a model needs to subscribe to multiple sources at once
 // (e.g. a stopwatch ticking every 100 ms AND a quit-signal watcher).
-// Sky.Live's setupSubscriptions currently only honours a single Sub.every —
-// calling Sub.batch from a Live program collapses to the first non-none
-// entry. Lifting that is independent work (SSE diff loop needs to handle
-// multiple ticker frames per session); the non-Live backends use
-// tea_subs.go's subManager which iterates over the batch list.
+// Sky.Live's setupSubscriptions honours every leaf of the batch: each
+// Sub.every runs, reconciled by interval so a timer still requested keeps
+// running across dispatches (live_view_version.go, applyEverySubsDiff);
+// the non-Live backends use tea_subs.go's subManager.
 func Sub_batch(list any) SkySub {
 	return subT{kind: "batch", batch: asList(list)}
 }

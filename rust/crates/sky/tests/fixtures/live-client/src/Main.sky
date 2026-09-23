@@ -1,0 +1,299 @@
+module Main exposing (main)
+
+{-| Sky.Live browser-client regression fixture, driven by
+scripts/live-client-verify.mjs (see scripts/live-client-e2e.sh). Each
+control reproduces one client defect; the `log` records every Msg update
+saw, so the driver can assert which Msg a gesture dispatched.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Sub as Sub exposing (Sub)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+import Std.Html as Html
+import Std.Html.Attributes as HA
+import Std.Html.Events as HE
+
+type Page
+    = Main
+    | Other
+
+type alias Model =
+    { page : Page
+    , upper : String
+    , capped : String
+    , draft : String
+    , locked : Bool
+    , choice : String
+    , num : String
+    , ime : String
+    , rows : List String
+    , denom : Float
+    , ratio : Float
+    , log : List String
+    }
+
+type Msg
+    = SetUpper String
+    | SetCapped String
+    | ClearAll
+    | Draft String
+    | Send
+    | LockedToggle Bool
+    | Choose String
+    | SetNum String
+    | SetIme String
+    | GotFile String
+    | Hovered
+    | Clicked
+    | Ctx
+    | Dbl
+    | Delete String
+    | Boom
+    | IncMain
+    | WipeOther
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { page = Main
+      , upper = ""
+      , capped = ""
+      , draft = ""
+      , locked = False
+      , choice = "a"
+      , num = ""
+      , ime = ""
+      , rows = [ "a", "b", "c", "d" ]
+      , denom = 0.0
+      , ratio = 1.0
+      , log = []
+      }
+    , Cmd.none
+    )
+
+
+push : String -> Model -> Model
+push s m =
+    { m | log = m.log ++ [ s ] }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        SetUpper s ->
+            ( push ("upper:" ++ s) { model | upper = String.toUpper s }
+            , Cmd.none
+            )
+
+        SetCapped s ->
+            if String.length s > 5 then
+                ( push ("capped-reject:" ++ s) model, Cmd.none )
+
+            else
+                ( push ("capped:" ++ s) { model | capped = s }, Cmd.none )
+
+        ClearAll ->
+            ( push "clear" { model | upper = "", capped = "", num = "" }
+            , Cmd.none
+            )
+
+        Draft s ->
+            ( push ("draft:" ++ s) { model | draft = s }, Cmd.none )
+
+        Send ->
+            ( push ("send:" ++ model.draft) { model | draft = "" }, Cmd.none )
+
+        LockedToggle b ->
+            ( push "locked-ignored" model, Cmd.none )
+
+        Choose s ->
+            ( push ("choose:" ++ s) { model | choice = s }, Cmd.none )
+
+        SetNum s ->
+            ( push ("num:[" ++ s ++ "]") { model | num = s }, Cmd.none )
+
+        SetIme s ->
+            ( push ("ime:" ++ s) { model | ime = s }, Cmd.none )
+
+        GotFile s ->
+            ( push ("file:" ++ String.left 22 s) model, Cmd.none )
+
+        Hovered ->
+            ( push "hovered" model, Cmd.none )
+
+        Clicked ->
+            ( push "clicked" model, Cmd.none )
+
+        Ctx ->
+            ( push "contextmenu" model, Cmd.none )
+
+        Dbl ->
+            ( push "dblclick" model, Cmd.none )
+
+        Delete r ->
+            ( push
+                  ("delete:" ++ r)
+                  { model | rows = List.filter (\x -> x /= r) model.rows }
+            , Cmd.none
+            )
+
+        Boom ->
+            ( { model | ratio = 1.0 / model.denom }, Cmd.none )
+
+        IncMain ->
+            ( push "inc-main" model, Cmd.none )
+
+        WipeOther ->
+            ( push "wipe-other" model, Cmd.none )
+
+
+idA : String -> Ui.Attribute msg
+idA s =
+    Ui.htmlAttribute "id" s
+
+
+view : Model -> Element Msg
+view model =
+    case model.page of
+
+        Other ->
+            Ui.column
+                [ Ui.spacing 6 ]
+                [ Ui.button
+                      [ idA "page-btn" ]
+                      { onPress = Just WipeOther, label = Ui.text "wipe other" }
+                , Ui.el [ idA "page" ] (Ui.text "other")
+                , logView model
+                ]
+
+        Main ->
+            mainView model
+
+
+logView : Model -> Element Msg
+logView model =
+    Ui.el [ idA "log" ] (Ui.text (String.join "," model.log))
+
+
+mainView : Model -> Element Msg
+mainView model =
+    Ui.column
+        [ Ui.spacing 6 ]
+        [ Ui.button
+              [ idA "page-btn" ]
+              { onPress = Just IncMain, label = Ui.text "inc main" }
+        , Ui.el [ idA "page" ] (Ui.text "main")
+        , Input.text
+              [ idA "upper" ]
+              { onChange = SetUpper
+              , text = model.upper
+              , placeholder = Nothing
+              , label = Input.labelHidden "upper"
+              }
+        , Input.text
+              [ idA "capped" ]
+              { onChange = SetCapped
+              , text = model.capped
+              , placeholder = Nothing
+              , label = Input.labelHidden "capped"
+              }
+        , Ui.button
+              [ idA "clear" ]
+              { onPress = Just ClearAll, label = Ui.text "clear" }
+        , Input.multiline
+              [ idA "draft", Ui.onEnter Send ]
+              { onChange = Draft
+              , text = model.draft
+              , placeholder = Nothing
+              , label = Input.labelHidden "draft"
+              , spellcheck = False
+              }
+        , Input.checkbox
+              [ idA "locked" ]
+              { onChange = LockedToggle
+              , icon = \_ -> Ui.text ""
+              , checked = model.locked
+              , label = Input.labelRight [] (Ui.text "locked")
+              }
+        , Input.radio
+              [ idA "radio" ]
+              { onChange = Choose
+              , selected = model.choice
+              , label = Input.labelHidden "r"
+              , options =
+                  [ Input.option "a" (Ui.text "A")
+                  , Input.option "b" (Ui.text "B")
+                  , Input.option "c" (Ui.text "C")
+                  ]
+              }
+        , Ui.input
+              [ idA "num"
+              , Ui.htmlAttribute "type" "number"
+              , Ui.htmlAttribute "value" model.num
+              , Ui.onInput SetNum
+              ]
+        , Input.text
+              [ idA "ime" ]
+              { onChange = SetIme
+              , text = model.ime
+              , placeholder = Nothing
+              , label = Input.labelHidden "ime"
+              }
+        , Ui.input
+              [ idA "file", Ui.htmlAttribute "type" "file", Ui.onFile GotFile ]
+        , Ui.button
+              [ idA "multi", Ui.onMouseOver Hovered ]
+              { onPress = Just Clicked, label = Ui.text "multi" }
+        , Ui.html
+              (Html.div
+                  [ HA.id "ctx", HE.onContextMenu Ctx, HE.onDblClick Dbl ]
+                  [ Html.text "right-click or double-click me" ])
+        , Ui.column
+              [ idA "rows" ]
+              (List.map
+                  (\r ->
+                      Ui.button
+                          [ idA ("del-" ++ r) ]
+                          { onPress = Just (Delete r)
+                          , label = Ui.text ("x " ++ r)
+                          })
+                  model.rows)
+        , Ui.button
+              [ idA "boom" ]
+              { onPress = Just Boom, label = Ui.text "boom" }
+        , Ui.el
+              [ idA "state" ]
+              (Ui.text
+                  ("upper=" ++ model.upper ++ "|capped=" ++ model.capped
+                      ++ "|choice="
+                      ++ model.choice
+                      ++ "|num="
+                      ++ model.num))
+        , logView model
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" Main, App.route "/other" Other ]
+        |> App.withNotFound Main
+
+
+main =
+    App.run app

@@ -217,9 +217,15 @@ When `__skyApplyPatches` processes a patch `p` targeting an element that is an i
 entry = __skyInputs[p.id]
 el    = querySelector([sky-id=p.id])
 
-if entry exists AND (el is focused OR entry.pendingDebounceId != null):
+if entry exists AND (entry.pendingDebounceId != null
+                    OR entry.lastSentSeq > entry.lastAckedSeq
+                    OR el is in an IME composition):
     DROP the value/checked/selected keys from p.attrs
     // apply the rest of the patch (class, style, aria-*, etc.)
+    // Focus alone does NOT make a tracked input dirty: once the user's
+    // keystrokes are acked, a model value (a clear, a normalisation)
+    // applies to the focused input. Only an UNTRACKED input (no input
+    // handler) is protected by focus + "typed since focus".
 
 else if entry exists AND p.attrs.value == entry.liveValue:
     DROP (server is echoing our own value — no-op)
@@ -235,6 +241,17 @@ else:
 The same filter runs for innerHTML patches targeting ancestors of a focused/dirty input: **an innerHTML patch that would wipe a dirty input is rewritten to a scoped patch that preserves the input's subtree.** Implementation: before applying `innerHTML`, scan the new HTML for sky-ids, diff against existing dirty inputs, and if a dirty input is inside the target, fall back to per-element patching for that subtree (morph-style).
 
 This preserves G1 even when the server sends a "wipe your whole form and rebuild" patch.
+
+**Convergence rule (rejected or normalised edits).** The structural diff
+compares the new render with the previous render, so when `update` rejects or
+normalises an edit the render does not change and no patch is emitted. The
+event reply therefore also carries a `value` patch for every input reported in
+`inputState` whose rendered model value differs from what the client reported
+(`reconcileControlledInputs`). The client applies it once the input is no
+longer dirty, so the DOM converges to the model. A checkbox or radio the user
+toggled converges after the reply to its event, from `data-sky-checked` (both
+states) or the `checked` attribute. Removing `value` / `checked` / `selected`
+resets the DOM property as well as the attribute.
 
 ## Server state
 

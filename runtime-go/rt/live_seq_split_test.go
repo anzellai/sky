@@ -517,7 +517,9 @@ func Test_OutSeqGobFieldName_StableForBackwardsCompat(t *testing.T) {
 
 	// Round-trip: localSeq → OutSeq → localSeq across encode/decode.
 	sess := buildSess(map[string]any{"model": "x"})
-	sess.localSeq = 12
+	// Above the wall-clock floor a restored session is lifted to (L7).
+	want := liveSeqFloor() + 1_000_000_000
+	sess.localSeq = want
 	blob, err := encodeSession(sess)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
@@ -526,8 +528,8 @@ func Test_OutSeqGobFieldName_StableForBackwardsCompat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if decoded.localSeq != 12 {
-		t.Fatalf("localSeq did not round-trip via OutSeq: got %d, want 12", decoded.localSeq)
+	if decoded.localSeq != want {
+		t.Fatalf("localSeq did not round-trip via OutSeq: got %d, want %d", decoded.localSeq, want)
 	}
 }
 
@@ -619,7 +621,7 @@ func Test_LiveJS_EmitsGlobalSeqGuard(t *testing.T) {
 	}
 
 	// __skyHandleResponse signature carries the new parameter.
-	if !strings.Contains(js, "function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq)") {
+	if !strings.Contains(js, "function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq, view, base, delta)") {
 		t.Fatalf("liveJS __skyHandleResponse signature does NOT carry globalSeq — caller-side plumbing won't compile")
 	}
 
@@ -629,7 +631,7 @@ func Test_LiveJS_EmitsGlobalSeqGuard(t *testing.T) {
 	// surfaces with a precise diagnostic.
 	wantSites := []string{
 		// HTTP /_sky/event JSON reply (data.globalSeq).
-		"function() {\n          if (data.patches) __skyApplyPatches(data.patches);\n        }, data.globalSeq",
+		"if (data.patches) __skyApplyPatches(data.patches);\n          __skyAfterEvent(body.seq);\n        }, data.globalSeq",
 		// Legacy SSE event:patch handler (frame.globalSeq).
 		"if (frame.body) __skyPatch(frame.body.replace(/\\\\n/g, \"\\n\"));\n      }, frame.globalSeq",
 		// P50b SSE event:patches handler (frame.globalSeq).
@@ -660,7 +662,7 @@ func Test_LiveJS_GlobalSeqGuardComesAfterLocalSeqGuard(t *testing.T) {
 	// applyFn, globalSeq) { ... }`; we start the scan from the `{`
 	// after the signature so prose comments earlier in the file don't
 	// pollute the ordering check.
-	bodyStart := strings.Index(js, "function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq) {")
+	bodyStart := strings.Index(js, "function __skyHandleResponse(seq, ackInputs, applyFn, globalSeq, view, base, delta) {")
 	if bodyStart < 0 {
 		t.Fatalf("__skyHandleResponse function not found")
 	}

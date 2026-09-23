@@ -200,6 +200,12 @@ jobs:
           command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
           scripts/spa-restore-e2e.sh
           scripts/spa-stale-handler-e2e.sh
+      # The Sky.Live browser client + desktop webview applier, in real Chromium:
+      # per-event handler ids, clicks resolved against the render they were
+      # made on, generic event binding, input authority, IME, gap buffering,
+      # the panic banner and multi-tab reconnects.
+      - name: Gate — Sky.Live client e2e (handler addressing, input authority)
+        run: scripts/live-client-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported
       # "binary missing" for two examples and "N% pixels exceed" for nine
