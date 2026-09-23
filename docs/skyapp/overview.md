@@ -313,5 +313,16 @@ app, or a builder argument that uses a local of the code building the app (the
 client build places that argument at top level). A guard is never dropped
 silently.
 
+A client build behaves like the `web` build for the same Msg sequence
+(`docs/skyspa/auto-split.md` §20). The server branches of `update` run one at a
+time, in the order the Msgs were dispatched, and each request is built from the
+model current when it is sent; a field the user edits while a request is on the
+wire keeps the edit. `App.withGuard` runs in the client for every Msg and again
+on the server for every server branch. A server branch's returned `Cmd` runs:
+its server tasks run on the server and their result Msgs come back to the
+client, and a `Std.Native` effect runs in the client. Retry after a lost
+connection never runs a server effect twice. On a reload the client restores its
+own state, and a field that only server branches write comes from the server.
+
 See also: `sky doc Std.App`, `docs/skylive/overview.md`, `docs/skyspa/overview.md`,
 and the design rationale in `docs/design/unified-app-builder.md`.

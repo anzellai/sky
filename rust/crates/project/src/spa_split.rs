@@ -1798,12 +1798,24 @@ pub fn generate(
     let report: SpaPartitionReport =
         spa_partition::analyze_loaded(&db, entry, &check_ids, proj_name.clone())?;
 
-    // The generator needs a per-branch `case msg of` split.
-    if report.whole_update.is_some() || report.branches.is_empty() {
-        return Err(
-            "cannot auto-split: `update` has no resolvable `case msg of` (per-branch analysis unavailable)".into(),
-        );
-    }
+    // The generator needs a per-branch `case msg of` split — EXCEPT for an
+    // `update` with no `case` that is entirely PURE: every Msg then runs in the
+    // client and `update` is kept verbatim (there is nothing to route to the
+    // server). An `update` that reaches an effect without a per-Msg `case` gets
+    // a precise error naming the change.
+    let upd_name = report
+        .update_name
+        .clone()
+        .unwrap_or_else(|| "update".to_string());
+    let no_case_msg = format!(
+        "cannot auto-split: `{upd_name}` has no top-level `case msg of`, and it reaches a server effect, so the split cannot tell which Msgs run in the client and which must run on the server. Write it as `update msg model = case msg of …` with one arm per Msg constructor (a single-constructor `update (Line l) model = …` becomes `update msg model = case msg of Line l -> …`), or move the effect into a `Cmd.perform`."
+    );
+    let pure_whole_update = match &report.whole_update {
+        Some(w) if w.server => return Err(no_case_msg),
+        Some(_) => true,
+        None if report.branches.is_empty() => return Err(no_case_msg),
+        None => false,
+    };
 
     // G5: `init`'s returned MODEL embeds a server read the wasm client cannot
     // reproduce. Emitting a frontend would either reference the backend-only read
@@ -2726,7 +2738,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         strip_init_cmd,
         init_in_entry,
         init_pure_model.as_deref(),
-        update_in_entry,
+        update_in_entry && !pure_whole_update,
         has_rpc_error,
         &server_internal,
         &model_field_names,
@@ -2734,6 +2746,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &session_field_names,
         &seed_field_names,
         follow_here(entry),
+        pure_whole_update && update_in_entry,
     )?;
 
     // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
@@ -2876,7 +2889,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             let mname = db.module_name(*m).to_string();
             let empty = HashSet::new();
             let tainted_here = tainted_by_module.get(&mname).unwrap_or(&empty);
-            let regen_here = *m == update_module && !update_in_entry;
+            let regen_here = *m == update_module && !update_in_entry && !pure_whole_update;
             let inject_here = Some(*m) == msg_module;
             // A tainted subset STRIPS its own copied decls, so it re-reads them
             // from `Shared` (`strips_self = true`); a copied name it still gets
@@ -4746,7 +4759,7 @@ fn inject_model_decoder_into_main(
          \x20           |> Spa.withPersistSeedFields {seed_lit}\n"
     );
     let mut out = main_text.to_string();
-    out.insert_str(line_start, &block);
+    insert_before_closing_paren(&mut out, line_start, close, &block);
     out
 }
 
@@ -4785,6 +4798,19 @@ fn server_only_written_fields(
         .collect()
 }
 
+/// Insert builder `lines` (each ending in `\n`) before the paren at `close` that
+/// ends the `Spa.app` argument. When that paren opens its own line (the
+/// synthesised form) the lines go before it; when it shares a line with the
+/// config record (`… })`, a hand-written entry) they go after a line break at
+/// the paren, so the record's closing brace is never split from its fields.
+fn insert_before_closing_paren(out: &mut String, line_start: usize, close: usize, lines: &str) {
+    if out[line_start..close].trim().is_empty() {
+        out.insert_str(line_start, lines);
+    } else {
+        out.insert_str(close, &format!("\n{lines}        "));
+    }
+}
+
 /// Insert one `|> Spa.with… ` builder line into the synthesised `main`'s config
 /// chain, immediately before the line that closes the `Spa.app` argument (the
 /// same placement as [`inject_model_decoder_into_main`]). Idempotent on
@@ -4802,7 +4828,7 @@ fn inject_config_builder_into_main(main_text: &str, marker: &str, line: &str) ->
     };
     let line_start = main_text[..close].rfind('\n').map(|n| n + 1).unwrap_or(0);
     let mut out = main_text.to_string();
-    out.insert_str(line_start, line);
+    insert_before_closing_paren(&mut out, line_start, close, line);
     out
 }
 
@@ -6100,6 +6126,9 @@ fn gen_frontend(
     seed_fields: &[String],
     // SPA-3: the follow-up context seen from the entry.
     follow: Option<FollowHere<'_>>,
+    // A wholly PURE `update` with no `case msg of` (SA-12): it runs in the
+    // client as written, so it is copied verbatim instead of regenerated.
+    keep_update_verbatim: bool,
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -6221,7 +6250,7 @@ fn gen_frontend(
                 body.push_str(main_text.trim_end());
                 body.push_str("\n\n\n");
             }
-            (Some("update"), _) => {
+            (Some("update"), _) if !keep_update_verbatim => {
                 // Regenerated below; skip both annotation + value.
             }
             (Some("init"), DeclKind::Value) if strip_entry_init => {

@@ -9,7 +9,8 @@
 //! Drives the real pipeline over `crates/sky/tests/fixtures/spa-server-chain`:
 //!   * `Reload` (server, File read) → `Reloaded` (server-internal) → writes `note`;
 //!   * `SyncCopy` (server) batches a server read with a `Std.Native` CLIENT effect
-//!     → NOT chained (fail-closed), a warning is emitted.
+//!     → NOT chained (fail-closed); it is a FOLLOW-UP branch (SPA-3): its RPC
+//!     runs the server read, the client runs the `Std.Native` leaf.
 
 use project::{spa_partition, spa_split};
 use std::path::PathBuf;
@@ -138,11 +139,28 @@ fn synced_and_copied_are_not_server_internal_failclosed() {
             "`{m}` belongs to the un-chained `SyncCopy` branch — it MUST stay a client arm, not be pruned"
         );
     }
+    // SPA-3: no discard floor any more — `SyncCopy` is a FOLLOW-UP branch: its
+    // RPC runs the server read and returns `Synced`, and the client runs the
+    // `Std.Native` leaf itself (`native`).
+    let fu = r
+        .follow_up
+        .iter()
+        .find(|f| f.branch == "SyncCopy")
+        .unwrap_or_else(|| {
+            panic!(
+                "`SyncCopy` must be a follow-up branch; got {:?}",
+                r.follow_up
+            )
+        });
     assert!(
-        r.server_chain_warnings
+        fu.native,
+        "`SyncCopy` batches a Std.Native leaf; got {fu:?}"
+    );
+    assert!(
+        !r.server_chain_warnings
             .iter()
             .any(|w| w.contains("SyncCopy")),
-        "the un-chained `SyncCopy` branch must emit a fail-closed warning; got {:?}",
+        "the discard-and-warn floor is gone; got {:?}",
         r.server_chain_warnings
     );
 }
@@ -204,7 +222,8 @@ fn backend_reload_handler_binds_and_settles_the_chain() {
         back.contains("Codec.toJson reloadRespCodec { note = mFinal.note }"),
         "Reload's response must carry the settled `note` from the chain's final model:\n{back}"
     );
-    // The un-chained SyncCopy handler still DISCARDS its command (today's floor).
+    // SPA-3: the un-chained SyncCopy handler RUNS its command's server leaves
+    // and returns the follow-up Msgs (no discard floor).
     let sync_block = back
         .split("syncCopyHandler req =")
         .nth(1)
@@ -213,8 +232,10 @@ fn backend_reload_handler_binds_and_settles_the_chain() {
         .next()
         .unwrap_or("");
     assert!(
-        sync_block.contains("( m2, _ ) =") && !sync_block.contains("spaChainSettle_"),
-        "the fail-closed SyncCopy handler must keep today's behaviour (bind `_`, no chain):\n{sync_block}"
+        sync_block.contains("( m2, cmd ) =")
+            && sync_block.contains("spaEncodeFollows_ (spaFollowUps_ cmd)")
+            && !sync_block.contains("spaChainSettle_"),
+        "the SyncCopy handler must run its command and return the follow-ups (no chain):\n{sync_block}"
     );
     let _ = std::fs::remove_dir_all(&out);
 }

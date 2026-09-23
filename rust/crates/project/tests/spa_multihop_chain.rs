@@ -143,10 +143,17 @@ fn a_native_leaf_in_the_deepest_hop_fails_the_whole_root_closed() {
             r.server_internal
         );
     }
-    // A fail-closed warning names the root.
+    // SPA-3: no discard floor — the root is a FOLLOW-UP branch: its RPC runs its
+    // own server perform and hands the follow-up Msg to the client, whose next
+    // hop runs as its own RPC (and the deepest hop's Std.Native leaf in the client).
     assert!(
-        r.server_chain_warnings.iter().any(|w| w.contains("Kick")),
-        "a fail-closed warning must name the root `Kick`; got {:?}",
+        r.follow_up.iter().any(|f| f.branch == "Kick"),
+        "the un-chained root `Kick` must be a follow-up branch; got {:?}",
+        r.follow_up
+    );
+    assert!(
+        !r.server_chain_warnings.iter().any(|w| w.contains("Kick")),
+        "the discard-and-warn floor is gone; got {:?}",
         r.server_chain_warnings
     );
 }

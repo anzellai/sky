@@ -195,11 +195,14 @@ jobs:
       #     message payload, not the one bound at its first render (the diff
       #     compares handlers by constructor name, so a payload-only change
       #     emits no patch; the client reads handlers from a per-node slot).
+      #   * spa-rpc-consistency-e2e — web:app gives Sky.Live's answer: ordered,
+      #     send-time RPCs, guard, follow-up Cmds, retry dedupe, reload state.
       - name: Gate — Sky.Spa wasm client e2e (restore first paint + stale handlers)
         run: |
           command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
           scripts/spa-restore-e2e.sh
           scripts/spa-stale-handler-e2e.sh
+          scripts/spa-rpc-consistency-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported
       # "binary missing" for two examples and "N% pixels exceed" for nine

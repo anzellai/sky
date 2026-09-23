@@ -256,7 +256,7 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
     );
     // The frontend must reach the effect through the typed RPC boundary instead.
     assert!(
-        front.contains("Spa.postJson") && front.contains("/_rpc/Persist"),
+        front.contains("Spa.rpc") && front.contains("/_rpc/Persist"),
         "frontend must call the RPC boundary for the server branch"
     );
 
@@ -745,7 +745,7 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
     );
     // Frontend SENDS the Msg arg.
     assert!(
-        front.contains("Spa.postJson toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"),
+        front.contains("Spa.rpc toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" (\\spaM_ -> { id = id }) AppliedToggle"),
         "frontend must send the Msg arg to the RPC:\n{front}"
     );
 
@@ -928,7 +928,7 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
         "backend must reconstruct `update (Toggle p.id) m`:\n{back}"
     );
     assert!(
-        front.contains("Spa.postJson toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"),
+        front.contains("Spa.rpc toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" (\\spaM_ -> { id = id }) AppliedToggle"),
         "frontend must send the Msg arg to the RPC:\n{front}"
     );
 
@@ -1674,7 +1674,7 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
     }
     // The server branch still routes through the RPC boundary.
     assert!(
-        front.contains("Spa.postJson") && front.contains("/_rpc/Increment"),
+        front.contains("Spa.rpc") && front.contains("/_rpc/Increment"),
         "frontend must call the RPC boundary for the Increment server branch"
     );
 
@@ -2666,9 +2666,9 @@ fn spa_guard_is_enforced_server_side_on_rpc() {
     let synth = std::fs::read_to_string(proj.join(".skyapp/web-app/src/Main.sky"))
         .expect("synthesised web-app entry must exist");
     for needle in [
-        "spaGuard_ =",
+        "\nspaGuard_ ",
         "spaOnNavigate_ =",
-        "spaOnRequest_ =",
+        "\nspaOnRequest_ ",
         "|> Spa.withOnNavigate spaOnNavigate_",
     ] {
         assert!(
@@ -2821,7 +2821,7 @@ fn web_app_sibling_update_with_rpc_error_builds() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Logic.sky"))
             .expect("the regenerated frontend Logic module must exist");
     assert!(
-        front_logic.contains("Spa.postJson") && front_logic.contains("/_rpc/Save"),
+        front_logic.contains("Spa.rpc") && front_logic.contains("/_rpc/Save"),
         "bug #4c: the sibling `update`'s Save arm must become an RPC in the frontend:\n{front_logic}"
     );
     assert!(
@@ -2922,7 +2922,7 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
             .expect("generated frontend entry must exist");
     assert!(
-        frontend.contains("note = model.note"),
+        frontend.contains("note = spaM_.note"),
         "bug #1: the client must send its own `note` in the request:\n{frontend}"
     );
 
@@ -4768,7 +4768,7 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     // The `SaveItem` server branch is rewritten to an RPC (proving the effect
     // stays server-side); the frontend never calls `Store.saveItems` directly.
     assert!(
-        fe_main.contains("Spa.postJson") && fe_main.contains("/_rpc/SaveItem"),
+        fe_main.contains("Spa.rpc") && fe_main.contains("/_rpc/SaveItem"),
         "GAP-A: the server branch must be rewritten to an RPC in the frontend (effect stays server-side):\n{fe_main}"
     );
 
@@ -5039,7 +5039,7 @@ fn sibling_module_update_regenerates_in_its_own_frontend_copy() {
         "the pure client helper `cleanDraft` must reach the frontend Update copy:\n{front_update}"
     );
     assert!(
-        front_update.contains("Spa.postJson") && front_update.contains("/_rpc/Save"),
+        front_update.contains("Spa.rpc") && front_update.contains("/_rpc/Save"),
         "the server arm `Save` must become an RPC in the frontend Update copy:\n{front_update}"
     );
 
@@ -5116,7 +5116,7 @@ fn sibling_module_update_and_msg_compose_in_one_frontend_copy() {
     // GAP-1: update regenerated with the RPC arm + the pure helper.
     assert!(
         front_update.contains("cleanDraft")
-            && front_update.contains("Spa.postJson")
+            && front_update.contains("Spa.rpc")
             && front_update.contains("/_rpc/Save"),
         "the sibling `update` must be regenerated (pure arm + RPC arm):\n{front_update}"
     );
@@ -5507,7 +5507,7 @@ fn guard_wrapper_narrows_and_whole_model_msg_arg_send_is_explicit() {
         "Edit's frontend request MUST NOT be bare `model` (misses `id`, and carries untouched fields):\n{front}"
     );
     assert!(
-        front.contains("session = model.session"),
+        front.contains("session = spaM_.session"),
         "Edit's narrowed request reads only the guard's field `session`:\n{front}"
     );
 

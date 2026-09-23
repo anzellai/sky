@@ -508,8 +508,10 @@ target shape):
 - **frontend/** — Model/init/view/subscriptions/`main` verbatim (view's
   annotation adjusted to `-> any` for the wasm renderer); Msg extended with an
   `AppliedM (Result Error MResp)` variant per SERVER branch; `update`'s pure arms
-  kept verbatim, each SERVER arm rewritten to `Spa.postJson MReqCodec MRespCodec
-  "/_rpc/M" <read-set> AppliedM` with a generated `AppliedM` apply-arm.
+  kept verbatim, each SERVER arm rewritten to `Spa.rpc MReqCodec MRespCodec
+  "/_rpc/M" (\spaM_ -> <read-set of spaM_>) AppliedM` with a generated
+  `AppliedM` apply-arm. The request is a FUNCTION of the model, built when the
+  RPC is sent (§20).
   **Server-tainted top-level bindings (from the analysis) are OMITTED** — the
   security spine, asserted by the test (the frontend source contains no `File.` /
   `saveN` / `Db.` / `System.`).
@@ -766,12 +768,13 @@ arm reachable through the perform edges. `Reload`'s write-set gains `note`
 correctness bug, so any shape the resolver cannot fully read widens to the whole
 model — never narrows.
 
-**Fail-closed (G5).** A branch is **not** chained — it keeps the discard-and-warn
-floor — when its transitive command chain contains a `Std.Native` **client**
-effect (which cannot run server-side), an **ambiguous** continuation (a `toMsg`
-that is also client- or wire-dispatched), or an **opaque** command shape the
-static resolver cannot read. The un-chained branch's continuations stay client
-arms.
+**Fail-closed (G5).** A branch is **not** chained when its transitive command
+chain contains a `Std.Native` **client** effect (which cannot run server-side),
+an **ambiguous** continuation (a `toMsg` that is also client- or
+wire-dispatched), or an **opaque** command shape the static resolver cannot
+read. The un-chained branch's continuations stay client arms, and the branch
+becomes a **follow-up branch** (§20): its command still RUNS. (There used to be
+a discard-and-warn floor here — the command ran nowhere. It is gone.)
 
 **Runtime.** `runtime-go/rt/spa_chain_notjs.go`'s `Spa_settleServerChain`
 (`Ffi.kernel "Spa_settleServerChain"`, the `spaChainSettle_` alias) folds every
@@ -841,10 +844,10 @@ through the guard-aware walk `collect_guarded_tail_cmd_exprs` — is a **single*
 **not** server-classified (client-pure). Recorded as
 `ServerChaining::client_result` (`(root, result_msg)` pairs).
 
-**Fail-closed.** The branch keeps the discard floor (with a warning) when:
-`ResultMsg`'s arm **reaches a server effect** (a deeper chain — split it into its
-own explicit RPC); the task is a `Std.Native` **client** effect; or the command
-is not a single clean server perform. A pattern-2 root's pattern-1 twin (the
+**Fail-closed.** The branch is not pattern-2 when `ResultMsg`'s arm **reaches a
+server effect** (a deeper chain), the task is a `Std.Native` **client** effect,
+or the command is not a single clean server perform. It is then a **follow-up
+branch** (§20) — its command runs; nothing is discarded. A pattern-2 root's pattern-1 twin (the
 direct-tuple `Reload`/`Reloaded` of §18) is untouched — it stays server-internal.
 
 **Runtime.** `runtime-go/rt/spa_perform_notjs.go`'s `Spa_runServerPerform`
@@ -862,3 +865,72 @@ server effect), both-trees build, and the end-to-end `POST /_rpc/Upload` →
 `client_result_e2e_post_upload_returns_task_result`, against
 `tests/fixtures/spa-client-result`); the runtime run-and-return + no-fold + Err
 fallback in `runtime-go/rt/spa_perform_notjs_test.go`.
+
+
+## 20. RPC consistency, follow-ups, guard and persistence (2026-09-23)
+
+The client must give the answer Sky.Live gives for the same Msg sequence. Live
+runs the whole TEA loop on the server, one Msg at a time, in dispatch order.
+Proven end to end by `scripts/spa-rpc-consistency-e2e.sh` (fixture
+`rust/crates/sky/tests/fixtures/spa-rpc-consistency`).
+
+**Serialised RPCs, send-time snapshots, ordered rebase.** Every server-branch
+arm emits `Spa.rpc` (runtime `cmdT{kind: "rpc"}`), and the client keeps one RPC
+queue (`runtime-go/rt/spa_rpcqueue.go`):
+
+- one RPC is in flight per client; the rest wait in dispatch order;
+- a request is built when it is SENT, from the model current at that moment
+  (`build snapshot`), so a second `Inc` reads the first `Inc`'s result;
+- while an RPC is in flight, every other Msg is applied at once (the user sees
+  it) and recorded. The response is applied to the SNAPSHOT the request was
+  built from, and the recorded Msgs are replayed on top, in order. This is the
+  model Live computes: a field the server branch writes takes the server value,
+  and a client edit made during the round trip is re-applied after it.
+  A replay re-runs only client arms, which are pure; their Cmds already ran and
+  are not re-run.
+
+**Retry without a second effect.** Each request carries `?rid=<id>`; a retry
+re-sends the same id. The backend answers a repeated id from the response it
+already produced (`spa_rpc_dedupe.go`: bounded cache, keyed by `sky_sid` + path
++ id), so a request whose response was lost is never run twice. A network
+failure keeps the RPC at the head of the queue; the Retry overlay re-runs every
+failed perform in failure order (`spaRetryQueue`), and the RPCs queued behind it
+follow.
+
+**Follow-ups: a server branch's command runs.** A server branch that is neither
+a chaining root (§18) nor a client-result root (§19) but returns `Cmd.perform`
+leaves is a follow-up branch (`SpaPartitionReport::follow_up`). Its handler runs
+every server perform leaf (`Spa_collectFollowUps`), encodes the resulting Msgs
+(one `SpaFollow<Ctor>Req` wire record per constructor, in `Shared`) into the
+response field `spaFollow_`, and the client decodes them and dispatches them in
+order through its own `update` (`Spa.followUps`) — a pure arm runs locally, a
+server arm becomes the next queued RPC. A follow-up that cannot be decoded is
+routed to `App.withRpcError`, else reported on the console (`Spa.reportError`);
+never dropped. A follow-up constructor whose argument has no wire codec fails
+the build, naming it.
+
+A `Std.Native` leaf (a client-only effect) cannot run on the server: the server
+skips it, and the client runs it when it sends the RPC, from the same snapshot
+(`Spa.rpcWith … (\model -> Cmd.batch [ <native leaves> ])`). A native leaf that
+uses a `let`-bound value of the arm or a server-tainted binding fails the build,
+naming it.
+
+**Guard.** `App.withGuard` runs in the client before `update` for every Msg,
+exactly like Live (`Spa.withGuard`, `spaGuardedUpdate`); a rejected Msg keeps the
+model and runs no Cmd. The backend still runs the guard on every server branch
+(the trusted check), and the fields the guard reads ride every request
+(`spa_partition::guard_readset`), so the server guard sees the client's values.
+A guard that reaches a server effect cannot run in the client; the build warns.
+
+**Persistence.** Every `web:app` build with a derivable `init` model persists
+the client model to `localStorage` and restores it on reload
+(`Spa.withPersistDecoder` + `Spa.withModelEncoder`; an SSR-settled `init` keeps
+`withModelDecoder`). On a reload, a field that ONLY server branches write comes
+from the SSR seed — server truth, rendered from the real request — and every
+other field from `localStorage` (`Spa.withPersistSeedFields`, the server
+write-sets minus the client write-sets). A restore no longer cancels `init`'s
+own command.
+
+**`update` without `case msg of`.** A wholly pure `update` with no `case` runs in
+the client as written. One that reaches a server effect fails with a message
+naming the change (write `update msg model = case msg of …`).
