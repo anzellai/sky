@@ -2877,23 +2877,39 @@ fn spa_split_and_build(
     let sky_ref = &sky;
     let backend_dir = od.join("backend");
     let frontend_dir = od.join("frontend");
-    let (backend_res, frontend_res) = std::thread::scope(|s| {
-        let b = s.spawn(|| {
-            let mut c = Command::new(sky_ref);
-            c.arg("build");
-            if embed {
-                c.arg("--embed");
-            }
-            c.arg("src/Main.sky").current_dir(&backend_dir).output()
-        });
-        let f = s.spawn(|| {
-            Command::new(sky_ref)
-                .args(["build", "--target", target, "src/Main.sky"])
-                .current_dir(&frontend_dir)
-                .output()
-        });
-        (b.join(), f.join())
-    });
+    let build_backend = || {
+        let mut c = Command::new(sky_ref);
+        c.arg("build");
+        if embed {
+            c.arg("--embed");
+        }
+        c.arg("src/Main.sky").current_dir(&backend_dir).output()
+    };
+    let build_frontend = || {
+        Command::new(sky_ref)
+            .args(["build", "--target", target, "src/Main.sky"])
+            .current_dir(&frontend_dir)
+            .output()
+    };
+    // `SKY_BUILD_SERIAL=1` runs the two legs one after the other. Each leg is a
+    // whole `sky build` (a Sky front-end of ~1.4 GB on a mid-size app, plus the
+    // Go toolchain), so the concurrent default peaks at roughly twice that: on
+    // a 2-core / 7 GB hosted CI runner the job was killed (exit 143) every
+    // time, while the same build passes on a laptop. Serial trades wall-clock
+    // for a peak of max(leg) instead of their sum.
+    let serial = std::env::var("SKY_BUILD_SERIAL")
+        .map(|v| !matches!(v.trim(), "" | "0" | "false" | "no"))
+        .unwrap_or(false);
+    let (backend_res, frontend_res) = if serial {
+        println!("   (SKY_BUILD_SERIAL is set: building the two legs one after the other)");
+        (Ok(build_backend()), Ok(build_frontend()))
+    } else {
+        std::thread::scope(|s| {
+            let b = s.spawn(build_backend);
+            let f = s.spawn(build_frontend);
+            (b.join(), f.join())
+        })
+    };
     let report_leg =
         |label: &str, res: std::thread::Result<std::io::Result<std::process::Output>>| -> bool {
             use std::io::Write;
