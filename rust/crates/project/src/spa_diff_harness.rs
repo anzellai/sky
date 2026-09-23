@@ -637,6 +637,7 @@ mod tests {
             chaining_branches: vec!["Chained".into()],
             client_result: vec![("ClientRoot".into(), "GotIt".into())],
             server_chain_warnings: vec![],
+            follow_up: vec![],
         }
     }
     fn io_args(args: &[&str]) -> BranchIo {

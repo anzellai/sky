@@ -533,8 +533,28 @@ func spaRpcNonce() string {
 // built from the CURRENT model — the send-time snapshot.
 func spaRpcPump() {
 	if j := spaRpcQ.startHead(spaModel); j != nil {
+		// The server branch's CLIENT residual (a Std.Native effect) runs now,
+		// from the same snapshot the request is built from (Spa.rpcWith).
+		if j.residual != nil {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						spaReportPanic("rpc-residual", r)
+					}
+				}()
+				interpretCmd(asCmdT(sky_call(j.residual, j.snapshot)), spaDispatch)
+			}()
+		}
 		go spaRpcSend(j)
 	}
+}
+
+// spaAsList reads a Sky List value as a Go slice (nil for anything else).
+func spaAsList(v any) []any {
+	if l, ok := v.([]any); ok {
+		return l
+	}
+	return AsList(v)
 }
 
 // spaRpcSend runs one queued RPC (on its own goroutine: the fetch blocks it,
@@ -880,8 +900,23 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 	case "rpc":
 		// An auto-split server-branch RPC (Spa.rpc): queue it; it is sent when
 		// every earlier RPC has settled, from the model current at that moment.
-		spaRpcQ.enqueue(cmd.task, cmd.toMsg)
+		spaRpcQ.enqueue(cmd.task, cmd.payload, cmd.toMsg)
 		spaRpcPump()
+	case "followUps":
+		// The Msgs a server branch's command produced on the backend (SPA-3),
+		// dispatched in order through the client `update` on one goroutine, so
+		// each settles before the next.
+		msgs := spaAsList(cmd.payload)
+		go func() {
+			for _, m := range msgs {
+				step(m)
+			}
+		}()
+	case "spaError":
+		if c := js.Global().Get("console"); c.Truthy() {
+			c.Call("error", "[sky.spa] a server branch's follow-up could not be applied:",
+				Basics_errorToStringT(cmd.payload))
+		}
 	case "publish", "publishNoEcho":
 		// v1 DECISION: Cmd.publish / publishNoEcho are a documented no-op on
 		// the Sky.Spa client. In-process pub/sub in Sky.Live fans a message

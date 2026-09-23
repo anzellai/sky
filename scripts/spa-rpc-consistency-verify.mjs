@@ -15,6 +15,7 @@
 //   dedupe    a request the server ran but whose response was lost is retried
 //             with the same id and does NOT run twice (SPA-6)
 //   retry     every failed/queued RPC runs, in order, on Retry (SPA-7)
+//   native    a server branch's Std.Native leaf runs in the client (SPA-3)
 //   reload    client scratch state is restored (SPA-8); a field only server
 //             branches write comes from the SSR seed, not localStorage (K5)
 //
@@ -165,6 +166,12 @@ try {
   check("reload: server field before reload", await text(page, "server"), "server=v1");
   await page.fill("#noteIn", "kept-note");
   await page.waitForTimeout(400);
+
+  // ---- a server branch's Std.Native client leaf runs in the client (SPA-3) --
+  await page.click("#stash");
+  await page.waitForTimeout(800);
+  check("native: the client ran the server branch's Std.Native leaf", await page.evaluate(() => localStorage.getItem("stash")), "kept-note");
+  check("native: its result Msg ran through the client update", await text(page, "stashed"), "stashed=ok");
   // The server truth changes behind the client's back (another tab, a job).
   writeFileSync(join(BACKEND_DIR, "server.txt"), "v2");
   await page.reload({ waitUntil: "networkidle" });

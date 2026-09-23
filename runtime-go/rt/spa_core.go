@@ -215,6 +215,26 @@ func Spa_withGuard(fn, cfg any) any { return spaCfgSet(cfg, "Guard", fn) }
 // generated Applied<Msg> constructor.
 func Spa_rpc(mk, to any) SkyCmd { return cmdT{kind: "rpc", task: mk, toMsg: to} }
 
+// Spa_rpcWith is Spa_rpc plus a CLIENT residual (`model -> Cmd msg`): the part
+// of the server branch's command that can only run in the client (a
+// `Std.Native` effect). The client runs `residual snapshot` when it SENDS the
+// RPC, from the same model snapshot the request is built from, so the effect
+// sees the model the server branch sees (SPA-3). Carried in `payload`.
+func Spa_rpcWith(mk, residual, to any) SkyCmd {
+	return cmdT{kind: "rpc", task: mk, toMsg: to, payload: residual}
+}
+
+// Spa_followUps dispatches a list of Msgs, in order, through the client
+// `update` — the follow-up Msgs a server branch's command produced on the
+// backend (Spa_collectFollowUps) and returned with its RPC response (SPA-3).
+func Spa_followUps(msgs any) SkyCmd { return cmdT{kind: "followUps", payload: msgs} }
+
+// Spa_reportError reports an Error loudly on the client console (the wasm
+// client has no Std.Log) without dispatching anything — used when a server
+// branch's follow-up Msgs cannot be decoded and the app declared no
+// `App.withRpcError` handler. Never a silent drop.
+func Spa_reportError(err any) SkyCmd { return cmdT{kind: "spaError", payload: err} }
+
 // ── Route matching (portable pure helpers) ──────────────────────────
 //
 // Reimplements Sky.Live's matchRoute / splitPath algorithm (live.go:1600-1624)

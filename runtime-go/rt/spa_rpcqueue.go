@@ -50,6 +50,10 @@ type spaRpcJob struct {
 	mk any
 	// toMsg maps the RPC Result to the Applied<Msg> constructor.
 	toMsg any
+	// residual is the optional CLIENT part of the server branch's command
+	// (`model -> Cmd msg`, a Std.Native effect), run with the snapshot when the
+	// job is sent (Spa.rpcWith).
+	residual any
 	// rid is the stable request id, reused verbatim by every retry.
 	rid string
 	// sent is true once the job left the queue head for the network.
@@ -76,9 +80,9 @@ func newSpaRpcQueue(nonce string) *spaRpcQueue {
 }
 
 // enqueue appends a job built from an `rpc` Cmd leaf and returns it.
-func (q *spaRpcQueue) enqueue(mk, toMsg any) *spaRpcJob {
+func (q *spaRpcQueue) enqueue(mk, residual, toMsg any) *spaRpcJob {
 	q.seq++
-	j := &spaRpcJob{mk: mk, toMsg: toMsg, rid: q.nonce + "-" + strconv.Itoa(q.seq)}
+	j := &spaRpcJob{mk: mk, residual: residual, toMsg: toMsg, rid: q.nonce + "-" + strconv.Itoa(q.seq)}
 	q.jobs = append(q.jobs, j)
 	return j
 }

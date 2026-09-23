@@ -88,7 +88,7 @@ func (c *rqClient) step(msg any) {
 	pair := c.upd(msg, c.model)
 	c.model = pair.V0
 	if cmd, ok := pair.V1.(cmdT); ok && cmd.kind == "rpc" {
-		c.q.enqueue(cmd.task, nil)
+		c.q.enqueue(cmd.task, nil, nil)
 	}
 	c.q.startHead(c.model)
 }
@@ -163,8 +163,8 @@ func TestSpaRpcQueue_ResponsesApplyInDispatchOrder(t *testing.T) {
 // unique across jobs.
 func TestSpaRpcQueue_RequestIDsStableAndUnique(t *testing.T) {
 	q := newSpaRpcQueue("n1")
-	a := q.enqueue("x", nil)
-	b := q.enqueue("y", nil)
+	a := q.enqueue("x", nil, nil)
+	b := q.enqueue("y", nil, nil)
 	if a.rid == b.rid || a.rid != "n1-1" || b.rid != "n1-2" {
 		t.Fatalf("rids = %q, %q", a.rid, b.rid)
 	}
@@ -179,7 +179,7 @@ func TestSpaRpcQueue_RequestIDsStableAndUnique(t *testing.T) {
 // reports the panic, rather than killing the client.
 func TestSpaRpcQueue_ReplayPanicFallsBack(t *testing.T) {
 	q := newSpaRpcQueue("p")
-	q.enqueue("inc", nil)
+	q.enqueue("inc", nil, nil)
 	q.startHead(rqModel{Count: 0})
 	q.record(rqDraft{S: "x"})
 	apply := rqUpdate(q)

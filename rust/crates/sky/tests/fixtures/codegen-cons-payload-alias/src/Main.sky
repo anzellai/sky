@@ -1,0 +1,76 @@
+module Main exposing (main)
+
+-- Two shapes that passed `sky check` but failed `go build` (check ≡ build):
+--   * `Ok (m :: ms)` in a `Result Error (List Msg)` slot — `x :: xs` lowers to
+--     an `any`-returning `rt.List_cons`, fed raw into `rt.Ok[E, []Msg]`;
+--   * `alias2 3 4` where `alias2 = add2` aliases an unannotated function
+--     binding — the caller saw `any` and emitted a curried call on it.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+type Msg
+    = A
+    | B Int
+
+
+dec : String -> Result Error Msg
+dec s =
+    if s == "a" then
+        Ok A
+
+    else
+        Ok (B (String.length s))
+
+
+decList : List String -> Result Error (List Msg)
+decList items =
+    case items of
+
+        [] ->
+            Ok []
+
+        item :: rest ->
+            case dec item of
+
+                Ok m ->
+                    case decList rest of
+
+                        Ok ms ->
+                            Ok (m :: ms)
+
+                        Err e ->
+                            Err e
+
+                Err e ->
+                    Err e
+
+
+count : Result Error (List Msg) -> Int
+count r =
+    case r of
+
+        Ok ms ->
+            List.length ms
+
+        Err _ ->
+            -1
+
+
+-- A zero-parameter alias of an unannotated function-valued binding, called
+-- with two arguments (`alias2 3 4`).
+add2 =
+    \a b -> a + b
+
+
+alias2 =
+    add2
+
+
+main =
+    println
+        (String.fromInt (count (decList [ "a", "bb", "c" ])) ++ " "
+            ++ String.fromInt (alias2 3 4))

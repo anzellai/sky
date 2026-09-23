@@ -13,6 +13,7 @@ import Sky.Core.File as File
 import Sky.Core.Result as Result
 import Sky.Core.String as String
 import Sky.Core.Task as Task
+import Std.Native as Native
 import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -31,6 +32,7 @@ type alias Model =
     , hits : Int
     , note : String
     , server : String
+    , stashed : String
     }
 
 type Msg
@@ -48,6 +50,8 @@ type Msg
     | Hit
     | Note String
     | Touch
+    | Stash
+    | Stashed (Result Error ())
 
 
 init : () -> ( Model, Cmd Msg )
@@ -63,6 +67,7 @@ init _ =
       , hits = 0
       , note = ""
       , server = ""
+      , stashed = ""
       }
     , Cmd.none
     )
@@ -174,6 +179,20 @@ update msg model =
         Touch ->
             ( { model | server = readServer () }, Cmd.none )
 
+        -- A server branch whose command holds a Std.Native CLIENT effect: the
+        -- server runs its own part, the client runs the native leaf (SPA-3).
+        Stash ->
+            ( { model | server = readServer () }
+            , Cmd.batch
+                  [ Cmd.perform (Native.storageSet "stash" model.note) Stashed ]
+            )
+
+        Stashed (Ok _) ->
+            ( { model | stashed = "ok" }, Cmd.none )
+
+        Stashed (Err e) ->
+            ( { model | stashed = "err " ++ Error.toString e }, Cmd.none )
+
 
 guard : Msg -> Model -> Result Error ()
 guard msg model =
@@ -227,6 +246,7 @@ view model =
         , row "hits" ("hits=" ++ String.fromInt model.hits)
         , row "note" ("note=" ++ model.note)
         , row "server" ("server=" ++ model.server)
+        , row "stashed" ("stashed=" ++ model.stashed)
         , Input.text
               [ Ui.htmlAttribute "id" "draft" ]
               { onChange = Draft
@@ -257,6 +277,7 @@ view model =
         , btn "serverThenPure" ServerThenPure
         , btn "hit" Hit
         , btn "touch" Touch
+        , btn "stash" Stash
         ]
 
 

@@ -509,7 +509,11 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         // callers as `any` — matching the `any` Go signature `lower_def` emits —
         // so the caller widens its argument instead of coercing it DOWN to a
         // closed struct (which would drop the row-carried fields).
-        let (rp_params, _rp_result) = row_poly_flags(&e.body, &e.types);
+        let collides = |t: &Ty| match sky_ty_to_go(t, &env) {
+            GoTy::Named(n, _) => goty_names_non_model_record(&n, &record_fields, &env),
+            _ => false,
+        };
+        let (rp_params, _rp_result) = row_poly_flags(&e.body, &e.types, &collides);
         let mut ptys = Vec::new();
         for (i, p) in e.body.params.iter().enumerate() {
             let inferred = || match &e.body.pats[*p] {
@@ -553,7 +557,11 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             .sig
             .as_ref()
             .map(|s| sig_result_after(s, e.body.params.len()));
-        let (_rp_params, rp_result) = row_poly_flags(&e.body, &e.types);
+        let collides = |t: &Ty| match sky_ty_to_go(t, &env) {
+            GoTy::Named(n, _) => goty_names_non_model_record(&n, &record_fields, &env),
+            _ => false,
+        };
+        let (_rp_params, rp_result) = row_poly_flags(&e.body, &e.types, &collides);
         let t = match sig_ret {
             Some(st) if !matches!(st, Ty::Var(_)) => Some(st),
             // Row-poly result + no concrete annotation → `any` (matches the `any`
@@ -566,6 +574,42 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         };
         if let Some(t) = t {
             def_result_tys.insert(*d, t);
+        }
+    }
+    // A zero-parameter ALIAS of another def (`alias2 = (add2)`) whose own
+    // per-def inference could not see the target's type (an unannotated target
+    // reads back as a bare var) takes the TARGET's result type. `lower_def`
+    // already emits the alias with the target's Go func type (recovered from the
+    // lowered body), so a caller that read the bare var saw `any` and emitted a
+    // curried call on it (`Main_alias2()(3)(4)`) that `go build` rejects while
+    // `sky check` passed. Iterated so an alias of an alias resolves too.
+    for _ in 0..8 {
+        let mut changed = false;
+        for (d, e) in &defs {
+            if !e.body.params.is_empty() || e.sig.is_some() {
+                continue;
+            }
+            let Some(root) = e.body.root else { continue };
+            let Expr::Var(Res::Def(target)) = &e.body.exprs[root] else {
+                continue;
+            };
+            let own_unresolved = match def_result_tys.get(d) {
+                None => true,
+                Some(Ty::Var(_)) | Some(Ty::Error) => true,
+                Some(_) => false,
+            };
+            if !own_unresolved || target == d {
+                continue;
+            }
+            if let Some(tt) = def_result_tys.get(target).cloned() {
+                if !matches!(tt, Ty::Var(_) | Ty::Error) && def_result_tys.get(d) != Some(&tt) {
+                    def_result_tys.insert(*d, tt);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
         }
     }
 
@@ -2283,7 +2327,30 @@ impl<'a> Ctx<'a> {
         // body preserve every row-carried field. The SAME flags drive the
         // caller-facing `def_param_tys`/`def_result_tys` tables, so both sides of
         // every call agree.
-        let (rp_params, rp_result) = row_poly_flags(&self.body, &self.types);
+        let collide_cache: Vec<(Ty, bool)> = {
+            let body = self.body;
+            let types = self.types;
+            let mut tys: Vec<Ty> = body
+                .params
+                .iter()
+                .filter_map(|p| match &body.pats[*p] {
+                    Pattern::Var(id) => types.locals.get(id).cloned(),
+                    _ => None,
+                })
+                .collect();
+            if let Some(Ty::Tuple(xs)) = &types.result {
+                tys.extend(xs.iter().cloned());
+            }
+            tys.into_iter()
+                .map(|t| {
+                    let g = self.goty(&t);
+                    let c = self.goty_collides(&g);
+                    (t, c)
+                })
+                .collect()
+        };
+        let collides = |t: &Ty| collide_cache.iter().any(|(x, c)| *c && x == t);
+        let (rp_params, rp_result) = row_poly_flags(&self.body, &self.types, &collides);
 
         for (i, p) in param_pats.iter().enumerate() {
             let (pname, mut pty, binds) = self.bind_param(*p, sig_params.get(i));
@@ -2910,7 +2977,7 @@ impl<'a> Ctx<'a> {
     /// is an OPEN record whose extension-var name is SHARED (count ≥ 2) across the
     /// param/result positions — the row var flows through, as in
     /// `\acc -> { acc | value = … }`.
-    fn local_fn_row_poly(&self, params: &[PatId], body: ExprId) -> (Vec<bool>, bool) {
+    fn local_fn_row_poly(&mut self, params: &[PatId], body: ExprId) -> (Vec<bool>, bool) {
         use std::collections::HashMap as Hm;
         let param_tys: Vec<Option<Ty>> = params
             .iter()
@@ -2920,22 +2987,33 @@ impl<'a> Ctx<'a> {
             })
             .collect();
         let result_ty = self.types.exprs.get(&body).cloned();
-        let mut counts: Hm<Name, u32> = Hm::new();
-        for t in param_tys
+        let tys: Vec<Ty> = param_tys
             .iter()
-            .map(|t| t.as_ref())
-            .chain(std::iter::once(result_ty.as_ref()))
-        {
-            if let Some(name) = record_ext_name(t) {
-                *counts.entry(name.clone()).or_insert(0) += 1;
-            }
+            .flatten()
+            .cloned()
+            .chain(match &result_ty {
+                Some(Ty::Tuple(xs)) => xs.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+        let mut collide_tys: Vec<(Ty, bool)> = Vec::new();
+        for t in tys {
+            let g = self.goty(&t);
+            let c = self.goty_collides(&g);
+            collide_tys.push((t, c));
         }
-        let is_rp = |t: Option<&Ty>| {
-            record_ext_name(t).is_some_and(|n| counts.get(n).copied().unwrap_or(0) >= 2)
-        };
-        let pflags = param_tys.iter().map(|t| is_rp(t.as_ref())).collect();
-        let rflag = is_rp(result_ty.as_ref());
-        (pflags, rflag)
+        let collides = |t: &Ty| collide_tys.iter().any(|(x, c)| *c && x == t);
+        row_poly_positions(&param_tys, result_ty.as_ref(), &collides)
+    }
+
+    /// Does a lowered Go type name a nominal record OTHER than the app's Model?
+    /// An open row that lowers to such a record resolved to it by field name
+    /// alone (see `row_poly_positions`).
+    fn goty_collides(&self, g: &GoTy) -> bool {
+        match g {
+            GoTy::Named(n, _) => goty_names_non_model_record(n, self.record_fields, self.env),
+            _ => false,
+        }
     }
 
     // ---- expression lowering -------------------------------------------
@@ -4122,10 +4200,42 @@ impl<'a> Ctx<'a> {
             }
             _ => maybe_a.clone(),
         };
+        // An `any`-typed argument (e.g. `x :: xs`, whose `rt.List_cons` returns
+        // `any`) fed to a CONCRETE payload type param is a `go build` error
+        // ("need type assertion") — `sky check` passed while `go build` failed
+        // (`Ok (m :: ms)` in a `Result Error (List Msg)` slot). Narrow exactly
+        // that case to the payload type; every argument that already compiled
+        // (typed, or a payload of `any`) is passed through unchanged.
+        let narrow_payload = |this: &mut Self, args: Vec<GoExpr>, payload: Option<&GoTy>| {
+            args.into_iter()
+                .map(|a| match payload {
+                    Some(p) if a.ty == GoTy::Any && *p != GoTy::Any => this.coerce_if_needed(a, p),
+                    _ => a,
+                })
+                .collect::<Vec<_>>()
+        };
+        let named_arg = |t: &GoTy, name: &str, i: usize| -> Option<GoTy> {
+            match t {
+                GoTy::Named(n, ts) if n == name => ts.get(i).cloned(),
+                _ => None,
+            }
+        };
         let expr = match cname.as_str() {
-            "Ok" => call_rt(&format!("rt.Ok{ok_ea}"), lowered_args, ok_actual),
-            "Err" => call_rt(&format!("rt.Err{res_ea}"), lowered_args, actual.clone()),
-            "Just" => call_rt(&format!("rt.Just{just_a}"), lowered_args, just_actual),
+            "Ok" => {
+                let p = named_arg(&ok_actual, "rt.SkyResult", 1);
+                let args = narrow_payload(self, lowered_args, p.as_ref());
+                call_rt(&format!("rt.Ok{ok_ea}"), args, ok_actual)
+            }
+            "Err" => {
+                let p = named_arg(actual, "rt.SkyResult", 0);
+                let args = narrow_payload(self, lowered_args, p.as_ref());
+                call_rt(&format!("rt.Err{res_ea}"), args, actual.clone())
+            }
+            "Just" => {
+                let p = named_arg(&just_actual, "rt.SkyMaybe", 0);
+                let args = narrow_payload(self, lowered_args, p.as_ref());
+                call_rt(&format!("rt.Just{just_a}"), args, just_actual)
+            }
             "Nothing" => {
                 let a = match actual {
                     GoTy::Named(n, ts) if n == "rt.SkyMaybe" && ts.len() == 1 => {
@@ -6895,8 +7005,28 @@ impl<'a> Ctx<'a> {
         let mut gparams = Vec::new();
         let mut destructure: Vec<GoStmt> = Vec::new();
         let mut elem_pinned = false;
+        // Row-polymorphism of THIS lambda (see `row_poly_positions`): a param
+        // whose open row flows into the (tuple-wrapped) result and whose Go type
+        // is a nominal record it only COLLIDES with by field name must take the
+        // reflective `any` path, or the caller's wider record is coerced down to
+        // that record and its other fields are reset (the immediately-applied
+        // `(\_ model -> ( { model | f = … }, cmd )) req m` shape). Only the
+        // colliding positions change; every other lambda lowers as before.
+        let (rp_params, rp_result) = if eta_extra.is_empty() {
+            self.local_fn_row_poly(&params, body)
+        } else {
+            (vec![false; params.len()], false)
+        };
+        let mut rp_changed = false;
         for (i, p) in params.iter().enumerate() {
             let mut ty = pt.get(i).cloned().unwrap_or(GoTy::Any);
+            if self.closure_elem.is_none()
+                && *rp_params.get(i).unwrap_or(&false)
+                && self.goty_collides(&ty)
+            {
+                ty = GoTy::Any;
+                rp_changed = true;
+            }
             // A closure param whose body-inferred Go type collapsed to an ANONYMOUS
             // subset `struct{…}` (only the fields the closure reads: `\r ->
             // r.tx.account`) never matches the runtime value a LIST COMBINATOR
@@ -7009,6 +7139,32 @@ impl<'a> Ctx<'a> {
         // Emit it: the lambda is boxed to `any` at the erased call site (no
         // caller signature to violate), and a downstream narrow consumer can
         // narrow FROM the full record, which the subset can't reconstruct.
+        let rt = if rp_result {
+            let colliding = |g: &GoTy, this: &Self| this.goty_collides(g);
+            match &rt {
+                g if colliding(g, self) => {
+                    rp_changed = true;
+                    GoTy::Any
+                }
+                GoTy::Tuple(xs) if xs.iter().any(|x| colliding(x, self)) => {
+                    rp_changed = true;
+                    GoTy::Tuple(
+                        xs.iter()
+                            .map(|x| {
+                                if colliding(x, self) {
+                                    GoTy::Any
+                                } else {
+                                    x.clone()
+                                }
+                            })
+                            .collect(),
+                    )
+                }
+                _ => rt,
+            }
+        } else {
+            rt
+        };
         let rt = if matches!(rt, GoTy::Struct(_)) {
             match &self.body.exprs[body] {
                 Expr::Update { base, .. } => match &self.body.exprs[*base] {
@@ -7031,11 +7187,14 @@ impl<'a> Ctx<'a> {
         };
         let b = if eta_extra.is_empty() {
             match (&self.body.exprs[body], &rt) {
-                // A row-polymorphic lambda CAF (`caf_lambda_ty`) returning a tuple
-                // literal: build the tuple against the ERASED element types, so
-                // the reflective record update is not narrowed back to the
-                // nominal its open row collided with.
-                (Expr::Tuple(elems), GoTy::Tuple(_)) if self.caf_lambda_ty.is_some() => {
+                // A row-polymorphic lambda (a CAF's `caf_lambda_ty`, or a
+                // colliding row above) returning a tuple literal: build the tuple
+                // against the ERASED element types, so the reflective record
+                // update is not narrowed back to the nominal its open row
+                // collided with.
+                (Expr::Tuple(elems), GoTy::Tuple(_))
+                    if self.caf_lambda_ty.is_some() || rp_changed =>
+                {
                     let elems = elems.clone();
                     self.lower_tuple(&elems, &rt)
                 }
@@ -7066,7 +7225,17 @@ impl<'a> Ctx<'a> {
         };
         let mut stmts = destructure;
         stmts.push(GoStmt::Return(Some(b)));
-        GoExpr::new(GoExprKind::FuncLit(gparams, rt, stmts), actual.clone())
+        // A row-poly erasure changed the signature: the literal's type is its
+        // own (erased) one, and the enclosing slot adapts to it.
+        let lit_ty = if rp_changed {
+            GoTy::Func(
+                gparams.iter().map(|p| p.ty.clone()).collect(),
+                Box::new(rt.clone()),
+            )
+        } else {
+            actual.clone()
+        };
+        GoExpr::new(GoExprKind::FuncLit(gparams, rt, stmts), lit_ty)
     }
 
     fn lower_case(&mut self, subject: ExprId, branches: &[CaseBranch], actual: &GoTy) -> GoExpr {
@@ -7908,6 +8077,17 @@ fn int_lit(n: i64) -> GoExpr {
     GoExpr::new(GoExprKind::IntLit(n), GoTy::Bare(Prim::Int))
 }
 
+/// Is Go type name `n` a nominal record that is NOT the app's TEA Model? (See
+/// `row_poly_positions`: an open row that lowered to such a record resolved to
+/// it by field name alone.)
+fn goty_names_non_model_record(
+    n: &str,
+    record_fields: &HashMap<String, Vec<(String, Ty)>>,
+    env: &TypeEnv,
+) -> bool {
+    record_fields.contains_key(n) && env.model.as_ref().map(|(_, m)| m.as_str()) != Some(n)
+}
+
 /// The top-level record extension-variable NAME of an inferred type, if it is an
 /// open record. Read-back names row vars by union-find id, so a name that recurs
 /// across positions is literally the SAME row var.
@@ -8033,8 +8213,11 @@ fn caf_lambda_row_poly_ty(body: &Body, types: &BodyTypes) -> Option<Ty> {
 /// coerced away (the row-poly result-access bug). Single-occurrence open rows
 /// (subset-of-nominal params, locally-consumed records) are NOT row-poly and
 /// keep their concrete struct — baseline-identical.
-fn row_poly_flags(body: &Body, types: &BodyTypes) -> (Vec<bool>, bool) {
-    use std::collections::HashMap as Hm;
+fn row_poly_flags(
+    body: &Body,
+    types: &BodyTypes,
+    collides: &dyn Fn(&Ty) -> bool,
+) -> (Vec<bool>, bool) {
     let param_tys: Vec<Option<Ty>> = body
         .params
         .iter()
@@ -8043,21 +8226,63 @@ fn row_poly_flags(body: &Body, types: &BodyTypes) -> (Vec<bool>, bool) {
             _ => None,
         })
         .collect();
-    let mut counts: Hm<Name, u32> = Hm::new();
+    row_poly_positions(&param_tys, types.result.as_ref(), collides)
+}
+
+/// The shared core of [`row_poly_flags`] / `local_fn_row_poly`: `(per-param,
+/// result)` row-polymorphism flags over explicit param + result types.
+///
+/// * The ORIGINAL rule (unchanged): a param or a bare-record result whose open
+///   row var is shared with another param / the bare-record result.
+/// * The TUPLE rule: a row var that flows from a param into a record that is a
+///   DIRECT element of a tuple result (the TEA `( { model | f = … }, cmd )`
+///   shape) is just as row-polymorphic. It flags a position ONLY when that
+///   position's Go type is a nominal record it merely COLLIDES with by field
+///   name (`collides`) — the one case that coerced the caller's wider record
+///   DOWN and silently reset its other fields. A position that resolves to the
+///   app's Model, or already erases to `any`, keeps its Go type, so every
+///   program that was already correct lowers byte-for-byte as before.
+fn row_poly_positions(
+    param_tys: &[Option<Ty>],
+    result: Option<&Ty>,
+    collides: &dyn Fn(&Ty) -> bool,
+) -> (Vec<bool>, bool) {
+    use std::collections::HashMap as Hm;
+    let mut old_counts: Hm<Name, u32> = Hm::new();
     for t in param_tys
         .iter()
         .map(|t| t.as_ref())
-        .chain(std::iter::once(types.result.as_ref()))
+        .chain(std::iter::once(result))
     {
         if let Some(name) = record_ext_name(t) {
-            *counts.entry(name.clone()).or_insert(0) += 1;
+            *old_counts.entry(name.clone()).or_insert(0) += 1;
         }
     }
-    let is_rp = |t: Option<&Ty>| {
-        record_ext_name(t).is_some_and(|n| counts.get(n).copied().unwrap_or(0) >= 2)
-    };
-    let pflags = param_tys.iter().map(|t| is_rp(t.as_ref())).collect();
-    let rflag = is_rp(types.result.as_ref());
+    let mut new_counts: Hm<Name, u32> = Hm::new();
+    for t in param_tys.iter().map(|t| t.as_ref()) {
+        if let Some(name) = record_ext_name(t) {
+            *new_counts.entry(name.clone()).or_insert(0) += 1;
+        }
+    }
+    for name in result_ext_names(result) {
+        *new_counts.entry(name.clone()).or_insert(0) += 1;
+    }
+    let old_shared = |n: &Name| old_counts.get(n).copied().unwrap_or(0) >= 2;
+    let new_shared = |n: &Name| new_counts.get(n).copied().unwrap_or(0) >= 2;
+    let pflags = param_tys
+        .iter()
+        .map(|t| match (record_ext_name(t.as_ref()), t) {
+            (Some(n), Some(ty)) => old_shared(n) || (new_shared(n) && collides(ty)),
+            _ => false,
+        })
+        .collect();
+    let rflag = record_ext_name(result).is_some_and(old_shared)
+        || match result {
+            Some(Ty::Tuple(xs)) => xs
+                .iter()
+                .any(|x| record_ext_name(Some(x)).is_some_and(new_shared) && collides(x)),
+            _ => false,
+        };
     (pflags, rflag)
 }
 

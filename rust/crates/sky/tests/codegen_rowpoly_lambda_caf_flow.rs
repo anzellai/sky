@@ -17,7 +17,13 @@
 //! the (possibly tuple-wrapped) result presents the ERASED function type
 //! (`func(any, any) rt.T2[any, int]`), and its root lambda is lowered against
 //! it, so the update goes through the reflective `rt.RecordUpdate` and keeps
-//! every field. Needs a `go` toolchain.
+//! every field. The same collision hit an immediately-APPLIED lambda
+//! (`onReqApplied r m = (\_ model -> ( { model | server = "u" }, 0 )) r m`, the
+//! shape the split's `spaOnRequest_ req_ model_` takes): `row_poly_positions`
+//! now flags a row var flowing from a param into a TUPLE-wrapped result, and a
+//! position whose Go type merely COLLIDES with a non-Model nominal takes the
+//! reflective path (`lower_lambda`, `lower_def`); positions that resolve to the
+//! Model or already erase to `any` are unchanged. Needs a `go` toolchain.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -93,12 +99,13 @@ fn rowpoly_lambda_caf_keeps_every_record_field() {
         "app failed: {stdout}{}",
         String::from_utf8_lossy(&run.stderr)
     );
-    // CAF lambda, top-level function, let-bound lambda: every one keeps `count`.
+    // CAF lambda, top-level function, let-bound lambda, immediately-applied
+    // lambda: every one keeps `count`.
     assert_eq!(
         stdout.trim(),
-        "5 6 7 osst",
+        "5 6 7 8 osstu",
         "a row-polymorphic lambda CAF must not narrow its record to a same-named \
-         nominal (regression: `count` reset to 0 → \"0 6 7 osst\")"
+         nominal (regression: `count` reset to 0 → \"0 6 7 0 osstu\")"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
