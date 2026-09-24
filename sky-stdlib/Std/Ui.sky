@@ -1185,10 +1185,11 @@ input attrs =
 -- Use with `Ui.onSubmit DoSignIn` where `DoSignIn` takes a typed
 -- record matching the form's named inputs (e.g.
 -- `type alias Creds = { username : String, password : String }`).
--- Sky.Live's typed Msg dispatch decodes the wire form data into
--- the record via case-insensitive json.Unmarshal — Sky's
--- lowercase field names land in the matching Go fields without
--- per-Msg decoder boilerplate.
+-- Every target decodes the submitted fields into that record
+-- STRICTLY by name (`Ui.name "username"`): String / Int / Float /
+-- Bool / Maybe fields only (else a compile error, [E2010]); a
+-- missing or unparsable field drops the submit with a logged
+-- FormDecode error, never a silent zero value.
 form : List (Attribute msg) -> List (Element msg) -> Element msg
 form attrs children =
     TaggedNode "form" NoDescription attrs children

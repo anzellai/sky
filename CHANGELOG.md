@@ -11,26 +11,117 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.25.17 — a re-rendered Sky.Spa button dispatches the current message (2026-09-23)
+## v0.25.17 — app-surface soundness sweep: Sky.Live, Sky.Spa, Std.App, Sky.Tui/Cli (2026-09-24)
 
-A patch over v0.25.16. `sky upgrade` is safe from any v0.25.x — a runtime fix in
-the Sky.Spa wasm client, no source-breaking change and no change to emitted code.
+A patch over v0.25.16. A bug in a Sky.Spa button (a re-rendered row kept sending
+the message from its first render) started a full audit of every app surface
+against "if it compiles, it works". Six audits reproduced 74 defects, from 11 root
+causes, in a real browser or a real terminal. This release fixes all of them. Each
+fix has a regression test that failed before it, and the new browser and terminal
+gates run nightly. No public function signature changes.
 
-Fixes a Sky.Spa (`--target web:app`) button that kept dispatching the message
-payload from its FIRST render. A list re-rendered with the same visible text but
-different data — for example rows `Ui.button [] { onPress = Just (Edit row.id),
-… }` replaced by rows with other ids — reused the existing DOM nodes, and clicking
-"Edit" then sent the OLD id. The DOM diff compares event handlers by constructor
-name (`Edit "a1"` and `Edit "b2"` both read as `Edit`), which is correct for
-Sky.Live and the desktop webview (they look the handler up on the server from the
-latest render), but the wasm client attached a listener that captured the message
-when it was first bound. Its listeners now read the message from a per-element
-slot that every render refreshes, so the payload always follows the model. This
-covers both an in-session re-render and the boot path, where the client hydrates
-the server's first paint and then patches to a model restored from
-`localStorage` with identical text. Sky.Live and the desktop webview were not
-affected. A browser regression gate (`scripts/spa-stale-handler-e2e.sh`) now runs
-nightly next to the restore first-paint gate.
+### Migration
+
+Two programs that used to compile and then fail at run time are now compile
+errors:
+
+- **`[E2010]` — `onSubmit` handler.** `onSubmit` takes a `Msg`, a `record -> Msg`,
+  or a `Dict String String -> Msg`, and every record field must be `String`,
+  `Int`, `Float`, `Bool`, or a `Maybe` of those. `onSubmit 42`, or a record with a
+  `List` field, used to crash or deliver zeroes. Fix: give the form record only
+  those field types, and name each control after its field (`Ui.name "age"`).
+- **`[E2011]` — pub/sub payload mismatch.** On a literal topic, every
+  `Cmd.publish` and `Sub.subscribeTopic` must agree on the payload type. The
+  error names both sites. Fix: publish the type the subscriber decodes.
+
+One example in the repository (`08-notes-app`) had the first defect: it passed a
+string to `onSubmit`, which never ran.
+
+### Sky.Live (`--target web`) and the desktop webview
+
+- An element with two or more handlers (for example `onChange` and `onEnter`)
+  dispatched the first handler for every event. Each event now resolves its own
+  handler.
+- A click that crossed a re-render on a slow network could act on another row.
+  Each render has a version. A click resolves against the render the user saw,
+  and a click on an expired render is dropped, never replaced by another
+  message.
+- Setting an input to `""`, unticking a checkbox, or moving a radio from the
+  model now updates the page. A value the model sets on the focused input
+  applies once the server has acknowledged the user's keystrokes. When `update`
+  rejects or normalises an edit, the input shows the model.
+- `Ui.onFile` and `Ui.onImage` dispatch. Every event type the view declares is
+  bound. Enter no longer overtakes the last typed characters. A cleared number
+  input sends `""`, not `"0"`. IME composition dispatches once, on commit.
+- The session is persisted after every dispatch path (command results, timers,
+  pub/sub, streams). Subscriptions restart after a server restart. Out-of-order
+  SSE frames are applied in order. `withNotFound` works on every request. A
+  crash in `update` shows a small banner. Two tabs on different routes no longer
+  share one route after a reconnect.
+
+### Sky.Spa (`--target web:app`) and the auto-split
+
+- Security: `App.withGuard` attached through a helper function was dropped with
+  no warning. The compiler now reads the `App` value from the syntax tree, and
+  any builder it cannot account for fails the build. The guard sees every field
+  it reads, and it also runs on the client for client-only messages.
+- Server calls run in dispatch order, are built when they are sent, and never
+  overwrite an edit the user made while a call was in flight.
+- A follow-up command from a server branch now runs. The client dispatches the
+  follow-up messages. Retry never repeats an action the server already ran, and
+  it keeps every failed call in order.
+- Every `web:app` app saves its model for a reload. On reload, fields that only
+  the server writes come from the server's first paint.
+- `Cmd` from the prelude (no `import Std.Cmd`) is analysed like `Std.Cmd`. A
+  message that `init` or the navigation hook dispatches is never removed from
+  the client.
+- `import Std.App as A` and an inline `App.run (App.app …)` work. A second app
+  value in the entry file no longer replaces fields. `sky check` checks the
+  target a bare `sky build` builds.
+- Hydration verifies text as well as structure. Route parameters decode the same
+  way on the server, on the client and in Sky.Live.
+
+### Shared diff (all web targets)
+
+- Keyed rows (`Std.Ui.Keyed`, named form fields) keep their identity. A new
+  children patch reuses DOM nodes, so a row that changes key never keeps a stale
+  id, and a focused input keeps its text and focus when siblings are inserted.
+- A changed root tag, a style change from `Ui.onPseudo`/`Ui.breakpoint`, and a
+  select whose options re-render are all patched correctly.
+- On Sky.Spa, key events carry the key, `onCheck` carries the Bool, and a
+  re-rendered button always sends the current message.
+- `Ui.onKeyDown` no longer crashes the view. The stdlib is now type-checked
+  against its own annotations, which is how that defect was found.
+- Checkbox and radio labels are real `<label>` elements, so a click on the label
+  toggles the control.
+
+### Terminal (`terminal:tui`, `terminal:cli`, `App.tui`, `App.cli`)
+
+- Security: `App.withGuard` is enforced on `terminal:cli` and `App.tui`.
+- `App.withDurable` works on the TUI. A snapshot that no longer decodes after a
+  model change is kept on disk and logged, never reset to `init` and
+  overwritten. This also covers Sky.Live.
+- Keys that arrive together use the current screen. Focus follows the element,
+  not its list position. Forms submit (`Ui.onSubmit`, `Ui.onEnter`),
+  `Input.multiline` is editable, and sliders show and step their value.
+- Input split across reads (a paste, a multibyte character, an escape sequence)
+  no longer freezes the app or loses characters. Alt keys decode, and Ctrl-C
+  always quits.
+- `Ui.width` on an input no longer makes the view 50,000 rows tall. Every update
+  repaints. Focus markers no longer cover the label.
+- Every `Sub.every` runs, on every target, and a timer that is still requested
+  keeps running across updates. `Cmd.publish` / `Sub.subscribeTopic` work in
+  the terminal loops. The CLI waits for running commands at end of input.
+  `App.withInput` works on the TUI.
+
+### Gates
+
+New nightly gates: `tui-e2e.sh`, `spa-vdom-identity-e2e.sh`,
+`live-client-e2e.sh`, `spa-rpc-consistency-e2e.sh`, `ui-forms-e2e.sh`, and
+`spa-stale-handler-e2e.sh`. The diff test runs 20,000 random tree transitions,
+with zero mismatches on both appliers. The `coerce-floor` golden moves by +155
+`narrow` (adapter and dispatch stay at 0). All of it comes from new stdlib code
+paths, and the golden header records each one.
 
 ## v0.25.16 — the Sky-managed Go build cache is never cleaned under a running build (2026-09-23)
 
