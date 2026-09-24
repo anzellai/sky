@@ -22,8 +22,8 @@ gates run nightly. No public function signature changes.
 
 ### Migration
 
-Two programs that used to compile and then fail at run time are now compile
-errors:
+Three kinds of program that used to compile and then fail at run time are now
+compile errors:
 
 - **`[E2010]` — `onSubmit` handler.** `onSubmit` takes a `Msg`, a `record -> Msg`,
   or a `Dict String String -> Msg`, and every record field must be `String`,
@@ -33,9 +33,14 @@ errors:
 - **`[E2011]` — pub/sub payload mismatch.** On a literal topic, every
   `Cmd.publish` and `Sub.subscribeTopic` must agree on the payload type. The
   error names both sites. Fix: publish the type the subscriber decodes.
+- **`[E1014]` — unknown operator.** Sky has no `!=`. "Not equal" is `/=`. Any
+  other operator used to compile and then run as an arithmetic `+`, so `s != ""`
+  crashed the first time it ran. Fix: write `/=` (the error names the
+  operator and gives the Sky spelling).
 
-One example in the repository (`08-notes-app`) had the first defect: it passed a
-string to `onSubmit`, which never ran.
+Two examples had these defects: `08-notes-app` passed a string to `onSubmit`,
+which never ran, and `13-skyshop` used `!=` in sixteen places, so filtering
+products crashed.
 
 ### Sky.Live (`--target web`) and the desktop webview
 
