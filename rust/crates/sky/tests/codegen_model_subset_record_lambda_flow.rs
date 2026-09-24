@@ -1,4 +1,4 @@
-//! Regression for a codegen record-lowering bug (2026-09-20, found in FacePlan).
+//! Regression for a codegen record-lowering bug (2026-09-20, found in a real app).
 //!
 //! An inline lambda that reads a NESTED record field over a list —
 //! `List.all (\r -> r.clinic.billingOverride == "comped") rows` where

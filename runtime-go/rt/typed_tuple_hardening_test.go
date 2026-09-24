@@ -146,7 +146,7 @@ func TestUnpackPairTypedTuple(t *testing.T) {
 	}
 }
 
-// Regression (found 2026-09-23 in FacePlan): a tuple of arity 4..9 built
+// Regression (found 2026-09-23 in a real app): a tuple of arity 4..9 built
 // inside a lambda passed to a type-erased HOF (`Maybe.map (\r -> (a,b,c,d)) …`)
 // lowers to `rt.T4[any,any,any,any]{…}`, then the caller narrows it with
 // `MaybeCoerce[rt.T4[int,string,int,int]]` → `coerceInner`. The tuple-structural

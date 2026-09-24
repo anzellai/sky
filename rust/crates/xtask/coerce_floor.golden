@@ -67,7 +67,6 @@
 # closed adapters the golden still reserved slack for, and that slack is now
 # gone. The `narrow` fall is a decrease in SITE count and is not a speedup
 # measurement — nothing here weights a site by how often it runs.
-#
 # ── Recorded transition, 2026-09-21 — Model-subset field-type disambiguation ──
 #     narrow  12858 -> 12850 (-8); 13-skyshop 1479 -> 1481 (+2), all other
 #             moves are DECREASES; NO other project rose.
@@ -79,10 +78,35 @@
 # subset `{ clinic | ρ }` and mis-resolved it to the Model — rendering `r.clinic`
 # as `SkyMaybe[Clinic]` and `r.clinic.field` as a static access on a `SkyMaybe`,
 # which `go build` REJECTS (`sky check` passed: an "if it compiles it works"
-# break, found in FacePlan). The fix vetoes the Model resolution for that
+# break, found in a real app). The fix vetoes the Model resolution for that
 # wrap/unwrap ambiguity, so the row falls to the sound reflective (`any`) path.
 # 13-skyshop carries one genuine instance of the same shape, hence +2; the net
 # is a decrease. Guard: rust/crates/sky/tests/codegen_model_subset_record_lambda_flow.rs.
+#
+# ── Recorded transition, 2026-09-24 — v0.25.17 app-surface sweep ──
+#     narrow  12850 -> 13005 (+155) over 75 rows; adapter and dispatch
+#             unchanged (0); no row fell. 31 rows +4, 3 rows +8, one +7 —
+#             every rise is one of the three stdlib sources below.
+# 1. +4 in every Std.App project: `Std.App.runTuiBoot_` gained a `withLine_`
+#    step (terminal:tui now honours `App.withInput`, audit SA-10), in both its
+#    `ViewUi` and `ViewString` branches. Each step carries the same two tokens
+#    as the `withOnKey` step beside it: an R2 `rt.AsString` inside the eta
+#    wrapper that retypes the `String -> msg` callback at the `Tui_withOnLine`
+#    kernel slot (doc 14 §3 R2, already the closed form), and an R6/R8
+#    generic-erase `rt.Coerce[any]` on the `Maybe (String -> msg)` payload of
+#    the stdlib `App` record (doc 14 §4.5, blocked for stdlib ADTs).
+# 2. +4 more in 37-composite-live-shop / 38-composite-ui-multibackend:
+#    `Std.Ui.Input.wrapWithClickableLabel` (checkbox / radio labels are real
+#    `<label>` elements, audit UF-13) reads the stdlib `Label` payload: four
+#    R6 narrowings, the same shape as the existing `wrapWithLabel`.
+#    apps/fieldbook is the third +8 row (sources 1 and 2).
+# 3. 67-durable-counter +7 = source 1 (+4), plus `Std.Durable.loadSnapshot` +1
+#    (a snapshot that no longer decodes is now a classified Decode error, not
+#    `Nothing`, audit SA-8) and `Sky.Core.Error.toString` +2 (now reachable, to
+#    log that error).
+# Found by bisecting the SOURCE (a compiler at d08a5910 and at main 0d34d2e7
+# both measure 20-cli-counter at 49; the sweep measures 53, all in
+# runTuiBoot_).
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -92,35 +116,35 @@
 06-json	adapter=0	dispatch=0	narrow=79
 07-todo-cli	adapter=0	dispatch=0	narrow=177
 08-notes-app	adapter=0	dispatch=0	narrow=462
-09-live-counter	adapter=0	dispatch=0	narrow=133
-10-live-component	adapter=0	dispatch=0	narrow=136
-12-skyvote	adapter=0	dispatch=0	narrow=502
-13-skyshop	adapter=0	dispatch=0	narrow=1481
+09-live-counter	adapter=0	dispatch=0	narrow=137
+10-live-component	adapter=0	dispatch=0	narrow=140
+12-skyvote	adapter=0	dispatch=0	narrow=506
+13-skyshop	adapter=0	dispatch=0	narrow=1485
 14-task-demo	adapter=0	dispatch=0	narrow=10
 15-http-server	adapter=0	dispatch=0	narrow=19
-16-skychess	adapter=0	dispatch=0	narrow=610
-17-skymon	adapter=0	dispatch=0	narrow=566
-18-job-queue	adapter=0	dispatch=0	narrow=239
-19-skyforum	adapter=0	dispatch=0	narrow=136
-20-cli-counter	adapter=0	dispatch=0	narrow=49
-21-tui-stopwatch	adapter=0	dispatch=0	narrow=56
-22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=62
-23-tui-todo	adapter=0	dispatch=0	narrow=80
-24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=86
-25-sky-console	adapter=0	dispatch=0	narrow=90
-26-ui-showcase	adapter=0	dispatch=0	narrow=350
-27-multi-session-chat	adapter=0	dispatch=0	narrow=232
-28-streaming-chat	adapter=0	dispatch=0	narrow=97
-29-webview-threejs-spike	adapter=0	dispatch=0	narrow=58
+16-skychess	adapter=0	dispatch=0	narrow=614
+17-skymon	adapter=0	dispatch=0	narrow=570
+18-job-queue	adapter=0	dispatch=0	narrow=243
+19-skyforum	adapter=0	dispatch=0	narrow=140
+20-cli-counter	adapter=0	dispatch=0	narrow=53
+21-tui-stopwatch	adapter=0	dispatch=0	narrow=60
+22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=66
+23-tui-todo	adapter=0	dispatch=0	narrow=84
+24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=90
+25-sky-console	adapter=0	dispatch=0	narrow=94
+26-ui-showcase	adapter=0	dispatch=0	narrow=354
+27-multi-session-chat	adapter=0	dispatch=0	narrow=236
+28-streaming-chat	adapter=0	dispatch=0	narrow=101
+29-webview-threejs-spike	adapter=0	dispatch=0	narrow=62
 30-sse-server-demo	adapter=0	dispatch=0	narrow=17
-31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=71
+31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=75
 32-sse-relay	adapter=0	dispatch=0	narrow=21
 33-websocket-echo	adapter=0	dispatch=0	narrow=6
-34-multi-tier-console	adapter=0	dispatch=0	narrow=76
+34-multi-tier-console	adapter=0	dispatch=0	narrow=80
 35-composite-generics	adapter=0	dispatch=0	narrow=162
 36-composite-server	adapter=0	dispatch=0	narrow=320
-37-composite-live-shop	adapter=0	dispatch=0	narrow=412
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=317
+37-composite-live-shop	adapter=0	dispatch=0	narrow=420
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=325
 40-generic-adt-field	adapter=0	dispatch=0	narrow=5
 41-nested-curry	adapter=0	dispatch=0	narrow=7
 42-poly-record	adapter=0	dispatch=0	narrow=3
@@ -133,28 +157,28 @@
 49-xmodule-adt	adapter=0	dispatch=0	narrow=2
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=2
-52-blog-analytics	adapter=0	dispatch=0	narrow=467
+52-blog-analytics	adapter=0	dispatch=0	narrow=471
 53-record-update-map	adapter=0	dispatch=0	narrow=25
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=5
 55-store-partial-update	adapter=0	dispatch=0	narrow=135
-61-app-kanban	adapter=0	dispatch=0	narrow=265
-62-app-notes	adapter=0	dispatch=0	narrow=446
-63-app-chat	adapter=0	dispatch=0	narrow=447
-64-app-native	adapter=0	dispatch=0	narrow=342
+61-app-kanban	adapter=0	dispatch=0	narrow=269
+62-app-notes	adapter=0	dispatch=0	narrow=450
+63-app-chat	adapter=0	dispatch=0	narrow=451
+64-app-native	adapter=0	dispatch=0	narrow=346
 65-metadata-service	adapter=0	dispatch=0	narrow=41
 66-slack-agent	adapter=0	dispatch=0	narrow=160
-67-durable-counter	adapter=0	dispatch=0	narrow=82
-apps/dispatch	adapter=0	dispatch=0	narrow=465
-apps/fieldbook	adapter=0	dispatch=0	narrow=695
+67-durable-counter	adapter=0	dispatch=0	narrow=89
+apps/dispatch	adapter=0	dispatch=0	narrow=469
+apps/fieldbook	adapter=0	dispatch=0	narrow=703
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
-apps/ledger	adapter=0	dispatch=0	narrow=567
+apps/ledger	adapter=0	dispatch=0	narrow=571
 apps/relay	adapter=0	dispatch=0	narrow=244
-examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=79
-examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=78
+examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=83
+examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=82
 examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=272
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=227
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/console	adapter=0	dispatch=0	narrow=325
-sky-bundled/doc	adapter=0	dispatch=0	narrow=65
+sky-bundled/console	adapter=0	dispatch=0	narrow=329
+sky-bundled/doc	adapter=0	dispatch=0	narrow=69
 test_pkg	adapter=0	dispatch=0	narrow=1
