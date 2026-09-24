@@ -14168,7 +14168,7 @@
           ]
         },
         "Std.Html": {
-          "count": 74,
+          "count": 73,
           "symbols": [
             "a",
             "area",
@@ -14217,7 +14217,6 @@
             "meter",
             "nav",
             "ol",
-            "p",
             "pre",
             "progress",
             "raw",
@@ -14669,7 +14668,7 @@
           ]
         }
       },
-      "count": 732,
+      "count": 731,
       "pct_of_denominator": 37.2
     }
   },
@@ -14692,10 +14691,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 39,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 242,
-      "refs_qualified": 232,
+      "refs_generous": 249,
+      "refs_qualified": 239,
       "role": "Layer2",
-      "sky_files": 146,
+      "sky_files": 148,
       "sky_toml_sections": []
     },
     {
