@@ -18,7 +18,9 @@ the message from its first render) started a full audit of every app surface
 against "if it compiles, it works". Six audits reproduced every defect listed
 here in a real browser or a real terminal; the full list, with the test for each
 fix, is `docs/history/v0.25.17/audit-register.md`. Every code fix has a
-regression test that failed before it; documentation fixes and layout-only
+regression test that failed before it, and two real apps (a shop and a
+multi-tenant clinic app, both `web:app`) were run end to end in a browser
+against v0.25.16 before the tag; documentation fixes and layout-only
 example fixes were checked by hand. The new browser and terminal gates run
 nightly. No public function signature changes.
 
@@ -76,8 +78,9 @@ products crashed.
   message.
 - Setting an input to `""`, unticking a checkbox, or moving a radio from the
   model now updates the page. A value the model sets on the focused input
-  applies once the server has acknowledged the user's keystrokes. When `update`
-  rejects or normalises an edit, the input shows the model.
+  applies once the server has acknowledged the user's keystrokes. As in Elm,
+  the page writes an input only when its rendered value changes, so text the
+  user types stays even when `update` does not store it.
 - `Ui.onFile` and `Ui.onImage` dispatch. Every event type the view declares is
   bound. Enter no longer overtakes the last typed characters. A cleared number
   input sends `""`, not `"0"`. IME composition dispatches once, on commit.
@@ -108,15 +111,27 @@ products crashed.
 - A follow-up command from a server branch now runs. The client dispatches the
   follow-up messages. Retry never repeats an action the server already ran, and
   it keeps every failed call in order.
-- Every `web:app` app saves its model for a reload. On reload, fields that only
-  the server writes come from the server's first paint.
+- Every `web:app` app saves its model for a reload. On reload, the fields the
+  server settled for that page (the session fields, `withRequest`, and the
+  finished `init` and `onNavigate` chains, which the page names) come from the
+  server's first paint. Every other field keeps its saved value, and a page the
+  server did not load still loads its data.
+- A server branch that returns a let-bound command, or `Cmd.batch` over
+  `List.map`, is read exactly. When a command still cannot be read, a follow-up
+  message with no wire codec is a build warning, not an error, and at run time
+  the backend drops it with a logged `SpaFollowUpOutsideWire` error.
+- A failed sign-in (a branch that keeps the model and sets an error) no longer
+  resets fields such as the current page. The request carries the whole model
+  when a branch answers with it.
 - `Cmd` from the prelude (no `import Std.Cmd`) is analysed like `Std.Cmd`. A
   message that `init` or the navigation hook dispatches is never removed from
   the client.
 - `import Std.App as A` and an inline `App.run (App.app …)` work. A second app
   value in the entry file no longer replaces fields. `sky check` checks the
   target a bare `sky build` builds.
-- Hydration verifies text as well as structure. Route parameters decode the same
+- Hydration verifies text as well as structure. Adjacent text (`text "a"` next
+  to `text b`) and a valued `Input.multiline` now hydrate; before, every such
+  page was rebuilt on load. Route parameters decode the same
   way on the server, on the client and in Sky.Live.
 - A page the server rendered from its data is no longer repainted empty and
   loaded again: the client boots from the server's model, and it does not run
@@ -136,6 +151,11 @@ products crashed.
   id, and a focused input keeps its text and focus when siblings are inserted.
 - A changed root tag, a style change from `Ui.onPseudo`/`Ui.breakpoint`, and a
   select whose options re-render are all patched correctly.
+- A button whose handler changes in place no longer keeps its old, released
+  listener ("call to released function" on Sky.Spa).
+- A form whose submit handler or `action` differs from the form that was in the
+  same place gets new, empty fields. A typed password no longer shows in the
+  next page's field of the same name.
 - On Sky.Spa, key events carry the key, `onCheck` carries the Bool, and a
   re-rendered button always sends the current message.
 - `Ui.onKeyDown` no longer crashes the view. The stdlib is now type-checked
