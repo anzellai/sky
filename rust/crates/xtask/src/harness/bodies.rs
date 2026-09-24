@@ -2743,9 +2743,9 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///
 /// 398 -> 399:
 ///
-/// * `Std/UiInputCheckboxTest` (+1) — a Std.Ui checkbox states its model value
-///   in both states (`data-sky-checked`), the marker the Live and Spa appliers
-///   use to put a refused click back (input-authority user-event rule).
+/// * `Std/UiInputCheckboxTest` (+1) — a Std.Ui checkbox renders its model value
+///   as the `checked` attribute alone (Elm semantics: the DOM is written only
+///   when the rendered value changes; no client re-assert marker).
 ///
 /// 398 + 1 = 399.
 pub const SKY_SUITES_EXPECTED: u64 = 399;

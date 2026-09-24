@@ -10,6 +10,10 @@ module Main exposing (main)
 --     logged decode error, never delivered with a zero.
 --   * A literal-topic publish + subscribe that agree on String (the program the
 --     [E2011] check must still accept).
+--   * W2: a password-reset form, submitted, is followed by a sign-in form in the
+--     same slot whose password field has the same `name`. The diff used to keep
+--     the <input> node, so the new password showed in the sign-in field. A form
+--     whose submit handler changes is a different form and is rebuilt.
 --
 -- e2e: scripts/ui-forms-e2e.sh (drives scripts/ui-forms-e2e-verify.mjs).
 
@@ -27,8 +31,18 @@ type alias Typed =
     , note : Maybe String
     }
 
+type alias ResetForm =
+    { password : String }
+
+type alias SignInForm =
+    { email : String
+    , password : String
+    }
+
 type alias Model =
     { keys : Int
+    , signIn : Bool
+    , signedIn : String
     , submitted : String
     , submits : Int
     , chat : String
@@ -39,6 +53,8 @@ type Msg
     | SubmitTyped Typed
     | Publish
     | GotChat String
+    | ResetPw ResetForm
+    | SignIn SignInForm
 
 
 chatTopic : String
@@ -48,7 +64,15 @@ chatTopic =
 
 init : () -> ( Model, Cmd Msg )
 init () =
-    ( { keys = 0, submitted = "none", submits = 0, chat = "none" }, Cmd.none )
+    ( { keys = 0
+      , signIn = False
+      , signedIn = "none"
+      , submitted = "none"
+      , submits = 0
+      , chat = "none"
+      }
+    , Cmd.none
+    )
 
 
 showBool : Bool -> String
@@ -95,6 +119,12 @@ update msg model =
 
         GotChat s ->
             ( { model | chat = s }, Cmd.none )
+
+        ResetPw _ ->
+            ( { model | signIn = True }, Cmd.none )
+
+        SignIn r ->
+            ( { model | signedIn = r.email }, Cmd.none )
 
 
 subscriptions : Model -> Sub Msg
@@ -151,7 +181,44 @@ view model =
               [ idA "pub" ]
               { onPress = Just Publish, label = Ui.text "publish" }
         , Ui.el [ idA "chat" ] (Ui.text ("chat:" ++ model.chat))
+        , passwordPage model
         ]
+
+
+-- W2: the reset page and the sign-in page put their form in the same slot, and
+-- both password fields are named "password".
+passwordPage : Model -> Element Msg
+passwordPage model =
+    if model.signIn then
+        Ui.form
+            [ idA "fsignin", Ui.onSubmit SignIn ]
+            [ Ui.input
+                  [ idA "fs-pw"
+                  , Ui.name "password"
+                  , Ui.htmlAttribute "type" "password"
+                  ]
+            , Ui.input [ idA "fs-email", Ui.name "email" ]
+            , Ui.input
+                  [ idA "fs-go"
+                  , Ui.htmlAttribute "type" "submit"
+                  , Ui.htmlAttribute "value" "sign in"
+                  ]
+            ]
+
+    else
+        Ui.form
+            [ idA "freset", Ui.onSubmit ResetPw ]
+            [ Ui.input
+                  [ idA "fr-pw"
+                  , Ui.name "password"
+                  , Ui.htmlAttribute "type" "password"
+                  ]
+            , Ui.input
+                  [ idA "fr-go"
+                  , Ui.htmlAttribute "type" "submit"
+                  , Ui.htmlAttribute "value" "reset"
+                  ]
+            ]
 
 
 app =

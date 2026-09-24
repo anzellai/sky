@@ -14,7 +14,8 @@
 //   UF-3 Ui.onFile dispatches
 //   F9  a programmatic model value applies to the focused input once acked
 //   F2  a model reset to "" clears the field
-//   UF-5 a rejected edit / ignored toggle converges to the model
+//   Elm rule (UF-5 by design): a rejected edit / ignored toggle leaves the DOM
+//       as the user left it; a model value that changes is applied
 //   F3  a radio group shows one checked option
 //   UF-8 a cleared number field sends "" (not "0")
 //   UF-11 an IME composition dispatches once, with the committed text
@@ -147,7 +148,10 @@ async function run(browser) {
     check(v2 === "", "F2 a model reset to \"\" clears the field", `value=${JSON.stringify(v2)}`);
     await ctx.close();
   }
-  // ── UF-5: rejected edit, ignored toggle ─────────────────────────────
+  // ── Elm rule: the DOM is written only when the render changes ───────
+  // (UF-5 by design, docs/skylive/input-authority-protocol.md.) A real app
+  // bound a field to one model value and wrote its onInput to another; a
+  // reconcile that put the unchanged model value back erased the typing.
   {
     const { ctx, page } = await freshPage(browser);
     await page.locator("#capped").click();
@@ -156,11 +160,17 @@ async function run(browser) {
     await page.keyboard.type("fg", { delay: 20 }); // update rejects "abcdefg"
     await page.waitForTimeout(900);
     const v = await page.locator("#capped").inputValue();
-    check(v === "abcde", "UF-5 a rejected edit converges to the model", `value=${v}`);
+    check(v === "abcdefg" && (await log(page)).includes("capped-reject:abcdefg"),
+      "Elm rule: a rejected edit leaves the field as the user typed it", `value=${v}`);
+    await page.locator("#clear").click();
+    await page.waitForTimeout(600);
+    const vc = await page.locator("#capped").inputValue();
+    check(vc === "", "Elm rule: a model value that changes (abcde -> \"\") is applied", `value=${JSON.stringify(vc)}`);
     await page.locator("input[type=checkbox]").first().click();
     await page.waitForTimeout(500);
     const c = await page.locator("input[type=checkbox]").first().isChecked();
-    check(!c, "UF-5 an ignored checkbox toggle converges to the model", `checked=${c}`);
+    check(c && (await log(page)).includes("locked-ignored"),
+      "Elm rule: an ignored checkbox toggle stays as the user left it", `checked=${c}`);
     await ctx.close();
   }
   // ── F3: radio group ─────────────────────────────────────────────────

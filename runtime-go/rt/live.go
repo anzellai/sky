@@ -3146,10 +3146,6 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if prev != nil && newTree != nil {
 		patches := liveDiff(prev, newTree, clientStateFromRequest(req.InputState))
 		if !patchesAreFullReplace(patches) {
-			// UF-5: an edit `update` rejected or normalised leaves the
-			// render unchanged, so the diff is silent; converge the
-			// reported inputs to the model.
-			patches = reconcileControlledInputs(newTree, req.InputState, patches)
 			writeEventJSONView(w, respSeq, req.Seq, respAck, patches, newView, baseView, dispatchErr)
 			return
 		}
@@ -5745,7 +5741,6 @@ var __skyPendingFrames = [];
 var __skyGapTimer = null;
 var __skyGapWaitMs = 1500;
 var __skyProcEpoch = null;   // server process epoch from the SSE hello
-var __skySrcBySeq = {};      // event seq -> checkbox/radio that sent it
 var __skyBaseBySeq = {};     // event seq -> {sid, value} of the focused field when it was sent
 var __skyRebaseBase = null;  // the entry of the reply being applied (see __skyRebase)
 
@@ -5945,27 +5940,9 @@ function __skyRebase(el, serverValue) {
   var end = el.value.length;
   try { el.setSelectionRange(end, end); } catch (_) {}
   if (el.hasAttribute("sky-input")) {
-    __skyDispatchInput(el, el.getAttribute("sky-input"), __skyHid(el, "input"), [el.value], null);
+    __skyDispatchInput(el, el.getAttribute("sky-input"), __skyHid(el, "input"), [el.value]);
   }
   return true;
-}
-
-// __skyAfterEvent runs once the reply to event "seq" is applied. A
-// checkbox / radio the user toggled converges to the model: when update
-// rejected the toggle, no patch arrives, and the browser kept the box
-// ticked while the model said otherwise.
-function __skyAfterEvent(seq) {
-  var src = __skySrcBySeq[seq];
-  if (!src) return;
-  delete __skySrcBySeq[seq];
-  if (!src.isConnected || __skyIsDirty(src)) return;
-  var want = null;
-  if (src.hasAttribute("data-sky-checked")) {
-    want = src.getAttribute("data-sky-checked") === "true";
-  } else if (src.hasAttribute("checked") || src.__skyCheckedCtl) {
-    want = src.hasAttribute("checked");
-  }
-  if (want !== null && src.checked !== want) src.checked = want;
 }
 
 // __skyShowError: a small runtime banner for a classified update panic,
@@ -6452,17 +6429,17 @@ function __skyLoaderEnd() {
 // ── Debounce ─────────────────────────────────────────────────
 var __skyInputTimers = {};
 var __skyInputPending = {};
-function __skyDebouncedSend(msgName, args, hid, delay, src) {
+function __skyDebouncedSend(msgName, args, hid, delay) {
   var key = hid || msgName;
   clearTimeout(__skyInputTimers[key]);
   // The view is captured NOW: the handler id belongs to the render the
   // user typed into, whatever renders land before the debounce fires.
-  __skyInputPending[key] = { msgName: msgName, args: args, hid: hid, view: __skyView, src: src };
+  __skyInputPending[key] = { msgName: msgName, args: args, hid: hid, view: __skyView };
   __skyInputTimers[key] = setTimeout(function() {
     var p = __skyInputPending[key];
     delete __skyInputPending[key];
     if (!p) return;
-    __skySend(p.msgName, p.args, p.hid, { noLoader: true, view: p.view, fromFlush: true, src: p.src });
+    __skySend(p.msgName, p.args, p.hid, { noLoader: true, view: p.view, fromFlush: true });
   }, delay);
 }
 // Flush pending debounced input on blur (tab away / click elsewhere).
@@ -6477,7 +6454,7 @@ document.addEventListener("focusout", function(ev) {
     clearTimeout(__skyInputTimers[key]);
     var p = __skyInputPending[key];
     delete __skyInputPending[key];
-    __skySend(p.msgName, p.args, p.hid, { noLoader: true, view: p.view, fromFlush: true, src: p.src });
+    __skySend(p.msgName, p.args, p.hid, { noLoader: true, view: p.view, fromFlush: true });
   }
 }, true);
 // Any user edit, handled or not: an untracked focused input counts as
@@ -6485,8 +6462,7 @@ document.addEventListener("focusout", function(ev) {
 document.addEventListener("input", function(ev) {
   var t = ev.target;
   if (!t || !ev.isTrusted) return;
-  // A toggle is not typing: checkbox / radio state converges through
-  // __skyAfterEvent, and a file input has no text to protect.
+  // A toggle is not typing, and a file input has no text to protect.
   if (t.type === "checkbox" || t.type === "radio" || t.type === "file") return;
   t.__skyTyped = true;
 }, true);
@@ -6649,7 +6625,6 @@ function __skySend(msgName, args, handlerId, opts) {
   if (!opts.noLoader) __skyLoaderStart();
   __skyClientSeq++;
   var mySeq = __skyClientSeq;
-  if (opts.src) __skySrcBySeq[mySeq] = opts.src;
   // The focused text field's value as this event leaves: the base the
   // reply's value for it applies to (see __skyRebase).
   var fae = document.activeElement;
@@ -6801,7 +6776,7 @@ function __skyPostEventNow(body) {
         var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
         var ack = null;
         if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
-        __skyHandleResponse(seq, ack, function() { __skyPatch(t); __skyAfterEvent(body.seq); },
+        __skyHandleResponse(seq, ack, function() { __skyPatch(t); },
                             undefined, r.headers.get("X-Sky-View"), "", false);
       });
     }
@@ -6843,7 +6818,6 @@ function __skyPostEventNow(body) {
             __skyRebaseBase = null;
             delete __skyBaseBySeq[body.seq];
           }
-          __skyAfterEvent(body.seq);
         }, data.globalSeq, data.view, data.base, true);
         if (data.error) __skyShowError(data.error);
       });
@@ -6864,7 +6838,6 @@ function __skyPostEventNow(body) {
           __skyRebaseBase = null;
           delete __skyBaseBySeq[body.seq];
         }
-        __skyAfterEvent(body.seq);
       }, undefined, r.headers.get("X-Sky-View"), "", false);
     });
   }).catch(function() {
@@ -7015,7 +6988,8 @@ function __skyApplyPatches(patches) {
       }
     }
     if (p.replace !== undefined && p.replace !== null) {
-      // The root changed tag: replace the element itself.
+      // The root changed tag, or a form became another form: replace the
+      // element itself.
       __skyReplaceElement(el, p.replace);
       continue;
     }
@@ -7053,8 +7027,7 @@ function __skyApplyPatches(patches) {
         // field, so the server's proposed value/checked/selected
         // would stomp in-flight keystrokes. Drop them and let the
         // next event round-trip settle the state.
-        if (dirty && (k === "value" || k === "checked" || k === "selected" ||
-                      k === "data-sky-checked")) {
+        if (dirty && (k === "value" || k === "checked" || k === "selected")) {
           if (k === "value") __skyRebase(el, v);
           continue;
         }
@@ -7094,11 +7067,7 @@ function __skyApplyPatches(patches) {
             valueChanged = true;
             __skyNoteServerValue(el, v);
           }
-          if (k === "checked") {
-            el.checked = v !== "" && v !== "false";
-            el.__skyCheckedCtl = true;
-          }
-          if (k === "data-sky-checked") el.checked = v === "true";
+          if (k === "checked") el.checked = v !== "" && v !== "false";
           if (k === "selected") el.selected = v !== "" && v !== "false";
           if (k === "disabled") el.disabled = v !== "" && v !== "false";
         }
@@ -7300,9 +7269,6 @@ function __skyBindEvents(root) {
         __skyBindOneEl(el, n.slice(4));
       }
     }
-    if (el.hasAttribute("checked") && (el.type === "checkbox" || el.type === "radio")) {
-      el.__skyCheckedCtl = true;
-    }
   }
   __skyBindEnter(root);
 }
@@ -7412,27 +7378,26 @@ function __skyBindOneEl(el, eventName) {
     // click doesn't (we only intercept when the attribute is set).
     if (ev.type === "submit") ev.preventDefault();
     var args = __skyExtractArgs(ev);
-    var src = (target.type === "checkbox" || target.type === "radio") ? target : null;
     if (ev.type === "input") {
       // UF-11: no Msg for an IME pre-edit; compositionend sends the text.
       if (ev.isComposing || target.__skyComposing) return;
-      __skyDispatchInput(target, msgName, hid, args, src);
+      __skyDispatchInput(target, msgName, hid, args);
       return;
     }
-    __skySend(msgName, args, hid, src ? {src: src} : undefined);
+    __skySend(msgName, args, hid);
   });
 }
 
 // __skyDispatchInput: record the live value against the input's sky-id
 // (so the snapshot bundled with the next send reflects the DOM, and the
 // patch filter recognises the input as dirty) and debounce the send.
-function __skyDispatchInput(target, msgName, hid, args, src) {
+function __skyDispatchInput(target, msgName, hid, args) {
   var sid = target.getAttribute("sky-id");
   if (sid) {
     var e = __skyInputEntry(sid);
     e.liveValue = args && args.length > 0 ? String(args[0]) : "";
   }
-  __skyDebouncedSend(msgName, args, hid, 150, src);
+  __skyDebouncedSend(msgName, args, hid, 150);
 }
 
 // Extract the args array for a DOM event following the legacy Sky.Live

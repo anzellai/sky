@@ -2,7 +2,7 @@
 // scripts/spa-vdom-identity-verify.mjs
 //
 // Browser e2e for the Sky.Spa DOM driver: node identity across the shared
-// diff, the form-control payloads, the user-event reconcile, IME, labels,
+// diff, the form-control payloads, the Elm rule for refused input, IME, labels,
 // injected styles, hydration parity and route-param decoding. Drives the
 // fixture rust/crates/sky/tests/fixtures/spa-vdom-identity (see its header for
 // the finding each control pins) in real headless Chromium.
@@ -10,7 +10,7 @@
 // With --live the app is the same fixture built for Sky.Live (--target web),
 // and only the checks that exercise the SHARED diff and the stdlib run: node
 // identity (F8, K2), select value (F4), injected styles (F6) and labels
-// (UF-13). The Live client's own payload / reconcile / IME handling is covered
+// (UF-13). The Live client's own payload / input-authority / IME handling is covered
 // by the Sky.Live suites.
 //
 // Usage: node scripts/spa-vdom-identity-verify.mjs <app> [--port N] [--live]
@@ -79,6 +79,8 @@ try {
     const page = await browser.newPage();
     const warn = [];
     watch(page, warn);
+    const released = [];
+    page.on("console", (m) => /released function/i.test(m.text()) && released.push(m.text()));
     await boot(page);
 
     check((await page.locator("#sel").inputValue()) === "c", "F5 select first paint shows the model value");
@@ -119,17 +121,31 @@ try {
     await settle(page);
     check((await logText(page)).includes("Chk:T"), "F11 onCheck receives the checked Bool");
 
-    // UF-5 — update refuses input.
+    // Elm rule (UF-5 by design): the DOM is written only when the rendered
+    // value CHANGES. update refuses input past 3 characters, so the model and
+    // the render stay "abc" and the field keeps every keystroke the user made.
     await page.locator("#lim").click();
     await page.keyboard.type("abcde", { delay: 30 });
     await settle(page);
     const lim = await page.locator("#lim").inputValue();
-    check(lim === "abc", "UF-5 a text field shows the model when update refuses input", `value=${lim}`);
-    await page.locator("#lock input[type=checkbox]").click();
+    check(lim === "abcde" && (await stateText(page)).includes("lim=abc accept="),
+      "Elm rule: a refused edit leaves the field as the user typed it", `value=${lim}`);
+    await page.locator("#b-limset").click();
     await settle(page);
-    const lockChecked = await page.locator("#lock input[type=checkbox]").isChecked();
-    check(!lockChecked && (await logText(page)).includes("SetLock"),
-      "UF-5 a checkbox stays unticked when update refuses the tick", `checked=${lockChecked}`);
+    const limSet = await page.locator("#lim").inputValue();
+    check(limSet === "xyz", "Elm rule: a model value that changes is applied to the field", `value=${limSet}`);
+    const lockBox = page.locator("#lock input[type=checkbox]");
+    await lockBox.click();
+    await settle(page);
+    const lockChecked = await lockBox.isChecked();
+    check(lockChecked && (await logText(page)).includes("SetLock"),
+      "Elm rule: an ignored tick leaves the checkbox as the user left it", `checked=${lockChecked}`);
+    await page.locator("#b-lockflip").click();  // model False -> True
+    await settle(page);
+    await page.locator("#b-lockflip").click();  // model True -> False: checked removed
+    await settle(page);
+    const lockAfter = await lockBox.isChecked();
+    check(!lockAfter, "Elm rule: a checked value that changes is applied to the checkbox", `checked=${lockAfter}`);
 
     }
 
@@ -155,6 +171,22 @@ try {
       "UF-11 IME pre-edit is not dispatched; the committed text is, once", `dispatched=${JSON.stringify(imeLog)} value=${imeVal}`);
 
     }
+
+    // W1 — rows appear after an RPC reply in the slot of a placeholder button
+    // whose handler differs; the diff keeps that node and rebinds it. A row
+    // button pressed afterwards must dispatch, with no released js.Func left
+    // attached ("call to released function" on every click).
+    await page.locator("#b-loadrows").click();
+    await page.locator("#row-b").waitFor({ timeout: 10000 });
+    await settle(page);
+    await page.locator("#row-a").click();
+    await settle(page);
+    await page.locator("#row-b").click();
+    await settle(page);
+    const rowLog = await logText(page);
+    check(rowLog.includes("OpenRow:a") && rowLog.includes("OpenRow:b") && released.length === 0,
+      "W1 a row button that appeared after an RPC reply dispatches with no released-function call",
+      `log=${rowLog.slice(0, 80)} released=${released.length}`);
 
     // F6 — the injected hover style follows the model.
     const hovCss = () => page.evaluate(() => {

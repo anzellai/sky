@@ -561,7 +561,6 @@ func step(msg any) {
 			spaSyncURLFromDOM(true)
 			spaScrollOnNavigate()
 			interpretCmd(asCmdT(cmd), spaDispatch)
-			spaFlushReconcile()
 			reconcileSubs()
 		},
 		spaReportPanic,
@@ -693,20 +692,8 @@ func spaRpcComplete(resMsg any) {
 	spaSyncURLFromDOM(true)
 	spaScrollOnNavigate()
 	interpretCmd(asCmdT(cmd), spaDispatch)
-	spaFlushReconcile()
 	reconcileSubs()
 	spaPersistAfterStep(prevModel, spaModel)
-}
-
-// spaFlushReconcile applies the UF-5 user-event reconcile to the tree just
-// painted. It runs AFTER the step's command is interpreted, not inside
-// renderCurrent: a server-branch update queues its RPC in interpretCmd, and the
-// reconcile must see that RPC as pending, or it writes the not-yet-answered
-// model back over the text the user just typed.
-func spaFlushReconcile() {
-	if spaPrev != nil {
-		spaReconcileControlled(spaPrev)
-	}
 }
 
 // spaDispatchUnrecorded runs a Msg through the normal step path without

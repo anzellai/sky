@@ -403,12 +403,10 @@ debounce, keystrokes the server has not acked, or an IME composition in
 progress. Once acked, a model value applies even while the input has focus (a
 clear, a normalisation). An untracked input stays protected while it has focus
 and the user has typed into it. Removing `value` / `checked` / `selected` /
-`disabled` also resets the DOM property. When `update` rejects or normalises an
-edit, the reply carries a `value` patch for every reported input whose model
-value differs (the render did not change, so the diff alone was silent). A
-checkbox or radio the user toggled converges to the model after the reply
-(`data-sky-checked`, which `Std.Ui`'s checkbox and radio emit in both states,
-or the `checked` attribute). A number field sends its text, so a cleared field
+`disabled` also resets the DOM property. The DOM is written only when the
+rendered value changes (Elm semantics): when `update` rejects an edit or
+ignores a toggle, the render does not change and the control keeps what the
+user left in it (see the input-authority protocol). A number field sends its text, so a cleared field
 sends `""`. During an IME composition no input Msg is sent; the committed text
 is sent once on `compositionend`.
 

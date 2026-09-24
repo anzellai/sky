@@ -2,8 +2,8 @@
 #
 # scripts/spa-vdom-identity-e2e.sh — browser e2e regression for the Sky.Spa
 # DOM driver: node identity across the shared diff (keyed and unkeyed sibling
-# inserts, a re-keyed row), select value, key / checkbox payloads, the
-# user-event reconcile of a refused input, IME composition, clickable labels,
+# inserts, a re-keyed row), select value, key / checkbox payloads, the Elm
+# rule for a refused input, W1 released listeners, IME composition, clickable labels,
 # injected hover styles, hydration text parity and route-param decoding.
 #
 # Builds the spa-vdom-identity fixture (--target web:app) and drives the real

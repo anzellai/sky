@@ -16,6 +16,8 @@ same defect; duplicates are listed on one row (`=`).
 
 Status: **fixed** means a regression test or e2e check covers it and was seen to
 fail before the fix. **open** means not closed in this release, with the reason.
+**by design** means the reported behaviour is the intended rule, stated in the
+linked doc, and a test pins the rule.
 
 ## A. Sky.Live / webview handler addressing
 
@@ -36,7 +38,7 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | F2 = F3 = L5 = UF-6 | Removing `value` / `checked` did not reset the DOM property (stale text; several radios checked) | fixed | live-client e2e "F2", "F3", "webview F2/F3" |
 | UF-6 (arrow keys) | Std.Ui radios had no shared `name`, so the browser did not group them | fixed | `TestRadioGroupsAreNamedPerGroup`, `TestRadioGroupKeepsAnAppName` |
 | F9 = UF-4 | A programmatic value on the focused input never applied (focus treated as dirty) | fixed | live-client e2e "F9/UF-4" |
-| UF-5 | A rejected / normalised edit left the DOM showing what the user did | fixed | `TestEvent_RejectedEditConvergesToModel`; spa-vdom-identity e2e "UF-5"; live-client e2e "UF-5" |
+| UF-5 | A rejected / normalised edit left the DOM showing what the user did | by design (Elm semantics): the DOM is written only when the rendered value CHANGES. The release candidate's user-event reconcile (write the unchanged model value back after every event) erased every keystroke in a real app whose `onInput` updates a different field than the one the view binds; it was removed on Live, Spa and webview, with the `data-sky-checked` marker that served only it (docs/skylive/input-authority-protocol.md) | `TestEvent_RejectedEditLeavesTheDOMAsTyped`, `TestEvent_ChangedModelValueIsApplied`; spa-vdom-identity e2e "Elm rule" (4 checks); live-client e2e "Elm rule" (3 checks) |
 | F4 | A select lost its value when its options re-rendered | fixed | `TestSelectKeepsValueWhenOptionsChange`, `TestEvent_SelectKeepsValueAcrossOptionsRerender`; spa-vdom-identity e2e "F4" |
 | F5 | Spa select first paint showed option 0 | fixed | spa-vdom-identity e2e "F5" |
 | UF-8 | A cleared number input sent `"0"` on Live | fixed | live-client e2e "UF-8" |
@@ -109,7 +111,7 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | (lead) | Prelude `Cmd` read as opaque | fixed | `spa_prelude_cmd_followup::prelude_cmd_is_analysed_like_imported_std_cmd` |
 | (lead) | A Msg the client `init` dispatches was pruned from the client | fixed | `spa_prelude_cmd_followup::a_msg_the_client_init_dispatches_is_never_server_internal` |
 | (lead) | A wildcard guard parameter read the whole model | fixed | `spa_split_flow::spa_guard_is_enforced_server_side_on_rpc` |
-| (lead) | The UF-5 reconcile overwrote an edit an RPC had not answered | fixed | spa-rpc-consistency e2e "order" |
+| (lead) | The UF-5 reconcile overwrote an edit an RPC had not answered | closed with UF-5 (the reconcile is removed) | spa-rpc-consistency e2e "order" |
 | D2 | A record-alias field naming an imported type resolved to a same-named stdlib type | fixed | `samename_stdlib_type::imported_type_in_a_record_alias_field_is_not_hijacked_by_a_stdlib_type`; spa-examples e2e |
 | D3 | Notes example saved into no row | fixed (example) | spa-examples e2e |
 
@@ -175,6 +177,8 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | SPA-10 | Spa: a deep link whose `onNavigate` the SSR handler settled into the `#sky-model` seed booted the client from `init` instead (only an app with a stripped `init` command wired `withModelDecoder`), so the first client paint lost the data the page showed, and the post-mount `onNavigate` sent a second RPC built from that empty model (`items: ""`). The RPC answer did restore the data, about 60 ms later; the "data lost for good" reading came from a probe that listed distinct texts in first-seen order | fixed (every app with a derivable model boots from the seed; the SSR page marks `data-sky-settled` "init" / "nav" only when that command ran to the end: every leaf ran, no un-chased follow-up, no suppressed write; the client skips exactly the marked commands, and an unfinished one still runs once) | `TestSpaSSRSettleFull_*`, `TestSpaSSRCmdIsNone`, `TestSpaSSRPageSettled_MarksOnlyWhatTheServerSettled`, `TestSpaPlanBoot_SeededAndSettledSkipsTheSecondNavigation`; spa-examples e2e fixtures `spa-seeded-nav` (items on the first paint and after 3 s, no flash, zero `/_rpc` calls) and `spa-seeded-nav-chain` (not marked, exactly one `/_rpc` call, loads once); `spa_split_flow` SSR needles |
 | SPA-11 | Regression inside this release, found by a real-app run (a shop, `web:app`): the client lost the SSR seed on every full load (products shown, then an empty page; a signed-in admin looked signed out), because `init`'s model `{ emptyModel \| products = [] }` has a record FIELD LABEL that shares its name with a server-tainted `products` binding and a textual word match dropped the client model decoder | fixed (the taint check walks reference nodes, not text) | `spa_field_label_taint::a_field_label_named_like_a_tainted_binding_keeps_the_model_decoder` |
 | UF-14 | Regression inside this release, same run: the strict form decode refused every admin product save because the record has a String field (an image URL an upload sets) with no form control | fixed (a String with no control is `""`, as HTML submits an empty input; a missing number stays a FormDecode error; the terminal uses the same shared decoder) | `TestFormSubmit_AbsentStringIsEmpty`, `TestTuiForm_DecodeErrorIsClassified` |
+| W1 | Regression inside this release, found by a real-app run: pressing a button that appeared after an RPC re-render logged "call to released function" (the action still ran). The children reconcile keeps a node whose handler changed and rebinds it in place (`applyAttrs`); `releaseNodeFns` released the old js.Func but never removed it from the node, so every click also called the released function | fixed (a listener is recorded with its node and event; a release detaches it first, and releases only that node's listeners, `dom_render_wasm.go` `spaListen` / `releaseNodeFns`) | spa-vdom-identity e2e "W1" (released=1 before, 0 after; Spa and Live) |
+| W2 | Pre-existing, same run: after a page change the diff kept an uncontrolled `<input>` (a named field with no `value`), so a new password typed into a reset form showed in the next page's sign-in field of the same name | fixed (a `<form>` whose submit handler or `action` differs from the previous form in that slot is a different form and is replaced with fresh nodes; the handler is identified by its constructor name or, for an eta-expanded closure, its code, `live_core.go` `sameForm` / `handlerIdentity`) | `TestFormSwapGivesFreshFieldNodes`, `TestFormRerenderKeepsFieldNodes`, `TestFormIdentityOfClosureHandlers`; ui-forms e2e "W2" (Live and Spa) |
 
 ## Open in this release (and why)
 

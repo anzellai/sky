@@ -267,16 +267,6 @@ func applyHtmlAttrShape(vn *VNode, name string, fields []any) {
 		if len(fields) >= 2 && AsBool(fields[1]) {
 			k := AsString(fields[0])
 			vn.setAttr(k, k)
-			if k == "checked" {
-				vn.setAttr("data-sky-checked", "true")
-			}
-		} else if len(fields) >= 2 && AsString(fields[0]) == "checked" {
-			// `Html.Attributes.checked False` renders no attribute, which is
-			// indistinguishable from "this checkbox is uncontrolled". State
-			// the model value, so a user click the model refuses is put back
-			// (the input-authority user-event rule; Std.Ui's checkbox and
-			// radio carry the same marker in both states).
-			vn.setAttr("data-sky-checked", "false")
 		}
 	case "EventAttr":
 		if len(fields) >= 1 {
@@ -1857,8 +1847,9 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	// pair. It used to emit an HTML (innerHTML) patch carrying the whole new
 	// element, which every applier wrote INSIDE the old root: the old tag
 	// survived with the new root nested in it (and the Spa applier rebuilt
-	// only the children).
-	if old.Tag != new_.Tag || old.Kind != new_.Kind {
+	// only the children). A <form> that became a different form (sameForm)
+	// is replaced too, at any depth, so no field value carries over.
+	if old.Tag != new_.Tag || old.Kind != new_.Kind || !sameForm(old, new_) {
 		html := renderVNode(*new_, nil)
 		*out = append(*out, Patch{ID: old.SkyID, Replace: &html})
 		return
@@ -1968,6 +1959,52 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	}
 
 	diffChildren(old, new_, clientState, out)
+}
+
+// sameForm reports whether two <form> VNodes in the same slot are the same
+// form. A form owns the values of its uncontrolled fields (a named input with
+// no `value`, the pinned password-form pattern): nothing in the tree states
+// them, so a kept <input> keeps whatever the user typed. When a page swaps one
+// form for another in the same slot (a password reset, then a sign-in) and both
+// have a field of the same name, the diff kept the node and the new password
+// showed in the sign-in field (W2). A form whose submit handler or action
+// differs is a different form, so it is replaced with fresh nodes; a form that
+// only re-renders (the same handler, a field shown or hidden, a show-password
+// toggle) is still patched in place and keeps focus and typing.
+func sameForm(old, new_ *VNode) bool {
+	if new_.Tag != "form" || old.Tag != "form" {
+		return true
+	}
+	return formIdentity(old) == formIdentity(new_)
+}
+
+func formIdentity(n *VNode) string {
+	submit := ""
+	if h, ok := n.Events["submit"]; ok {
+		submit = handlerIdentity(h)
+	}
+	return submit + "|" + n.Attrs["action"]
+}
+
+// handlerIdentity names where a handler comes from: the Msg constructor name
+// when it has one, else the handler function's code (a closure is named after
+// the function and position that create it, "main.Main_view.func2", so the
+// same binding site gives the same name on every render). An eta-expanded
+// `Ui.onSubmit SignIn` is such a closure and has no constructor name; two
+// different forms' handlers were both "_" to liveEventAttrValue. When the Go
+// compiler inlines one view helper at two call sites, each copy has its own
+// name; a form that moves between those two paths is then rebuilt, which costs
+// its uncontrolled text but never carries text into another form.
+func handlerIdentity(h any) string {
+	if name := msgDisplayName(h); name != "" {
+		return name
+	}
+	if rv := reflect.ValueOf(h); rv.Kind() == reflect.Func {
+		if f := runtime.FuncForPC(rv.Pointer()); f != nil {
+			return f.Name()
+		}
+	}
+	return "_"
 }
 
 // diffChildren reconciles old.Children into new_.Children.

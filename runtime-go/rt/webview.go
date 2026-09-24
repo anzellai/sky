@@ -841,7 +841,6 @@ const webviewSharedJS = `
             if (k === "checked") el.checked = v !== "" && v !== "false";
             if (k === "selected") el.selected = v !== "" && v !== "false";
             if (k === "disabled") el.disabled = v !== "" && v !== "false";
-            if (k === "data-sky-checked") el.checked = v === "true";
           }
         }
         if (hadFocus && valueChanged && savedSelStart !== null &&

@@ -12,8 +12,14 @@ module Main exposing (main)
 --                  is prepended it must still show "c"
 --   kd        F10  onKeyDown gets event.key
 --   ck        F11  onCheck gets a Bool (it panicked on a string)
---   lim       UF-5 update refuses more than 3 characters: the field shows the model
---   lock      UF-5 update refuses the tick: the checkbox stays unticked
+--   lim       Elm rule: update refuses more than 3 characters, the render does
+--                  not change, so the field keeps what the user typed; "limset"
+--                  CHANGES the model value, which the field then shows
+--   lock      Elm rule: update ignores the tick, so the box stays as the user
+--                  left it; "lockflip" CHANGES the model value, which applies
+--   rows      W1   rows appear after an RPC reply in the slot of a placeholder
+--                  button; pressing a row button must not call a released
+--                  js.Func (console "call to released function")
 --   accept    UF-13 clicking the caption text ticks the checkbox
 --   colour    UF-13 clicking a radio option's text picks it
 --   ime       UF-11 IME pre-edit is not dispatched; the committed text is, once
@@ -60,11 +66,15 @@ type alias Model =
     , dark : Bool
     , log : List String
     , navs : List String
+    , rows : List String
     }
 
 type Msg
     = Reload
     | Reloaded (Result Error String)
+    | LoadRows
+    | RowsLoaded (Result Error String)
+    | OpenRow String
     | Vv String
     | Rekey
     | PickK String
@@ -74,6 +84,8 @@ type Msg
     | Chk Bool
     | Lim String
     | SetLock Bool
+    | LimSet
+    | LockFlip
     | Accept Bool
     | Colour String
     | Ime String
@@ -97,6 +109,7 @@ init () =
       , dark = False
       , log = []
       , navs = []
+      , rows = []
       }
     , Cmd.none
     )
@@ -119,6 +132,15 @@ update msg model =
 
         Reloaded (Err _) ->
             ( { model | note = "" }, Cmd.none )
+
+        LoadRows ->
+            ( model, Cmd.perform (File.readFile "data/note.txt") RowsLoaded )
+
+        RowsLoaded _ ->
+            ( { model | rows = [ "a", "b" ] }, Cmd.none )
+
+        OpenRow r ->
+            ( logm ("OpenRow:" ++ r) model, Cmd.none )
 
         Vv s ->
             ( { model | vv = s }, Cmd.none )
@@ -160,6 +182,12 @@ update msg model =
         SetLock _ ->
             ( logm "SetLock" model, Cmd.none )
 
+        LimSet ->
+            ( { model | lim = "xyz" }, Cmd.none )
+
+        LockFlip ->
+            ( { model | lock = not model.lock }, Cmd.none )
+
         Accept b ->
             ( { model | accept = b }, Cmd.none )
 
@@ -198,6 +226,28 @@ btn lbl m =
     Ui.button
         [ Ui.htmlAttribute "id" ("b-" ++ lbl) ]
         { onPress = Just m, label = Ui.text lbl }
+
+
+-- W1: before the RPC answers, the slot holds one placeholder button; after it,
+-- the row buttons. The diff keeps the placeholder node for the first row and
+-- changes its handler, which rebinds the listener in place.
+rowButtons : List String -> List (Element Msg)
+rowButtons rows =
+    if List.isEmpty rows then
+        [ Ui.button
+              [ Ui.htmlAttribute "id" "b-loadrows" ]
+              { onPress = Just LoadRows, label = Ui.text "load rows" }
+        ]
+
+    else
+        List.map
+            (\r ->
+                Ui.button
+                    [ Ui.htmlAttribute "id" ("row-" ++ r) ]
+                    { onPress = Just (OpenRow r)
+                    , label = Ui.text ("open " ++ r)
+                    })
+            rows
 
 
 flag : Bool -> String
@@ -239,6 +289,7 @@ home model =
                 )
               ]
         , btn "rekey" Rekey
+        , Ui.column [ Ui.htmlAttribute "id" "rows" ] (rowButtons model.rows)
         , Ui.html
               (Html.select
                   [ HA.id "sel", HA.value model.sel, HE.onChange Pick ]
@@ -256,6 +307,7 @@ home model =
               , placeholder = Nothing
               , label = Input.labelHidden "lim"
               }
+        , btn "limset" LimSet
         , Input.checkbox
               [ Ui.htmlAttribute "id" "lock" ]
               { onChange = SetLock
@@ -263,6 +315,7 @@ home model =
               , checked = model.lock
               , label = Input.labelHidden "lock"
               }
+        , btn "lockflip" LockFlip
         , Input.checkbox
               [ Ui.htmlAttribute "id" "accept" ]
               { onChange = Accept
