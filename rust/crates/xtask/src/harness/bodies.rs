@@ -96,7 +96,7 @@ pub const SKY_VERIFY_EXPECTED: u64 = 6;
 /// Total checkable branches across the diff-fuzz fixtures. Measured: **10** —
 /// `spa-derived-read` 4 (whole-model reads + the Msg-arg collision),
 /// `spa-diff-narrow` 2 (narrow read/write sets), `spa-partition-io` 3
-/// (Save / SaveTagged / Bulk), `spa-guard` 1 (Save — an App.app app, analysed
+/// (Save / SaveTagged / Bulk), `spa-guard` 1 (Stamp — an App.app app, analysed
 /// via app_config_defs). Exact: a fence change that drops or adds a checkable
 /// branch flips this and fails.
 pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 10;
@@ -405,7 +405,8 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
     // reads `update` from `Std.App.app/web` configs too (app_config_defs), so an
     // App.app app is fuzzed in-process without the App -> Spa source synthesis.
     // `spa-guard` is App.app; the harness omits the guard on both legs, so its
-    // Save branch still diffs the plumbing.
+    // plain `Stamp` server branch diffs the App.app plumbing (`Save` performs into a
+    // client arm, so it is a client-result root and is excluded).
     const FIXTURES: &[&str] = &[
         "rust/crates/sky/tests/fixtures/spa-derived-read",
         "rust/crates/sky/tests/fixtures/spa-diff-narrow",

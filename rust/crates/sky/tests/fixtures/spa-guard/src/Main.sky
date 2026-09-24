@@ -11,26 +11,35 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.File as File
+import Sky.Core.System as System
 import Sky.Http.Server as Server
 import Std.App as App
 import Std.Ui as Ui exposing (Element)
 
 
+-- A server-only value: `Stamp` reads it with no command, so `Stamp` is a PLAIN
+-- server branch (an RPC with a write-set). It is the branch the in-process
+-- differential fuzzer (`xtask harness` spa-diff-fuzz) checks on this App.app
+-- fixture; `Save` performs into a client arm, which makes it a client-result
+-- root the fuzzer rightly excludes.
+serverStamp : String
+serverStamp =
+    System.getenvOr "SPA_GUARD_STAMP" "stamped"
+
 type Page
     = Home
     | Admin
-
 
 type alias Model =
     { page : Page
     , saved : String
     }
 
-
 type Msg
     = Save String
     | Saved (Result Error ())
     | Nav Page
+    | Stamp
 
 
 init : () -> ( Model, Cmd Msg )
@@ -41,6 +50,7 @@ init () =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         Save content ->
             ( model, Cmd.perform (File.writeFile "data/out.txt" content) Saved )
 
@@ -50,11 +60,15 @@ update msg model =
         Nav p ->
             ( { model | page = p }, Cmd.none )
 
+        Stamp ->
+            ( { model | saved = serverStamp }, Cmd.none )
+
 
 -- The trusted authorisation guard: DENY every `Save` (writes disabled here).
 guard : Msg -> Model -> Result Error ()
 guard msg _ =
     case msg of
+
         Save _ ->
             Err (Error.unexpected "writes are not authorised")
 
@@ -75,8 +89,10 @@ seedReq _ model =
 view : Model -> Element Msg
 view model =
     case model.page of
+
         Home ->
-            Ui.column []
+            Ui.column
+                []
                 [ Ui.text "Home"
                 , Ui.link [] { url = "/admin", label = Ui.text "Admin" }
                 ]
