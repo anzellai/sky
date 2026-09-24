@@ -37,6 +37,14 @@ const PORT = Number(arg("--port", MODE === "notes" ? "9341" : "9342"));
 const URL = `http://127.0.0.1:${PORT}/`;
 const DB = join(mkdtempSync(join(tmpdir(), "sky-spa-examples-")), "app.db");
 
+// A server already on the port would answer in place of the one under test
+// (a stale binary passes or fails for the wrong build) — refuse to start.
+try {
+  await fetch(URL, { signal: AbortSignal.timeout(1000) });
+  console.error(`${MODE}: harness error: port ${PORT} is already serving; stop that process first`);
+  process.exit(1);
+} catch (_) {}
+
 const proc = spawn(BACKEND, [], {
   cwd: dirname(dirname(BACKEND)),
   // ENV=development: the dev Console badge is on, as a developer sees the app.
@@ -165,6 +173,11 @@ try {
   console.error("--- server log ---\n" + serverLog.slice(-3000));
   code = 1;
 } finally {
+  // SIGTERM starts a graceful drain; do not leave the server behind if the
+  // drain outlives this run.
+  const exited = new Promise((r) => proc.once("exit", r));
   proc.kill("SIGTERM");
+  const done = await Promise.race([exited.then(() => true), new Promise((r) => setTimeout(() => r(false), 3000))]);
+  if (!done) proc.kill("SIGKILL");
 }
 process.exit(code);
