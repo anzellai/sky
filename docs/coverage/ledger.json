@@ -484,7 +484,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 398,
+      "expected_assertions": 399,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
