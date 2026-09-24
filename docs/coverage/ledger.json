@@ -698,7 +698,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1958,
+    "stdlib_entries": 1967,
     "stdlib_modules": 101,
     "surfaces_covered": 148,
     "surfaces_covered_pct": 88.6,
@@ -6364,6 +6364,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
             "strength": 4
@@ -9373,6 +9378,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -9521,14 +9531,14 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "apps:storefront (gate `apps-ffi-scale`)",
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
           {
-            "by": "examples/08-notes-app (retained; built + run by gate `build-run` + the sweep)",
-            "class": "Runs",
-            "strength": 2
+            "by": "apps:storefront (gate `apps-ffi-scale`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/09-live-counter (retained; built + run by gate `build-run` + the sweep)",
@@ -9596,11 +9606,6 @@
       "cover_today": {
         "class": "Asserted",
         "evidence": [
-          {
-            "by": "examples/08-notes-app (built + run by scripts/example-sweep.sh + xtask build-run --run)",
-            "class": "Runs",
-            "strength": 2
-          },
           {
             "by": "examples/09-live-counter (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
@@ -11251,6 +11256,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -11944,6 +11954,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -12046,6 +12061,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
@@ -12545,9 +12565,8 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 11,
+          "count": 10,
           "symbols": [
-            "append",
             "copy",
             "exists",
             "isDir",
@@ -12876,13 +12895,14 @@
           ]
         },
         "Std.Cli": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "AppConfig",
             "config",
             "program",
             "readPassword",
             "withDurable",
+            "withGuard",
             "withOnLine"
           ]
         },
@@ -13157,19 +13177,15 @@
           ]
         },
         "Std.Html.Events": {
-          "count": 21,
+          "count": 17,
           "symbols": [
             "fileMaxSize",
             "on",
             "onBlur",
-            "onCheck",
-            "onContextMenu",
-            "onDblClick",
             "onEnter",
             "onError",
             "onFile",
             "onFocus",
-            "onKeyDown",
             "onKeyPress",
             "onKeyUp",
             "onLoad",
@@ -13279,23 +13295,30 @@
           ]
         },
         "Std.Spa": {
-          "count": 11,
+          "count": 18,
           "symbols": [
             "AppConfig",
             "Route",
+            "followUps",
+            "reportError",
             "route",
             "routeInt",
+            "rpc",
+            "rpcWith",
+            "withGuard",
             "withHead",
             "withModelDecoder",
             "withModelEncoder",
             "withNotFound",
             "withOnNavigate",
+            "withPersistDecoder",
             "withPersistProtectedFields",
+            "withPersistSeedFields",
             "withRoutes"
           ]
         },
         "Std.Tui": {
-          "count": 9,
+          "count": 10,
           "symbols": [
             "AppConfig",
             "app",
@@ -13305,11 +13328,12 @@
             "withCanvasWidth",
             "withDurable",
             "withGuard",
-            "withOnKey"
+            "withOnKey",
+            "withOnLine"
           ]
         },
         "Std.Ui": {
-          "count": 62,
+          "count": 58,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -13359,13 +13383,9 @@
             "fullHd",
             "gridTracksRaw",
             "layoutWith",
-            "onEnter",
-            "onFile",
             "onImage",
-            "onKeyDown",
             "onLeft",
             "onMouseOut",
-            "onMouseOver",
             "onRight",
             "overflow",
             "scrollbars",
@@ -13446,7 +13466,7 @@
           ]
         },
         "Std.Ui.Input": {
-          "count": 9,
+          "count": 8,
           "symbols": [
             "Label",
             "Placeholder",
@@ -13455,7 +13475,6 @@
             "currentPassword",
             "labelBelow",
             "newPassword",
-            "radio",
             "username"
           ]
         },
@@ -13523,8 +13542,8 @@
           ]
         }
       },
-      "count": 655,
-      "pct_of_denominator": 33.5
+      "count": 654,
+      "pct_of_denominator": 33.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13590,9 +13609,8 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 11,
+          "count": 10,
           "symbols": [
-            "append",
             "copy",
             "exists",
             "isDir",
@@ -13940,13 +13958,14 @@
           ]
         },
         "Std.Cli": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "AppConfig",
             "config",
             "program",
             "readPassword",
             "withDurable",
+            "withGuard",
             "withOnLine"
           ]
         },
@@ -14151,7 +14170,7 @@
           ]
         },
         "Std.Html": {
-          "count": 78,
+          "count": 74,
           "symbols": [
             "a",
             "area",
@@ -14170,7 +14189,6 @@
             "col",
             "details",
             "dialog",
-            "div",
             "doctype",
             "em",
             "embed",
@@ -14191,7 +14209,6 @@
             "htmlNode",
             "iframe",
             "img",
-            "input",
             "label",
             "legend",
             "li",
@@ -14202,13 +14219,11 @@
             "meter",
             "nav",
             "ol",
-            "option",
             "p",
             "pre",
             "progress",
             "raw",
             "section",
-            "select",
             "small",
             "source",
             "span",
@@ -14280,25 +14295,20 @@
           ]
         },
         "Std.Html.Events": {
-          "count": 27,
+          "count": 23,
           "symbols": [
             "fileMaxHeight",
             "fileMaxSize",
             "fileMaxWidth",
             "on",
             "onBlur",
-            "onChange",
-            "onCheck",
             "onClick",
-            "onContextMenu",
-            "onDblClick",
             "onEnter",
             "onError",
             "onFile",
             "onFocus",
             "onImage",
             "onInput",
-            "onKeyDown",
             "onKeyPress",
             "onKeyUp",
             "onLoad",
@@ -14308,7 +14318,8 @@
             "onMouseUp",
             "onReset",
             "onScroll",
-            "onSelect"
+            "onSelect",
+            "onSubmit"
           ]
         },
         "Std.Image": {
@@ -14412,23 +14423,30 @@
           ]
         },
         "Std.Spa": {
-          "count": 11,
+          "count": 18,
           "symbols": [
             "AppConfig",
             "Route",
+            "followUps",
+            "reportError",
             "route",
             "routeInt",
+            "rpc",
+            "rpcWith",
+            "withGuard",
             "withHead",
             "withModelDecoder",
             "withModelEncoder",
             "withNotFound",
             "withOnNavigate",
+            "withPersistDecoder",
             "withPersistProtectedFields",
+            "withPersistSeedFields",
             "withRoutes"
           ]
         },
         "Std.Tui": {
-          "count": 9,
+          "count": 10,
           "symbols": [
             "AppConfig",
             "app",
@@ -14438,11 +14456,12 @@
             "withCanvasWidth",
             "withDurable",
             "withGuard",
-            "withOnKey"
+            "withOnKey",
+            "withOnLine"
           ]
         },
         "Std.Ui": {
-          "count": 62,
+          "count": 58,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -14492,13 +14511,9 @@
             "fullHd",
             "gridTracksRaw",
             "layoutWith",
-            "onEnter",
-            "onFile",
             "onImage",
-            "onKeyDown",
             "onLeft",
             "onMouseOut",
-            "onMouseOver",
             "onRight",
             "overflow",
             "scrollbars",
@@ -14579,7 +14594,7 @@
           ]
         },
         "Std.Ui.Input": {
-          "count": 9,
+          "count": 8,
           "symbols": [
             "Label",
             "Placeholder",
@@ -14588,7 +14603,6 @@
             "currentPassword",
             "labelBelow",
             "newPassword",
-            "radio",
             "username"
           ]
         },
@@ -14657,8 +14671,8 @@
           ]
         }
       },
-      "count": 738,
-      "pct_of_denominator": 37.7
+      "count": 733,
+      "pct_of_denominator": 37.3
     }
   },
   "units": [
@@ -14678,12 +14692,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 33,
+      "modules_imported": 39,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 189,
-      "refs_qualified": 179,
+      "refs_generous": 241,
+      "refs_qualified": 231,
       "role": "Layer2",
-      "sky_files": 125,
+      "sky_files": 139,
       "sky_toml_sections": []
     },
     {
@@ -14915,10 +14929,10 @@
       ],
       "gate": null,
       "id": "examples/08-notes-app",
-      "modules_imported": 18,
+      "modules_imported": 17,
       "path": "examples/08-notes-app",
-      "refs_generous": 176,
-      "refs_qualified": 142,
+      "refs_generous": 175,
+      "refs_qualified": 141,
       "role": "Example",
       "sky_files": 5,
       "sky_toml_sections": [

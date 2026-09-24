@@ -57,13 +57,25 @@ tests =
                 (\_ ->
                     Test.equal
                         True
-                        (String.contains "checked" (renderCheckbox True)))
+                        (String.contains " checked=\"" (renderCheckbox True)))
           , Test.test
                 "checked = False omits the checked attribute"
                 (\_ ->
                     Test.equal
                         False
-                        (String.contains "checked" (renderCheckbox False)))
+                        (String.contains " checked=\"" (renderCheckbox False)))
+          , Test.test
+                "the model value is stated in both states (data-sky-checked)"
+                (\_ ->
+                    Test.equal
+                        ( True, True )
+                        ( String.contains
+                              "data-sky-checked=\"true\""
+                              (renderCheckbox True)
+                        , String.contains
+                              "data-sky-checked=\"false\""
+                              (renderCheckbox False)
+                        ))
           , Test.test
                 "the rendered control is still an input of type checkbox"
                 (\_ ->
