@@ -2262,6 +2262,25 @@ enum CmdDefKind {
     Other,
 }
 
+/// The `Cmd` constructor a KERNEL reference names. `Cmd.perform` / `Cmd.batch`
+/// / `Cmd.none` / `Cmd.publish` reached through the prelude (no `import Std.Cmd`)
+/// resolve to `Res::Kernel { Cmd, … }`, not to a `Std.Cmd` def, so
+/// [`cmd_def_kind`] never sees them; without this an app written that way had
+/// every server command read as opaque (and every `Msg` treated as a possible
+/// follow-up).
+fn cmd_kernel_kind(module: &str, func: &str) -> Option<CmdDefKind> {
+    if module.rsplit('.').next() != Some("Cmd") {
+        return None;
+    }
+    match func {
+        "perform" => Some(CmdDefKind::Perform),
+        "batch" => Some(CmdDefKind::Batch),
+        "none" => Some(CmdDefKind::NoneCmd),
+        "publish" | "publishNoEcho" => Some(CmdDefKind::Publish),
+        _ => None,
+    }
+}
+
 fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
     if def_is_kernel_alias_to(db, d, &["Cmd_perform"]) {
         CmdDefKind::Perform
@@ -2368,8 +2387,15 @@ fn resolve_cmd_leaves_rec(
     }
     match &body.exprs[e] {
         Expr::Call(callee, args) => {
-            if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
-                match cmd_def_kind(db, *d) {
+            let kind_and_def = match &body.exprs[*callee] {
+                Expr::Var(Res::Def(d)) => Some((cmd_def_kind(db, *d), Some(*d))),
+                Expr::Var(Res::Kernel { module, func }) => {
+                    cmd_kernel_kind(module.as_str(), func.as_str()).map(|k| (k, None))
+                }
+                _ => None,
+            };
+            if let Some((kind, def)) = kind_and_def {
+                match kind {
                     CmdDefKind::Perform => {
                         if args.len() == 2 {
                             let to_msg = literal_ctor_name(body, db, args[1]);
@@ -2401,11 +2427,21 @@ fn resolve_cmd_leaves_rec(
                     // A HELPER returning a `Cmd` (e.g. `shippedCmd o = Cmd.perform
                     // (Mailer.sendShipped o) EmailSent`) — resolve INTO its body so
                     // the perform edge is seen, not treated as opaque.
-                    CmdDefKind::Other => resolve_helper_cmd(db, *d, out, depth + 1, visited),
+                    CmdDefKind::Other => match def {
+                        Some(d) => resolve_helper_cmd(db, d, out, depth + 1, visited),
+                        None => out.push(CmdLeaf::Unresolvable),
+                    },
                 }
                 return;
             }
             out.push(CmdLeaf::Unresolvable);
+        }
+        // A prelude `Cmd.none` resolves to the kernel, not to a `Std.Cmd` def.
+        Expr::Var(Res::Kernel { module, func }) => {
+            match cmd_kernel_kind(module.as_str(), func.as_str()) {
+                Some(CmdDefKind::NoneCmd) => out.push(CmdLeaf::NoneCmd),
+                _ => out.push(CmdLeaf::Unresolvable),
+            }
         }
         // A bare reference: `Cmd.none`, or a nullary `Cmd`-returning helper.
         Expr::Var(Res::Def(d)) => match cmd_def_kind(db, *d) {
@@ -4113,6 +4149,18 @@ fn helper_readset(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> Option<BT
     let resolved = db.resolve(loc.module);
     let body = resolved.bodies.get(&f)?;
     let root = body.root?;
+    // A parameter the helper never binds reads nothing (`guard msg _`), and a
+    // record pattern reads exactly the fields it names (`guard msg { role }`).
+    // Neither binds a model local, so without this both fell through to
+    // "opaque" and the caller shipped the whole model — which also dragged
+    // wire-undecodable fields into every request.
+    match body.params.get(i).map(|p| &body.pats[*p]) {
+        Some(Pattern::Anything) => return Some(BTreeSet::new()),
+        Some(Pattern::Record(fields)) => {
+            return Some(fields.iter().map(|(n, _)| n.as_str().to_string()).collect());
+        }
+        _ => {}
+    }
     let mlocal = param_local_at(body, i)?;
     let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
     let mut wf: BTreeSet<String> = BTreeSet::new();
