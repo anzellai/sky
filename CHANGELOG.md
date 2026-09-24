@@ -74,6 +74,10 @@ products crashed.
   SSE frames are applied in order. `withNotFound` works on every request. A
   crash in `update` shows a small banner. Two tabs on different routes no longer
   share one route after a reconnect.
+- The dev "Console" badge no longer breaks in-app navigation. It sat between
+  the page and its script, so a `sky-nav` pasted the whole document into the
+  page (a second badge, and "script revival rejected" warnings). It is now a
+  small tab on the right edge, clear of app controls.
 
 ### Sky.Spa (`--target web:app`) and the auto-split
 
@@ -96,6 +100,11 @@ products crashed.
   target a bare `sky build` builds.
 - Hydration verifies text as well as structure. Route parameters decode the same
   way on the server, on the client and in Sky.Live.
+- A record alias whose field names an imported record type (`{ messages : List
+  Message }` with `Message` from another module) could resolve that field to a
+  stdlib type of the same name. The generated server response then carried
+  empty records, so a chat history loaded as blank rows. Field types now
+  resolve through the importing module, as the type checker does.
 
 ### Shared diff (all web targets)
 

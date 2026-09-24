@@ -451,7 +451,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 75,
+      "expected_assertions": 76,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -484,7 +484,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 399,
+      "expected_assertions": 400,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -12800,9 +12800,8 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 9,
+          "count": 8,
           "symbols": [
-            "Message",
             "ToolCall",
             "ToolResponse",
             "ToolSpec",
@@ -13542,7 +13541,7 @@
           ]
         }
       },
-      "count": 654,
+      "count": 653,
       "pct_of_denominator": 33.2
     },
     "symbols_unreferenced_strict": {
@@ -13860,9 +13859,8 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 10,
+          "count": 9,
           "symbols": [
-            "Message",
             "ToolCall",
             "ToolResponse",
             "ToolSpec",
@@ -14671,8 +14669,8 @@
           ]
         }
       },
-      "count": 733,
-      "pct_of_denominator": 37.3
+      "count": 732,
+      "pct_of_denominator": 37.2
     }
   },
   "units": [
@@ -14694,10 +14692,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 39,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 241,
-      "refs_qualified": 231,
+      "refs_generous": 242,
+      "refs_qualified": 232,
       "role": "Layer2",
-      "sky_files": 139,
+      "sky_files": 141,
       "sky_toml_sections": []
     },
     {
@@ -15172,8 +15170,8 @@
       "id": "examples/24-tui-kitchen-sink",
       "modules_imported": 11,
       "path": "examples/24-tui-kitchen-sink",
-      "refs_generous": 47,
-      "refs_qualified": 46,
+      "refs_generous": 48,
+      "refs_qualified": 47,
       "role": "Example",
       "sky_files": 1,
       "sky_toml_sections": [
