@@ -1,0 +1,215 @@
+module Main exposing (main)
+
+-- R2 / R3 (register section M): the full-load rule of a Sky.Spa app.
+--
+-- On a full page load the client restores its stored model, and takes from
+-- the SSR seed ONLY the fields the server settled for THIS page (the
+-- write-sets of the init and onNavigate command chains it finished). Every
+-- other field keeps its stored value, even one only server branches write.
+--
+--   /settings has no loader: `me` (written only by `SignIn`) must be restored,
+--   not replaced by `init`'s "" ("Loading your settings" forever).
+--   `basket` (written only by `AddToBasket`) must be restored on every page.
+--   /admin's onNavigate is `LoadAdmin`: its fields (`products`,
+--   `adminLoaded`) come from the seed, so a reload shows the products even
+--   when the stored copy is empty.
+--   `PageLink` (every other page) clears `notice` / `error`: a banner does not
+--   come back on a full load.
+--   init's command writes `config`: the seed wins for it.
+--
+-- R3: a wrong password keeps the page (`SignIn`'s success leaf rebuilds the
+-- model, so its response is the whole model and its request must be too).
+-- Driver: scripts/spa-reload-verify.mjs (run by scripts/spa-restore-e2e.sh).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Events as Ev
+
+type alias Model =
+    { page : String
+    , notice : String
+    , error : String
+    , me : String
+    , basket : List String
+    , products : List String
+    , adminLoaded : Bool
+    , config : String
+    , clicks : Int
+    }
+
+
+emptyModel : Model
+emptyModel =
+    { page = "home"
+    , notice = ""
+    , error = ""
+    , me = ""
+    , basket = []
+    , products = []
+    , adminLoaded = False
+    , config = ""
+    , clicks = 0
+    }
+
+type Msg
+    = PageLink String
+    | LoadAdmin
+    | ClearProducts
+    | AddToBasket String
+    | SignIn String
+    | GotConfig (Result Error String)
+    | Bump
+
+
+readData : String -> String
+readData name =
+    String.trim
+        (Result.withDefault "" (Task.run (File.readFile ("data/" ++ name))))
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( emptyModel, Cmd.perform (File.readFile "data/config.txt") GotConfig )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        PageLink p ->
+            ( { model | page = p, notice = "", error = "" }, Cmd.none )
+
+        LoadAdmin ->
+            ( { model | page = "admin"
+              , products = String.split "," (readData "products.txt")
+              , adminLoaded = True
+              , notice = ""
+              , error = ""
+              }
+            , Cmd.none
+            )
+
+        ClearProducts ->
+            ( { model | products = [] }, Cmd.none )
+
+        AddToBasket item ->
+            if String.isEmpty (readData "stock.txt") then
+                ( { model | error = "out of stock" }, Cmd.none )
+
+            else
+                ( { model | basket = model.basket ++ [ item ] }, Cmd.none )
+
+        SignIn password ->
+            if password == readData "password.txt" then
+                ( { emptyModel | me = "ada"
+                  , notice = "Welcome back"
+                  , basket = model.basket
+                  , config = model.config
+                  , page = "home"
+                  }
+                , Cmd.none
+                )
+
+            else
+                ( { model | error = "wrong password" }, Cmd.none )
+
+        GotConfig (Ok s) ->
+            ( { model | config = String.trim s }, Cmd.none )
+
+        GotConfig (Err _) ->
+            ( model, Cmd.none )
+
+        Bump ->
+            ( { model | clicks = model.clicks + 1 }, Cmd.none )
+
+
+row : String -> String -> Element Msg
+row key txt =
+    Ui.el [ Ui.htmlAttribute "id" key ] (Ui.text txt)
+
+
+button : String -> Msg -> Element Msg
+button label msg =
+    Ui.el [ Ev.onClick msg ] (Ui.text label)
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ row "page" ("page=" ++ model.page)
+        , row "notice" ("notice=" ++ model.notice)
+        , row "error" ("error=" ++ model.error)
+        , row "basket" ("basket=" ++ String.join "," model.basket)
+        , row "config" ("config=" ++ model.config)
+        , row "clicks" ("clicks=" ++ String.fromInt model.clicks)
+        , if model.page == "settings" then
+              row
+                  "settings"
+                  (if String.isEmpty model.me then
+                      "settings=loading"
+
+                  else
+                      "settings=" ++ model.me)
+
+          else
+              row "settings" ("me=" ++ model.me)
+        , if model.page == "admin" then
+              row
+                  "products"
+                  (if List.isEmpty model.products then
+                      "products=none"
+
+                  else
+                      "products=" ++ String.join "," model.products)
+
+          else
+              row "products" "products=-"
+        , button "signin-good" (SignIn "pw")
+        , button "signin-bad" (SignIn "nope")
+        , button "add-apple" (AddToBasket "apple")
+        , button "add-pear" (AddToBasket "pear")
+        , button "clear-products" ClearProducts
+        , button "bump" Bump
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+onNavigate : String -> Msg
+onNavigate p =
+    if p == "admin" then
+        LoadAdmin
+
+    else
+        PageLink p
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes
+               [ App.route "/" "home"
+               , App.route "/settings" "settings"
+               , App.route "/admin" "admin"
+               , App.route "/signin" "signin"
+               ]
+        |> App.withNotFound "home"
+        |> App.withOnNavigate onNavigate
+
+
+main =
+    App.run app

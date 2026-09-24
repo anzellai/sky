@@ -1442,7 +1442,7 @@ pub fn analyze_wire(
             read_fields: io.read_fields.clone(),
             write_fields: io.write_fields.clone(),
             always_written: io.always_written.clone(),
-            reads_whole_model: io.reads_whole_model,
+            reads_whole_model: io.request_whole_model(),
             writes_whole_model: io.writes_whole_model,
             msg_arg_tys: b.msg_arg_tys.clone(),
         });

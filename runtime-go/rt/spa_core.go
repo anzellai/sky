@@ -187,10 +187,10 @@ func Spa_withPersistProtectedFields(fields, cfg any) any {
 // still runs its own init command. The server IGNORES it.
 func Spa_withPersistDecoder(fn, cfg any) any { return spaCfgSet(cfg, "PersistDecoder", fn) }
 
-// Spa_withPersistSeedFields stores the names of the model fields that ONLY
-// server branches write (K5). On a reload the client takes these from the SSR
-// seed — server truth, rendered fresh from the real request — and restores
-// every other field from localStorage. Unlike PersistProtectedFields they play
+// Spa_withPersistSeedFields stores the names of the model fields the SSR seed
+// settles on EVERY page: the `withRequest` hook's write-set (R2). On a full
+// load the client takes these, and the page's `data-sky-seed-fields`, from the
+// seed and restores every other field from localStorage. Unlike PersistProtectedFields they play
 // no part in the sign-out check. The server IGNORES it.
 func Spa_withPersistSeedFields(fields, cfg any) any {
 	return spaCfgSet(cfg, "PersistSeedFields", fields)

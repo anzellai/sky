@@ -154,6 +154,14 @@ func SpaSSRPage(headHTML, bodyHTML, wasmName, modelJSON string) string {
 // this page ("init", "nav"; spaSettledAttr). An empty list tells the client
 // that it must still run both.
 func SpaSSRPageSettled(headHTML, bodyHTML, wasmName, modelJSON, settled string) string {
+	return SpaSSRPageSeeded(headHTML, bodyHTML, wasmName, modelJSON, settled, nil)
+}
+
+// SpaSSRPageSeeded is SpaSSRPageSettled plus the `data-sky-seed-fields`
+// marker (R2): the model fields the server settled for THIS page. On a full
+// load the client takes these fields from the `#sky-model` seed and restores
+// every other field from localStorage (spaMergeStoredOverSeed).
+func SpaSSRPageSeeded(headHTML, bodyHTML, wasmName, modelJSON, settled string, seedFields []string) string {
 	var b strings.Builder
 	b.WriteString(`<!doctype html>` + "\n")
 	// `data-sky-hydrating` drives the first-paint loading affordance (progress
@@ -171,7 +179,8 @@ func SpaSSRPageSettled(headHTML, bodyHTML, wasmName, modelJSON, settled string) 
 	b.WriteString(`</head>` + "\n")
 	b.WriteString(`<body>`)
 	// The server-rendered view + the SSR marker so the client hydrates.
-	b.WriteString(`<div id="app" ` + spaSettledMarker + `="` + settled + `" ` + spaSSRMarker + `="1">`)
+	b.WriteString(`<div id="app" ` + spaSettledMarker + `="` + settled + `" ` +
+		spaSeedFieldsMarker + `="` + spaSeedFieldsAttr(seedFields) + `" ` + spaSSRMarker + `="1">`)
 	b.WriteString(bodyHTML)
 	b.WriteString(`</div>`)
 	// Embedded initial model (JSON-escaped against a `</script>` break-out).
@@ -231,6 +240,29 @@ func jsStringLit(s string) string {
 // client boots from the `#sky-model` seed and skips exactly the commands named
 // here; any other command still runs once on the client.
 const spaSettledMarker = "data-sky-settled"
+
+// spaSeedFieldsMarker is the attribute naming the model fields the server
+// settled for this page (R2, see SpaSSRPageSeeded).
+const spaSeedFieldsMarker = "data-sky-seed-fields"
+
+// spaSeedFieldsAttr renders the seed-field list (deduplicated, in order). A
+// field name is a Sky identifier, so it never needs HTML escaping; anything
+// else is dropped rather than written into the attribute.
+func spaSeedFieldsAttr(fields []string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fields {
+		bad := strings.IndexFunc(f, func(r rune) bool {
+			return !(r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z')
+		}) >= 0
+		if f == "" || bad || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return strings.Join(out, " ")
+}
 
 // spaSettledAttr renders the marker's token list.
 func spaSettledAttr(initDone, navDone bool) string {

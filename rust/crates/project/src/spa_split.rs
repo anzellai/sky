@@ -766,6 +766,10 @@ pub(crate) struct FollowCtx {
     branches: HashMap<String, bool>,
     /// Every follow-up Msg constructor the wire covers, with its arity.
     ctors: Vec<(String, usize)>,
+    /// Constructors that MAY be a follow-up (a branch whose command could not
+    /// be read) but have no wire codec, with their arity. The backend encoder
+    /// drops one and logs a classified error (never silent; R1).
+    outside_wire: Vec<(String, usize)>,
     /// How many constructors the Msg union has (a `_` arm is emitted only when
     /// the covered set is smaller — a redundant arm is rejected).
     all_ctors: usize,
@@ -811,6 +815,7 @@ fn build_follow_ctx(
     // Server-internal Msgs never reach the client (no client arm, pruned from
     // the client `Msg`), so they are never a client follow-up.
     server_internal: &HashSet<String>,
+    warnings: &mut Vec<String>,
 ) -> Result<Option<FollowCtx>, String> {
     let wire_names: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
     let fu: Vec<&spa_partition::FollowUpBranch> = follow_up
@@ -840,12 +845,23 @@ fn build_follow_ctx(
     })?;
     let msg_ty = decl_name(&msg_decl).unwrap_or_else(|| "Msg".to_string());
     let all_variants = union_variant_names(&msg_decl);
-    let mut ctor_set: BTreeSet<String> = BTreeSet::new();
+    // `known`: constructors a resolved perform leaf NAMES — each is a certain
+    // follow-up, so one that cannot cross fails the build. A branch whose
+    // command the analysis could not read stands in the WHOLE union; most of
+    // those constructors are never its follow-up, so one without a wire codec
+    // is left off the wire with a build warning, and the backend logs a
+    // classified error if it ever does occur (R1).
+    let mut known: BTreeSet<String> = BTreeSet::new();
+    let mut unknown_branches: Vec<&str> = Vec::new();
     for f in &fu {
         match &f.ctors {
-            Some(cs) => ctor_set.extend(cs.iter().cloned()),
-            None => ctor_set.extend(all_variants.iter().cloned()),
+            Some(cs) => known.extend(cs.iter().cloned()),
+            None => unknown_branches.push(f.branch.as_str()),
         }
+    }
+    let mut ctor_set: BTreeSet<String> = known.clone();
+    if !unknown_branches.is_empty() {
+        ctor_set.extend(all_variants.iter().cloned());
     }
     ctor_set.retain(|c| !server_internal.contains(c));
     let branch_list = fu
@@ -854,21 +870,31 @@ fn build_follow_ctx(
         .collect::<Vec<_>>()
         .join(", ");
     let mut ctors: Vec<(String, usize)> = Vec::new();
-    for c in &ctor_set {
+    let mut outside_wire: Vec<(String, usize)> = Vec::new();
+    let mut outside_why: Vec<String> = Vec::new();
+    'ctor: for c in &ctor_set {
         let args = union_variant_arg_types(&msg_decl, c).ok_or_else(|| {
             format!("sky.spa: follow-up Msg `{c}` of server branch(es) {branch_list} is not a constructor of `{msg_ty}`")
         })?;
         let mut fields: Vec<ModelFieldTy> = Vec::new();
         for (i, t) in args.iter().enumerate() {
-            let r = resolver.resolve(t).map_err(|e| {
-                format!(
-                    "sky.spa: server branch(es) {branch_list} return a command whose follow-up Msg `{c}` \
-                     cannot cross to the client — argument {} has no wire codec: {e}. Give the argument a \
-                     codec-able type (a record, a List, a Result Error, a primitive), or run the follow-up \
-                     from a client arm.",
-                    i + 1
-                )
-            })?;
+            let r = match resolver.resolve(t) {
+                Ok(r) => r,
+                Err(e) if !known.contains(c) => {
+                    outside_wire.push((c.clone(), args.len()));
+                    outside_why.push(format!("`{c}` (argument {}: {e})", i + 1));
+                    continue 'ctor;
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "sky.spa: server branch(es) {branch_list} return a command whose follow-up Msg `{c}` \
+                         cannot cross to the client — argument {} has no wire codec: {e}. Give the argument a \
+                         codec-able type (a record, a List, a Result Error, a primitive), or run the follow-up \
+                         from a client arm.",
+                        i + 1
+                    ))
+                }
+            };
             fields.push(ModelFieldTy {
                 name: format!("a{i}"),
                 ty_name: r.surface,
@@ -910,10 +936,26 @@ fn build_follow_ctx(
             }
         }
     }
+    if !outside_wire.is_empty() {
+        let unread = unknown_branches
+            .iter()
+            .map(|b| format!("`{b}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        warnings.push(format!(
+            "warning [sky.spa]: the command of server branch(es) {unread} could not be read, so any `{msg_ty}` \
+             may be its follow-up. These constructors have no wire codec and do not cross to the client: {}. \
+             If the command produces one at run time, the backend drops it and logs the classified error \
+             `SpaFollowUpOutsideWire`. Return the command directly (a `Cmd.perform … Ctor`, a `Cmd.batch` \
+             over a list or a `List.map`) so the split reads its follow-ups exactly.",
+            outside_why.join(", ")
+        ));
+    }
     Ok(Some(FollowCtx {
         branches: fu.iter().map(|f| (f.branch.clone(), f.native)).collect(),
         all_ctors: all_variants.len(),
         ctors,
+        outside_wire,
         msg_ty,
         msg_module,
         msg_module_name: db.module_name(msg_module).to_string(),
@@ -949,13 +991,47 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
             "        {pat} ->\n            [ \"{c}\", Codec.toJson spaFollow{c}ReqCodec {rec} ]\n\n"
         ));
     }
+    // R1: a constructor that MAY be a follow-up (its branch's command could not
+    // be read) but has no wire codec. If one occurs, the backend drops it and
+    // logs the classified `SpaFollowUpOutsideWire` error (runtime-go
+    // spa_followups_notjs.go); the rest of the response still applies.
+    for (c, n) in &fc.outside_wire {
+        let pat = if *n == 0 {
+            format!("{q}{c}")
+        } else {
+            format!("{q}{c}{}", " _".repeat(*n))
+        };
+        arms.push_str(&format!(
+            "        {pat} ->\n            spaFollowOutsideWire_ \"{c}\"\n\n"
+        ));
+    }
     // A constructor the analysis proved is never a follow-up encodes as an
     // empty tag, which the client rejects LOUDLY (never a silent drop). Only
     // when the covered set is smaller than the union (else `_` is redundant).
-    let wildcard = if fc.ctors.len() < fc.all_ctors {
+    let wildcard = if fc.ctors.len() + fc.outside_wire.len() < fc.all_ctors {
         "        _ ->\n            [ \"\", \"\" ]\n\n"
     } else {
         ""
+    };
+    // An outside-wire follow-up encodes as `[]` and is skipped here.
+    let (outside_kernel, cons_step) = if fc.outside_wire.is_empty() {
+        (
+            String::new(),
+            "\x20           spaEncodeFollow_ m_ :: spaEncodeFollowList_ rest_\n".to_string(),
+        )
+    } else {
+        (
+            "spaFollowOutsideWire_ : String -> List String\n\
+             spaFollowOutsideWire_ =\n\
+             \x20   Ffi.kernel \"Spa_followUpOutsideWire\"\n\n\n"
+                .to_string(),
+            "\x20           case spaEncodeFollow_ m_ of\n\
+             \x20               [] ->\n\
+             \x20                   spaEncodeFollowList_ rest_\n\n\
+             \x20               item_ ->\n\
+             \x20                   item_ :: spaEncodeFollowList_ rest_\n"
+                .to_string(),
+        )
     };
     format!(
         "-- SPA-3: a server branch's returned command RUNS. `spaFollowUps_` runs every\n\
@@ -964,6 +1040,7 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
          spaFollowUps_ : any -> List {q}{ty}\n\
          spaFollowUps_ =\n\
          \x20   Ffi.kernel \"Spa_collectFollowUps\"\n\n\n\
+         {outside_kernel}\
          spaEncodeFollows_ : List {q}{ty} -> String\n\
          spaEncodeFollows_ msgs_ =\n\
          \x20   Codec.toJson (Codec.list (Codec.list Codec.string)) (spaEncodeFollowList_ msgs_)\n\n\n\
@@ -973,7 +1050,7 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
          \x20       [] ->\n\
          \x20           []\n\n\
          \x20       m_ :: rest_ ->\n\
-         \x20           spaEncodeFollow_ m_ :: spaEncodeFollowList_ rest_\n\n\n\
+         {cons_step}\n\n\
          spaEncodeFollow_ : {q}{ty} -> List String\n\
          spaEncodeFollow_ m_ =\n\
          \x20   case m_ of\n\
@@ -2141,6 +2218,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             .iter()
             .cloned()
             .collect::<HashSet<String>>(),
+        &mut warnings,
     )?;
     // STATELESS SIGNED SESSION (security): the identity projection the backend
     // signs into an httpOnly `sky_sid` cookie and verifies on every RPC + SSR. A
@@ -2698,6 +2776,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             tainted: &tainted_set,
         })
     };
+    let settle_plan = build_settle_plan(&db, &check_ids, entry, &report, &model_field_names);
     let backend_src = gen_backend(
         &file,
         &src,
@@ -2716,19 +2795,22 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &session_projection,
         &mut warnings,
         follow_ctx.as_ref().map(|fc| (fc, fc_q(fc, entry))),
+        &settle_plan,
     )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
     // frontend so the client keeps them from the server-verified SSR seed on
     // restore (never from localStorage). Empty → the whole stored model restores.
     let session_field_names: Vec<String> =
         session_projection.iter().map(|p| p.name.clone()).collect();
-    // K5 (USER DECISION): on a reload, a field that ONLY server branches write is
-    // server truth — its value comes from the SSR seed (which the backend renders
-    // from the real request), never from a stale localStorage copy; every other
-    // field (client scratch state) is restored from localStorage.
-    let seed_field_names = server_only_written_fields(&report.branches, &model_field_names)
-        .into_iter()
+    // R2 (replaces K5): on a full load the seed wins only for the fields the
+    // server settled for the page. The `withRequest` hook runs on EVERY SSR
+    // request, so its fields are a constant list (`Spa.withPersistSeedFields`);
+    // the init / onNavigate fields travel per page (`data-sky-seed-fields`).
+    let seed_field_names = settle_plan
+        .request_fields
+        .iter()
         .filter(|f| !session_field_names.contains(f))
+        .cloned()
         .collect::<Vec<_>>();
     let frontend_src = gen_frontend(
         &file,
@@ -4772,39 +4854,216 @@ fn inject_model_decoder_into_main(
     out
 }
 
-/// K5: the model fields that ONLY server branches write. On a reload these are
-/// server truth: the client keeps them from the SSR seed and restores every
-/// other field from localStorage. A server branch writing the whole model
-/// contributes every field; a CLIENT branch with an unknown write-set (or one
-/// writing the whole model) claims every field, so nothing is seed-only — the
-/// safe direction (client scratch state is never replaced by the seed).
-fn server_only_written_fields(
-    branches: &[spa_partition::BranchVerdict],
-    model_fields: &[String],
-) -> Vec<String> {
-    let mut server: BTreeSet<String> = BTreeSet::new();
-    let mut client: BTreeSet<String> = BTreeSet::new();
-    for b in branches {
-        if b.server {
-            match &b.io {
-                Some(io) if io.writes_whole_model => server.extend(model_fields.iter().cloned()),
-                Some(io) => server.extend(io.write_fields.iter().cloned()),
-                None => {}
-            }
+/// R2: what the SSR settle writes, resolved into field lists for the backend
+/// page (`data-sky-seed-fields`) and the client (`Spa.withPersistSeedFields`).
+/// A `None` field list means "could not be read": the page then claims
+/// nothing for that command (and an unreadable onNavigate is not marked
+/// finished, so the client runs it again, as v0.25.16 did).
+#[derive(Default)]
+pub(crate) struct SettlePlan {
+    /// Fields the finished init command chain writes.
+    pub init_fields: Option<Vec<String>>,
+    /// Fields the `withRequest` hook (and its command chain) writes.
+    pub request_fields: Vec<String>,
+    /// Per onNavigate Msg constructor (with its arity): the fields its arm and
+    /// its command chain write. Empty when the app has no onNavigate hook.
+    pub nav: Vec<(String, usize, Option<Vec<String>>)>,
+    /// The Msg union name, and the module that declares it.
+    pub msg_ty: String,
+    pub msg_module: Option<ModuleId>,
+    pub msg_module_name: String,
+    /// How many constructors the Msg union has.
+    pub all_ctors: usize,
+    /// The qualifier for Msg constructors in the backend entry (`""` when the
+    /// entry declares the union, else the `SpaMsgMod_` import alias).
+    pub msg_q: String,
+}
+
+/// R2: the backend tables behind `data-sky-seed-fields` — the fields init's
+/// finished command chain writes (`spaInitSeedFields_`), and per onNavigate
+/// Msg constructor the fields its arm and command chain write
+/// (`spaNavSeedFields_`; `Nothing` = could not be read, so the page does not
+/// mark that navigation finished and the client runs it again).
+fn render_settle_tables(settle: &SettlePlan) -> String {
+    let list = |fs: &[String]| {
+        if fs.is_empty() {
+            "[]".to_string()
         } else {
-            match &b.client_io {
-                Some(io) if !io.writes_whole_model => {
-                    client.extend(io.write_fields.iter().cloned())
-                }
-                _ => return Vec::new(),
+            format!(
+                "[ {} ]",
+                fs.iter()
+                    .map(|f| format!("\"{f}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    };
+    let mut out = format!(
+        "-- R2: the model fields init's finished command chain writes. On a full\n\
+         -- load the client takes these from the seed; it restores the rest.\n\
+         spaInitSeedFields_ : List String\n\
+         spaInitSeedFields_ =\n\
+         \x20   {}\n\n\n",
+        list(settle.init_fields.as_deref().unwrap_or(&[]))
+    );
+    if settle.nav.is_empty() {
+        return out;
+    }
+    let q = &settle.msg_q;
+    let mut arms = String::new();
+    for (c, n, fields) in &settle.nav {
+        let body = match fields {
+            Some(fs) => format!("Just {}", list(fs)),
+            None => "Nothing".to_string(),
+        };
+        arms.push_str(&format!(
+            "        {q}{c}{} ->\n            {body}\n\n",
+            " _".repeat(*n)
+        ));
+    }
+    if settle.nav.len() < settle.all_ctors {
+        arms.push_str("        _ ->\n            Nothing\n\n");
+    }
+    out.push_str(&format!(
+        "-- R2: per onNavigate Msg, the model fields its arm and command chain\n\
+         -- write (`Nothing`: not readable, so the navigation is not marked done).\n\
+         spaNavSeedFields_ : {q}{ty} -> Maybe (List String)\n\
+         spaNavSeedFields_ m_ =\n\
+         \x20   case m_ of\n\
+         {arms}\n",
+        ty = settle.msg_ty
+    ));
+    out
+}
+/// The model fields that running Msg `ctor` through `update` — and every Msg
+/// its command dispatches, transitively — can write. `None` when an arm's
+/// write-set is unknown or the whole model, or a command cannot be read.
+fn settle_closure(
+    ctor: &str,
+    report: &spa_partition::SpaPartitionReport,
+    memo: &mut HashMap<String, Option<BTreeSet<String>>>,
+    on_path: &mut HashSet<String>,
+) -> Option<BTreeSet<String>> {
+    if let Some(m) = memo.get(ctor) {
+        return m.clone();
+    }
+    if !on_path.insert(ctor.to_string()) {
+        // A cycle adds nothing its first visit does not already add.
+        return Some(BTreeSet::new());
+    }
+    let result = (|| {
+        let mut out: BTreeSet<String> = BTreeSet::new();
+        let mut any_arm = false;
+        for b in report.branches.iter().filter(|b| ctor_name(&b.msg) == ctor) {
+            any_arm = true;
+            let io = if b.server {
+                b.io.as_ref()
+            } else {
+                b.client_io.as_ref()
+            }?;
+            if io.writes_whole_model {
+                return None;
+            }
+            out.extend(io.write_fields.iter().cloned());
+        }
+        if !any_arm {
+            return None;
+        }
+        let conts = report.settle.continuations.get(ctor)?.as_ref()?;
+        for k in conts {
+            out.extend(settle_closure(k, report, memo, on_path)?);
+        }
+        Some(out)
+    })();
+    on_path.remove(ctor);
+    memo.insert(ctor.to_string(), result.clone());
+    result
+}
+
+/// The fields a list of dispatched Msgs settles (see [`settle_closure`]).
+fn settle_closure_all(
+    ctors: &[String],
+    report: &spa_partition::SpaPartitionReport,
+    memo: &mut HashMap<String, Option<BTreeSet<String>>>,
+) -> Option<BTreeSet<String>> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for c in ctors {
+        out.extend(settle_closure(c, report, memo, &mut HashSet::new())?);
+    }
+    Some(out)
+}
+
+/// Build the [`SettlePlan`] (R2) from the partition report's settle facts.
+fn build_settle_plan(
+    db: &SkyDatabase,
+    check_ids: &[ModuleId],
+    entry: ModuleId,
+    report: &spa_partition::SpaPartitionReport,
+    model_fields: &[String],
+) -> SettlePlan {
+    let facts = &report.settle;
+    let mut memo: HashMap<String, Option<BTreeSet<String>>> = HashMap::new();
+    let keep_model = |s: BTreeSet<String>| -> Vec<String> {
+        model_fields
+            .iter()
+            .filter(|f| s.contains(*f))
+            .cloned()
+            .collect()
+    };
+    let mut plan = SettlePlan {
+        init_fields: facts
+            .init_continuations
+            .as_ref()
+            .and_then(|cs| settle_closure_all(cs, report, &mut memo))
+            .map(keep_model),
+        ..Default::default()
+    };
+    if facts.has_request_hook {
+        let mut fs: BTreeSet<String> = facts.request_writes.iter().flatten().cloned().collect();
+        if let Some(cs) = &facts.request_continuations {
+            if let Some(more) = settle_closure_all(cs, report, &mut memo) {
+                fs.extend(more);
+            }
+        }
+        plan.request_fields = keep_model(fs);
+    }
+    let Some(nav_ctors) = &facts.nav_ctors else {
+        return plan;
+    };
+    // The Msg union: the one whose variants include an `update` head.
+    let heads: HashSet<&str> = facts.continuations.keys().map(|s| s.as_str()).collect();
+    let mut found: Option<(ModuleId, syntax::ast::Decl)> = None;
+    'mods: for m in check_ids {
+        for d in db.module_parse(*m).tree().decls() {
+            if matches!(decl_kind(&d), DeclKind::Union)
+                && union_variant_names(&d)
+                    .iter()
+                    .any(|v| heads.contains(v.as_str()))
+            {
+                found = Some((*m, d));
+                break 'mods;
             }
         }
     }
-    model_fields
-        .iter()
-        .filter(|f| server.contains(*f) && !client.contains(*f))
-        .cloned()
-        .collect()
+    let Some((msg_module, msg_decl)) = found else {
+        return plan;
+    };
+    let variants = union_variant_names(&msg_decl);
+    plan.msg_ty = decl_name(&msg_decl).unwrap_or_else(|| "Msg".to_string());
+    plan.msg_module = Some(msg_module);
+    plan.msg_module_name = db.module_name(msg_module).to_string();
+    plan.msg_q = if msg_module == entry {
+        String::new()
+    } else {
+        "SpaMsgMod_.".to_string()
+    };
+    plan.all_ctors = variants.len();
+    for c in nav_ctors.iter().filter(|c| variants.contains(c)) {
+        let arity = union_variant_arg_types(&msg_decl, c).map_or(0, |a| a.len());
+        let fields = settle_closure(c, report, &mut memo, &mut HashSet::new()).map(keep_model);
+        plan.nav.push((c.clone(), arity, fields));
+    }
+    plan
 }
 
 /// Insert builder `lines` (each ending in `\n`) before the paren at `close` that
@@ -5111,6 +5370,8 @@ fn gen_backend(
     warnings: &mut Vec<String>,
     // SPA-3: the follow-up context + the Msg qualifier for the backend entry.
     follow: Option<(&FollowCtx, &str)>,
+    // R2: what the SSR settle writes, for the page's seed-field marker.
+    settle: &SettlePlan,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -5172,6 +5433,13 @@ fn gen_backend(
         if any_follow && !q.is_empty() {
             import_lines.push(format!("import {} as SpaMsgMod_", fc.msg_module_name));
         }
+    }
+    // R2: the per-constructor onNavigate seed-field table names Msg
+    // constructors; import the union's module under the same alias.
+    let msg_alias_line = format!("import {} as SpaMsgMod_", settle.msg_module_name);
+    if !settle.nav.is_empty() && !settle.msg_q.is_empty() && !import_lines.contains(&msg_alias_line)
+    {
+        import_lines.push(msg_alias_line);
     }
     // SSR (design §4.1): a backend that carries `view`/`init` (≥1 server branch,
     // or push) gets an SSR `GET /{$}` route that renders the first paint. It
@@ -5611,7 +5879,7 @@ fn gen_backend(
         // intact. `base` (the init value) is bound by `run_setup` in the read-set
         // shapes but NOT in the reads_whole_model shapes, so bind it here for those.
         if !session_proj.is_empty() {
-            if io.reads_whole_model {
+            if io.request_whole_model() {
                 run_setup
                     .push_str("\n                ( base, _ ) =\n                    init ()\n");
             }
@@ -5808,9 +6076,12 @@ fn gen_backend(
              -- The page kernel also stamps `data-sky-settled` on #app: the two\n\
              -- Bools say whether init's command and the route's onNavigate command\n\
              -- ran to the end here, so the client skips exactly those (SPA-10).\n\
-             spaSsrPageSettled : String -> String -> String -> String -> Bool -> Bool -> String\n\
-             spaSsrPageSettled =\n\
-             \x20   Ffi.kernel \"Spa_ssrPageSettled\"\n\n\n\
+             -- The list is `data-sky-seed-fields`: the model fields those finished\n\
+             -- commands wrote. On a full load the client takes only these (and the\n\
+             -- session / request fields) from the seed and restores the rest (R2).\n\
+             spaSsrPageSeeded : String -> String -> String -> String -> Bool -> Bool -> List String -> String\n\
+             spaSsrPageSeeded =\n\
+             \x20   Ffi.kernel \"Spa_ssrPageSeeded\"\n\n\n\
              spaSsrCmdIsNone : any -> Bool\n\
              spaSsrCmdIsNone =\n\
              \x20   Ffi.kernel \"Spa_ssrCmdIsNone\"\n\n\n\
@@ -5823,6 +6094,7 @@ fn gen_backend(
              spaWasmName =\n\
              \x20   spaSsrWasmName \"../frontend/dist\"\n\n\n",
         );
+        handlers.push_str(&render_settle_tables(settle));
         // Per-route resolver alias — resolves the request path to the route's
         // page + model server-side (design §4.1). Emitted only when the app has
         // routes; a route-less app renders the root.
@@ -5968,19 +6240,34 @@ fn gen_backend(
             let settle_expr = "spaSsrSettleFull navModel_ navCmd_ update";
             if ssr_guard {
                 lets.push_str(&format!(
-                    "        ( resolved, navDone_ ) =\n            case spaGuard_ navMsg_ preNav_ of\n\
+                    "        ( resolved, navRan_ ) =\n            case spaGuard_ navMsg_ preNav_ of\n\
                      \x20               Err _ ->\n                    ( preNav_, False )\n\n\
                      \x20               Ok _ ->\n                    {settle_expr}\n\n"
                 ));
             } else {
                 lets.push_str(&format!(
-                    "        ( resolved, navDone_ ) =\n            {settle_expr}\n\n"
+                    "        ( resolved, navRan_ ) =\n            {settle_expr}\n\n"
                 ));
+            }
+            if settle.nav.is_empty() {
+                lets.push_str("        navDone_ =\n            False\n\n        navFields_ =\n            []\n\n");
+            } else {
+                lets.push_str(
+                    "        ( navDone_, navFields_ ) =\n            case spaNavSeedFields_ navMsg_ of\n\
+                     \x20               Just fs_ ->\n                    if navRan_ then\n                        ( True, fs_ )\n\n\
+                     \x20                   else\n                        ( False, [] )\n\n\
+                     \x20               Nothing ->\n                    ( False, [] )\n\n",
+                );
             }
         } else {
             lets.push_str(&format!("        resolved =\n            {chain}\n\n"));
-            lets.push_str("        navDone_ =\n            False\n\n");
+            lets.push_str(
+                "        navDone_ =\n            False\n\n        navFields_ =\n            []\n\n",
+            );
         }
+        lets.push_str(
+            "        initFields_ =\n            if initDone_ then\n                spaInitSeedFields_\n\n            else\n                []\n\n",
+        );
         lets.push_str(
             "        modelJson =\n            Codec.toJson (Codec.auto resolved) resolved\n",
         );
@@ -6002,13 +6289,14 @@ fn gen_backend(
              \x20   in\n\
              \x20   Task.succeed\n\
              \x20       (Server.html\n\
-             \x20           (spaSsrPageSettled\n\
+             \x20           (spaSsrPageSeeded\n\
              \x20               (spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
              \x20               spaWasmName\n\
              \x20               modelJson\n\
              \x20               initDone_\n\
              \x20               navDone_\n\
+             \x20               (initFields_ ++ navFields_)\n\
              \x20           )\n\
              \x20       )\n\n\n"
         ));
@@ -7486,6 +7774,7 @@ mod fix7_tests {
                 writes_whole_model: false,
                 write_fields: vec![],
                 always_written: vec![],
+                fresh_response: false,
             },
         )];
         gen_frontend_update(

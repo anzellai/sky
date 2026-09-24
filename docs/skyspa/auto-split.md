@@ -428,6 +428,11 @@ reads → the RPC *inputs*) and the **write-set** (Model fields it writes → th
 (sound: bigger payload, never a wrong value — under-approximating reads is a
 correctness bug, so unknown ⇒ send more). This is what keeps payloads ∝ effect
 I/O, not Model size (§ the large-Model answer).
+A whole-model RESPONSE goes with a narrow request only when every response
+leaf builds a fresh model (a record literal, `{ emptyModel | … }`); when one leaf
+rebuilds the model and another keeps it (`{ model | error = … }` on a failed
+sign-in), the request carries the whole model, or the keeping leaf would answer
+with `init`'s defaults (R3, `BranchIo::fresh_response`).
 
 **B2 — the RPC shape + runtime glue (prove on a minimal app first).** One generic
 per-server-branch endpoint. Client → server: `{ msg args + read-set fields }`;
@@ -906,8 +911,17 @@ response field `spaFollow_`, and the client decodes them and dispatches them in
 order through its own `update` (`Spa.followUps`) — a pure arm runs locally, a
 server arm becomes the next queued RPC. A follow-up that cannot be decoded is
 routed to `App.withRpcError`, else reported on the console (`Spa.reportError`);
-never dropped. A follow-up constructor whose argument has no wire codec fails
-the build, naming it.
+never dropped. The split reads the follow-up constructors from the command: a
+`Cmd.perform _ Ctor` leaf, through helpers, `let` names, `if` / `case`, and a
+`Cmd.batch` over a list, `xs ++ ys`, `c :: cs` or `List.map` / `List.indexedMap`
+of a lambda or helper (each perform then runs once per element). A follow-up
+constructor it reads whose argument has no wire codec fails the build, naming
+it. When a command cannot be read (for example `Cmd.batch (List.filterMap …)`),
+every `Msg` constructor may be its follow-up: those with a wire codec cross, and
+those without one are named in a build warning. If one of them occurs at run
+time, the backend drops it and logs the classified error
+`SpaFollowUpOutsideWire` (`Spa_followUpOutsideWire`); the rest of the response
+still applies (R1).
 
 A `Std.Native` leaf (a client-only effect) cannot run on the server: the server
 skips it, and the client runs it when it sends the RPC, from the same snapshot
@@ -924,10 +938,22 @@ A guard that reaches a server effect cannot run in the client; the build warns.
 
 **Persistence.** Every `web:app` build with a derivable `init` model persists
 the client model to `localStorage` and restores it on reload
-(`Spa.withModelDecoder` + `Spa.withModelEncoder`). On a reload, a field that ONLY
-server branches write comes from the SSR seed — server truth, rendered from the real request — and every
-other field from `localStorage` (`Spa.withPersistSeedFields`, the server
-write-sets minus the client write-sets). A restore no longer cancels `init`'s
+(`Spa.withModelDecoder` + `Spa.withModelEncoder`). On a full page load
+the client restores the stored model and takes from the SSR seed ONLY the fields
+the server settled for THIS page (R2): the session fields, the fields the
+`withRequest` hook writes (it runs on every request, so they are a constant list,
+`Spa.withPersistSeedFields`), and the write-sets of the commands the page marks
+finished in `data-sky-settled` — init's command chain and the route's
+`onNavigate` Msg with its command chain. The page names these fields in
+`data-sky-seed-fields` on `#app`; the backend computes them per `onNavigate`
+constructor at build time (`spaNavSeedFields_`). Every other field keeps its
+stored value, even one only server branches write: the seed holds `init`'s
+default for a field this page did not load, and a default never paints over
+data. An `onNavigate` Msg whose write-set cannot be read (a whole-model write, an
+unreadable command) is not marked finished, so the client runs it after the
+mount, as it did in v0.25.16. This is Sky.Live's rule: a Live reload keeps the
+session model and runs `onNavigate` over it, so a notice that `onNavigate` clears
+is cleared, and one it does not clear stays. A restore does not cancel `init`'s
 own command.
 
 **Seeded boot (SPA-10).** When the page is server-rendered, the client boots

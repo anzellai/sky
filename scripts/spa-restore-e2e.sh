@@ -45,5 +45,20 @@ node "$ROOT/scripts/spa-hydration-verify.mjs" "$APP" \
   --click 'button:has-text("increment")' --clicks 3 \
   --expect "count=3"
 
-echo "spa-restore-e2e: PASS — restored model paints on the first SSR paint."
+# R2 / R3 (register M): the full-load rule. The seed wins only for the fields
+# the server settled for the page; everything else is restored. Its data/ is
+# staged next to the backend binary, where the reads resolve.
+RX="$(dirname "$FX")/spa-rc-reload"
+mkdir -p "$RX"
+cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-rc-reload/." "$RX/"
+echo "==> building the full-load fixture (--target web:app)"
+( cd "$RX" && "$SKY" build --target web:app src/Main.sky )
+RBE="$RX/.skyapp/web-app/.split/backend"
+[ -x "$RBE/sky-out/app" ] || { echo "spa-restore-e2e: backend app not built at $RBE/sky-out/app" >&2; exit 1; }
+mkdir -p "$RBE/data"
+cp -Rf "$RX/data/." "$RBE/data/"
+echo "==> driving the full-load rule (settled fields from the seed, the rest restored)"
+node "$ROOT/scripts/spa-reload-verify.mjs" "$RBE/sky-out/app" --port "${RELOAD_PORT:-9372}"
+
+echo "spa-restore-e2e: PASS — restored model paints on the first SSR paint; a full load keeps what the page did not settle."
 rm -rf "$(dirname "$FX")"
