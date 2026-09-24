@@ -1028,18 +1028,27 @@ onEnter msg =
 -- Model and decode/upload as needed (the Std.Encoding module's
 -- base64Decode helps here).
 --
--- For images, prefer `onImage` instead — it auto-resizes to the
--- `fileMaxWidth` / `fileMaxHeight` hints before sending, saving
--- bandwidth on large camera-roll uploads.
+-- For images, prefer `onImage` instead — on Sky.Live and the desktop
+-- window it scales to the `fileMaxWidth` / `fileMaxHeight` hints
+-- before sending, saving bandwidth on large camera-roll uploads.
 onFile : (String -> msg) -> Attribute msg
 onFile cb =
     AttrEvent (Event.onFile cb)
 
 
--- Image-input change handler — same as onFile but the browser-side
--- driver scales the image to `Ui.fileMaxWidth` / `fileMaxHeight`
--- (default 1200×1200) and re-encodes as JPEG @ 0.85 quality before
--- sending. Output is still a `data:image/jpeg;base64,...` URL.
+-- Image-input change handler — same as onFile, plus a browser-side
+-- resize on Sky.Live (`--target web`) and the desktop window: the
+-- image is scaled to fit `Ui.fileMaxWidth` / `fileMaxHeight` (default
+-- 1200×1200) and re-encoded as JPEG @ 0.85 quality before sending
+-- (a `data:image/jpeg;base64,...` URL).
+--
+-- On Sky.Spa (`--target web:app`) the image is NOT resized: the
+-- client sends the file as chosen (its own type, still capped by
+-- `fileMaxSize`), and the width / height hints are ignored. The
+-- resize belongs on the server there — `Std.Image.resizeToFit` in
+-- the RPC that receives it — so the wasm client carries no image
+-- pipeline. Code that must bound the stored size on every target
+-- resizes on the server.
 onImage : (String -> msg) -> Attribute msg
 onImage cb =
     AttrEvent (Event.onImage cb)
@@ -1057,7 +1066,9 @@ fileMaxSize bytes =
 
 -- Image resize hint — width in pixels. The image is scaled to fit
 -- `fileMaxWidth` × `fileMaxHeight` (default 1200×1200) on the
--- browser side before being sent. Only applies to `Ui.onImage`.
+-- browser side before being sent. Only applies to `Ui.onImage`, and
+-- only on Sky.Live and the desktop window (Sky.Spa sends the file
+-- unchanged; see `onImage`).
 fileMaxWidth : Int -> Attribute msg
 fileMaxWidth px =
     AttrAttribute "data-sky-ev-sky-file-max-width" (String.fromInt px)

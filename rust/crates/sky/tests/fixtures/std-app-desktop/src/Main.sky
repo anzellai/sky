@@ -1,0 +1,42 @@
+module Main exposing (main)
+
+{-| Fixture for std_app_flow.rs — a Std.App on `--target desktop` (Sky.Live in
+a native window). The tests start it with a Live server that cannot bind, so
+no window may open: the run must fail at once and name the cause (SA-9).
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+init : a -> ( Int, Cmd () )
+init _ =
+    ( 0, Cmd.none )
+
+
+update : () -> Int -> ( Int, Cmd () )
+update _ n =
+    ( n, Cmd.none )
+
+
+view : Int -> Element ()
+view _ =
+    Ui.text "desktop"
+
+
+main : Task Error ()
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ()
+            |> App.withWindow "fixture" 400 300)

@@ -199,6 +199,31 @@ try {
     await page.close();
   }
 
+  // ── Back / Forward (popstate) runs onNavigate — both targets ─────────
+  // Sky.Spa fires onNavigate on the client; Sky.Live fires it on the server
+  // for the nav GET the popstate makes. Either way the app sees one Msg per
+  // step and shows the page of the URL.
+  {
+    const page = await browser.newPage();
+    await boot(page, "/u/a");
+    const navsOf = async () => (await text(page, "#navs")).split(",").filter((s) => s !== "");
+    const before = await navsOf();
+    check(JSON.stringify(before) === JSON.stringify(["u:a"]),
+      "onNavigate runs once for the first paint of a route", JSON.stringify(before));
+    await page.evaluate(() => history.pushState({}, "", "/u/b"));
+    await page.evaluate(() => history.back()); // popstate → /u/a
+    await page.waitForTimeout(LIVE ? 900 : 400);
+    await page.evaluate(() => history.forward()); // popstate → /u/b
+    await page.waitForTimeout(LIVE ? 900 : 400);
+    const shown = await text(page, "#uname");
+    const after = await navsOf();
+    check(shown === "name=b" && after.length === before.length + 2 &&
+      JSON.stringify(after.slice(-2)) === JSON.stringify(["u:a", "u:b"]),
+      "popstate routes the page and runs onNavigate once per Back / Forward",
+      `page=${shown} before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
+    await page.close();
+  }
+
   // ── F5: a page the client builds from scratch (not hydratable) ───────
   if (!LIVE) {
     const page = await browser.newPage();
@@ -224,16 +249,22 @@ try {
     check((await page.locator("#sel").inputValue()) === "c", "F5 select first paint on the rebuild path shows the model value");
     await page.close();
   }
+  if (failures.length) {
+    console.error(`\nspa-vdom-identity: ${failures.length} FAILED: ${failures.join("; ")}`);
+    process.exitCode = 2;
+  } else {
+    console.log("\nspa-vdom-identity: all checks PASS");
+    process.exitCode = 0;
+  }
 } catch (e) {
   console.error("harness error:", e);
-  if (browser) await browser.close();
-  proc.kill();
-  process.exit(1);
+  process.exitCode = 1;
+} finally {
+  // A hung browser or app must not leave the gate running: close both and
+  // exit explicitly on every path.
+  try {
+    await browser?.close();
+  } catch (_) {}
+  proc.kill("SIGKILL");
+  process.exit(process.exitCode ?? 1);
 }
-await browser.close();
-proc.kill();
-if (failures.length) {
-  console.error(`\nspa-vdom-identity: ${failures.length} FAILED: ${failures.join("; ")}`);
-  process.exit(2);
-}
-console.log("\nspa-vdom-identity: all checks PASS");

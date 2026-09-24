@@ -49,6 +49,12 @@ func durableCtxOf(wiring any) *durableCtx {
 // boot runs setup (create the snapshot table, once) then restores the model for
 // runId, returning the restored model or initModel when there is no snapshot.
 func (d *durableCtx) boot(runId string, initModel any) any {
+	return d.bootWith(runId, nil, initModel)
+}
+
+// bootWith is boot with the request that created a Sky.Live session (nil
+// for Cli / Tui).
+func (d *durableCtx) bootWith(runId string, req any, initModel any) any {
 	if d == nil {
 		return initModel
 	}
@@ -69,7 +75,21 @@ func (d *durableCtx) boot(runId string, initModel any) any {
 		durableReportRestoreFailure(runId, fmt.Sprintf("%v", extractErrResultValue(res)))
 		return initModel
 	}
+	// Sky.Live: a request-derived Model (App.withRequest) must not be
+	// replaced by the snapshot's copy of an EARLIER request's fields. The
+	// Live wiring carries `applyRestoreRequest`, which applies the snapshot
+	// and then re-runs the request hook over it for the current request.
+	if applyReq := Field(d.wiring, "ApplyRestoreRequest"); applyReq != nil && req != nil {
+		return SkyCall(applyReq, req, res, initModel)
+	}
 	return SkyCall(applyFn, res, initModel)
+}
+
+// bootRequest is boot for a Sky.Live fresh session: req is the request that
+// created the session (the same value Live's init received), so a restore
+// can re-derive the fields App.withRequest takes from the CURRENT request.
+func (d *durableCtx) bootRequest(runId string, req any, initModel any) any {
+	return d.bootWith(runId, req, initModel)
 }
 
 // bootFixed / persistFixed use the ctx's own fixed run id (Cli / Tui). Both are

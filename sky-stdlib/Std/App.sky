@@ -87,6 +87,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.Http as Http
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 import Sky.Ffi as Ffi
@@ -98,6 +99,7 @@ import Std.Db as Db exposing (Db)
 import Std.Durable as Durable
 import Std.Html as Html exposing (Html)
 import Std.Live as Live
+import Std.Log as Log
 import Std.Spa as Spa
 import Std.Tui as Tui
 import Std.Ui as Ui exposing (Element(..))
@@ -560,6 +562,53 @@ withDurableId rid dbHandle codec (App a) =
             , runId = rid
             }
         }
+
+
+-- The Sky.Live durability wiring: the shared one plus `applyRestoreRequest`.
+-- A Live session is restored on its first request AFTER `init` has run the
+-- `withRequest` hook, so the snapshot would replace the fields that hook took
+-- from the CURRENT request (a cookie, a header) with the copy an earlier
+-- request left in the snapshot. The runtime passes the request, and this
+-- re-runs the hook over the restored Model. The hook's `Cmd` already ran once
+-- for this request (from `init`), so it is not run again.
+--
+-- The seed is a type variable, as in `Live.config`'s `init : a -> …`: the
+-- runtime hands over the raw request seed, and `toRequest`
+-- (`requestFromSeed_`) turns it into the `Request` the hook takes.
+liveDurable_ : (seed -> Request) -> Maybe (Request -> model -> ( model, Cmd msg )) -> DurableWiring model -> { enabled : Bool
+, setup : Task Error ()
+, restore : String -> Task Error (Maybe model)
+, persist : String -> model -> Task Error ()
+, applyRestore : Result Error (Maybe model) -> model -> model
+, runId : String
+, applyRestoreRequest : seed -> Result Error (Maybe model) -> model -> model
+}
+liveDurable_ toRequest onRequest d =
+    { enabled = d.enabled
+    , setup = d.setup
+    , restore = d.restore
+    , persist = d.persist
+    , applyRestore = d.applyRestore
+    , runId = d.runId
+    , applyRestoreRequest =
+        \liveSeed res initModel ->
+            case onRequest of
+
+                Just f ->
+                    case res of
+
+                        Ok (Just m) ->
+                            let
+                                ( m1, _ ) = f (toRequest liveSeed) m
+                            in
+                                m1
+
+                        _ ->
+                            initModel
+
+                Nothing ->
+                    d.applyRestore res initModel
+    }
 
 
 -- The runtime only calls this for `Ok`: a restore that FAILS (a snapshot the
@@ -1065,7 +1114,9 @@ runLiveBoot_ (App a) =
                             withGuard_
                 withDur_ =
                     if a.durable.enabled then
-                        Live.withDurable a.durable withNav_
+                        Live.withDurable
+                            (liveDurable_ requestFromSeed_ a.onRequest a.durable)
+                            withNav_
 
                     else
                         withNav_
@@ -1374,13 +1425,28 @@ runLiveWindow (App a) =
         -- `livePort_` runs Live's own resolver over `findWeb`'s port, so an
         -- operator's `SKY_LIVE_PORT` override moves the window with the server
         -- instead of leaving it on the WebOpts port (a blank window).
+        --
+        -- `Task.spawn` discards the spawned task's result, so a server that
+        -- FAILS to start (a listen error, a bad config) used to be lost: the
+        -- window then waited out its probe and failed with no cause. The
+        -- server task reports its own failure and ends the process instead.
     in
         Task.andThen
             (\_ ->
                 openLiveWindow_
                     (livePort_ w.port)
                     { title = d.title, size = ( d.width, d.height ) })
-            (Task.spawn (runLive (App a)))
+            (Task.spawn (runLive (App a) |> Task.onError liveWindowServerFailed_))
+
+
+-- | The Live server of a desktop window failed to start: say why, then end
+-- the process (exit 1) so no window opens onto a server that is not there.
+liveWindowServerFailed_ : Error -> Task Error ()
+liveWindowServerFailed_ e =
+    Log.error
+        ("desktop window: the Sky.Live server failed to start, so the window is not opened: "
+            ++ Error.toString e)
+        |> Task.andThen (\_ -> System.exit 1)
 
 
 -- | The port Sky.Live binds for a `Live.withPort p` config (env override,
@@ -1395,9 +1461,11 @@ openLiveWindow_ : Int -> { title : String
 } -> Task Error ()
 openLiveWindow_ port window =
     -- Wait until the Live server actually answers before opening the window. A
-    -- fixed delay was wrong: an app with a slow boot (embedded PostgreSQL takes
-    -- ~20s) is not listening yet, so the webview loaded a dead port and rendered
-    -- blank with no retry. Poll the port, then navigate once it responds.
+    -- fixed delay was wrong: an app with a slow `init` is not listening yet, so
+    -- the webview loaded a dead port and rendered blank with no retry. Poll the
+    -- port, then navigate once it responds. (An `--embed` PostgreSQL is not a
+    -- case of this: the generated `main` boots the cluster and waits for it to
+    -- accept connections BEFORE the app body, and so this code, runs.)
     Task.andThen
         (\_ -> Webview.url ("http://localhost:" ++ String.fromInt port) window)
         (waitForServer_ port 200)

@@ -1,0 +1,87 @@
+module Main exposing (main)
+
+{-| Fixture for scripts/tui-e2e.sh — an App.tui String view with a line
+prompt (App.withInput) and App.withGuard. The guard rejects `Reveal`, so a
+rejected line must leave the model unchanged (T12 for App.tui). The prompt
+sits on the bottom row, so a terminal resize must move it (SIGWINCH repaint).
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+type alias Model =
+    { count : Int
+    , secret : String
+    }
+
+type Msg
+    = Inc
+    | Reveal
+    | Other String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, secret = "hidden" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Reveal ->
+            ( { model | secret = "REVEALED", count = model.count + 100 }
+            , Cmd.none
+            )
+
+        Other _ ->
+            ( model, Cmd.none )
+
+
+guard : Msg -> Model -> Result Error ()
+guard msg _ =
+    case msg of
+
+        Reveal ->
+            Err Error.permissionDenied
+
+        _ ->
+            Ok ()
+
+
+onLine : String -> Msg
+onLine s =
+    if s == "inc" then
+        Inc
+
+    else if s == "secret" then
+        Reveal
+
+    else
+        Other s
+
+
+view : Model -> String
+view model =
+    "count=" ++ String.fromInt model.count ++ " secret=" ++ model.secret
+
+
+main : Task Error ()
+main =
+    App.run
+        (App.tui
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withInput onLine
+            |> App.withGuard guard)

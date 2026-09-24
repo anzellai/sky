@@ -2488,7 +2488,9 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// restart / memory-store eviction whenever the sid cookie survives. A
 		// no-op (returns init's model) when the app is not durable or no snapshot
 		// exists. Runs before applyRoute so the current URL's page still wins.
-		model = app.durable.boot(sid, model)
+		// The request goes along so a restore keeps the fields App.withRequest
+		// derives from THIS request (not the snapshot's stale copy).
+		model = app.durable.bootRequest(sid, req, model)
 		// Register model types for gob encoding so DB-backed
 		// session stores can decode them on future Get calls.
 		gobRegisterAll(model)
@@ -5744,6 +5746,8 @@ var __skyGapTimer = null;
 var __skyGapWaitMs = 1500;
 var __skyProcEpoch = null;   // server process epoch from the SSE hello
 var __skySrcBySeq = {};      // event seq -> checkbox/radio that sent it
+var __skyBaseBySeq = {};     // event seq -> {sid, value} of the focused field when it was sent
+var __skyRebaseBase = null;  // the entry of the reply being applied (see __skyRebase)
 
 function __skyInputEntry(sid) {
   var e = __skyInputs[sid];
@@ -5920,6 +5924,30 @@ function __skyRequestResync() {
   __skyClientSeq++;
   __skyPostEvent({sessionId: __skySid, seq: __skyClientSeq, msg: "__skyResync",
                   args: [], handlerId: "", tab: __skyTabId});
+}
+
+// __skyRebase: the reply to an event sets a new value for the focused
+// field, but the user has typed on since the event left (a chat composer:
+// type, Enter, keep typing). The field is dirty, so the value would be
+// dropped and the old text kept: "first" + "second" became "firstsecond"
+// although update cleared the draft on Enter. When the field still starts
+// with its value at send time and only has text appended, the appended text
+// is the user's edit ON TOP of the server's value: apply the server's value,
+// keep the appended text after it, and send the result. Any other edit
+// (inside the old text) keeps the DOM, as before.
+function __skyRebase(el, serverValue) {
+  var b = __skyRebaseBase;
+  if (!b || el.__skyComposing || el.getAttribute("sky-id") !== b.sid) return false;
+  var cur = String(el.value == null ? "" : el.value);
+  var sv = String(serverValue == null ? "" : serverValue);
+  if (sv === b.value || cur.length <= b.value.length || cur.lastIndexOf(b.value, 0) !== 0) return false;
+  el.value = sv + cur.slice(b.value.length);
+  var end = el.value.length;
+  try { el.setSelectionRange(end, end); } catch (_) {}
+  if (el.hasAttribute("sky-input")) {
+    __skyDispatchInput(el, el.getAttribute("sky-input"), __skyHid(el, "input"), [el.value], null);
+  }
+  return true;
 }
 
 // __skyAfterEvent runs once the reply to event "seq" is applied. A
@@ -6133,7 +6161,7 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     // F9: the focused input keeps its node, but when the user's
     // keystrokes are all acknowledged its value follows the model like
     // any other patch (a clear / normalisation must show).
-    if (isFocused && !__skyIsDirty(live)) {
+    if (isFocused) {
       var pv = null;
       if (live.tagName === "TEXTAREA") {
         if (!__skyPlaceholderUncontrolled(placeholder)) pv = placeholder.value;
@@ -6141,9 +6169,13 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
                  live.type !== "checkbox" && live.type !== "radio" && live.type !== "file") {
         pv = placeholder.getAttribute("value");
       }
-      if (pv !== null && live.value !== pv) {
-        live.value = pv;
-        __skyNoteServerValue(live, pv);
+      if (!__skyIsDirty(live)) {
+        if (pv !== null && live.value !== pv) {
+          live.value = pv;
+          __skyNoteServerValue(live, pv);
+        }
+      } else if (pv !== null) {
+        __skyRebase(live, pv);
       }
     }
     // Splice: replace the placeholder in tmp with the live node.
@@ -6618,6 +6650,18 @@ function __skySend(msgName, args, handlerId, opts) {
   __skyClientSeq++;
   var mySeq = __skyClientSeq;
   if (opts.src) __skySrcBySeq[mySeq] = opts.src;
+  // The focused text field's value as this event leaves: the base the
+  // reply's value for it applies to (see __skyRebase).
+  var fae = document.activeElement;
+  if (fae && (fae.tagName === "INPUT" || fae.tagName === "TEXTAREA") &&
+      fae.type !== "checkbox" && fae.type !== "radio" && fae.type !== "file" &&
+      fae.getAttribute("sky-id")) {
+    __skyBaseBySeq[mySeq] = { sid: fae.getAttribute("sky-id"), value: String(fae.value == null ? "" : fae.value) };
+    // A reply that never applies (dropped as stale) leaves its entry;
+    // integer keys enumerate ascending, so drop the oldest past a bound.
+    var bks = Object.keys(__skyBaseBySeq);
+    if (bks.length > 64) delete __skyBaseBySeq[bks[0]];
+  }
   // Stamp every currently-dirty input with this seq. The server's
   // ack (for a future response) will clear them back to parity.
   var dirtyIds = Object.keys(__skyInputs);
@@ -6667,11 +6711,32 @@ var __skyPostChain = Promise.resolve();
 var __skyDraining = false;
 function __skyPostEvent(body) {
   if (__skyEventQueue.length > 0 && !__skyDraining) {
-    __skyEventQueue.push(body);
+    __skyQueueInsert(body);
     return;
   }
-  var run = function() { return __skyPostEventNow(body); };
+  var fromQueue = __skyDraining;
+  var run = function() {
+    // An EARLIER event failed while this one waited in the chain: it must
+    // not overtake that event. Queue it in order; the drain sends it.
+    if (!fromQueue && __skyEventQueue.length > 0) {
+      __skyQueueInsert(body);
+      return;
+    }
+    return __skyPostEventNow(body);
+  };
   __skyPostChain = __skyPostChain.then(run, run);
+}
+// __skyQueueInsert keeps the retry queue in send (seq) order. A replayed
+// event that fails again goes back in FRONT of the later events it was
+// ahead of; appending it let a later click overtake it (two queued deletes
+// replayed as b, a).
+function __skyQueueInsert(body) {
+  var i = __skyEventQueue.length;
+  while (i > 0 && typeof body.seq === "number" && typeof __skyEventQueue[i - 1].seq === "number" &&
+         __skyEventQueue[i - 1].seq > body.seq) {
+    i--;
+  }
+  __skyEventQueue.splice(i, 0, body);
 }
 function __skyPostEventNow(body) {
   // Phase 1.2 — attach the per-session CSRF token. The server-side
@@ -6771,7 +6836,13 @@ function __skyPostEventNow(body) {
         __skyOnPostSuccess();
         if (!data) return;
         __skyHandleResponse(data.seq, data.ackInputs, function() {
-          if (data.patches) __skyApplyPatches(data.patches);
+          __skyRebaseBase = __skyBaseBySeq[body.seq] || null;
+          try {
+            if (data.patches) __skyApplyPatches(data.patches);
+          } finally {
+            __skyRebaseBase = null;
+            delete __skyBaseBySeq[body.seq];
+          }
           __skyAfterEvent(body.seq);
         }, data.globalSeq, data.view, data.base, true);
         if (data.error) __skyShowError(data.error);
@@ -6785,8 +6856,16 @@ function __skyPostEventNow(body) {
       var ackRaw = r.headers.get("X-Sky-Ack-Inputs");
       var ack = null;
       if (ackRaw) { try { ack = JSON.parse(ackRaw); } catch(_) {} }
-      __skyHandleResponse(seq, ack, function() { __skyPatch(t); __skyAfterEvent(body.seq); },
-                          undefined, r.headers.get("X-Sky-View"), "", false);
+      __skyHandleResponse(seq, ack, function() {
+        __skyRebaseBase = __skyBaseBySeq[body.seq] || null;
+        try {
+          __skyPatch(t);
+        } finally {
+          __skyRebaseBase = null;
+          delete __skyBaseBySeq[body.seq];
+        }
+        __skyAfterEvent(body.seq);
+      }, undefined, r.headers.get("X-Sky-View"), "", false);
     });
   }).catch(function() {
     __skyLoaderEnd();
@@ -6829,7 +6908,7 @@ function __skyOnPostFailure(body) {
       console.warn("[sky.live] event queue at cap; dropped oldest", dropped);
     }
   }
-  __skyEventQueue.push(body);
+  __skyQueueInsert(body);
   __skyShowReconnecting();
   __skyScheduleRetry();
 }
@@ -6976,6 +7055,7 @@ function __skyApplyPatches(patches) {
         // next event round-trip settle the state.
         if (dirty && (k === "value" || k === "checked" || k === "selected" ||
                       k === "data-sky-checked")) {
+          if (k === "value") __skyRebase(el, v);
           continue;
         }
         if (v === "") {

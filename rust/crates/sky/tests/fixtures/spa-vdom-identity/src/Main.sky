@@ -21,6 +21,8 @@ module Main exposing (main)
 --   /u/:name  SPA-5 a route param decodes the same on the server and the client
 --   /plain    F5   a page the client cannot hydrate (a valued textarea) is
 --                  built from scratch; its select must still show "c"
+--   navs      Back / Forward (popstate) runs onNavigate once per step, on
+--                  Sky.Spa and on Sky.Live alike
 --
 -- `Reload` reads a file (a SERVER branch), which puts the app on the SSR path.
 
@@ -57,6 +59,7 @@ type alias Model =
     , ime : String
     , dark : Bool
     , log : List String
+    , navs : List String
     }
 
 type Msg
@@ -75,6 +78,7 @@ type Msg
     | Colour String
     | Ime String
     | Toggle
+    | Navigated Page
 
 
 init : () -> ( Model, Cmd Msg )
@@ -92,6 +96,7 @@ init () =
       , ime = ""
       , dark = False
       , log = []
+      , navs = []
       }
     , Cmd.none
     )
@@ -166,6 +171,26 @@ update msg model =
 
         Toggle ->
             ( { model | dark = not model.dark }, Cmd.none )
+
+        Navigated p ->
+            ( { model | navs = model.navs ++ [ pageName p ] }, Cmd.none )
+
+
+pageName : Page -> String
+pageName p =
+    case p of
+
+        Home ->
+            "home"
+
+        UserPage name ->
+            "u:" ++ name
+
+        Plain ->
+            "plain"
+
+        NotFoundPage ->
+            "notfound"
 
 
 btn : String -> Msg -> Element Msg
@@ -307,6 +332,9 @@ view model =
                       [ Ui.htmlAttribute "id" "ulen" ]
                       (Ui.text ("len=" ++ String.fromInt (String.length name)))
                 , btn "toggle" Toggle
+                , Ui.el
+                      [ Ui.htmlAttribute "id" "navs" ]
+                      (Ui.text (String.join "," model.navs))
                 ]
 
         Plain ->
@@ -350,6 +378,7 @@ app =
                , App.routeParam "/u/:name" UserPage
                ]
         |> App.withNotFound NotFoundPage
+        |> App.withOnNavigate Navigated
 
 
 main =

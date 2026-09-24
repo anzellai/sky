@@ -12,10 +12,12 @@
 #     onKey, Ctrl-C quits with onKey set, withDurable restores the model, an
 #     App.tui String view draws at column 0 and quits on q, and the Std.Ui
 #     controls work (focus by identity, textarea, form submit, slider,
-#     onEnter, the App.withInput line prompt);
+#     onEnter, the App.withInput line prompt), and an App.tui String view
+#     with App.withGuard keeps its model when the guard rejects a line and
+#     repaints its bottom-row prompt on a terminal resize (SIGWINCH);
 #   * runs the terminal:cli app with no input handler: it must exit 0 after
 #     its slow Cmd.perform landed, with the published payload delivered and
-#     the guarded Msg rejected.
+#     the guarded Msg rejected, and every printed view frame ends with a newline.
 #
 # Proven to FAIL on a pre-fix compiler and PASS on the fixed one.
 #
@@ -49,7 +51,7 @@ if ! python3 -c 'import pyte' >/dev/null 2>&1; then
   PY="$WORK/venv/bin/python"
 fi
 
-for fx in app string forms cli; do
+for fx in app string forms guard cli; do
   mkdir -p "$WORK/$fx"
   cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/tui-e2e/$fx/." "$WORK/$fx/"
   echo "==> building the tui-e2e $fx fixture"
@@ -66,18 +68,30 @@ bin_of() {
 APP_BIN="$(bin_of "$WORK/app" terminal-tui)"
 STR_BIN="$(bin_of "$WORK/string" terminal-tui)"
 FORMS_BIN="$(bin_of "$WORK/forms" terminal-tui)"
+GUARD_BIN="$(bin_of "$WORK/guard" terminal-tui)"
 CLI_BIN="$(bin_of "$WORK/cli" terminal-cli)"
 
 echo "==> driving the terminal:tui fixtures in a pty"
 with_timeout 300 "$PY" "$ROOT/scripts/tui-e2e-drive.py" "$WORK/app" "$APP_BIN" "$WORK/string" "$STR_BIN" \
-  "$WORK/forms" "$FORMS_BIN"
+  "$WORK/forms" "$FORMS_BIN" "$WORK/guard" "$GUARD_BIN"
 
 echo "==> running the terminal:cli fixture without an input handler"
 set +e
-CLI_OUT="$(cd "$WORK/cli" && with_timeout 30 "$CLI_BIN" </dev/null 2>&1)"
+( cd "$WORK/cli" && with_timeout 30 "$CLI_BIN" </dev/null >|"$WORK/cli.out" 2>&1 )
 CLI_RC=$?
 set -e
+CLI_OUT="$(cat "$WORK/cli.out")"
 fail=0
+# Each printed frame of the flattened Element view ends with a newline, so
+# successive frames (and the shell prompt after the program) start on their
+# own line instead of running together ("...secret=hiddenloaded=no ...").
+frames="$(grep -o 'loaded=' "$WORK/cli.out" | wc -l | tr -d ' ')"
+starts="$(grep -c '^loaded=' "$WORK/cli.out" || true)"
+if [ "$frames" -lt 1 ] || [ "$frames" != "$starts" ] || [ "$(tail -c 1 "$WORK/cli.out" | od -An -c | tr -d ' ')" != '\n' ]; then
+  echo "FAIL  cli: every view frame ends with a newline ($frames frames, $starts at a line start)"; fail=1
+else
+  echo "PASS  cli: every view frame ends with a newline ($frames frames)"
+fi
 [ "$CLI_RC" -eq 0 ] || { echo "FAIL  terminal:cli without withInput exits 0 (got $CLI_RC)"; fail=1; }
 case "$CLI_OUT" in *"loaded=yes heard=hello secret=hidden"*) echo "PASS  cli: perform landed + publish delivered + guard held" ;;
   *) echo "FAIL  cli: expected 'loaded=yes heard=hello secret=hidden'"; fail=1 ;; esac

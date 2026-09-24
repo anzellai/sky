@@ -35,6 +35,7 @@ type alias Model =
     , denom : Float
     , ratio : Float
     , log : List String
+    , navs : List String
     }
 
 type Msg
@@ -56,6 +57,9 @@ type Msg
     | Boom
     | IncMain
     | WipeOther
+    | Shout
+    | Heard String
+    | Navigated Page
 
 
 init : a -> ( Model, Cmd Msg )
@@ -72,6 +76,7 @@ init _ =
       , denom = 0.0
       , ratio = 1.0
       , log = []
+      , navs = []
       }
     , Cmd.none
     )
@@ -152,6 +157,15 @@ update msg model =
         WipeOther ->
             ( push "wipe-other" model, Cmd.none )
 
+        Shout ->
+            ( push "shout" model, Cmd.publish "shout" "hi" )
+
+        Heard s ->
+            ( push ("heard:" ++ s) model, Cmd.none )
+
+        Navigated p ->
+            ( { model | navs = model.navs ++ [ pageName p ] }, Cmd.none )
+
 
 idA : String -> Ui.Attribute msg
 idA s =
@@ -176,9 +190,24 @@ view model =
             mainView model
 
 
+pageName : Page -> String
+pageName p =
+    case p of
+
+        Main ->
+            "main"
+
+        Other ->
+            "other"
+
+
 logView : Model -> Element Msg
 logView model =
-    Ui.el [ idA "log" ] (Ui.text (String.join "," model.log))
+    Ui.column
+        []
+        [ Ui.el [ idA "log" ] (Ui.text (String.join "," model.log))
+        , Ui.el [ idA "navs" ] (Ui.text (String.join "," model.navs))
+        ]
 
 
 mainView : Model -> Element Msg
@@ -265,6 +294,9 @@ mainView model =
                           })
                   model.rows)
         , Ui.button
+              [ idA "shout" ]
+              { onPress = Just Shout, label = Ui.text "shout" }
+        , Ui.button
               [ idA "boom" ]
               { onPress = Just Boom, label = Ui.text "boom" }
         , Ui.el
@@ -281,7 +313,7 @@ mainView model =
 
 subscriptions : Model -> Sub Msg
 subscriptions _ =
-    Sub.none
+    Sub.subscribeTopic "shout" Heard
 
 
 app =
@@ -293,6 +325,7 @@ app =
         }
         |> App.withRoutes [ App.route "/" Main, App.route "/other" Other ]
         |> App.withNotFound Main
+        |> App.withOnNavigate Navigated
 
 
 main =

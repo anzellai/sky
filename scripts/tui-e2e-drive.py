@@ -2,7 +2,7 @@
 """scripts/tui-e2e-drive.py — drive the tui-e2e fixtures in a real pty.
 
 usage: tui-e2e-drive.py <app-dir> <app-binary> <string-dir> <string-binary>
-                        <forms-dir> <forms-binary>
+                        <forms-dir> <forms-binary> <guard-dir> <guard-binary>
 
 Each scenario starts the binary under a pseudo-terminal, writes key bytes
 (some deliberately split across writes), and reads the screen back through
@@ -218,6 +218,34 @@ def main():
         p.write(b"q")
         rc = p.wait_exit(3)
         check("q quits an App.tui without onKey (exit 0)", rc == 0, p.text())
+    finally:
+        p.close()
+
+    # 4b. App.tui String view with App.withGuard + a line prompt. A line the
+    #     guard rejects leaves the model unchanged (T12 for App.tui); a
+    #     terminal resize repaints, so the bottom-row prompt follows the new
+    #     last row (SIGWINCH).
+    guard_dir, guard_bin = sys.argv[7:9]
+    p = Pty(guard_dir, guard_bin)
+    try:
+        check("App.tui with withGuard starts", p.wait_for("count=0 secret=hidden", 3), p.text())
+        p.write(b"inc\r")
+        p.wait_for("count=1", 3)
+        p.write(b"secret\r", settle=0.4)
+        p.write(b"inc\r")
+        ok = p.wait_for("count=2 secret=hidden", 3)
+        check("App.tui: a Msg the guard rejects does not change the model",
+              ok and "REVEALED" not in p.text() and "count=10" not in p.text(), p.text())
+        new_rows = ROWS - 10
+        fcntl.ioctl(p.master, termios.TIOCSWINSZ, struct.pack("HHHH", new_rows, COLS, 0, 0))
+        p.screen.resize(new_rows, COLS)
+        p.pump(0.6)
+        lines = p.text().splitlines()
+        check("App.tui repaints on a terminal resize (prompt on the new last row)",
+              len(lines) == new_rows and lines[new_rows - 1].startswith(">")
+              and lines[0].startswith("count=2"), p.text())
+        p.write(b"\x03")
+        p.wait_exit(3)
     finally:
         p.close()
 

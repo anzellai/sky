@@ -685,3 +685,85 @@ fn a_guard_attached_via_a_local_helper_is_enforced_on_web_app() {
         "the guarded effect must not run:\n{resp}"
     );
 }
+
+fn desktop_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-desktop")
+}
+
+/// SA-9. `--target desktop` runs the Sky.Live server on a spawned task and
+/// opens the native window once that server answers. `Task.spawn` drops the
+/// spawned task's result, so a server that FAILED to start (here: the bind
+/// address is not on this machine, which is not the port-in-use case that
+/// already exits) was lost: the window probe polled a dead port for about 50 s
+/// and then failed with no cause. It must fail at once, name the cause, and
+/// open no window. (A headless test cannot cover the success path, where a
+/// native window opens; the port the window and the probe use is covered by
+/// `TestStdAppLivePort_FollowsEnvOverride`.)
+#[cfg(target_os = "macos")]
+#[test]
+fn a_desktop_window_whose_live_server_fails_to_start_exits_at_once_naming_the_cause() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = copy_fixture_to_temp(desktop_fixture_dir(), "desktop-fail");
+    {
+        let _build_guard = BUILD_LOCK.lock().unwrap();
+        let out = Command::new(SKY)
+            .args(["build", "src/Main.sky"])
+            .current_dir(&dir)
+            .output()
+            .expect("run sky build");
+        assert!(
+            out.status.success(),
+            "desktop fixture build failed:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let bin = [".skyapp/desktop/sky-out/app", "sky-out/app"]
+        .iter()
+        .map(|p| dir.join(p))
+        .find(|p| p.is_file())
+        .expect("no desktop binary built");
+    let log_path = dir.join("run.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let started = std::time::Instant::now();
+    let mut child = Command::new(&bin)
+        .current_dir(&dir)
+        // 192.0.2.1 is TEST-NET-1: never an address of this machine, so the
+        // listener fails with "can't assign requested address".
+        .env("SKY_HOST", "192.0.2.1")
+        .env("SKY_LIVE_PORT", "9334")
+        .stdin(std::process::Stdio::null())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .expect("spawn desktop app");
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break Some(s);
+        }
+        if started.elapsed() > std::time::Duration::from_secs(20) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    let out = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    let status = status.unwrap_or_else(|| {
+        panic!(
+            "the desktop app was still running 20 s after its Live server failed to \
+             start (the failure was lost; the window probe kept polling):\n{out}"
+        )
+    });
+    assert!(
+        !status.success(),
+        "a desktop app whose server cannot start must exit non-zero:\n{out}"
+    );
+    assert!(
+        out.contains("failed to start") && out.contains("192.0.2.1"),
+        "the exit must name the server's start failure and its cause:\n{out}"
+    );
+}

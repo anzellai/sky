@@ -228,6 +228,15 @@ impl Server {
     }
 }
 
+// A failed assertion unwinds past `stop`; without this the server process
+// outlives the test and holds its port, so the next run cannot start.
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 fn curl_get(port: u16, path: &str, jar: &Path, save: bool) -> String {
     let url = format!("http://127.0.0.1:{port}{path}");
     let mut args: Vec<String> = vec![
@@ -418,6 +427,186 @@ fn a_live_model_survives_a_process_restart_via_durable_snapshot() {
         "a fresh cookie-less session on process 2 must start at 0, not the restored value:\n{fresh}"
     );
 
+    server2.stop();
+    let _ = std::fs::remove_dir_all(&project);
+    let _ = std::fs::remove_file(&jar);
+}
+
+/// A durable Live app whose `App.withRequest` hook copies the `X-Probe` request
+/// header into the Model. The snapshot holds the header of the request that
+/// was current when it was written; a restore must not bring that stale value
+/// back over the header of the request that is current now.
+const REQ_APP_SRC: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Db as Db exposing (Db)
+import Std.Codec as Codec exposing (Codec)
+
+
+type alias Model =
+    { count : Int, probe : String }
+
+
+modelCodec : Codec Model
+modelCodec =
+    Codec.auto { count = 0, probe = "" }
+
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, probe = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+fromRequest req model =
+    ( { model | probe = Maybe.withDefault "none" (Dict.get "X-Probe" req.headers) }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("DCOUNT=" ++ String.fromInt model.count)
+        , Ui.text ("PROBE=" ++ model.probe ++ ";")
+        , Ui.button [] { onPress = Just Increment, label = Ui.text "inc" }
+        ]
+
+
+mkApp db =
+    App.app { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+        |> App.withRequest fromRequest
+        |> App.withNotFound ()
+        |> App.withDurable db modelCodec
+
+
+main : Task Error ()
+main =
+    Db.connect () |> Task.andThen (\db -> App.run (mkApp db))
+"#;
+
+fn curl_get_probe(port: u16, jar: &Path, probe: &str) -> String {
+    let url = format!("http://127.0.0.1:{port}/");
+    let out = Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "30",
+            "-b",
+            &jar.display().to_string(),
+            "-c",
+            &jar.display().to_string(),
+            "-H",
+            &format!("X-Probe: {probe}"),
+            &url,
+        ])
+        .output()
+        .expect("run curl GET (probe)");
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+fn rendered_probe(body: &str) -> Option<String> {
+    let idx = body.find("PROBE=")?;
+    let rest = &body[idx + "PROBE=".len()..];
+    Some(rest[..rest.find(';')?].to_string())
+}
+
+#[test]
+// Same tier as the restart test above: a real `go build` + two processes.
+#[ignore = "heavy HTTP restart e2e leg; runs nightly (--ignored)"]
+fn a_durable_restore_keeps_the_fields_with_request_derives_from_the_current_request() {
+    if !have_go() {
+        required(Need::Go, false);
+        return;
+    }
+    if !have_curl() {
+        panic!("curl is required to drive the Sky.Live HTTP restart flow");
+    }
+    let project = std::env::temp_dir().join(unique("dlive-req"));
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(
+        project.join("sky.toml"),
+        "name = \"dlivereq\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\
+         [database]\ndriver = \"sqlite\"\npath = \"dlivereq.db\"\n",
+    )
+    .unwrap();
+    std::fs::write(project.join("src").join("Main.sky"), REQ_APP_SRC).unwrap();
+    let build = run_bounded(
+        Command::new(SKY)
+            .args(["build", "src/Main.sky"])
+            .current_dir(&project),
+        "sky build src/Main.sky",
+    );
+    assert!(
+        build.status.success(),
+        "durable withRequest Live app build failed:\n{}",
+        both(&build)
+    );
+    let app_bin = project.join("sky-out").join("app");
+
+    // Process 1: the request carries X-Probe: first; one update snapshots it.
+    let server1 = Server::launch(&project, &app_bin, 9321);
+    let jar = std::env::temp_dir().join(unique("dl-req-jar"));
+    let initial = curl_get_probe(server1.port, &jar, "first");
+    assert_eq!(
+        rendered_probe(&initial).as_deref(),
+        Some("first"),
+        "{initial}"
+    );
+    let csrf = cookie_from_jar(&jar, "__sky_csrf").expect("process 1 set no __sky_csrf cookie");
+    let handler_id = button_handler_id(&initial).expect("could not find the button data-sky-hid");
+    let status = curl_post_event(server1.port, &jar, &csrf, &handler_id);
+    assert_eq!(
+        status,
+        "200",
+        "event returned HTTP {status}\nlog:\n{}",
+        server1.read_log()
+    );
+    let on1 = curl_get_probe(server1.port, &jar, "first");
+    assert_eq!(
+        rendered_count(&on1),
+        Some(1),
+        "process 1 did not apply its own dispatch:\n{on1}"
+    );
+    // The snapshot write after an update is asynchronous: give it time to
+    // land before the process is killed.
+    std::thread::sleep(Duration::from_millis(1000));
+    server1.stop();
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Process 2: the SAME session, a new request with X-Probe: second. The
+    // count comes from the snapshot; the probe comes from THIS request.
+    let server2 = Server::launch(&project, &app_bin, 9322);
+    let restored = curl_get_probe(server2.port, &jar, "second");
+    assert_eq!(
+        rendered_count(&restored),
+        Some(1),
+        "the snapshot was not restored:\n{restored}\nlog:\n{}",
+        server2.read_log()
+    );
+    assert_eq!(
+        rendered_probe(&restored).as_deref(),
+        Some("second"),
+        "the durable restore overwrote the field App.withRequest derived from the current \
+         request with the snapshot's stale value:\n{restored}"
+    );
     server2.stop();
     let _ = std::fs::remove_dir_all(&project);
     let _ = std::fs::remove_file(&jar);

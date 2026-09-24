@@ -3,10 +3,16 @@
 -- `button / text / multiline / email / username / search /
 -- currentPassword / newPassword / checkbox / radio / radioRow /
 -- slider` build typed `Element msg` form widgets with labels and
--- typed event slots.  Password fields obey the v0.15 best-practice
--- pattern — pair with `Ui.form` + `onSubmit DoSignIn` rather than
--- per-keystroke `onInput`, so the secret never lands in Model and
--- the browser password manager doesn't re-prompt on every render.
+-- typed event slots.  The text controls are CONTROLLED: each sends
+-- `onChange` on every keystroke and renders `text` back as its value.
+-- That includes `currentPassword` / `newPassword`, so they put the
+-- secret in the Model. For a sign-in or sign-up form, follow the
+-- password-form pattern instead: a named `Ui.input` with type
+-- "password" (no `value`, no `onInput`) inside `Ui.form` +
+-- `Ui.onSubmit DoSignIn` (docs/skyui/overview.md, "Forms — the
+-- password best-practice pattern"). Use the two password controls
+-- only when you need the value on every keystroke (a strength
+-- meter, live validation).
 module Std.Ui.Input exposing
     ( button
     , text
@@ -175,11 +181,13 @@ search attrs cfg =
     inputBase "search" attrs cfg
 
 
--- Password input — current-password autocomplete (sign-in flows).
--- Per Sky.Live's "Forms with passwords" doctrine in CLAUDE.md you
--- normally want `Ui.form` + `onSubmit` rather than wiring `onChange`
--- on every keystroke; this control is here for cases where you do
--- need per-keystroke updates (validation feedback, strength meters).
+-- Password input — current-password autocomplete. It is CONTROLLED:
+-- `onChange` is required and fires on every keystroke, and `text` is
+-- rendered back as the value, so the secret lives in the Model. It
+-- cannot be used submit-only. For a sign-in form use a named
+-- `Ui.input` with type "password" inside `Ui.form` + `onSubmit` (see
+-- the module header); use this control only when you need the value
+-- per keystroke (validation feedback, strength meters).
 currentPassword : List (Attribute msg) -> { onChange : String -> msg
 , text : String
 , placeholder : Maybe (Placeholder msg)

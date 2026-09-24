@@ -939,8 +939,15 @@ func layoutElement(elem any, ctx tuiLayoutCtx, maxW, maxH int, parentAxis layout
 		}
 		// Skip first field (tag); the rest mirror Node's layout.
 		return layoutNode(ntag, fields[1:], ctx, maxW, maxH, parentAxis)
-	case 4: // Raw _
-		return layoutBox{kind: "text", text: "[raw]", width: 5, height: 1}
+	case 4: // Raw node — the Std.Html node's text content (markup cannot draw)
+		s := ""
+		if len(fields) > 0 {
+			s = tuiRawText(fields[0])
+		}
+		if s == "" {
+			return layoutBox{kind: "empty"}
+		}
+		return layoutBox{kind: "text", text: s, width: runeLen(s), height: 1}
 	}
 	return layoutBox{kind: "empty"}
 }

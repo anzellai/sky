@@ -40,7 +40,7 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | F4 | A select lost its value when its options re-rendered | fixed | `TestSelectKeepsValueWhenOptionsChange`, `TestEvent_SelectKeepsValueAcrossOptionsRerender`; spa-vdom-identity e2e "F4" |
 | F5 | Spa select first paint showed option 0 | fixed | spa-vdom-identity e2e "F5" |
 | UF-8 | A cleared number input sent `"0"` on Live | fixed | live-client e2e "UF-8" |
-| UF-11 | IME pre-edit strings were dispatched | fixed (Live, Spa); webview: see open | spa-vdom-identity e2e "UF-11"; live-client e2e "UF-11" |
+| UF-11 | IME pre-edit strings were dispatched | fixed (Live, Spa, webview) | spa-vdom-identity e2e "UF-11"; live-client e2e "UF-11", "webview UF-11" (the webview applier JS in headless Chromium; the native WKWebView is not driven) |
 | UF-13 | Checkbox / radio labels were not clickable | fixed | spa-vdom-identity e2e "UF-13" |
 
 ## C. Node identity in the diff
@@ -88,7 +88,7 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | ID | Defect | Status | Test |
 |---|---|---|---|
 | L7 | Only some dispatch paths persisted the session | fixed | `TestPerformCompletion_PersistsTheSession`, `TestTimeEveryTick_PersistsTheSession`, `TestDecodeSession_StaleOutSeqLiftedToFloor` |
-| L7 (epoch) | Client seq guard across a process restart | see open | — |
+| L7 (epoch) | Client seq guard across a process restart | fixed | `TestSSEHello_CarriesTheProcessEpoch`, `TestLiveClientResetsBroadcastGuardOnNewEpoch`; live-client e2e "L7 …" (the app is restarted mid-session on a sqlite session store, then a broadcast and a local update must apply) |
 | L9 | A delta frame overtaken by an HTTP reply was dropped | fixed | live-client e2e "L9" |
 | L10 | `withNotFound` only on the first request | fixed | `TestInitial_NotFoundPageOnEveryRequest` |
 | L12 | A classified update panic gave no feedback | fixed | `TestEvent_UpdatePanicSurfacesToTheUser`; live-client e2e "L12" |
@@ -121,7 +121,7 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | SA-2 | A second app value replaced fields | fixed | `std_app_second_app_value_does_not_replace_fields` |
 | SA-3 | `import Std.App as A` not detected | fixed | `std_app_aliased_and_exposed_run_is_detected_and_rewritten` |
 | SA-12 | Inline `App.run (App.app …)`; update without `case` | fixed | `std_app_inline_run_argument_is_read`; `spa_update_no_case.rs` |
-| T12 = SA-6 (terminal) | `withGuard` ignored on `terminal:cli` and `App.tui` (security) | fixed; App.tui test: see open | `TestCli_PublishAndGuard`; tui e2e (cli) |
+| T12 = SA-6 (terminal) | `withGuard` ignored on `terminal:cli` and `App.tui` (security) | fixed | `TestCli_PublishAndGuard`; tui e2e (cli); tui e2e "App.tui: a Msg the guard rejects does not change the model" (`tui-e2e/guard` fixture) |
 
 ## J. Durable
 
@@ -130,7 +130,7 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | T1 = SA-5 | `withDurable` no-op on the TUI | fixed | tui e2e "withDurable restores the model on restart" |
 | SA-8 | An undecodable snapshot was reset and overwritten | fixed | `TestDurableBoot_RestoreFailureKeepsSnapshot` |
 | (user decision) | `SnapshotEvent` swallowed restore and write failures | fixed (`RestoreFailed`, `PersistFailed`) | durable-tea-app fixture (exhaustive match) |
-| SA-9 | Desktop window probed the wrong port | fixed; e2e: see open | `TestStdAppLivePort_FollowsEnvOverride` |
+| SA-9 | Desktop window probed the wrong port | fixed | `TestStdAppLivePort_FollowsEnvOverride`; `std_app_flow::a_desktop_window_whose_live_server_fails_to_start_exits_at_once_naming_the_cause` (macOS; see the note under "Open") |
 | SA-10 | `terminal:tui` ignored `withInput` | fixed | tui e2e "line prompt" |
 
 ## K. Terminal loop
@@ -157,24 +157,49 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | D4 overflow | Mobile overflow in 12, 26, 37 | fixed (examples) | — (visual; checked in the sweep) |
 | D4 checkbox | Two boxes in 37 / 38 | fixed (example icons); a stdlib overlay was tried and REVERTED because an empty icon made the checkbox unclickable | live-client e2e (native checkbox clickable) |
 
+## M. Found while closing the judge's gaps (fixed in this release)
+
+| ID | Defect | Status | Test |
+|---|---|---|---|
+| L13 | Live: type, press Enter (update clears the draft), keep typing at once: the clear was dropped and the field showed "firstsecond" | fixed (the reply's value is applied under text appended since the event left, then sent) | live-client e2e "a cleared focused input takes the next typing (immediately)" |
+| L14 | Live: an event replayed from the retry queue that failed again went to the back, behind a later click (two queued deletes replayed as b, a) | fixed (the queue is kept in send order; a chained event does not overtake a queued one) | live-client e2e "queued events replay once each, in order, …"; `TestLiveJS_QueueAndRetryMarkers` |
+| SA-14 | Live + `withDurable` + `withRequest`: a restore replaced the request-derived fields with the snapshot's copy from an earlier request | fixed (the Live wiring re-runs the request hook over the restored Model) | `durable_tea_live_flow::a_durable_restore_keeps_the_fields_with_request_derives_from_the_current_request` |
+| SA-15 | Desktop: a Live server that failed to start (not port-in-use) was dropped by `Task.spawn`; the window probe waited about 50 s and failed with no cause | fixed (the server task logs the cause and exits 1) | `std_app_flow::a_desktop_window_whose_live_server_fails_to_start_exits_at_once_naming_the_cause` |
+| T19 | A `Raw` node (`Ui.html`) rendered as the literal `[raw]` in the TUI | fixed (its text content renders) | `TestTuiLayout_RawRendersItsTextContent` |
+| T20 | `terminal:cli` frames ran together on one line ("…hiddenloaded=no …") without the flatten's newline | covered (already fixed in the candidate; now gated) | tui e2e "cli: every view frame ends with a newline" |
+| D5 | Docs said Spa `onImage` resizes; the wasm client sends the file unchanged | fixed (docs): resize is Live / desktop only, the server resizes on Spa (`Std.Image.resizeToFit`) | — (docs) |
+| D6 | `Std.Ui.Input` header said the password controls pair with `Ui.form` + `onSubmit`; they require a per-keystroke `onChange` | fixed (docs): they are controlled; the submit-only pattern is a named `Ui.input` in `Ui.form` | — (docs) |
+| SPA-9 | Spa: an app whose `onNavigate` changes what the view shows never hydrated. The server renders init → route → onNavigate → view; the wasm client (booting from `init`, no SSR model seed) painted BEFORE onNavigate, so every cold load was "hydrate skipped, full rebuild" | fixed (the client runs the initial-mount onNavigate through the guarded update before its first paint and runs its Cmd after the mount; a seeded boot and a two-step restore are unchanged) | spa-vdom-identity e2e "SPA-5 cold load hydrates" (the fixture now shows onNavigate state) and "onNavigate runs once for the first paint of a route" |
+| (parity) | Back / Forward on Live vs Spa | both run `onNavigate` once per step (Live on the server for the nav GET, Spa on the client) | live-client e2e "popstate routes the page …"; spa-vdom-identity e2e "popstate …" (Spa and Live) |
+
 ## Open in this release (and why)
 
 | Item | Status |
 |---|---|
-| App.tui guard | Fixed in code; the automated test covers only `terminal:cli`. Test to be added before the tag. |
-| L7 process epoch | Fixed in code; no test. Test to be added before the tag. |
-| UF-11 webview IME, SA-9 desktop port | Fixed in code; no end-to-end test. Tests to be added before the tag, or the claim narrowed. |
-| Auditors' "unconfirmed" items | Never reproduced by the audits; each is being reproduced before the tag (list below). |
+| Desktop window, success path | Not tested end to end: a headless run cannot open a native window. The window URL and the probe share one port value (`openLiveWindow_ (livePort_ w.port)`), and `TestStdAppLivePort_FollowsEnvOverride` pins that value; the failure path is tested end to end. |
+| UF-11 in the native webview | The webview applier JS is driven in headless Chromium, not in WKWebView. |
+| Spa seeded boot and onNavigate | Not verified: when the client boots from the SSR model seed, the server has already run onNavigate (and settled its read) into that seed, and the client still fires it once after the mount. Whether that repeats a data load was not driven in a browser here. |
+| Live click backlog past 16 renders | By design (L2): a click made on a render the session no longer holds is refused as a desync, never resolved against another render. A burst of more than 16 events faster than the replies (measured: 30 events under 0 to 160 ms of added delay each, 9 dropped) loses the oldest clicks. Raising the window costs session memory (one handler map per retained render). Needs a decision; not changed here. |
 
-Unconfirmed items (from the audit reports): Live popstate did not fire `onNavigate`
-(Spa does); Live server clear of a focused input then typing gave `secondfirst`;
-Live retry-queue replay of stale ids (covered by L2's versioning, not driven end to
-end); Live POSTs not serialised (0/20 reorders seen); Live sqlite `idleEvict` could
-turn L7 into loss without a restart; Spa `onImage` does no resize although the docs
-say it does; `Input.currentPassword` needs a per-keystroke `onChange`; `App.tui`
-had no SIGWINCH repaint; TUI focus / blur Msgs could be dropped when the channel is
-full; a Raw node renders as `[raw]` in the TUI; the CLI flatten lacked a trailing
-newline; Live durable restore may overwrite `withRequest` fields; a `runLiveWindow`
-start failure may be lost; the window may open before an `--embed` server is ready;
-a second app value's `withNotFound` / `withRoutes` may be picked up; publish /
-subscribe payload types unchecked across a topic (closed by [E2011]).
+## Unconfirmed items: results
+
+Each item was run on this candidate (branch `fix/judge-gaps`). "REPRODUCED" items are fixed above.
+
+| Item | Result | What was run |
+|---|---|---|
+| Live popstate does not fire `onNavigate` (Spa does) | NOT REPRODUCED. Live runs it on the server for the nav GET that popstate makes (`handleInitial` → `dispatchOnNavigate`); Spa runs it on the client. Both are right per docs/skyspa/overview.md and docs/skylive/architecture.md, and both now have a test. | live-client e2e and spa-vdom-identity e2e (both targets): `pushState`, `back`, `forward`; one `onNavigate` per step |
+| Live server clear of a focused input then typing gave `secondfirst` | REPRODUCED as "firstsecond" when the typing starts before the reply lands (L13). Typing after the reply was correct. | live-client e2e "a cleared focused input takes the next typing" (after the reply, and at once) |
+| Live retry-queue replay of stale ids | REPRODUCED as an ORDER defect (L14): the ids resolved correctly, but a replay that failed again fell behind a later event. | live-client e2e: event POSTs aborted, two deletes queued, network restored |
+| Live POSTs not serialised | NOT REPRODUCED: 16 clicks under uneven per-request delays applied in click order. Seen on the way: with 30 events queued (20 clicks and 10 hovers), 9 replies were `desync` and those clicks were dropped, because a click made on a render older than the last 16 is refused. That is the documented L2 window (docs/skylive/architecture.md), not a reorder; it is listed under "Open" for a decision. | live-client e2e "16 event POSTs apply in click order" |
+| Live sqlite `idleEvict` could turn L7 into loss without a restart | NOT REPRODUCED: `idleEvictPass` persists before it evicts, and a reload goes through `decodeSession` → `restoredLocalSeq`, the same floor as a restart. | code read (live_store.go `idleEvictPass`, `decodeSession`); the restart path it shares is covered by `TestDecodeSession_StaleOutSeqLiftedToFloor` and the L7 e2e |
+| Spa `onImage` does no resize although the docs say it does | REPRODUCED (docs vs behaviour, D5). The wasm client sends the file raw by design (dom_render_wasm.go); the docs now say so. | code read + docs: sky-stdlib/Std/Ui.sky, docs/skyui/overview.md, docs/stdlib.md |
+| `Input.currentPassword` needs a per-keystroke `onChange` | REPRODUCED (docs, D6): the control is controlled by design; the module header claimed otherwise. | code read: sky-stdlib/Std/Ui/Input.sky |
+| `App.tui` had no SIGWINCH repaint | NOT REPRODUCED: `tuiWatchResize` repaints both TUI loops. Now gated; removing the watch makes the gate fail. | tui e2e "App.tui repaints on a terminal resize" (pty resized 40 → 30 rows) |
+| TUI focus / blur Msgs dropped when the channel is full | NOT REPRODUCED: focus / blur Msgs go on the loop's local `pending` slice, not a channel (tui_app_loop.go `setFocus`, `run`). | code read |
+| A Raw node renders as `[raw]` in the TUI | REPRODUCED (T19), fixed. | `TestTuiLayout_RawRendersItsTextContent` |
+| CLI flatten lacked a trailing newline | NOT REPRODUCED on this candidate; with the newline removed, frames run together, so it is now gated (T20). | tui e2e "cli: every view frame ends with a newline" |
+| Live durable restore may overwrite `withRequest` fields | REPRODUCED (SA-14), fixed. | `durable_tea_live_flow` restart test with an `X-Probe` header |
+| A `runLiveWindow` start failure may be lost | REPRODUCED (SA-15) for a non-port-in-use listen error, fixed. | `std_app_flow` desktop test with `SKY_HOST=192.0.2.1` |
+| The window may open before an `--embed` server is ready | NOT REPRODUCED: the generated `main` boots the embedded cluster and waits for it (`rt.MaybeStartEmbeddedPostgres`, lower.rs) before the app body runs. The stale code comment is corrected. | code read |
+| A second app value's `withNotFound` / `withRoutes` may be picked up | NOT REPRODUCED: the runtime and the Spa synthesis read only the value passed to `App.run` (`read_app_value`). The SSR route scan adds `GET` mounts for any `App.route` literal in the project, but those mounts serve the same SSR handler an unmatched path reaches through `staticNotFound`, which routes by the real app. | code read (spa_split.rs `spa_ssr_route_patterns`, app_entry.rs `read_app_value`) |
+| Publish / subscribe payload types unchecked across a topic | Closed by [E2011] (row L11). | `disagreeing_topic_across_modules_is_rejected_naming_both_sites` |

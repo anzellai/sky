@@ -57,7 +57,10 @@ func TestLiveJS_QueueAndRetryMarkers(t *testing.T) {
 		`function __skyDrainQueue() {`,
 		`Math.pow(2, __skyRetryAttempts - 1)`, // exponential backoff
 		`__skyEventQueue.shift()`,             // FIFO
-		`__skyEventQueue.push(body)`,
+		// A failed event enters the queue in send (seq) order, so a replay
+		// that fails again cannot fall behind a later click.
+		`function __skyQueueInsert(body) {`,
+		`__skyEventQueue.splice(i, 0, body);`,
 		// SSE-open drains the queue (early reconnect signal).
 		`if (__skyEventQueue.length > 0) __skyDrainQueue();`,
 	}

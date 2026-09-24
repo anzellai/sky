@@ -151,9 +151,11 @@ func spaRun(cfg any) any {
 	// decoder (Spa_withModelDecoder) so the value has the exact Go shape the
 	// reflect-free adapters assert. Absent the marker/blob/decoder (a pure CDN
 	// deploy, or an app with no SSR), keep today's behaviour: run init's cmd0.
+	seeded := false
 	if ssrModel, ok := spaBootFromSSRModel(doc, spaRoot, Field(cfg, "ModelDecoder")); ok {
 		spaModel = ssrModel
 		cmd0 = nil // server settled the first-paint read; do not re-fire it
+		seeded = true
 	}
 
 	// Client scratch-state restore (P2). AFTER the SSR seed decision so the
@@ -188,7 +190,26 @@ func spaRun(cfg any) any {
 		}
 	}
 
-	if restored && spaFirstPaintNeedsTwoStep(seedModel, restoredModel) {
+	// Initial-mount onNavigate BEFORE the first paint, when the client boots
+	// from `init` (no SSR model seed). The server renders init -> route ->
+	// onNavigate -> view (Sky.Live's first request, and the Spa SSR handler), so
+	// a first client paint WITHOUT the navigation Msg differs from the server
+	// DOM whenever onNavigate changes what the view shows: hydration was
+	// skipped and the page rebuilt from scratch. The Msg's Cmd runs after the
+	// mount, with init's. (A seeded boot and a two-step restore keep firing it
+	// after the mount, as before.)
+	var navCmd any
+	navAtMount := len(spaRoutes) > 0 && spaOnNavigate != nil
+	twoStep := restored && spaFirstPaintNeedsTwoStep(seedModel, restoredModel)
+	prePainted := false
+	if navAtMount && !seeded && !twoStep {
+		navAtMount = false
+		prePainted = true
+		applyURL()
+		navCmd = spaPrePaintNavigate()
+	}
+
+	if twoStep {
 		// Step 1: render the SEED and hydrate/adopt the matching server DOM
 		// (spaPrev == nil → the hydrate path), so no server node is wiped.
 		spaModel = seedModel
@@ -203,7 +224,9 @@ func spaRun(cfg any) any {
 		applyURL()
 		renderCurrent()
 	} else {
-		applyURL()
+		if !prePainted { // the pre-paint navigation already routed (route -> onNavigate -> view)
+			applyURL()
+		}
 		renderCurrent()
 	}
 	// The client has now rendered/hydrated, so every handler is attached: clear
@@ -218,6 +241,9 @@ func spaRun(cfg any) any {
 	spaSyncURLFromDOM(false)
 	spaLastSettledPath = spaCurrentPath()
 	interpretCmd(asCmdT(cmd0), spaDispatch)
+	if navCmd != nil {
+		interpretCmd(asCmdT(navCmd), spaDispatch)
+	}
 	reconcileSubs()
 
 	// Install link interception + Back/Forward only when the app routes — a
@@ -225,7 +251,9 @@ func spaRun(cfg any) any {
 	// never preventDefault its links.
 	if len(spaRoutes) > 0 {
 		spaInstallRouter()
-		spaFireOnNavigate() // initial-mount navigation hook (mirrors Sky.Live)
+		if navAtMount {
+			spaFireOnNavigate() // initial-mount navigation hook (mirrors Sky.Live)
+		}
 	}
 
 	select {} // keep the Go runtime alive to service events
@@ -303,6 +331,32 @@ func spaApplyURL(path string) {
 		page = spaNotFound
 	}
 	spaModel = RecordUpdate(spaModel, map[string]any{"Page": page})
+}
+
+// spaPrePaintNavigate runs onNavigate(model.Page) through the guarded update
+// WITHOUT rendering, for the first paint (see the boot sequence), and returns
+// the Msg's Cmd for the caller to run after the mount. A panic in update keeps
+// the model, is reported like any other update panic, and returns no Cmd.
+func spaPrePaintNavigate() (cmd any) {
+	page := Field(spaModel, "Page")
+	if page == nil {
+		return nil
+	}
+	msg := sky_call(spaOnNavigate, page)
+	if msg == nil {
+		return nil
+	}
+	prev := spaModel
+	defer func() {
+		if r := recover(); r != nil {
+			spaModel = prev
+			cmd = nil
+			spaReportPanic("update", r)
+		}
+	}()
+	pair := spaGuardedStep(msg, spaModel)
+	spaModel = pair.V0
+	return pair.V1
 }
 
 // spaFireOnNavigate dispatches onNavigate(model.Page) through the TEA step —

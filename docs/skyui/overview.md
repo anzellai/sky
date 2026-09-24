@@ -487,7 +487,7 @@ Ui.onInput    : (String -> msg) -> Attribute msg     -- typed callback
 Ui.onChange   : (String -> msg) -> Attribute msg
 Ui.onFocus / onMouseOver / onMouseOut / onKeyDown   : msg -> Attribute msg   -- onKeyDown fires on every keydown; the key is not carried (use Std.Html.Events.onKeyDown for a (String -> msg) handler)
 Ui.onFile     : (String -> msg) -> Attribute msg     -- file upload (data URL)
-Ui.onImage    : (String -> msg) -> Attribute msg     -- image upload + browser-side resize
+Ui.onImage    : (String -> msg) -> Attribute msg     -- image upload + browser-side resize (Live / desktop; Spa sends it unchanged)
 ```
 
 The `(String -> msg)` shape on `onInput` etc. is important: at the wire layer Sky.Live ships the typed input value, and the typed callback shape lets the HM type-checker verify the wrapper at the call site. Pass a Msg constructor that takes a String (`type Msg = ... | DraftChanged String | ...`).
@@ -558,9 +558,10 @@ type Msg = ... | AvatarSelected String | DocSelected String | ...
 
 view model =
     Ui.column [ Ui.spacing 12 ]
-        [ -- Image upload — auto-resizes to fileMaxWidth × Height before
-          -- upload. Re-encodes as JPEG @ 0.85 quality. Saves bandwidth on
-          -- large camera-roll photos.
+        [ -- Image upload — on Sky.Live and the desktop window it resizes to
+          -- fileMaxWidth × Height before upload and re-encodes as JPEG @ 0.85
+          -- quality. Saves bandwidth on large camera-roll photos. (Sky.Spa
+          -- sends the file unchanged; see below.)
           Ui.input
             [ Ui.htmlAttribute "type" "file"
             , Ui.htmlAttribute "accept" "image/*"
@@ -579,6 +580,8 @@ view model =
             ]
         ]
 ```
+
+**The resize is a Sky.Live / desktop feature.** On Sky.Spa (`--target web:app`) the wasm client sends the image as chosen: its own MIME type, no resize, and `fileMaxWidth` / `fileMaxHeight` are ignored (`fileMaxSize` still applies). Resizing there is the server's job — decode the data URL and call `Std.Image.resizeToFit` in the RPC that receives it, so the wasm client carries no image pipeline. An app that must bound the stored image size on every target resizes on the server.
 
 The data URL carries the MIME type (`data:image/jpeg;base64,...` or `data:application/pdf;base64,...`). Decode with `Std.Encoding.base64Decode` if you need raw bytes; route to `Http.post` for upload to a backend. Note: `Ui.fileMaxSize` is a UX guard, not a security boundary — Sky.Live caps the wire payload at `[live] maxBodyBytes` (default 5 MiB) and your server should still validate.
 
@@ -1043,7 +1046,7 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | **Events**: `onClick / onMouseOver/Out / onFocus` | ✅ | |
 | Events: `onInput` (text input) | ✅ | Typed `(String -> msg)` |
 | Events: `onChange / onKeyDown / onSubmit` | ✅ | Sky.Live wire events |
-| Events: `onFile / onImage` (with browser-side resize) | ✅ | Base64 data URL + `fileMaxSize/Width/Height` |
+| Events: `onFile / onImage` (with browser-side resize on Sky.Live / desktop) | ✅ | Base64 data URL + `fileMaxSize/Width/Height`; Sky.Spa sends the image unchanged (resize on the server) |
 | **Input controls**: `button / text / multiline / checkbox` | ✅ | `Std.Ui.Input` |
 | Input: `email / username / search / currentPassword / newPassword` | ✅ | Typed wrappers with the matching HTML5 input type + `autocomplete=` for password-manager UX |
 | Input: `radio / radioRow / slider` | ✅ | `RadioOption` uses string values (Sky-side trade-off vs elm-ui's polymorphic option type to sidestep deeply-nested-polymorphic-record HM friction) |

@@ -95,7 +95,9 @@ mix-and-match — pre-inject whatever your targets need:
 - `App.withWindow title width height` — desktop window. The `desktop` target
   opens the window on the port Sky.Live actually binds (a `SKY_LIVE_PORT`
   override included), once the server answers; when the server never answers,
-  the run fails with an `Unavailable` error and no blank window opens.
+  the run fails with an `Unavailable` error and no blank window opens. When the
+  server fails to start (a listen error, a bad config), the process logs the
+  cause and exits 1 at once, before any window opens.
 - `App.withInput onLine` — a terminal line/text input handler: stdin lines on
   `terminal:cli`, a one-line prompt under the view on `terminal:tui`. Without it
   a `terminal:cli` app reads no input and exits 0 once its Cmds and timers are
