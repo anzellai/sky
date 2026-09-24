@@ -151,11 +151,20 @@ products crashed.
 ### Gates
 
 New nightly gates: `tui-e2e.sh`, `spa-vdom-identity-e2e.sh`,
-`live-client-e2e.sh`, `spa-rpc-consistency-e2e.sh`, `ui-forms-e2e.sh`, and
-`spa-stale-handler-e2e.sh`. The diff test runs 20,000 random tree transitions,
-with zero mismatches on both appliers. The `coerce-floor` golden moves by +155
-`narrow` (adapter and dispatch stay at 0). All of it comes from new stdlib code
-paths, and the golden header records each one.
+`live-client-e2e.sh`, `spa-rpc-consistency-e2e.sh`, `ui-forms-e2e.sh`,
+`spa-stale-handler-e2e.sh` and `spa-examples-e2e.sh`. A new Go test runs 20,000
+random tree transitions through Go models of the Sky.Live and Sky.Spa appliers,
+with zero mismatches; the shipped appliers are covered by the browser gates.
+The `coerce-floor` golden moves by +141 `narrow` net (12850 to 12991); adapter
+and dispatch stay at 0. The golden header records the source of every row that
+moved (new stdlib code paths, changed examples, and -17 in 13-skyshop from the
+removed `!=`).
+
+New public builders: `Std.Cli.withGuard` and `Std.Tui.withOnLine` (the terminal
+backends for `App.withGuard` and `App.withInput`). `Std.Spa` gains `rpc`,
+`rpcWith`, `followUps`, `reportError`, `withGuard`, `withPersistDecoder` and
+`withPersistSeedFields`, which the auto-split emits into generated code; apps
+do not call them directly.
 
 ## v0.25.16 — the Sky-managed Go build cache is never cleaned under a running build (2026-09-23)
 

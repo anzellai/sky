@@ -110,9 +110,11 @@
 # ── Recorded transition, 2026-09-24 — v0.25.17 UI/UX sweep fixes ──
 #     narrow +5 -1 over 6 rows; adapter and dispatch unchanged (0). Every rise
 #     sits in a function whose SOURCE changed (per-function token diff):
-# 1. +1 in 37 / 38 / apps/fieldbook: `Std.Ui.Input.checkbox` lays the native
-#    box over the icon (two `__overlayControl` / `__relative` marker attrs in
-#    the checkbox row), the same per-call-site shape as its other attrs.
+# 1. +1 in 37 / 38 / apps/fieldbook: the checkbox overlay (later REVERTED —
+#    see the next record; 38 falls back). In 37 and apps/fieldbook the +1 that
+#    remains is `Std.Ui.Input.radioRow` / `radio` gaining the
+#    `data-sky-radio-group` marker attr (radio groups name their radios),
+#    measured per function against main: radioRow 2 -> 3.
 # 2. +1 26-ui-showcase: `Edit s` now binds its String payload (the textarea
 #    edits a model field), one R6 payload narrowing in `Main_update`.
 # 3. +1 62-app-notes: `Persist.createNote` answers the inserted id (an `Int`

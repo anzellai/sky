@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 -- Transitive (multi-hop) server-internal effect chaining for the Sky.Spa
--- auto-split (the darraghstudio checkout-finalize shape).
+-- auto-split (the checkout-finalize shape of a real app).
 --
 --   * `Kick x` is a client-dispatched SERVER branch (a wire entry). It performs
 --     `fetchThing x` -> `Fetched`.
