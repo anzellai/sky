@@ -352,25 +352,20 @@ summaryText model =
 
 
 -- Custom checkbox tick. The Input.checkbox `icon` field is a
--- `Bool -> Element msg` so we paint a small filled square when
--- checked and an outline when unchecked. Works the same under
--- Live, Tui (ANSI cells), and Webview (WKWebView).
+-- `Bool -> Element msg`: the native checkbox is the control, so the icon
+-- only adds a green check mark beside it when ticked (a drawn box beside the
+-- native one showed two boxes). Works the same under Live, Tui (ANSI cells)
+-- and Webview (WKWebView).
 checkmarkIcon : Bool -> Element Msg
 checkmarkIcon checked =
     Ui.el
-        [ Background.color
-              (if checked then
-                  okGreen
+        [ Ui.width (Ui.px 14), Font.color okGreen, Font.bold ]
+        (Ui.text
+            (if checked then
+                "✓"
 
-              else
-                  Ui.rgb 240 240 244)
-        , Border.rounded 3
-        , Border.width 1
-        , Border.color hairline
-        , Ui.width (Ui.px 18)
-        , Ui.height (Ui.px 18)
-        ]
-        (Ui.text "")
+            else
+                ""))
 
 
 -- ─── Footer ────────────────────────────────────────────────────────

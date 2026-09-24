@@ -297,9 +297,10 @@ async function runWebview(browser) {
   await page.close();
 }
 
+let browser;
 try {
   await waitListening();
-  const browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true });
   await run(browser);
   await runWebview(browser);
   await browser.close();
@@ -309,5 +310,11 @@ try {
   console.error("HARNESS ERROR:", e.message);
   process.exitCode = 1;
 } finally {
+  // An error leaves Chromium open, and Node then never exits: the gate hangs
+  // instead of failing. Close it, stop the app, and exit explicitly.
+  try {
+    await browser?.close();
+  } catch (_) {}
   proc.kill("SIGKILL");
+  process.exit(process.exitCode ?? 1);
 }

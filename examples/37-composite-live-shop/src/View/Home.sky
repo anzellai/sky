@@ -121,24 +121,16 @@ controlBar model =
         ]
 
 
+-- The native checkbox is the control; the icon only adds a green check mark
+-- beside it when ticked (drawing a second box beside the native one showed two
+-- boxes).
 checkmarkIcon : Bool -> Element Msg
 checkmarkIcon checked =
     Ui.el
-        [ Background.color
-              (if checked then
-                  Ui.rgb 60 160 90
-
-              else
-                  Ui.rgb 240 240 244)
-        , Border.rounded 3
-        , Border.width 1
-        , Border.color Common.hairline
-        , Ui.width (Ui.px 18)
-        , Ui.height (Ui.px 18)
-        , Font.color (Ui.rgb 255 255 255)
-        , Font.size 12
+        [ Ui.width (Ui.px 14)
+        , Font.color (Ui.rgb 60 160 90)
+        , Font.size 14
         , Font.bold
-        , Font.alignCenter
         ]
         (Ui.text
             (if checked then

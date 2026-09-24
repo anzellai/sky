@@ -55,12 +55,13 @@ async function clickAndExpect(page, label, want, step) {
   if (!ok) failures.push(step);
 }
 
+let browser;
 try {
   await Promise.race([
     listening,
     new Promise((_, rej) => setTimeout(() => rej(new Error("backend never listened\n" + serverLog)), 20000)),
   ]);
-  const browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   const consoleMsgs = [];
   page.on("pageerror", (e) => consoleMsgs.push(`[pageerror] ${e.message}`));
@@ -90,5 +91,11 @@ try {
   console.error("HARNESS ERROR:", e.message);
   process.exitCode = 1;
 } finally {
+  // An error would leave Chromium open and Node would never exit (the gate
+  // hangs instead of failing): close it, stop the app, exit explicitly.
+  try {
+    await browser?.close();
+  } catch (_) {}
   proc.kill("SIGKILL");
+  process.exit(process.exitCode ?? 1);
 }
