@@ -400,6 +400,10 @@ pub fn check_modules_with_world(
         });
     }
 
+    // `[E2011]` sites from every module under check, with the source text of
+    // their module (for the label span trim).
+    let mut topic_sites: Vec<crate::pubsub_topic::TopicSite> = Vec::new();
+    let mut topic_src: HashMap<String, String> = HashMap::new();
     for &mid in to_check {
         let mname = sky.module_name(mid).to_string();
         // Module source text — used to tighten an E2001 label span to the first
@@ -436,6 +440,8 @@ pub fn check_modules_with_world(
         // dedup as `[E2008]`: one offending `Codec.auto`-family call, one
         // diagnostic).
         let mut codec_elems = codec_elem::CodecElemScan::default();
+        // `[E2010]` state (per module, one diagnostic per offending call).
+        let mut form_submits = crate::form_submit::FormSubmitScan::default();
 
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
@@ -527,6 +533,21 @@ pub fn check_modules_with_world(
             let expr_ty: HashMap<ExprId, Ty> = recorded.into_iter().collect();
             codec_elem::scan_body(body, &expr_ty, sky, &dname, &mut codec_elems);
 
+            // ---- [E2010] form-submit handler ---------------------------
+            crate::form_submit::scan_body(body, &expr_ty, sky, &dname, &mut form_submits);
+
+            // ---- [E2011] literal pub/sub topic (collected; compared below,
+            // across every module under check) --------------------------
+            crate::pubsub_topic::scan_body(
+                body,
+                &expr_ty,
+                sky,
+                &mname,
+                &module_src,
+                &dname,
+                &mut topic_sites,
+            );
+
             // exhaustiveness (warnings, not type errors)
             let warns = exhaustive::check_body(body, &world);
             out.exhaustiveness_warnings += warns.len();
@@ -569,6 +590,31 @@ pub fn check_modules_with_world(
             });
         }
 
+        // One `[E2010]` per offending `onSubmit` call in this module.
+        for f in &form_submits.found {
+            out.type_errors += 1;
+            out.diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: Code("E2010".to_string()),
+                message: format!(
+                    "[{}] {}",
+                    f.def_name,
+                    crate::form_submit::message(&f.reason)
+                ),
+                labels: f
+                    .span
+                    .map(|s| {
+                        vec![diagnostics::Label {
+                            span: trim_leading_ws(&module_src, s),
+                            message: "this onSubmit argument".into(),
+                        }]
+                    })
+                    .unwrap_or_default(),
+                suggestion: Some(crate::form_submit::suggestion()),
+            });
+        }
+        topic_src.insert(mname.clone(), module_src.clone());
+
         // One `[E2009]` per offending `Codec.auto`-family call in this module.
         for f in &codec_elems.found {
             out.type_errors += 1;
@@ -588,6 +634,37 @@ pub fn check_modules_with_world(
                 suggestion: Some(codec_elem::suggestion()),
             });
         }
+    }
+    // `[E2011]`: every publisher and subscriber of one literal topic, across
+    // all modules under check, must agree on the payload type.
+    for (i, j) in crate::pubsub_topic::mismatches(&topic_sites) {
+        let this = &topic_sites[i];
+        let other = &topic_sites[j];
+        let src = topic_src
+            .get(&this.module)
+            .map(String::as_str)
+            .unwrap_or("");
+        out.type_errors += 1;
+        out.diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            code: Code("E2011".to_string()),
+            message: format!(
+                "[{}] {}",
+                this.def_name,
+                crate::pubsub_topic::message(this, other)
+            ),
+            labels: this
+                .span
+                .map(|s| {
+                    vec![diagnostics::Label {
+                        span: trim_leading_ws(src, s),
+                        message: "this payload type disagrees with another site of the topic"
+                            .into(),
+                    }]
+                })
+                .unwrap_or_default(),
+            suggestion: Some(crate::pubsub_topic::suggestion()),
+        });
     }
     // stable order for the type table (L4)
     out.def_types.sort_by(|a, b| {

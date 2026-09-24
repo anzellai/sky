@@ -721,6 +721,11 @@ func isNumericKind(k reflect.Kind) bool {
 // slices and record-lists round-trip. Shared by rt.Coerce and
 // narrowReflectValue so the two narrowers never diverge.
 func narrowMapToStruct(src reflect.Value, targetTy reflect.Type) reflect.Value {
+	// A submitted form decodes strictly (form_decode.go): a field the form
+	// cannot fill is an error, never a zero value.
+	if src.IsValid() && src.Type() == formFieldsType {
+		return mustDecodeFormRecord(src.Interface().(FormFields), targetTy)
+	}
 	out := reflect.New(targetTy).Elem()
 	n := targetTy.NumField()
 	for i := 0; i < n; i++ {

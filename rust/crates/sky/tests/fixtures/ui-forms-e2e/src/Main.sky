@@ -1,0 +1,168 @@
+module Main exposing (main)
+
+-- Forms + keydown + pub/sub e2e fixture (built for --target web AND web:app).
+--
+--   * `Ui.onKeyDown KeyPressed` on an input. It used to crash the view on every
+--     render (Std.Ui passed a bare Msg to the key-carrying Html handler).
+--   * `Ui.onSubmit SubmitTyped` into a record with String / Int / Bool / Maybe
+--     fields. The submit used to zero-fill: "42" became 0 and a checked box
+--     became False. A form whose Int field does not parse is now DROPPED with a
+--     logged decode error, never delivered with a zero.
+--   * A literal-topic publish + subscribe that agree on String (the program the
+--     [E2011] check must still accept).
+--
+-- e2e: scripts/ui-forms-e2e.sh (drives scripts/ui-forms-e2e-verify.mjs).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Sub as Sub exposing (Sub)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type alias Typed =
+    { title : String
+    , age : Int
+    , agree : Bool
+    , note : Maybe String
+    }
+
+type alias Model =
+    { keys : Int
+    , submitted : String
+    , submits : Int
+    , chat : String
+    }
+
+type Msg
+    = KeyPressed
+    | SubmitTyped Typed
+    | Publish
+    | GotChat String
+
+
+chatTopic : String
+chatTopic =
+    "fixture-chat"
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { keys = 0, submitted = "none", submits = 0, chat = "none" }, Cmd.none )
+
+
+showBool : Bool -> String
+showBool b =
+    if b then
+        "T"
+
+    else
+        "F"
+
+
+showNote : Maybe String -> String
+showNote m =
+    case m of
+
+        Just s ->
+            "just:" ++ s
+
+        Nothing ->
+            "nothing"
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        KeyPressed ->
+            ( { model | keys = model.keys + 1 }, Cmd.none )
+
+        SubmitTyped r ->
+            ( { model | submitted =
+                  "title=" ++ r.title ++ " age=" ++ String.fromInt (r.age + 1)
+                      ++ " agree="
+                      ++ showBool r.agree
+                      ++ " note="
+                      ++ showNote r.note
+              , submits = model.submits + 1
+              }
+            , Cmd.none
+            )
+
+        Publish ->
+            ( model, Cmd.publish chatTopic "hello-topic" )
+
+        GotChat s ->
+            ( { model | chat = s }, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.subscribeTopic "fixture-chat" GotChat
+
+
+idA : String -> Ui.Attribute msg
+idA s =
+    Ui.htmlAttribute "id" s
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.el [ idA "keys" ] (Ui.text ("keys:" ++ String.fromInt model.keys))
+        , Ui.input [ idA "keybox", Ui.onKeyDown KeyPressed ]
+        , Ui.el [ idA "submitted" ] (Ui.text ("submitted:" ++ model.submitted))
+        , Ui.el
+              [ idA "submits" ]
+              (Ui.text ("submits:" ++ String.fromInt model.submits))
+        , Ui.form
+              [ idA "ftyped", Ui.onSubmit SubmitTyped ]
+              [ Ui.input [ idA "ft-title", Ui.name "title" ]
+              , Ui.input
+                    [ idA "ft-age"
+                    , Ui.name "age"
+                    , Ui.htmlAttribute "type" "number"
+                    ]
+              , Ui.input
+                    [ idA "ft-agree"
+                    , Ui.name "agree"
+                    , Ui.htmlAttribute "type" "checkbox"
+                    ]
+              , Ui.input [ idA "ft-note", Ui.name "note" ]
+              , Ui.input
+                    [ idA "ft-go"
+                    , Ui.htmlAttribute "type" "submit"
+                    , Ui.htmlAttribute "value" "go"
+                    ]
+              ]
+        , Ui.form
+              [ idA "fbad", Ui.onSubmit SubmitTyped ]
+              [ Ui.input [ idA "fb-title", Ui.name "title" ]
+              , Ui.input [ idA "fb-age", Ui.name "age" ]
+              , Ui.input
+                    [ idA "fb-go"
+                    , Ui.htmlAttribute "type" "submit"
+                    , Ui.htmlAttribute "value" "go"
+                    ]
+              ]
+        , Ui.button
+              [ idA "pub" ]
+              { onPress = Just Publish, label = Ui.text "publish" }
+        , Ui.el [ idA "chat" ] (Ui.text ("chat:" ++ model.chat))
+        ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app

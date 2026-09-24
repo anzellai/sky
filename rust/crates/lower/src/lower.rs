@@ -2220,6 +2220,31 @@ impl<'a> Ctx<'a> {
         None
     }
 
+    /// The payload kind a `Sub.subscribeTopic` decoder expects, when its
+    /// parameter is a primitive the runtime can check: `"String"`, `"Int"`,
+    /// `"Float"` or `"Bool"`. The payload arrives as `any` (a topic is a
+    /// string, so HM cannot link publisher and subscriber); the decoder's
+    /// parameter shape IS known here (doc 14 §1: the slot's shape is static,
+    /// the value's is not), so the kind travels to the runtime as a tag — the
+    /// typed-kernel-entry lever (doc 14 §5.3). A record / ADT / variable
+    /// parameter returns `None` and keeps the untagged call: its narrowing
+    /// (`rt.Coerce`) already fails loudly on a wrong shape.
+    fn topic_payload_kind(&self, decoder: ExprId) -> Option<&'static str> {
+        let Ty::Fun(param, _) = self.sky_ty_of(decoder)? else {
+            return None;
+        };
+        match &*param {
+            Ty::App(n, a) if a.is_empty() => match ty::nominal::base(n.as_str()) {
+                "String" => Some("String"),
+                "Int" => Some("Int"),
+                "Float" => Some("Float"),
+                "Bool" => Some("Bool"),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Route a Dict operation that lets the KEY out to the typed-key kernel
     /// entry point for the key's Sky type (`rt.Dict_toListIntKey`,
     /// `rt.Dict_foldlCharKey`, …).
@@ -5149,6 +5174,34 @@ impl<'a> Ctx<'a> {
                 return self.kernel_call_lowered(go, vec![wfns], actual);
             }
             self.local_counter = saved;
+        }
+        // `Sub.subscribeTopic topic decoder` whose decoder takes a primitive: tag
+        // the decoder with the payload kind it expects (`rt.TypedTopicDecoder`),
+        // so the runtime refuses a payload of another kind as a classified
+        // decode error instead of letting the decoder's lenient narrowing
+        // (`rt.AsString` stringifies anything) deliver a wrong value. See
+        // `topic_payload_kind`.
+        if go == "rt.Sub_subscribeTopic" && args.len() == 2 {
+            if let Some(kind) = self.topic_payload_kind(args[1]) {
+                let topic = self.lower_expr(args[0], &GoTy::Any);
+                let topic = self.widen(topic);
+                let dec = self.lower_expr(args[1], &GoTy::Any);
+                let dec = self.widen(dec);
+                let tagged = GoExpr::new(
+                    GoExprKind::Call(
+                        Box::new(GoExpr::new(
+                            GoExprKind::Ident("rt.TypedTopicDecoder".into()),
+                            GoTy::Any,
+                        )),
+                        vec![
+                            GoExpr::new(GoExprKind::StrLit(kind.into()), GoTy::Bare(Prim::Str)),
+                            dec,
+                        ],
+                    ),
+                    GoTy::Any,
+                );
+                return self.kernel_call_lowered(go, vec![topic, tagged], actual);
+            }
         }
         // A Dict operation that lets the KEY out routes to the typed-key entry
         // point for that key type (`rt.Dict_toListIntKey` / `rt.Dict_foldlCharKey`

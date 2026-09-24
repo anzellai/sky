@@ -670,6 +670,16 @@ func spaRunTask(task any) SkyResult[SkyADT, any] {
 // prefix, mirroring the message the perform / timer / topic recovers already
 // emit. Keeping the log here (not in spa_step.go) keeps the guard core
 // build-tag-free and host-testable.
+// spaReportFormDecodeError reports a dropped form submit (form_decode.go),
+// the Sky.Spa counterpart of the Sky.Live FormDecode log line.
+func spaReportFormDecodeError(e *FormDecodeError) {
+	if c := js.Global().Get("console"); c.Truthy() {
+		c.Call("error",
+			"[sky.spa] form submit decode error (FormDecode); the submit is dropped:",
+			e.Error())
+	}
+}
+
 func spaReportPanic(stage string, r any) {
 	if c := js.Global().Get("console"); c.Truthy() {
 		c.Call("error",
@@ -1074,7 +1084,9 @@ func collectTopics(s subT, out map[string]any) {
 	switch s.kind {
 	case "subscribeTopic":
 		if s.topic != "" {
-			out[s.topic] = s.toMsg // last-write-wins for a repeated topic
+			// last-write-wins for a repeated topic; the decoder keeps its
+			// payload-kind tag (topic_decode.go).
+			out[s.topic] = TypedTopicDecoder(s.payloadKind, s.toMsg)
 		}
 	case "batch":
 		for _, c := range s.batch {
@@ -1121,7 +1133,16 @@ func openTopic(topic string, toMsg any) {
 			return nil
 		}
 		payload := spaDecodeSSEData(data.String())
-		step(sky_call(sub.toMsg, payload))
+		msg, derr := decodeTopicPayload(topic, sub.toMsg, payload)
+		if derr != nil {
+			logEmit(logLevelError, "error",
+				"Sky.Spa Sub.subscribeTopic: pub/sub decode error (TopicDecode); the event is dropped", map[string]any{
+					"topic":  topic,
+					"reason": derr.Reason,
+				})
+			return nil
+		}
+		step(msg)
 		return nil
 	})
 	sub.es.Call("addEventListener", "message", sub.onMsg)

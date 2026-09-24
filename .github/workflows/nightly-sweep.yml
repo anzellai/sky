@@ -220,7 +220,11 @@ jobs:
       # the panic banner and multi-tab reconnects.
       - name: Gate — Sky.Live client e2e (handler addressing, input authority)
         run: scripts/live-client-e2e.sh
-          scripts/spa-rpc-consistency-e2e.sh
+      # Ui.onKeyDown renders + dispatches, typed Ui.onSubmit decodes strictly
+      # (a bad field drops the submit with a FormDecode error), and a
+      # literal-topic pub/sub delivers — on Sky.Live AND Sky.Spa.
+      - name: Gate — Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
+        run: scripts/ui-forms-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported
       # "binary missing" for two examples and "N% pixels exceed" for nine

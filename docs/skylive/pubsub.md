@@ -117,6 +117,26 @@ non-encodable payload degrades to local-only delivery (logged once),
 never a panic. **Dict-shaped payloads (`Dict.fromList […]`)
 are the safest portable choice.**
 
+### One payload type per topic — `[E2011]` and the runtime check
+
+The payload stays `any` in the signatures, so HM cannot link a publisher to a
+subscriber by itself. Two checks close the gap:
+
+* **Compile time (`[E2011]`).** When a topic is a string literal, or a
+  top-level `String` constant whose body is a literal, the checker collects
+  every `Cmd.publish` / `Cmd.publishNoEcho` / `PubSub.publish` /
+  `PubSub.publishNoEcho` payload type and every `Sub.subscribeTopic` decoder
+  argument type for that topic across the WHOLE program. If two disagree, the
+  build fails and the message names both sites. A computed topic
+  (`"chat:room-" ++ room`) is not seen here.
+* **Run time.** A payload the subscriber's decoder cannot take is a classified
+  `TopicDecode` error: the event is dropped, `update` does not run, and one line
+  names the topic and the reason (Sky.Live: stderr,
+  `[sky.live] pub/sub decode error (TopicDecode): …`; Sky.Spa: the console).
+  A decoder whose parameter is `String` / `Int` / `Float` / `Bool` is tagged
+  with that kind at compile time, so an `Int` published to a `String`
+  subscriber is refused instead of arriving as the text `"5"`.
+
 ### `Sub.subscribeTopic topic toMsg`
 
 Receive every payload broadcast to `topic`, decoded into a Msg via

@@ -28,3 +28,12 @@ func logMsgDecodeError(fn any, arg any, raw json.RawMessage) {
 			"fully-applied Msg per radio instead.\n",
 		fnName, expected, arg, arg, string(raw))
 }
+
+// logFormDecodeError reports a form submit the handler's record cannot take
+// (form_decode.go). The event is dropped and the model is not touched.
+func logFormDecodeError(e *FormDecodeError) {
+	fmt.Fprintf(os.Stderr,
+		"[sky.live] form submit decode error (FormDecode): %s. The submit is "+
+			"dropped. Give each record field an input with the same Ui.name, and "+
+			"make its value parse as the field's type.\n", e.Error())
+}

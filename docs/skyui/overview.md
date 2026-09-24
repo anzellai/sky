@@ -90,7 +90,7 @@ Std.Ui takes a different cut: model layout in terms the user actually wants (`ro
 | **Length** | `Length` | `Ui.px 200`, `Ui.fill`, `Ui.fillPortion 2`, `Ui.content`, `Ui.minimum 100 Ui.fill`, `Ui.maximum 600 Ui.fill` |
 | **Color** | `Color` | `Ui.rgb 255 102 0`, `Ui.rgba 0 0 0 0.5`, `Ui.white`, `Ui.black` |
 
-Every `Element msg` has a `msg` parameter — the same `msg` you've defined for your TEA app. Attributes that carry events (`onClick`, `onSubmit`, `onInput`) tie into the same `msg` so the type checker catches mismatches at compile time.
+Every `Element msg` has a `msg` parameter — the same `msg` you've defined for your TEA app. Attributes that carry events (`onClick`, `onInput`, `onKeyDown`) tie into the same `msg` so the type checker catches mismatches at compile time. `onSubmit` is the exception: its signature is `a -> Attribute b`, because its argument is either a Msg or a function from the form's record to a Msg. The checker still inspects every `onSubmit` call and rejects an argument that can never receive a form submit with `[E2010]` (see [Forms](#forms--the-password-best-practice-pattern)).
 
 `App.app` takes `view : model -> Element msg` and wraps your root element in a viewport-tall page shell for you — no explicit wrapper call in the common case. Reach for `Ui.layoutWith` (§`Ui.layoutWith`) only when you need to style that wrapper itself (page-wide background, cascading font).
 
@@ -482,10 +482,10 @@ Event handlers are typed:
 
 ```elm
 Ui.onClick    : msg -> Attribute msg
-Ui.onSubmit   : msg -> Attribute msg
+Ui.onSubmit   : a -> Attribute b                      -- a Msg, or (Record -> msg); checked by [E2010]
 Ui.onInput    : (String -> msg) -> Attribute msg     -- typed callback
 Ui.onChange   : (String -> msg) -> Attribute msg
-Ui.onFocus / onMouseOver / onMouseOut / onKeyDown   : msg -> Attribute msg
+Ui.onFocus / onMouseOver / onMouseOut / onKeyDown   : msg -> Attribute msg   -- onKeyDown fires on every keydown; the key is not carried (use Std.Html.Events.onKeyDown for a (String -> msg) handler)
 Ui.onFile     : (String -> msg) -> Attribute msg     -- file upload (data URL)
 Ui.onImage    : (String -> msg) -> Attribute msg     -- image upload + browser-side resize
 ```
@@ -529,7 +529,18 @@ loginView model =
         ]
 ```
 
-When the form submits, Sky.Live ships the formData `{"username": "...", "password": "..."}` as the args to `DoSignIn`. The wire driver decodes the JSON directly into `LoginForm` via case-insensitive `json.Unmarshal` — Sky's lowercase field names land in the matching Go fields without per-Msg decoder boilerplate.
+When the form submits, the client sends each named control's value as TEXT (`{"username": "...", "password": "..."}`), with an unchecked checkbox left out. The runtime decodes that into the handler's record strictly, by field name (case-insensitive), with the same rules on Sky.Live, Sky.Spa and the terminal (`runtime-go/rt/form_decode.go`):
+
+| Record field | Filled from | Missing / bad value |
+|---|---|---|
+| `String` | the text | missing → decode error |
+| `Int` / `Float` | the text, parsed (spaces ignored) | missing, empty or not a number → decode error |
+| `Bool` | `"on"` / `"true"` / `"checked"` / `"1"` / `"yes"` → `True` | absent (an unchecked box), `""`, `"false"`, `"off"`, `"0"`, `"no"` → `False`; anything else → decode error |
+| `Maybe X` | `Just` the decoded text | absent or `""` → `Nothing` |
+
+A decode error is never a zero value. The submit is DROPPED, `update` does not run, and a classified `FormDecode` line names the field (Sky.Live: stderr, `[sky.live] form submit decode error (FormDecode): …`; Sky.Spa: the browser console). So give every record field an input with the same `Ui.name`, and give a checkbox bound to a `Bool` field no custom `value` (or one of the true words above).
+
+The compiler checks the handler shape at the call site (`[E2010]`): the argument must be a Msg, or a one-argument function whose parameter is a record of `String` / `Int` / `Float` / `Bool` / `Maybe` of those (or `Dict String String` for the raw field map). `Ui.onSubmit 42`, a `String -> Msg` handler, or a record with a `List` field is rejected, because no form submit can produce it.
 
 Three concrete wins from this pattern over per-keystroke `onInput`:
 

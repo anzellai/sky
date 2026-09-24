@@ -572,8 +572,8 @@ func spaReconcileControlled(root *VNode) {
 // (control name -> its string value), the shape rt.Coerce narrows to a record
 // (e.g. Credentials { email, password }) in update. Unnamed controls and an
 // unchecked checkbox/radio are skipped, mirroring the browser's own FormData.
-func spaFormData(form js.Value) map[string]any {
-	out := map[string]any{}
+func spaFormData(form js.Value) FormFields {
+	out := FormFields{}
 	if !form.Truthy() {
 		return out
 	}
@@ -608,12 +608,18 @@ func spaFormData(form js.Value) map[string]any {
 // fields), so hand it the field map. A plain nullary Msg value (onSubmit with a
 // no-arg Msg) is dispatched as-is. A panic (an rt.Coerce mismatch) is recovered
 // so the instance stays alive, like dispatchEvent.
-func dispatchSubmit(handler any, data map[string]any) {
+func dispatchSubmit(handler any, data FormFields) {
 	if spaDispatch == nil {
 		return
 	}
 	defer func() {
 		if r := recover(); r != nil {
+			// A field the handler's record cannot take (form_decode.go): the
+			// submit is dropped and reported, never zero-filled.
+			if fe, ok := asFormDecodeError(r); ok {
+				spaReportFormDecodeError(fe)
+				return
+			}
 			spaReportPanic("submit", r)
 		}
 	}()
@@ -621,8 +627,10 @@ func dispatchSubmit(handler any, data map[string]any) {
 	case func(any) any:
 		spaDispatch(h(data))
 	case func(string) any:
-		// A String-typed onSubmit is unusual; keep the pre-fix empty payload.
-		spaDispatch(h(""))
+		// A form submit is a record of fields, never one String; the compiler
+		// rejects a String handler ([E2010]). Report it rather than dispatch a
+		// made-up value.
+		spaReportFormDecodeError(&FormDecodeError{Record: "String", Field: "", Reason: "cannot receive a form submit: the handler takes a String"})
 	default:
 		if isFunc(handler) {
 			spaDispatch(sky_call(handler, data))
