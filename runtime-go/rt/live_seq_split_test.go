@@ -631,7 +631,7 @@ func Test_LiveJS_EmitsGlobalSeqGuard(t *testing.T) {
 	// surfaces with a precise diagnostic.
 	wantSites := []string{
 		// HTTP /_sky/event JSON reply (data.globalSeq).
-		"          __skyAfterEvent(body.seq);\n        }, data.globalSeq, data.view, data.base, true);",
+		"            delete __skyBaseBySeq[body.seq];\n          }\n        }, data.globalSeq, data.view, data.base, true);",
 		// Legacy SSE event:patch handler (frame.globalSeq).
 		"if (frame.body) __skyPatch(frame.body.replace(/\\\\n/g, \"\\n\"));\n      }, frame.globalSeq",
 		// P50b SSE event:patches handler (frame.globalSeq).

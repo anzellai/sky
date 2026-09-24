@@ -29,10 +29,31 @@ import (
 // the first render so event closures built here can call back into the loop.
 var spaDispatch func(msg any)
 
-// spaNodeFns maps a DOM element's sky-id to the js.Funcs bound on it. A rebuild,
-// removal, or handler change Releases them before dropping the node — an
-// unreleased js.Func leaks its Go closure for the life of the process.
-var spaNodeFns = map[string][]js.Func{}
+// spaNodeFns maps a DOM element's sky-id to the listeners bound on it. A
+// rebuild, removal, or handler change releases them before dropping the node:
+// an unreleased js.Func leaks its Go closure for the life of the process.
+//
+// Each entry keeps the NODE and the event it was added for, because releasing a
+// js.Func does not detach it. A handler change rebinds a KEPT node in place
+// (applyAttrs), and the old listener used to stay attached as a released
+// function: every later click logged "call to released function" (W1). A
+// release now removes the listener from its node first, and only the listeners
+// of the node being released are touched, never those of another node that
+// carries the same sky-id for the moment.
+var spaNodeFns = map[string][]spaListener{}
+
+// spaListener is one event listener the client added to a DOM node.
+type spaListener struct {
+	node js.Value
+	evt  string
+	fn   js.Func
+}
+
+// spaListen adds f as n's listener for evt and records it under id.
+func spaListen(n js.Value, id, evt string, f js.Func) {
+	n.Call("addEventListener", evt, f)
+	spaNodeFns[id] = append(spaNodeFns[id], spaListener{node: n, evt: evt, fn: f})
+}
 
 // spaNodeHandlers holds each element's CURRENT handlers (see spa_handlers.go). A
 // listener reads its message from here when it fires rather than capturing it at
@@ -45,7 +66,7 @@ var spaNodeHandlers = spaHandlerSlots{}
 // records the event listeners it attaches. Used for the initial render only.
 func spaMount(mount js.Value, root VNode) {
 	for id := range spaNodeFns {
-		releaseNodeFns(id)
+		releaseNodeFns(id, js.Value{})
 	}
 	mount.Set("innerHTML", "")
 	mount.Call("appendChild", buildDOM(root))
@@ -374,8 +395,7 @@ func bindNodeEvents(n js.Value, el VNode) {
 				spaReadFileAndDispatch(node, spaNodeHandlers.lookup(idOf(this), ek, h))
 				return nil
 			})
-			spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
-			n.Call("addEventListener", "change", f)
+			spaListen(n, el.SkyID, "change", f)
 			continue
 		}
 		// Synthetic "enter" event (Ui.onEnter). The DOM has no "enter" event, so
@@ -395,12 +415,10 @@ func bindNodeEvents(n js.Value, el VNode) {
 					}
 					ev.Call("preventDefault")
 				}
-				spaNoteEventTarget(this)
 				dispatchEvent(spaNodeHandlers.lookup(idOf(this), "enter", h), "")
 				return nil
 			})
-			spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
-			n.Call("addEventListener", "keydown", f)
+			spaListen(n, el.SkyID, "keydown", f)
 			continue
 		}
 		if strings.HasPrefix(evt, "sky-") {
@@ -444,12 +462,10 @@ func bindNodeEvents(n js.Value, el VNode) {
 					}
 				}
 			}
-			spaNoteEventTarget(this)
 			dispatchEvent(cur, eventPayload(e, args))
 			return nil
 		})
-		spaNodeFns[el.SkyID] = append(spaNodeFns[el.SkyID], f)
-		n.Call("addEventListener", evt, f)
+		spaListen(n, el.SkyID, evt, f)
 		if evt == "input" {
 			spaBindComposition(n, el.SkyID, h, idOf)
 		}
@@ -471,122 +487,11 @@ func spaBindComposition(n js.Value, id string, h any, idOf func(js.Value) string
 			val = v.String()
 		}
 		this.Set("__skyComposed", val)
-		spaNoteEventTarget(this)
 		dispatchEvent(spaNodeHandlers.lookup(idOf(this), "input", h), val)
 		return nil
 	})
-	spaNodeFns[id] = append(spaNodeFns[id], start, end)
-	n.Call("addEventListener", "compositionstart", start)
-	n.Call("addEventListener", "compositionend", end)
-}
-
-// spaEventTarget is the form control the last user event came from. After
-// the re-render, spaReconcileControlled makes its live state (.value /
-// .checked) show the MODEL — see UF-5 in docs/skylive/input-authority-protocol.md.
-var spaEventTarget js.Value
-
-func spaNoteEventTarget(this js.Value) {
-	if this.Type() != js.TypeObject {
-		spaEventTarget = js.Value{}
-		return
-	}
-	switch tagName(this) {
-	case "INPUT", "TEXTAREA", "SELECT":
-		spaEventTarget = this
-	default:
-		spaEventTarget = js.Value{}
-	}
-}
-
-// spaReconcileControlled is the Spa half of the input-authority rule for a
-// user event (UF-5): after update has run and the patches are applied, a
-// CONTROLLED form control shows what the model says, even when the model
-// did not change. The diff compares the previous VNode with the new one, so
-// when update rejects or normalises the input (keeps "abc" when the user
-// typed "abcd", refuses a checkbox tick) both trees agree, no patch is
-// emitted, and the DOM kept the user's rejected state.
-//
-//   - text-like input / textarea / select: controlled when the VNode has a
-//     `value`; .value is rewritten when it differs (caret kept, clamped).
-//   - checkbox / radio: controlled when the VNode has `checked` or states
-//     `data-sky-checked` (Std.Ui's checkbox and radio, and
-//     Html.Attributes.checked); .checked follows the model value.
-//   - a file input is never touched.
-//
-// While a server-branch RPC is queued or in flight the model is NOT yet
-// authoritative for the control (the branch's write lands with the response),
-// so writing the model back would erase what the user just typed ("a" then "b"
-// became "b"). The target is kept and reconciled on the first render after the
-// queue drains, when the model holds every dispatched edit, replayed in order
-// (spaRpcQueue.complete) — which still puts a value the server rejected or
-// normalised back into the control. Sky.Live's rule is the same: an unacked
-// edit is never overwritten (docs/skylive/input-authority-protocol.md).
-var spaReconcileDeferred js.Value
-
-func spaReconcileControlled(root *VNode) {
-	el := spaEventTarget
-	spaEventTarget = js.Value{}
-	if el.Type() != js.TypeObject {
-		el = spaReconcileDeferred
-	}
-	if spaRpcQ != nil && spaRpcQ.pending() {
-		if el.Type() == js.TypeObject {
-			spaReconcileDeferred = el
-		}
-		return
-	}
-	spaReconcileDeferred = js.Value{}
-	if el.Type() != js.TypeObject || !el.Get("isConnected").Truthy() {
-		return
-	}
-	if el.Get("__skyComposing").Truthy() {
-		return
-	}
-	sid := el.Call("getAttribute", "sky-id")
-	if sid.Type() != js.TypeString {
-		return
-	}
-	nv := findVNode(root, sid.String())
-	if nv == nil {
-		return
-	}
-	typ := strings.ToLower(nv.Attrs["type"])
-	switch typ {
-	case "file":
-		return
-	case "checkbox", "radio":
-		_, has := nv.Attrs["checked"]
-		marker, marked := nv.Attrs["data-sky-checked"]
-		if !has && !marked {
-			return
-		}
-		want := has && boolAttr(nv.Attrs["checked"])
-		if marked {
-			want = marker == "true"
-		}
-		if el.Get("checked").Truthy() != want {
-			el.Set("checked", want)
-		}
-		return
-	}
-	v, ok := nv.Attrs["value"]
-	if !ok {
-		return
-	}
-	cur := el.Get("value")
-	if cur.Type() == js.TypeString && cur.String() == v {
-		return
-	}
-	s, e := -1, -1
-	focused := el.Equal(js.Global().Get("document").Get("activeElement"))
-	if focused {
-		s, e = selectionRange(el)
-	}
-	el.Set("value", v)
-	if focused && s >= 0 && hasFn(el, "setSelectionRange") {
-		l := valueLen(el)
-		el.Call("setSelectionRange", min(s, l), min(e, l))
-	}
+	spaListen(n, id, "compositionstart", start)
+	spaListen(n, id, "compositionend", end)
 }
 
 // spaFormData reads a submitted <form>'s named controls into a map[string]any
@@ -973,7 +878,7 @@ func spaRenameKept(renames []spaRename) {
 		to     string
 		hidTo  string
 		hasHid bool
-		fns    []js.Func
+		fns    []spaListener
 	}
 	var all []moved
 	for _, r := range renames {
@@ -1081,7 +986,7 @@ func applyAttrs(el js.Value, attrs map[string]string, id string, newRoot *VNode)
 
 	if eventChanged {
 		if nv := findVNode(newRoot, id); nv != nil {
-			releaseNodeFns(id)
+			releaseNodeFns(id, el)
 			bindNodeEvents(el, *nv)
 		}
 	}
@@ -1212,14 +1117,27 @@ func findVNode(root *VNode, id string) *VNode {
 	return nil
 }
 
-func releaseNodeFns(id string) {
-	spaNodeHandlers.drop(id)
-	if fns, ok := spaNodeFns[id]; ok {
-		for _, f := range fns {
-			f.Release()
+// releaseNodeFns detaches and releases the listeners recorded under id. With
+// a node, only that node's listeners go (another node may carry the same id
+// while a patch set is half applied); with js.Value{} every listener under id
+// goes (spaMount, which empties the whole mount).
+func releaseNodeFns(id string, node js.Value) {
+	all := node.Type() != js.TypeObject
+	var keep []spaListener
+	for _, l := range spaNodeFns[id] {
+		if !all && !l.node.Equal(node) {
+			keep = append(keep, l)
+			continue
 		}
-		delete(spaNodeFns, id)
+		l.node.Call("removeEventListener", l.evt, l.fn)
+		l.fn.Release()
 	}
+	if len(keep) > 0 {
+		spaNodeFns[id] = keep
+		return
+	}
+	delete(spaNodeFns, id)
+	spaNodeHandlers.drop(id)
 }
 
 // releaseDOMSubtree releases the listeners bound on n and every element
@@ -1230,12 +1148,13 @@ func releaseDOMSubtree(n js.Value) {
 		return
 	}
 	if s := n.Call("getAttribute", "sky-id"); s.Type() == js.TypeString {
-		releaseNodeFns(s.String())
+		releaseNodeFns(s.String(), n)
 	}
 	list := n.Call("querySelectorAll", "[sky-id]")
 	for i := 0; i < list.Length(); i++ {
-		if s := list.Index(i).Call("getAttribute", "sky-id"); s.Type() == js.TypeString {
-			releaseNodeFns(s.String())
+		c := list.Index(i)
+		if s := c.Call("getAttribute", "sky-id"); s.Type() == js.TypeString {
+			releaseNodeFns(s.String(), c)
 		}
 	}
 }

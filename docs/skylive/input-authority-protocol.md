@@ -296,35 +296,44 @@ The same filter runs for innerHTML patches targeting ancestors of a focused/dirt
 
 This preserves G1 even when the server sends a "wipe your whole form and rebuild" patch.
 
-### User-event reconcile (the model wins after update)
+### The DOM is written only when the render changes (Elm semantics)
 
-The rules above protect what the user is typing from a server value that is
-older than it. The opposite case needs a rule too: **after the user's own
-event has been through `update`, a controlled control shows the model**, even
-when the model did not move. When `update` refuses or normalises the input
-(keeps `"abc"` when the user typed `"abcd"`, refuses a checkbox tick), the
-previous and the new tree agree, so a tree-to-tree diff emits nothing and the
-DOM keeps the refused state.
+This is the rule for a control after the user's own event, on Sky.Live,
+Sky.Spa and the desktop webview alike: **a control's live state (`.value`,
+`.checked`, `.selected`) is written only when the rendered value CHANGES
+between the previous render and the new one.** It is the rule Elm's virtual
+DOM follows.
 
-The rule, per applier, for the control the event came from:
+- When `update` refuses or normalises an edit to the SAME value the previous
+  render showed (keeps `"abc"` when the user typed `"abcd"`, ignores a
+  checkbox tick), the two renders agree, no patch is emitted, and the control
+  keeps what the user left in it. Sky does not write the model value back.
+- When the rendered value CHANGES (a clear, a normalisation to a new value, a
+  value set by another event), the new value is applied. For a focused
+  tracked input it applies once the input's keystrokes are acked (F9 /
+  UF-4 above). Removing `value` / `checked` / `selected` / `disabled`
+  resets the DOM property as well as the attribute (F2 / F3).
 
-1. After the patches for that event are applied, read the control's LIVE state
-   (`.value`, or `.checked` for a checkbox / radio) and compare it with the new
-   tree — not with the previous tree.
-2. Text-like `input`, `textarea`, `select`: controlled when the VNode has a
-   `value` attribute. Write `.value` when it differs; keep the caret (clamped
-   to the new length).
-3. `checkbox` / `radio`: controlled when the VNode has `checked`, or declares
-   states `data-sky-checked="true|false"` (Std.Ui's checkbox and radio always
-   do, in both states; `Html.Attributes.checked` renders it too, since "no
-   `checked`" alone cannot tell "unticked" from "uncontrolled"). Set `.checked`
-   to the stated model value.
-4. Never touch a `file` input, or a field with an open IME composition (the
-   composition owns it; see below).
+Why not "the model always wins": an app can bind a field to one model value
+and write its `onInput` to another (an app bug, but a common one). In Elm,
+and on Sky up to v0.25.16, the field keeps what the user types, because the
+rendered value never changes. A v0.25.17 release candidate added a
+"user-event reconcile" that wrote the unchanged model value back into the
+control after every event; on such an app it erased every keystroke. It was
+removed (audit register `docs/history/v0.25.17/audit-register.md`, row
+UF-5: by design). An app that must show a refused edit as refused changes the
+rendered value, for example by rendering an error, or by clearing the field.
 
-Sky.Spa implements this in `spaReconcileControlled` (`dom_render_wasm.go`),
-run by `renderCurrent` after every patch set. Sky.Live implements it as
-described below.
+**A different form gets fresh fields.** An uncontrolled field (a named
+input with no `value`, the pinned password-form pattern) keeps what the user
+typed, because nothing in the tree states its value. When a page puts a
+different form in the slot of the previous one (a password reset, then a
+sign-in form), a kept `<input>` would carry the typed text into the new form.
+A `<form>` whose submit handler or `action` differs from the previous
+render's form in that slot is therefore a different form: the diff replaces
+it (`replace` patch) and every field is a new, empty node. A form that only
+re-renders (the same handler, a field shown or hidden) is patched in place and
+keeps focus and typing (`sameForm`, `live_core.go`).
 
 **IME composition.** While a composition is open (`compositionstart` to
 `compositionend`, or `event.isComposing`), `input` events carry pre-edit text
@@ -333,16 +342,14 @@ and are NOT dispatched, and no `value` patch is written to that field. On
 non-composing `input` event with the same value is not dispatched again). An
 Enter that confirms a composition does not fire `Ui.onEnter`.
 
-**Convergence rule (rejected or normalised edits).** The structural diff
-compares the new render with the previous render, so when `update` rejects or
-normalises an edit the render does not change and no patch is emitted. The
-event reply therefore also carries a `value` patch for every input reported in
-`inputState` whose rendered model value differs from what the client reported
-(`reconcileControlledInputs`). The client applies it once the input is no
-longer dirty, so the DOM converges to the model. A checkbox or radio the user
-toggled converges after the reply to its event, from `data-sky-checked` (both
-states) or the `checked` attribute. Removing `value` / `checked` / `selected`
-resets the DOM property as well as the attribute.
+**Rejected or normalised edits.** The structural diff compares the new
+render with the previous render. When `update` rejects an edit, or
+normalises it to the value the previous render already showed, the render
+does not change and no patch is emitted: the control keeps what the user
+typed (the rule above). The `inputState` a client reports only aligns the
+diff with what the user has on screen, so a CHANGED model value that equals
+the typed text is not written again; it never adds a patch the render did
+not ask for.
 
 ## Server state
 

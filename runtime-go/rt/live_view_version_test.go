@@ -215,19 +215,18 @@ func TestDiff_GainingUnnamedHandlerIsNotARemoval(t *testing.T) {
 	t.Fatalf("no sky-input attribute patch for a gained handler: %+v", patches)
 }
 
-// ── UF-5: a rejected edit converges to the model ────────────────────
+// ── Elm rule: the DOM is written only when the rendered value changes ──
+//
+// docs/skylive/input-authority-protocol.md, "The DOM is written only when the
+// render changes". A real app bound an input to one model field and wrote
+// its onInput to another; in Elm and on v0.25.16 the field kept what the user
+// typed, because the render did not change. A "user-event reconcile" that
+// wrote the unchanged model value back into the field erased every keystroke.
 
-func TestEvent_RejectedEditConvergesToModel(t *testing.T) {
-	store := newMemoryStore(30 * time.Minute)
-	app := &liveApp{
-		init: func(req any) any { return SkyTuple2{V0: "abcde", V1: cmdT{kind: "none"}} },
-		update: func(msg, model any) any {
-			s := msg.(string)
-			if len(s) > 5 { // the app rejects edits longer than 5
-				return SkyTuple2{V0: model, V1: cmdT{kind: "none"}}
-			}
-			return SkyTuple2{V0: s, V1: cmdT{kind: "none"}}
-		},
+func elmRuleApp(update func(msg, model any) any) *liveApp {
+	return &liveApp{
+		init:   func(req any) any { return SkyTuple2{V0: "abcde", V1: cmdT{kind: "none"}} },
+		update: update,
 		view: func(model any) any {
 			return velement("div", nil, []any{
 				velement("input", []any{
@@ -236,24 +235,50 @@ func TestEvent_RejectedEditConvergesToModel(t *testing.T) {
 				}, nil),
 			})
 		},
-		store: store, locker: newSessionLocker(), msgTags: map[string]int{},
+		store: newMemoryStore(30 * time.Minute), locker: newSessionLocker(), msgTags: map[string]int{},
 	}
+}
+
+func postTypedValue(t *testing.T, app *liveApp, typed string) []Patch {
+	t.Helper()
 	_, cookie, view := getPage(t, app, "/", "")
 	rr := postLiveEvent(t, app, cookie, map[string]any{
-		"seq": 1, "msg": "_", "args": []any{"abcdefg"}, "handlerId": "r.0#input.input", "view": view,
-		"inputState": map[string]any{"r.0#input": map[string]any{"value": "abcdefg", "seq": 1}},
+		"seq": 1, "msg": "_", "args": []any{typed}, "handlerId": "r.0#input.input", "view": view,
+		"inputState": map[string]any{"r.0#input": map[string]any{"value": typed, "seq": 1}},
 	})
 	var resp struct {
 		Patches []Patch `json:"patches"`
 	}
-	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	for _, p := range resp.Patches {
-		if p.ID == "r.0#input" && p.Attrs["value"] == "abcde" {
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("reply is not JSON: %v %s", err, rr.Body.String())
+	}
+	return resp.Patches
+}
+
+func TestEvent_RejectedEditLeavesTheDOMAsTyped(t *testing.T) {
+	app := elmRuleApp(func(msg, model any) any {
+		// The app ignores the edit: the model, and so the render, stay "abcde".
+		return SkyTuple2{V0: model, V1: cmdT{kind: "none"}}
+	})
+	for _, p := range postTypedValue(t, app, "abcdefg") {
+		if _, ok := p.Attrs["value"]; ok && p.ID == "r.0#input" {
+			t.Fatalf("the render did not change but the reply writes value=%q over what the user typed "+
+				"(Elm semantics: the DOM is written only when the rendered value changes): %+v", p.Attrs["value"], p)
+		}
+	}
+}
+
+func TestEvent_ChangedModelValueIsApplied(t *testing.T) {
+	app := elmRuleApp(func(msg, model any) any {
+		// The app normalises the edit to a value the render has not shown yet.
+		return SkyTuple2{V0: strings.ToUpper(msg.(string)), V1: cmdT{kind: "none"}}
+	})
+	for _, p := range postTypedValue(t, app, "abcdef") {
+		if p.ID == "r.0#input" && p.Attrs["value"] == "ABCDEF" {
 			return
 		}
 	}
-	t.Fatalf("update rejected the edit (model stays \"abcde\") but the reply carries no value patch, "+
-		"so the input keeps showing the rejected \"abcdefg\": %s", rr.Body.String())
+	t.Fatalf("the rendered value changed to ABCDEF but the reply carries no value patch")
 }
 
 // ── F4: select keeps its value when its options re-render ───────────

@@ -167,8 +167,8 @@ by shape, and a matched child keeps its DOM node, so a focused input keeps its
 focus, caret and typing when something is inserted above it. Event payloads
 follow Sky.Live's convention: `onKeyDown` / `onKeyUp` / `onKeyPress` get
 `event.key`, `onCheck` gets the checkbox's Bool, input / change get the value.
-After an event, a controlled control shows the model even when `update` refused
-or normalised the input (the user-event reconcile). While an IME composition is
+A control's value is written only when the rendered value changes (Elm
+semantics): when `update` refuses an edit, the field keeps what the user typed. While an IME composition is
 open the field's input events are not dispatched; the committed text is, once.
 A server-painted first page is adopted (hydrated) only when it shows exactly
 what the client's first view says; otherwise the client builds the page itself.

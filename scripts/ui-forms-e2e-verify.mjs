@@ -13,6 +13,8 @@
 //      DROPPED (no Msg), never delivered with a zero.
 //   3. Literal-topic pub/sub (Sky.Live only) — a publish on the topic reaches
 //      the subscriber.
+//   4. W2 — a new password typed into a reset form must not appear in the
+//      sign-in form that replaces it (same slot, same field name).
 //
 // Usage: node scripts/ui-forms-e2e-verify.mjs <app> --mode live|spa [--port N]
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
@@ -121,7 +123,19 @@ try {
       errors.join(" | ").slice(0, 300));
   }
 
-  // 5. Literal-topic pub/sub (Sky.Live).
+  // 5. W2: the reset form is replaced by a sign-in form in the same slot, with
+  // a password field of the same name. The typed password must not carry over.
+  if ((await page.locator("#fr-pw").count()) > 0) {
+    await page.locator("#fr-pw").first().fill("new-secret-pw");
+    await page.locator("#fr-go").first().click();
+    await page.waitForTimeout(800);
+  }
+  const signInShown = (await page.locator("#fs-pw").count()) > 0;
+  const leaked = signInShown ? await page.locator("#fs-pw").first().inputValue() : "<no sign-in form>";
+  check(signInShown && leaked === "", "W2 a submitted password does not carry into the next form",
+    `sign-in password field = ${JSON.stringify(leaked)}`);
+
+  // 6. Literal-topic pub/sub (Sky.Live).
   if (MODE === "live") {
     await page.locator("#pub").first().click();
     await page.waitForTimeout(1000);

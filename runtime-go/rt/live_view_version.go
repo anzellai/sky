@@ -306,70 +306,6 @@ func (sess *liveSession) stopAllEvery() {
 	}
 }
 
-// ── Controlled-input convergence (UF-5) ───────────────────────────
-
-// reconcileControlledInputs adds a `value` patch for every input the
-// client reported (inputState) whose rendered model value differs from
-// what the client shows. The structural diff compares the new render
-// with the previous RENDER, so when `update` rejects or normalises an
-// edit the model — and so the render — does not change, no patch is
-// emitted, and the DOM kept the user's rejected text for ever. An
-// input without a rendered `value` is uncontrolled and left alone.
-// Checkboxes and radios are converged client-side (their state is the
-// presence of the `checked` attribute; see __skyReassertChecked).
-func reconcileControlledInputs(newTree *VNode, state map[string]inputStateEntry, patches []Patch) []Patch {
-	if newTree == nil || len(state) == 0 {
-		return patches
-	}
-	patched := map[string]bool{}
-	for _, p := range patches {
-		if p.Attrs != nil {
-			if _, ok := p.Attrs["value"]; ok {
-				patched[p.ID] = true
-			}
-		}
-	}
-	var walk func(n *VNode)
-	walk = func(n *VNode) {
-		if n == nil || n.Kind != "element" {
-			return
-		}
-		if entry, ok := state[n.SkyID]; ok && n.SkyID != "" && !patched[n.SkyID] {
-			if v, isCtl := controlledTextValue(n); isCtl && v != entry.Value {
-				patches = append(patches, Patch{ID: n.SkyID, Attrs: map[string]string{"value": v}})
-			}
-		}
-		for i := range n.Children {
-			walk(&n.Children[i])
-		}
-	}
-	walk(newTree)
-	return patches
-}
-
-// controlledTextValue is the model value a text-like control renders,
-// and whether it renders one at all.
-func controlledTextValue(n *VNode) (string, bool) {
-	switch n.Tag {
-	case "textarea":
-		if v, ok := n.Attrs["value"]; ok {
-			return v, true
-		}
-		if len(n.Children) == 1 && n.Children[0].Kind == "text" {
-			return n.Children[0].Text, true
-		}
-		return "", false
-	case "input":
-		switch strings.ToLower(n.Attrs["type"]) {
-		case "checkbox", "radio", "file", "submit", "button", "image", "reset":
-			return "", false
-		}
-		v, ok := n.Attrs["value"]
-		return v, ok
-	}
-	return "", false
-}
-
 // ── Select value across an options re-render (F4) ─────────────────
 
 // markSelectedInSelectPatches re-renders the options of a <select>
@@ -434,8 +370,7 @@ func markSelectedInSelectPatches(newTree *VNode, patches []Patch) []Patch {
 }
 
 // liveDiff is diffTrees plus the Live-side post-passes every producer
-// applies: select option marking. The HTTP event path additionally runs
-// reconcileControlledInputs (it is the only path with fresh inputState).
+// applies: select option marking.
 func liveDiff(prev, next *VNode, clientState map[string]string) []Patch {
 	return markSelectedInSelectPatches(next, diffTrees(prev, next, clientState))
 }

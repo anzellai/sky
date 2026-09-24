@@ -245,3 +245,84 @@ func TestSelectKeepsValueWhenOptionsChange(t *testing.T) {
 		}
 	}
 }
+
+// W2: a password-reset form followed, in the same slot, by a sign-in form
+// whose password field has the same name. The fields are uncontrolled (no
+// `value`), so nothing in the tree states what the user typed; a kept
+// <input> node showed the new password in the sign-in field. A form whose
+// submit handler differs is a different form: it gets fresh nodes.
+func formPage(submit string, fields ...string) VNode {
+	form := vel("form", nil)
+	form.Events["submit"] = SkyADT{SkyName: submit}
+	for _, f := range fields {
+		form.Children = append(form.Children, vel("input", map[string]string{"name": f, "type": "password", "id": f}))
+	}
+	return vel("div", nil, vel("div", nil, form))
+}
+
+func TestFormSwapGivesFreshFieldNodes(t *testing.T) {
+	oldV := formPage("ResetPassword", "password")
+	newV := formPage("SignIn", "password", "email")
+	o, n := prep(oldV), prep(newV)
+	patches := diffTrees(&o, &n, nil)
+	for _, isSpa := range []bool{false, true} {
+		doc := docFor(o, isSpa)
+		before := serialOf(t, doc, byAttr("id", "password"))
+		if missed := applyPatches(doc, patches, &n, isSpa); missed != 0 {
+			t.Fatalf("spa=%v: %d targets missed\n%s", isSpa, missed, fmtPatches(patches))
+		}
+		if got, want := canon(doc.kids, isSpa), canon(docFor(n, isSpa).kids, isSpa); got != want {
+			t.Fatalf("spa=%v: not converged\nGOT  %s\nWANT %s", isSpa, got, want)
+		}
+		if after := serialOf(t, doc, byAttr("id", "password")); after == before {
+			t.Fatalf("spa=%v: the sign-in form reused the reset form's password <input>, so the typed "+
+				"password carries over\n%s", isSpa, fmtPatches(patches))
+		}
+	}
+}
+
+// The same form re-rendered (the same submit handler, a field added) keeps
+// its field nodes, so focus and typing survive.
+func TestFormRerenderKeepsFieldNodes(t *testing.T) {
+	oldV := formPage("SignIn", "password")
+	newV := formPage("SignIn", "password", "email")
+	o, n := prep(oldV), prep(newV)
+	patches := diffTrees(&o, &n, nil)
+	for _, isSpa := range []bool{false, true} {
+		doc := docFor(o, isSpa)
+		before := serialOf(t, doc, byAttr("id", "password"))
+		if missed := applyPatches(doc, patches, &n, isSpa); missed != 0 {
+			t.Fatalf("spa=%v: %d targets missed\n%s", isSpa, missed, fmtPatches(patches))
+		}
+		if after := serialOf(t, doc, byAttr("id", "password")); after != before {
+			t.Fatalf("spa=%v: a re-render of the same form rebuilt its field\n%s", isSpa, fmtPatches(patches))
+		}
+	}
+}
+
+// W2 with the handlers an app actually has: an eta-expanded `Ui.onSubmit
+// ResetPw` is a closure with no constructor name, so two forms' handlers
+// looked the same. Two closures from different sites are different forms; the
+// same site on the next render is the same form. (The helpers stand for a
+// view function; noinline keeps the one code copy a view function has.)
+//
+//go:noinline
+func w2ResetHandler() any { return func(p any) any { return p } }
+
+//go:noinline
+func w2SignInHandler() any { return func(p any) any { return []any{p} } }
+
+func TestFormIdentityOfClosureHandlers(t *testing.T) {
+	form := func(h any) VNode {
+		f := vel("form", nil)
+		f.Events["submit"] = h
+		return f
+	}
+	a, b, a2 := form(w2ResetHandler()), form(w2SignInHandler()), form(w2ResetHandler())
+	if sameForm(&a, &b) {
+		t.Fatalf("forms submitting through closures from different sites read as the same form (%q)", formIdentity(&a))
+	}
+	if !sameForm(&a, &a2) {
+		t.Fatalf("the same closure site on the next render read as a different form: %q vs %q", formIdentity(&a), formIdentity(&a2))
+	}
+}
