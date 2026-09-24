@@ -3,7 +3,7 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Sky.Core.String as String
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
 import Std.Ui as Ui exposing (Element)
 import Std.App as App
 import Std.Cmd as Cmd
@@ -51,6 +51,28 @@ update db msg model =
 
         Durable ev ->
             ( Durable.applyRestore ev model, Cmd.none )
+
+
+-- Every SnapshotEvent constructor, matched exhaustively: the compile guard
+-- proves an app can surface a failed restore or a failed write (v0.25.17 added
+-- RestoreFailed and PersistFailed; before, both were silently swallowed).
+eventLabel : Durable.SnapshotEvent Model -> String
+eventLabel ev =
+    case ev of
+        Durable.Restored (Just _) ->
+            "restored"
+
+        Durable.Restored Nothing ->
+            "fresh"
+
+        Durable.RestoreFailed e ->
+            "restore failed: " ++ Error.toString e
+
+        Durable.Persisted ->
+            "saved"
+
+        Durable.PersistFailed e ->
+            "save failed: " ++ Error.toString e
 
 
 view : Model -> Element Msg

@@ -357,7 +357,10 @@ radio attrs cfg =
         renderedOptions =
             List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
         columnBaseAttrs =
-            Ui.spacing 6 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
+            Ui.spacing 6
+                :: radioGroupMarker
+                :: controlAttrs
+                ++ implicitFillIfHoisted layoutAttrs
     in
         wrapWithLabel
             cfg.label
@@ -380,7 +383,10 @@ radioRow attrs cfg =
         renderedOptions =
             List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
         rowBaseAttrs =
-            Ui.spacing 12 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
+            Ui.spacing 12
+                :: radioGroupMarker
+                :: controlAttrs
+                ++ implicitFillIfHoisted layoutAttrs
     in
         wrapWithLabel
             cfg.label
@@ -451,6 +457,16 @@ inputBase inputType attrs cfg =
         inputEl = Ui.input baseAttrs
     in
         wrapWithLabel cfg.label layoutAttrs inputEl
+
+
+-- Marks a radio group's container. The runtime names every unnamed radio in the
+-- group after the container's sky-id (applyRadioGroupNames, live_core.go), so
+-- the browser groups them natively: one selection, arrow keys move within the
+-- group, and two groups on a page never share a name. A `Ui.name` the app sets
+-- on the group is kept.
+radioGroupMarker : Attribute msg
+radioGroupMarker =
+    Ui.htmlAttribute "data-sky-radio-group" "1"
 
 
 -- Render a single radio option — a clickable `<input type="radio">`

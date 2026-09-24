@@ -1366,6 +1366,7 @@ const liveBaseCSS = `*,*::before,*::after{box-sizing:border-box}` +
 	`@keyframes sky-spa-hydrating{0%{left:-35%}100%{left:100%}}`
 
 func applyStyleInjections(n *VNode) {
+	applyRadioGroupNames(n, "")
 	present := scanStyleMarkers(n)
 	if present == 0 {
 		return
@@ -3219,4 +3220,35 @@ func sky_call2(f any, a, b any) any {
 	}
 	// Curried: f(a)(b)
 	return sky_call(sky_call(f, a), b)
+}
+
+// applyRadioGroupNames names the radios of every Std.Ui radio group. A radio
+// with no `name` is not grouped by the browser: several can be checked at
+// once, and the arrow keys do not move between them. Std.Ui's radio and
+// radioRow mark their container with `data-sky-radio-group`; every unnamed
+// `<input type="radio">` inside it gets the group's name — the container's own
+// `name` attribute when the app set one (`Ui.name`), else the container's
+// sky-id, which is deterministic (server and client render the same name, so
+// hydration and diffs agree) and unique on the page. A radio that already has
+// a `name` is left alone. It runs after assignSkyIDs, from
+// applyStyleInjections, on every render path (Sky.Live, Sky.Spa, webview).
+func applyRadioGroupNames(n *VNode, group string) {
+	if n == nil || n.Kind != "element" {
+		return
+	}
+	if _, ok := n.Attrs["data-sky-radio-group"]; ok {
+		if nm := n.Attrs["name"]; nm != "" {
+			group = nm
+		} else if n.SkyID != "" {
+			group = n.SkyID
+		}
+	}
+	if group != "" && n.Tag == "input" && strings.EqualFold(n.Attrs["type"], "radio") {
+		if n.Attrs["name"] == "" {
+			n.setAttr("name", group)
+		}
+	}
+	for i := range n.Children {
+		applyRadioGroupNames(&n.Children[i], group)
+	}
 }

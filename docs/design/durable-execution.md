@@ -217,6 +217,8 @@ awaitSignal : Ctx -> Codec a -> String -> Task Error a               -- passive,
   - **TEA wiring** — a durable `Std.App` app adds one `Msg` variant and wires
     `Durable.restoreCmd` (init loads the snapshot, model swaps in on tick one),
     `Durable.snapshotCmd` (update persists the new model), `Durable.applyRestore`.
+    `SnapshotEvent` carries `RestoreFailed` / `PersistFailed` too (v0.25.17): a
+    snapshot that no longer decodes, or a write that failed, is never silent.
     `Std.App`'s `init` stays synchronous; restore is a first tick, not a framework
     change.
   - The model must be a plain data value with a `Codec` (no function fields) — the

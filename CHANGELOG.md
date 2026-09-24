@@ -38,6 +38,17 @@ compile errors:
   crashed the first time it ran. Fix: write `/=` (the error names the
   operator and gives the Sky spelling).
 
+One public type gained constructors, which breaks an exhaustive `case` over it:
+
+- **`Std.Durable.SnapshotEvent`** now has `RestoreFailed Error` and
+  `PersistFailed Error`, next to `Restored` and `Persisted`. Before, a snapshot
+  that no longer decoded (after a `Model` field was added or renamed) arrived
+  as `Restored Nothing`, and a failed write arrived as `Persisted`. The app
+  could not tell either failure from success. `applyRestore` handles both by
+  keeping the current model. If you match `SnapshotEvent` yourself, add the two
+  arms, show the error, and do not `snapshotCmd` over a snapshot that failed to
+  restore, because that write replaces the only copy of the old data.
+
 Two examples had these defects: `08-notes-app` passed a string to `onSubmit`,
 which never ran, and `13-skyshop` used `!=` in sixteen places, so filtering
 products crashed.
@@ -99,6 +110,9 @@ products crashed.
   against its own annotations, which is how that defect was found.
 - Checkbox and radio labels are real `<label>` elements, so a click on the label
   toggles the control.
+- Every `Std.Ui` radio group names its radios (the group's `Ui.name`, else a
+  stable id), so the browser groups them: one selection, and the arrow keys
+  move within the group.
 
 ### Terminal (`terminal:tui`, `terminal:cli`, `App.tui`, `App.cli`)
 

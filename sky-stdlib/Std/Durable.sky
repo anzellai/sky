@@ -897,12 +897,22 @@ saveSnapshotAuto db runId codec model =
 -- ---------------------------------------------------------------------------
 -- Durable TEA (v2) — restore-on-first-tick wiring for a Std.App / Sky.Live app
 -- ---------------------------------------------------------------------------
-{-| The event a durable TEA app routes through one added `Msg` variant. `Restored`
-carries the model loaded at startup (`Nothing` for a fresh run); `Persisted`
-acknowledges a snapshot write. -}
+{-| The event a durable TEA app routes through one added `Msg` variant.
+
+  - `Restored` carries the model loaded at startup (`Nothing` for a fresh run).
+  - `RestoreFailed` says a snapshot exists but could not be read or no longer
+    decodes (typically after a `Model` field was added or renamed). Keep the
+    current model, surface the error, and do NOT `snapshotCmd` over it before
+    you have decided what to do: that write would replace the only copy of the
+    old data. (`App.withDurable` follows this rule for you.)
+  - `Persisted` acknowledges a snapshot write; `PersistFailed` reports a write
+    that did not happen, so an app never believes an unsaved model is saved.
+-}
 type SnapshotEvent model
     = Restored (Maybe model)
+    | RestoreFailed Error
     | Persisted
+    | PersistFailed Error
 
 
 {-| A `Cmd` for the app's `init` that loads the last snapshot and delivers it as
@@ -921,14 +931,13 @@ restoreCmd db runId codec toMsg =
         (loadSnapshot db runId codec)
         (\res ->
             toMsg
-                (Restored
-                    (case res of
+                (case res of
 
-                        Ok mm ->
-                            mm
+                    Ok mm ->
+                        Restored mm
 
-                        Err _ ->
-                            Nothing)))
+                    Err e ->
+                        RestoreFailed e))
 
 
 {-| A `Cmd` for the app's `update` that snapshots the new model after a real
@@ -945,11 +954,23 @@ update, delivering `Persisted`. Add it to the `Cmd` your `update` returns.
 -}
 snapshotCmd : Db -> String -> Codec model -> (SnapshotEvent model -> msg) -> model -> Cmd msg
 snapshotCmd db runId codec toMsg model =
-    Cmd.perform (saveSnapshotAuto db runId codec model) (\_ -> toMsg Persisted)
+    Cmd.perform
+        (saveSnapshotAuto db runId codec model)
+        (\res ->
+            toMsg
+                (case res of
+
+                    Ok _ ->
+                        Persisted
+
+                    Err e ->
+                        PersistFailed e))
 
 
 {-| Apply a `SnapshotEvent` in `update`: `Restored (Just m)` swaps in the restored
-model; everything else keeps the current model. -}
+model; everything else — a fresh run, a failed restore, a write acknowledgement or
+failure — keeps the current model. Match the event yourself as well to surface
+`RestoreFailed` / `PersistFailed`. -}
 applyRestore : SnapshotEvent model -> model -> model
 applyRestore ev model =
     case ev of
@@ -960,5 +981,11 @@ applyRestore ev model =
         Restored Nothing ->
             model
 
+        RestoreFailed _ ->
+            model
+
         Persisted ->
+            model
+
+        PersistFailed _ ->
             model
