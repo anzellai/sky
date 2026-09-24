@@ -292,7 +292,10 @@ multiline attrs cfg =
 
 
 -- Checkbox. The icon is the visual checkmark element (use a simple
--- unicode tick for now or a custom Element).
+-- unicode tick for now or a custom Element). On the web the icon is the
+-- ONLY box drawn: the native input lies transparently over it (it still
+-- takes the click, the focus and the keyboard), so the icon must draw
+-- both states. An icon of `Ui.none` leaves nothing to see.
 --
 -- `cfg.checked` drives the native `checked` attribute as well as the
 -- icon, so the underlying `<input type="checkbox">` reflects the model

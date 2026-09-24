@@ -107,6 +107,19 @@
 # Found by bisecting the SOURCE (a compiler at d08a5910 and at main 0d34d2e7
 # both measure 20-cli-counter at 49; the sweep measures 53, all in
 # runTuiBoot_).
+# ── Recorded transition, 2026-09-24 — v0.25.17 UI/UX sweep fixes ──
+#     narrow +5 -1 over 6 rows; adapter and dispatch unchanged (0). Every rise
+#     sits in a function whose SOURCE changed (per-function token diff):
+# 1. +1 in 37 / 38 / apps/fieldbook: `Std.Ui.Input.checkbox` lays the native
+#    box over the icon (two `__overlayControl` / `__relative` marker attrs in
+#    the checkbox row), the same per-call-site shape as its other attrs.
+# 2. +1 26-ui-showcase: `Edit s` now binds its String payload (the textarea
+#    edits a model field), one R6 payload narrowing in `Main_update`.
+# 3. +1 62-app-notes: `Persist.createNote` answers the inserted id (an `Int`
+#    out of `Task.run`), one R2 scalar narrowing.
+# 4. -1 63-app-chat: the record-alias field fix (`LoadResp.messages` is
+#    `[]Domain_Message_R`, no longer converted through the stdlib
+#    `Std_Ai_Provider_Message_R`) removes one narrowing. Floor tightened.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -132,7 +145,7 @@
 23-tui-todo	adapter=0	dispatch=0	narrow=84
 24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=90
 25-sky-console	adapter=0	dispatch=0	narrow=94
-26-ui-showcase	adapter=0	dispatch=0	narrow=354
+26-ui-showcase	adapter=0	dispatch=0	narrow=355
 27-multi-session-chat	adapter=0	dispatch=0	narrow=236
 28-streaming-chat	adapter=0	dispatch=0	narrow=101
 29-webview-threejs-spike	adapter=0	dispatch=0	narrow=62
@@ -143,8 +156,8 @@
 34-multi-tier-console	adapter=0	dispatch=0	narrow=80
 35-composite-generics	adapter=0	dispatch=0	narrow=162
 36-composite-server	adapter=0	dispatch=0	narrow=320
-37-composite-live-shop	adapter=0	dispatch=0	narrow=420
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=325
+37-composite-live-shop	adapter=0	dispatch=0	narrow=421
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=326
 40-generic-adt-field	adapter=0	dispatch=0	narrow=5
 41-nested-curry	adapter=0	dispatch=0	narrow=7
 42-poly-record	adapter=0	dispatch=0	narrow=3
@@ -162,14 +175,14 @@
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=5
 55-store-partial-update	adapter=0	dispatch=0	narrow=135
 61-app-kanban	adapter=0	dispatch=0	narrow=269
-62-app-notes	adapter=0	dispatch=0	narrow=450
-63-app-chat	adapter=0	dispatch=0	narrow=451
+62-app-notes	adapter=0	dispatch=0	narrow=451
+63-app-chat	adapter=0	dispatch=0	narrow=450
 64-app-native	adapter=0	dispatch=0	narrow=346
 65-metadata-service	adapter=0	dispatch=0	narrow=41
 66-slack-agent	adapter=0	dispatch=0	narrow=160
 67-durable-counter	adapter=0	dispatch=0	narrow=89
 apps/dispatch	adapter=0	dispatch=0	narrow=469
-apps/fieldbook	adapter=0	dispatch=0	narrow=703
+apps/fieldbook	adapter=0	dispatch=0	narrow=704
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=571
 apps/relay	adapter=0	dispatch=0	narrow=244
