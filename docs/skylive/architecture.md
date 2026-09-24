@@ -374,7 +374,9 @@ dispatch. `Ui.onFile` / `Ui.onImage` dispatch by handler id too.
 content id (`view`, a hash of the body, `live_view_version.go`). The page and
 every reply carry it; every event carries the id of the body the DOM showed
 when the user acted. The server keeps the handler maps of the last 16 distinct
-renders and resolves the handler id in THAT render. A click on row b made
+renders, and of every render younger than 30 seconds (up to 256), and resolves
+the handler id in THAT render — so a burst of taps queued on one render still
+resolves. A click on row b made
 before the reply to a click on row a arrived deletes b, not the row that now
 sits where b was. An id the session no longer holds is a desync (the client is
 refreshed, the action dropped), never a different Msg. The same applies to

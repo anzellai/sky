@@ -171,6 +171,7 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | D6 | `Std.Ui.Input` header said the password controls pair with `Ui.form` + `onSubmit`; they require a per-keystroke `onChange` | fixed (docs): they are controlled; the submit-only pattern is a named `Ui.input` in `Ui.form` | — (docs) |
 | SPA-9 | Spa: an app whose `onNavigate` changes what the view shows never hydrated. The server renders init → route → onNavigate → view; the wasm client (booting from `init`, no SSR model seed) painted BEFORE onNavigate, so every cold load was "hydrate skipped, full rebuild" | fixed (the client runs the initial-mount onNavigate through the guarded update before its first paint and runs its Cmd after the mount; a seeded boot and a two-step restore are unchanged) | spa-vdom-identity e2e "SPA-5 cold load hydrates" (the fixture now shows onNavigate state) and "onNavigate runs once for the first paint of a route" |
 | (parity) | Back / Forward on Live vs Spa | both run `onNavigate` once per step (Live on the server for the nav GET, Spa on the client) | live-client e2e "popstate routes the page …"; spa-vdom-identity e2e "popstate …" (Spa and Live) |
+| L15 | Live: a burst of more than 16 events queued on one render (each processed event renders again) outran the 16-render handler window, and the late clicks were refused as desyncs (30 events, 9 dropped) | fixed (a render's handler map is also kept while younger than 30 s, up to 256 renders) | `TestHandlerRetention_ABurstResolvesAgainstTheRenderItWasMadeOn`, `TestHandlerRetention_IsCapped`, `TestHandlerRetention_OldRendersPastTheWindowAreReleased` |
 
 ## Open in this release (and why)
 
@@ -179,7 +180,6 @@ fail before the fix. **open** means not closed in this release, with the reason.
 | Desktop window, success path | Not tested end to end: a headless run cannot open a native window. The window URL and the probe share one port value (`openLiveWindow_ (livePort_ w.port)`), and `TestStdAppLivePort_FollowsEnvOverride` pins that value; the failure path is tested end to end. |
 | UF-11 in the native webview | The webview applier JS is driven in headless Chromium, not in WKWebView. |
 | Spa seeded boot and onNavigate | Not verified: when the client boots from the SSR model seed, the server has already run onNavigate (and settled its read) into that seed, and the client still fires it once after the mount. Whether that repeats a data load was not driven in a browser here. |
-| Live click backlog past 16 renders | By design (L2): a click made on a render the session no longer holds is refused as a desync, never resolved against another render. A burst of more than 16 events faster than the replies (measured: 30 events under 0 to 160 ms of added delay each, 9 dropped) loses the oldest clicks. Raising the window costs session memory (one handler map per retained render). Needs a decision; not changed here. |
 
 ## Unconfirmed items: results
 

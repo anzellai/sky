@@ -47,15 +47,27 @@ import (
 	"unsafe"
 )
 
-// liveHandlerHistory is how many distinct renders a session keeps the
-// handler maps of. A click made on a render older than this is refused
+// liveHandlerHistory is how many distinct renders a session always keeps the
+// handler maps of. A click made on a render no longer held is refused
 // (desync), never resolved against a newer render.
 const liveHandlerHistory = 16
+
+// liveHandlerRecent keeps a render's handler map for at least this long,
+// beyond liveHandlerHistory, up to liveHandlerCap. A burst of clicks made on one
+// render (30 queued taps; each processed tap renders again) used to outrun the
+// 16-render window, and the late taps were refused as desyncs although the user
+// made every one of them on a render the server had just sent. Time bounds the
+// window a burst needs; the cap bounds the memory a session can hold.
+const (
+	liveHandlerRecent = 30 * time.Second
+	liveHandlerCap    = 256
+)
 
 // handlerGen is the handler map of one distinct render body.
 type handlerGen struct {
 	view     string
 	handlers map[string]any
+	at       time.Time
 }
 
 var liveViewCastagnoli = crc32.MakeTable(crc32.Castagnoli)
@@ -75,13 +87,18 @@ func liveViewID(body string) string {
 // appended in place, so a copy of the old header taken for a rollback
 // stays valid.
 func (s *liveSession) recordRenderGeneration(view string) {
+	now := time.Now()
 	gens := make([]handlerGen, 0, liveHandlerHistory)
-	gens = append(gens, handlerGen{view: view, handlers: s.handlers})
+	gens = append(gens, handlerGen{view: view, handlers: s.handlers, at: now})
 	for _, g := range s.handlerGens {
 		if g.view == view {
 			continue
 		}
-		if len(gens) == liveHandlerHistory {
+		if len(gens) >= liveHandlerCap {
+			break
+		}
+		// Newest first: past the always-kept window, keep only recent renders.
+		if len(gens) >= liveHandlerHistory && now.Sub(g.at) > liveHandlerRecent {
 			break
 		}
 		gens = append(gens, g)
