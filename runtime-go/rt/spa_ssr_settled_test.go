@@ -142,3 +142,20 @@ func TestSpaSSRPageSettled_MarksOnlyWhatTheServerSettled(t *testing.T) {
 		t.Fatalf("an unsettled page must carry an empty data-sky-settled:\n%s", none)
 	}
 }
+
+// R2: the page names the fields the server settled for it
+// (`data-sky-seed-fields`), deduplicated; a name that is not an identifier
+// never reaches the attribute.
+func TestSpaSSRPageSeeded_NamesTheSettledFields(t *testing.T) {
+	page := SpaSSRPageSeeded("", "<p>x</p>", "main.wasm", "{}", "init nav",
+		[]string{"siteConfig", "notice", "siteConfig", `bad"><script>`})
+	if !strings.Contains(page, `data-sky-seed-fields="siteConfig notice"`) {
+		t.Fatalf("seed-field marker missing or wrong: %s", page)
+	}
+	if strings.Contains(page, "<script>\"") || strings.Contains(page, `bad"`) {
+		t.Fatalf("a non-identifier field name reached the page: %s", page)
+	}
+	if !strings.Contains(SpaSSRPageSettled("", "", "m.wasm", "{}", ""), `data-sky-seed-fields=""`) {
+		t.Fatalf("a page with no settled fields must carry an empty marker")
+	}
+}

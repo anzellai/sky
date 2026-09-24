@@ -94,14 +94,19 @@ func spaFieldKeys(f string) []string {
 	return []string{f, s}
 }
 
-// spaSeedWinsFields is the set of fields a reload takes from the SSR seed
-// rather than localStorage: the protected (session) fields plus the fields ONLY
-// server branches write (K5 — server truth, which the seed renders fresh from
-// the real request; a stale local copy must never paint over it).
-func spaSeedWinsFields(protected, serverOnly []string) []string {
-	out := make([]string, 0, len(protected)+len(serverOnly))
+// spaSeedWinsFields is the set of fields a full load takes from the SSR seed
+// rather than localStorage (R2): the protected (session) fields, the fields the
+// `withRequest` hook writes (it runs on every page request, as Sky.Live re-runs
+// it over a restored model), and the fields the server SETTLED for THIS page —
+// the write-sets of the init and onNavigate command chains it finished (the
+// page's `data-sky-seed-fields`). Every other field keeps its stored value,
+// even one only server branches write: the seed holds `init`'s default for a
+// field this page did not load, and a default must never paint over data.
+func spaSeedWinsFields(protected, request, settled []string) []string {
+	out := make([]string, 0, len(protected)+len(request)+len(settled))
 	out = append(out, protected...)
-	return append(out, serverOnly...)
+	out = append(out, request...)
+	return append(out, settled...)
 }
 
 // spaFirstPaintPlan decides how an SSR first paint proceeds after a localStorage

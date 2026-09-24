@@ -26,7 +26,7 @@
 
 use base::{DefId, FileId, ModuleId};
 use hir::{Body, Expr, ExprId, LocalDef, LocalId, PatId, Pattern, Res, SkyDb};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 /// A `diagnostics::SourceProvider` over an already-loaded source db, keyed the
@@ -638,6 +638,13 @@ pub struct BranchIo {
     /// leaf shape could not be modelled. Meaningful only when
     /// `writes_whole_model` is false.
     pub always_written: Vec<String>,
+    /// Every response leaf builds a FRESH model (a record literal, or an update
+    /// of a top-level constant such as `{ emptyModel | … }`, directly or through
+    /// helpers) — no leaf preserves a field of the client model. Only then may a
+    /// whole-model response go with a narrow request (see
+    /// [`request_whole_model`]). `false` (the sound default) whenever a leaf
+    /// could not be proven fresh.
+    pub fresh_response: bool,
 }
 
 impl BranchIo {
@@ -675,9 +682,15 @@ impl BranchIo {
     /// whole-model RESPONSE does NOT by itself force a whole-model request — a
     /// fresh-record response (`writes_whole_model` via a `{ a = model.x, b = "" }`
     /// rebuild) assigns every field server-side, echoing only the model fields it
-    /// explicitly READS (which are in `read_fields`), so those reads suffice.
+    /// explicitly READS (which are in `read_fields`), so those reads suffice —
+    /// but only when EVERY response leaf is fresh (`fresh_response`). A
+    /// whole-model response with one leaf that PRESERVES the client model (a
+    /// failed sign-in's `{ model | error = … }` beside a success leaf that
+    /// rebuilds the model) ships every field of the server's model back, so the
+    /// request must carry every field, or the preserving leaf answers with
+    /// `init`'s defaults (R3: the page moved to "/").
     pub fn request_whole_model(&self) -> bool {
-        self.reads_whole_model
+        self.reads_whole_model || (self.writes_whole_model && !self.fresh_response)
     }
 
     /// The request field set: `read_fields ∪ (write_fields − always_written)`
@@ -940,6 +953,33 @@ pub struct SpaPartitionReport {
     /// perform leaf, returns the resulting follow-up Msgs, and the client
     /// dispatches them; a `Std.Native` leaf (`native`) runs in the client.
     pub follow_up: Vec<FollowUpBranch>,
+    /// What the SSR settle can write, the raw material of the reload rule (R2):
+    /// on a full load the client keeps the SSR seed only for the fields the
+    /// server settled for THIS page, and restores every other field.
+    pub settle: SettleFacts,
+}
+
+/// The static facts the reload rule (R2) is built from. A `None` list means
+/// "could not be read": the split then claims nothing for that command, and
+/// the client falls back to running it (never a stale value painted as fresh).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SettleFacts {
+    /// Per `update` head constructor: the Msg constructors its returned command
+    /// dispatches (every `Cmd.perform _ Ctor` leaf, through helpers, `let`
+    /// names and batches). `None` when a leaf cannot be read.
+    pub continuations: BTreeMap<String, Option<Vec<String>>>,
+    /// The Msg constructors `init`'s command dispatches.
+    pub init_continuations: Option<Vec<String>>,
+    /// The Msg constructors the `onNavigate` hook can build (the Msgs the SSR
+    /// dispatches for a page). `None` when the app has no hook or it cannot be
+    /// read.
+    pub nav_ctors: Option<Vec<String>>,
+    /// The `withRequest` hook: the model fields it writes (`None` = unknown,
+    /// or it rebuilds the model) and the Msgs its command dispatches.
+    pub request_writes: Option<Vec<String>>,
+    pub request_continuations: Option<Vec<String>>,
+    /// Whether the app declares a `withRequest` hook at all.
+    pub has_request_hook: bool,
 }
 
 /// One SPA-3 follow-up branch (see [`SpaPartitionReport::follow_up`]).
@@ -1178,6 +1218,7 @@ pub fn analyze_loaded(
     let mut client_result: Vec<(String, String)> = Vec::new();
     let mut server_chain_warnings: Vec<String> = Vec::new();
     let mut follow_up: Vec<FollowUpBranch> = Vec::new();
+    let mut msg_continuations: BTreeMap<String, Option<Vec<String>>> = BTreeMap::new();
 
     match update_field {
         UpdateField::Def(update_def) => {
@@ -1224,6 +1265,7 @@ pub fn analyze_loaded(
                 client_result = chaining.client_result;
                 server_chain_warnings = chaining.warnings;
                 follow_up = chaining.follow_up;
+                msg_continuations = chaining.continuations;
             } else {
                 return Err("update def has no body".into());
             }
@@ -1309,7 +1351,161 @@ pub fn analyze_loaded(
         client_result,
         server_chain_warnings,
         follow_up,
+        settle: SettleFacts {
+            continuations: msg_continuations,
+            ..settle_hook_facts(db, &check_ids, entry)
+        },
     })
+}
+
+/// The Msg constructors a command-valued tail expression dispatches: every
+/// perform leaf's constructor, through the tail scaffolding and whole-arm
+/// helper delegates. `None` when a leaf cannot be read (an opaque command, a
+/// perform whose `toMsg` is not a constructor).
+fn tail_continuations(db: &dyn SkyDb, body: &Body, e: ExprId) -> Option<Vec<String>> {
+    let mut leaves: Vec<(CmdLeaf, bool)> = Vec::new();
+    let mut visited: HashSet<DefId> = HashSet::new();
+    collect_tail_cmd_leaves_tagged(db, body, e, false, &mut leaves, 0, &mut visited);
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    for (leaf, _) in leaves {
+        match leaf {
+            CmdLeaf::Perform {
+                to_msg: Some(m), ..
+            } => {
+                out.insert(m);
+            }
+            CmdLeaf::Perform { to_msg: None, .. } | CmdLeaf::Unresolvable => return None,
+            CmdLeaf::NoneCmd | CmdLeaf::Publish => {}
+        }
+    }
+    Some(out.into_iter().collect())
+}
+
+/// The model parameter local and body expression of a hook `f a0 … model …`
+/// whose model parameter is at `idx`: a lambda value (`\req model -> …`), a
+/// function def, or a value def naming another def. `None` when unreadable.
+fn hook_body(
+    db: &dyn SkyDb,
+    d: DefId,
+    idx: usize,
+    depth: usize,
+) -> Option<(Body, LocalId, ExprId)> {
+    if depth > FRESH_DEPTH {
+        return None;
+    }
+    let (b, root) = def_root(db, d)?;
+    if !b.params.is_empty() {
+        let l = param_local_at(&b, idx)?;
+        // A wrapper that forwards its parameters to the real hook
+        // (`spaOnRequest_ req_ model_ = (\_ model -> …) req_ model_`, the App→Spa
+        // synthesis): follow the call when the model parameter lands at `idx`.
+        if let Expr::Call(callee, args) = &b.exprs[root] {
+            let forwards = args
+                .get(idx)
+                .is_some_and(|a| matches!(&b.exprs[*a], Expr::Var(Res::Local(x)) if *x == l));
+            if forwards {
+                match &b.exprs[*callee] {
+                    Expr::Lambda { params, body: lb } => {
+                        let pat = *params.get(idx)?;
+                        let inner = match &b.pats[pat] {
+                            Pattern::Var(x) | Pattern::Alias(_, x) => *x,
+                            _ => return None,
+                        };
+                        let lb = *lb;
+                        return Some((b, inner, lb));
+                    }
+                    Expr::Var(Res::Def(g)) => {
+                        let g = *g;
+                        return hook_body(db, g, idx, depth + 1);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        return Some((b, l, root));
+    }
+    let mut e = root;
+    // Parenthesised / let-wrapped values reduce to the lambda or name.
+    loop {
+        match &b.exprs[e] {
+            Expr::Let { body: inner, .. } => e = *inner,
+            _ => break,
+        }
+    }
+    match &b.exprs[e] {
+        Expr::Lambda { params, body: lb } => {
+            let pat = *params.get(idx)?;
+            let l = match &b.pats[pat] {
+                Pattern::Var(l) => *l,
+                Pattern::Alias(_, l) => *l,
+                _ => return None,
+            };
+            let lb = *lb;
+            Some((b, l, lb))
+        }
+        Expr::Var(Res::Def(g)) => {
+            let g = *g;
+            hook_body(db, g, idx, depth + 1)
+        }
+        _ => None,
+    }
+}
+
+/// The init / onNavigate / withRequest facts of [`SettleFacts`] (the
+/// per-constructor continuations come from the `update` walk).
+fn settle_hook_facts(
+    db: &skydb::SkyDatabase,
+    check_ids: &[ModuleId],
+    entry: ModuleId,
+) -> SettleFacts {
+    let mut out = SettleFacts::default();
+    // init: its command's continuations.
+    if let Some(i) = find_config_field_def(db, check_ids, entry, "init") {
+        out.init_continuations = def_root(db, i).and_then(|(b, root)| {
+            let e = match &b.exprs[root] {
+                Expr::Lambda { body: lb, .. } => *lb,
+                _ => root,
+            };
+            tail_continuations(db, &b, e)
+        });
+    }
+    // onNavigate: the Msg constructors the hook builds. The App→Spa synthesis
+    // names it `spaOnNavigate_` in the entry; a hand-written Spa app passes it
+    // to `Spa.withOnNavigate`.
+    let nav_def = def_by_name(db, entry, "spaOnNavigate_")
+        .or_else(|| find_config_field_def(db, check_ids, entry, "onNavigate"));
+    if let Some(n) = nav_def {
+        let mut ctors: BTreeSet<String> = BTreeSet::new();
+        let mut vis: HashSet<DefId> = HashSet::new();
+        collect_constructed_ctors(db, n, &mut ctors, &mut vis);
+        out.nav_ctors = Some(ctors.into_iter().collect());
+    }
+    // withRequest: the hook `\req model -> ( model', cmd )`.
+    if let Some(r) = def_by_name(db, entry, "spaOnRequest_") {
+        out.has_request_hook = true;
+        if let Some((b, model_local, e)) = hook_body(db, r, 1, 0) {
+            let mut writes: BTreeSet<String> = BTreeSet::new();
+            let mut whole = false;
+            let mut allowed: HashSet<ExprId> = HashSet::new();
+            collect_writes_tail(
+                db,
+                &b,
+                e,
+                Some(model_local),
+                &HashMap::new(),
+                &mut writes,
+                &mut whole,
+                &mut allowed,
+                0,
+                None,
+            );
+            if !whole {
+                out.request_writes = Some(writes.into_iter().collect());
+            }
+            out.request_continuations = tail_continuations(db, &b, e);
+        }
+    }
+    out
 }
 
 /// G5 refusal input: the server reads embedded in `init`'s returned MODEL — the
@@ -2238,6 +2434,9 @@ pub struct ServerChaining {
     pub warnings: Vec<String>,
     /// SPA-3 follow-up branches (see [`SpaPartitionReport::follow_up`]).
     pub follow_up: Vec<FollowUpBranch>,
+    /// R2: per head constructor, the Msgs its command dispatches (see
+    /// [`SettleFacts::continuations`]).
+    pub continuations: BTreeMap<String, Option<Vec<String>>>,
 }
 
 /// One leaf of a statically-resolved `Cmd` tree returned by an `update` arm.
@@ -2252,6 +2451,13 @@ enum CmdLeaf {
     Perform {
         to_msg: Option<String>,
         task_client_effect: bool,
+        /// The leaf runs once PER ELEMENT of a list
+        /// (`Cmd.batch (List.map (\x -> Cmd.perform … ToMsg) xs)`): its
+        /// constructor is exact, but how many times it runs is known only at run
+        /// time. The follow-up wire needs only the constructor. The patterns that
+        /// need exactly one perform (server chaining, the client-result perform)
+        /// treat a repeated leaf as unresolved (fail closed).
+        repeated: bool,
     },
     /// `Cmd.publish` / `Cmd.publishNoEcho` — a server→client push leaf (not a
     /// server-runnable read; a chain containing one is not chained).
@@ -2413,6 +2619,7 @@ fn resolve_cmd_leaves_rec(
                             out.push(CmdLeaf::Perform {
                                 to_msg,
                                 task_client_effect: client,
+                                repeated: false,
                             });
                         } else {
                             out.push(CmdLeaf::Unresolvable);
@@ -2420,15 +2627,12 @@ fn resolve_cmd_leaves_rec(
                     }
                     CmdDefKind::Batch => {
                         if args.len() == 1 {
-                            if let Expr::List(xs) = &body.exprs[args[0]] {
-                                for x in xs {
-                                    resolve_cmd_leaves_rec(db, body, *x, out, depth, visited);
-                                }
-                                return;
-                            }
+                            // A literal list, a let-bound list, a `List.map` over
+                            // a lambda, `xs ++ ys`, `c :: cs` (see the fn).
+                            resolve_cmd_list_leaves(db, body, args[0], out, depth, visited);
+                        } else {
+                            out.push(CmdLeaf::Unresolvable);
                         }
-                        // A batch over anything but a literal list is opaque.
-                        out.push(CmdLeaf::Unresolvable);
                     }
                     CmdDefKind::NoneCmd => out.push(CmdLeaf::NoneCmd),
                     CmdDefKind::Publish => out.push(CmdLeaf::Publish),
@@ -2471,6 +2675,120 @@ fn resolve_cmd_leaves_rec(
             resolve_cmd_leaves_rec(db, body, *els, out, depth, visited);
         }
         Expr::Let { body: b, .. } => resolve_cmd_leaves_rec(db, body, *b, out, depth, visited),
+        // A let-bound command returned or batched BY NAME (`let sends = … in
+        // ( m, sends )`): resolve the bound expression. Chasing a name spends
+        // depth, so a cyclic or runaway alias chain ends as `Unresolvable`.
+        Expr::Var(Res::Local(l)) => match let_bound_expr(body, *l) {
+            Some(bound) => resolve_cmd_leaves_rec(db, body, bound, out, depth + 1, visited),
+            None => out.push(CmdLeaf::Unresolvable),
+        },
+        _ => out.push(CmdLeaf::Unresolvable),
+    }
+}
+
+/// The expression a plain single-binder, parameterless `let` binds to local `l`
+/// (`x = expr`), searched over every `let` in `body` (a `LocalId` is unique in
+/// its body). `None` for a lambda / case / function parameter, a destructure,
+/// or a local function (`f x = …`).
+fn let_bound_expr(body: &Body, l: LocalId) -> Option<ExprId> {
+    for (_, expr) in body.exprs.iter() {
+        if let Expr::Let { defs, .. } = expr {
+            for d in defs {
+                if d.params.is_empty()
+                    && d.pat.is_none()
+                    && d.binders.len() == 1
+                    && d.binders[0].1 == l
+                {
+                    return Some(d.body);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Is `callee` the stdlib list function whose kernel symbol is `sym`
+/// (`List.map` → `List_map`)? Matches both a `Sky.Core.List` def (a
+/// `Ffi.kernel` alias) and a direct kernel reference.
+fn is_list_kernel(db: &dyn SkyDb, body: &Body, callee: ExprId, sym: &str) -> bool {
+    match &body.exprs[callee] {
+        Expr::Var(Res::Def(d)) => def_is_kernel_alias_to(db, *d, &[sym]),
+        Expr::Var(Res::Kernel { module, func }) => {
+            module.as_str().rsplit('.').next() == Some("List")
+                && format!("List_{}", func.as_str()) == sym
+        }
+        _ => false,
+    }
+}
+
+/// Resolve a `List (Cmd msg)` expression — the argument of `Cmd.batch` — into
+/// its command leaves. A literal list resolves element by element; a let-bound
+/// list follows its binding; `xs ++ ys` and `c :: cs` resolve both sides; and
+/// `List.map f xs` / `List.indexedMap f xs` resolve `f`'s body (a lambda or a
+/// top-level helper) as ONE command whose perform leaves are marked
+/// `repeated` (they run once per element). Any other shape is `Unresolvable`
+/// (fail closed).
+fn resolve_cmd_list_leaves(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    out: &mut Vec<CmdLeaf>,
+    depth: usize,
+    visited: &mut HashSet<DefId>,
+) {
+    if depth > CMD_RESOLVE_DEPTH {
+        out.push(CmdLeaf::Unresolvable);
+        return;
+    }
+    match &body.exprs[e] {
+        Expr::List(xs) => {
+            for x in xs {
+                resolve_cmd_leaves_rec(db, body, *x, out, depth, visited);
+            }
+        }
+        Expr::Var(Res::Local(l)) => match let_bound_expr(body, *l) {
+            Some(bound) => resolve_cmd_list_leaves(db, body, bound, out, depth + 1, visited),
+            None => out.push(CmdLeaf::Unresolvable),
+        },
+        Expr::Let { body: b, .. } => resolve_cmd_list_leaves(db, body, *b, out, depth, visited),
+        Expr::Binop { op, lhs, rhs, .. } if op.as_str() == "++" => {
+            resolve_cmd_list_leaves(db, body, *lhs, out, depth, visited);
+            resolve_cmd_list_leaves(db, body, *rhs, out, depth, visited);
+        }
+        Expr::Binop { op, lhs, rhs, .. } if op.as_str() == "::" => {
+            resolve_cmd_leaves_rec(db, body, *lhs, out, depth, visited);
+            resolve_cmd_list_leaves(db, body, *rhs, out, depth, visited);
+        }
+        Expr::Call(callee, args)
+            if args.len() == 2
+                && (is_list_kernel(db, body, *callee, "List_map")
+                    || is_list_kernel(db, body, *callee, "List_indexedMap")) =>
+        {
+            let mut inner: Vec<CmdLeaf> = Vec::new();
+            match &body.exprs[args[0]] {
+                Expr::Lambda { body: lb, .. } => {
+                    resolve_cmd_leaves_rec(db, body, *lb, &mut inner, depth + 1, visited)
+                }
+                Expr::Var(Res::Def(d)) => {
+                    resolve_helper_cmd(db, *d, &mut inner, depth + 1, visited)
+                }
+                _ => inner.push(CmdLeaf::Unresolvable),
+            }
+            for leaf in inner {
+                out.push(match leaf {
+                    CmdLeaf::Perform {
+                        to_msg,
+                        task_client_effect,
+                        ..
+                    } => CmdLeaf::Perform {
+                        to_msg,
+                        task_client_effect,
+                        repeated: true,
+                    },
+                    other => other,
+                });
+            }
+        }
         _ => out.push(CmdLeaf::Unresolvable),
     }
 }
@@ -2566,6 +2884,15 @@ fn collect_tail_cmd_leaves_tagged(
         }
         Expr::Lambda { body: b, .. } => {
             collect_tail_cmd_leaves_tagged(db, body, *b, guarded, out, depth, visited)
+        }
+        // A let-bound `( model, cmd )` pair returned BY NAME (`badCreds`):
+        // resolve its binding. Chasing a name spends depth (a cycle ends as
+        // `Unresolvable`); a name that is not a plain `let` (a parameter)
+        // contributes nothing, as before.
+        Expr::Var(Res::Local(l)) => {
+            if let Some(bound) = let_bound_expr(body, *l) {
+                collect_tail_cmd_leaves_tagged(db, body, bound, guarded, out, depth + 1, visited)
+            }
         }
         Expr::Call(callee, args) => {
             // A guard/HOF wrapper: `guard model (\_ -> ( model, cmd ))` — the pair
@@ -2948,13 +3275,19 @@ fn compute_server_chaining(
                     for (leaf, guarded) in cmd_leaves {
                         match leaf {
                             CmdLeaf::NoneCmd => arm_contributed = true,
-                            CmdLeaf::Publish | CmdLeaf::Unresolvable => {
+                            // A per-element perform (`Cmd.batch (List.map …)`) runs
+                            // an unknown number of times: not a chain step, exactly
+                            // as the opaque batch it was read as before.
+                            CmdLeaf::Publish
+                            | CmdLeaf::Unresolvable
+                            | CmdLeaf::Perform { repeated: true, .. } => {
                                 dirty = true;
                                 arm_contributed = true;
                             }
                             CmdLeaf::Perform {
                                 to_msg,
                                 task_client_effect,
+                                ..
                             } if !guarded => {
                                 // DIRECT perform — today's rule, unchanged.
                                 has_perform = true;
@@ -2977,6 +3310,7 @@ fn compute_server_chaining(
                             CmdLeaf::Perform {
                                 to_msg,
                                 task_client_effect,
+                                ..
                             } => {
                                 // GUARDED perform. It joins the server-side chain
                                 // ONLY when the continuation is a resolvable,
@@ -3247,8 +3581,12 @@ fn compute_server_chaining(
                 CmdLeaf::Perform {
                     to_msg,
                     task_client_effect,
+                    repeated,
                 } => {
                     perform_count += 1;
+                    if *repeated {
+                        clean = false; // runs once per element: not ONE perform.
+                    }
                     if *task_client_effect {
                         clean = false; // a client Std.Native task cannot run server-side.
                     }
@@ -3327,6 +3665,7 @@ fn compute_server_chaining(
                     CmdLeaf::Perform {
                         to_msg,
                         task_client_effect,
+                        ..
                     } => {
                         has_perform = true;
                         native |= task_client_effect;
@@ -3354,6 +3693,19 @@ fn compute_server_chaining(
                 native,
             });
         }
+    }
+
+    // R2: every head's continuations (all its arms), for the reload rule.
+    for (head, idxs) in &arms_by_ctor {
+        let mut acc: Option<BTreeSet<String>> = Some(BTreeSet::new());
+        for &ai in idxs {
+            match (tail_continuations(db, body, arms[ai].body), acc.as_mut()) {
+                (Some(cs), Some(set)) => set.extend(cs),
+                _ => acc = None,
+            }
+        }
+        out.continuations
+            .insert(head.clone(), acc.map(|s| s.into_iter().collect()));
     }
 
     out.server_internal = server_internal.into_iter().collect();
@@ -3461,7 +3813,96 @@ fn compute_branch_io(
         writes_whole_model: writes_whole,
         write_fields: write_fields.into_iter().collect(),
         always_written,
+        fresh_response: writes_whole && tail_is_fresh(db, body, arm_body, 0),
     }
+}
+
+/// The ceiling for the fresh-response proof through helper defs and let names.
+const FRESH_DEPTH: usize = 8;
+
+/// Does every `( model', cmd )` leaf of the tail expression `e` build a FRESH
+/// model (see [`model_is_fresh`])? Walks `let` / `if` / `case`, a let-bound
+/// pair returned by name, and a whole-arm helper delegate. Anything else (a
+/// guard wrapper, a parameter, an opaque call) is not proven: `false`.
+fn tail_is_fresh(db: &dyn SkyDb, body: &Body, e: ExprId, depth: usize) -> bool {
+    if depth > FRESH_DEPTH {
+        return false;
+    }
+    match &body.exprs[e] {
+        Expr::Tuple(xs) if xs.len() == 2 => model_is_fresh(db, body, xs[0], depth),
+        Expr::Let { body: b, .. } => tail_is_fresh(db, body, *b, depth),
+        Expr::If { arms, els } => {
+            arms.iter().all(|(_, t)| tail_is_fresh(db, body, *t, depth))
+                && tail_is_fresh(db, body, *els, depth)
+        }
+        Expr::Case { branches, .. } => branches
+            .iter()
+            .all(|br| tail_is_fresh(db, body, br.body, depth)),
+        Expr::Var(Res::Local(l)) => match let_bound_expr(body, *l) {
+            Some(bound) => tail_is_fresh(db, body, bound, depth + 1),
+            None => false,
+        },
+        Expr::Call(callee, _) => match &body.exprs[*callee] {
+            Expr::Var(Res::Def(d)) => {
+                def_root(db, *d).is_some_and(|(hb, root)| tail_is_fresh(db, &hb, root, depth + 1))
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Is the model-valued expression `e` a FRESH model — one that keeps no field
+/// of the client model? A record literal is; so is an update of a top-level
+/// constant (`{ emptyModel | … }`), and a helper whose body is. An update of a
+/// parameter or local (`{ model | … }`), a bare parameter, or an opaque value is
+/// not proven: `false`.
+fn model_is_fresh(db: &dyn SkyDb, body: &Body, e: ExprId, depth: usize) -> bool {
+    if depth > FRESH_DEPTH {
+        return false;
+    }
+    match &body.exprs[e] {
+        Expr::Record(_) => true,
+        Expr::Update { base, .. } => match &body.exprs[*base] {
+            // A top-level constant with no parameters (`emptyModel`).
+            Expr::Var(Res::Def(d)) => def_root(db, *d).is_some_and(|(hb, root)| {
+                hb.params.is_empty() && model_is_fresh(db, &hb, root, depth + 1)
+            }),
+            _ => model_is_fresh(db, body, *base, depth + 1),
+        },
+        Expr::Let { body: b, .. } => model_is_fresh(db, body, *b, depth),
+        Expr::If { arms, els } => {
+            arms.iter()
+                .all(|(_, t)| model_is_fresh(db, body, *t, depth))
+                && model_is_fresh(db, body, *els, depth)
+        }
+        Expr::Case { branches, .. } => branches
+            .iter()
+            .all(|br| model_is_fresh(db, body, br.body, depth)),
+        Expr::Var(Res::Local(l)) => match let_bound_expr(body, *l) {
+            Some(bound) => model_is_fresh(db, body, bound, depth + 1),
+            None => false,
+        },
+        Expr::Var(Res::Def(d)) => def_root(db, *d).is_some_and(|(hb, root)| {
+            hb.params.is_empty() && model_is_fresh(db, &hb, root, depth + 1)
+        }),
+        Expr::Call(callee, _) => match &body.exprs[*callee] {
+            Expr::Var(Res::Def(d)) => {
+                def_root(db, *d).is_some_and(|(hb, root)| model_is_fresh(db, &hb, root, depth + 1))
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// A top-level def's resolved body and root expression.
+fn def_root(db: &dyn SkyDb, d: DefId) -> Option<(Body, ExprId)> {
+    let loc = db.def_loc(d)?;
+    let resolved = db.resolve(loc.module);
+    let b = resolved.bodies.get(&d)?;
+    let root = b.root?;
+    Some((b.clone(), root))
 }
 
 /// Is expression `e` the bare model parameter (`Var(Res::Local(model))`)?

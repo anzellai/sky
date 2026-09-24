@@ -1,0 +1,173 @@
+module Main exposing (main)
+
+-- Regression fixture for two auto-split defects a real app run found in the
+-- v0.25.17 release candidate (register section M, R1 and R3).
+--
+-- R1: `SendAll` delegates to a helper whose command is a LET-BOUND
+-- `Cmd.batch (List.map (\x -> Cmd.perform … Sent) xs)`. The split could not
+-- read it, treated EVERY Msg as a possible follow-up, and failed the build on
+-- `GotConfig`, whose `Dict` argument has no wire codec. `Blast` returns a
+-- command the split can still not read (`List.filterMap`): the build must
+-- warn about `GotConfig` and not fail.
+--
+-- R3: `SignIn` rebuilds the model on success (a fresh record) and keeps it on
+-- failure (`{ model | error = … }`). The response is the whole model, so the
+-- request must carry the whole model, or the failure answers with `init`'s
+-- `page`. `Reset` returns only fresh records: its request stays narrow.
+-- Tests: project/tests/spa_rc_followup.rs.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.File as File
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui.Events as Ev
+
+type alias Model =
+    { page : String
+    , names : List String
+    , log : String
+    , error : String
+    , user : String
+    , config : String
+    }
+
+
+emptyModel : Model
+emptyModel =
+    { page = "home"
+    , names = [ "a", "b" ]
+    , log = ""
+    , error = ""
+    , user = ""
+    , config = ""
+    }
+
+type Msg
+    = SendAll
+    | Blast
+    | Sent (Result Error ())
+    | GotConfig (Result Error (List (Dict String String)))
+    | SignIn String
+    | Reset
+
+
+loadConfig : Task Error (List (Dict String String))
+loadConfig =
+    File.readFile "config.txt"
+        |> Task.map (\s -> [ Dict.fromList [ ( "k", s ) ] ])
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( emptyModel, Cmd.perform loadConfig GotConfig )
+
+
+sendAll : Model -> ( Model, Cmd Msg )
+sendAll model =
+    let
+        sends =
+            List.map
+                (\name ->
+                    let
+                        body = "hi " ++ name
+                    in
+                        Cmd.perform
+                            (File.writeFile ("out-" ++ name ++ ".txt") body)
+                            Sent)
+                model.names
+    in
+        ( { model | log = "sending" }, Cmd.batch sends )
+
+
+blast : Model -> ( Model, Cmd Msg )
+blast model =
+    ( { model | log = "blast" }
+    , Cmd.batch
+          (List.filterMap
+              (\name ->
+                  if String.isEmpty name then
+                      Nothing
+
+                  else
+                      Just (Cmd.perform (File.writeFile name "x") Sent))
+              model.names)
+    )
+
+
+signIn : String -> Model -> ( Model, Cmd Msg )
+signIn password model =
+    let
+        stored =
+            Result.withDefault "" (Task.run (File.readFile "password.txt"))
+        bad = ( { model | error = "wrong password" }, Cmd.none )
+    in
+        if password == stored then
+            ( { emptyModel | user = "ada", page = "home" }, Cmd.none )
+
+        else
+            bad
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        SendAll ->
+            sendAll model
+
+        Blast ->
+            blast model
+
+        Sent _ ->
+            ( { model | log = model.log ++ "." }, Cmd.none )
+
+        GotConfig (Ok rows) ->
+            ( { model | config = String.fromInt (List.length rows) }, Cmd.none )
+
+        GotConfig (Err _) ->
+            ( model, Cmd.none )
+
+        SignIn password ->
+            signIn password model
+
+        Reset ->
+            let
+                _ = Task.run (File.writeFile "reset.txt" "1")
+            in
+                ( { emptyModel | log = "reset" }, Cmd.none )
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            []
+            [ Ui.el [ Ev.onClick SendAll ] (Ui.text ("log " ++ model.log))
+            , Ui.el [ Ev.onClick Blast ] (Ui.text "blast")
+            , Ui.el
+                  [ Ev.onClick (SignIn "pw") ]
+                  (Ui.text ("user " ++ model.user ++ model.error))
+            , Ui.el [ Ev.onClick Reset ] (Ui.text ("config " ++ model.config))
+            ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

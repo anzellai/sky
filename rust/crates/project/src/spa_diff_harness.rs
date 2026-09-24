@@ -531,6 +531,7 @@ mod tests {
             writes_whole_model: true,
             write_fields: vec![],
             always_written: vec![],
+            fresh_response: false,
         };
         let checkable = vec![CheckableBranch {
             ctor: "SetScaleArg".to_string(),
@@ -576,6 +577,7 @@ mod tests {
             writes_whole_model: false,
             write_fields: vec!["count".to_string()],
             always_written: vec![],
+            fresh_response: false,
         };
         let checkable = vec![CheckableBranch {
             ctor: "Inc".to_string(),
@@ -638,6 +640,7 @@ mod tests {
             client_result: vec![("ClientRoot".into(), "GotIt".into())],
             server_chain_warnings: vec![],
             follow_up: vec![],
+            settle: Default::default(),
         }
     }
     fn io_args(args: &[&str]) -> BranchIo {
@@ -648,6 +651,7 @@ mod tests {
             writes_whole_model: false,
             write_fields: vec!["a".into()],
             always_written: vec![],
+            fresh_response: false,
         }
     }
 

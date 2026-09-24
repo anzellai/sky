@@ -11,7 +11,10 @@ package rt
 // (build tag js), and every js access degrades gracefully — a missing/throwing
 // localStorage falls back to the SSR seed and never breaks the app.
 
-import "syscall/js"
+import (
+	"strings"
+	"syscall/js"
+)
 
 // spaModelEncoder is the wired `model -> String` encoder (Spa_withModelEncoder),
 // or nil when the app has no encoder (persistence then disabled). spaPersistProt
@@ -20,8 +23,8 @@ import "syscall/js"
 var (
 	spaModelEncoder any
 	spaPersistProt  []string
-	// spaPersistSeed are the fields ONLY server branches write: kept from the
-	// SSR seed on a reload, never from localStorage (K5).
+	// spaPersistSeed are the fields the `withRequest` hook writes: it runs on
+	// every SSR request, so they come from the seed on a reload (R2).
 	spaPersistSeed []string
 )
 
@@ -139,7 +142,8 @@ func spaRestoreFromStorage(cfg any, doc js.Value) bool {
 		return false
 	}
 	seed := spaReadSeedBlob(doc)
-	merged, useIt := spaMergeStoredOverSeed(stored, seed, spaSeedWinsFields(spaPersistProt, spaPersistSeed), spaPersistMaxBytes)
+	wins := spaSeedWinsFields(spaPersistProt, spaPersistSeed, spaPageSeedFields(doc))
+	merged, useIt := spaMergeStoredOverSeed(stored, seed, wins, spaPersistMaxBytes)
 	if !useIt {
 		return false
 	}
@@ -197,4 +201,27 @@ func spaPostSignOut() {
 		defer func() { _ = recover() }()
 		fetchBlocking("POST", "/_rpc/__spaSignOut", "{}")
 	}()
+}
+
+// spaPageSeedFields reads the SSR page's `data-sky-seed-fields` marker: the
+// model fields the server settled for THIS page (R2). Empty when the page
+// carries no marker (no SSR, or a page that settled nothing).
+func spaPageSeedFields(doc js.Value) (fields []string) {
+	defer func() {
+		if recover() != nil {
+			fields = nil
+		}
+	}()
+	if !doc.Truthy() {
+		return nil
+	}
+	el := doc.Call("getElementById", "app")
+	if !el.Truthy() {
+		return nil
+	}
+	v := el.Call("getAttribute", spaSeedFieldsMarker)
+	if v.Type() != js.TypeString {
+		return nil
+	}
+	return strings.Fields(v.String())
 }

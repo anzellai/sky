@@ -38,3 +38,22 @@ func TestSpaCollectFollowUps_RunsEveryPerformInOrder(t *testing.T) {
 		t.Fatalf("server tasks ran %d times, want 3", ran)
 	}
 }
+
+// R1: a follow-up Msg outside the wire set is dropped with a classified error
+// log, never silently, and yields the empty item the encoder skips.
+func TestSpaFollowUpOutsideWire_LogsAClassifiedErrorAndYieldsNothing(t *testing.T) {
+	var logged []string
+	prev := spaLogFollowUpOutsideWire
+	spaLogFollowUpOutsideWire = func(ctor string) { logged = append(logged, ctor) }
+	defer func() { spaLogFollowUpOutsideWire = prev }()
+	got := AsList(Spa_followUpOutsideWire("GotConfig"))
+	if len(got) != 0 {
+		t.Fatalf("an outside-wire follow-up must encode as the empty item; got %v", got)
+	}
+	if len(logged) != 1 || logged[0] != "GotConfig" {
+		t.Fatalf("the drop must be logged once, naming the constructor; got %v", logged)
+	}
+	if spaFollowUpOutsideWireClass != "SpaFollowUpOutsideWire" {
+		t.Fatalf("classified error name changed: %q", spaFollowUpOutsideWireClass)
+	}
+}

@@ -268,10 +268,11 @@ withPersistDecoder =
     Ffi.kernel "Spa_withPersistDecoder"
 
 
--- | Set the model fields that ONLY server branches write. On a reload the client
--- takes these from the SSR seed (server truth, rendered fresh from the real
--- request) and restores every other field from localStorage. The auto-split
--- derives the list from the server write-sets.
+-- | Set the model fields the SSR seed settles on EVERY page (the fields the
+-- `withRequest` hook writes). On a full load the client takes these, and the
+-- page's own `data-sky-seed-fields`, from the SSR seed and restores every other
+-- field from localStorage. The auto-split derives the list from the hook's
+-- write-set.
 withPersistSeedFields : List String -> AppConfig model msg -> AppConfig model msg
 withPersistSeedFields =
     Ffi.kernel "Spa_withPersistSeedFields"

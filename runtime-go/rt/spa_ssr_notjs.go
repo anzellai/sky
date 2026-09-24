@@ -256,3 +256,13 @@ func tupleFirstField(pair any) (any, bool) {
 	}
 	return nil, false
 }
+
+// Spa_ssrPageSeeded is Spa_ssrPageSettled plus the page's seed-wins field list
+// (R2): the model fields the server SETTLED for this page — the write-sets of
+// the init command chain and the route's onNavigate chain it finished. On a
+// full load the client restores its stored model and takes only these fields
+// (and the session / request fields) from the `#sky-model` seed.
+func Spa_ssrPageSeeded(head, body, wasmName, modelJSON, initDone, navDone, seedFields any) string {
+	return SpaSSRPageSeeded(AsString(head), AsString(body), AsString(wasmName), AsString(modelJSON),
+		spaSettledAttr(AsBool(initDone), AsBool(navDone)), spaStringList(seedFields))
+}

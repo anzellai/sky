@@ -16,8 +16,8 @@
 //             with the same id and does NOT run twice (SPA-6)
 //   retry     every failed/queued RPC runs, in order, on Retry (SPA-7)
 //   native    a server branch's Std.Native leaf runs in the client (SPA-3)
-//   reload    client scratch state is restored (SPA-8); a field only server
-//             branches write comes from the SSR seed, not localStorage (K5)
+//   reload    client scratch state is restored (SPA-8); a field the withRequest
+//             hook writes (it runs on every request) comes from the SSR seed (R2)
 //
 // Usage: node scripts/spa-rpc-consistency-verify.mjs <backend-app> [--port N]
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
@@ -161,7 +161,7 @@ try {
   check("retry: failed Hit re-ran", await num("hits"), hits0 + 1);
   check("retry: Inc queued/failed behind it also ran", await num("count"), count0 + 1);
 
-  // ---- reload: persistence (SPA-8) + SSR seed for server-only fields (K5) --
+  // ---- reload: persistence (SPA-8) + SSR seed for the request-hook field (R2)
   await page.click("#touch");
   await page.waitForTimeout(600);
   check("reload: server field before reload", await text(page, "server"), "server=v1");
@@ -179,7 +179,7 @@ try {
   await page.waitForTimeout(1500);
   check("reload: client scratch state restored", await text(page, "note"), "note=kept-note");
   check("reload: guard-permitted client flag restored", await text(page, "unlocked"), "unlocked=yes");
-  check("reload: server-only field from the SSR seed", await text(page, "server"), "server=v2");
+  check("reload: request-hook field from the SSR seed", await text(page, "server"), "server=v2");
 
   await browser.close();
   for (const m of pageErrors) console.log(m);

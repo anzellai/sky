@@ -1,0 +1,5 @@
+[project]
+name = "rc-reload"
+
+[app]
+target = "web:app"

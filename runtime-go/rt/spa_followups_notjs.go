@@ -70,3 +70,27 @@ func asSkyADT(v any) SkyADT {
 	}
 	return SkyADT{}
 }
+
+// spaFollowUpOutsideWireClass is the classified error a backend logs when a
+// server branch's command produced a follow-up Msg that has no wire codec.
+const spaFollowUpOutsideWireClass = "SpaFollowUpOutsideWire"
+
+// spaLogFollowUpOutsideWire writes the classified error (a var so a host test
+// can observe it).
+var spaLogFollowUpOutsideWire = func(ctor string) {
+	logEmit(logLevelError, "error",
+		"sky.spa: a server branch's command produced the follow-up Msg `"+ctor+
+			"`, which has no wire codec, so it was not sent to the client (see the build warning)",
+		map[string]any{"class": spaFollowUpOutsideWireClass, "msg": ctor})
+}
+
+// Spa_followUpOutsideWire is the backend encoder arm for a Msg constructor the
+// auto-split could not rule out as a follow-up (the branch's command could not
+// be read statically) and cannot encode (no wire codec for an argument). The
+// build warns about it; if one occurs at run time the Msg is dropped from the
+// response and the drop is logged as a classified error, never silently (R1).
+// It returns the empty item, which the generated encoder skips.
+func Spa_followUpOutsideWire(ctor any) any {
+	spaLogFollowUpOutsideWire(AsString(ctor))
+	return []any{}
+}
