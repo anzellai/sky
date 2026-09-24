@@ -521,7 +521,7 @@ sweep_worker() {
 # with_timeout + its resolver + the perl program travel to the xargs workers.
 # A worker that could not bound its example would be a worker that ran it
 # unbounded, or (before this shim existed) reported a pass for not running it.
-export -f run_example sweep_worker with_timeout _sky_with_timeout_resolve
+export -f run_example sweep_worker with_timeout _sky_with_timeout_resolve _sky_with_timeout_which
 export _SKY_WITH_TIMEOUT_PERL_PROG SKY_WITH_TIMEOUT_KILL_AFTER
 export EXAMPLES_ROOT SKY SKY_RUNTIME_DIR CLEAN BUILD_ONLY
 export RESULTS_DIR SKIP_GUI_LINUX
