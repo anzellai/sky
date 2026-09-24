@@ -464,9 +464,10 @@ or the session store, and password managers don't re-prompt.
 `onSubmit` takes a plain `Msg`, a `record -> Msg`, or a `Dict String String -> Msg`.
 Every field of that record must be `String`, `Int`, `Float`, `Bool`, or a `Maybe`
 of one of those — anything else is a compile error (`[E2010]`). A submitted field
-is decoded strictly: `"42"` becomes `42`, a ticked checkbox becomes `True`, and a
-field that is missing or does not parse drops the submit with a logged
-`FormDecode` error (never a silent `0` / `""`). Name each form control
+is decoded strictly: `"42"` becomes `42`, a ticked checkbox becomes `True`. A
+`String` field with no control is `""` (as HTML submits an empty input), a `Bool`
+`False`, a `Maybe` `Nothing`; a number that is missing or does not parse drops
+the submit with a logged `FormDecode` error (never a silent `0`). Name each form control
 (`Ui.name "age"`) after its record field.
 
 Pub/sub on a literal topic is type-checked across the whole program: every

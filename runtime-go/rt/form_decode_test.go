@@ -71,15 +71,31 @@ func TestFormSubmit_AbsentBoolIsFalse(t *testing.T) {
 	}
 }
 
-// A missing or unparsable field is a CLASSIFIED decode error: the event is
-// dropped (msgDecodeError), never delivered with a zero value.
+// A String field with no control decodes as "" — as HTML submits an empty text
+// input. A record often carries a String the form does not edit (an image URL
+// an upload sets), and refusing the whole submit for it broke a real admin
+// form (every product save failed).
+func TestFormSubmit_AbsentStringIsEmpty(t *testing.T) {
+	for hname, handler := range map[string]any{"typed": typedCtor, "any-wrapped": typedCtorAny} {
+		res := applyMsgArgs(handler, submitRaw(`{"age":"1","ratio":"0"}`), "")
+		if _, dropped := res.(msgDecodeError); dropped {
+			t.Fatalf("%s: a String field with no control must decode as \"\", not drop the submit", hname)
+		}
+		if got := fieldsOf(t, res); got.Title != "" || got.Age != 1 {
+			t.Fatalf("%s: want title \"\" and age 1, got %+v", hname, got)
+		}
+	}
+}
+
+// A missing or unparsable NUMBER field, or a Bool that does not parse, is a
+// CLASSIFIED decode error: the event is dropped (msgDecodeError), never
+// delivered with a zero value.
 func TestFormSubmit_BadFieldDropsTheEvent(t *testing.T) {
 	cases := map[string]string{
-		"missing String": `{"age":"1","ratio":"0"}`,
-		"not an Int":     `{"title":"t","age":"forty","ratio":"0"}`,
-		"empty Int":      `{"title":"t","age":"","ratio":"0"}`,
-		"not a Bool":     `{"title":"t","age":"1","agree":"maybe","ratio":"0"}`,
-		"missing Float":  `{"title":"t","age":"1"}`,
+		"not an Int":    `{"title":"t","age":"forty","ratio":"0"}`,
+		"empty Int":     `{"title":"t","age":"","ratio":"0"}`,
+		"not a Bool":    `{"title":"t","age":"1","agree":"maybe","ratio":"0"}`,
+		"missing Float": `{"title":"t","age":"1"}`,
 	}
 	for name, raw := range cases {
 		for hname, handler := range map[string]any{"typed": typedCtor, "any-wrapped": typedCtorAny} {

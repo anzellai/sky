@@ -1,0 +1,83 @@
+module Main exposing (main)
+
+-- The init model sets a record FIELD named `products`, and the module also has
+-- a SERVER-TAINTED top-level binding named `products` (it reads the
+-- environment). The field label is not a reference to that binding, so the
+-- client must still get its model decoder (`Spa.withModelDecoder`: SSR seed
+-- boot + persistence). A textual word match used to drop it, and a real shop
+-- then lost its server data on every page load.
+-- Test: project/tests/spa_field_label_taint.rs.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Std.Spa as Spa
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Ui.Events as Ev
+
+
+products : String
+products =
+    System.getenvOr "SHOP_PRODUCTS" "none"
+
+type alias Model =
+    { products : String
+    , count : Int
+    }
+
+
+blank : Model
+blank =
+    { products = "", count = 0 }
+
+type Msg
+    = Inc
+    | Load
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { blank | products = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Load ->
+            ( { model | products = products }, Cmd.none )
+
+
+view : Model -> any
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            []
+            [ Ui.el
+                  [ Ev.onClick Inc ]
+                  (Ui.text ("count " ++ String.fromInt model.count))
+            , Ui.el
+                  [ Ev.onClick Load ]
+                  (Ui.text ("products " ++ model.products))
+            ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

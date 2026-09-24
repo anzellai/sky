@@ -258,8 +258,12 @@ func TestTuiForm_DecodeErrorIsClassified(t *testing.T) {
 	if _, err := tuiDecodeFormSubmit(func(f loginForm) any { return signIn{f} }, map[string]string{"email": "x", "age": "old"}); err == nil {
 		t.Fatalf("Int field fed \"old\" decoded without an error")
 	}
-	if _, err := tuiDecodeFormSubmit(func(f loginForm) any { return signIn{f} }, map[string]string{"age": "3"}); err == nil {
-		t.Fatalf("missing String field decoded without an error")
+	if _, err := tuiDecodeFormSubmit(func(f loginForm) any { return signIn{f} }, map[string]string{"email": "x"}); err == nil {
+		t.Fatalf("missing Int field decoded without an error")
+	}
+	// A String with no control is "" on every target (the shared decoder).
+	if msg, err := tuiDecodeFormSubmit(func(f loginForm) any { return signIn{f} }, map[string]string{"age": "3"}); err != nil || msg.(signIn).f.Email != "" {
+		t.Fatalf("missing String field: want \"\", got %v, %v", msg, err)
 	}
 	msg, err := tuiDecodeFormSubmit("plainMsg", nil)
 	if err != nil || msg != "plainMsg" {

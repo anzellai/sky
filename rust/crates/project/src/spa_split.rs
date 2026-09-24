@@ -2572,8 +2572,17 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             .tree()
             .decls()
             .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))
+            .filter(|d| {
+                // Only a REAL reference to a server-tainted binding stops the
+                // decoder: a record FIELD LABEL with the same name (`{ m |
+                // products = [] }` beside a tainted `products` binding) is not
+                // one. A textual word match here dropped the decoder, and with it
+                // the SSR seed boot and persistence, for such an app.
+                !init_model_refs(d)
+                    .iter()
+                    .any(|r| tainted_names.iter().any(|t| t == r))
+            })
             .and_then(|d| init_pure_model_expr(&isrc, &d))
-            .filter(|m| !tainted_names.iter().any(|t| references_word(m, t)))
     };
 
     // ---- write the three trees ----
@@ -4837,6 +4846,29 @@ fn inject_config_builder_into_main(main_text: &str, marker: &str, line: &str) ->
 /// blank client-side: `Codec.fromJson (Codec.auto <model>) json` (design §4.5).
 /// The model expression is pure (no `db` reference in the standard shape), so the
 /// derived decoder is NOT server-tainted and survives into the frontend tree.
+/// The names the pure model expression of `init` REFERENCES (plain and the last
+/// segment of qualified references), read from the syntax tree. Record field
+/// labels and string contents are not references.
+fn init_model_refs(init_val: &syntax::ast::Decl) -> Vec<String> {
+    let Some((model, _cmd)) = init_return_tuple(init_val) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for n in model.syntax().descendants() {
+        match n.kind() {
+            SyntaxKind::RefExpr => out.push(n.text().to_string().trim().to_string()),
+            SyntaxKind::QualRefExpr => {
+                let t = n.text().to_string();
+                if let Some(last) = t.trim().rsplit('.').next() {
+                    out.push(last.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn init_pure_model_expr(src: &str, init_val: &syntax::ast::Decl) -> Option<String> {
     let (model, _cmd) = init_return_tuple(init_val)?;
     Some(slice(src, model.syntax()).to_string())

@@ -199,7 +199,16 @@ func decodeFormRecord(fields FormFields, target reflect.Type) (reflect.Value, er
 		default:
 			if !present {
 				switch ft.Kind() {
-				case reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
+				case reflect.String:
+					// No control for a String field reads as an empty one, the way
+					// HTML submits an empty text input. A record often carries a
+					// String the form does not edit (an image URL set by an upload),
+					// and refusing the whole submit for it broke real forms. A number
+					// has no empty value, so a missing Int or Float stays an error
+					// (never a silent 0).
+					rec.Field(i).SetString("")
+					continue
+				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
 					reflect.Int64, reflect.Float32, reflect.Float64:
 					return fail(fmt.Sprintf("is missing: the form has no control named %q", name))
 				}

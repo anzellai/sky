@@ -953,9 +953,10 @@ onClick msg =
 --     The runtime decodes the submitted fields (`{name: text, ...}`)
 --     into the typed record STRICTLY (runtime-go/rt/form_decode.go):
 --     input `name` attributes map to record fields by name, Int /
---     Float / Bool / Maybe fields are parsed from the text, and a
---     missing or unparsable field drops the submit with a logged
---     FormDecode error (never a zero value).
+--     Float / Bool / Maybe fields are parsed from the text. A String
+--     field with no control is "", a Bool False, a Maybe Nothing; a
+--     missing or unparsable number drops the submit with a logged
+--     FormDecode error (never a silent 0).
 --
 -- The checker rejects an argument no form submit can produce ([E2010]):
 -- a non-Msg value, a handler of more than one argument, or a record
@@ -1198,9 +1199,10 @@ input attrs =
 -- `type alias Creds = { username : String, password : String }`).
 -- Every target decodes the submitted fields into that record
 -- STRICTLY by name (`Ui.name "username"`): String / Int / Float /
--- Bool / Maybe fields only (else a compile error, [E2010]); a
--- missing or unparsable field drops the submit with a logged
--- FormDecode error, never a silent zero value.
+-- Bool / Maybe fields only (else a compile error, [E2010]). A String
+-- with no control is "", a Bool False, a Maybe Nothing; a missing or
+-- unparsable number drops the submit with a logged FormDecode error,
+-- never a silent 0.
 form : List (Attribute msg) -> List (Element msg) -> Element msg
 form attrs children =
     TaggedNode "form" NoDescription attrs children

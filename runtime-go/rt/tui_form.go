@@ -7,7 +7,6 @@ package rt
 import (
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 )
 
@@ -16,9 +15,9 @@ import (
 // The handler is a plain Msg (returned as is) or a constructor taking the
 // form record. Each record field is filled from the control with the same
 // name (the Sky field name, case-insensitive) and converted to the field's
-// type (String / Int / Float / Bool). A missing field (other than a Bool,
-// which an unchecked checkbox leaves out) or a value that does not parse is
-// an error — never a zero-filled record.
+// type by the shared decoder (form_decode.go): a String with no control is "",
+// a Bool with none is False (an unchecked box), a Maybe with none is Nothing,
+// and a missing or unparsable number is an error — never a silent 0.
 //
 // The typed codegen usually wraps the constructor as `func(any) any` that
 // narrows its argument to the record (`rt.Coerce[Rec](arg)`), so the
@@ -117,62 +116,12 @@ func tuiFormFieldName(sf reflect.StructField) string {
 }
 
 func tuiBuildFormRecord(pt reflect.Type, fields map[string]string) (reflect.Value, error) {
-	lookup := func(name string) (string, bool) {
-		if v, ok := fields[name]; ok {
-			return v, true
-		}
-		for k, v := range fields {
-			if strings.EqualFold(k, name) {
-				return v, true
-			}
-		}
-		return "", false
+	// One decoder for every target (form_decode.go): the same record rules on
+	// Sky.Live, Sky.Spa and the terminal, Maybe fields included. A String field
+	// with no control is ""; a missing or unparsable number is an error.
+	ff := make(FormFields, len(fields))
+	for k, v := range fields {
+		ff[k] = v
 	}
-	rec := reflect.New(pt).Elem()
-	for i := 0; i < pt.NumField(); i++ {
-		sf := pt.Field(i)
-		if !sf.IsExported() {
-			continue
-		}
-		name := tuiFormFieldName(sf)
-		raw, present := lookup(name)
-		fv := rec.Field(i)
-		switch sf.Type.Kind() {
-		case reflect.String:
-			if !present {
-				return rec, fmt.Errorf("field %q is missing (give its input Ui.name %q)", name, name)
-			}
-			fv.SetString(raw)
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			if !present {
-				return rec, fmt.Errorf("field %q is missing (give its input Ui.name %q)", name, name)
-			}
-			n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-			if err != nil {
-				return rec, fmt.Errorf("field %q: %q is not an Int", name, raw)
-			}
-			fv.SetInt(n)
-		case reflect.Float32, reflect.Float64:
-			if !present {
-				return rec, fmt.Errorf("field %q is missing (give its input Ui.name %q)", name, name)
-			}
-			f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-			if err != nil {
-				return rec, fmt.Errorf("field %q: %q is not a Float", name, raw)
-			}
-			fv.SetFloat(f)
-		case reflect.Bool:
-			switch strings.ToLower(strings.TrimSpace(raw)) {
-			case "true", "on", "checked", "1", "yes":
-				fv.SetBool(true)
-			case "", "false", "off", "0", "no":
-				fv.SetBool(false)
-			default:
-				return rec, fmt.Errorf("field %q: %q is not a Bool", name, raw)
-			}
-		default:
-			return rec, fmt.Errorf("field %q has type %s, which a form cannot fill (use String, Int, Float or Bool)", name, sf.Type)
-		}
-	}
-	return rec, nil
+	return decodeFormRecord(ff, pt)
 }

@@ -32,6 +32,10 @@ compile errors:
   `Int`, `Float`, `Bool`, or a `Maybe` of those. `onSubmit 42`, or a record with a
   `List` field, used to crash or deliver zeroes. Fix: give the form record only
   those field types, and name each control after its field (`Ui.name "age"`).
+  At run time a submitted field decodes strictly: a `String` with no control is
+  `""`, an unticked box is `False`, an empty `Maybe` is `Nothing`, and a number
+  that is missing or does not parse drops the submit with a logged `FormDecode`
+  error (it used to arrive as `0`).
 - **`[E2011]` — pub/sub payload mismatch.** On a literal topic, every
   `Cmd.publish` and `Sub.subscribeTopic` must agree on the payload type. The
   error names both sites. Fix: publish the type the subscriber decodes.

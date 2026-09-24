@@ -533,7 +533,7 @@ When the form submits, the client sends each named control's value as TEXT (`{"u
 
 | Record field | Filled from | Missing / bad value |
 |---|---|---|
-| `String` | the text | missing → decode error |
+| `String` | the text | missing → `""` (as HTML submits an empty input) |
 | `Int` / `Float` | the text, parsed (spaces ignored) | missing, empty or not a number → decode error |
 | `Bool` | `"on"` / `"true"` / `"checked"` / `"1"` / `"yes"` → `True` | absent (an unchecked box), `""`, `"false"`, `"off"`, `"0"`, `"no"` → `False`; anything else → decode error |
 | `Maybe X` | `Just` the decoded text | absent or `""` → `Nothing` |
