@@ -2748,15 +2748,7 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///   use to put a refused click back (input-authority user-event rule).
 ///
 /// 398 + 1 = 399.
-///
-/// 399 -> 400:
-///
-/// * `Std/UiInputCheckboxTest` (+1) — the native checkbox is laid
-///   transparently over the custom `icon` instead of beside it, so a user sees
-///   one box, not two.
-///
-/// 399 + 1 = 400.
-pub const SKY_SUITES_EXPECTED: u64 = 400;
+pub const SKY_SUITES_EXPECTED: u64 = 399;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

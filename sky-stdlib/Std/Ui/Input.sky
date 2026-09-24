@@ -324,12 +324,6 @@ checkbox attrs cfg =
 
             else
                 [ Ui.htmlAttribute "data-sky-checked" "false" ]
-        -- The native box is laid transparently OVER the icon
-        -- (`__overlayControl` inside a `__relative` row), so the icon is
-        -- the only box a user sees while the real input still takes the
-        -- click, the focus and the keyboard. Rendering both side by side
-        -- showed two boxes, the native one out of line with the icon.
-        -- The terminal backend ignores both markers and draws the input.
         checkInput =
             inputElementWith
                 "checkbox"
@@ -339,11 +333,10 @@ checkbox attrs cfg =
 
                 else
                     "false")
-                (checkedAttrs ++ [ AttrStyle "__overlayControl" "true" ])
+                checkedAttrs
         iconEl = cfg.icon cfg.checked
         rowBaseAttrs =
-            AttrStyle "__relative" "true" :: Ui.spacing 8 :: controlAttrs
-                ++ implicitFillIfHoisted layoutAttrs
+            Ui.spacing 8 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
     in
         wrapWithClickableLabel
             cfg.label
