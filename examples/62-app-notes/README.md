@@ -37,8 +37,9 @@ sky spa-partition src/Main.sky        # prints each branch CLIENT/SERVER + read/
 ```
 
 ```
-SERVER  Create   in: {draftBody, draftTitle}   out: {draftBody, draftTitle, notes, selected}
-                 references Persist.createNote (reaches server kernel Db.execObjectWith)
+SERVER  Create   in: {}   out: {draftBody, draftTitle, notes, selected}
+                 references Persist.loadNotes (reaches server kernel Db.queryObjects)
+SERVER  Save     in: {draftBody, draftTitle, selected}   out: {notes, selected}
 CLIENT  Search _  pure — no server effect or tainted value
 Server-tainted top-level bindings: createNote, dbConn, deleteNote, loadNotes, notesStore, updateNote
 ```

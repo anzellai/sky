@@ -187,10 +187,11 @@ fixedAndFill =
 -- collapsed at content-line height even though the user supplied
 -- `Ui.height fill` on Input.multiline.
 --
--- Takes an `onChange` constructor from the caller so this fixture
--- keeps the polymorphic `Element msg` shape the rest of cases uses.
-inputMultilineFill : (String -> msg) -> Element msg
-inputMultilineFill onEdit =
+-- Takes the bound text and an `onChange` constructor from the caller
+-- so this fixture keeps the polymorphic `Element msg` shape the rest
+-- of cases uses, and edits a real model field.
+inputMultilineFill : String -> (String -> msg) -> Element msg
+inputMultilineFill body onEdit =
     Ui.column
         [ Ui.width Ui.fill
         , Ui.height (Ui.px 120)
@@ -203,7 +204,7 @@ inputMultilineFill onEdit =
               , Ui.htmlAttribute "data-test-id" "input-multiline-textarea"
               ]
               { onChange = onEdit
-              , text = "fill the column"
+              , text = body
               , placeholder = Nothing
               , label = Input.labelHidden "Body"
               , spellcheck = False
@@ -576,11 +577,11 @@ card sectionId title body =
         ]
 
 
--- Composite list — wired into Main's view. Takes an `onEdit`
--- constructor so the `inputMultilineFill` fixture (#403 / v0.15.55)
--- can route its typed `onChange` back to the caller's Msg type.
-cases : (String -> msg) -> List (Element msg)
-cases onEdit =
+-- Composite list — wired into Main's view. Takes the textarea's bound
+-- text and an `onEdit` constructor so the `inputMultilineFill` fixture
+-- (#403 / v0.15.55) edits the caller's model through its own Msg type.
+cases : String -> (String -> msg) -> List (Element msg)
+cases note onEdit =
     [ card "triple-nested" "Triple-nested fill (#63 class)" tripleNestedFill
     , card
           "wrap-label"
@@ -589,7 +590,7 @@ cases onEdit =
     , card
           "input-multiline"
           "Input.multiline fill (#403 / v0.15.55)"
-          (inputMultilineFill onEdit)
+          (inputMultilineFill note onEdit)
     , card "portion" "fillPortion 1:2:3" portionRow
     , card "fixed-fill" "Fixed-px siblings of fill child" fixedAndFill
     , card "viewport" "Viewport-resize stub (#376)" viewportStub

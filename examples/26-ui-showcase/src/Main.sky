@@ -11,7 +11,9 @@ import Std.Ui.Font as Font
 import RegressionGates
 
 type alias Model =
-    { count : Int }
+    { count : Int
+    , note : String
+    }
 
 type Msg
     = Inc
@@ -21,7 +23,7 @@ type Msg
 
 init : a -> ( Model, Cmd Msg )
 init _ =
-    ( { count = 0 }, Cmd.none )
+    ( { count = 0, note = "fill the column" }, Cmd.none )
 
 
 subscriptions : Model -> Sub Msg
@@ -39,11 +41,12 @@ update msg model =
         Dec ->
             ( { model | count = model.count - 1 }, Cmd.none )
 
-        Edit _ ->
-            -- Showcase doesn't persist the textarea value; the
-            -- typed onChange callback exists so RegressionGates'
-            -- `inputMultilineFill` fixture compiles end-to-end.
-            ( model, Cmd.none )
+        Edit s ->
+            -- The `inputMultilineFill` textarea is bound to `note`, so
+            -- typing into it edits the model. (Bound to a constant it
+            -- read as a broken, read-only field: the input-authority
+            -- rule puts the model's value back after every keystroke.)
+            ( { model | note = s }, Cmd.none )
 
 
 white : Ui.Color
@@ -282,16 +285,20 @@ barChartDemo =
         ]
 
 
+-- Each stat card is AT MOST 140 px and shrinks to share the row: three
+-- fixed 140 px cards did not fit a phone's width, and pushed the page
+-- 100 px wider than a 390 px viewport. On a desktop they are 140 px, as
+-- before; on a phone the sparklines narrow instead of overflowing.
 sparklineDemo : Element Msg
 sparklineDemo =
     Ui.row
-        [ Ui.spacing 16, Ui.centerY ]
+        [ Ui.width Ui.fill, Ui.spacing 16, Ui.centerY ]
         [ Ui.column
-              [ Ui.spacing 4 ]
+              [ Ui.spacing 4, Ui.width (Ui.maximum 140 Ui.fill) ]
               [ Ui.el [ Font.size 12 ] (Ui.text "Throughput")
               , Ui.el [ Font.size 20, Font.bold ] (Ui.text "1.2 k/s")
               , Ui.el
-                    [ Ui.width (Ui.px 140), Ui.height (Ui.px 32) ]
+                    [ Ui.width Ui.fill, Ui.height (Ui.px 32) ]
                     (Chart.sparkline
                         (Chart.defaultCfg |> Chart.withWidth 140
                             |> Chart.withHeight 32
@@ -310,11 +317,11 @@ sparklineDemo =
                         ])
               ]
         , Ui.column
-              [ Ui.spacing 4 ]
+              [ Ui.spacing 4, Ui.width (Ui.maximum 140 Ui.fill) ]
               [ Ui.el [ Font.size 12 ] (Ui.text "p95 latency")
               , Ui.el [ Font.size 20, Font.bold ] (Ui.text "84 ms")
               , Ui.el
-                    [ Ui.width (Ui.px 140), Ui.height (Ui.px 32) ]
+                    [ Ui.width Ui.fill, Ui.height (Ui.px 32) ]
                     (Chart.sparkline
                         (Chart.defaultCfg |> Chart.withWidth 140
                             |> Chart.withHeight 32
@@ -333,13 +340,13 @@ sparklineDemo =
                         ])
               ]
         , Ui.column
-              [ Ui.spacing 4 ]
+              [ Ui.spacing 4, Ui.width (Ui.maximum 140 Ui.fill) ]
               [ Ui.el [ Font.size 12 ] (Ui.text "Error rate")
               , Ui.el
                     [ Font.size 20, Font.bold, Font.color (Ui.rgb 200 60 60) ]
                     (Ui.text "0.4 %")
               , Ui.el
-                    [ Ui.width (Ui.px 140), Ui.height (Ui.px 32) ]
+                    [ Ui.width Ui.fill, Ui.height (Ui.px 32) ]
                     (Chart.sparkline
                         (Chart.defaultCfg |> Chart.withWidth 140
                             |> Chart.withHeight 32
@@ -601,6 +608,12 @@ view model =
         -- runner supplies the `Ui.layout` document shell. The page-level attrs
         -- that used to sit on `Ui.layout`'s root (width/height fill, background,
         -- font) move onto this root `Ui.column`.
+        --
+        -- `Ui.clipX` on the root: the regression-gate fixtures pin FIXED
+        -- pixel widths on purpose (a 360 px `wrap-label` outer, a 460 px
+        -- clipped strip) — the widths are what they measure. On a phone they
+        -- overflow their card; the clip keeps them from widening the whole
+        -- page (a sideways scroll) without changing any pixel inside a card.
     in
         Ui.column
             [ Ui.width Ui.fill
@@ -608,6 +621,7 @@ view model =
             , Background.color (Ui.rgb 244 245 248)
             , Font.family "system-ui, -apple-system, Segoe UI, sans-serif"
             , Ui.htmlAttribute "data-test-id" "showcase-root"
+            , Ui.clipX
             ]
             [ Ui.column
                   [ Ui.width (Ui.maximum 760 Ui.fill)
@@ -615,7 +629,7 @@ view model =
                   , Ui.padding 28
                   , Ui.spacing 18
                   ]
-                  (originalSections ++ RegressionGates.cases Edit)
+                  (originalSections ++ RegressionGates.cases model.note Edit)
             ]
 
 

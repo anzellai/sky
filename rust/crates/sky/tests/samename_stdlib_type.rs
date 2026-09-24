@@ -161,3 +161,87 @@ fn project_type_alias_shadows_a_same_named_stdlib_type_in_emitted_go() {
 
     let _ = std::fs::remove_dir_all(&proj);
 }
+
+fn imported_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/samename-imported-type")
+}
+
+/// The IMPORTED-type half of the same class. The fix above resolves a bare
+/// field-type name against the DECLARING module's own aliases first, which
+/// covers `Main.Message` but not a `Message` that `Main` imports from another
+/// project module (`import Domain exposing (..)`): that reference still fell
+/// through to the bare first-writer-wins table and took the stdlib
+/// `Std.Ai.Provider.Message`. A record alias `LoadResp = { messages : List
+/// Message }` — exactly what the Sky.Spa auto-split generates for an RPC
+/// response — then lowered its field to `[]Std_Ai_Provider_Message_R`, the
+/// constructor converted every decoded `Domain.Message` into that struct, and
+/// each field read back as its zero value. A chat app's history load rendered
+/// rows with no author and no text.
+///
+/// Asserted on the RUNNING program, not only on the emitted struct: the decoded
+/// values must survive the record-alias constructor intact.
+#[test]
+fn imported_type_in_a_record_alias_field_is_not_hijacked_by_a_stdlib_type() {
+    let _lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&imported_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build on the samename-imported-type fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "fixture must build:\n{log}");
+
+    let go = std::fs::read_to_string(proj.join("sky-out/main.go")).unwrap_or_default();
+    // Non-vacuity: the colliding stdlib record must be in the compile set.
+    assert!(
+        go.contains("Std_Ai_Provider_Message_R"),
+        "the collision condition is absent (Std.Ai not in the compile set); the \
+         test would be vacuous — the fixture no longer exercises the bug"
+    );
+    let resp_line = go
+        .lines()
+        .find(|l| l.contains("type Main_LoadResp_R struct"))
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        resp_line.contains("Messages []Domain_Message_R"),
+        "the imported `Domain.Message` must win in the record-alias field:\n{resp_line}"
+    );
+
+    let run = Command::new(proj.join("sky-out/app"))
+        .current_dir(&proj)
+        .output()
+        .expect("run the fixture binary");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(run.status.success(), "fixture must run cleanly:\n{stdout}");
+    assert!(
+        stdout.contains("resp 7|alice|hello from alice|1790238262204"),
+        "the decoded record must keep its field values through the \
+         record-alias constructor:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("event 7|alice|hello from alice|1790238262204"),
+        "the imported type must also survive a union variant payload:\n{stdout}"
+    );
+    // Both same-tailed types in one record: the bare name is `Domain.Message`,
+    // the qualified one the stdlib record — each keeps its own fields.
+    assert!(
+        stdout.contains("pair 7|alice|hello from alice|1790238262204 / user:hi"),
+        "a record holding both same-tailed types must keep each one's fields:\n{stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}

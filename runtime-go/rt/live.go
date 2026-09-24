@@ -2662,6 +2662,12 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// devBanner is "" in production; injected as a sibling of sky-root
 	// so it survives every diff/patch cycle (root replacement won't
 	// blow it away) and stays pinned bottom-right via position:fixed.
+	// It goes AFTER the runtime <script>, never between `</div>` and
+	// `<script>`: the client's __skyPatch strips a full-page sky-nav
+	// response with /<div id="sky-root">(…)<\/div><script>/, and a badge
+	// in that gap made the match fail, so the WHOLE document (a second
+	// badge, the runtime as an inline <script>) was spliced into
+	// #sky-root. See live_nav_envelope_test.go.
 	// Also suppressed when this app IS itself running as a sub-app
 	// (basePath != "") — the bundled Sky Console is the canonical
 	// case: rendering a "🔍 Console" link inside the console itself
@@ -2688,7 +2694,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// override in the app's head. Empty string when app didn't
 	// supply `head` — byte-identical to pre-v0.15.58 output.
 	headExtra := renderAppHead(app.head, model)
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s<script>%s</script></body></html>", baseMeta, headExtra, liveBaseCSS, body, devBanner, liveJSWithCfgAndCsrfWithBaseView(sid, app.bannerCfg, csrfToken, app.basePath, initialView))
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div><script>%s</script>%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, liveJSWithCfgAndCsrfWithBaseView(sid, app.bannerCfg, csrfToken, app.basePath, initialView), devBanner)
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html

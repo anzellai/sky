@@ -1068,8 +1068,8 @@ only the entry-point module switches between `Live.app` and
 
 - `SKY_CONSOLE_EMBED=off` — opt-out of the auto-mount inside user
   apps (the standalone CLI still works).
-- `SKY_DEV_BANNER=off` — opt-out of the floating "🔍 Console"
-  banner without disabling the mount.
+- `SKY_DEV_BANNER=off` — opt-out of the floating "🔍" Sky Console
+  tab (right edge, vertically centred) without disabling the mount.
 - `SKY_CONSOLE_URL=https://...` — override the banner's href
   (e.g. to point at a remote shared dashboard).
 - `ENV=production` (or `SKY_ENV=…` outside `{dev, development,

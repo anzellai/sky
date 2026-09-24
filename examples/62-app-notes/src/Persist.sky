@@ -79,18 +79,22 @@ loadNotes _ =
             []
 
 
--- Insert a new note from the drafts; answer with the fresh list.
-createNote : String -> String -> List Note
+-- Insert a new note; answer with its database-assigned id (0 when the
+-- insert failed), so the caller can SELECT the note it just made. The
+-- `id = 0` passed in is ignored: the column is `serial`.
+createNote : String -> String -> Int
 createNote title body =
-    let
-        _ =
-            Task.run
-                (Store.insert
-                    dbConn
-                    notesStore
-                    { id = 0, title = sanitize title, body = body })
-    in
-        loadNotes ()
+    case Task.run
+             (Store.insert
+                 dbConn
+                 notesStore
+                 { id = 0, title = sanitize title, body = body }) of
+
+        Ok newId ->
+            newId
+
+        Err _ ->
+            0
 
 
 -- Update the note with the given id; answer with the fresh list.

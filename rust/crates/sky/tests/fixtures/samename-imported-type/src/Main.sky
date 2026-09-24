@@ -1,0 +1,83 @@
+module Main exposing (main)
+
+-- Regression: a record alias whose field names an IMPORTED project type
+-- (`messages : List Message`, `Message` from `Domain`) must lower that field to
+-- the imported type (`Domain_Message_R`), never to the same-tailed stdlib
+-- `Std_Ai_Provider_Message_R`. Before the fix the field lowered to the stdlib
+-- record, the constructor converted each decoded `Domain.Message` into it, and
+-- every field read back as its zero value: `0|||0` instead of the JSON's
+-- values. This is the shape the auto-split generates for an RPC response
+-- (`type alias LoadResp = { messages : List Message }`), so a Sky.Spa history
+-- load rendered empty rows.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Codec as Codec exposing (Codec)
+import Std.Log exposing (println)
+import Std.Ai.Provider as Provider
+import Domain exposing (..)
+
+type alias LoadResp =
+    { messages : List Message }
+
+type Event
+    = Got Message
+
+-- Both `Message` types in one record: the bare name is the exposing-imported
+-- `Domain.Message`, the qualified one the stdlib record. Using the stdlib type
+-- keeps the collision condition present in the emitted Go.
+type alias Pair =
+    { ours : Message
+    , theirs : Provider.Message
+    }
+
+
+pairLine : Pair -> String
+pairLine p =
+    "pair " ++ line p.ours ++ " / " ++ p.theirs.role ++ ":" ++ p.theirs.content
+
+
+loadRespCodec : Codec LoadResp
+loadRespCodec =
+    Codec.object LoadResp |> Codec.field "messages" .messages messageListCodec
+        |> Codec.buildObject
+
+
+raw : String
+raw =
+    "{\"messages\":[{\"id\":7,\"author\":\"alice\",\"body\":\"hello from alice\",\"ts\":1790238262204}]}"
+
+
+line : Message -> String
+line m =
+    String.fromInt m.id ++ "|" ++ m.author ++ "|" ++ m.body ++ "|"
+        ++ String.fromInt m.ts
+
+
+eventLine : Event -> String
+eventLine ev =
+    case ev of
+
+        Got m ->
+            "event " ++ line m
+
+
+main : Task Error ()
+main =
+    case Codec.fromJson loadRespCodec raw of
+
+        Ok resp ->
+            println
+                (String.join
+                    "\n"
+                    (List.map (\m -> "resp " ++ line m) resp.messages
+                        ++ List.map (\m -> eventLine (Got m)) resp.messages
+                        ++ List.map
+                               (\m ->
+                                   pairLine
+                                       { ours = m, theirs = Provider.user "hi" })
+                               resp.messages))
+
+        Err _ ->
+            println "decode error"

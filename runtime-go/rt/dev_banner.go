@@ -32,6 +32,13 @@ import (
 // our talk" promise of the Std.Ui console. The container is
 // `position: fixed; z-index: 2147483646` (max int32 - 1 — leaves
 // room for the existing status banner at max).
+//
+// Placement: a compact icon tab on the right EDGE, vertically centred
+// (the word "Console" is its title + aria-label, not its width). It
+// was pinned bottom-right, which is where apps put their primary
+// action (a chat composer's Send, a form's Submit), so in development
+// it covered that control and took its clicks. The vertical middle of
+// the right edge is clear of both the header and the bottom bar.
 func devBannerHTML() string {
 	if productionFromEnv() {
 		return ""
@@ -51,14 +58,14 @@ func devBannerHTML() string {
 	// breaking out of the href / title attribute.
 	esc := html.EscapeString(url)
 	return fmt.Sprintf(
-		`<a id="__sky-dev-console" href="%s" target="_blank" rel="noopener" title="Sky Console (dev only)" `+
-			`style="position:fixed;right:12px;bottom:12px;z-index:2147483646;`+
-			`font:12px/1.4 ui-monospace,Menlo,monospace;`+
-			`background:#1c2027;color:#7eb6ff;`+
-			`border:1px solid #353b46;border-radius:6px;`+
-			`padding:6px 10px;text-decoration:none;`+
+		`<a id="__sky-dev-console" href="%s" target="_blank" rel="noopener" title="Sky Console (dev only)" aria-label="Sky Console (dev only)" `+
+			`style="position:fixed;right:0;top:50%%;transform:translateY(-50%%);z-index:2147483646;`+
+			`font:11px/1.3 ui-monospace,Menlo,monospace;`+
+			`background:#1c2027;color:#7eb6ff;opacity:0.85;`+
+			`border:1px solid #353b46;border-right:0;border-radius:6px 0 0 6px;`+
+			`padding:5px 6px;text-decoration:none;`+
 			`box-shadow:0 2px 8px rgba(0,0,0,0.4);">`+
-			`&#128269; Console</a>`,
+			`&#128269;</a>`,
 		esc,
 	)
 }

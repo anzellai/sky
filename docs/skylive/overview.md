@@ -317,7 +317,7 @@ Backwards-compatible: omit `[env] prefix` and behaviour matches every prior Sky 
 
 ## Dev console — auto-mounted at `/_sky/console`
 
-Every Sky.Live (and Sky.Http.Server) app **auto-mounts a Std.Ui-written dev console at `/_sky/console`** in dev mode. A floating "🔍 Console" anchor injected into every rendered page links straight to it. Zero user code needed.
+Every Sky.Live (and Sky.Http.Server) app **auto-mounts a Std.Ui-written dev console at `/_sky/console`** in dev mode. A small "🔍" tab (titled "Sky Console") on the right edge of every rendered page, vertically centred so it stays clear of an app's header and bottom-bar controls, links straight to it. Zero user code needed.
 
 **On a bare `sky run` it is mounted AND unauthenticated.** With `SKY_CONSOLE_AUTH` and `ENV` both unset the mode resolves to dev-open and the gate returns true outright, so anything that can reach the port can read the console. That is deliberate — it is what makes a first Sky.Live app show its own telemetry with nothing configured — and it is why the default is now *announced* rather than only gated. The app says so at startup, under its `listening` line, together with what to set before deploying:
 

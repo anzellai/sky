@@ -169,25 +169,44 @@ update msg model =
         Load ->
             ( { model | notes = Persist.loadNotes () }, Cmd.none )
 
-        -- SERVER — insert a new note from the drafts, return the fresh list.
+        -- SERVER — insert an empty note, SELECT it, and clear the editor, so
+        -- the next Save writes into the new note. (It used to leave
+        -- `selected = 0`: Save then updated no row, and the typed title was
+        -- only persisted as the body of the NEXT "New note".)
         Create ->
+            let
+                newId =
+                    Persist.createNote "" ""
+            in
             ( { model
-                | notes = Persist.createNote model.draftTitle model.draftBody
+                | notes = Persist.loadNotes ()
                 , draftTitle = ""
                 , draftBody = ""
-                , selected = 0
+                , selected = newId
               }
             , Cmd.none
             )
 
-        -- SERVER — update the selected note with the drafts.
+        -- SERVER — write the drafts into the selected note. With no note
+        -- selected (a fresh editor), Save creates one from the drafts and
+        -- selects it, so typed text is never silently dropped.
         Save ->
-            ( { model
-                | notes =
-                    Persist.updateNote model.selected model.draftTitle model.draftBody
-              }
-            , Cmd.none
-            )
+            if model.selected == 0 then
+                let
+                    newId =
+                        Persist.createNote model.draftTitle model.draftBody
+                in
+                ( { model | notes = Persist.loadNotes (), selected = newId }
+                , Cmd.none
+                )
+
+            else
+                ( { model
+                    | notes =
+                        Persist.updateNote model.selected model.draftTitle model.draftBody
+                  }
+                , Cmd.none
+                )
 
         -- SERVER — delete a note by id, return the fresh list.
         Delete id ->

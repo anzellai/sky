@@ -292,7 +292,10 @@ multiline attrs cfg =
 
 
 -- Checkbox. The icon is the visual checkmark element (use a simple
--- unicode tick for now or a custom Element).
+-- unicode tick for now or a custom Element). On the web the icon is the
+-- ONLY box drawn: the native input lies transparently over it (it still
+-- takes the click, the focus and the keyboard), so the icon must draw
+-- both states. An icon of `Ui.none` leaves nothing to see.
 --
 -- `cfg.checked` drives the native `checked` attribute as well as the
 -- icon, so the underlying `<input type="checkbox">` reflects the model
@@ -321,6 +324,12 @@ checkbox attrs cfg =
 
             else
                 [ Ui.htmlAttribute "data-sky-checked" "false" ]
+        -- The native box is laid transparently OVER the icon
+        -- (`__overlayControl` inside a `__relative` row), so the icon is
+        -- the only box a user sees while the real input still takes the
+        -- click, the focus and the keyboard. Rendering both side by side
+        -- showed two boxes, the native one out of line with the icon.
+        -- The terminal backend ignores both markers and draws the input.
         checkInput =
             inputElementWith
                 "checkbox"
@@ -330,10 +339,11 @@ checkbox attrs cfg =
 
                 else
                     "false")
-                checkedAttrs
+                (checkedAttrs ++ [ AttrStyle "__overlayControl" "true" ])
         iconEl = cfg.icon cfg.checked
         rowBaseAttrs =
-            Ui.spacing 8 :: controlAttrs ++ implicitFillIfHoisted layoutAttrs
+            AttrStyle "__relative" "true" :: Ui.spacing 8 :: controlAttrs
+                ++ implicitFillIfHoisted layoutAttrs
     in
         wrapWithClickableLabel
             cfg.label

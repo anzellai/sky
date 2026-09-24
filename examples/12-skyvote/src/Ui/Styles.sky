@@ -678,6 +678,22 @@ globalStyles =
         , media
               "(max-width: 640px)"
               [ rule ".toolbar" [ flexDirection Column ]
+              -- In the column toolbar the desktop `flex: 1 1 200px` basis
+              -- becomes a HEIGHT (a 200 px tall search box); size it by its
+              -- content and stretch it across instead.
+              , rule
+                    ".search-input"
+                    [ property "flex" "0 0 auto"
+                    , property "align-self" "stretch"
+                    ]
+              -- Five nav items do not fit a 390 px phone on one line: let
+              -- them wrap, with tighter padding, instead of widening the page.
+              , rule
+                    ".nav"
+                    [ flexWrap Wrap, property "justify-content" "center" ]
+              , rule ".nav-link" [ padding2 (px 8) (px 10) ]
+              , rule ".auth-nav" [ property "margin-left" "0" ]
+              , rule ".auth-nav-anon" [ property "margin-left" "0" ]
               , rule ".filter-group" [ flexWrap Wrap ]
               , rule ".idea-card" [ flexDirection Column ]
               , rule ".header-inner" [ flexDirection Column, gap (px 12) ]
