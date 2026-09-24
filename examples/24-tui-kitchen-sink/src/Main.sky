@@ -371,16 +371,18 @@ inputsSection model =
               [ Ui.spacing 4 ]
               [ Ui.el [] (Ui.text "Checkbox:")
               , Ui.input
-                    [ Ui.htmlAttribute "type" "checkbox"
+                    ([ Ui.htmlAttribute "type" "checkbox"
                     , Ui.htmlAttribute "value" (boolToString model.checkbox1)
                     , Ui.onClick ToggleCheckbox1
                     ]
+                        ++ checkedAttr model.checkbox1)
               , Ui.text "newsletter"
               , Ui.input
-                    [ Ui.htmlAttribute "type" "checkbox"
+                    ([ Ui.htmlAttribute "type" "checkbox"
                     , Ui.htmlAttribute "value" (boolToString model.checkbox2)
                     , Ui.onClick ToggleCheckbox2
                     ]
+                        ++ checkedAttr model.checkbox2)
               , Ui.text "marketing"
               ]
         , Ui.row
@@ -420,12 +422,18 @@ inputsSection model =
         ]
 
 
+-- One radio of the "colour" group. The terminal reads a radio's state from
+-- its `value` (non-empty = selected); a browser reads the `checked`
+-- attribute and groups radios by `name`. Both are set, so the SAME view
+-- shows exactly one selected radio under Sky.Tui and under Sky.Live —
+-- binding only `value` left every clicked radio checked in the browser.
 radioOption : Model -> String -> String -> Element Msg
 radioOption model val label =
     Ui.row
         [ Ui.spacing 2 ]
         [ Ui.input
-              [ Ui.htmlAttribute "type" "radio"
+              ([ Ui.htmlAttribute "type" "radio"
+              , Ui.htmlAttribute "name" "colour"
               , Ui.htmlAttribute
                     "value"
                     (if model.radioValue == val then
@@ -435,8 +443,20 @@ radioOption model val label =
                         "")
               , Ui.onClick (SelectRadio val)
               ]
+                  ++ checkedAttr (model.radioValue == val))
         , Ui.text label
         ]
+
+
+-- The browser's checked state for a raw checkbox / radio input (the
+-- terminal uses `value`, see `radioOption`).
+checkedAttr : Bool -> List (Ui.Attribute Msg)
+checkedAttr on =
+    if on then
+        [ Ui.htmlAttribute "checked" "checked" ]
+
+    else
+        []
 
 
 boolToString : Bool -> String

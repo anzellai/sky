@@ -116,9 +116,12 @@ sessionPill maybe =
             navLink SignInPage "Sign in"
 
 
+-- A wrappedRow: the brand, three links and two pills do not fit a phone's
+-- width on one line, and a plain row pushed the page ~60 px wider than a
+-- 390 px viewport. On a narrow screen the pills wrap onto a second line.
 topNav : Model -> Element Msg
 topNav model =
-    Ui.row
+    Ui.wrappedRow
         [ Ui.width Ui.fill
         , Ui.spacing 16
         , Ui.paddingXY 24 12
