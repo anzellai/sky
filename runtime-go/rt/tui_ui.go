@@ -1644,6 +1644,11 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					out.isParagraph = true
 				case "__textcolumn":
 					out.isTextColumn = true
+				case "__relative", "__overlayControl":
+					// Web-only: Input.checkbox lays the native box
+					// transparently over its icon. The terminal keeps
+					// drawing the control itself (it is the focus
+					// target), so both markers are deliberate no-ops.
 				case "__gridMin":
 					// gridColumns N → AttrStyle "__gridMin" (encoded value)
 					if v, ok := afields[1].(string); ok {

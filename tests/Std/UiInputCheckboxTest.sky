@@ -84,5 +84,22 @@ tests =
                         (String.contains
                             "type=\"checkbox\""
                             (renderCheckbox True)))
+          , Test.test
+                "the native box is laid transparently over the icon, not beside it"
+                (\_ ->
+                    -- Rendered side by side, a custom `icon` showed next to
+                    -- the browser's own box: two boxes for one control. The
+                    -- native input now fills its `position: relative` row at
+                    -- `opacity: 0`, above the icon, so it keeps the click and
+                    -- the focus while only the icon is seen.
+                    Test.equal
+                        ( True, True )
+                        ( String.contains
+                              "position: absolute; top: 0; left: 0; width: 100%; height: 100%; margin: 0; opacity: 0;"
+                              (renderCheckbox False)
+                        , String.contains
+                              "position: relative;"
+                              (renderCheckbox False)
+                        ))
           ]
     ]
