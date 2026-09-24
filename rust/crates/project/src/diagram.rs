@@ -4763,11 +4763,11 @@ fn http_hosts_in(
     const CAP: usize = 4000;
     let mut queue: Vec<DefId> = Vec::new();
     let mut seen: HashSet<DefId> = HashSet::new();
-    let mut visit = |db: &dyn SkyDb,
-                     body: &Body,
-                     e: ExprId,
-                     out: &mut BTreeSet<String>,
-                     queue: &mut Vec<DefId>| {
+    let visit = |db: &dyn SkyDb,
+                 body: &Body,
+                 e: ExprId,
+                 out: &mut BTreeSet<String>,
+                 queue: &mut Vec<DefId>| {
         let mut ids: Vec<ExprId> = Vec::new();
         walk_exprs(body, e, &mut |x| ids.push(x));
         for x in &ids {

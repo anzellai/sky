@@ -3003,7 +3003,6 @@ impl<'a> Ctx<'a> {
     /// param/result positions — the row var flows through, as in
     /// `\acc -> { acc | value = … }`.
     fn local_fn_row_poly(&mut self, params: &[PatId], body: ExprId) -> (Vec<bool>, bool) {
-        use std::collections::HashMap as Hm;
         let param_tys: Vec<Option<Ty>> = params
             .iter()
             .map(|p| match &self.body.pats[*p] {

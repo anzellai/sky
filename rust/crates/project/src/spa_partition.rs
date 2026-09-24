@@ -1209,8 +1209,16 @@ pub fn analyze_loaded(
                 // branches' RPC I/O to the union over their continuation arms.
                 let view_def = find_config_field_def(db, &check_ids, entry, "view");
                 let subs_def = find_config_field_def(db, &check_ids, entry, "subscriptions");
-                let chaining =
-                    compute_server_chaining(db, umod, body, view_def, subs_def, &mut branches);
+                let extra_client = client_hook_ctors(db, &check_ids, entry);
+                let chaining = compute_server_chaining(
+                    db,
+                    umod,
+                    body,
+                    view_def,
+                    subs_def,
+                    &extra_client,
+                    &mut branches,
+                );
                 server_internal = chaining.server_internal;
                 chaining_branches = chaining.chaining_branches;
                 client_result = chaining.client_result;
@@ -2719,6 +2727,53 @@ fn walk_ctor_names(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<St
 /// Every constructor a top-level def BUILDS, transitively through its callees.
 /// Over-approximates (follows every reachable def) — the set is used to KEEP a
 /// Msg client-side, so including more only keeps more (never drops a live arm).
+/// Msg constructors the CLIENT builds outside `view` / `subscriptions` / the
+/// client `update` arms: `init` (its first-load command, e.g.
+/// `Cmd.perform (File.readFile …) GotItems`) and the argument of
+/// `App.withOnNavigate` / `Spa.withOnNavigate`. A Msg built there reaches the
+/// client `update`, so it must never be pruned as server-internal: before this,
+/// a chain whose continuation `init` also dispatched was pruned from the client
+/// `Msg`, and the synthesised client `init` failed with an undefined name.
+fn client_hook_ctors(
+    db: &skydb::SkyDatabase,
+    check_ids: &[ModuleId],
+    entry: ModuleId,
+) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    let mut vis: HashSet<DefId> = HashSet::new();
+    if let Some(i) = find_config_field_def(db, check_ids, entry, "init") {
+        collect_constructed_ctors(db, i, &mut out, &mut vis);
+    }
+    let mut hooks: Vec<DefId> = Vec::new();
+    for m in ["Std.App", "Std.Spa"] {
+        if let Some(mid) = db.module_by_name(m) {
+            if let Some(d) = def_by_name(db, mid, "withOnNavigate") {
+                hooks.push(d);
+            }
+        }
+    }
+    if hooks.is_empty() {
+        return out;
+    }
+    for mid in check_ids {
+        let resolved = db.resolve(*mid);
+        for body in resolved.bodies.values() {
+            for (_, expr) in body.exprs.iter() {
+                if let Expr::Call(callee, args) = expr {
+                    if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
+                        if hooks.contains(d) {
+                            if let Some(a) = args.first() {
+                                expr_constructed_ctors(db, body, *a, &mut out);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn collect_constructed_ctors(
     db: &dyn SkyDb,
     def: DefId,
@@ -2777,6 +2832,7 @@ fn compute_server_chaining(
     body: &Body,
     view_def: Option<DefId>,
     subs_def: Option<DefId>,
+    extra_client: &BTreeSet<String>,
     branches: &mut [BranchVerdict],
 ) -> ServerChaining {
     let mut out = ServerChaining::default();
@@ -2823,6 +2879,9 @@ fn compute_server_chaining(
     if let Some(s) = subs_def {
         collect_constructed_ctors(db, s, &mut client_dispatched, &mut vis);
     }
+    // `init` and the navigation hook also construct Msgs in the CLIENT (the
+    // first-load command, a route change); see [`client_hook_ctors`].
+    client_dispatched.extend(extra_client.iter().cloned());
     for arm in arms.iter() {
         let head = arm_ctor_key(body, arm.pat);
         let is_server = head

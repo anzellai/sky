@@ -59,3 +59,21 @@ fn prelude_cmd_is_analysed_like_imported_std_cmd() {
         prelude.chaining_branches
     );
 }
+
+/// A continuation that the CLIENT also dispatches from `init` is not
+/// server-internal. `spa-ssr-p3`'s `init` returns
+/// `Cmd.perform (File.readFile …) GotItems`, and `LoadItems` performs the same
+/// read into `GotItems`. Once the prelude `Cmd` was read, `LoadItems` chained
+/// and `GotItems` was pruned from the client `Msg`, so the synthesised client
+/// `init` failed with `Undefined name: GotItems`. `init` (and the navigation
+/// hook) now count as client dispatch sites.
+#[test]
+fn a_msg_the_client_init_dispatches_is_never_server_internal() {
+    let r = analyze("spa-ssr-p3");
+    assert!(
+        !r.server_internal.contains(&"GotItems".to_string()),
+        "`init` dispatches `GotItems` on the client, so it must stay a client Msg; \
+         server_internal={:?}",
+        r.server_internal
+    );
+}
