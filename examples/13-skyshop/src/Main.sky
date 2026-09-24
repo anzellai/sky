@@ -79,7 +79,7 @@ refreshProducts model =
     let
         -- Update user profile with shipping address
         products =
-            if model.search != "" || model.categoryFilter != "all" then
+            if model.search /= "" || model.categoryFilter /= "all" then
                 Products.searchProducts
                     model.search
                     model.categoryFilter

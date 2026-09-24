@@ -56,7 +56,7 @@ viewCartContent model =
             [ Html.h1
                   [ tw [ text3xl, fontBold, mb2, textGray900 ] ]
                   [ text (Tr.t lang "cart.title") ]
-            , if model.checkoutUrl != "" then
+            , if model.checkoutUrl /= "" then
                   viewCheckoutRedirect model
 
               else if List.isEmpty model.cartItems then
@@ -160,7 +160,7 @@ viewCartItem model item =
     in
         div
             [ Layout.cartItem ]
-            [ if thumb != "" then
+            [ if thumb /= "" then
                   img [ src thumb, alt title, Layout.cartThumb ]
 
               else

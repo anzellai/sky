@@ -149,7 +149,8 @@ html =
 | `==` `/=` `<` `>` `<=` `>=` | Comparison |
 | `&&` `\|\|` | Boolean |
 
-No custom operators — language constraint.
+No custom operators — language constraint. Any other operator is a compile
+error (`[E1014] UNKNOWN OPERATOR`): "not equal" is `/=`, never `!=`.
 
 ## Comments
 

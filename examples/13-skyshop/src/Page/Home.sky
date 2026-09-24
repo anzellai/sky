@@ -348,7 +348,7 @@ viewProductCard model product =
             ]
             [ div
                   [ style "aspect-ratio:4/3;overflow:hidden" ]
-                  [ if firstImage != "" then
+                  [ if firstImage /= "" then
                         img [ src firstImage, alt title, Layout.objectCover_ ]
 
                     else

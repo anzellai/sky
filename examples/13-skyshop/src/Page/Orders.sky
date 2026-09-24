@@ -222,7 +222,7 @@ viewOrderDetail model order =
                               , span [ tw [ fontMedium ] ] [ text createdAt ]
                               ]
                         ]
-                  , if shippingName != "" then
+                  , if shippingName /= "" then
                         div
                             [ tw [ borderT, borderGray200, pt4, mb4 ] ]
                             [ Html.h3
@@ -250,7 +250,7 @@ viewOrderDetail model order =
 
                     else
                         text ""
-                  , if remarks != "" then
+                  , if remarks /= "" then
                         div
                             [ tw [ borderT, borderGray200, pt4, mb4 ] ]
                             [ Html.h3

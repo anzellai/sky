@@ -61,7 +61,7 @@ domainUrl _ =
         port_ =
             Result.withDefault "" (Task.run (System.getenv "SKY_LIVE_PORT"))
     in
-        if domain != "" then
+        if domain /= "" then
             domain
 
         else
@@ -476,7 +476,7 @@ verifyStripeSession cartId sessionId =
                             { status = status
                             , paymentStatus = paymentStatus
                             , customerName =
-                                if custName != "" then
+                                if custName /= "" then
                                     custName
 
                                 else

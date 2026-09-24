@@ -134,7 +134,7 @@ viewAdminProductRow model product =
             ]
             [ div
                   [ tw [ flex, itemsCenter, gap3 ] ]
-                  [ if thumb != "" then
+                  [ if thumb /= "" then
                         img [ src thumb, alt title, Layout.adminThumb ]
 
                     else
@@ -224,7 +224,7 @@ viewAdminEditProduct model =
                         ]
                   ]
             , viewProductForm model
-            , if model.editProductId != "" then
+            , if model.editProductId /= "" then
                   viewImageManager model
 
               else
@@ -753,7 +753,7 @@ viewAdminOrderDetail model order =
                         [ Money.formatPrice totalAmount totalCurrency
                         , createdAt
                         ]
-                  , if shippingName != "" then
+                  , if shippingName /= "" then
                         infoCard
                             "Shipping"
                             [ shippingName
@@ -763,7 +763,7 @@ viewAdminOrderDetail model order =
 
                     else
                         text ""
-                  , if remarks != "" then
+                  , if remarks /= "" then
                         infoCard "Remarks" [ remarks ]
 
                     else
@@ -780,7 +780,7 @@ viewAdminOrderDetail model order =
                               [ tw [ flex, flexWrap, gap2 ] ]
                               (List.map
                                   (\newState ->
-                                      if newState != st && newState != "ongoing" then
+                                      if newState /= st && newState /= "ongoing" then
                                           button
                                               [ onClick
                                                     (UpdateOrderState

@@ -1,0 +1,26 @@
+-- gate: reject
+-- defect: `!=` is not a Sky operator (Sky writes "not equal" as `/=`)
+-- rust: reject [E1014] unknown operator, reported where it is written
+--
+-- Found 2026-09-24 by the v0.25.17 UI/UX sweep. The resolver mapped any
+-- operator it did not know to `identity`, and lowering then emitted it as an
+-- arithmetic `rt.Add`, so `s != ""` type-checked, went through `go build`, and
+-- panicked at run time (`rt.AsInt: expected numeric value, got string`) the
+-- first time the branch ran. An example app shipped sixteen of these.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+pick : String -> String
+pick s =
+    if s != "" then
+        "search"
+
+    else
+        "list"
+
+
+main =
+    println (pick "x")

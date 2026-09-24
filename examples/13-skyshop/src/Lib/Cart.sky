@@ -227,7 +227,7 @@ removeItem itemId =
                 cartId = Db.getField "cart_id" item
                 _ = Db.deleteDoc "cart_items" itemId
             in
-                if cartId != "" then
+                if cartId /= "" then
                     let
                         _ = recalculateTotal cartId
                     in

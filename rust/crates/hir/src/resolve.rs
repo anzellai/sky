@@ -1857,7 +1857,7 @@ impl<'a> Resolver<'a> {
                     let mut acc = build_seg(self, first);
                     for s in it {
                         let rhs = build_seg(self, s);
-                        let res = op_kernel("++");
+                        let res = op_kernel("++").expect("++ is a Sky operator");
                         acc = self.body.expr(Expr::Binop {
                             op: Name::new("++"),
                             res,
@@ -2014,8 +2014,29 @@ impl<'a> Resolver<'a> {
                     Some(e) => self.resolve_expr(&e),
                     None => self.body.expr(Expr::Error),
                 };
-                let op = b.op().map(|t| t.text().to_string()).unwrap_or_default();
-                let res = op_kernel(&op);
+                let op_tok = b.op();
+                let op = op_tok
+                    .as_ref()
+                    .map(|t| t.text().to_string())
+                    .unwrap_or_default();
+                let Some(res) = op_kernel(&op) else {
+                    // An operator Sky does not define (`!=`, `===`, `<>`, `and` …)
+                    // is a NAMING error, reported where it is written. It used to
+                    // resolve to `identity` and lower to an arithmetic `rt.Add`, so
+                    // `s != ""` type-checked, built, and panicked at run time.
+                    if self.quiet == 0 {
+                        let mut diag = Diagnostic::error(
+                            "E1014",
+                            format!("unknown operator `{op}`{}", unknown_op_hint(&op)),
+                        );
+                        if let Some(t) = &op_tok {
+                            diag =
+                                diag.with_label(self.span_of(t.text_range()), "not a Sky operator");
+                        }
+                        self.result.diagnostics.push(diag);
+                    }
+                    return self.body.expr(Expr::Error);
+                };
                 self.body.expr(Expr::Binop {
                     op: Name::new(&op),
                     res,
@@ -3179,8 +3200,9 @@ fn decode_multiline_escapes(s: &str) -> String {
     out
 }
 
-/// The kernel reference an operator desugars to (doc 03 §5.2). Always resolves.
-fn op_kernel(op: &str) -> Res {
+/// The kernel reference an operator desugars to (doc 03 §5.2), or `None` for a
+/// token Sky does not define as an operator (reported as `[E1014]`).
+fn op_kernel(op: &str) -> Option<Res> {
     let func = match op {
         "+" => "add",
         "-" => "sub",
@@ -3203,12 +3225,25 @@ fn op_kernel(op: &str) -> Res {
         "<|" => "apL",
         ">>" => "composeL",
         "<<" => "composeR",
-        _ => "identity",
+        _ => return None,
     };
     let module = if op == "::" { "List" } else { "Basics" };
-    Res::Kernel {
+    Some(Res::Kernel {
         module: Name::new(module),
         func: Name::new(func),
+    })
+}
+
+/// A suggestion for an operator spelled the way another language spells it.
+fn unknown_op_hint(op: &str) -> &'static str {
+    match op {
+        "!=" | "!==" | "<>" => " — Sky writes \"not equal\" as `/=`",
+        "===" => " — Sky writes equality as `==`",
+        "and" | "&" => " — Sky writes \"and\" as `&&`",
+        "or" | "|" => " — Sky writes \"or\" as `||`",
+        "!" => " — Sky writes negation as `not x`",
+        "+=" | "-=" | "*=" => " — Sky has no assignment operators; build a new value (`x + 1`)",
+        _ => " — Sky has no custom operators",
     }
 }
 

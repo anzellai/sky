@@ -99,7 +99,7 @@ viewProductDetail model product =
                               [ text title ]
                         , viewDetailPrice pricing
                         , viewDetailStock model stock
-                        , if summary != "" then
+                        , if summary /= "" then
                               div
                                   [ tw [ mt6 ] ]
                                   [ Html.h3
@@ -291,7 +291,7 @@ viewAddToCart model product stock =
     let
         lang = model.lang
         productId = Db.getField "id" product
-        canAdd = stock != 0
+        canAdd = stock /= 0
     in
         div
             [ tw [ mt8 ] ]
