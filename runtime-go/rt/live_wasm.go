@@ -151,11 +151,21 @@ func spaRun(cfg any) any {
 	// decoder (Spa_withModelDecoder) so the value has the exact Go shape the
 	// reflect-free adapters assert. Absent the marker/blob/decoder (a pure CDN
 	// deploy, or an app with no SSR), keep today's behaviour: run init's cmd0.
+	//
+	// The seed carries every command the server RAN for this page (init's read,
+	// the route's onNavigate load). The page's `data-sky-settled` marker names
+	// the ones it FINISHED (spa_ssr.go spaPlanBoot); only those are skipped
+	// below, so a command the server could not finish still runs once here.
 	seeded := false
 	if ssrModel, ok := spaBootFromSSRModel(doc, spaRoot, Field(cfg, "ModelDecoder")); ok {
 		spaModel = ssrModel
-		cmd0 = nil // server settled the first-paint read; do not re-fire it
 		seeded = true
+	}
+	settled := ""
+	if seeded {
+		if v := spaRoot.Call("getAttribute", spaSettledMarker); v.Type() == js.TypeString {
+			settled = v.String()
+		}
 	}
 
 	// Client scratch-state restore (P2). AFTER the SSR seed decision so the
@@ -175,8 +185,8 @@ func spaRun(cfg any) any {
 	// server's seed markup but never patch its text/attrs/children, so the restored
 	// scratch state (a message list, a cart) would never appear on first paint.
 	seedModel := spaModel
-	// The restore does NOT cancel init's command: an SSR-settled init already
-	// cleared cmd0 above, and any other app's init command still runs — it is
+	// The restore does NOT cancel init's command: an SSR-finished init is skipped
+	// by the boot plan below, and any other app's init command still runs — it is
 	// what re-reads the server data the restored scratch state sits beside.
 	restored := spaRestoreFromStorage(cfg, doc)
 	restoredModel := spaModel
@@ -196,14 +206,19 @@ func spaRun(cfg any) any {
 	// a first client paint WITHOUT the navigation Msg differs from the server
 	// DOM whenever onNavigate changes what the view shows: hydration was
 	// skipped and the page rebuilt from scratch. The Msg's Cmd runs after the
-	// mount, with init's. (A seeded boot and a two-step restore keep firing it
-	// after the mount, as before.)
+	// mount, with init's. A two-step restore, and a seeded boot whose page does
+	// not say the server finished onNavigate, fire it after the mount. A seeded
+	// boot whose page says the server finished it does not fire it again:
+	// Sky.Live runs onNavigate once per navigation (spaPlanBoot).
 	var navCmd any
-	navAtMount := len(spaRoutes) > 0 && spaOnNavigate != nil
 	twoStep := restored && spaFirstPaintNeedsTwoStep(seedModel, restoredModel)
+	plan := spaPlanBoot(seeded, settled, len(spaRoutes) > 0 && spaOnNavigate != nil, twoStep)
+	if !plan.runInitCmd {
+		cmd0 = nil // the server finished init's command into the seed
+	}
+	navAtMount := plan.navAfterMount
 	prePainted := false
-	if navAtMount && !seeded && !twoStep {
-		navAtMount = false
+	if plan.prePaintNav {
 		prePainted = true
 		applyURL()
 		navCmd = spaPrePaintNavigate()

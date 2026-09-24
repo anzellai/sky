@@ -2539,7 +2539,7 @@ fn spa_ssr_settles_per_route_onnavigate_data() {
     for needle in [
         "spaOnNavigate_ preNav_.page",
         "update navMsg_ preNav_",
-        "spaSsrSettle navModel_ navCmd_ update",
+        "spaSsrSettleFull navModel_ navCmd_ update",
     ] {
         assert!(
             backend.contains(needle),
@@ -3058,8 +3058,8 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
         "Server.api \"GET /{$}\" ssrHandler",
         "Server.api \"GET /items\" ssrHandler",
         // data-resolved settle (init IS get-safe)
-        "spaSsrSettle routed cmd0 update",
-        "resolved =\n            spaSsrSettle routed cmd0 update",
+        "spaSsrSettleFull routed cmd0 update",
+        "( initSettled_, initDone_ ) =\n            spaSsrSettleFull routed cmd0 update",
     ] {
         assert!(
             backend.contains(needle),
@@ -3637,7 +3637,7 @@ fn spa_ssr_sibling_db_init_is_stripped_in_the_frontend() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
             .unwrap_or_else(|_| panic!("generated backend Main.sky must exist:\n{log}"));
     assert!(
-        backend_main.contains("spaSsrSettle routed cmd0 update"),
+        backend_main.contains("spaSsrSettleFull routed cmd0 update"),
         "GAP-2: the sibling init must be resolved GET-safe → a data-resolve settle:\n{backend_main}"
     );
 
@@ -4100,7 +4100,7 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
         .unwrap_or_else(|_| panic!("generated backend entry must exist:\n{log}"));
     for needle in [
         "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path",
-        "spaSsrSettle routed cmd0 update",
+        "spaSsrSettleFull routed cmd0 update",
         "Codec.toJson (Codec.auto resolved) resolved",
     ] {
         assert!(
@@ -4788,7 +4788,7 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
         .expect("generated backend Main.sky must exist");
     assert!(
-        backend.contains("spaSsrSettle routed cmd0 update"),
+        backend.contains("spaSsrSettleFull routed cmd0 update"),
         "GAP-B: `init` (in the sibling `Data`) must be resolved GET-safe → a data-resolve settle:\n{backend}"
     );
     assert!(

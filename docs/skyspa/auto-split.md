@@ -924,12 +924,23 @@ A guard that reaches a server effect cannot run in the client; the build warns.
 
 **Persistence.** Every `web:app` build with a derivable `init` model persists
 the client model to `localStorage` and restores it on reload
-(`Spa.withPersistDecoder` + `Spa.withModelEncoder`; an SSR-settled `init` keeps
-`withModelDecoder`). On a reload, a field that ONLY server branches write comes
-from the SSR seed — server truth, rendered from the real request — and every
+(`Spa.withModelDecoder` + `Spa.withModelEncoder`). On a reload, a field that ONLY
+server branches write comes from the SSR seed — server truth, rendered from the real request — and every
 other field from `localStorage` (`Spa.withPersistSeedFields`, the server
 write-sets minus the client write-sets). A restore no longer cancels `init`'s
 own command.
+
+**Seeded boot (SPA-10).** When the page is server-rendered, the client boots
+from the `#sky-model` seed: the model the server rendered, with `init`'s read
+and the route's `onNavigate` load already settled into it. The page carries
+`data-sky-settled` on `#app`, naming what the server FINISHED: `init` (init's
+command ran to the end, or was empty) and `nav` (the route's `onNavigate`
+command ran to the end). "To the end" means every leaf ran, no follow-up was
+left (the SSR settle runs one round) and no write was suppressed (a GET never
+mutates). The client skips exactly the named commands, so a settled deep link
+makes no RPC and `onNavigate` runs once per navigation, as on Sky.Live. A
+command the server did not finish (a chained read, a suppressed write, an
+`init` command that is not GET-safe) still runs once on the client.
 
 **`update` without `case msg of`.** A wholly pure `update` with no `case` runs in
 the client as written. One that reaches a server effect fails with a message

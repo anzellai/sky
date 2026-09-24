@@ -1,0 +1,91 @@
+module Main exposing (main)
+
+-- SPA-10 (register M): a routed `onNavigate` whose command the SSR handler
+-- settles completely (one read, no follow-up). A deep link to /items must show
+-- the items on the first paint and keep them: the client boots from the SSR
+-- seed and must NOT run onNavigate a second time (no /_rpc call at all).
+-- `loads` counts the reads that reached the model; it must stay 1.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { page : String
+    , items : String
+    , loading : Bool
+    , loads : Int
+    }
+
+type Msg
+    = Navigated String
+    | Got (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = "home", items = "", loading = False, loads = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigated p ->
+            if p == "items" then
+                ( { model | page = p, loading = True }
+                , Cmd.perform (File.readFile "data/items.json") Got
+                )
+
+            else
+                ( { model | page = p }, Cmd.none )
+
+        Got (Ok s) ->
+            ( { model | items = String.trim s
+              , loading = False
+              , loads = model.loads + 1
+              }
+            , Cmd.none
+            )
+
+        Got (Err _) ->
+            ( { model | loading = False }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text
+              (if model.loading then
+                  "state=loading"
+
+              else
+                  "state=ready")
+        , Ui.text ("items=" ++ model.items)
+        , Ui.text ("loads=" ++ String.fromInt model.loads)
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" "home", App.route "/items" "items" ]
+        |> App.withNotFound "home"
+        |> App.withOnNavigate Navigated
+
+
+main =
+    App.run app

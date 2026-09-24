@@ -144,15 +144,29 @@ func Spa_ssrSettle(model, cmd, update any) any {
 // server's runPerformBody task→toMsg→update shape (live.go:3806-3811) but
 // synchronous and lock-free — SSR renders on the request goroutine, no session.
 func spaSsrSettleRound(model, cmd, update any) any {
+	m, _ := spaSsrSettleRoundFull(model, cmd, update)
+	return m
+}
+
+// spaSsrSettleRoundFull is spaSsrSettleRound that also reports whether the round
+// FINISHED the command: every leaf was a perform (or none), and every update it
+// folded returned no follow-up. A follow-up is not chased (one round), and a
+// leaf the settle does not run (a publish, an unrecognised value) is left
+// undone, so either makes the result false.
+func spaSsrSettleRoundFull(model, cmd, update any) (any, bool) {
 	c, ok := cmd.(cmdT)
 	if !ok {
-		return model
+		return model, false
 	}
 	m := model
+	full := true
 	switch c.kind {
+	case "none", "":
 	case "batch":
 		for _, sub := range c.batch {
-			m = spaSsrSettleRound(m, sub, update)
+			var subFull bool
+			m, subFull = spaSsrSettleRoundFull(m, sub, update)
+			full = full && subFull
 		}
 	case "perform":
 		// Run the read (task : () -> Result), then map its Result to a Msg and
@@ -167,8 +181,66 @@ func spaSsrSettleRound(model, cmd, update any) any {
 		if next, ok := tupleFirstField(pair); ok {
 			m = next
 		}
+		// The follow-up command is not chased by this one-round settle, so
+		// anything but Cmd.none leaves the command unfinished.
+		follow, ok := tupleSecondField(pair)
+		if !ok || !spaCmdIsNone(follow) {
+			full = false
+		}
+	default:
+		// publish / publishNoEcho / any other leaf: the settle does not run it.
+		full = false
 	}
-	return m
+	return m, full
+}
+
+// spaCmdIsNone reports whether a command has nothing to run: Cmd.none, or a
+// batch whose every member is none.
+func spaCmdIsNone(cmd any) bool {
+	c, ok := cmd.(cmdT)
+	if !ok {
+		return false
+	}
+	switch c.kind {
+	case "none", "":
+		return true
+	case "batch":
+		for _, sub := range c.batch {
+			if !spaCmdIsNone(sub) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// Spa_ssrSettleFull is `Ffi.kernel "Spa_ssrSettleFull"`: the settle
+// Spa_ssrSettle runs, returning `( model, Bool )` as a `T2[any, any]`. The Bool
+// is True only when the settle FINISHED the command (spaSsrSettleRoundFull) and
+// no destructive effect self-suppressed inside it (spa_ssr_safe.go). The SSR
+// handler stamps that verdict on the page (`data-sky-settled`), and the client
+// skips running the same command again only then (register M, SPA-10): a
+// command the server did not finish still runs once on the client.
+func Spa_ssrSettleFull(model, cmd, update any) any {
+	st := enterSsrSettle()
+	defer exitSsrSettle()
+	m, full := spaSsrSettleRoundFull(model, cmd, update)
+	return T2[any, any]{V0: m, V1: full && !st.suppressed}
+}
+
+// Spa_ssrCmdIsNone is `Ffi.kernel "Spa_ssrCmdIsNone"`: True when a command has
+// nothing to run. The SSR handler uses it for an `init` command it does not
+// settle: an empty command is trivially finished; any other is left to the
+// client.
+func Spa_ssrCmdIsNone(cmd any) bool { return spaCmdIsNone(cmd) }
+
+// Spa_ssrPageSettled is `Ffi.kernel "Spa_ssrPageSettled"`: Spa_ssrPage plus the
+// `data-sky-settled` marker naming what the server finished for this page
+// ("init" for init's command, "nav" for the route's onNavigate command).
+func Spa_ssrPageSettled(head, body, wasmName, modelJSON, initDone, navDone any) string {
+	return SpaSSRPageSettled(AsString(head), AsString(body), AsString(wasmName), AsString(modelJSON),
+		spaSettledAttr(AsBool(initDone), AsBool(navDone)))
 }
 
 // tupleFirstField extracts field V0 of any `T2[A, B]` tuple value regardless of

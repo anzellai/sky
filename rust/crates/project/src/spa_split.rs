@@ -4717,7 +4717,6 @@ fn inject_model_decoder_into_main(
     main_text: &str,
     session_fields: &[String],
     seed_fields: &[String],
-    ssr_boot: bool,
 ) -> String {
     if main_text.contains("Spa.withModelDecoder") || main_text.contains("Spa.withPersistDecoder") {
         return main_text.to_string();
@@ -4744,14 +4743,15 @@ fn inject_model_decoder_into_main(
     };
     let fields_lit = lit(session_fields);
     let seed_lit = lit(seed_fields);
-    // An SSR-settled init boots from the seed (`withModelDecoder`); any other
-    // app uses the decoder only to restore localStorage (`withPersistDecoder`)
-    // and keeps running its own init command.
-    let decoder_line = if ssr_boot {
-        "Spa.withModelDecoder spaModelDecoder_"
-    } else {
-        "Spa.withPersistDecoder spaModelDecoder_"
-    };
+    // Every app boots from the SSR seed when the page carries one (SPA-10).
+    // The seed is the model the server RENDERED (init, the request seed, the
+    // route, the settled init read and the settled onNavigate load), so a
+    // client that boots from `init` instead paints a model the page does not
+    // show and builds its first RPC from it. Which commands the client still
+    // runs is the page's `data-sky-settled` marker (spa_ssr.go spaPlanBoot),
+    // not this build-time choice. Without an SSR page (a static deploy) the
+    // decoder only restores localStorage.
+    let decoder_line = "Spa.withModelDecoder spaModelDecoder_";
     let block = format!(
         "            |> {decoder_line}\n\
          \x20           |> Spa.withModelEncoder spaModelEncoder_\n\
@@ -5773,9 +5773,15 @@ fn gen_backend(
              spaSsrRenderBody : any -> String\n\
              spaSsrRenderBody =\n\
              \x20   Ffi.kernel \"Spa_ssrRenderBody\"\n\n\n\
-             spaSsrPage : String -> String -> String -> String -> String\n\
-             spaSsrPage =\n\
-             \x20   Ffi.kernel \"Spa_ssrPage\"\n\n\n\
+             -- The page kernel also stamps `data-sky-settled` on #app: the two\n\
+             -- Bools say whether init's command and the route's onNavigate command\n\
+             -- ran to the end here, so the client skips exactly those (SPA-10).\n\
+             spaSsrPageSettled : String -> String -> String -> String -> Bool -> Bool -> String\n\
+             spaSsrPageSettled =\n\
+             \x20   Ffi.kernel \"Spa_ssrPageSettled\"\n\n\n\
+             spaSsrCmdIsNone : any -> Bool\n\
+             spaSsrCmdIsNone =\n\
+             \x20   Ffi.kernel \"Spa_ssrCmdIsNone\"\n\n\n\
              spaSsrWasmName : String -> String\n\
              spaSsrWasmName =\n\
              \x20   Ffi.kernel \"Spa_ssrWasmName\"\n\n\n\
@@ -5810,7 +5816,7 @@ fn gen_backend(
         let settle_nav = nav_ssr;
         let seed_req = has_synth_on_request;
         let ssr_guard = has_synth_guard && nav_ssr;
-        if settle_init || settle_nav || seed_req {
+        if seed_req {
             handlers.push_str(
                 "-- Data-resolved SSR (design §4.2): settle a GET-safe read to a\n\
                  -- data-bearing model server-side so the first paint carries REAL\n\
@@ -5822,6 +5828,17 @@ fn gen_backend(
                  \x20   Ffi.kernel \"Spa_ssrSettle\"\n\n\n",
             );
         }
+        if settle_init || settle_nav {
+            handlers.push_str(
+                "-- The same settle, which also reports whether it FINISHED the\n\
+                 -- command (every leaf ran, no un-chased follow-up, no suppressed\n\
+                 -- write). The page marks a finished command so the client, booting\n\
+                 -- from the seed, does not run it a second time (SPA-10).\n\
+                 spaSsrSettleFull : model -> any -> any -> ( model, Bool )\n\
+                 spaSsrSettleFull =\n\
+                 \x20   Ffi.kernel \"Spa_ssrSettleFull\"\n\n\n",
+            );
+        }
         // The request param is needed for route resolution (`req.path`), the
         // `withRequest` seed (`req`), AND the STATELESS SIGNED SESSION cookie read.
         let req_param = if has_synth_routes || seed_req || !session_proj.is_empty() {
@@ -5830,14 +5847,17 @@ fn gen_backend(
             "_"
         };
         // Build the let-binding block. Bindings sit at 8 spaces, `in` at 4, body
-        // at 4. The settle chain NESTS `spaSsrSettle` calls (no intermediate
-        // bindings + no `Cmd.batch`), so the no-seed/no-nav common case emits the
-        // exact same `resolved = spaSsrSettle routed cmd0 update` as before.
+        // at 4. init's read settles first (`spaSsrSettleFull`, which also reports
+        // whether it finished the command), then the request-seed's read NESTS
+        // over it (`spaSsrSettle`), then the route's onNavigate settles.
+        //
+        // SPA-10: the page carries `data-sky-settled` naming the commands the
+        // server FINISHED (`initDone_`, `navDone_`). The client boots from the
+        // seed and skips exactly those; an unfinished one (a follow-up the
+        // one-round settle did not chase, a suppressed write, an init command
+        // that is not GET-safe) still runs once on the client.
         let mut lets = String::new();
-        let cmd0_bind = if settle_init { "cmd0" } else { "_" };
-        lets.push_str(&format!(
-            "        ( model0, {cmd0_bind} ) =\n            init ()\n\n"
-        ));
+        lets.push_str("        ( model0, cmd0 ) =\n            init ()\n\n");
         // STATELESS SIGNED SESSION SSR seed: apply the SAME verified-cookie
         // override to the seed model BEFORE route resolution, so the first paint
         // reflects the verified identity (not the empty `init` value). The rest of
@@ -5884,44 +5904,50 @@ fn gen_backend(
             seed_base.to_string()
         };
         // The settle chain over the routed model: settle init's read, then the
-        // request-seed's read, by NESTING (each runs under the SSR-safe guard).
+        // request-seed's read (each runs under the SSR-safe guard). An init
+        // command that is not GET-safe is NOT run here; it counts as finished
+        // only when it is empty.
         let mut chain = route_base.clone();
         if settle_init {
-            chain = format!("spaSsrSettle {chain} cmd0 update");
+            lets.push_str(&format!(
+                "        ( initSettled_, initDone_ ) =\n            spaSsrSettleFull {chain} cmd0 update\n\n"
+            ));
+            chain = "initSettled_".to_string();
+        } else {
+            lets.push_str("        initDone_ =\n            spaSsrCmdIsNone cmd0\n\n");
         }
         if seed_req {
-            chain = if settle_init {
-                format!("spaSsrSettle ({chain}) cmdSeed_ update")
-            } else {
-                format!("spaSsrSettle {chain} cmdSeed_ update")
-            };
+            chain = format!("spaSsrSettle {chain} cmdSeed_ update");
         }
         // onNavigate: fire `onNavigate page` for the resolved route, run it
         // through `update` to a (model, cmd), and settle that command — the
         // per-route data load. When a guard is present it authorises the
         // navigation FIRST: a denied navigation renders the pre-nav model with NO
         // protected data settled (never a server-side data leak) and never runs
-        // the load. The guard is the TRUSTED server-side check (fix 5).
+        // the load. The guard is the TRUSTED server-side check (fix 5). A denied
+        // navigation is not finished: the client fires it (and its guard
+        // rejects it there too).
         if settle_nav {
             lets.push_str(&format!("        preNav_ =\n            {chain}\n\n"));
             lets.push_str(
                 "        navMsg_ =\n            spaOnNavigate_ preNav_.page\n\n\
                  \x20       ( navModel_, navCmd_ ) =\n            update navMsg_ preNav_\n\n",
             );
-            let settle_expr = "spaSsrSettle navModel_ navCmd_ update";
+            let settle_expr = "spaSsrSettleFull navModel_ navCmd_ update";
             if ssr_guard {
                 lets.push_str(&format!(
-                    "        resolved =\n            case spaGuard_ navMsg_ preNav_ of\n\
-                     \x20               Err _ ->\n                    preNav_\n\n\
+                    "        ( resolved, navDone_ ) =\n            case spaGuard_ navMsg_ preNav_ of\n\
+                     \x20               Err _ ->\n                    ( preNav_, False )\n\n\
                      \x20               Ok _ ->\n                    {settle_expr}\n\n"
                 ));
             } else {
                 lets.push_str(&format!(
-                    "        resolved =\n            {settle_expr}\n\n"
+                    "        ( resolved, navDone_ ) =\n            {settle_expr}\n\n"
                 ));
             }
         } else {
             lets.push_str(&format!("        resolved =\n            {chain}\n\n"));
+            lets.push_str("        navDone_ =\n            False\n\n");
         }
         lets.push_str(
             "        modelJson =\n            Codec.toJson (Codec.auto resolved) resolved\n",
@@ -5936,6 +5962,7 @@ fn gen_backend(
              -- instead of re-running the effectful init. `Codec.auto` derives the\n\
              -- model codec from the value — it compiles for ANY model (an\n\
              -- unencodable field degrades the blob at runtime, never breaks the build).\n\
+             -- `data-sky-settled` names the commands finished here (SPA-10).\n\
              ssrHandler : Handler\n\
              ssrHandler {req_param} =\n\
              \x20   let\n\
@@ -5943,11 +5970,13 @@ fn gen_backend(
              \x20   in\n\
              \x20   Task.succeed\n\
              \x20       (Server.html\n\
-             \x20           (spaSsrPage\n\
+             \x20           (spaSsrPageSettled\n\
              \x20               (spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
              \x20               spaWasmName\n\
              \x20               modelJson\n\
+             \x20               initDone_\n\
+             \x20               navDone_\n\
              \x20           )\n\
              \x20       )\n\n\n"
         ));
@@ -6176,10 +6205,10 @@ fn gen_frontend(
     // reaching `db`. The pure model expr comes from init's DECLARING module (entry
     // or sibling), resolved by the caller, so a sibling init gets a decoder too.
     // SPA-8: the model codec is emitted for EVERY app with a derivable pure init
-    // model — persistence is not tied to the SSR-settled init any more. Only an
-    // `init_strip` app boots from the SSR seed (`withModelDecoder`); the others
-    // get the decoder for the localStorage restore alone (`withPersistDecoder`)
-    // and still run their own init command.
+    // model — persistence is not tied to the SSR-settled init any more. SPA-10:
+    // every such app boots from the SSR seed (`withModelDecoder`); the page's
+    // `data-sky-settled` marker decides whether init's command and onNavigate
+    // still run on the client.
     let decoder_blank = init_pure_model.map(|s| s.to_string());
     let follow_here = regen_update
         && follow
@@ -6220,12 +6249,7 @@ fn gen_frontend(
                 // driver can boot from `#sky-model` (design §4.5).
                 let main_text = slice(src, d.syntax());
                 let main_text = if decoder_blank.is_some() {
-                    inject_model_decoder_into_main(
-                        main_text,
-                        session_fields,
-                        seed_fields,
-                        init_strip,
-                    )
+                    inject_model_decoder_into_main(main_text, session_fields, seed_fields)
                 } else {
                     main_text.to_string()
                 };

@@ -146,6 +146,14 @@ func spaResultOk(r any) (any, bool) {
 // and loads the content-hashed `wasmName`. The `data-sky-ssr` marker on #app
 // tells the boot path to hydrate rather than rebuild.
 func SpaSSRPage(headHTML, bodyHTML, wasmName, modelJSON string) string {
+	return SpaSSRPageSettled(headHTML, bodyHTML, wasmName, modelJSON, "")
+}
+
+// SpaSSRPageSettled is SpaSSRPage with the `data-sky-settled` marker on #app:
+// `settled` is the space-separated list of commands the server FINISHED for
+// this page ("init", "nav"; spaSettledAttr). An empty list tells the client
+// that it must still run both.
+func SpaSSRPageSettled(headHTML, bodyHTML, wasmName, modelJSON, settled string) string {
 	var b strings.Builder
 	b.WriteString(`<!doctype html>` + "\n")
 	// `data-sky-hydrating` drives the first-paint loading affordance (progress
@@ -163,7 +171,7 @@ func SpaSSRPage(headHTML, bodyHTML, wasmName, modelJSON string) string {
 	b.WriteString(`</head>` + "\n")
 	b.WriteString(`<body>`)
 	// The server-rendered view + the SSR marker so the client hydrates.
-	b.WriteString(`<div id="app" ` + spaSSRMarker + `="1">`)
+	b.WriteString(`<div id="app" ` + spaSettledMarker + `="` + settled + `" ` + spaSSRMarker + `="1">`)
 	b.WriteString(bodyHTML)
 	b.WriteString(`</div>`)
 	// Embedded initial model (JSON-escaped against a `</script>` break-out).
@@ -209,4 +217,79 @@ func rootAbsoluteAsset(name string) string {
 func jsStringLit(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`)
 	return `"` + r.Replace(s) + `"`
+}
+
+// spaSettledMarker is the attribute the SSR page stamps on #app naming the
+// commands the server FINISHED while it rendered the page (register M,
+// SPA-10). Its value is a space-separated token list:
+//
+//   - "init" — init's command ran to the end on the server (or was empty);
+//   - "nav"  — the route's onNavigate command ran to the end on the server.
+//
+// "Ran to the end" is Spa_ssrSettleFull's verdict: every leaf ran, no
+// follow-up was left un-chased and no destructive effect was suppressed. The
+// client boots from the `#sky-model` seed and skips exactly the commands named
+// here; any other command still runs once on the client.
+const spaSettledMarker = "data-sky-settled"
+
+// spaSettledAttr renders the marker's token list.
+func spaSettledAttr(initDone, navDone bool) string {
+	var toks []string
+	if initDone {
+		toks = append(toks, "init")
+	}
+	if navDone {
+		toks = append(toks, "nav")
+	}
+	return strings.Join(toks, " ")
+}
+
+// spaParseSettled reads the marker's token list.
+func spaParseSettled(attr string) (initDone, navDone bool) {
+	for _, t := range strings.Fields(attr) {
+		switch t {
+		case "init":
+			initDone = true
+		case "nav":
+			navDone = true
+		}
+	}
+	return
+}
+
+// spaBootPlanT is what the client runs at boot besides the first paint.
+type spaBootPlanT struct {
+	// runInitCmd: run init's command after the mount.
+	runInitCmd bool
+	// prePaintNav: run onNavigate through update BEFORE the first paint (SPA-9,
+	// a cold boot from init, so the first client paint matches the server's).
+	prePaintNav bool
+	// navAfterMount: fire onNavigate after the mount.
+	navAfterMount bool
+}
+
+// spaPlanBoot decides the boot sequence (live_wasm.go spaRun). `seeded` is true
+// when the client booted from the SSR `#sky-model` seed; `settled` is the
+// page's data-sky-settled value; `navHook` is true when the app routes and set
+// onNavigate; `twoStep` is true for a localStorage restore painted in two steps.
+//
+// Sky.Live runs onNavigate once per navigation. A seeded boot already holds the
+// result of the server's run, so running it again on the client repeats the
+// load (and, before this rule, the repeated RPC was built from a model that did
+// not match the page). It is skipped only when the server says it finished it.
+func spaPlanBoot(seeded bool, settled string, navHook, twoStep bool) spaBootPlanT {
+	initDone, navDone := spaParseSettled(settled)
+	p := spaBootPlanT{runInitCmd: !(seeded && initDone)}
+	if !navHook {
+		return p
+	}
+	switch {
+	case seeded && navDone:
+		// The seed carries the finished navigation.
+	case !seeded && !twoStep:
+		p.prePaintNav = true
+	default:
+		p.navAfterMount = true
+	}
+	return p
 }

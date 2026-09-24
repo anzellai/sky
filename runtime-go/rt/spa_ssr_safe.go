@@ -31,7 +31,15 @@ package rt
 
 import "sync"
 
-var ssrSettleGoroutines sync.Map // map[int64]bool
+var ssrSettleGoroutines sync.Map // map[int64]*ssrSettleState
+
+// ssrSettleState records what happened inside ONE settle on one goroutine.
+// suppressed is set when a destructive kernel self-suppressed: that effect did
+// not run, so the settle is not complete and the page must not tell the client
+// that the command already ran (spa_ssr_notjs.go Spa_ssrSettleFull).
+type ssrSettleState struct {
+	suppressed bool
+}
 
 // InSsrSettle reports whether the calling goroutine is inside an SSR settle.
 // Destructive write kernels consult it to self-suppress (a GET must not mutate).
@@ -41,9 +49,13 @@ func InSsrSettle() bool {
 	return ok
 }
 
-// enterSsrSettle marks the calling goroutine as inside an SSR settle. Pairs with
-// `defer exitSsrSettle()`. Idempotent — nested settle rounds re-mark harmlessly.
-func enterSsrSettle() { ssrSettleGoroutines.Store(currentGoroutineID(), true) }
+// enterSsrSettle marks the calling goroutine as inside an SSR settle and returns
+// the settle's fresh state record. Pairs with `defer exitSsrSettle()`.
+func enterSsrSettle() *ssrSettleState {
+	st := &ssrSettleState{}
+	ssrSettleGoroutines.Store(currentGoroutineID(), st)
+	return st
+}
 
 // exitSsrSettle clears the mark for the calling goroutine.
 func exitSsrSettle() { ssrSettleGoroutines.Delete(currentGoroutineID()) }
@@ -58,8 +70,12 @@ func exitSsrSettle() { ssrSettleGoroutines.Delete(currentGoroutineID()) }
 //	    ... perform the effect ...
 //	}
 func ssrSuppressedWrite(op string) any {
-	if !InSsrSettle() {
+	v, ok := ssrSettleGoroutines.Load(currentGoroutineID())
+	if !ok {
 		return nil
+	}
+	if st, ok := v.(*ssrSettleState); ok {
+		st.suppressed = true
 	}
 	return Err[any, any](ErrIo(
 		"effect suppressed during server-side render (a GET must not mutate): " + op))

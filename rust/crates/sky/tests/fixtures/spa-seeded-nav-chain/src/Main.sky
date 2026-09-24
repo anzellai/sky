@@ -1,0 +1,103 @@
+module Main exposing (main)
+
+-- SPA-10 (register M), the unfinished shape: `onNavigate` reads an index and
+-- its result CHAINS to a second read. The SSR settle runs one round, so the
+-- page must NOT be marked settled, and the client must run onNavigate itself —
+-- exactly once — so the items still load (the server chain settles the whole
+-- chain in that one RPC). `loads` must end at 1.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { page : String
+    , index : String
+    , items : String
+    , loading : Bool
+    , loads : Int
+    }
+
+type Msg
+    = Navigated String
+    | GotIndex (Result Error String)
+    | GotItems (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = "home", index = "", items = "", loading = False, loads = 0 }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigated p ->
+            if p == "items" then
+                ( { model | page = p, loading = True }
+                , Cmd.perform (File.readFile "data/index.txt") GotIndex
+                )
+
+            else
+                ( { model | page = p }, Cmd.none )
+
+        GotIndex (Ok name) ->
+            ( { model | index = String.trim name }
+            , Cmd.perform (File.readFile ("data/" ++ String.trim name)) GotItems
+            )
+
+        GotIndex (Err _) ->
+            ( { model | loading = False }, Cmd.none )
+
+        GotItems (Ok s) ->
+            ( { model | items = String.trim s
+              , loading = False
+              , loads = model.loads + 1
+              }
+            , Cmd.none
+            )
+
+        GotItems (Err _) ->
+            ( { model | loading = False }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text
+              (if model.loading then
+                  "state=loading"
+
+              else
+                  "state=ready")
+        , Ui.text ("items=" ++ model.items)
+        , Ui.text ("loads=" ++ String.fromInt model.loads)
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" "home", App.route "/items" "items" ]
+        |> App.withNotFound "home"
+        |> App.withOnNavigate Navigated
+
+
+main =
+    App.run app

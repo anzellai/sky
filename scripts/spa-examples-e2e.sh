@@ -47,6 +47,24 @@ build_example() { # build_example <example-dir-name>
 build_example 62-app-notes
 build_example 63-app-chat
 
+# SPA-10 (register M): a deep link whose onNavigate the SSR handler settles into
+# the seed. Fixtures, not examples: one settled shape, one whose onNavigate
+# chains past the one-round SSR settle. Their data/ is staged next to the
+# backend binary, where the reads resolve.
+build_fixture() { # build_fixture <fixture-dir-name>
+  local name="$1"
+  mkdir -p "$TMP/$name"
+  cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/$name/." "$TMP/$name/"
+  echo "==> building fixture $name (--target web:app)"
+  ( cd "$TMP/$name" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky )
+  local be="$TMP/$name/.skyapp/web-app/.split/backend"
+  [ -x "$be/sky-out/app" ] || { echo "spa-examples-e2e: backend not built at $be/sky-out/app" >&2; exit 1; }
+  mkdir -p "$be/data"
+  cp -Rf "$TMP/$name/data/." "$be/data/"
+}
+build_fixture spa-seeded-nav
+build_fixture spa-seeded-nav-chain
+
 echo "==> driving examples/62-app-notes"
 with_timeout 300 node "$ROOT/scripts/spa-examples-e2e-verify.mjs" notes \
   "$TMP/62-app-notes/.skyapp/web-app/.split/backend/sky-out/app" --port "${NOTES_PORT:-9341}"
@@ -54,5 +72,12 @@ echo "==> driving examples/63-app-chat"
 with_timeout 300 node "$ROOT/scripts/spa-examples-e2e-verify.mjs" chat \
   "$TMP/63-app-chat/.skyapp/web-app/.split/backend/sky-out/app" --port "${CHAT_PORT:-9342}"
 
-echo "spa-examples-e2e: PASS — notes persist each Save; chat history loads with author + text; the dev badge clears Send."
+echo "==> driving fixture spa-seeded-nav (onNavigate settled by the server)"
+with_timeout 300 node "$ROOT/scripts/spa-seeded-nav-verify.mjs" settled \
+  "$TMP/spa-seeded-nav/.skyapp/web-app/.split/backend/sky-out/app" --port "${SEEDNAV_PORT:-9343}"
+echo "==> driving fixture spa-seeded-nav-chain (onNavigate chains past the settle)"
+with_timeout 300 node "$ROOT/scripts/spa-seeded-nav-verify.mjs" chain \
+  "$TMP/spa-seeded-nav-chain/.skyapp/web-app/.split/backend/sky-out/app" --port "${SEEDNAV_CHAIN_PORT:-9344}"
+
+echo "spa-examples-e2e: PASS — notes persist each Save; chat history loads with author + text; the dev badge clears Send; a settled seeded deep link keeps its data with no second onNavigate."
 rm -rf "$TMP"

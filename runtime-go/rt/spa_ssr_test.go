@@ -296,3 +296,35 @@ func TestSpaSSRPage_referencesRootAbsoluteAssets(t0 *testing.T) {
 		t0.Fatalf("SSR page must NOT fetch a bare relative wasm name:\n%s", page)
 	}
 }
+
+// Seeded-boot navigation (register M, SPA-10): which of init's command, the
+// pre-paint onNavigate and the post-mount onNavigate the client runs, from the
+// seed decision and the page's `data-sky-settled` marker.
+func TestSpaPlanBoot_SeededAndSettledSkipsTheSecondNavigation(t *testing.T) {
+	cases := []struct {
+		name                     string
+		seeded                   bool
+		settled                  string
+		nav, twoStep             bool
+		runInit, pre, afterMount bool
+	}{
+		// The reported defect: the server settled onNavigate into the seed.
+		{"seeded, both settled", true, "init nav", true, false, false, false, false},
+		{"seeded, nav settled only", true, "nav", true, false, true, false, false},
+		// Anything the server did not finish still runs once on the client.
+		{"seeded, nothing settled", true, "", true, false, true, false, true},
+		{"seeded, init settled, nav not", true, "init", true, false, false, false, true},
+		{"seeded, restored two-step, nav settled", true, "init nav", true, true, false, false, false},
+		// Not seeded (no SSR, or the decode failed): today's behaviour.
+		{"cold, no seed", false, "init nav", true, false, true, true, false},
+		{"cold, two-step restore", false, "", true, true, true, false, true},
+		{"no onNavigate hook", true, "init nav", false, false, false, false, false},
+	}
+	for _, c := range cases {
+		p := spaPlanBoot(c.seeded, c.settled, c.nav, c.twoStep)
+		if p.runInitCmd != c.runInit || p.prePaintNav != c.pre || p.navAfterMount != c.afterMount {
+			t.Errorf("%s: got runInit=%v pre=%v afterMount=%v, want %v %v %v",
+				c.name, p.runInitCmd, p.prePaintNav, p.navAfterMount, c.runInit, c.pre, c.afterMount)
+		}
+	}
+}
