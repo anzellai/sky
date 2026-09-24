@@ -203,6 +203,7 @@ jobs:
           scripts/spa-restore-e2e.sh
           scripts/spa-stale-handler-e2e.sh
           scripts/spa-rpc-consistency-e2e.sh
+          scripts/spa-examples-e2e.sh
       # The terminal TEA loops driven in a real pty (pyte reads the screen):
       # key decoding across split reads, focus/queued keys, timers, pub/sub,
       # guard, durability and the exit rules of terminal:tui and terminal:cli.
