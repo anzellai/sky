@@ -84,6 +84,12 @@ products crashed.
   the page and its script, so a `sky-nav` pasted the whole document into the
   page (a second badge, and "script revival rejected" warnings). It is now a
   small tab on the right edge, clear of app controls.
+- Text typed right after an update cleared the field (Enter to send, then keep
+  typing) is kept under the cleared value, not lost or run together. A retried
+  event keeps its original order. A burst of clicks queued on one render (30
+  taps) resolves against that render, where the late ones used to be refused.
+- With `withDurable` and `withRequest`, a restore no longer replaces the
+  fields `withRequest` derives from the current request.
 
 ### Sky.Spa (`--target web:app`) and the auto-split
 
@@ -106,6 +112,11 @@ products crashed.
   target a bare `sky build` builds.
 - Hydration verifies text as well as structure. Route parameters decode the same
   way on the server, on the client and in Sky.Live.
+- A page the server rendered from its data is no longer repainted empty and
+  loaded again: the client boots from the server's model, and it does not run
+  `init` or `onNavigate` again when the server finished them (the page says
+  which). An app whose `onNavigate` changes the view now hydrates instead of
+  rebuilding.
 - A record alias whose field names an imported record type (`{ messages : List
   Message }` with `Message` from another module) could resolve that field to a
   stdlib type of the same name. The generated server response then carried
@@ -147,6 +158,9 @@ products crashed.
   keeps running across updates. `Cmd.publish` / `Sub.subscribeTopic` work in
   the terminal loops. The CLI waits for running commands at end of input.
   `App.withInput` works on the TUI.
+- A desktop window whose server fails to start exits at once and names the
+  cause, instead of waiting about 50 seconds. A `Ui.html` node shows its text
+  in the TUI, not `[raw]`.
 
 ### Gates
 
