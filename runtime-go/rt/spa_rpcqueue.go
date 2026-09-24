@@ -87,6 +87,12 @@ func (q *spaRpcQueue) enqueue(mk, residual, toMsg any) *spaRpcJob {
 	return j
 }
 
+// pending reports whether any server-branch RPC is queued or in flight — i.e.
+// whether the model still lacks a write the server has not answered yet.
+func (q *spaRpcQueue) pending() bool {
+	return len(q.jobs) > 0
+}
+
 // inFlight returns the job currently on the network, or nil.
 func (q *spaRpcQueue) inFlight() *spaRpcJob {
 	if len(q.jobs) > 0 && q.jobs[0].sent {

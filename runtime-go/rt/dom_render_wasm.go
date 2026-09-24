@@ -512,9 +512,30 @@ func spaNoteEventTarget(this js.Value) {
 //     `data-sky-checked` (Std.Ui's checkbox and radio, and
 //     Html.Attributes.checked); .checked follows the model value.
 //   - a file input is never touched.
+//
+// While a server-branch RPC is queued or in flight the model is NOT yet
+// authoritative for the control (the branch's write lands with the response),
+// so writing the model back would erase what the user just typed ("a" then "b"
+// became "b"). The target is kept and reconciled on the first render after the
+// queue drains, when the model holds every dispatched edit, replayed in order
+// (spaRpcQueue.complete) — which still puts a value the server rejected or
+// normalised back into the control. Sky.Live's rule is the same: an unacked
+// edit is never overwritten (docs/skylive/input-authority-protocol.md).
+var spaReconcileDeferred js.Value
+
 func spaReconcileControlled(root *VNode) {
 	el := spaEventTarget
 	spaEventTarget = js.Value{}
+	if el.Type() != js.TypeObject {
+		el = spaReconcileDeferred
+	}
+	if spaRpcQ != nil && spaRpcQ.pending() {
+		if el.Type() == js.TypeObject {
+			spaReconcileDeferred = el
+		}
+		return
+	}
+	spaReconcileDeferred = js.Value{}
 	if el.Type() != js.TypeObject || !el.Get("isConnected").Truthy() {
 		return
 	}

@@ -492,6 +492,7 @@ func step(msg any) {
 			spaSyncURLFromDOM(true)
 			spaScrollOnNavigate()
 			interpretCmd(asCmdT(cmd), spaDispatch)
+			spaFlushReconcile()
 			reconcileSubs()
 		},
 		spaReportPanic,
@@ -623,8 +624,20 @@ func spaRpcComplete(resMsg any) {
 	spaSyncURLFromDOM(true)
 	spaScrollOnNavigate()
 	interpretCmd(asCmdT(cmd), spaDispatch)
+	spaFlushReconcile()
 	reconcileSubs()
 	spaPersistAfterStep(prevModel, spaModel)
+}
+
+// spaFlushReconcile applies the UF-5 user-event reconcile to the tree just
+// painted. It runs AFTER the step's command is interpreted, not inside
+// renderCurrent: a server-branch update queues its RPC in interpretCmd, and the
+// reconcile must see that RPC as pending, or it writes the not-yet-answered
+// model back over the text the user just typed.
+func spaFlushReconcile() {
+	if spaPrev != nil {
+		spaReconcileControlled(spaPrev)
+	}
 }
 
 // spaDispatchUnrecorded runs a Msg through the normal step path without
@@ -721,10 +734,6 @@ func renderCurrent() {
 		// what keeps the typing case a MINIMAL patch set.
 		patches := diffTrees(spaPrev, &vn, snapshotFocusedInput())
 		spaApplyPatches(patches, spaPrev, &vn)
-		// UF-5: the control the user just used shows the MODEL, even when the
-		// model did not move (update rejected or normalised the input), which
-		// the tree-to-tree diff cannot see.
-		spaReconcileControlled(&vn)
 		// The diff compares handlers by constructor name, so a payload-only
 		// change emits no patch and no rebind. Refresh every element's handler
 		// slot from the new tree so its listener dispatches the CURRENT payload.
