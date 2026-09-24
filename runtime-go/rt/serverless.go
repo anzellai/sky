@@ -20,7 +20,6 @@ package rt
 
 import (
 	"os"
-	"sync"
 	"sync/atomic"
 )
 
@@ -56,15 +55,29 @@ func IsServerless() bool {
 }
 
 var (
-	serverlessOnce  sync.Once
-	serverlessCache atomic.Bool
+	// serverlessState memoises the detection: 0 unknown, 1 not serverless, 2
+	// serverless. One atomic word, so ResetServerlessCache is a single store
+	// that cannot race a concurrent IsServerless (replacing a sync.Once while
+	// another goroutine was inside Do was a data race under -race).
+	serverlessState atomic.Int32
 )
 
 func serverlessDetect() bool {
-	serverlessOnce.Do(func() {
-		serverlessCache.Store(detectServerlessFromEnv())
-	})
-	return serverlessCache.Load()
+	switch serverlessState.Load() {
+	case 1:
+		return false
+	case 2:
+		return true
+	}
+	// Detection is pure over the environment, so two goroutines that both see
+	// "unknown" compute the same answer; the last store wins harmlessly.
+	v := detectServerlessFromEnv()
+	if v {
+		serverlessState.Store(2)
+	} else {
+		serverlessState.Store(1)
+	}
+	return v
 }
 
 func detectServerlessFromEnv() bool {
@@ -104,8 +117,7 @@ var serverlessEnvFingerprints = []string{
 // call. TEST-ONLY — production code should never call this (the
 // env vars don't change at runtime).
 func ResetServerlessCache() {
-	serverlessOnce = sync.Once{}
-	serverlessCache.Store(false)
+	serverlessState.Store(0)
 }
 
 // ServerlessShutdownGrace returns the SIGTERM drain budget appropriate
