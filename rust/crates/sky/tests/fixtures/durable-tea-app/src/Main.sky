@@ -12,7 +12,6 @@ import Std.Db as Db exposing (Db)
 import Std.Codec as Codec exposing (Codec)
 import Std.Durable as Durable
 
-
 type alias Model =
     { count : Int }
 
@@ -20,7 +19,6 @@ type alias Model =
 modelCodec : Codec Model
 modelCodec =
     Codec.auto { count = 0 }
-
 
 type Msg
     = Increment
@@ -34,20 +32,18 @@ runId =
 
 init : Db -> () -> ( Model, Cmd Msg )
 init db _ =
-    ( { count = 0 }
-    , Durable.restoreCmd db runId modelCodec Durable
-    )
+    ( { count = 0 }, Durable.restoreCmd db runId modelCodec Durable )
 
 
 update : Db -> Msg -> Model -> ( Model, Cmd Msg )
 update db msg model =
     case msg of
+
         Increment ->
             let
-                m2 =
-                    { model | count = model.count + 1 }
+                m2 = { model | count = model.count + 1 }
             in
-            ( m2, Durable.snapshotCmd db runId modelCodec Durable m2 )
+                ( m2, Durable.snapshotCmd db runId modelCodec Durable m2 )
 
         Durable ev ->
             ( Durable.applyRestore ev model, Cmd.none )
@@ -59,6 +55,7 @@ update db msg model =
 eventLabel : Durable.SnapshotEvent Model -> String
 eventLabel ev =
     case ev of
+
         Durable.Restored (Just _) ->
             "restored"
 
@@ -77,8 +74,7 @@ eventLabel ev =
 
 view : Model -> Element Msg
 view model =
-    Ui.column []
-        [ Ui.text ("count: " ++ String.fromInt model.count) ]
+    Ui.column [] [ Ui.text ("count: " ++ String.fromInt model.count) ]
 
 
 subscriptions : Model -> Sub Msg
@@ -87,11 +83,18 @@ subscriptions _ =
 
 
 mkApp db =
-    App.app { init = init db, update = update db, view = view, subscriptions = subscriptions }
+    App.app
+        { init = init db
+        , update = update db
+        , view = view
+        , subscriptions = subscriptions
+        }
         |> App.withNotFound (view { count = 0 })
 
 
 main : Task Error ()
 main =
     Db.connect ()
-        |> Task.andThen (\db -> Durable.setup db |> Task.andThen (\_ -> App.run (mkApp db)))
+        |> Task.andThen
+               (\db ->
+                   Durable.setup db |> Task.andThen (\_ -> App.run (mkApp db)))

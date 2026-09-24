@@ -357,9 +357,7 @@ radio attrs cfg =
         renderedOptions =
             List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
         columnBaseAttrs =
-            Ui.spacing 6
-                :: radioGroupMarker
-                :: controlAttrs
+            Ui.spacing 6 :: radioGroupMarker :: controlAttrs
                 ++ implicitFillIfHoisted layoutAttrs
     in
         wrapWithLabel
@@ -383,9 +381,7 @@ radioRow attrs cfg =
         renderedOptions =
             List.map (renderRadioOption cfg.onChange cfg.selected) cfg.options
         rowBaseAttrs =
-            Ui.spacing 12
-                :: radioGroupMarker
-                :: controlAttrs
+            Ui.spacing 12 :: radioGroupMarker :: controlAttrs
                 ++ implicitFillIfHoisted layoutAttrs
     in
         wrapWithLabel
