@@ -1,0 +1,29 @@
+module Domain exposing (Message, messageCodec, messageListCodec)
+
+-- A project `Message` record declared in a module OTHER than the one that uses
+-- it in a record-alias field. Its name shares its tail with the stdlib
+-- `Std.Ai.Provider.Message` (`{ role, content }`), which is in the compile set.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+
+type alias Message =
+    { id : Int
+    , author : String
+    , body : String
+    , ts : Int
+    }
+
+
+messageCodec : Codec Message
+messageCodec =
+    Codec.object Message |> Codec.field "id" .id Codec.int
+        |> Codec.field "author" .author Codec.string
+        |> Codec.field "body" .body Codec.string
+        |> Codec.field "ts" .ts Codec.int
+        |> Codec.buildObject
+
+
+messageListCodec : Codec (List Message)
+messageListCodec =
+    Codec.list messageCodec

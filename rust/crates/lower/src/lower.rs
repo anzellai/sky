@@ -1584,7 +1584,19 @@ fn collect_types(
                         // (e.g. `Std.Ai.Provider.Message` when Std.Ai is in the
                         // compile set) — the silent `{author,body}` → `{role,content}`
                         // substitution that mislabels the emitted Go struct field.
-                        let fields: Vec<(String, Ty)> = ty::record_alias_fields(a.syntax())
+                        //
+                        // The field types are first resolved through HIR in this
+                        // module's scope, so an `exposing`-imported project type
+                        // (`import Domain exposing (..)` → `Message`) arrives as
+                        // its module-qualified key (`Domain.Message`). The own-
+                        // module lookup alone covered only a type declared HERE;
+                        // an imported one still fell to the bare table and took
+                        // the stdlib record, and the alias's constructor then
+                        // converted every value to it, zeroing each field (a
+                        // Sky.Spa `LoadResp { messages : List Message }` history
+                        // decoded to rows with no author and no text).
+                        let fields: Vec<(String, Ty)> = world
+                            .record_alias_fields_resolved(db.as_sky_db(), m, a.syntax())
                             .into_iter()
                             .map(|(n, t)| (n, world.expand_ty_in_module(&t, &mname)))
                             .collect();

@@ -164,6 +164,41 @@ pub struct World {
 }
 
 impl World {
+    /// The (field-name, field-type) pairs of a record alias in DECLARATION order,
+    /// with every field-type reference resolved through HIR in the DECLARING
+    /// module's scope (`m`). A reference to a declared alias or union becomes its
+    /// module-qualified key (`Domain.Message`), so an `exposing`-imported project
+    /// type can never be confused with a same-tailed type of another module (the
+    /// stdlib `Std.Ai.Provider.Message`). The syntactic [`record_alias_fields`]
+    /// yields BARE names, which the lowering could only resolve through a bare
+    /// table. Used by the Go-emission type collection (`lower::collect_types`).
+    pub fn record_alias_fields_resolved(
+        &self,
+        db: &dyn SkyDb,
+        m: ModuleId,
+        alias_syntax: &SyntaxNode,
+    ) -> Vec<(String, Ty)> {
+        let record = alias_syntax.descendants().find(|n| {
+            n.children()
+                .any(|c| c.kind() == SyntaxKind::TypeRecordField)
+        });
+        let mut out = Vec::new();
+        if let Some(record) = record {
+            for node in record
+                .children()
+                .filter(|c| c.kind() == SyntaxKind::TypeRecordField)
+            {
+                let fname = first_lower(&node).unwrap_or_default();
+                let fty = child_types(&node)
+                    .first()
+                    .map(|t| resolve_type_names(db, m, t, self.type_keys()))
+                    .unwrap_or(Ty::Error);
+                out.push((fname, fty));
+            }
+        }
+        out
+    }
+
     /// The two module-qualified key sets, bundled for reference resolution.
     fn type_keys(&self) -> TypeKeys<'_> {
         TypeKeys {
