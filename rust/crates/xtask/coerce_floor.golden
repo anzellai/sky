@@ -120,6 +120,14 @@
 # 4. -1 63-app-chat: the record-alias field fix (`LoadResp.messages` is
 #    `[]Domain_Message_R`, no longer converted through the stdlib
 #    `Std_Ai_Provider_Message_R`) removes one narrowing. Floor tightened.
+#
+# ── Recorded transition, 2026-09-24 (later) — ratchet DOWN after the sweep ──
+#     narrow  13-skyshop 1485 -> 1468 (-17): its sixteen `!=` were an unknown
+#             operator the resolver lowered to `rt.Add` (each an `rt.AsBool`
+#             narrowing); they are `/=` now and `!=` is `[E1014]`.
+#             38-composite-ui-multibackend 326 -> 325 (-1): its checkbox icon
+#             is a check mark beside the native box instead of a drawn box.
+#     No row rose. Blessed so the lower floor is locked.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -132,7 +140,7 @@
 09-live-counter	adapter=0	dispatch=0	narrow=137
 10-live-component	adapter=0	dispatch=0	narrow=140
 12-skyvote	adapter=0	dispatch=0	narrow=506
-13-skyshop	adapter=0	dispatch=0	narrow=1485
+13-skyshop	adapter=0	dispatch=0	narrow=1468
 14-task-demo	adapter=0	dispatch=0	narrow=10
 15-http-server	adapter=0	dispatch=0	narrow=19
 16-skychess	adapter=0	dispatch=0	narrow=614
@@ -157,7 +165,7 @@
 35-composite-generics	adapter=0	dispatch=0	narrow=162
 36-composite-server	adapter=0	dispatch=0	narrow=320
 37-composite-live-shop	adapter=0	dispatch=0	narrow=421
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=326
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=325
 40-generic-adt-field	adapter=0	dispatch=0	narrow=5
 41-nested-curry	adapter=0	dispatch=0	narrow=7
 42-poly-record	adapter=0	dispatch=0	narrow=3

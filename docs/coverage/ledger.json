@@ -473,7 +473,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 141,
+      "expected_assertions": 142,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -484,7 +484,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 400,
+      "expected_assertions": 399,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -15362,8 +15362,8 @@
       "id": "examples/38-composite-ui-multibackend",
       "modules_imported": 20,
       "path": "examples/38-composite-ui-multibackend",
-      "refs_generous": 89,
-      "refs_qualified": 85,
+      "refs_generous": 88,
+      "refs_qualified": 84,
       "role": "Example",
       "sky_files": 6,
       "sky_toml_sections": [

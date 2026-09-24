@@ -100,6 +100,9 @@ appDef =
     App.app
         { init = init, update = update, view = view, subscriptions = subscriptions }
         |> App.withOnKey onKey
+        -- The same App.app also builds for `--target web`, which needs a
+        -- not-found page (a bare `sky check` / `sky build` checks that target).
+        |> App.withNotFound ()
 
 
 main =

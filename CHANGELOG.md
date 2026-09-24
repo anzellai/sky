@@ -38,6 +38,12 @@ compile errors:
   crashed the first time it ran. Fix: write `/=` (the error names the
   operator and gives the Sky spelling).
 
+`sky check` now checks the same target a bare `sky build` builds (`--target`,
+else `[app] target` in `sky.toml`, else `web`). A terminal-only `App.app` that
+sets neither and has no `App.withNotFound` used to pass a bare `sky check` and
+then fail `sky build`; now both report the missing not-found page. Fix: add
+`[app] target = "terminal:tui"` to `sky.toml`, or `|> App.withNotFound ()`.
+
 One public type gained constructors, which breaks an exhaustive `case` over it:
 
 - **`Std.Durable.SnapshotEvent`** now has `RestoreFailed Error` and
