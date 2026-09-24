@@ -6,13 +6,10 @@ package rt
 //
 // Two pieces live here:
 //
-//   - spaHydratableVNode — the POSITIVE structural parity check
-//     that decides whether a server-rendered DOM can be hydrated in place, or
-//     whether the client must fall back to a full spaMount rebuild. This is the
-//     P1 exit-criterion mechanism (§4.4 / §8 risk 1): the `sky-id`-presence
-//     check alone is NOT fail-safe because three server/client divergences line
-//     up by sky-id yet corrupt on the first structural diff. Consulting this
-//     check turns a silent corruption into a caught, correct rebuild.
+//   - the SSR model seed decode (spaDecodeModelBlob) and the boot plan
+//     (spaPlanBoot). The hydrate-or-rebuild decision itself, and the text-run
+//     split that makes the server DOM match the client tree, are in
+//     spa_hydrate.go.
 //
 //   - SpaSSRPage — assembles the full first-paint HTML document (per-route
 //     <head>, server-rendered body inside #app, base CSS, embedded initial
@@ -29,66 +26,6 @@ import (
 // (rather than today's wipe-and-rebuild spaMount). Its presence ALSO means an
 // embedded model blob (#sky-model) is available to prime spaModel.
 const spaSSRMarker = "data-sky-ssr"
-
-// spaHydratableVNode is the recursive structural parity check. It returns false
-// (with a reason) when the tree contains one of the known server/client DOM
-// divergences that a `sky-id`-presence check cannot see:
-//
-//   - adjacent text/raw children: the server concatenates escaped text into one
-//     run (live_core.go:440), which the browser parses to a SINGLE text node,
-//     while the client keeps them as N separate VNode children. A raw run
-//     adjacent to text coalesces the same way.
-//   - a <textarea> carrying a value: the server splices the value as child text
-//     (live_core.go textarea block) while the client models it as the DOM
-//     `.value` property, so the child structure differs.
-//
-// A lone "raw" node is NO LONGER a divergence: the client now renders raw HTML
-// inline into its parent (dom_render_wasm.go spaSetChildren → renderChildrenHTML),
-// byte-identical to the SSR serialisation (live_core.go:444). Hydration binds
-// elements by sky-id and never descends into raw content, so the SSR-rendered
-// raw (e.g. a <style>'s CSS) is adopted verbatim rather than wiped by a full
-// rebuild. The adjacency guard below still rejects a raw node next to a textual
-// sibling.
-//
-// Anything else — element trees with at most one textual (text/raw) child per
-// parent and no valued-textarea — is byte-structurally identical on both sides
-// and safe to hydrate.
-func spaHydratableVNode(n VNode) (bool, string) {
-	switch n.Kind {
-	case "raw":
-		return true, ""
-	case "text":
-		return true, ""
-	}
-
-	// A <textarea> whose value is present splices as child text server-side but
-	// is a property client-side.
-	if n.Tag == "textarea" {
-		if v, ok := n.Attrs["value"]; ok && v != "" {
-			return false, "textarea value: server splices child text, client sets the .value property"
-		}
-		// A textarea can also carry its value as spliced child text directly.
-		for _, c := range n.Children {
-			if c.Kind == "text" && c.Text != "" {
-				return false, "textarea value: server splices child text, client sets the .value property"
-			}
-		}
-	}
-
-	// Adjacent text/raw children coalesce differently across the boundary.
-	prevWasTextual := false
-	for _, c := range n.Children {
-		textual := c.Kind == "text" || c.Kind == "raw"
-		if textual && prevWasTextual {
-			return false, "adjacent text: server concatenates into one browser text node, client keeps separate children"
-		}
-		prevWasTextual = textual
-		if ok, reason := spaHydratableVNode(c); !ok {
-			return false, reason
-		}
-	}
-	return true, ""
-}
 
 // spaDecodeModelBlob turns the SSR-embedded `#sky-model` JSON blob back into the
 // TYPED initial model by applying the app's model DECODER (design §4.5). The

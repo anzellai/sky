@@ -25,8 +25,11 @@ module Main exposing (main)
 --   ime       UF-11 IME pre-edit is not dispatched; the committed text is, once
 --   hov       F6   the injected hover <style> follows the model
 --   /u/:name  SPA-5 a route param decodes the same on the server and the client
---   /plain    F5   a page the client cannot hydrate (a valued textarea) is
---                  built from scratch; its select must still show "c"
+--   /plain    hydration: adjacent text runs (a Html.p of several texts, a
+--                  Ui.paragraph with a link), a text input and a valued
+--                  textarea (Input.multiline) all hydrate in place, with no
+--                  "hydrate skipped"; the server nodes survive and the
+--                  select still shows "c" (F5)
 --   navs      Back / Forward (popstate) runs onNavigate once per step, on
 --                  Sky.Spa and on Sky.Live alike
 --
@@ -393,7 +396,37 @@ view model =
         Plain ->
             Ui.column
                 []
-                [ Input.multiline
+                [ Ui.html
+                      (Html.p
+                          [ HA.id "hy-p" ]
+                          [ Html.text "Hello, "
+                          , Html.text model.colour
+                          , Html.text "! dark="
+                          , Html.text
+                                (if model.dark then
+                                    "yes"
+
+                                else
+                                    "no")
+                          ])
+                , Ui.paragraph
+                      [ Ui.htmlAttribute "id" "hy-para" ]
+                      [ Ui.text "Read "
+                      , Ui.link
+                            []
+                            { url = "/u/docs", label = Ui.text "the docs" }
+                      , Ui.text " or "
+                      , Ui.text "ask."
+                      ]
+                , Input.text
+                      [ Ui.htmlAttribute "id" "hy-in" ]
+                      { onChange = Vv
+                      , text = model.vv
+                      , placeholder = Nothing
+                      , label = Input.labelAbove [] (Ui.text "Name")
+                      }
+                , btn "toggle" Toggle
+                , Input.multiline
                       [ Ui.htmlAttribute "id" "notes" ]
                       { onChange = Vv
                       , text = "notes"

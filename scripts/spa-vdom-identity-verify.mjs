@@ -256,11 +256,46 @@ try {
     await page.close();
   }
 
-  // ── F5: a page the client builds from scratch (not hydratable) ───────
+  // ── Hydration of a typical Std.Ui page (register M) ───────────────────
+  // /plain holds adjacent text runs (the server writes them back to back, so
+  // the browser parses ONE text node where the client tree holds several), a
+  // Ui.paragraph with a link, a text input and a valued textarea. Each of
+  // these used to make the client refuse the SSR DOM ("hydrate skipped, full
+  // rebuild: adjacent text" / "textarea value") and rebuild the page. A marker
+  // set on the server nodes BEFORE the wasm boots must survive the boot.
   if (!LIVE) {
     const page = await browser.newPage();
+    const warn = [];
+    watch(page, warn);
+    await page.route(BASE + "/plain", async (route) => {
+      const resp = await route.fetch();
+      const mark = `<script>for (const s of ["#hy-p", "#hy-para", "#hy-in", "#notes"]) { const n = document.querySelector(s); if (n) n.__skySsr = 1; }` +
+        `const p = document.querySelector("#hy-p"); if (p && p.firstChild) p.firstChild.__skySsr = 1;</script>`;
+      const body = (await resp.text()).replace(`<script src="/wasm_exec.js">`, mark + `<script src="/wasm_exec.js">`);
+      await route.fulfill({ response: resp, body });
+    });
     await boot(page, "/plain");
-    check((await page.locator("#sel2").inputValue()) === "c", "F5 select first paint on the build-from-scratch path shows the model value");
+    check(!warn.some((w) => w.includes("hydrate skipped")), "a page with adjacent text, a paragraph, inputs and a valued textarea hydrates", warn.join(" | "));
+    const kept = await page.evaluate(() => {
+      const p = document.querySelector("#hy-p");
+      return {
+        els: ["#hy-p", "#hy-para", "#hy-in", "#notes"].every((s) => document.querySelector(s)?.__skySsr === 1),
+        text: p?.firstChild?.__skySsr === 1,
+        nodes: p ? p.childNodes.length : -1,
+      };
+    });
+    check(kept.els && kept.text, "hydration keeps the server-rendered element and text nodes", JSON.stringify(kept));
+    check(kept.nodes === 4, "a server text run is split into the client's text nodes", `childNodes=${kept.nodes}`);
+    check((await text(page, "#hy-p")) === "Hello, a! dark=no", "the split text run shows the server text", await text(page, "#hy-p"));
+    check((await page.locator("#notes").inputValue()) === "notes", "a hydrated valued textarea shows its value");
+    check((await page.locator("#sel2").inputValue()) === "c", "F5 select first paint on the hydrate path shows the model value");
+    await page.locator("#b-toggle").click();
+    await settle(page);
+    check((await text(page, "#hy-p")) === "Hello, a! dark=yes", "a hydrated text run follows the model", await text(page, "#hy-p"));
+    await page.locator("#hy-in").fill("Ada");
+    await settle(page);
+    check((await page.locator("#hy-in").inputValue()) === "Ada", "a hydrated text input keeps what the user types");
+    check(warn.length === 0, "no [sky.spa] warnings or page errors on /plain", warn.join(" | "));
     await page.close();
   }
 

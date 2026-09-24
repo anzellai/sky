@@ -172,6 +172,9 @@ semantics): when `update` refuses an edit, the field keeps what the user typed. 
 open the field's input events are not dispatched; the committed text is, once.
 A server-painted first page is adopted (hydrated) only when it shows exactly
 what the client's first view says; otherwise the client builds the page itself.
+Adjacent texts (`text "Hello, "` next to `text name`) arrive as one browser
+text node, and hydration splits that node at the client's boundaries; the
+server's nodes stay in the page.
 
 ## Routing — `App.withRoutes` (History API)
 
