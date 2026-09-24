@@ -776,7 +776,7 @@ func renderCurrent() {
 		// (data-sky-ssr) AND the freshly-computed tree is provably hydratable,
 		// ATTACH handlers to the existing server DOM in place instead of wiping +
 		// rebuilding — preserving node identity so there is no flash. Otherwise
-		// (no SSR, or a structural divergence spaHydratableVNode caught) fall back
+		// (no SSR, or a server DOM that spaCanHydrate refused) fall back
 		// to today's full spaMount, which is always correct.
 		if spaShouldHydrate(spaRoot, vn) {
 			spaHydrate(spaRoot, vn)

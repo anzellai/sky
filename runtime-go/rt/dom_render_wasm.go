@@ -81,12 +81,13 @@ func spaMount(mount js.Value, root VNode) {
 //     non-SSR / static-shell deploy still boots via spaMount, unchanged);
 //   - the mount actually has a server-painted element child (an empty `#app`
 //     from a stale/failed render is rebuilt, not hydrated onto nothing);
-//   - the freshly-computed VNode tree passes the POSITIVE structural parity
-//     check (spa_ssr.go). A `sky-id`-presence check alone is NOT fail-safe: raw
-//     nodes, adjacent text, and valued <textarea> line up by sky-id yet diverge
-//     structurally from the server DOM and corrupt on the first diff. When the
-//     tree is not provably hydratable we rebuild (correct today's behaviour)
-//     rather than adopt a mismatched tree.
+//   - the server DOM shows what the freshly-computed VNode tree says
+//     (spaCanHydrate, spa_hydrate.go): tags, sky-ids, attributes and text. A
+//     run of adjacent text children is ONE server text node (the parser
+//     merges it) and is accepted when its text is the run's text; spaHydrate
+//     then splits it to the client's structure. A valued <textarea> holds its
+//     value as server text and gets the .value property on hydrate. When the
+//     server DOM differs we rebuild rather than adopt a mismatched tree.
 func spaShouldHydrate(mount js.Value, root VNode) bool {
 	if !mount.Truthy() {
 		return false
@@ -97,10 +98,7 @@ func spaShouldHydrate(mount js.Value, root VNode) bool {
 	if !mount.Get("firstElementChild").Truthy() {
 		return false
 	}
-	ok, reason := spaHydratableVNode(root)
-	if ok {
-		ok, reason = spaHydrationParity(mount.Get("firstElementChild"), &root)
-	}
+	ok, reason := spaCanHydrate(spaJSDOM(mount.Get("firstElementChild")), &root)
 	if !ok {
 		if c := js.Global().Get("console"); c.Truthy() {
 			c.Call("warn", "[sky.spa] SSR hydrate skipped, full rebuild:", reason)
@@ -110,72 +108,37 @@ func spaShouldHydrate(mount js.Value, root VNode) bool {
 	return true
 }
 
-// spaHydrationParity checks that the server-painted DOM SHOWS what the
-// client's first tree says — tags, sky-ids, the tree's attributes and every
-// text node — before hydration adopts it (SPA-5). Hydration only binds
-// listeners; it writes no text. So when the server and the client computed a
-// different first view (a route param the server decoded and the client did
-// not, a model field only one side had), the page kept showing the server's
-// text while the client's model and every later diff assumed its own. A
-// mismatch rebuilds from the client tree instead, which is always correct.
-//
-// Extra DOM attributes are allowed (the server stamps sky-<event> and
-// data-sky-hid, which the client does not model). A child list holding raw
-// HTML is not compared node by node (a raw string parses to any number of
-// nodes).
-func spaHydrationParity(node js.Value, v *VNode) (bool, string) {
-	if !node.Truthy() || node.Get("nodeType").Int() != 1 {
-		return false, "server DOM has no element for " + v.SkyID
+// spaJSDOM adapts a browser DOM node to the portable spaDOM interface
+// (spa_hydrate.go). A missing node (null / undefined) is the nil interface.
+func spaJSDOM(n js.Value) spaDOM {
+	if !n.Truthy() {
+		return nil
 	}
-	if strings.ToLower(tagName(node)) != v.Tag {
-		return false, "tag differs at " + v.SkyID + ": server <" + strings.ToLower(tagName(node)) + ">, client <" + v.Tag + ">"
+	return spaJSNode{n}
+}
+
+type spaJSNode struct{ v js.Value }
+
+func (n spaJSNode) NodeType() int { return n.v.Get("nodeType").Int() }
+func (n spaJSNode) Tag() string   { return strings.ToLower(tagName(n.v)) }
+func (n spaJSNode) Attr(k string) (string, bool) {
+	a := n.v.Call("getAttribute", k)
+	if a.Type() != js.TypeString {
+		return "", false
 	}
-	if v.SkyID != "" {
-		if s := node.Call("getAttribute", "sky-id"); s.Type() != js.TypeString || s.String() != v.SkyID {
-			return false, "sky-id differs at " + v.SkyID
-		}
+	return a.String(), true
+}
+func (n spaJSNode) FirstChild() spaDOM  { return spaJSDOM(n.v.Get("firstChild")) }
+func (n spaJSNode) NextSibling() spaDOM { return spaJSDOM(n.v.Get("nextSibling")) }
+func (n spaJSNode) Data() string {
+	d := n.v.Get("data")
+	if d.Type() != js.TypeString {
+		return ""
 	}
-	for k, want := range v.Attrs {
-		if k == "value" && (v.Tag == "select" || v.Tag == "textarea") {
-			continue
-		}
-		if got := node.Call("getAttribute", k); got.Type() != js.TypeString || got.String() != want {
-			return false, "attribute " + k + " differs at " + v.SkyID
-		}
-	}
-	for i := range v.Children {
-		if v.Children[i].Kind == "raw" {
-			return true, ""
-		}
-	}
-	dom := node.Get("firstChild")
-	for i := range v.Children {
-		c := &v.Children[i]
-		if c.Kind == "text" && c.Text == "" {
-			continue
-		}
-		if !dom.Truthy() {
-			return false, "server DOM has fewer children at " + v.SkyID
-		}
-		switch c.Kind {
-		case "text":
-			if dom.Get("nodeType").Int() != 3 {
-				return false, "text expected at " + v.SkyID
-			}
-			if d := dom.Get("data"); d.Type() != js.TypeString || d.String() != c.Text {
-				return false, "text differs at " + v.SkyID
-			}
-		default:
-			if ok, why := spaHydrationParity(dom, c); !ok {
-				return false, why
-			}
-		}
-		dom = dom.Get("nextSibling")
-	}
-	if dom.Truthy() {
-		return false, "server DOM has more children at " + v.SkyID
-	}
-	return true, ""
+	return d.String()
+}
+func (n spaJSNode) SplitText(offsetUTF16 int) spaDOM {
+	return spaJSDOM(n.v.Call("splitText", offsetUTF16))
 }
 
 // spaHydrate attaches the client's real event closures (and input-prop
@@ -188,6 +151,9 @@ func spaHydrationParity(node js.Value, v *VNode) (bool, string) {
 // so they are harmless bytes a later pass may strip. renderCurrent sets spaPrev
 // to this tree afterwards, so every subsequent render takes the diff path.
 func spaHydrate(mount js.Value, root VNode) {
+	// Split each server text node that holds a run of client text children
+	// (spa_hydrate.go), so later patches see the structure spaMount builds.
+	spaHydrateTextRuns(spaJSDOM(mount.Get("firstElementChild")), &root)
 	hydrateVNode(mount, root)
 }
 
@@ -301,16 +267,6 @@ func spaSyncSelectValue(n js.Value, el *VNode) {
 			n.Set("value", v)
 		}
 	}
-}
-
-// spaChildrenContainRaw reports whether any direct child is a raw-HTML node.
-func spaChildrenContainRaw(children []VNode) bool {
-	for i := range children {
-		if children[i].Kind == "raw" {
-			return true
-		}
-	}
-	return false
 }
 
 // spaSetChildren populates parent's children from a VNode list.
