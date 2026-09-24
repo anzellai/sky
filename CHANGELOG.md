@@ -15,10 +15,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 A patch over v0.25.16. A bug in a Sky.Spa button (a re-rendered row kept sending
 the message from its first render) started a full audit of every app surface
-against "if it compiles, it works". Six audits reproduced 74 defects, from 11 root
-causes, in a real browser or a real terminal. This release fixes all of them. Each
-fix has a regression test that failed before it, and the new browser and terminal
-gates run nightly. No public function signature changes.
+against "if it compiles, it works". Six audits reproduced every defect listed
+here in a real browser or a real terminal; the full list, with the test for each
+fix, is `docs/history/v0.25.17/audit-register.md`. Every code fix has a
+regression test that failed before it; documentation fixes and layout-only
+example fixes were checked by hand. The new browser and terminal gates run
+nightly. No public function signature changes.
 
 ### Migration
 
