@@ -40,7 +40,7 @@ const ROOT = resolve(__dirname, "..");
 // ─── 1. Extract liveJS() output from a one-off Sky boot ────────
 //
 // The cheap path: spawn the 09-live-counter example, GET / once,
-// pull the inline <script> body that carries the live runtime.
+// fetch the external client script the page loads.
 // We then kill the app; no further app interaction needed.
 
 const EXAMPLE_DIR = join(ROOT, "examples", "09-live-counter");
@@ -77,24 +77,15 @@ await new Promise((res, rej) => {
 // Pull the page HTML; grep out the runtime script block.
 const html = await fetch(`http://127.0.0.1:${PORT}/`).then((r) => r.text());
 
-// The runtime JS is inlined inside one big <script>…</script> block
-// at the bottom of the page (last script in the document). Capture
-// it by anchoring on the first `var __skySid` declaration and
-// reading through to the closing </script>\n</body>\n</html>.
-const startMarker = "var __skySid";
-const startIdx = html.indexOf(startMarker);
-if (startIdx < 0) {
-  console.error("[probe] could not locate `var __skySid` in initial page — runtime missing?");
+// The runtime JS is the same-origin file /_sky/live.<hash>.js the page
+// loads (live_client_asset.go; strict-CSP safe). Fetch it by the page's src.
+const m = html.match(/<script src="([^"]*\/_sky\/live\.[0-9a-f]+\.js)"><\/script>/);
+if (!m) {
+  console.error("[probe] the page does not load /_sky/live.<hash>.js — runtime missing?");
   app.kill();
   process.exit(2);
 }
-const closeIdx = html.lastIndexOf("</script>");
-if (closeIdx < 0 || closeIdx <= startIdx) {
-  console.error("[probe] could not locate closing </script> after runtime start");
-  app.kill();
-  process.exit(2);
-}
-const liveJS = html.slice(startIdx, closeIdx);
+const liveJS = await fetch(`http://127.0.0.1:${PORT}${m[1]}`).then((r) => r.text());
 
 // Kill the app — we have what we need.
 app.kill();

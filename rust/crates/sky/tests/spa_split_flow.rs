@@ -3253,9 +3253,22 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
         "the deep-link document must NOT reference a bare relative wasm_exec.js:\n{deep_body}"
     );
     assert!(
-        deep_body.contains(r#"fetch("/main."#) && deep_body.contains(".wasm\")"),
-        "the deep-link document must fetch the wasm by root-absolute URL:\n{deep_body}"
+        deep_body.contains(r#"data-wasm="/main."#) && deep_body.contains(".wasm\"></script>"),
+        "the deep-link document must name the wasm by root-absolute URL:\n{deep_body}"
     );
+    // Strict CSP: the loader is the same-origin file /spa-boot.<hash>.js, and the
+    // document carries no inline executable script.
+    assert!(
+        deep_body.contains(r#"<script src="/spa-boot."#),
+        "the deep-link document must boot through /spa-boot.<hash>.js:\n{deep_body}"
+    );
+    for tag in deep_body.split("<script").skip(1) {
+        let open = tag.split('>').next().unwrap_or("");
+        assert!(
+            open.contains("src=") || open.contains("application/json"),
+            "the deep-link document carries an inline executable <script{open}>"
+        );
+    }
 
     // /wasm_exec.js is a REAL asset served by the static mount: 200 + JavaScript.
     let (code, ctype) = asset.expect("GET /wasm_exec.js should answer");
