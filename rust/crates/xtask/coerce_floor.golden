@@ -143,6 +143,17 @@
 #     whose source changed — renderElement -> renderElementIn, renderNodeAs,
 #     layoutWith, and the new keptRoleAttrs. No function whose source is
 #     unchanged moved.
+#
+# ── Recorded transition, 2026-09-25 — v0.25.19 FFI function values ──
+#     narrow  13-skyshop 1468 -> 1479 (+11); adapter and dispatch unchanged (0);
+#     no other row moved. Cause: a CODEGEN FIX that adds code where there was
+#     none. Eleven Go-FFI functions passed as VALUES in src/Lib/Stripe.sky
+#     (`Result.andThen Stripe.addressLine1`, `...CustomerDetailsName`, …) used
+#     to lower to `nil` — no code, so no narrowing, and a NilDereference panic
+#     when applied. Each now lowers to a closure over its wrapper that pays
+#     exactly what a CALL of that wrapper pays: one `rt.Coerce` of the argument
+#     into the wrapper's `FfiT_…_P0` slot (the Go-FFI argument floor, doc 14
+#     §4). Measured on the emitted Go: 11 closures, one tracked token each.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -155,7 +166,7 @@
 09-live-counter	adapter=0	dispatch=0	narrow=137
 10-live-component	adapter=0	dispatch=0	narrow=140
 12-skyvote	adapter=0	dispatch=0	narrow=506
-13-skyshop	adapter=0	dispatch=0	narrow=1468
+13-skyshop	adapter=0	dispatch=0	narrow=1479
 14-task-demo	adapter=0	dispatch=0	narrow=10
 15-http-server	adapter=0	dispatch=0	narrow=19
 16-skychess	adapter=0	dispatch=0	narrow=614
