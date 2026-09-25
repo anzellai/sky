@@ -141,6 +141,53 @@ fn doctor_missing_entry_file_is_error() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A library (`[lib]` in sky.toml, no `entry`) has no entry file, and doctor
+/// must not ask for one. Before v0.25.19 it reported
+/// "✗ entry file `src/Main.sky` does not exist" on every library.
+#[test]
+fn doctor_library_project_does_not_require_an_entry_file() {
+    let dir = scratch_dir("library");
+    std::fs::write(dir.join("sky.toml"), "[lib]\nname = \"doctor-lib\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src").join("DoctorLib")).unwrap();
+    std::fs::write(
+        dir.join("src").join("DoctorLib").join("Greeting.sky"),
+        "module DoctorLib.Greeting exposing (hello)\n\n\nhello : String -> String\nhello name =\n    \"hello \" ++ name\n",
+    )
+    .unwrap();
+
+    let (code, log) = run_sky(&dir, &["doctor"]);
+    assert!(
+        !log.contains("entry file"),
+        "a library must not be asked for an entry file:\n{log}"
+    );
+    assert!(
+        !log.contains("library has no"),
+        "a library with modules must not be reported empty:\n{log}"
+    );
+    // With a Go toolchain present the library is otherwise healthy.
+    if go_on_path() {
+        assert_eq!(code, 0, "healthy library should exit 0:\n{log}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What still applies to a library is checked: one with no modules under its
+/// source root is an Error.
+#[test]
+fn doctor_library_without_modules_is_error() {
+    let dir = scratch_dir("emptylib");
+    std::fs::write(dir.join("sky.toml"), "[lib]\nname = \"doctor-lib\"\n").unwrap();
+
+    let (code, log) = run_sky(&dir, &["doctor"]);
+    assert_eq!(code, 1, "a library with no modules should exit 1:\n{log}");
+    assert!(
+        log.contains("library has no `.sky` modules under `src/`"),
+        "expected the library-no-modules finding:\n{log}"
+    );
+    assert!(!log.contains("entry file"), "{log}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn doctor_outside_project_exits_2() {
     // A bare temp dir with no sky.toml in it or any ancestor we control. We can't

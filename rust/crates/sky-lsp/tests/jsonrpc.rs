@@ -994,3 +994,46 @@ fn did_change_publish_is_debounced_over_jsonrpc() {
 
     c.shutdown();
 }
+
+/// v0.25.19: a dangling `exposing` entry is published on `didOpen` over the real
+/// transport, with its own code ([E1015]). It used to publish nothing, while the
+/// program went on to panic at run time.
+#[test]
+fn dangling_export_is_published_on_did_open_over_jsonrpc() {
+    let mut c = Client::start();
+    c.initialize();
+    c.open("module Main exposing (main, decode)\n\nmain =\n    1\n");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut seen = Vec::new();
+    let mut found = false;
+    while !found {
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+        let Ok(msg) = c.rx.recv_timeout(deadline - now) else {
+            break;
+        };
+        if msg.get("method").and_then(Value::as_str) != Some("textDocument/publishDiagnostics") {
+            continue;
+        }
+        let diags = msg
+            .get("params")
+            .and_then(|p| p.get("diagnostics"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        found = diags.iter().any(|d| {
+            d.get("code").and_then(Value::as_str) == Some("E1015")
+                && d.get("message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|m| m.contains("exposes `decode`, but does not define it"))
+        });
+        seen.push(diags);
+    }
+    assert!(
+        found,
+        "expected an [E1015] publish for `decode`; got {seen:#?}"
+    );
+    c.shutdown();
+}

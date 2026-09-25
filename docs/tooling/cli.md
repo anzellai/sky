@@ -478,6 +478,8 @@ additions:
 
 | Check id | Severity | What it covers |
 |---|---|---|
+| `entry-missing` | error | the `entry` file (default `src/Main.sky`) exists. A library (`[lib]` in sky.toml) with no `entry` has no entry file and is not asked for one |
+| `library-no-modules` | error | a library has at least one `.sky` module under its source root |
 | `go-toolchain` | error | Go ≥ 1.22 on PATH |
 | `ffi-cache-orphan` | warn | `.skycache/ffi/*.skyi` with no `.skydeps/` source |
 | `missing-lockfile` | info | `.skydeps/` populated but no `sky.lock` |

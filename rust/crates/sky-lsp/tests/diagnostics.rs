@@ -688,3 +688,92 @@ main =
         "the correctly-applied twin must publish nothing; got: {errs:#?}"
     );
 }
+
+fn has_code(diags: &[Diagnostic], code: &str, needle: &str) -> bool {
+    diags.iter().any(|d| {
+        d.code
+            == Some(tower_lsp::lsp_types::NumberOrString::String(
+                code.to_string(),
+            ))
+            && d.message.contains(needle)
+    })
+}
+
+#[test]
+fn dangling_export_publishes_e1015_and_the_use_site_e1001() {
+    // v0.25.19: a module listed `decode` in `exposing (…)` after the function
+    // was deleted, and a caller wrote `Resp.decode body`. `sky check` accepted
+    // it and the program panicked (`NilDereference`); the LSP showed nothing.
+    // The editor must now show BOTH errors, from the same pipeline the build uses:
+    // [E1015] on the exporter's clause, [E1001] at the caller's reference.
+    let root = build_fixture(true);
+    let mut a = analysis_for(&root);
+    let resp = "module Resp exposing (decode, other)\n\n\
+                other : Int -> Int\nother x =\n    x + 1\n";
+    a.set_document(sibling_url(&root, "Resp.sky"), resp.to_string());
+    let buf = "\
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Resp
+
+
+main =
+    let
+        r =
+            Resp.decode \"hi\"
+    in
+    println (String.fromInt (Resp.other 1))
+";
+    a.set_document(main_url(&root), buf.to_string());
+
+    let resp_diags = a.diagnostics(&sibling_url(&root, "Resp.sky"));
+    assert!(
+        has_code(
+            &resp_diags,
+            "E1015",
+            "exposes `decode`, but does not define it"
+        ),
+        "the exporter must publish [E1015]; got: {resp_diags:#?}"
+    );
+    let main_diags = a.diagnostics(&main_url(&root));
+    assert!(
+        has_code(&main_diags, "E1001", "Undefined name: Resp.decode"),
+        "the caller must publish [E1001] at `Resp.decode`; got: {main_diags:#?}"
+    );
+    // The error sits on the reference itself (line 11, `Resp.decode`).
+    let d = main_diags
+        .iter()
+        .find(|d| d.message.contains("Resp.decode"))
+        .unwrap();
+    assert_eq!(d.range.start, Position::new(10, 12), "{d:#?}");
+}
+
+#[test]
+fn restored_export_publishes_nothing() {
+    // The twin: once `decode` is defined again, nothing is published.
+    let root = build_fixture(true);
+    let mut a = analysis_for(&root);
+    let resp = "module Resp exposing (decode, other)\n\n\
+                decode : String -> Int\ndecode s =\n    String.length s\n\n\
+                other : Int -> Int\nother x =\n    x + 1\n";
+    a.set_document(sibling_url(&root, "Resp.sky"), resp.to_string());
+    let buf = "\
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Resp
+
+
+main =
+    println (String.fromInt (Resp.other (Resp.decode \"hi\")))
+";
+    a.set_document(main_url(&root), buf.to_string());
+    for url in [sibling_url(&root, "Resp.sky"), main_url(&root)] {
+        let diags = a.diagnostics(&url);
+        let errs = errors(&diags);
+        assert!(errs.is_empty(), "{url}: {errs:#?}");
+    }
+}

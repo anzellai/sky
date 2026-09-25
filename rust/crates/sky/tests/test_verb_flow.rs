@@ -207,3 +207,31 @@ fn failing_case_still_fails_the_run() {
     assert_eq!(report["failed"].as_i64(), Some(1), "report was {report}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A suite passed by a RELATIVE path (`sky test tests/FooTest.sky`, the usual
+/// spelling) printed every compile error in it TWICE: the declared-name source
+/// root (`tests`) and the project's `<abs>/tests` compared unequal, so the tree
+/// was loaded twice and the module checked twice. Found while fixing the
+/// v0.25.19 dangling-export hole, where each `[E1001]` appeared twice.
+#[test]
+fn compile_error_in_a_relative_suite_path_is_reported_once() {
+    let (dir, _suite) = project("dupdiag", "tests/FooTest.sky", "FooTest");
+    std::fs::write(
+        dir.join("tests").join("FooTest.sky"),
+        "module FooTest exposing (tests)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Test as Test exposing (Test)\n\n\
+         tests : List Test\n\
+         tests =\n    \
+         [ Test.test \"a\" (\\_ -> Test.equal 2 (noSuchHelper 1)) ]\n",
+    )
+    .unwrap();
+    let (code, out, _) = run_test(&dir, Path::new("tests/FooTest.sky"));
+    assert_ne!(code, 0, "a suite with an undefined name must fail:\n{out}");
+    assert_eq!(
+        out.matches("Undefined name: noSuchHelper").count(),
+        1,
+        "each compile error must be reported exactly once:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -9376,8 +9376,18 @@ fn check_sky_toml(root: &Path) -> Vec<Finding> {
 }
 
 /// The entry `.sky` (sky.toml `entry`, default `src/Main.sky`) must exist.
+///
+/// A LIBRARY (`[lib]` in sky.toml) has no entry file: it is imported, never
+/// run. Requiring the default `src/Main.sky` there reported a false Error on
+/// every library. A library that names an `entry` explicitly still has it
+/// checked; one that does not is checked for what a library does need, its
+/// modules under the source root.
 fn check_entry_file(root: &Path) -> Vec<Finding> {
-    let entry = toml_entry(root).unwrap_or_else(|| "src/Main.sky".to_string());
+    let explicit = toml_entry(root);
+    if explicit.is_none() && is_library_project(root) {
+        return check_library_sources(root);
+    }
+    let entry = explicit.unwrap_or_else(|| "src/Main.sky".to_string());
     let path = root.join(&entry);
     if path.is_file() {
         Vec::new()
@@ -9389,6 +9399,39 @@ fn check_entry_file(root: &Path) -> Vec<Finding> {
             hint: "create it, or fix the `entry = \"...\"` path in sky.toml".into(),
             fix: None,
         }]
+    }
+}
+
+/// True when sky.toml declares a `[lib]` table (a whole-line header, so a
+/// `[lib]` inside a comment or a string never matches) — a Sky library.
+fn is_library_project(root: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(root.join("sky.toml")) else {
+        return false;
+    };
+    text.lines().any(|raw| {
+        let l = raw.trim();
+        l == "[lib]" || l == "[\"lib\"]"
+    })
+}
+
+/// A library must have at least one `.sky` module under its source root
+/// (`[source] root`, default `src`) — that is what an importer resolves.
+fn check_library_sources(root: &Path) -> Vec<Finding> {
+    let src_root = project::configured_source_root(root);
+    let mut files = Vec::new();
+    collect_sky_files(&root.join(&src_root), &mut files);
+    if files.is_empty() {
+        vec![Finding {
+            check: "library-no-modules",
+            severity: Severity::Error,
+            message: format!("library has no `.sky` modules under `{src_root}/`"),
+            hint: "add the library's modules under the source root, or fix `[source] root` \
+                   in sky.toml"
+                .into(),
+            fix: None,
+        }]
+    } else {
+        Vec::new()
     }
 }
 

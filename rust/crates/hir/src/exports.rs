@@ -48,6 +48,13 @@ pub struct ModuleExports {
     pub values: Vec<(Name, DefId)>,
     pub unions: Vec<ExportedUnion>,
     pub aliases: Vec<ExportedAlias>,
+    /// Values the `exposing` clause lists but the module does not declare.
+    /// Never published (see `compute_exports`); kept so an importer's error
+    /// can name the dangling export as the cause.
+    pub listed_undeclared_values: Vec<Name>,
+    /// Types the `exposing` clause lists but the module does not declare —
+    /// re-exports of an imported type, or (reported by `[E1015]`) dangling.
+    pub listed_undeclared_types: Vec<Name>,
 }
 
 impl ModuleExports {
@@ -57,6 +64,8 @@ impl ModuleExports {
             values: Vec::new(),
             unions: Vec::new(),
             aliases: Vec::new(),
+            listed_undeclared_values: Vec::new(),
+            listed_undeclared_types: Vec::new(),
         }
     }
 }
@@ -67,6 +76,20 @@ impl ModuleExports {
             .iter()
             .find(|(n, _)| n.as_str() == name)
             .map(|(_, d)| *d)
+    }
+    /// True when the `exposing` clause lists value `name` but the module does
+    /// not declare it (a dangling export).
+    pub fn lists_undeclared_value(&self, name: &str) -> bool {
+        self.listed_undeclared_values
+            .iter()
+            .any(|n| n.as_str() == name)
+    }
+    /// True when the `exposing` clause lists type `name` but the module does
+    /// not declare it (a re-export, or a dangling export).
+    pub fn lists_undeclared_type(&self, name: &str) -> bool {
+        self.listed_undeclared_types
+            .iter()
+            .any(|n| n.as_str() == name)
     }
     pub fn ctor(&self, name: &str) -> Option<(&ExportedUnion, &ExportedCtor)> {
         self.unions.iter().find_map(|u| {
@@ -260,17 +283,34 @@ pub fn compute_exports(
         }
     }
 
-    // ---- re-exports (lenient): explicitly-listed names not declared locally ----
-    // A module may re-expose an imported name. We don't chase the origin here;
-    // we publish the name so an importer resolves it (avoids a false class-(a)).
+    // ---- listed but not declared here ----
+    // A value listed in `exposing (…)` that this module does not declare is NOT
+    // published. It used to be ("re-exports (lenient)"), and that is how a
+    // dangling export became a runtime nil: an importer's `M.x` resolved to a
+    // `DefId` with no declaration behind it, the checker gave it a fresh type
+    // variable, and lowering emitted `nil`. Sky has no value re-exports (an
+    // imported value has no definition in the re-exporter for lowering to emit),
+    // so the name is recorded here only so an importer can say WHY it misses;
+    // the module itself reports `[E1015]` at the clause.
+    //
+    // A listed-but-undeclared TYPE is recorded too. It is usually a real
+    // re-export (the importer chases it to its origin), so an importer must not
+    // call it undefined; a dangling one is `[E1015]` in the exporter.
     if let (false, Some(c)) = (expose_all, clause.as_ref()) {
         for it in &c.items {
-            if let ExposedItem::Value(v) = it {
-                let known = exports.values.iter().any(|(n, _)| n.as_str() == v);
-                if !known {
-                    let vd = value_def(intern, v);
-                    exports.values.push((Name::new(v), vd));
+            match it {
+                ExposedItem::Value(v) => {
+                    let known = exports.values.iter().any(|(n, _)| n.as_str() == v);
+                    if !known {
+                        exports.listed_undeclared_values.push(Name::new(v));
+                    }
                 }
+                ExposedItem::Type { name, .. } => {
+                    if exports.type_(name).is_none() {
+                        exports.listed_undeclared_types.push(Name::new(name));
+                    }
+                }
+                ExposedItem::Operator => {}
             }
         }
     }

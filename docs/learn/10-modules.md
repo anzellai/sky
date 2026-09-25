@@ -43,6 +43,21 @@ If you try to import a name a module doesn't expose, that's a hard error:
 
 This holds for the standard library too — the export list means what it says.
 
+It holds in the other direction as well: a module may only expose what it has.
+Listing a name the module does not define is an error at the list itself:
+
+```elm
+-- module Responses exposing (decodeResponse, send)
+-- … but `decodeResponse` was deleted
+-- ✗ [E1015] UNKNOWN EXPORT: module `Responses` exposes `decodeResponse`, but
+--   does not define it. Define `decodeResponse` in `Responses`, or remove it
+--   from the `exposing` list.
+```
+
+A caller's `Responses.decodeResponse` is then `[E1001]` at the call, naming the
+dangling export as the cause. A module can re-expose a *type* it imports (the
+type keeps its one identity), but not a value: define a wrapper instead.
+
 ## Two imports, one name
 
 If two imports bring in the *same* unqualified name and you use it bare, Sky
