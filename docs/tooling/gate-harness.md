@@ -189,9 +189,9 @@ not be resolved — an error always means "do the work"). Every other gate is
 **carried**, and the run says so:
 
 ```
-RE-PROVEN 2 gate(s), CARRIED 39 gate(s) (inputs unchanged since their recorded proof)
-  re-proven  canary: the canary is re-run by every falsifier run
-  re-proven  apps-ledger: its inputs changed since the proof
+RE-RUN 2 gate(s), CARRIED 39 gate(s) (inputs unchanged since their recorded proof)
+  re-run     canary: the canary is re-run by every falsifier run
+  re-run     apps-ledger: its inputs changed since the proof
   carried    roundtrip: proof taken 0d ago, inputs digest unchanged
 ```
 

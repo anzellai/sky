@@ -269,8 +269,15 @@ fn read_result(path: &Path, expected_generation: u64) -> (Option<ChildResult>, b
 }
 
 /// Where a gate's generation-stamped result file lives.
+/// The file is keyed by the PARENT's pid as well as the generation: two harness
+/// processes running at once (two `cargo test` e2e cases, or two operators)
+/// both start at generation 1, and a shared `canary.gen1.json` let one run
+/// delete or read the other's result — the second run then rendered NOT RUN.
 pub fn result_path(dir: &Path, gate: &str, generation: u64) -> PathBuf {
-    dir.join(format!("{gate}.gen{generation}.json"))
+    dir.join(format!(
+        "{gate}.gen{generation}.p{}.json",
+        std::process::id()
+    ))
 }
 
 /// Write a result from inside the child. Written to a temp file and renamed so

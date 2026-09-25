@@ -722,7 +722,7 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
     }
 
     println!(
-        "\nRE-PROVEN {} gate(s), CARRIED {} gate(s){}",
+        "\nRE-RUN {} gate(s), CARRIED {} gate(s){}",
         reproved.len(),
         carried.len(),
         if o.all {
@@ -732,7 +732,7 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
         }
     );
     for (g, why) in &reproved {
-        println!("  re-proven  {g}: {why}");
+        println!("  re-run     {g}: {why}");
     }
     for (g, at) in &carried {
         println!(
