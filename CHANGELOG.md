@@ -43,6 +43,12 @@ were inline.
   (Sky.Live pages, `Sky.Http.Server` responses and static files), for an app
   with no proxy. It is opt-in: unset, the headers do not change. It never
   overwrites a policy that the app already set. See `docs/sky-toml.md`.
+- **Bundled apps rebuild when their source changes.** `sky doc --serve`,
+  `sky doc --tui` and the console hub cached their built app by version
+  alone, so a compiler whose bundled source or runtime changed within one
+  version served the old app. The cache key now also carries the embedded
+  asset fingerprint. `rust/crates/sky/tests/doc_flow.rs` found it: the stale
+  doc server answered 404 for the new search script.
 
 Regression tests: `runtime-go/rt/csp_strict_test.go` (no inline executable
 script on the Live, Spa and console pages; no `eval` / `new Function` in
