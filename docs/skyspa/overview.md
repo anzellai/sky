@@ -266,6 +266,29 @@ on the user's machine → **untrusted**. Therefore, unavoidably:
 - Sky's typed secrets (`Auth.signToken` takes `String`, never `any`) and the
   production gate carry over unchanged.
 
+### Content-Security-Policy
+
+A Sky.Spa page runs under `script-src 'self' 'wasm-unsafe-eval'` with no
+hashes and no `'unsafe-inline'`. The build writes the wasm loader as a file,
+`dist/spa-boot.<hash>.js`, next to `wasm_exec.js` and `main.<hash>.wasm`, and
+precompresses it (`.gz`, and `.br` when `brotli` is installed) with them. Both
+`dist/index.html` and the SSR first-paint page load it the same way:
+
+```html
+<script src="/wasm_exec.js"></script>
+<script src="/spa-boot.<hash>.js" data-wasm="/main.<hash>.wasm"></script>
+```
+
+The loader reads the wasm URL from its own `data-wasm` attribute, so the file
+is the same for every build and its name changes only when the loader
+changes. The `#sky-model` seed stays a `<script type="application/json">`
+block, which a browser never executes. Static hosting (nginx, Caddy, a CDN)
+needs nothing extra: `spa-boot.<hash>.js` is a normal file in `dist/`.
+`'wasm-unsafe-eval'` is required because it allows
+`WebAssembly.instantiateStreaming`. It does not allow JS `eval`. Set
+`SKY_CSP=strict` to make the backend send the policy itself. See
+[the Sky.Live architecture notes](../skylive/architecture.md#content-security-policy).
+
 ## Honest limits
 
 These are real, current scope boundaries — not roadmap optimism:

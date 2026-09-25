@@ -42,6 +42,25 @@ Auto-instrumented (Tier 1 — always on):
   that collector (Tempo / Jaeger / Honeycomb / Datadog / Cloud
   Trace — anything that speaks OTLP).
 
+### The Console behind a strict Content-Security-Policy
+
+The Sky Console at `/_sky/console` is a Sky.Live sub-app. It works behind a
+reverse proxy that sends `script-src 'self' 'wasm-unsafe-eval'`, with no
+hashes and no `'unsafe-inline'`. The page loads its client from
+`/_sky/console/_sky/live.<hash>.js` and reads its session id and CSRF token
+from a `<script type="application/json" id="sky-live-cfg">` block, which a
+browser never executes. The fallback HTML shell (used only when the console
+app is not linked in) loads `/_sky/console-shell.<hash>.js`. So an example
+Caddy policy needs no Sky-specific entry:
+
+```
+header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+```
+
+Without a proxy, set `SKY_CSP=strict` to make the app send an equivalent
+policy itself. It never replaces a policy that the app already set. See
+`docs/skylive/architecture.md`, "Content-Security-Policy".
+
 ### Watching the hub itself
 
 The console hub is a collector, so the usual question — "is anything being

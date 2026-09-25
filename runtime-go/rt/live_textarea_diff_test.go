@@ -169,7 +169,7 @@ func TestTextareaJS_ApplyPatchesSetsValueProperty(t *testing.T) {
 	// `value` attribute would have NO visual effect even if set).
 	// Without this sync, the diff would set the attribute but the
 	// textarea on screen would still show the old text.
-	js := liveJS("test-session")
+	js := liveClientJS
 	// `if (k === "value" && ("value" in el)) el.value = v;` — must
 	// appear verbatim in the inlined JS. Whitespace tolerant.
 	if !strings.Contains(js, `el.value = v`) {
@@ -200,7 +200,7 @@ func TestTextareaJS_ApplyPatchesSetsValueProperty(t *testing.T) {
 // `RangeError`. Scroll restoration matters for multi-line textareas
 // where the cursor sat below the visible area.
 func TestTextareaJS_PreservesCursorOnValueApply(t *testing.T) {
-	js := liveJS("test-session")
+	js := liveClientJS
 	// Snapshot path: must read selectionStart / selectionEnd BEFORE
 	// setting el.value.
 	for _, needle := range []string{
@@ -254,7 +254,7 @@ func TestTextareaJS_PreservesCursorOnValueApply(t *testing.T) {
 // degrade to bare `el.value = v` which sets cursor to end (=12),
 // inconvenient mid-edit.
 func TestTextareaJS_CursorPreservationContract(t *testing.T) {
-	js := liveJS("test-session")
+	js := liveClientJS
 	// The two halves of the contract must both be present.
 	if !strings.Contains(js, "hadFocus") {
 		t.Fatalf("cursor preservation predicates missing — value-apply path no longer remembers focus state")

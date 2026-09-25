@@ -139,9 +139,12 @@ func TestSpaSSRPage_servesRealBodyHeadModelNotEmptyDiv(t0 *testing.T) {
 		!strings.Contains(liveBaseCSS, `pointer-events:auto`) {
 		t0.Fatalf("base CSS must define the blocking hydration overlay (::after, pointer-events:auto)")
 	}
-	// A safety timeout drops the blocking marker if the wasm never boots.
-	if !strings.Contains(page, `removeAttribute('data-sky-hydrating')`) {
-		t0.Fatalf("SSR page must carry the hydration-overlay safety timeout:\n%s", page)
+	// A safety timeout drops the blocking marker if the wasm never boots. It
+	// lives in the external boot loader the page loads (strict CSP: no inline
+	// script).
+	if !strings.Contains(page, `<script src="`+SpaBootPath+`"`) ||
+		!strings.Contains(SpaBootJS, `removeAttribute("data-sky-hydrating")`) {
+		t0.Fatalf("SSR page must load the boot loader that carries the hydration-overlay safety timeout:\n%s", page)
 	}
 	// The initial model is embedded for the client to prime spaModel from.
 	if !strings.Contains(page, `id="sky-model"`) || !strings.Contains(page, `{"page":"Home"}`) {
@@ -173,11 +176,14 @@ func TestSpaSSRPage_referencesRootAbsoluteAssets(t0 *testing.T) {
 	if strings.Contains(page, `<script src="wasm_exec.js">`) {
 		t0.Fatalf("SSR page must NOT reference a bare relative wasm_exec.js:\n%s", page)
 	}
-	if !strings.Contains(page, `fetch("/main.abc123.wasm")`) {
-		t0.Fatalf("SSR page must fetch the wasm by root-absolute URL:\n%s", page)
+	if !strings.Contains(page, `data-wasm="/main.abc123.wasm"`) {
+		t0.Fatalf("SSR page must name the wasm by root-absolute URL:\n%s", page)
 	}
-	if strings.Contains(page, `fetch("main.abc123.wasm")`) {
-		t0.Fatalf("SSR page must NOT fetch a bare relative wasm name:\n%s", page)
+	if strings.Contains(page, `data-wasm="main.abc123.wasm"`) {
+		t0.Fatalf("SSR page must NOT name a bare relative wasm:\n%s", page)
+	}
+	if !strings.HasPrefix(SpaBootPath, "/") {
+		t0.Fatalf("the boot loader URL must be root-absolute: %s", SpaBootPath)
 	}
 }
 

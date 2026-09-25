@@ -239,6 +239,7 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 	// with whichever path serves the root and feed both UIs.
 	if !inlineConsoleHealthy.Load() {
 		safeMount(mux, "/_sky/console", HandleConsole)
+		safeMount(mux, consoleShellPath, HandleConsoleShellJS)
 		// Only flip the legacy-healthy flag when WE registered the
 		// path. The `safeMount` panic-recover hides duplicate
 		// registrations, but in this branch the inline path didn't
@@ -374,6 +375,13 @@ func HandleConsole(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store") // always fresh
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(consoleHTML))
+}
+
+// HandleConsoleShellJS serves the legacy shell's script (consoleShellJS). It is
+// a public constant with a content-hashed name, so it is not gated and is cached
+// as immutable.
+func HandleConsoleShellJS(w http.ResponseWriter, r *http.Request) {
+	serveStaticJS(consoleShellJS)(w, r)
 }
 
 // consoleAccessAllowed implements the auth gate.

@@ -44,7 +44,7 @@ import (
 // retains the legacy one. A grep-style assertion is sufficient — the
 // JS is one long string literal, the call shape is stable.
 func TestLiveJS_EmitsPatchesEventListener(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	wantPatches := `addEventListener("patches"`
 	wantLegacyPatch := `addEventListener("patch"`
 	if !strings.Contains(js, wantPatches) {
@@ -242,7 +242,7 @@ func TestHandleSSE_EmitsEventPatchForPatchFrame(t *testing.T) {
 // regression pins the guard string-contents so a future rewrite of
 // __skyApplyPatches can't silently drop it.
 func TestLiveJS_IdempotentSetAttributeGuard(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	// The guarded pattern is "if (el.getAttribute(k) !== v) {" — a
 	// substring search is robust against whitespace tweaks but tight
 	// enough to catch a logic flip (e.g. someone "simplifying" the
@@ -280,7 +280,7 @@ func TestLiveJS_IdempotentSetAttributeGuard(t *testing.T) {
 // document, internal SSE, navigation history, scroll position
 // belong to the iframe. Placeholder contributes only non-src attrs.
 func TestLiveJS_IframePreservedAcrossHTMLReplace(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	wantIframeQuery := `container.querySelectorAll("iframe")`
 	if !strings.Contains(js, wantIframeQuery) {
 		t.Fatalf("__skyReplaceHTMLPreservingFocus must walk iframes via %q; "+

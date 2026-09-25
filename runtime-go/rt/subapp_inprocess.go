@@ -497,6 +497,10 @@ func registerSubAppRoutes(
 	parentMux.HandleFunc(prefix+"/_sky/event", wrap(app.handleEvent))
 	parentMux.HandleFunc(prefix+"/_sky/sse", wrap(app.handleSSE))
 	parentMux.HandleFunc(prefix+"/_sky/config", wrap(app.handleConfig))
+	// The Sky.Live client script (live_client_asset.go) under the sub-app's
+	// base, where its page loads it. It is a public constant, so it is not
+	// gated: a gate that redirects would hand the browser HTML for a script.
+	parentMux.HandleFunc(prefix+liveClientPath, serveStaticJS(liveClientJS))
 	// Static files for the sub-app (if configured).
 	if app.staticDir != "" {
 		sp := prefix + app.staticURL

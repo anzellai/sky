@@ -22,7 +22,7 @@ import (
 // Symptom: the whole tab freezes, the spinner never resolves, clicks are no-ops
 // — the classic connection-pool-exhaustion signature.
 func TestSseOpenIsIdempotentAndClosesOnUnload(t *testing.T) {
-	js := liveJSWithCfgAndCsrfWithBase("test-sid", liveBannerConfig{}, "csrf-token", "")
+	js := liveClientJS
 
 	// __skyOpenSSE must close any existing connection BEFORE creating a new one.
 	open := strings.Index(js, "function __skyOpenSSE()")

@@ -1792,10 +1792,6 @@ func walkAttrs(attrs []any, ctx tuiLayoutCtx) walkedAttrs {
 					// Sky.Live URL-sync sentinel for history
 					// push/replace. Pure browser-history concept —
 					// no terminal analogue; safe silent skip.
-				case "data-sky-eval":
-					// Legacy Sky.Live CSP-incompatible escape
-					// hatch (post-patch JS eval). No terminal
-					// analogue; safe silent skip.
 				default:
 					tuiWarn("attribute", "raw HTML attribute "+k)
 				}

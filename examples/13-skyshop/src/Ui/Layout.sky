@@ -621,9 +621,12 @@ page model content =
         ]
 
 
+-- A marker element, not code: the Firebase script in Lib.OAuth watches for
+-- it and signs out. (The old `data-sky-eval` string was run through
+-- `new Function`, which no runtime path does any more.)
 viewSignOutTrigger model =
     if model.signOutPending == True then
-        div [ attribute "data-sky-eval" "skySignOut()" ] []
+        div [ attribute "data-skyshop-signout" "1" ] []
 
     else
         text ""

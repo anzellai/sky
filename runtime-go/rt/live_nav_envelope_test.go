@@ -29,9 +29,15 @@ import (
 // envelope, taken verbatim from the served page's JS and translated to Go syntax.
 func patchEnvelopeRegexp(t *testing.T, page string) *regexp.Regexp {
 	t.Helper()
+	// The client is the external /_sky/live.<hash>.js (live_client_asset.go);
+	// the page must load exactly that file.
+	if !strings.Contains(page, `<script src="`+liveClientPath+`"></script>`) {
+		t.Fatal("served page does not load the Live client")
+	}
+	page = liveClientJS
 	fn := strings.Index(page, "function __skyPatch(t) {")
 	if fn < 0 {
-		t.Fatal("served page has no __skyPatch function")
+		t.Fatal("the Live client has no __skyPatch function")
 	}
 	const open = "var m = t.match(/"
 	i := strings.Index(page[fn:], open)
@@ -76,7 +82,7 @@ func assertEnvelopeStripsToBody(t *testing.T, page, wantInBody string) {
 	if strings.Contains(body, "__sky-dev-console") {
 		t.Fatalf("extracted body contains the dev Console badge — it would render twice:\n%s", body)
 	}
-	if strings.Contains(body, "var __skySid") {
+	if strings.Contains(body, "sky-live-cfg") || strings.Contains(body, liveClientPath) {
 		t.Fatalf("extracted body contains the runtime script:\n%.600s", body)
 	}
 }

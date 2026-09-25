@@ -115,6 +115,60 @@ that the next build overwrote.
   the URL and the error instead of a blank page.
 
 See `docs/skyapp/overview.md` and `docs/sky-toml.md` (`SKY_APP_URL`).
+### Every page works under a strict Content-Security-Policy (no inline script)
+
+Sky now runs under `script-src 'self' 'wasm-unsafe-eval'` with no hashes, no
+nonces, no `'unsafe-inline'` and no `'unsafe-eval'`. A reverse proxy that sent
+that policy used to break the Sky Console ("Executing inline script violates …
+script-src"), every Sky.Live page and every Sky.Spa page, because their scripts
+were inline.
+
+- **Sky.Live** (and so the Sky Console, a Live sub-app): the client is now the
+  same-origin file `/_sky/live.<hash>.js` (under the base path for a sub-app,
+  for example `/_sky/console/_sky/live.<hash>.js`), cached as immutable. The
+  session id, CSRF token, base path, view id and banner settings are in a
+  `<script type="application/json" id="sky-live-cfg">` block that the client
+  reads. The browser downloads the client once per runtime version, not on
+  every page load.
+- **Sky.Spa**: the wasm loader is the file `dist/spa-boot.<hash>.js` (next to
+  `wasm_exec.js` and `main.<hash>.wasm`, precompressed with them). Both
+  `dist/index.html` and the SSR page load it with
+  `<script src="/spa-boot.<hash>.js" data-wasm="/main.<hash>.wasm">`. Static
+  hosting needs no change: it is a normal file in `dist/`.
+- **Fallback console shell** and **`sky doc --serve` / `--export`**: their
+  scripts are files too (`/_sky/console-shell.<hash>.js`,
+  `api/search.<hash>.js`).
+- **`data-sky-eval` is removed.** No runtime path calls `eval` or
+  `new Function` any more. Use `data-sky-path` for URL sync, or an event
+  that the app handles. `examples/13-skyshop` is migrated.
+- **New: `SKY_CSP=strict`** makes the runtime send a strict policy itself
+  (Sky.Live pages, `Sky.Http.Server` responses and static files), for an app
+  with no proxy. It is opt-in: unset, the headers do not change. It never
+  overwrites a policy that the app already set. See `docs/sky-toml.md`.
+- **Bundled apps rebuild when their source changes.** `sky doc --serve`,
+  `sky doc --tui` and the console hub cached their built app by version
+  alone, so a compiler whose bundled source or runtime changed within one
+  version served the old app. The cache key now also carries the embedded
+  asset fingerprint. `rust/crates/sky/tests/doc_flow.rs` found it: the stale
+  doc server answered 404 for the new search script.
+
+Regression tests: `runtime-go/rt/csp_strict_test.go` (no inline executable
+script on the Live, Spa and console pages; no `eval` / `new Function` in
+any runtime script; the `SKY_CSP` contract), the Rust tests that pin the
+dist loader to the runtime copy, and `scripts/csp-e2e.sh` (the Console's six
+tabs, a Sky.Live page, a `Std.Ui` form with CSRF, and both Sky.Spa boot
+paths in Chromium, through a proxy that sends the policy and with
+`SKY_CSP=strict`, with zero `securitypolicyviolation` events). On the
+previous runtime the e2e reports a `script-src` violation and a dead page
+for every scenario.
+
+### Migration
+
+- If your app emitted `data-sky-eval`, it no longer runs. Use
+  `data-sky-path` (URL sync), a Sky message, or a same-origin script file
+  that watches for a marker element.
+- A test or tool that read `var __skyCsrfToken = "…"` out of the page must
+  read the `sky-live-cfg` JSON block instead.
 
 ## v0.25.18 — Sky.Spa restores only for the same user; pages hydrate in place; far less build memory; LSP hover (2026-09-25)
 

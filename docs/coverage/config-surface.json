@@ -48,14 +48,14 @@
   ],
   "pre_binary": {
     "bin": [
-      "rust/crates/project/src/build.rs:1627 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1650 (sky_toml_project_key)"
     ],
     "database.driver": [
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:9573 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:9637 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -89,14 +89,14 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:6924 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:7044 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:6975 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:7095 (sky_toml_project_key)"
     ],
     "root": [
-      "rust/crates/project/src/build.rs:1633 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1656 (sky_toml_project_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:6931 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:6982 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
@@ -180,6 +180,7 @@
     "ANALYTICS_RETENTION",
     "ANALYTICS_SYNCHRONOUS_COMMIT",
     "CONSOLE_DISABLED",
+    "CSP",
     "CSRF",
     "DB_CONN_MAX_IDLE_TIME",
     "DB_CONN_MAX_LIFETIME",
@@ -246,12 +247,12 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 119,
+    "documented_names": 120,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 16,
     "read_without_doc": 26,
     "runtime_read_literal_sky_names": 45,
-    "runtime_read_suffixes": 45,
+    "runtime_read_suffixes": 46,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,
     "unclassified_keys": 0,

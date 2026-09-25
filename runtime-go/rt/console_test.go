@@ -42,7 +42,7 @@ func TestConsole_HTMLShell_ServedAtRoot(t *testing.T) {
 		}
 	}
 	// Polling loop present.
-	if !strings.Contains(body, "setInterval(refresh") {
+	if !strings.Contains(consoleShellJS, "setInterval(refresh") {
 		t.Errorf("missing polling loop in console JS")
 	}
 }

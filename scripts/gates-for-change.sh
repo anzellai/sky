@@ -100,6 +100,7 @@ spa_e2e() {
     add 60 "e2e: Sky.Spa examples" "scripts/spa-examples-e2e.sh"
     add 60 "e2e: Sky.Spa + Sky.Live DOM identity" "scripts/spa-vdom-identity-e2e.sh"
     add 60 "e2e: Std.Ui forms" "scripts/ui-forms-e2e.sh"
+    add 60 "e2e: strict Content-Security-Policy" "scripts/csp-e2e.sh"
     add 50 "harness: spa-diff-fuzz" "$HARNESS --only spa-diff-fuzz"
 }
 

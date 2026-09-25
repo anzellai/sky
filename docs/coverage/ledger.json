@@ -451,7 +451,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 76,
+      "expected_assertions": 77,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -473,7 +473,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 142,
+      "expected_assertions": 143,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -14705,8 +14705,8 @@
       "id": "apps:bundled",
       "modules_imported": 24,
       "path": "sky-bundled",
-      "refs_generous": 127,
-      "refs_qualified": 121,
+      "refs_generous": 129,
+      "refs_qualified": 123,
       "role": "Layer2",
       "sky_files": 13,
       "sky_toml_sections": []

@@ -746,6 +746,43 @@ warning: a production device build should use `https://`. The iOS shell gets
 an App Transport Security exception (`NSExceptionDomains`) for exactly that
 host, and the Android shell gets a network security config that permits
 cleartext for exactly that host.
+### Content-Security-Policy — `SKY_CSP` *(v0.25.19+)*
+
+Every page that Sky serves (Sky.Live, the Sky Console, Sky.Spa, `Std.Ui`
+forms) runs under `script-src 'self' 'wasm-unsafe-eval'` with no hashes, no
+nonces, no `'unsafe-inline'` and no `'unsafe-eval'`: the scripts are
+same-origin files and per-page data is in `<script type="application/json">`
+blocks. You can send that policy from a reverse proxy, or have the runtime
+send it:
+
+| Env var         | Default | Meaning |
+|-----------------|---------|---------|
+| `<PREFIX>_CSP`  | (unset) | `strict` sends a strict `Content-Security-Policy` on every Sky.Live page, `Sky.Http.Server` response and static file that has none |
+
+With `SKY_CSP=strict` the policy is:
+
+```
+default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none';
+base-uri 'self'; form-action 'self'; frame-ancestors 'self'
+```
+
+`frame-ancestors` takes the `SKY_LIVE_FRAME_ANCESTORS` list when that is
+set, and `X-Frame-Options: SAMEORIGIN` stays when it is not. Rules:
+
+- **Opt-in.** Unset (or `off`), the response headers do not change.
+- **Never overwrites.** A `Content-Security-Policy` that the app set (for
+  example with `Server.withHeader`) or that a proxy sets later wins. The
+  runtime adds its policy only to a response that has none.
+- **An unknown value is an error, not a silent no-op.** The runtime logs a
+  warning that names the accepted values and sends no policy.
+- It is an environment variable, not a `sky.toml` key, like `SKY_HOST`: the
+  same binary can run with and without it. It is prefix-affected
+  (`FENCE_CSP` under `[env] prefix = "FENCE"`).
+
+The strict policy blocks third-party scripts, images, fonts and API hosts.
+If the app loads any, send your own policy (it wins) instead of
+`SKY_CSP=strict`.
 
 ---
 

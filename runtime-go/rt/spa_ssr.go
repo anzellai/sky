@@ -17,6 +17,7 @@ package rt
 //     empty-#app static shell.
 
 import (
+	"html"
 	"reflect"
 	"strings"
 )
@@ -141,14 +142,12 @@ func SpaSSRPageSeeded(headHTML, bodyHTML, wasmName, modelJSON, settled string, s
 	// not defined") and the wasm never boots. A leading slash is correct at any
 	// route depth.
 	b.WriteString(`<script src="/wasm_exec.js"></script>`)
-	b.WriteString(`<script>const go=new Go();WebAssembly.instantiateStreaming(fetch(`)
-	b.WriteString(jsStringLit(rootAbsoluteAsset(wasmName)))
-	b.WriteString(`),go.importObject).then((res)=>{go.run(res.instance);});`)
-	// Safety net for the blocking hydration overlay: the client normally clears
-	// `data-sky-hydrating` after it hydrates (spaClearHydratingMarker). If the wasm
-	// never boots (a failed fetch/instantiate on a flaky network), drop the
-	// blocking overlay after 12s so the page is not locked forever.
-	b.WriteString(`setTimeout(function(){document.documentElement.removeAttribute('data-sky-hydrating')},12000);</script>`)
+	// The boot loader is a same-origin file (spa_boot.go), never an inline
+	// script: a strict Content-Security-Policy (script-src 'self'
+	// 'wasm-unsafe-eval') blocks inline script, and the page then stayed on
+	// "Loading…". It reads the wasm URL from data-wasm, and it also drops the
+	// blocking hydration overlay after 12s if the wasm never boots.
+	b.WriteString(`<script src="` + SpaBootPath + `" data-wasm="` + html.EscapeString(rootAbsoluteAsset(wasmName)) + `"></script>`)
 	b.WriteString(`</body></html>`)
 	return b.String()
 }
@@ -166,13 +165,6 @@ func escapeModelForScript(json string) string {
 // bare `main.<hash>.wasm`; an already-rooted value is left unchanged.
 func rootAbsoluteAsset(name string) string {
 	return "/" + strings.TrimPrefix(name, "/")
-}
-
-// jsStringLit renders a double-quoted JS string literal for the wasm URL,
-// escaping the characters that could break out of the literal.
-func jsStringLit(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`)
-	return `"` + r.Replace(s) + `"`
 }
 
 // spaSettledMarker is the attribute the SSR page stamps on #app naming the

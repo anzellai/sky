@@ -226,6 +226,12 @@ jobs:
       # literal-topic pub/sub delivers — on Sky.Live AND Sky.Spa.
       - name: Gate — Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
         run: scripts/ui-forms-e2e.sh
+      # csp-e2e — every page Sky serves works under a strict
+      # Content-Security-Policy (script-src 'self' 'wasm-unsafe-eval', no inline
+      # script): the Console, Sky.Live, a Std.Ui form and both Sky.Spa boot paths,
+      # behind a proxy that sets the policy and with SKY_CSP=strict.
+      - name: Gate — strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
+        run: scripts/csp-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported
       # "binary missing" for two examples and "N% pixels exceed" for nine

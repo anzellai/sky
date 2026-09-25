@@ -356,7 +356,7 @@ for UX/DX/security/scalability, not by accident.
 | **Observability** | `Std.Log` structured logs; the dev console auto-mounts at `/_sky/console`; `OTEL_EXPORTER_OTLP_ENDPOINT` for an external collector. Telemetry **storage** is tunable via `Sky.Config.withTelemetry*` builders (or `SKY_TELEMETRY_*` env, which overrides them): counter/histogram coalescing windows to cut DB rows, and `withTelemetryDbCapacity` for the hourly size-report "near full" flag. See `docs/observability.md` + `sky doc Sky.Config`. |
 | **Sky.Live navigation** | Every internal link is `sky-nav` (one persistent SSE per session). Bare `<a href>` only to deliberately leave the app. |
 | **Password forms** | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record; never per-keystroke `onInput` on a password field. The record's fields must be `String`/`Int`/`Float`/`Bool`/`Maybe` of those (`[E2010]`); each is decoded strictly from the control with the same `Ui.name`. |
-| **No raw HTML/JS** | `Std.Ui` HTML-escapes everything; `data-sky-eval` is forbidden. |
+| **No raw HTML/JS** | `Std.Ui` HTML-escapes everything. `data-sky-eval` is gone (no runtime path evaluates a string); use `data-sky-path` for URL sync. |
 
 The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
 `Std.Ui` layout, Sky.Tui, Sky.Webview) live in `docs/skylive/`, `docs/skyui/`,
@@ -382,6 +382,12 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
 - Multi-replica → a **shared** session store (`redis`/`postgres`), sticky
   sessions keyed on `sky_sid`, and cross-instance pub/sub (`store=redis` or
   `SKY_LIVE_BROKER_URL`). `memory` and `sqlite` are single-instance only.
+- Content-Security-Policy: every page Sky serves (Sky.Live, the Sky Console,
+  Sky.Spa) works under `script-src 'self' 'wasm-unsafe-eval'` with **no hashes
+  and no `'unsafe-inline'`** — the scripts are same-origin files
+  (`/_sky/live.<hash>.js`, `spa-boot.<hash>.js`). Send the policy from the
+  proxy, or set `SKY_CSP=strict` to have the runtime send it (it never
+  overwrites a policy the app set). See `docs/sky-toml.md`.
 
 > **`SKY_AUTH_TOKEN_SECRET` is not a runtime setting, and this gate used to say
 > it was.** Nothing in `runtime-go/` reads it: `sky_sid` is unsigned random hex,

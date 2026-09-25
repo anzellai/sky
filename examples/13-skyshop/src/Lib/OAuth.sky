@@ -84,6 +84,8 @@ var p=provider==='facebook'?new firebase.auth.FacebookAuthProvider():new firebas
 firebase.auth().signInWithPopup(p).catch(function(e){if(el){el.textContent=e.message;el.style.display='block';}});
 }
 function skySignOut(){if(_fbReady){firebase.auth().signOut();}}
+function _skyWatchSignOut(){var el=document.querySelector('[data-skyshop-signout]');if(el&&!el.__skyshopDone){el.__skyshopDone=true;skySignOut();}}
+new MutationObserver(_skyWatchSignOut).observe(document.documentElement,{childList:true,subtree:true});
 </script>"""
 
 

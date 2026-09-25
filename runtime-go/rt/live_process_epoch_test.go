@@ -87,7 +87,7 @@ func TestSSEHello_CarriesTheProcessEpoch(t *testing.T) {
 // changes. The browser e2e (scripts/live-client-verify.mjs "L7 restart")
 // drives it end to end; this pins the reset in the served page.
 func TestLiveClientResetsBroadcastGuardOnNewEpoch(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	for _, want := range []string{
 		"var __skyProcEpoch = null;",
 		"if (__skyProcEpoch !== null && hp.pe !== __skyProcEpoch) __skyLastGlobalSeq = 0;",

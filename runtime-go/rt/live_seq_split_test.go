@@ -608,7 +608,7 @@ func Test_LiveApp_GlobalSeq_IsAtomicInt64(t *testing.T) {
 // __skyLastGlobalSeq for symmetry with the existing
 // __skyLastAppliedSeq counter.)
 func Test_LiveJS_EmitsGlobalSeqGuard(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 
 	// State variable present.
 	if !strings.Contains(js, "__skyLastGlobalSeq") {
@@ -656,7 +656,7 @@ func Test_LiveJS_EmitsGlobalSeqGuard(t *testing.T) {
 // design-doc reference attached to __skyHandleResponse itself
 // describes the global counter BEFORE the function starts).
 func Test_LiveJS_GlobalSeqGuardComesAfterLocalSeqGuard(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	// Scope the index search to the function body. The function
 	// definition is `function __skyHandleResponse(seq, ackInputs,
 	// applyFn, globalSeq) { ... }`; we start the scan from the `{`

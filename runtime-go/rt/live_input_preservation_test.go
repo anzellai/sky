@@ -121,7 +121,7 @@ func TestNonEmptyDiffStillJson(t *testing.T) {
 // silently regress every Sky.Live signup form. These markers are the
 // regression fence.
 func TestLiveJS_PreserveAllUncontrolledInputs(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		// Helper that decides "is this server-rendered placeholder
 		// uncontrolled, i.e. should we splice the live node across".
@@ -158,7 +158,7 @@ func TestLiveJS_PreserveAllUncontrolledInputs(t *testing.T) {
 // __skyApplyPatches. Without this, a Tick subscription firing while
 // the user has a <select> open would close the dropdown mid-pick.
 func TestLiveJS_OpenSelectDefence(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		// Detection: focused SELECT is the proxy for "dropdown open".
 		`document.activeElement.tagName === "SELECT"`,
