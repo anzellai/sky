@@ -50,6 +50,7 @@
 #                               (the default on a GitHub Actions runner; =on enables)
 #   SKY_GATE_CACHE_DIR=<dir>    where entries live
 #                               (default ${XDG_CACHE_HOME:-$HOME/.cache}/sky-gate-build)
+#   SKY_GATE_CACHE_MIN_FREE_MB=<n> store nothing when the disk has less free (default 20480)
 #   SKY_GATE_CACHE_MAX_MB=<n>   size bound, pruned oldest-used first (default 8192;
 #                               a built example is ~220 MB, and on APFS a restored
 #                               copy is a clone that shares the entry's blocks)
@@ -285,6 +286,18 @@ gate_cached_build() { # <sky-binary> <project-dir> [--artefact <rel>]... [--clea
     ( cd "$dir" && "$bin" "$@" ) || rc=$?
     if [ $rc -ne 0 ] || [ $clean -eq 0 ]; then
         return $rc
+    fi
+
+    # Never store onto a nearly full disk. A later clean build of the same
+    # project replaces its output, and from then on the entry holds its own
+    # blocks (~220 MB for a built example), so a store is real disk. Below the
+    # floor the build result is kept, but nothing is stored.
+    local free_kb floor_kb
+    free_kb=$(df -k "$dir" 2>/dev/null | awk 'NR==2 {print $4}')
+    floor_kb=$(( ${SKY_GATE_CACHE_MIN_FREE_MB:-20480} * 1024 ))
+    if [ -n "$free_kb" ] && [ "$free_kb" -lt "$floor_kb" ]; then
+        echo "gate-cache: not stored (20 20 12 61 79 80 81 98 33 100 204 250 395 398 399 400 701( free_kb / 1024 )) MB free, floor $(( floor_kb / 1024 )) MB)" >&2
+        return 0
     fi
 
     # Store atomically: build the entry in a private directory, then rename it

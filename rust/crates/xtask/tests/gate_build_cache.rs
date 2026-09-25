@@ -88,7 +88,8 @@ impl World {
             })
             .args(["--", "build", "src/Main.sky"])
             .env("SKY_GATE_CACHE_DIR", &self.cache)
-            .env("SKY_GATE_CACHE", "on");
+            .env("SKY_GATE_CACHE", "on")
+            .env("SKY_GATE_CACHE_MIN_FREE_MB", "0");
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
@@ -319,4 +320,19 @@ fn a_ci_runner_defaults_to_off() {
     let log = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success() && log.contains("OFF"), "{log}");
     assert!(!w.cache.join("entries").exists());
+}
+
+/// A nearly full disk gets no new entry: the build still succeeds and its
+/// output is used, but nothing is stored.
+#[test]
+fn a_nearly_full_disk_is_not_stored_to() {
+    let w = world("floor");
+    let floor = [("SKY_GATE_CACHE_MIN_FREE_MB", "999999999")];
+    let (ok, log) = w.build(&floor, &[]);
+    assert!(ok && log.contains("not stored"), "{log}");
+    let (_, log) = w.build(&floor, &[]);
+    assert!(
+        log.contains("MISS"),
+        "nothing was stored, so a rerun misses: {log}"
+    );
 }

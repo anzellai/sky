@@ -11,7 +11,10 @@ This page is the operator's view.
 cargo run --release -p xtask -- harness --list          # the registry
 cargo run --release -p xtask -- harness                 # run the T1 gates
 cargo run --release -p xtask -- harness --only reject   # run one
-cargo run --release -p xtask -- harness --verify-falsifiers
+cargo run --release -p xtask -- harness --verify-falsifiers        # incremental
+cargo run --release -p xtask -- harness --verify-falsifiers --all  # re-prove every gate
+cargo run --release -p xtask -- harness --explain-inputs conformance
+scripts/gates-for-change.sh --dry-run                             # which gates a change needs
 ```
 
 ## Why it exists
@@ -144,8 +147,65 @@ error[E0080]: evaluation panicked: every gate must declare at least one
    `VACUOUS`;
 4. revert, guaranteed — the patch reverts in `Drop`, including on panic.
 
-Proofs are recorded in `docs/coverage/falsifier-proofs.json`. A gate whose proof
-is missing or older than the window renders `UNPROVEN` under `--require-proofs`.
+Proofs are recorded in `docs/coverage/falsifier-proofs.json`, one record per
+gate: as declared only when **every** declared mutation behaved as declared (a
+gate with two mutations used to be recorded by whichever ran last). A gate whose
+proof is missing, older than the window, or whose inputs changed since it was
+taken renders `UNPROVEN` under `--require-proofs`.
+
+### Incremental proofs — a proof is re-taken only when its inputs change
+
+A full sweep re-proves every gate: each baseline and each mutated run, with an
+`xtask` rebuild per Rust-source mutation. Measured locally it is over an hour,
+and almost all of it re-establishes proofs nothing touched. So a local
+`--verify-falsifiers` is **incremental**. Each record carries an `inputs_hash`,
+the digest of everything that decides whether the proof still holds:
+
+- the gate's **registration** — name, tier, platforms, budget, exact assertion
+  count, expectation, and every mutation's id, description, target, `from` and
+  `to` text;
+- the **mutation targets**, byte for byte;
+- the gate's **body source** — its function and the transitive closure of the
+  helper items it calls in `harness/bodies.rs`, `harness/layer2.rs` and
+  `main.rs` (comments stripped, so an edited comment does not force a re-proof),
+  plus every `xtask` module it calls into (`crate::corpus::…` is all of
+  `src/corpus/`);
+- its **fixtures and scripts** — every tracked path named by a string literal in
+  that closure or in those modules, and every tracked path a named script names
+  in turn (one level: `conformance.sh` pulls in the `lib/*.sh` it sources and
+  the suites it runs). A script's references into the toolchain (`rust/`,
+  `runtime-go/`, `sky-stdlib/`, `docs/`, …) are not followed — the compiler as a
+  whole is what `--all` is for;
+- the **falsifier runner** (`harness/falsify.rs`, `harness/child.rs`).
+
+Only tracked files count, by their working-tree content, so a digest is a
+function of what a commit contains and CI computes the same one. The proof
+ledger itself is never an input (the `coverage-ledger` gate reads it).
+
+A run **re-proves** a gate when its digest changed, when it has no record, when
+the record is not as declared or names a retired mutation, when it is out of the
+window, or when either side has no digest (a legacy record, or inputs that could
+not be resolved — an error always means "do the work"). Every other gate is
+**carried**, and the run says so:
+
+```
+RE-PROVEN 2 gate(s), CARRIED 39 gate(s) (inputs unchanged since their recorded proof)
+  re-proven  canary: the canary is re-run by every falsifier run
+  re-proven  apps-ledger: its inputs changed since the proof
+  carried    roundtrip: proof taken 0d ago, inputs digest unchanged
+```
+
+The canary runs in every falsifier run, whatever the selection. `--all` carries
+nothing; the nightly and the release pass it, so a whole-system interaction the
+digest does not model is still re-proven before a tag.
+`--explain-inputs <gate>` prints a gate's input paths, its body closure and its
+digest — use it to see why a gate re-proved, or to check a new gate's inputs.
+
+Because `--require-proofs` (the release tier lines) rejects a proof whose digest
+no longer matches the tree, a change to a gate's inputs must land with the
+re-proved ledger: run the incremental `--verify-falsifiers` (it is the last
+step `scripts/gates-for-change.sh` plans) and commit
+`docs/coverage/falsifier-proofs.json`.
 
 ### Where the proofs are checked
 
@@ -162,10 +222,60 @@ can rot it. Both are now caught, at two depths:
 - **Does-it-still-bite, deeply, nightly.** `--verify-falsifiers` actually applies
   each mutation and confirms the gate reddens. It rebuilds `xtask` per
   Rust-source mutation and runs every selected gate **twice** (baseline +
-  mutated), so it is the deepest and slowest check here and runs in the nightly
-  `falsifier-verification` job (`nightly-sweep.yml`), scoped `--tier t1` — the
-  merge-blocking tier the per-PR gates lean on. It accepts `--tier` / `--only`
-  to verify one slice at a time; with neither it sweeps the whole registry.
+  mutated), so it is the deepest and slowest check here. It runs with `--all`
+  in the nightly `falsifier-verification` job (`nightly-sweep.yml`, `--tier
+  t1`) and in the release workflow's `gate-falsifiers-1` … `-6` jobs, whose
+  `--only` lists together cover every registered gate of every tier. It accepts
+  `--tier` / `--only` to verify one slice at a time; with neither it sweeps the
+  whole registry. Locally it is incremental (above).
+
+## Which gates to run: the narrow set locally, the full suite at merge and release
+
+- **Per change, locally:** `scripts/gates-for-change.sh`. It diffs against a
+  base (default `origin/main`; committed, staged, unstaged and untracked paths
+  all count), maps each path to the narrowest gates that exercise it, prints the
+  plan and runs it (`--dry-run` prints only). For example: `runtime-go/rt/**` →
+  `go test ./rt/...` + the browser tier + the Sky.Live client e2e;
+  `rust/crates/project/src/spa_*` → `cargo test -p project` + the Sky.Spa e2e +
+  `spa-diff-fuzz`; `rust/crates/{syntax,hir,ty,lower,codegen}/**` → the crate's
+  tests + the corpus gates + coerce-floor + T2 + build-run + the example sweep +
+  conformance; `docs/**` → `doc-examples.sh`; `examples/<x>/**` → roundtrip +
+  `build-run --only=<x>` + the sweep. A path no rule claims is printed as
+  `UNMAPPED`. The last step is always the incremental falsifier run.
+- **At a merge to `main` or a release tag:** the release workflow's full suite
+  (`.github/workflows/release.yml`), which must be green before the tag. It runs
+  every tier — workspace tests, T1-T4, every falsifier proof with `--all`, the
+  census `--check`s, the full clean-slate example sweep (build **and** run),
+  build-run, conformance, verify-cli, the browser tier, every e2e script, the doc
+  examples and `go test -race` — in concurrent jobs that `release:` waits on.
+  Nothing is deferred to the nightly. `tests/workflows_parse.rs` fails the build
+  if a `gate-*` job is disabled or drops out of `release: needs:`.
+
+### The gate build cache
+
+The sweep, the browser gate, the ui-showcase gate, the e2e scripts and
+`build-run`'s `sky build` paths share `scripts/lib/gate-build-cache.sh`, a
+content-addressed cache of built projects. The key is the compiler binary's
+hash (which carries the baked embed fingerprint), the project's absolute path
+and full content (everything but build output and run-time state), the `sky`
+arguments and artefact paths, `go version` plus the Go env that changes codegen,
+and the `SKY_*` / `CGO_*` environment. A hit restores what a **clean** build of
+identical inputs stored (an APFS clone on macOS); anything else builds.
+
+It never serves what a fresh build would not produce: a changed source file, a
+rebuilt compiler, other arguments or another toolchain miss; only a `--clean`
+build stores; a project with floating `[go.dependencies]` (network-resolved
+"latest") is never cached; the callers still refuse a stale compiler
+(`require_fresh_compiler`). `SKY_GATE_CACHE=off` disables it (the default on a
+GitHub Actions runner, where each job builds a project once),
+`SKY_GATE_CACHE_DIR` moves it, `SKY_GATE_CACHE_MAX_MB` (default 8192) bounds
+it, oldest-used first, and nothing is stored while the disk has under
+`SKY_GATE_CACHE_MIN_FREE_MB` (default 20480) free. e2e fixtures build in stable per-worktree directories
+under the cache directory, because the key includes the project path.
+
+`scripts/build.sh` no longer wipes the Go build cache on every run past 5 GB;
+it wipes it only under disk pressure (over 5 GB with under 30 GB free), or past
+20 GB — the policy `example-sweep.sh` already used.
 
 ## The canary
 

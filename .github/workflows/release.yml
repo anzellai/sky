@@ -3,6 +3,11 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # A dispatched run (`gh workflow run release.yml --ref <branch>`) executes
+  # every gate job — the full suite — and skips the publishing jobs, so a merge
+  # to main can be held on the same gate as a tag (CLAUDE.md §0.2.1). Open the
+  # PR first: `verify-ci-green` needs the per-commit ci-green of the head commit.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -860,6 +865,8 @@ jobs:
   # Assemble release assets, generate checksums, publish GitHub Release.
   # ────────────────────────────────────────────────────────────────
   release:
+    # Only a tag publishes; a dispatched full-suite run stops before this job.
+    if: startsWith(github.ref, 'refs/tags/v')
     # Publication is blocked until EVERY gate job is green — the §0.2.1
     # "full suite green before publish" invariant, preserved across the split.
     # A red gate → this job never runs → no Release → the tag is safe. This list
