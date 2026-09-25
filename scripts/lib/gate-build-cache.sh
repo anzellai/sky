@@ -116,6 +116,18 @@ gate_cache_project_cacheable() { # <project-dir>
     return 0
 }
 
+# A SHA-256 hex digest, or failure. Every digest in the key goes through this:
+# a hash that failed (a transient `fork` error under load, a file vanishing)
+# must fail the KEY, never contribute an empty string — two failed hashes of
+# different content would otherwise produce the same key and serve a stale hit.
+_gc_checked() { # <digest>
+    case "$1" in
+        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+            [ ${#1} -eq 64 ] && { printf '%s\n' "$1"; return 0; } ;;
+    esac
+    return 1
+}
+
 # Every input file of a project, as `<sha256>  <relpath>` lines, sorted.
 _gc_project_manifest() { # <project-dir>
     (
@@ -126,66 +138,93 @@ _gc_project_manifest() { # <project-dir>
             -o -type f \
             ! -name '*.db' ! -name '*.db-shm' ! -name '*.db-wal' ! -name '*.db-journal' \
             ! -name '*.log' ! -name '.DS_Store' \
-            -print | LC_ALL=C sort | while IFS= read -r f; do
-            printf '%s  %s\n' "$(_gc_file_sha256 "$f")" "$f"
-        done
+            -print | LC_ALL=C sort >"${TMPDIR:-/tmp}/.gc-files.$$" || exit 1
+        while IFS= read -r f; do
+            h="$(_gc_checked "$(_gc_file_sha256 "$f")")" || exit 1
+            printf '%s  %s\n' "$h" "$f"
+        done <"${TMPDIR:-/tmp}/.gc-files.$$"
+        rc=$?
+        rm -f "${TMPDIR:-/tmp}/.gc-files.$$"
+        exit $rc
     )
 }
 
 # The compiler's identity, computed once per process tree (a 100+ MB binary is
-# not re-hashed for every project). Keyed by path, size and mtime so a rebuilt
-# binary in the same process tree is re-hashed.
+# not re-hashed for every project). Keyed by path, inode, size and mtime so a
+# rebuilt binary in the same process tree is re-hashed.
 _gc_compiler_hash() { # <sky-binary>
-    local bin="$1" stamp
-    stamp="$bin:$(stat -c '%i:%s:%Y' "$bin" 2>/dev/null || stat -f '%i:%z:%m' "$bin")"
+    local bin="$1" stamp h
+    stamp="$bin:$(stat -c '%i:%s:%Y' "$bin" 2>/dev/null || stat -f '%i:%z:%m' "$bin")" || return 1
     if [ "${_SKY_GATE_CACHE_COMPILER_STAMP:-}" = "$stamp" ] && [ -n "${_SKY_GATE_CACHE_COMPILER_HASH:-}" ]; then
         printf '%s\n' "$_SKY_GATE_CACHE_COMPILER_HASH"
         return 0
     fi
-    _SKY_GATE_CACHE_COMPILER_HASH="$(_gc_file_sha256 "$bin")"
+    h="$(_gc_checked "$(_gc_file_sha256 "$bin")")" || return 1
+    _SKY_GATE_CACHE_COMPILER_HASH="$h"
     _SKY_GATE_CACHE_COMPILER_STAMP="$stamp"
     export _SKY_GATE_CACHE_COMPILER_HASH _SKY_GATE_CACHE_COMPILER_STAMP
-    printf '%s\n' "$_SKY_GATE_CACHE_COMPILER_HASH"
+    printf '%s\n' "$h"
 }
 
+# The Go toolchain's identity. A probe that fails is a failed KEY: an empty
+# toolchain section would match any other empty one, across Go versions.
 _gc_toolchain() {
-    if command -v go >/dev/null 2>&1; then
-        go version 2>/dev/null
-        go env GOOS GOARCH CGO_ENABLED GOFLAGS GOEXPERIMENT GOAMD64 GOARM64 CC 2>/dev/null
-    else
-        echo "go: absent"
-    fi
+    command -v go >/dev/null 2>&1 || { echo "go: absent"; return 0; }
+    local v e
+    v="$(go version 2>/dev/null)" || return 1
+    e="$(go env GOOS GOARCH CGO_ENABLED GOFLAGS GOEXPERIMENT GOAMD64 GOARM64 CC 2>/dev/null)" || return 1
+    case "$v" in "go version "*) ;; *) return 1 ;; esac
+    printf '%s\n%s\n' "$v" "$e"
 }
 
-# The full key text. Its SHA-256 is the entry name.
+# The key's environment section: every SKY_* / CGO_* variable, by NAME and a
+# DIGEST of its value. Values are never written: a developer's environment
+# holds secrets (`SKY_*_SECRET`, OAuth client secrets), and the key text is
+# stored next to each entry.
+#
+# SKY_RUNTIME_DIR is excluded: only the retired Haskell compiler read it (the
+# Rust compiler embeds its runtime, whose content the binary hash covers), and
+# the sweep exports it while the browser gate does not — keeping it would stop
+# the two from sharing a build. `tests/gate_build_cache.rs` fails if any Rust
+# compiler source starts reading it.
+_gc_env() {
+    local name val h
+    for name in $(env | sed -n 's/^\(\(SKY\|CGO\)_[A-Za-z0-9_]*\)=.*/\1/p' | LC_ALL=C sort -u); do
+        case "$name" in SKY_GATE_CACHE* | SKY_RUNTIME_DIR | _SKY_*) continue ;; esac
+        eval "val=\${$name-}"
+        h="$(_gc_checked "$(printf '%s' "$val" | _gc_sha256)")" || return 1
+        printf '%s=%s\n' "$name" "$h"
+    done
+}
+
+# The full key text. Its SHA-256 is the entry name. Fails — and the caller
+# then builds without the cache — when any part cannot be established.
 gate_cache_key_text() { # <sky-binary> <project-dir> <artefacts> <sky args...>
     local bin="$1" dir="$2" artefacts="$3"
     shift 3
-    local abs
+    local abs compiler toolchain envs files a
     abs="$(cd "$dir" && pwd -P)" || return 1
-    printf 'gate-build-cache v1\n'
-    printf 'compiler %s\n' "$(_gc_compiler_hash "$bin")"
+    compiler="$(_gc_compiler_hash "$bin")" || return 1
+    toolchain="$(_gc_toolchain)" || return 1
+    envs="$(_gc_env)" || return 1
+    files="$(_gc_project_manifest "$abs")" || return 1
+    [ -n "$files" ] || return 1
+    printf 'gate-build-cache v2\n'
+    printf 'compiler %s\n' "$compiler"
     printf 'project %s\n' "$abs"
     printf 'artefacts %s\n' "$artefacts"
     printf 'args'
-    local a
     for a in "$@"; do printf ' [%s]' "$a"; done
     printf '\n'
-    printf 'toolchain\n'
-    _gc_toolchain
-    printf 'env\n'
-    # SKY_RUNTIME_DIR is excluded: only the retired Haskell compiler read it (the
-    # Rust compiler embeds its runtime, whose content the binary hash covers),
-    # and the sweep exports it while the browser gate does not — keeping it
-    # would stop the two from sharing a build. `tests/gate_build_cache.rs` fails
-    # if any Rust compiler source starts reading it.
-    env | LC_ALL=C sort | grep -E '^(SKY_|CGO_)' | grep -vE '^(SKY_GATE_CACHE|SKY_RUNTIME_DIR=)' || true
-    printf 'files\n'
-    _gc_project_manifest "$abs"
+    printf 'toolchain\n%s\n' "$toolchain"
+    printf 'env\n%s\n' "$envs"
+    printf 'files\n%s\n' "$files"
 }
 
 gate_cache_key() { # same arguments as gate_cache_key_text
-    gate_cache_key_text "$@" | _gc_sha256
+    local text
+    text="$(gate_cache_key_text "$@")" || return 1
+    _gc_checked "$(printf '%s' "$text" | _gc_sha256)"
 }
 
 _gc_copy_tree() { # <src> <dst> — clone on APFS / reflink on btrfs+xfs when possible
@@ -248,10 +287,16 @@ gate_cached_build() { # <sky-binary> <project-dir> [--artefact <rel>]... [--clea
         return $?
     fi
 
-    local key root entry
-    _gc_compiler_hash "$bin" >/dev/null || return 1
-    key="$(gate_cache_key "$bin" "$dir" "$artefacts" "$@")" || {
-        echo "gate-cache: OFF $name (key could not be computed)" >&2
+    local key keytext root entry
+    # One key text, computed once: the entry name is its digest, and the same
+    # text is what gets stored beside the entry.
+    if keytext="$(gate_cache_key_text "$bin" "$dir" "$artefacts" "$@")"; then
+        key="$(_gc_checked "$(printf '%s' "$keytext" | _gc_sha256)")" || key=""
+    else
+        key=""
+    fi
+    [ -n "$key" ] || {
+        echo "gate-cache: OFF $name (key could not be computed; building without the cache)" >&2
         ( cd "$dir" && "$bin" "$@" )
         return $?
     }
@@ -312,7 +357,7 @@ gate_cached_build() { # <sky-binary> <project-dir> [--artefact <rel>]... [--clea
             _gc_copy_tree "$dir/$a" "$tmp/$a" || { rm -rf "$tmp"; return 0; }
         fi
     done
-    gate_cache_key_text "$bin" "$dir" "$artefacts" "$@" >"$tmp/.key" 2>/dev/null || true
+    printf '%s\n' "$keytext" >"$tmp/.key"
     : >"$tmp/.complete"
     mv "$tmp" "$entry" 2>/dev/null || rm -rf "$tmp"
     gate_cache_prune

@@ -336,3 +336,58 @@ fn a_nearly_full_disk_is_not_stored_to() {
         "nothing was stored, so a rerun misses: {log}"
     );
 }
+
+/// The key text stored beside an entry never holds an environment VALUE: a
+/// developer's `SKY_*` variables include secrets. It holds a digest, so a
+/// changed value still misses.
+#[test]
+fn no_environment_value_is_written_to_the_cache() {
+    let w = world("secret");
+    let secret = "s3cr3t-value-that-must-not-land-on-disk";
+    let (ok, log) = w.build(&[("SKY_SOME_SECRET", secret)], &[]);
+    assert!(ok && log.contains("MISS"), "{log}");
+    let mut found = false;
+    for e in std::fs::read_dir(w.cache.join("entries"))
+        .unwrap()
+        .flatten()
+    {
+        let key = std::fs::read_to_string(e.path().join(".key")).unwrap_or_default();
+        assert!(key.contains("SKY_SOME_SECRET="), "the name is keyed: {key}");
+        assert!(
+            !key.contains(secret),
+            "a secret value was written to {}",
+            e.path().display()
+        );
+        found = true;
+    }
+    assert!(found, "no entry was stored");
+    let (_, log) = w.build(&[("SKY_SOME_SECRET", "other")], &[]);
+    assert!(log.contains("MISS"), "a changed value must miss: {log}");
+}
+
+/// A toolchain probe that fails is a failed KEY — the build runs uncached —
+/// never an empty toolchain section that another failed probe would match.
+#[test]
+fn a_failed_toolchain_probe_builds_uncached() {
+    let w = world("goprobe");
+    let fake = w.root.join("fakego");
+    std::fs::create_dir_all(&fake).unwrap();
+    std::fs::write(fake.join("go"), "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(fake.join("go"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        fake.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let (ok, log) = w.build(&[("PATH", path.as_str())], &[]);
+    assert!(ok && log.contains("OFF"), "{log}");
+    assert!(
+        !w.cache.join("entries").exists()
+            || std::fs::read_dir(w.cache.join("entries")).unwrap().count() == 0,
+        "an entry was stored under an unknown toolchain"
+    );
+}
