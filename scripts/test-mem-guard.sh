@@ -104,7 +104,7 @@ expect_class "/usr/local/go/pkg/tool/linux_amd64/link" always
 expect_class "/opt/homebrew/Cellar/go/1.26.1/libexec/pkg/tool/darwin_arm64/asm" always
 expect_class "/usr/local/go/pkg/tool/linux_amd64/cgo" always
 expect_class "/usr/local/go/bin/go" always
-expect_class "/Users/me/.cargo/bin/cargo" always
+expect_class "/opt/rust/bin/cargo" always
 expect_class "sky" always
 expect_class "/bin/link" none
 expect_class "/usr/local/bin/compile" none
