@@ -182,7 +182,9 @@ _gc_toolchain() {
 # holds secrets (`SKY_*_SECRET`, OAuth client secrets), and the key text is
 # stored next to each entry.
 #
-# SKY_RUNTIME_DIR is excluded: only the retired Haskell compiler read it (the
+# Excluded: this cache's own knobs; `SKY_WITH_TIMEOUT_*`, the time-bound
+# shim's knobs (the sweep exports them, the browser gate does not); and
+# SKY_RUNTIME_DIR: only the retired Haskell compiler read it (the
 # Rust compiler embeds its runtime, whose content the binary hash covers), and
 # the sweep exports it while the browser gate does not — keeping it would stop
 # the two from sharing a build. `tests/gate_build_cache.rs` fails if any Rust
@@ -190,7 +192,7 @@ _gc_toolchain() {
 _gc_env() {
     local name val h
     for name in $(env | sed -n 's/^\(\(SKY\|CGO\)_[A-Za-z0-9_]*\)=.*/\1/p' | LC_ALL=C sort -u); do
-        case "$name" in SKY_GATE_CACHE* | SKY_RUNTIME_DIR | _SKY_*) continue ;; esac
+        case "$name" in SKY_GATE_CACHE* | SKY_RUNTIME_DIR | SKY_WITH_TIMEOUT_* | _SKY_*) continue ;; esac
         eval "val=\${$name-}"
         h="$(_gc_checked "$(printf '%s' "$val" | _gc_sha256)")" || return 1
         printf '%s=%s\n' "$name" "$h"

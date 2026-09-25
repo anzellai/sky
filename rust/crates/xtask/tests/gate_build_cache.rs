@@ -270,7 +270,7 @@ fn the_cache_is_pruned_to_its_bound() {
 /// is safe only while no Rust compiler source reads it: if one starts to, the
 /// variable changes what a build produces and must be back in the key.
 #[test]
-fn the_env_var_the_key_ignores_is_read_by_no_compiler_source() {
+fn the_env_vars_the_key_ignores_are_read_by_no_compiler_source() {
     fn walk(dir: &Path, hits: &mut Vec<String>) {
         let Ok(rd) = std::fs::read_dir(dir) else {
             return;
@@ -284,7 +284,7 @@ fn the_env_var_the_key_ignores_is_read_by_no_compiler_source() {
                 walk(&p, hits);
             } else if p.extension().is_some_and(|x| x == "rs") {
                 let text = std::fs::read_to_string(&p).unwrap_or_default();
-                if text.contains("SKY_RUNTIME_DIR") {
+                if text.contains("SKY_RUNTIME_DIR") || text.contains("SKY_WITH_TIMEOUT") {
                     hits.push(p.display().to_string());
                 }
             }
@@ -295,8 +295,8 @@ fn the_env_var_the_key_ignores_is_read_by_no_compiler_source() {
     hits.retain(|h| !h.contains("/xtask/"));
     assert!(
         hits.is_empty(),
-        "a compiler source now reads SKY_RUNTIME_DIR, which scripts/lib/gate-build-cache.sh \
-         leaves out of its key — put it back in the key: {hits:?}"
+        "a compiler source now reads SKY_RUNTIME_DIR or SKY_WITH_TIMEOUT_*, which \
+         scripts/lib/gate-build-cache.sh leaves out of its key — put it back in the key: {hits:?}"
     );
 }
 
@@ -390,4 +390,16 @@ fn a_failed_toolchain_probe_builds_uncached() {
             || std::fs::read_dir(w.cache.join("entries")).unwrap().count() == 0,
         "an entry was stored under an unknown toolchain"
     );
+}
+
+/// The time-bound shim's own knobs are not compiler inputs: the sweep exports
+/// them and the browser gate does not, and keying on them stopped the two from
+/// sharing a single build (measured: every browser-gate build missed after a
+/// full sweep had stored the same projects).
+#[test]
+fn the_time_bound_shims_knobs_do_not_split_the_key() {
+    let w = world("shim");
+    w.build(&[], &[]);
+    let (_, log) = w.build(&[("SKY_WITH_TIMEOUT_KILL_AFTER", "10")], &[]);
+    assert!(log.contains("HIT"), "{log}");
 }
