@@ -56,6 +56,29 @@ No public function signature changes.
 
 ### Tooling
 
+- **Go builds a large app with far less memory.** On a 22k-line Sky.Spa app,
+  one `go tool compile` of the backend's generated `main` package peaked at
+  5.6 GB, the embedded console's package at 4.8 GB with Go inlining on, and
+  `go build` can run two such compiles at once: enough to crash a 16 GB
+  machine. Two generated shapes caused it, both nests of closures that Go's
+  inliner copies once per level. A tail `if` / `case` / `let` was an
+  immediately-called closure, so an `else if` chain or a `case` of `case`s
+  nested one per level (the app's `update` became 7,871 closure bodies); these
+  are now plain Go statements. A curried value of three or more arguments (a
+  record constructor handed to `Codec.object`: 74 nested closures for a
+  74-field record) is now one closure over an argument slice (`rt.CurryN`).
+  Behaviour is unchanged. Measured with `go build -p 1`, go1.26.1:
+  `main` 5.6 GB / 18.3 s → 2.2 GB / 6.7 s; the console 4.8 GB / 10.8 s →
+  0.5 GB / 1.4 s with inlining on; `link` 3.4 GB → 0.7 GB. Tests:
+  `rust/crates/sky/tests/go_compile_shape.rs` (closure depth and a measured
+  compile budget), `rust/crates/lower/src/shape.rs`, `runtime-go/rt/curry_test.go`.
+- **`sky build` limits `go build -p` to what memory holds.** When the available
+  memory does not hold one compile per CPU plus 1 GB, `sky build` passes
+  `go build -p <n>` with the number of compiles it holds (at least 1). The
+  per-compile peak is estimated from the size of `main.go` and raised to the
+  largest Go process measured on earlier builds (`sky-out/.sky-go-peak-bytes`).
+  `SKY_GO_BUILD_JOBS=<n>` sets it yourself, and a `-p` in `GOFLAGS` is kept. The
+  decision is printed under the `--timings` table.
 - **The compiler uses far less memory on a large module.** The backend leg of a
   22k-line Sky.Spa app (its generated `Shared` module has 12,300 lines) peaked
   at 6.6 GB in `sky` and the memory guard stopped it. It now peaks at 0.74 GB,
@@ -86,18 +109,22 @@ No public function signature changes.
     10k-line app it takes 4.4 s instead of 32 s.
   - The `.gz` / `.br` files are cached by content, so brotli level 11 runs only
     when the wasm changes. The level is unchanged. `sky run` skips them.
-  - The embedded Sky Console is compiled without Go inlining. Its generated
-    closures made Go emit symbol names of up to 50 MB, so every Sky.Live and
-    Sky.Spa server binary shrinks from 229–499 MB to about 46 MB, and links
-    faster.
+  - Every Sky.Live and Sky.Spa server binary shrinks from 229–499 MB to about
+    62 MB, and links faster. The embedded Sky Console's generated closures made
+    Go emit symbol names of up to 50 MB; with the closure shapes above gone, the
+    longest name is about 200 bytes with inlining on.
   - New `sky build --timings` (or `SKY_TIMINGS=1`) prints the time of each
     build phase.
-- **The two Sky.Spa halves build in parallel only when memory allows.** They
-  run together only when free memory holds two leg peaks plus 1 GB (the peak is
-  measured on the previous build, else estimated); otherwise one after the
-  other. A 22k-line app peaks near 7 GB per half, so two at once could exhaust a
-  16 GB machine. `SKY_BUILD_SERIAL=1` forces serial and the new
-  `SKY_BUILD_PARALLEL=1` forces parallel. The build prints its choice.
+- **The two Sky.Spa halves build in parallel only when memory allows.** Each
+  half needs its `sky` process (which stays in memory while its `go build`
+  runs) plus its largest Go compile. The halves run together only when free
+  memory holds both halves plus 1 GB, otherwise one after the other; in
+  parallel each half's `go build -p` is set from the memory both share. The
+  figures are estimated from the generated sources and raised to what the
+  previous build measured. The 22k-line app now needs about 4.7 GB for both
+  halves, so it builds them in parallel on a 16 GB machine.
+  `SKY_BUILD_SERIAL=1` forces serial and the new `SKY_BUILD_PARALLEL=1` forces
+  parallel. The build prints its choice.
 - **One `sky` version no longer wipes another's Go build cache.** A `sky` with a
   different embedded runtime ran `go clean -cache` on the shared
   `~/.sky/go-build`, so two versions in use at once forced each other into cold
@@ -114,6 +141,12 @@ No public function signature changes.
 
 ### Gates and CI
 
+- **The memory guard watches the Go compiler.** `scripts/mem-guard.sh` watched
+  the `go` command, but `go build` does its work in child processes
+  (`compile`, `link`, `asm`, `cgo`), which it did not see. It now applies the
+  same per-process limit to them, matched by their `…/pkg/tool/<os_arch>/` path
+  so an unrelated `link` binary is never a target
+  (`scripts/test-mem-guard.sh`).
 - **The release workflow runs the full suite again.** A "lean release" setting
   had switched off the workspace tests, T1, both T2 jobs and the falsifier
   proofs at release time, so v0.25.17 was tagged without them (they passed

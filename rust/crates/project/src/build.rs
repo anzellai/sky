@@ -645,16 +645,31 @@ fn build_inner(
     // `--wasm`: compile the client for the browser (GOOS=js GOARCH=wasm) and
     // drop the matching wasm_exec.js. The native cgo-detection path is skipped —
     // a Sky.Spa client imports `syscall/js` and must NOT native-build.
+    // How many packages `go build` compiles at once, from this machine's
+    // available memory and the project's measured Go peak (go_jobs.rs).
+    let jobs = match crate::go_jobs::plan(&out_dir) {
+        Ok(j) => j,
+        Err(e) => {
+            report.go_build_stderr = e;
+            return report;
+        }
+    };
+    crate::timings::note(format!("go build: {}", jobs.reason));
+    let jobs_arg = jobs.arg();
+    let jobs_arg = jobs_arg.as_deref();
     if opts.wasm {
         let _t = crate::timings::phase("go build (wasm, GOOS=js)");
-        match run_wasm_build(&out_dir) {
+        match run_wasm_build(&out_dir, jobs_arg) {
             Ok(()) => report.go_build_ok = true,
             Err(e) => report.go_build_stderr = e,
         }
+        crate::go_jobs::record_peaks(&out_dir);
         return report;
     }
     let t_go = crate::timings::phase("go build (native)");
-    match run_go_build_detecting_cgo(&out_dir, &source, &bin_name) {
+    let go_result = run_go_build_detecting_cgo(&out_dir, &source, &bin_name, jobs_arg);
+    crate::go_jobs::record_peaks(&out_dir);
+    match go_result {
         Ok(outcome) => {
             report.go_build_ok = outcome.ok;
             report.go_build_stderr = outcome.stderr;
@@ -713,7 +728,7 @@ struct GoBuildOutcome {
 /// toolchain, e.g. TinyGo, fails with a WebAssembly LinkError). Standard-Go wasm
 /// has full reflect, so no de-reflection is needed; the bundle is larger but runs
 /// in any browser / WKWebView / Android WebView.
-fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
+fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     // `-ldflags=-s -w` strips the symbol table (`-s`) and DWARF (`-w`). A
     // browser never reads either, and for GOARCH=wasm they are pure download
     // weight — the client is delivered over the wire, so this is the one target
@@ -723,7 +738,9 @@ fn run_wasm_build(out_dir: &Path) -> Result<(), String> {
     cmd.current_dir(out_dir)
         .env("GOOS", "js")
         .env("GOARCH", "wasm")
-        .args(["build", "-ldflags=-s -w", "-o", "main.wasm", "."]);
+        .arg("build")
+        .args(jobs)
+        .args(["-ldflags=-s -w", "-o", "main.wasm", "."]);
     // Same isolated, bounded Sky build cache as the native build. The wasm build
     // is a SEPARATE cache namespace (GOOS=js/GOARCH=wasm), so it never shared the
     // constrained-HOME fallback before — apply it here too.
@@ -771,12 +788,13 @@ fn run_go_build_detecting_cgo(
     out_dir: &Path,
     source: &str,
     bin_name: &str,
+    jobs: Option<&str>,
 ) -> Result<GoBuildOutcome, String> {
     // Sky.Webview: the stub (`webview_stub.go`, `!cgo || !darwin`) compiles fine
     // under CGO=0, producing a binary that silently no-ops on `Webview.app`.
     // Force cgo up front so the real WKWebView-backed `webview.go` links.
     if source.contains("rt.Webview_app") || source.contains("rt.Webview_url") {
-        let attempt = run_go_build_once(out_dir, "1", bin_name)?;
+        let attempt = run_go_build_once(out_dir, "1", bin_name, jobs)?;
         return Ok(GoBuildOutcome {
             ok: attempt.status_ok,
             stderr: attempt.stderr,
@@ -788,7 +806,7 @@ fn run_go_build_detecting_cgo(
     }
 
     // Preferred path: static, pure-Go binary.
-    let static_attempt = run_go_build_once(out_dir, "0", bin_name)?;
+    let static_attempt = run_go_build_once(out_dir, "0", bin_name, jobs)?;
     if static_attempt.status_ok {
         return Ok(GoBuildOutcome {
             ok: true,
@@ -798,7 +816,7 @@ fn run_go_build_detecting_cgo(
     }
 
     // The static build failed — an FFI package may require cgo. Retry with it.
-    let cgo_attempt = run_go_build_once(out_dir, "1", bin_name)?;
+    let cgo_attempt = run_go_build_once(out_dir, "1", bin_name, jobs)?;
     if cgo_attempt.status_ok {
         return Ok(GoBuildOutcome {
             ok: true,
@@ -853,39 +871,15 @@ fn sky_build_goflags_from(existing: &str) -> String {
     flags.join(" ")
 }
 
-/// `go build` flag that compiles the embedded console package without inlining.
-///
-/// `rt/console_app/main.go` is generated Sky (the console is a `Std.Ui` app), so
-/// `Std.Ui`'s tag dispatch is a chain of ~25 nested immediately-called closures,
-/// one per line after `gofmt`. When the Go compiler (measured on go1.26.1)
-/// inlines such a chain, each inlined closure's symbol name repeats its parent's
-/// name, so the names double at every level: the longest is 50 MB, and the
-/// names alone were 179 MB of a 229 MB server binary (`runtime.pclntab`'s
-/// funcname table). Every Sky.Live / Sky.Http.Server / Sky.Spa backend that
-/// links the console paid it: in the link time of every build, in the binary
-/// size, and in the upload of every deploy. With inlining off for this one
-/// package the same binary is 46 MB and the longest name is under 1 kB. The
-/// console is an operator UI, so its lost inlining is not on any hot path. The
-/// pattern only matches `sky-app/rt/console_app`, so a build without the
-/// console is unaffected, and no other package's cache key changes.
-pub(crate) const CONSOLE_APP_GCFLAGS: &str = "-gcflags=sky-app/rt/console_app=-l";
-
-/// [`CONSOLE_APP_GCFLAGS`], unless the user already passes `-gcflags` through
-/// `GOFLAGS` (a debug build's `all=-N -l`): a command-line `-gcflags` replaces
-/// the `GOFLAGS` one, so adding ours would silently drop theirs.
-fn console_gcflags(user_goflags: &str) -> Option<&'static str> {
-    let user_sets_gcflags = user_goflags
-        .split_whitespace()
-        .any(|f| f.starts_with("-gcflags") || f.starts_with("--gcflags"));
-    (!user_sets_gcflags).then_some(CONSOLE_APP_GCFLAGS)
-}
-
-fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuildAttempt, String> {
+fn run_go_build_once(
+    out_dir: &Path,
+    cgo: &str,
+    bin_name: &str,
+    jobs: Option<&str>,
+) -> Result<GoBuildAttempt, String> {
     let mut cmd = Command::new("go");
     cmd.arg("build")
-        .args(console_gcflags(
-            &std::env::var("GOFLAGS").unwrap_or_default(),
-        ))
+        .args(jobs)
         .arg("-o")
         .arg(bin_name)
         .arg(".")
@@ -2566,22 +2560,6 @@ mod sky_toml_tests {
         driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, sky_toml_flag,
         sky_toml_section_key, unknown_config_keys,
     };
-
-    /// The console package is compiled without inlining (its generated closure
-    /// chains otherwise produce 50 MB symbol names), but never over a user's own
-    /// `-gcflags` in `GOFLAGS`: a command-line `-gcflags` would replace it.
-    #[test]
-    fn console_gcflags_disable_inlining_unless_the_user_passes_gcflags() {
-        use super::{console_gcflags, CONSOLE_APP_GCFLAGS};
-        assert_eq!(CONSOLE_APP_GCFLAGS, "-gcflags=sky-app/rt/console_app=-l");
-        assert_eq!(console_gcflags(""), Some(CONSOLE_APP_GCFLAGS));
-        assert_eq!(
-            console_gcflags("-mod=mod -trimpath"),
-            Some(CONSOLE_APP_GCFLAGS)
-        );
-        assert_eq!(console_gcflags("-gcflags=all=-N -l"), None);
-        assert_eq!(console_gcflags("-trimpath --gcflags=-m"), None);
-    }
 
     #[test]
     fn goflags_preserve_user_flags_and_force_mod_and_buildvcs() {

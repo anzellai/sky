@@ -81,6 +81,38 @@ else
     fail=$(( fail + 1 )); printf '  FAIL  %-38s got=%q, want an integer 0-100\n' "against this host's sysctl" "$got"
 fi
 
+# Which processes the guard watches. `go build` does its work in the Go
+# toolchain's children: one `compile` of a large generated Sky package measured
+# 5.6 GB while the `go` parent stayed small, and the guard used to see only the
+# parent. The Go tools are matched by their `/pkg/tool/<os_arch>/` path, so an
+# unrelated binary that happens to be called `link` is not a target.
+echo "watch_class()"
+eval "$(sed -n '/^ALWAYS_KILL_RE=/p;/^GO_TOOL_RE=/p;/^PANIC_KILL_RE=/p' "$GUARD")"
+eval "$(sed -n '/^watch_class()/,/^}/p' "$GUARD")"
+declare -F watch_class >/dev/null || { echo "FAIL: watch_class not found in mem-guard.sh" >&2; exit 1; }
+expect_class() {
+    local comm="$1" want="$2"
+    watch_class "$comm"
+    if [[ "$WATCH_CLASS" == "$want" ]]; then
+        pass=$(( pass + 1 )); printf '  ok    %-62s %s\n' "$comm" "$WATCH_CLASS"
+    else
+        fail=$(( fail + 1 )); printf '  FAIL  %-62s got=%s want=%s\n' "$comm" "$WATCH_CLASS" "$want"
+    fi
+}
+expect_class "/nix/store/x-go-1.26.1/share/go/pkg/tool/darwin_arm64/compile" always
+expect_class "/usr/local/go/pkg/tool/linux_amd64/link" always
+expect_class "/opt/homebrew/Cellar/go/1.26.1/libexec/pkg/tool/darwin_arm64/asm" always
+expect_class "/usr/local/go/pkg/tool/linux_amd64/cgo" always
+expect_class "/usr/local/go/bin/go" always
+expect_class "/Users/me/.cargo/bin/cargo" always
+expect_class "sky" always
+expect_class "/bin/link" none
+expect_class "/usr/local/bin/compile" none
+expect_class "/usr/local/go/pkg/tool/linux_amd64/vet" none
+expect_class "/Applications/Ghostty.app/Contents/MacOS/ghostty" panic
+expect_class "node" panic
+expect_class "/usr/sbin/mDNSResponder" none
+
 # Shadow sysctl with a failing stub rather than blanking PATH — blanking it
 # removes awk as well, which tests nothing about the guard. The guard runs
 # under `set -euo pipefail`, so a failing sysctl must not fail the pipeline:

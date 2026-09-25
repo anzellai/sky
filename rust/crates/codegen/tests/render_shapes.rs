@@ -401,3 +401,50 @@ fn emits_sealed_iface_with_variant_structs() {
         "variant name marker:\n{out}"
     );
 }
+
+// =========================================================================
+// A spliced tail `case`/`let` (lower/src/shape.rs) is a bare Go block
+// statement: a scope for its locals, and no closure. Both the statement form
+// (a function body) and the inline form (inside a closure) must render it.
+// =========================================================================
+#[test]
+fn renders_a_scope_statement_without_a_closure() {
+    use lower::ir::{GoFuncDecl, GoParam};
+    let body = vec![GoStmt::Scope(vec![
+        GoStmt::Short("_subj".into(), ident("v_0")),
+        GoStmt::If(
+            GoExpr::new(
+                GoExprKind::Ident("_subj == 0".into()),
+                GoTy::Bare(Prim::Bool),
+            ),
+            vec![GoStmt::Return(Some(int_lit(1)))],
+            vec![GoStmt::Return(Some(int_lit(2)))],
+        ),
+    ])];
+    let f = GoItem::Func(GoFuncDecl {
+        name: "Main_f".into(),
+        type_params: vec![],
+        params: vec![GoParam {
+            name: "v_0".into(),
+            ty: GoTy::Bare(Prim::Int),
+        }],
+        ret: GoTy::Bare(Prim::Int),
+        body: body.clone(),
+        doc: None,
+    });
+    let src = emit_program(&[f], false);
+    assert!(
+        src.contains(
+            "func Main_f(v_0 int) int {\n\t{\n\t\t_subj := v_0\n\t\tif _subj == 0 {\n\t\t\treturn 1\n\t\t} else {\n\t\t\treturn 2\n\t\t}\n\t}\n}\n"
+        ),
+        "{src}"
+    );
+    let lam = GoExpr::new(
+        GoExprKind::FuncLit(vec![], GoTy::Bare(Prim::Int), body),
+        GoTy::Func(vec![], Box::new(GoTy::Bare(Prim::Int))),
+    );
+    assert_eq!(
+        render_expr(&lam),
+        "func() int { { _subj := v_0; if _subj == 0 { return 1 } else { return 2 } } }"
+    );
+}

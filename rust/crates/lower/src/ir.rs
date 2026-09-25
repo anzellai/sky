@@ -204,6 +204,11 @@ pub enum GoStmt {
         then: Vec<GoStmt>,
     },
     Comment(String),
+    /// `{ stmts }` — a bare Go block statement: a new lexical scope with no
+    /// closure. The tail-block flattening pass (`shape::flatten_tail_blocks`)
+    /// emits it in place of `return func() T { stmts }()` when the IIFE body
+    /// declares locals, so they keep their own scope without a closure.
+    Scope(Vec<GoStmt>),
 }
 
 /// A Go top-level item.

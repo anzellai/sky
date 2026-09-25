@@ -593,8 +593,9 @@ fn inode(p: &std::path::Path) -> u64 {
 ///   * the `.gz` / `.br` bundle variants come from the content-hash cache
 ///     instead of re-running gzip / brotli-11,
 ///   * the backend binary is not bloated by the console's inlined closure names
-///     (it was 218-229 MB; it is ~46 MB with the console compiled without
-///     inlining).
+///     (it was 218-229 MB; since v0.25.18 the console's generated Go has no
+///     nested immediately-called closures, so with inlining on it is ~62 MB and
+///     its longest symbol name ~200 bytes).
 /// Before the fix every rebuild wiped `.skyapp/web-app/`, re-linked both legs
 /// and re-ran brotli-11 on the multi-MB wasm (measured: 19 s warm, most of it
 /// brotli). A second part pins the internal `--no-precompress` flag the
@@ -603,7 +604,7 @@ fn inode(p: &std::path::Path) -> u64 {
 /// Heavy (two full web:app builds + a wasm build) — #[ignore]d for the T1
 /// budget; nightly via `--ignored`. Per-commit legs: the `precompress::tests`
 /// cache tests, `tests::restage_keeps_only_the_go_build_outputs` and
-/// `console_gcflags_disable_inlining_unless_the_user_passes_gcflags`.
+/// `go_compile_shape` (the emitted-Go shape and compile-memory budget).
 #[cfg(unix)]
 #[ignore = "heavy web:app build; nightly via --ignored; per-commit legs: sky precompress::tests + restage_keeps_only_the_go_build_outputs"]
 #[test]

@@ -2803,29 +2803,32 @@ fn spa_split_and_build(
     // estimated from the generated sources) — see `leg_plan`.
     let backend_dir = od.join("backend");
     let frontend_dir = od.join("frontend");
-    let peak_record = backend_dir.join("sky-out").join(leg_plan::PEAK_RECORD);
     let env_flag = |k: &str| {
         std::env::var(k)
             .map(|v| !matches!(v.trim(), "" | "0" | "false" | "no"))
             .unwrap_or(false)
     };
-    let (per_leg_peak, peak_source) = match leg_plan::recorded_peak(&peak_record) {
-        Some(b) => (b, "measured last build"),
-        None => (
-            leg_plan::estimate_from_source(
-                leg_plan::sky_source_bytes(&backend_dir.join("src"))
-                    .max(leg_plan::sky_source_bytes(&frontend_dir.join("src"))),
-            ),
-            "estimated from sources",
-        ),
+    let (backend_need, b_measured) = leg_plan::leg_need(&backend_dir);
+    let (frontend_need, f_measured) = leg_plan::leg_need(&frontend_dir);
+    let peak_source = if b_measured || f_measured {
+        "(estimated from sources, raised to last build's measured peaks)"
+    } else {
+        "(estimated from sources)"
     };
     let plan = leg_plan::decide(
         env_flag("SKY_BUILD_SERIAL"),
         env_flag("SKY_BUILD_PARALLEL"),
-        per_leg_peak,
-        &format!("({peak_source})"),
+        backend_need,
+        frontend_need,
+        peak_source,
         leg_plan::available_memory(),
+        std::thread::available_parallelism().map_or(1, |n| n.get()),
     );
+    // In parallel, each leg's `go build -p` is set here, from the memory both
+    // legs share; a user's own SKY_GO_BUILD_JOBS reaches the legs unchanged.
+    let leg_go_jobs = plan
+        .go_jobs
+        .filter(|_| std::env::var_os(project::go_jobs::ENV_JOBS).is_none());
     project::timings::note(format!("legs: {}", plan.reason));
     println!(
         "\n== building backend (native{}) + frontend (--target {target}): {} ==",
@@ -2844,6 +2847,9 @@ fn spa_split_and_build(
         if embed {
             c.arg("--embed");
         }
+        if let Some(n) = leg_go_jobs {
+            c.env(project::go_jobs::ENV_JOBS, n.to_string());
+        }
         let t = project::timings::phase("backend leg (child sky build, native)");
         let out = c.arg("src/Main.sky").current_dir(&backend_dir).output();
         t.end();
@@ -2855,6 +2861,9 @@ fn spa_split_and_build(
         c.args(["build", "--target", target, "src/Main.sky"]);
         if !precompress {
             c.arg("--no-precompress");
+        }
+        if let Some(n) = leg_go_jobs {
+            c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
         let out = c.current_dir(&frontend_dir).output();
         t.end();
@@ -2871,14 +2880,8 @@ fn spa_split_and_build(
         })
     };
     t_legs.end();
-    // Record the per-leg peak for the next build's decision. Keep the larger of
-    // this build's and the recorded one: a no-change rebuild skips the link and
-    // peaks far lower than an edit that re-links, so the latest alone would
-    // under-state the next build.
-    if let Some(peak) = leg_plan::children_peak_rss() {
-        let keep = leg_plan::recorded_peak(&peak_record).map_or(peak, |p| p.max(peak));
-        let _ = std::fs::write(&peak_record, keep.to_string());
-    }
+    // Each leg recorded its own `sky` and Go peaks in its `sky-out/` for the
+    // next build's plan (`project::go_jobs::record_peaks`).
     let report_leg =
         |label: &str, res: std::thread::Result<std::io::Result<std::process::Output>>| -> bool {
             use std::io::Write;

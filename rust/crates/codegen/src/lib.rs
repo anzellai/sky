@@ -314,6 +314,15 @@ fn emit_stmt(w: &mut Writer, st: &GoStmt) {
         GoStmt::Return(None) => w.line("return"),
         GoStmt::Return(Some(e)) => w.line(&format!("return {}", render_expr(e))),
         GoStmt::Comment(c) => w.line(&format!("// {c}")),
+        GoStmt::Scope(body) => {
+            w.line("{");
+            w.indent += 1;
+            for s in body {
+                emit_stmt(w, s);
+            }
+            w.indent -= 1;
+            w.line("}");
+        }
         GoStmt::IfTypeAssert {
             binder,
             ok,
@@ -452,6 +461,7 @@ fn render_stmts_inline(body: &[GoStmt]) -> String {
             GoStmt::Return(None) => parts.push("return".to_string()),
             GoStmt::Return(Some(e)) => parts.push(format!("return {}", render_expr(e))),
             GoStmt::Comment(c) => parts.push(format!("/* {c} */")),
+            GoStmt::Scope(body) => parts.push(format!("{{ {} }}", render_stmts_inline(body))),
             GoStmt::If(cond, then, els) => {
                 let mut s = format!(
                     "if {} {{ {} }}",

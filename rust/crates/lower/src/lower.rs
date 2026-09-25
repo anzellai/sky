@@ -853,6 +853,9 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         items.extend(group);
     }
     items.extend(funcs);
+    // Last: a shape-only rewrite, after every pass that reads the IIFE
+    // boundaries (tail-return coercion, TCO). See `shape.rs`.
+    crate::shape::flatten_tail_blocks(&mut items);
 
     LowerOutput {
         items,
@@ -1291,6 +1294,12 @@ fn compute_def_effect(
     }
     effect
 }
+
+/// From this arity up, a curried boxed function value is one flat
+/// `rt.CurryN` closure instead of a nest of one closure per parameter (see
+/// `Ctx::curried_any`). Arity 1 and 2 keep the nest: it is as cheap there and
+/// reads as plain Go.
+pub(crate) const FLAT_CURRY_MIN_ARITY: usize = 3;
 
 const RESERVED: &[&str] = &[
     "init",
@@ -3890,48 +3899,17 @@ impl<'a> Ctx<'a> {
         };
         let boxed_closure = arity >= 2 || (arity == 1 && is_boxed_slot(expected));
         if boxed_closure {
-            let pnames: Vec<String> = (0..arity)
-                .map(|_| {
-                    let n = format!("_p{}", self.local_counter);
-                    self.local_counter += 1;
-                    n
-                })
-                .collect();
-            // ctor args: each `any` lambda param coerced to its field type
-            // (`rt.AsInt(_p0)`, …). `ctor_emit` widens/coerces per ctor kind.
-            let arg_exprs: Vec<GoExpr> = pnames
-                .iter()
-                .zip(param_tys.iter())
-                .map(|(pn, pty)| {
-                    let id = GoExpr::new(GoExprKind::Ident(pn.clone()), GoTy::Any);
-                    self.coerce_if_needed(id, pty)
-                })
-                .collect();
-            let ctor_val = self.ctor_emit(&cname, arg_exprs, &ret, pin.as_deref());
-            let ctor_val = self.coerce_if_needed(ctor_val, &ret);
-            // Wrap from the innermost param outward. Every lambda returns `any`
-            // (the constructed value, or the next lambda boxed) so its Go type is
-            // uniformly `func(any) any`.
-            let mut lambda: Option<GoExpr> = None;
-            for pn in pnames.iter().rev() {
-                let ret_body = match lambda.take() {
-                    None => self.widen(ctor_val.clone()),
-                    Some(inner) => self.widen(inner),
-                };
-                lambda = Some(GoExpr::new(
-                    GoExprKind::FuncLit(
-                        vec![GoParam {
-                            name: pn.clone(),
-                            ty: GoTy::Any,
-                        }],
-                        GoTy::Any,
-                        vec![GoStmt::Return(Some(ret_body))],
-                    ),
-                    GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any)),
-                ));
-            }
-            // Safe: `boxed_closure` guarantees arity ≥ 1 → ≥ 1 iteration.
-            return lambda.expect("curried ctor nest has ≥1 lambda");
+            return self.curried_any(arity, "_p", |cx, params| {
+                // ctor args: each `any` lambda param coerced to its field type
+                // (`rt.AsInt(_p0)`, …). `ctor_emit` widens/coerces per ctor kind.
+                let arg_exprs: Vec<GoExpr> = params
+                    .into_iter()
+                    .zip(param_tys.iter())
+                    .map(|(id, pty)| cx.coerce_if_needed(id, pty))
+                    .collect();
+                let ctor_val = cx.ctor_emit(&cname, arg_exprs, &ret, pin.as_deref());
+                cx.coerce_if_needed(ctor_val, &ret)
+            });
         }
         let mut gparams: Vec<GoParam> = Vec::new();
         let mut arg_exprs: Vec<GoExpr> = Vec::new();
@@ -4005,34 +3983,114 @@ impl<'a> Ctx<'a> {
             _ => return e,
         };
         let arity = ps.len();
+        // Direct typed call `e(narrow(_w0), …)`, each `any` param narrowed to
+        // `e`'s declared param type — reflection-free after the landed
+        // ResultCoerceOk / narrow_call struct arm. The innermost body is the
+        // call result, widened to `any` by `curried_any` (recurses: a
+        // func-returning `e` boxes its result too). The result is the outermost
+        // `func(any) any` — returned CALLABLE (not wrapped).
+        self.curried_any(arity, "_w", |cx, params| {
+            let call_args: Vec<GoExpr> = params
+                .into_iter()
+                .zip(ps.iter())
+                .map(|(id, pty)| cx.coerce_if_needed(id, pty))
+                .collect();
+            GoExpr::new(GoExprKind::Call(Box::new(e), call_args), r)
+        })
+    }
+
+    /// A curried Sky function value of `arity ≥ 1` in the boxed-closure
+    /// convention: a `func(any) any` that takes one argument per call and,
+    /// after the last, returns `body(args)` widened to `any`. `body` receives
+    /// one `any`-typed expression per parameter.
+    ///
+    /// Below [`FLAT_CURRY_MIN_ARITY`] this is the nest
+    /// `func(_p0 any) any { return any(func(_p1 any) any { … }) }`. From that
+    /// arity up it is one flat closure over an argument slice,
+    /// `rt.CurryN(n, func(_ps []any) any { … _ps[0] … _ps[n-1] … })`, because
+    /// the nest costs the Go compiler O(n²): level k captures the k parameters
+    /// before it, so every level is its own closure type and body. A 74-field
+    /// record constructor used as a `Codec.object` argument was a 74-deep nest;
+    /// 177 of them in one generated app cost `go tool compile` about 1.9 GB of
+    /// its 5.6 GB peak (measured, go1.26.1). Both forms apply one argument at a
+    /// time and share nothing between partial applications, so behaviour is the
+    /// same (`rt.CurryN` copies its argument slice on every step).
+    fn curried_any(
+        &mut self,
+        arity: usize,
+        prefix: &str,
+        body: impl FnOnce(&mut Self, Vec<GoExpr>) -> GoExpr,
+    ) -> GoExpr {
+        let fn_any = GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any));
+        if arity >= FLAT_CURRY_MIN_ARITY {
+            let ps = format!("_ps{}", self.local_counter);
+            self.local_counter += 1;
+            let slice = GoExpr::new(
+                GoExprKind::Ident(ps.clone()),
+                GoTy::Slice(Box::new(GoTy::Any)),
+            );
+            let params: Vec<GoExpr> = (0..arity)
+                .map(|i| {
+                    GoExpr::new(
+                        GoExprKind::Index(
+                            Box::new(slice.clone()),
+                            Box::new(GoExpr::new(
+                                GoExprKind::IntLit(i as i64),
+                                GoTy::Bare(Prim::Int),
+                            )),
+                        ),
+                        GoTy::Any,
+                    )
+                })
+                .collect();
+            let value = body(self, params);
+            let ret_body = self.widen(value);
+            let flat = GoExpr::new(
+                GoExprKind::FuncLit(
+                    vec![GoParam {
+                        name: ps,
+                        ty: GoTy::Slice(Box::new(GoTy::Any)),
+                    }],
+                    GoTy::Any,
+                    vec![GoStmt::Return(Some(ret_body))],
+                ),
+                GoTy::Func(vec![GoTy::Slice(Box::new(GoTy::Any))], Box::new(GoTy::Any)),
+            );
+            return GoExpr::new(
+                GoExprKind::Call(
+                    Box::new(GoExpr::new(
+                        GoExprKind::Ident("rt.CurryN".into()),
+                        GoTy::Any,
+                    )),
+                    vec![
+                        GoExpr::new(GoExprKind::IntLit(arity as i64), GoTy::Bare(Prim::Int)),
+                        flat,
+                    ],
+                ),
+                fn_any,
+            );
+        }
         let pnames: Vec<String> = (0..arity)
             .map(|_| {
-                let n = format!("_w{}", self.local_counter);
+                let n = format!("{prefix}{}", self.local_counter);
                 self.local_counter += 1;
                 n
             })
             .collect();
-        // Direct typed call `e(narrow(_w0), …)`, each `any` param narrowed to
-        // `e`'s declared param type — reflection-free after the landed
-        // ResultCoerceOk / narrow_call struct arm.
-        let call_args: Vec<GoExpr> = pnames
+        let params: Vec<GoExpr> = pnames
             .iter()
-            .zip(ps.iter())
-            .map(|(pn, pty)| {
-                let id = GoExpr::new(GoExprKind::Ident(pn.clone()), GoTy::Any);
-                self.coerce_if_needed(id, pty)
-            })
+            .map(|pn| GoExpr::new(GoExprKind::Ident(pn.clone()), GoTy::Any))
             .collect();
-        let call = GoExpr::new(GoExprKind::Call(Box::new(e), call_args), r);
-        // innermost body = the call result widened to `any` (recurses: a
-        // func-returning `e` boxes its result too).
-        let mut inner_body = Some(self.widen(call));
+        let value = body(self, params);
+        // Wrap from the innermost param outward. Every lambda returns `any` (the
+        // value, or the next lambda boxed) so its Go type is uniformly
+        // `func(any) any`.
+        let mut ret_body = self.widen(value);
         let mut lambda: Option<GoExpr> = None;
         for pn in pnames.iter().rev() {
-            let ret_body = match lambda.take() {
-                None => inner_body.take().expect("innermost body set once"),
-                Some(inner) => self.widen(inner),
-            };
+            if let Some(inner) = lambda.take() {
+                ret_body = self.widen(inner);
+            }
             lambda = Some(GoExpr::new(
                 GoExprKind::FuncLit(
                     vec![GoParam {
@@ -4040,12 +4098,11 @@ impl<'a> Ctx<'a> {
                         ty: GoTy::Any,
                     }],
                     GoTy::Any,
-                    vec![GoStmt::Return(Some(ret_body))],
+                    vec![GoStmt::Return(Some(ret_body.clone()))],
                 ),
-                GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any)),
+                fn_any.clone(),
             ));
         }
-        // The outermost `func(any) any` lambda — returned CALLABLE (not wrapped).
         lambda.expect("arity ≥ 1 → ≥ 1 lambda")
     }
 

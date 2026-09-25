@@ -135,17 +135,34 @@ variants in `dist/` are cached by the SHA-256 of the file they compress (in
 when the wasm bytes change. `sky run` does not write them at all: its backend
 serves the bundle itself and compresses on the fly.
 
-Serial or parallel legs. The backend and frontend legs of a client build run in
-parallel only when the machine's available memory holds two leg peaks plus a
-1 GB reserve; otherwise they run one after the other. Available memory is
+Serial or parallel legs. A leg needs its own `sky` process (which stays in
+memory while its `go build` runs) plus its largest Go compile. The backend and
+frontend legs of a client build run in parallel only when the machine's
+available memory holds both legs' `sky` and Go peaks plus a 1 GB reserve;
+otherwise they run one after the other. Available memory is
 `free + inactive + speculative` pages on macOS (`vm_stat`) and `MemAvailable` on
-Linux, capped by the cgroup's remaining limit in a container. The leg peak is the
-one measured on the project's previous split build (the largest seen is kept in the
-backend leg's `sky-out/.sky-leg-peak-bytes`), else an estimate from the size of
-the generated leg sources. When memory cannot be read, the legs run serially.
+Linux, capped by the cgroup's remaining limit in a container. The plan
+estimates each leg from the size of its generated sources, and raises each
+figure to the peak the leg measured on a previous build when that was more
+(each leg keeps the largest it has seen in its own `sky-out/`,
+`.sky-front-peak-bytes` and `.sky-go-peak-bytes`; a record from a compiler
+before v0.25.18 is ignored). When memory cannot be read, the legs run serially.
 `SKY_BUILD_SERIAL=1` forces serial and `SKY_BUILD_PARALLEL=1` forces parallel.
 The build prints its decision in the `== building … ==` line and in the
 `--timings` report.
+
+Go compile parallelism. `go build` compiles up to one package per CPU at the
+same time, and the compile of a large app's generated `main` package is the
+largest process in a build (about 2.2 GB for a 22k-line app). So `sky build`
+passes `go build -p <n>` when the available memory does not hold one such
+compile per CPU plus the 1 GB reserve, with `n` the number of compiles it does
+hold (at least 1). The per-compile peak is an estimate from the size of the
+generated `main.go`, raised to the largest Go process measured on the project's
+previous builds (`sky-out/.sky-go-peak-bytes`) when that was more. Unknown memory builds one package at a time. When a
+client build runs its legs in parallel, it sets each leg's `-p` from the memory
+both legs share. `SKY_GO_BUILD_JOBS=<n>` sets `-p <n>` yourself (`auto` decides
+as above), and a `-p` already in `GOFLAGS` is kept. The decision is printed
+under the `--timings` table as `go build: -p …`.
 
 ### `sky spa-split <path> --out <dir> [--build | --target <t>]`
 
