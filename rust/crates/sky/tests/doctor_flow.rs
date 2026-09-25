@@ -164,11 +164,13 @@ fn doctor_library_project_does_not_require_an_entry_file() {
         !log.contains("library has no"),
         "a library with modules must not be reported empty:\n{log}"
     );
-    // With a Go toolchain present the library is otherwise healthy.
-    if go_on_path() {
-        assert_eq!(code, 0, "healthy library should exit 0:\n{log}");
-    }
     let _ = std::fs::remove_dir_all(&dir);
+    // The library is otherwise healthy, so doctor exits 0 — which needs the Go
+    // toolchain check to pass too.
+    if !required(Need::Go, go_on_path()) {
+        return;
+    }
+    assert_eq!(code, 0, "healthy library should exit 0:\n{log}");
 }
 
 /// What still applies to a library is checked: one with no modules under its
