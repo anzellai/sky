@@ -202,6 +202,52 @@ Back/Forward (`popstate`) is honoured; an external host, `target="_blank"`, a
 
 The full surface (typed signatures + summaries) is `sky doc Std.App`.
 
+## Client persistence and identity
+
+A `web:app` client writes its whole model to `localStorage` after each
+`update` and restores it on a full page load, so a reload keeps client scratch
+state (a form draft, a counter, a dismissed banner). `localStorage` is shared by
+every tab of the origin, and it holds ONE model: the last one any tab wrote.
+
+**A stored model restores only for the identity it was stored under.** The
+identity is the value of the session field(s): the model fields of type
+`Session` / `Maybe Session` that a server branch writes, which the backend signs
+into the `sky_sid` cookie and the SSR seed carries. On a full load the client
+compares the identity of the stored model with the identity of the seed:
+
+| Stored model → seed | Result |
+|---|---|
+| same identity, or signed out → signed out | the stored model restores over the seed |
+| one identity → another identity | nothing restores, the stored copy is removed |
+| signed out → signed in | nothing restores, the stored copy is removed (a basket filled before sign-in is not carried over) |
+| signed in → signed out | nothing restores, the stored copy is removed |
+
+So two tabs with two identities (a practitioner in one, a patient link in the
+other) never show each other's data. Each tab's full load after the other tab
+wrote boots from its own seed: the tab loses its unsaved scratch state, never its
+server data. When an `update` signs out (clears the session field), the client
+removes the stored copy and does not write the signed-out model for the rest of
+that page's life, because that model still holds the signed-in user's other
+fields. A page served without an SSR seed (a static deploy, a native shell) has
+no server identity to compare, and restores the stored model as it is. An app
+with no session field has one identity, and restores as before.
+
+**Shared computers.** The stored model stays in the browser until the next
+change of identity, sign-out in the page, or a full load under another
+identity. A user who closes the tab without signing out leaves their last model
+in `localStorage`, where the next user of that browser profile can read it with
+the developer tools (the app never shows it to them). Keep sensitive data in
+server state, not in client scratch fields, if the app runs on shared machines.
+
+Before v0.25.18 the model was stored under `sky:spa:model` with no identity
+check. The client deletes that key on the first load and restores it only for an
+app with no session field. The current key is `sky:spa:model:v2`.
+
+**Sky.Live has no such store.** A Sky.Live model lives on the server, keyed by
+the `sky_sid` session; the browser holds only the cookie. Two Sky.Live tabs with
+the same cookie share one session by design, and nothing of the model is
+written to the browser.
+
 ## Security — the untrusted client is a first-class rule
 
 In Sky.Live `update` runs on the server → **trusted**. In Sky.Spa `update` runs

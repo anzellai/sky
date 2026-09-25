@@ -60,5 +60,20 @@ cp -Rf "$RX/data/." "$RBE/data/"
 echo "==> driving the full-load rule (settled fields from the seed, the rest restored)"
 node "$ROOT/scripts/spa-reload-verify.mjs" "$RBE/sky-out/app" --port "${RELOAD_PORT:-9372}"
 
-echo "spa-restore-e2e: PASS — restored model paints on the first SSR paint; a full load keeps what the page did not settle."
+# The identity rule: a stored model restores only for the session identity it
+# was stored under. Two pages in one browser context (shared localStorage, as
+# two tabs) hold two identities; neither ever shows the other one's data.
+IX="$(dirname "$FX")/spa-identity-slot"
+mkdir -p "$IX"
+cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-identity-slot/." "$IX/"
+echo "==> building the identity fixture (--target web:app)"
+( cd "$IX" && "$SKY" build --target web:app src/Main.sky )
+IBE="$IX/.skyapp/web-app/.split/backend"
+[ -x "$IBE/sky-out/app" ] || { echo "spa-restore-e2e: backend app not built at $IBE/sky-out/app" >&2; exit 1; }
+mkdir -p "$IBE/data"
+cp -Rf "$IX/data/." "$IBE/data/"
+echo "==> driving the identity rule (two identities, one localStorage)"
+node "$ROOT/scripts/spa-identity-verify.mjs" "$IBE/sky-out/app" --port "${IDENTITY_PORT:-9373}"
+
+echo "spa-restore-e2e: PASS — restored model paints on the first SSR paint; a full load keeps what the page did not settle; a stored model restores only for its own identity."
 rm -rf "$(dirname "$FX")"

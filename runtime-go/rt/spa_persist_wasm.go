@@ -63,9 +63,12 @@ func spaLocalStorage() (ls js.Value) {
 	return v
 }
 
-// spaReadStoredModel reads the persisted model JSON from localStorage. Returns
-// ("", false) when storage is unavailable, the key is absent, or the read throws.
-func spaReadStoredModel() (blob string, ok bool) {
+// spaLocalKV is window.localStorage as a spaKV. Every call is guarded: an
+// unavailable or throwing storage (private mode, a quota error) reads as absent
+// and writes as a no-op, so persistence degrades and the app keeps working.
+type spaLocalKV struct{}
+
+func (spaLocalKV) Get(key string) (blob string, ok bool) {
 	defer func() {
 		if recover() != nil {
 			blob, ok = "", false
@@ -75,27 +78,30 @@ func spaReadStoredModel() (blob string, ok bool) {
 	if !ls.Truthy() {
 		return "", false
 	}
-	v := ls.Call("getItem", spaPersistKey)
+	v := ls.Call("getItem", key)
 	if v.Type() != js.TypeString {
 		return "", false
 	}
 	return v.String(), true
 }
 
-// spaWriteStoredModel writes the model JSON to localStorage, skipping a blob over
-// the size cap and swallowing any throw (a QuotaExceededError, or a private-mode
-// setItem throw). Best effort: a failed write never breaks the app.
-func spaWriteStoredModel(blob string) {
-	if blob == "" || len(blob) > spaPersistMaxBytes {
-		return
-	}
+func (spaLocalKV) Set(key, value string) {
 	defer func() { _ = recover() }()
-	ls := spaLocalStorage()
-	if !ls.Truthy() {
-		return
+	if ls := spaLocalStorage(); ls.Truthy() {
+		ls.Call("setItem", key, value)
 	}
-	ls.Call("setItem", spaPersistKey, blob)
 }
+
+func (spaLocalKV) Remove(key string) {
+	defer func() { _ = recover() }()
+	if ls := spaLocalStorage(); ls.Truthy() {
+		ls.Call("removeItem", key)
+	}
+}
+
+// spaLife is this page's persistence identity (spaPersistLife): set by the boot
+// restore, updated by every persisted step.
+var spaLife spaPersistLife
 
 // spaReadSeedBlob reads the SSR-embedded `#sky-model` JSON text, or "" when no
 // blob is present (a pure CDN mount with no SSR). js reads guarded.
@@ -120,7 +126,8 @@ func spaReadSeedBlob(doc js.Value) (blob string) {
 }
 
 // spaRestoreFromStorage is the boot restore (called AFTER the SSR seed decision,
-// BEFORE the first render). It reads the stored model, merges it over the SSR
+// BEFORE the first render). It reads the stored model, keeps it only when it
+// was stored under the seed's identity (spaRestoreStored), merges it over the SSR
 // seed (session fields kept from the seed — spaMergeStoredOverSeed), decodes the
 // merged JSON with the app's model decoder, and sets spaModel from it. Returns
 // true when it restored (so the caller can null init's cmd0). Any failure — no
@@ -137,13 +144,12 @@ func spaRestoreFromStorage(cfg any, doc js.Value) bool {
 	if decoder == nil {
 		return false
 	}
-	stored, ok := spaReadStoredModel()
-	if !ok {
-		return false
-	}
 	seed := spaReadSeedBlob(doc)
 	wins := spaSeedWinsFields(spaPersistProt, spaPersistSeed, spaPageSeedFields(doc))
-	merged, useIt := spaMergeStoredOverSeed(stored, seed, wins, spaPersistMaxBytes)
+	// Restores only a model stored under the seed's identity (spa_persist.go
+	// spaRestoreStored); another identity's copy is removed, never merged.
+	merged, useIt, life := spaRestoreStored(spaLocalKV{}, seed, spaPersistProt, wins, spaPersistMaxBytes)
+	spaLife = life
 	if !useIt {
 		return false
 	}
@@ -170,7 +176,10 @@ func spaFirstPaintNeedsTwoStep(seed, restored any) (twoStep bool) {
 }
 
 // spaPersistAfterStep runs after each TEA step (live_wasm.go step). It encodes
-// the new model and writes it to localStorage, and — when a protected (session)
+// the new model and writes it to localStorage under the identity rule
+// (spaPersistWrite: a change of identity removes the old identity's copy, and a
+// page that held a signed-in identity never writes a signed-out model), and —
+// when a protected (session)
 // field went from set to cleared this step — POSTs the P3 sign-out endpoint to
 // clear the httpOnly `sky_sid` cookie. All js access is guarded; a codec panic or
 // a storage throw never kills the instance.
@@ -180,7 +189,9 @@ func spaPersistAfterStep(prevModel, nextModel any) {
 	}
 	defer func() { _ = recover() }()
 	nextJSON := spaEncodeModel(nextModel)
-	spaWriteStoredModel(nextJSON)
+	if nextJSON != "" {
+		spaPersistWrite(spaLocalKV{}, &spaLife, nextJSON, spaPersistProt, spaPersistMaxBytes)
+	}
 	if len(spaPersistProt) == 0 {
 		return // no session to protect → nothing to sign out
 	}
