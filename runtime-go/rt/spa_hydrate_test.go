@@ -16,6 +16,9 @@ package rt
 // page instead of splitting the node.
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -291,12 +294,12 @@ func ssrParseHTML(t *testing.T, body string) *html.Node {
 // page logged "[sky.spa] SSR hydrate skipped, full rebuild: tag differs at
 // …#form.0#div: server <input>, client <div>". The SSR page is served as a
 // Sky.Http.Server HTML response, and for a request that carries the CSRF
-// cookie the server added `<input type="hidden" name="__sky_csrf">` as the
-// first child of every `<form method="post">` (injectCsrfIntoForms). The
-// renderer emits method="post" on every form with an onSubmit, so the served
-// DOM held a node the rendered tree never had. A first visit (no cookie yet)
-// hydrated; every later page load rebuilt.
-func TestSpaHydrate_csrfCookieRequestStillHydratesForms(t *testing.T) {
+// cookie the server adds `<input type="hidden" name="__sky_csrf">` as the
+// first child of every `<form method="post">` (injectCsrfIntoForms). That
+// input is deliberate: it is what lets a native POST (before the wasm client
+// runs, or with JS off) pass the CSRF check. The hydration walk must step over
+// it, not refuse the page.
+func signInPage() *VNode {
 	signIn := el("div", nil,
 		el("form", nil,
 			el("div", nil,
@@ -309,35 +312,137 @@ func TestSpaHydrate_csrfCookieRequestStillHydratesForms(t *testing.T) {
 		),
 	)
 	signIn.Children[0].Events = map[string]any{"submit": "DoSignIn"}
-	root := withIDs(signIn)
+	return withIDs(signIn)
+}
+
+func TestSpaHydrate_csrfCookieRequestStillHydratesForms(t *testing.T) {
+	root := signInPage()
 	body := renderVNode(*root, map[string]any{})
 	if !strings.Contains(body, `method="post"`) {
 		t.Fatalf("precondition: the renderer marks a submit form method=post: %s", body)
 	}
 	served := injectCsrfIntoForms(body, "tok123")
-	if ok, reason := spaCanHydrate(xdom(ssrParseHTML(t, served)), root); !ok {
+	if !strings.Contains(served, `<form sky-id="r.0#form"`) || !strings.Contains(served, `<input type="hidden" name="__sky_csrf" value="tok123">`) {
+		t.Fatalf("the served SSR form must carry the CSRF token for a native POST: %s", served)
+	}
+	dom := ssrParseHTML(t, served)
+	if ok, reason := spaCanHydrate(xdom(dom), root); !ok {
 		t.Fatalf("the SSR page served to a request with a CSRF cookie must hydrate, refused: %s\nhtml: %s", reason, served)
 	}
-	if served != body {
-		t.Fatalf("a runtime-rendered form (it carries a sky-id) must be served as rendered\nrendered: %s\nserved:   %s", body, served)
+	// The text-run split walks the same slots and must not trip on it either.
+	spaHydrateTextRuns(xdom(dom), root)
+	form := dom.FirstChild
+	if form == nil || form.FirstChild == nil || !spaIsServerCsrfInput(xdom(form.FirstChild)) {
+		t.Fatalf("hydration must leave the token as the form's first child")
 	}
 }
 
-// The injection itself stays for the forms it exists for: hand-written
-// Sky.Http.Server markup, which no client runtime owns.
-func TestInjectCsrfIntoForms_handWrittenPostFormsKeepTheToken(t *testing.T) {
-	cases := map[string]string{
-		"double-quoted":       `<form method="post" action="/login"><input name="u"></form>`,
-		"upper-case method":   `<FORM METHOD="POST" action="/login"><input name="u"></FORM>`,
-		"Html.render (no id)": renderVNode(func() VNode { v := el("form", attrs("method", "post"), txt("x")); return v }(), map[string]any{}),
+// A text-run form (text children right after the token) hydrates too.
+func TestSpaHydrate_csrfTokenBeforeATextRun(t *testing.T) {
+	v := el("div", nil, el("form", nil, txt("Hello, "), txt("world"), el("button", nil, txt("Go"))))
+	v.Children[0].Events = map[string]any{"submit": "Go"}
+	root := withIDs(v)
+	served := injectCsrfIntoForms(renderVNode(*root, map[string]any{}), "tok")
+	dom := ssrParseHTML(t, served)
+	if ok, reason := spaCanHydrate(xdom(dom), root); !ok {
+		t.Fatalf("refused: %s\nhtml: %s", reason, served)
 	}
-	for name, in := range cases {
+	spaHydrateTextRuns(xdom(dom), root)
+	if why := clientShapeSkippingToken(dom, root); why != "" {
+		t.Fatalf("after hydration the DOM must have spaMount's structure (plus the token): %s", why)
+	}
+}
+
+// clientShapeSkippingToken is clientShape with the form's token stepped over.
+func clientShapeSkippingToken(n *html.Node, v *VNode) string {
+	form := n.FirstChild
+	if form != nil && form.FirstChild != nil && spaIsServerCsrfInput(xdom(form.FirstChild)) {
+		tok := form.FirstChild
+		form.RemoveChild(tok)
+		defer form.InsertBefore(tok, form.FirstChild)
+	}
+	return clientShape(n, v)
+}
+
+// The skip is exactly the server's token as a form's first child. Anything
+// broader would let parity accept a server DOM the client tree does not show.
+func TestSpaHydrate_csrfSkipIsNarrow(t *testing.T) {
+	root := signInPage()
+	body := renderVNode(*root, map[string]any{})
+	open := `<form sky-id="r.0#form" sky-submit="_" data-sky-hid="r.0#form.submit" method="post">`
+	if !strings.Contains(body, open) {
+		t.Fatalf("precondition: form opener %q not in %s", open, body)
+	}
+	cases := map[string]string{
+		"another name":            `<input type="hidden" name="__other" value="t">`,
+		"not hidden":              `<input type="text" name="__sky_csrf" value="t">`,
+		"a div":                   `<div>t</div>`,
+		"carries a sky-id":        `<input type="hidden" name="__sky_csrf" value="t" sky-id="x">`,
+		"two tokens (second one)": `<input type="hidden" name="__sky_csrf" value="t"><input type="hidden" name="__sky_csrf" value="t">`,
+	}
+	for name, extra := range cases {
 		t.Run(name, func(t *testing.T) {
-			out := injectCsrfIntoForms(in, "tok123")
-			if !strings.Contains(out, `name="__sky_csrf" value="tok123"`) {
-				t.Fatalf("a hand-written POST form must carry the CSRF token: %s", out)
+			served := strings.Replace(body, open, open+extra, 1)
+			if ok, _ := spaCanHydrate(xdom(ssrParseHTML(t, served)), root); ok {
+				t.Fatalf("a server form holding %s must be refused", extra)
 			}
 		})
+	}
+	// Outside a form the token is not skipped either.
+	div := withIDs(el("div", nil, el("div", nil, txt("x"))))
+	served := strings.Replace(renderVNode(*div, map[string]any{}), `<div sky-id="r.0#div">`,
+		`<div sky-id="r.0#div"><input type="hidden" name="__sky_csrf" value="t">`, 1)
+	if ok, _ := spaCanHydrate(xdom(ssrParseHTML(t, served)), div); ok {
+		t.Fatalf("a token input outside a form must be refused")
+	}
+}
+
+// With JS off (or before the wasm client runs) a submit of the SSR form is a
+// native POST of its fields. The injected token must make that POST pass the
+// CSRF middleware, not 403.
+func TestSpaHydrate_nativePostOfSSRFormPassesCSRF(t *testing.T) {
+	resetCsrf(t)
+	const tok = "cookie-token-123"
+	root := signInPage()
+	served := injectCsrfIntoForms(renderVNode(*root, map[string]any{}), tok)
+	dom := ssrParseHTML(t, served)
+	// Collect the fields a browser submits: every named input of the form.
+	fields := url.Values{}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "input" {
+			d := xDOM{n}
+			if nm, ok := d.Attr("name"); ok {
+				v, _ := d.Attr("value")
+				fields.Add(nm, v)
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(dom)
+	fields.Set("email", "a@b.c")
+	post := func(body url.Values) int {
+		req := httptest.NewRequest(http.MethodPost, "/signin", strings.NewReader(body.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: SkyCsrfCookieName, Value: tok})
+		resp := httptest.NewRecorder()
+		CSRFMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })).ServeHTTP(resp, req)
+		return resp.Code
+	}
+	if code := post(fields); code != 200 {
+		t.Fatalf("a native POST of the served SSR form must pass CSRF, got %d (fields %v)", code, fields)
+	}
+	// Proof the token is what carries it: the same POST without it is 403.
+	without := url.Values{}
+	for k, v := range fields {
+		if k != "__sky_csrf" {
+			without[k] = v
+		}
+	}
+	if code := post(without); code != http.StatusForbidden {
+		t.Fatalf("precondition: a native POST without the token must be 403, got %d", code)
 	}
 }
 
@@ -495,5 +600,36 @@ func TestSpaHydrate_linkWithElLabelInParagraph(t *testing.T) {
 	after := shape("span")
 	if ok, reason := spaCanHydrate(xdom(ssrParse(t, after)), after); !ok {
 		t.Fatalf("<p><a><span> (what Std.Ui emits now) must hydrate, refused: %s", reason)
+	}
+}
+
+// With JS disabled the SSR page must be usable: the first-paint overlay
+// (html[data-sky-hydrating]::after, pointer-events:auto) is cleared only by
+// script, so it covered the page forever and no form could be submitted. The
+// page carries a <noscript> style in <head> that hides it.
+func TestSpaSSRPage_noScriptHidesTheHydratingOverlay(t *testing.T) {
+	page := SpaSSRPage("", `<div sky-id="r"><form sky-id="r.0#form" method="post"></form></div>`, "main.wasm", "{}")
+	doc, err := html.ParseWithOptions(strings.NewReader(page), html.ParseOptionEnableScripting(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	var walk func(n *html.Node, inHead, inNoscript bool)
+	walk = func(n *html.Node, inHead, inNoscript bool) {
+		if n.Type == html.ElementNode {
+			inHead = inHead || n.Data == "head"
+			inNoscript = inNoscript || n.Data == "noscript"
+			if n.Data == "style" && inHead && inNoscript && n.FirstChild != nil &&
+				strings.Contains(n.FirstChild.Data, "html[data-sky-hydrating]::after{display:none}") {
+				found = true
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c, inHead, inNoscript)
+		}
+	}
+	walk(doc, false, false)
+	if !found {
+		t.Fatalf("the SSR page must hide the hydrating overlay when scripts are off:\n%s", page)
 	}
 }

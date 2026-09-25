@@ -531,31 +531,45 @@ nested model =
               ]
         , Ui.form
               [ Ui.htmlAttribute "id" "nest-form", Ui.onSubmit DoSignIn ]
-              [ Ui.column
-                    []
-                    [ Ui.el [] (Ui.text "Email")
-                    , Ui.input
-                          [ Ui.name "email"
-                          , Ui.htmlAttribute "type" "email"
-                          , Ui.htmlAttribute "value" ""
-                          ]
-                    ]
-              , Ui.column
-                    []
-                    [ Ui.el [] (Ui.text "Password")
-                    , Ui.input
-                          [ Ui.name "password"
-                          , Ui.htmlAttribute "type" "password"
-                          ]
-                    ]
-              , Ui.el
-                    []
-                    (Ui.html
-                        (Html.button
-                            [ HA.type_ "submit" ]
-                            [ Html.text "Sign in" ]))
-              ]
+              (nestExtra model
+                  ++ [ Ui.column
+                           []
+                           [ Ui.el [] (Ui.text "Email")
+                           , Ui.input
+                                 [ Ui.name "email"
+                                 , Ui.htmlAttribute "type" "email"
+                                 , Ui.htmlAttribute "value" ""
+                                 ]
+                           ]
+                     , Ui.column
+                           []
+                           [ Ui.el [] (Ui.text "Password")
+                           , Ui.input
+                                 [ Ui.name "password"
+                                 , Ui.htmlAttribute "type" "password"
+                                 ]
+                           ]
+                     , Ui.el
+                           []
+                           (Ui.html
+                               (Html.button
+                                   [ HA.type_ "submit" ]
+                                   [ Html.text "Sign in" ]))
+                     ])
+        , btn "toggle" Toggle
         , Ui.el
               [ Ui.htmlAttribute "id" "log" ]
               (Ui.text (String.join "," (List.reverse model.log)))
         ]
+
+
+-- A form child that comes and goes with the model: toggling it makes the
+-- client reconcile the form's children, which must keep the server's CSRF
+-- token input (the first child) in place.
+nestExtra : Model -> List (Element Msg)
+nestExtra model =
+    if model.dark then
+        [ Ui.el [ Ui.htmlAttribute "id" "nest-extra" ] (Ui.text "extra") ]
+
+    else
+        []
