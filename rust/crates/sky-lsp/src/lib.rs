@@ -29,13 +29,14 @@
 //! `SkyDatabase` is `Send`, so it is held across `await` behind the server's one
 //! async mutex; no salsa is imported here (it stays quarantined in `skydb`, L1).
 
+mod docs;
 mod server;
 pub use server::run;
 
 use base::{DefId, FileId, ModuleId, Span};
 use hir::{
-    DefKind, FieldOcc, ImportSource, LocalId, RefOcc, Res, ResolveResult, ScopeNameKind, SkyDb,
-    TypeOcc,
+    DefKind, FieldDecl, FieldOcc, FieldRecv, ImportSource, LocalId, RefOcc, Res, ResolveResult,
+    ScopeNameKind, SkyDb, TypeOcc,
 };
 use skydb::{SkyDatabase, SourceFile};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -100,6 +101,10 @@ pub struct Analysis {
     /// dep), the root is reloaded before serving — the #1 staleness gap. `None`
     /// snapshot means neither tree existed at load time.
     project_scan: HashMap<PathBuf, Option<std::time::SystemTime>>,
+    /// Field name → every record-alias field declaration, across the workspace
+    /// (see `field_decl_index`). Valid until the next `set_document`.
+    field_index: Mutex<HashMap<String, Vec<(ModuleId, FieldDecl)>>>,
+    field_index_valid: std::sync::atomic::AtomicBool,
 }
 
 impl Default for Analysis {
@@ -132,6 +137,8 @@ impl Analysis {
             loaded_projects: std::collections::HashSet::new(),
             ffi: ffi::FfiRegistry::default(),
             project_scan: HashMap::new(),
+            field_index: Mutex::new(HashMap::new()),
+            field_index_valid: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -152,6 +159,7 @@ impl Analysis {
     /// memoised `resolve`/`infer` is untouched. On a NEW module we mint a fresh
     /// input and register it (position == `ModuleId` == span `FileId`).
     pub fn set_document(&mut self, url: Url, text: String) {
+        *self.field_index_valid.get_mut() = false;
         let parse = syntax::parse(&text, FileId(0));
         let name = module_name(&parse, url_key(&url).as_deref());
         let idx = match self.by_name.get(&name) {
@@ -339,13 +347,26 @@ impl Analysis {
         let db = self.db();
         let module = ModuleId(idx as u32);
         let resolved = db.resolve(module);
-        let cand = self.cand_at(db, &resolved, module, off)?;
         let typer = Typer::new(db);
-        let md = match cand {
-            Cand::Ref(o) => self.hover_ref(&typer, &resolved, db, o),
-            Cand::Field(o) => self.hover_field(&typer, &resolved, o),
-            Cand::Type(o) => self.hover_type(o),
-            Cand::Def { def, .. } => self.hover_def(&typer, db, def),
+        let md = match self.cand_at(db, &resolved, module, off) {
+            Some(Cand::Ref(o)) => self.hover_ref(&typer, &resolved, db, o),
+            Some(Cand::Field(o)) => self.hover_field(&typer, db, &resolved, module, o),
+            Some(Cand::FieldDecl(f)) => Some(self.render_field_decl(f, None)),
+            Some(Cand::Type(o)) => Some(self.type_def_markdown(db, o.con, o.name.as_str())),
+            Some(Cand::Def { def, .. }) => self.hover_def(&typer, db, def),
+            // A type VARIABLE in an annotation (`Maybe a`) is not an occurrence
+            // the resolver indexes; answer from the tree.
+            None => match type_name_at(&self.docs[idx].parse, off) {
+                Some(TypeName::Var(v)) => Some(format!("```sky\n{v}\n```\n\nType variable")),
+                // A type name the resolver leaves nominal (a kernel-implicit
+                // `Cmd`/`Sub`/`Decoder`, a kernel-qualified type): answer by name.
+                Some(TypeName::Con(n)) => Some(self.type_name_markdown(db, &n)),
+                Some(TypeName::BoolLit(b)) => Some(with_doc(
+                    format!("```sky\n{b} : Bool\n```"),
+                    docs::builtin_type("Bool").map(|(_, d)| d.to_string()),
+                )),
+                None => None,
+            },
         }?;
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -367,7 +388,153 @@ impl Analysis {
         let ty = self
             .ref_type_string(typer, resolved, db, o)
             .unwrap_or_else(|| "?".to_string());
-        Some(format!("```sky\n{name} : {ty}\n```"))
+        let doc = match &o.res {
+            Res::Ctor(cr)
+                if db
+                    .def_loc(cr.def)
+                    .is_some_and(|l| l.module.index() == u32::MAX) =>
+            {
+                db.def_loc(cr.def)
+                    .and_then(|l| docs::builtin_ctor_parent(l.name.as_str()))
+                    .and_then(docs::builtin_type)
+                    .map(|(_, d)| d.to_string())
+            }
+            Res::Def(d) | Res::Ctor(hir::CtorRef { def: d, .. }) => self.def_doc(db, *d),
+            Res::Kernel { module, func } => self.kernel_doc(db, module.as_str(), func.as_str()),
+            _ => None,
+        };
+        Some(with_doc(format!("```sky\n{name} : {ty}\n```"), doc))
+    }
+
+    /// The doc comment of a top-level declaration: above its type annotation when
+    /// it has one (that is where a value's doc sits), else above the declaration.
+    fn def_doc(&self, db: &dyn SkyDb, d: DefId) -> Option<String> {
+        let loc = db.def_loc(d)?;
+        if loc.module.index() == u32::MAX {
+            return None;
+        }
+        let (start, _) = self.decl_range(db, loc.module, loc.name.as_str(), loc.kind)?;
+        let text = &self.docs.get(loc.module.index() as usize)?.text;
+        docs::doc_comment_before(text, start)
+    }
+
+    /// The doc comment of a kernel function (`List.map`): its Sky-source stub in
+    /// the stdlib module the kernel pseudo-module is imported as.
+    fn kernel_doc(&self, db: &dyn SkyDb, kmod: &str, func: &str) -> Option<String> {
+        self.def_doc(db, kernel_source_def(db, kmod, func)?)
+    }
+
+    /// Byte range (first to last significant token) of the top-level declaration
+    /// of `name` in module `m`. For a value, the range starts at its annotation
+    /// when present. For a constructor, it is the enclosing union.
+    fn decl_range(
+        &self,
+        db: &dyn SkyDb,
+        m: ModuleId,
+        name: &str,
+        kind: DefKind,
+    ) -> Option<(usize, usize)> {
+        let tree = db.module_parse(m).tree();
+        let tok_is = |t: Option<syntax::SyntaxToken>| t.is_some_and(|t| t.text() == name);
+        let mut anno: Option<(usize, usize)> = None;
+        for decl in tree.decls() {
+            let hit = match (&decl, kind) {
+                (ast::Decl::TypeAnno(a), DefKind::Value) => {
+                    if tok_is(a.name()) && anno.is_none() {
+                        anno = Some(sig_range(decl.syntax()));
+                    }
+                    false
+                }
+                (ast::Decl::Value(v), DefKind::Value) => tok_is(v.name()),
+                (ast::Decl::Union(u), DefKind::TypeCon) => tok_is(u.name()),
+                (ast::Decl::Alias(a), DefKind::TypeAlias) => tok_is(a.name()),
+                (ast::Decl::Union(u), DefKind::Ctor) => {
+                    u.variants().iter().any(|v| tok_is(v.name()))
+                }
+                _ => false,
+            };
+            if hit {
+                let r = sig_range(decl.syntax());
+                return Some(match anno {
+                    Some(a) if kind == DefKind::Value => (a.0, r.1),
+                    _ => r,
+                });
+            }
+        }
+        anno
+    }
+
+    /// Hover markdown for a type known only by NAME (no Sky declaration): a
+    /// builtin (`Maybe`, `Int`, …) renders its definition; a kernel-implicit
+    /// runtime type (`Cmd`, `Sub`, `Decoder`) renders `type Name` plus the doc of
+    /// the stdlib module that owns it (`Std.Cmd`), when there is one.
+    fn type_name_markdown(&self, db: &dyn SkyDb, name: &str) -> String {
+        if let Some(m) = db.module_by_name(&format!("Sky.Core.{name}")) {
+            for k in [DefKind::TypeCon, DefKind::TypeAlias] {
+                if let Some((s, e)) = self.decl_range(db, m, name, k) {
+                    let text = &self.docs[m.index() as usize].text;
+                    let src = docs::decl_source(&text[s..e]);
+                    return with_doc(
+                        format!("```sky\n{src}\n```"),
+                        docs::doc_comment_before(text, s),
+                    );
+                }
+            }
+        }
+        if let Some((def, doc)) = docs::builtin_type(name) {
+            return with_doc(format!("```sky\n{def}\n```"), Some(doc.to_string()));
+        }
+        let module_doc = [format!("Std.{name}"), format!("Sky.Core.{name}")]
+            .iter()
+            .find_map(|mn| {
+                let m = db.module_by_name(mn)?;
+                let text = &self.docs.get(m.index() as usize)?.text;
+                let start = module_kw_offset(text)?;
+                docs::doc_comment_before(text, start)
+            });
+        with_doc(format!("```sky\ntype {name}\n```"), module_doc)
+    }
+
+    /// Hover markdown for a type name: the type's definition (its source for a
+    /// user/stdlib type, the builtin definition for `Maybe`/`Result`/…) plus its
+    /// doc comment.
+    fn type_def_markdown(&self, db: &dyn SkyDb, con: DefId, name: &str) -> String {
+        let loc = db.def_loc(con);
+        let (m, kind, name) = match &loc {
+            Some(l) if l.module.index() != u32::MAX => (Some(l.module), l.kind, l.name.as_str()),
+            // A builtin type: prefer its stdlib source (`Error` lives in
+            // `Sky.Core.Error`), else the builtin table.
+            _ => {
+                let nm = loc.as_ref().map(|l| l.name.as_str()).unwrap_or(name);
+                let m = db.module_by_name(&format!("Sky.Core.{nm}"));
+                let found = m.and_then(|m| {
+                    [DefKind::TypeCon, DefKind::TypeAlias]
+                        .into_iter()
+                        .find(|k| self.decl_range(db, m, nm, *k).is_some())
+                        .map(|k| (m, k))
+                });
+                match found {
+                    Some((m, k)) => (Some(m), k, nm),
+                    None => return self.type_name_markdown(db, nm),
+                }
+            }
+        };
+        let Some(m) = m else {
+            return format!("```sky\ntype {name}\n```");
+        };
+        let Some(text) = self.docs.get(m.index() as usize).map(|d| d.text.as_str()) else {
+            return format!("```sky\ntype {name}\n```");
+        };
+        match self.decl_range(db, m, name, kind) {
+            Some((s, e)) => {
+                let decl_src = docs::decl_source(&text[s..e]);
+                with_doc(
+                    format!("```sky\n{decl_src}\n```"),
+                    docs::doc_comment_before(text, s),
+                )
+            }
+            None => format!("```sky\ntype {name}\n```"),
+        }
     }
 
     /// The rendered type of a reference occurrence — the shared core of hover and
@@ -384,10 +551,26 @@ impl Analysis {
     ) -> Option<String> {
         match &o.res {
             Res::Def(d) => self.def_sig_string(typer, db, *d),
+            // A kernel with no pinned scheme (a builtin like `identity`) answers
+            // from its Sky-source stub in the stdlib.
             Res::Kernel { module, func } => typer
                 .kernel_sig(module.as_str(), func.as_str())
+                .or_else(|| typer.check_kernel_sig(module.as_str(), func.as_str()))
+                .map(|s| s.ty.render_pretty())
+                .or_else(|| {
+                    let d = kernel_source_def(db, module.as_str(), func.as_str())?;
+                    self.def_sig_string(typer, db, d)
+                }),
+            Res::Ctor(cr) => typer
+                .ctor_sig_by_def(cr.def)
+                .or_else(|| {
+                    // A builtin ctor (`Just`, `Ok`, `True`) has no per-def scheme.
+                    let loc = db.def_loc(cr.def)?;
+                    (loc.module.index() == u32::MAX)
+                        .then(|| typer.builtin_ctor_sig(loc.name.as_str()))
+                        .flatten()
+                })
                 .map(|s| s.ty.render_pretty()),
-            Res::Ctor(cr) => typer.ctor_sig_by_def(cr.def).map(|s| s.ty.render_pretty()),
             Res::Local(l) => {
                 let body = resolved.bodies.get(&o.owner)?;
                 typer
@@ -447,19 +630,153 @@ impl Analysis {
             })
     }
 
-    fn hover_field(&self, typer: &Typer, resolved: &ResolveResult, o: &FieldOcc) -> Option<String> {
-        let name = self.slice(o.span).trim().to_string();
-        let body = resolved.bodies.get(&o.owner)?;
-        let bt = typer.body_types_annotated(o.owner, body);
-        let recv = bt.exprs.get(&o.receiver)?;
-        let s = record_field(recv, o.field.as_str())
-            .map(|t| t.render_pretty())
-            .unwrap_or_else(|| "?".to_string());
-        Some(format!("```sky\n{name} : {s}\n```"))
+    /// Hover for a record-field name at any site (`r.f`, `{ f = … }`,
+    /// `{ r | f = … }`, `{ f }` pattern, `.f`). The field's DECLARED type (the
+    /// alias the user wrote, e.g. `user : User`) when the record resolves to a
+    /// known record alias, else its inferred type; plus the alias it belongs to.
+    fn hover_field(
+        &self,
+        typer: &Typer,
+        db: &dyn SkyDb,
+        resolved: &ResolveResult,
+        module: ModuleId,
+        o: &FieldOcc,
+    ) -> Option<String> {
+        let info = field_info(typer, resolved, o);
+        match self.find_field_decl(db, resolved, module, o.field.as_str(), &info) {
+            Some(FieldMatch {
+                decl,
+                certain: true,
+            }) => Some(self.render_field_decl(&decl, info.field.as_ref())),
+            _ => {
+                let ty = info
+                    .field
+                    .map(|t| t.render_pretty())
+                    .unwrap_or_else(|| "?".to_string());
+                Some(format!("```sky\n{} : {ty}\n```", o.field.as_str()))
+            }
+        }
     }
 
-    fn hover_type(&self, o: &TypeOcc) -> Option<String> {
-        Some(format!("```sky\ntype {}\n```", o.name.as_str()))
+    /// `name : T` for a record-alias field declaration, with the alias it belongs
+    /// to. `T` is the declared text unless the alias is generic (then the
+    /// use-site `inferred` type, when known, is the accurate one).
+    fn render_field_decl(&self, decl: &FieldDecl, inferred: Option<&Ty>) -> String {
+        let declared = decl.ty_span.map(|s| {
+            self.slice(s)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        let ty = match (declared, inferred) {
+            (Some(_), Some(t)) if decl.generic => t.render_pretty(),
+            (Some(d), _) => d,
+            (None, Some(t)) => t.render_pretty(),
+            (None, None) => "?".to_string(),
+        };
+        format!(
+            "```sky\n{} : {ty}\n```\n\nField of `{}`",
+            decl.field.as_str(),
+            decl.alias.as_str()
+        )
+    }
+
+    /// The record-alias field declaration a field occurrence refers to. Prefers
+    /// this module, then the modules it imports, then every loaded module (a
+    /// record alias from a module the file never imports still reaches it through
+    /// a value's type). `certain` is true when the record's field set EQUALS the
+    /// alias's (a closed record), or when exactly one alias in the nearest tier
+    /// carries a compatible field set.
+    fn find_field_decl(
+        &self,
+        db: &dyn SkyDb,
+        resolved: &ResolveResult,
+        module: ModuleId,
+        field: &str,
+        info: &FieldInfo,
+    ) -> Option<FieldMatch> {
+        let imported: HashSet<ModuleId> = resolved
+            .qualifiers
+            .values()
+            .filter_map(|src| match src {
+                ImportSource::Dep(m) => Some(*m),
+                _ => None,
+            })
+            .collect();
+        let rank = |m: ModuleId| -> u8 {
+            if m == module {
+                0
+            } else if imported.contains(&m) {
+                1
+            } else {
+                2
+            }
+        };
+        let mut cands: Vec<(u8, FieldDecl)> = self
+            .field_decl_index(db)
+            .get(field)
+            .map(|v| v.iter().map(|(m, f)| (rank(*m), f.clone())).collect())
+            .unwrap_or_default();
+        cands.sort_by_key(|(r, f)| (*r, f.span.file.index(), f.span.range.0));
+        let first_local = cands.iter().find(|(r, _)| *r == 0).map(|(_, f)| f.clone());
+        let compatible: Vec<(u8, FieldDecl)> = cands
+            .into_iter()
+            .filter(|(_, f)| {
+                info.names
+                    .iter()
+                    .all(|n| f.siblings.iter().any(|s| s.as_str() == n))
+            })
+            .collect();
+        if info.closed {
+            if let Some((_, f)) = compatible
+                .iter()
+                .find(|(_, f)| f.siblings.len() == info.names.len())
+            {
+                return Some(FieldMatch {
+                    decl: f.clone(),
+                    certain: true,
+                });
+            }
+        }
+        let nearest = compatible.first().map(|(r, _)| *r);
+        let tier: Vec<FieldDecl> = compatible
+            .into_iter()
+            .filter(|(r, _)| Some(*r) == nearest)
+            .map(|(_, f)| f)
+            .collect();
+        let certain = tier.len() == 1 && !info.names.is_empty();
+        tier.into_iter()
+            .next()
+            .or(first_local)
+            .map(|decl| FieldMatch { decl, certain })
+    }
+
+    /// Every record-alias field declaration in the workspace, keyed by field
+    /// name. Built once per workspace state (any `set_document` drops it), so a
+    /// field hover does not re-walk every module's resolution.
+    fn field_decl_index(
+        &self,
+        db: &dyn SkyDb,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, Vec<(ModuleId, FieldDecl)>>> {
+        let mut guard = self.field_index.lock().unwrap_or_else(|e| e.into_inner());
+        if !self
+            .field_index_valid
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            guard.clear();
+            for mi in 0..self.docs.len() {
+                let m = ModuleId(mi as u32);
+                for f in &db.resolve(m).field_decls {
+                    guard
+                        .entry(f.field.as_str().to_string())
+                        .or_default()
+                        .push((m, f.clone()));
+                }
+            }
+            self.field_index_valid
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        guard
     }
 
     /// Hover for a cursor ON a declaration name (bug (a)). A value renders the
@@ -474,16 +791,16 @@ impl Analysis {
                 let ty = self
                     .def_sig_string(typer, db, def)
                     .unwrap_or_else(|| "?".to_string());
-                format!("```sky\n{name} : {ty}\n```")
+                with_doc(format!("```sky\n{name} : {ty}\n```"), self.def_doc(db, def))
             }
             DefKind::Ctor => {
                 let ty = typer
                     .ctor_sig_by_def(def)
                     .map(|s| s.ty.render_pretty())
                     .unwrap_or_else(|| "?".to_string());
-                format!("```sky\n{name} : {ty}\n```")
+                with_doc(format!("```sky\n{name} : {ty}\n```"), self.def_doc(db, def))
             }
-            DefKind::TypeCon | DefKind::TypeAlias => format!("```sky\ntype {name}\n```"),
+            DefKind::TypeCon | DefKind::TypeAlias => self.type_def_markdown(db, def, &name),
         };
         Some(md)
     }
@@ -511,14 +828,22 @@ impl Analysis {
                     .iter()
                     .find(|b| b.owner == o.owner && b.local == *l)
                     .map(|b| b.span),
-                Res::Kernel { .. } | Res::Foreign { .. } | Res::Error => None,
+                // A kernel function jumps to its Sky-source stub in the stdlib.
+                Res::Kernel { module: kmod, func } => {
+                    let d = kernel_source_def(db, kmod.as_str(), func.as_str())?;
+                    def_span(db, &resolved, module, d)
+                }
+                Res::Foreign { .. } | Res::Error => None,
             },
-            Cand::Type(o) => def_span(db, &resolved, module, o.con),
+            Cand::Type(o) => def_span(db, &resolved, module, o.con)
+                .or_else(|| builtin_type_source(db, o.name.as_str())),
             Cand::Field(o) => {
                 let typer = Typer::new(db);
-                let recv_fields = receiver_fields(&typer, &resolved, o.owner, o.receiver);
-                field_span(&resolved, o.field.as_str(), recv_fields.as_deref())
+                let info = field_info(&typer, &resolved, o);
+                self.find_field_decl(db, &resolved, module, o.field.as_str(), &info)
+                    .map(|m| m.decl.span)
             }
+            Cand::FieldDecl(f) => Some(f.span),
         }?;
         self.location(span)
     }
@@ -862,6 +1187,7 @@ impl Analysis {
             }
             Cand::Type(o) => Some((Target::Global(o.con), o.span)),
             Cand::Field(o) => Some((Target::Field(o.field.as_str().to_string()), o.span)),
+            Cand::FieldDecl(f) => Some((Target::Field(f.field.as_str().to_string()), f.span)),
         }
     }
 
@@ -1165,7 +1491,15 @@ impl Analysis {
 
     fn is_renameable(&self, db: &dyn SkyDb, target: &Target) -> bool {
         match target {
-            Target::Local { .. } => true,
+            // A local bound by a record pattern (`{ age }`) IS the field name:
+            // renaming it would rename the field the pattern reads, so refuse
+            // it like a field rename.
+            Target::Local { owner, local } => !db.def_loc(*owner).is_some_and(|l| {
+                db.resolve(l.module).field_occs.iter().any(|o| {
+                    o.owner == *owner
+                        && matches!(&o.recv, FieldRecv::Pattern { local: pl, .. } if pl == local)
+                })
+            }),
             Target::Global(d) => self.def_kind(db, *d).is_some(),
             // A kernel/builtin function has no Sky definition site; a field
             // rename would need whole-program record-shape analysis to be safe.
@@ -1865,44 +2199,6 @@ fn def_span(db: &dyn SkyDb, resolved: &ResolveResult, this: ModuleId, d: DefId) 
         .map(|(_, s)| *s)
 }
 
-fn field_span(
-    resolved: &ResolveResult,
-    field: &str,
-    recv_fields: Option<&[String]>,
-) -> Option<Span> {
-    let cands: Vec<&hir::FieldDecl> = resolved
-        .field_decls
-        .iter()
-        .filter(|f| f.field.as_str() == field)
-        .collect();
-    if cands.is_empty() {
-        return None;
-    }
-    if let Some(rf) = recv_fields {
-        if let Some(f) = cands.iter().find(|f| {
-            rf.iter()
-                .all(|n| f.siblings.iter().any(|s| s.as_str() == n))
-        }) {
-            return Some(f.span);
-        }
-    }
-    Some(cands[0].span)
-}
-
-fn receiver_fields(
-    typer: &Typer,
-    resolved: &ResolveResult,
-    owner: DefId,
-    receiver: hir::ExprId,
-) -> Option<Vec<String>> {
-    let body = resolved.bodies.get(&owner)?;
-    let bt = typer.body_types_annotated(owner, body);
-    match bt.exprs.get(&receiver)? {
-        Ty::Record(fields, _) => Some(fields.iter().map(|(n, _)| n.as_str().to_string()).collect()),
-        _ => None,
-    }
-}
-
 fn module_completion(db: &dyn SkyDb, dep: ModuleId, recv: &str) -> Vec<CompletionItem> {
     let exports = db.module_exports(dep);
     let mut items = Vec::new();
@@ -1926,6 +2222,8 @@ fn module_completion(db: &dyn SkyDb, dep: ModuleId, recv: &str) -> Vec<Completio
 enum Cand<'a> {
     Ref(&'a RefOcc),
     Field(&'a FieldOcc),
+    /// The cursor sits on a field NAME in a record-alias declaration.
+    FieldDecl(&'a FieldDecl),
     Type(&'a TypeOcc),
     /// The cursor sits ON a declaration name (a value `foo =` site, a type/alias
     /// con, or a constructor) — resolved from `def_spans`, or a top-level
@@ -1969,6 +2267,14 @@ fn best_candidate(resolved: &ResolveResult, off: u32) -> Option<Cand<'_>> {
             }
         }
     }
+    for f in &resolved.field_decls {
+        if contains(f.span, off) {
+            let len = span_len(f.span);
+            if best.as_ref().map(|(l, _)| len < *l).unwrap_or(true) {
+                best = Some((len, Cand::FieldDecl(f)));
+            }
+        }
+    }
     for (d, span) in &resolved.def_spans {
         if contains(*span, off) {
             let len = span_len(*span);
@@ -1991,6 +2297,169 @@ fn contains(span: Span, off: u32) -> bool {
 }
 fn span_len(span: Span) -> u32 {
     span.range.1.saturating_sub(span.range.0)
+}
+
+/// What the inferred body says about a field occurrence's record: the field's
+/// type, the record's known field names, and whether the record is closed.
+struct FieldInfo {
+    field: Option<Ty>,
+    names: Vec<String>,
+    closed: bool,
+}
+
+struct FieldMatch {
+    decl: FieldDecl,
+    certain: bool,
+}
+
+fn field_info(typer: &Typer, resolved: &ResolveResult, o: &FieldOcc) -> FieldInfo {
+    let mut info = FieldInfo {
+        field: None,
+        names: Vec::new(),
+        closed: false,
+    };
+    let Some(body) = resolved.bodies.get(&o.owner) else {
+        return info;
+    };
+    let bt = typer.body_types_annotated(o.owner, body);
+    let record = match &o.recv {
+        FieldRecv::Access(e) | FieldRecv::Record(e) => bt.exprs.get(e).cloned(),
+        // `.f : record -> field` — the record is the argument, the field the result.
+        FieldRecv::Accessor(e) => match bt.exprs.get(e) {
+            Some(Ty::Fun(arg, res)) => {
+                info.field = Some((**res).clone());
+                Some((**arg).clone())
+            }
+            _ => None,
+        },
+        FieldRecv::Pattern { local, fields } => {
+            info.field = bt.locals.get(local).cloned();
+            info.names = fields.iter().map(|n| n.as_str().to_string()).collect();
+            return info;
+        }
+    };
+    if let Some(rec @ Ty::Record(fields, ext)) = &record {
+        info.names = fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+        info.closed = ext.is_none();
+        if let Some(t) = record_field(rec, o.field.as_str()) {
+            info.field = Some(t);
+        }
+    }
+    info
+}
+
+/// The stdlib Sky-source value def behind a kernel function (`Crypto.sha256` →
+/// `Sky.Core.Crypto.sha256`), via the kernel pseudo-module table.
+fn kernel_source_def(db: &dyn SkyDb, kmod: &str, func: &str) -> Option<DefId> {
+    let m = hir::KERNEL_MODULES
+        .iter()
+        .filter(|(_, k)| *k == kmod)
+        .find_map(|(path, _)| db.module_by_name(path))
+        .or_else(|| db.module_by_name(kmod))?;
+    let r = db.resolve(m);
+    r.def_spans.iter().map(|(d, _)| *d).find(|d| {
+        db.def_loc(*d)
+            .is_some_and(|l| l.kind == DefKind::Value && l.name.as_str() == func)
+    })
+}
+
+/// The declaration span of a builtin type that has Sky source in the stdlib
+/// (`Error` → `Sky.Core.Error`).
+fn builtin_type_source(db: &dyn SkyDb, name: &str) -> Option<Span> {
+    let m = db.module_by_name(&format!("Sky.Core.{name}"))?;
+    let r = db.resolve(m);
+    r.def_spans
+        .iter()
+        .find(|(d, _)| {
+            db.def_loc(*d).is_some_and(|l| {
+                matches!(l.kind, DefKind::TypeCon | DefKind::TypeAlias) && l.name.as_str() == name
+            })
+        })
+        .map(|(_, s)| *s)
+}
+
+/// Append a doc comment (if any) below a hover code block.
+fn with_doc(md: String, doc: Option<String>) -> String {
+    match doc {
+        Some(d) => format!("{md}\n\n---\n\n{d}"),
+        None => md,
+    }
+}
+
+/// First-to-last significant-token byte range of a node.
+fn sig_range(n: &syntax::SyntaxNode) -> (usize, usize) {
+    let mut toks = n
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .filter(|t| !t.kind().is_trivia());
+    let Some(first) = toks.next() else {
+        let r = n.text_range();
+        return (u32::from(r.start()) as usize, u32::from(r.end()) as usize);
+    };
+    let last = toks.last().unwrap_or_else(|| first.clone());
+    (
+        u32::from(first.text_range().start()) as usize,
+        u32::from(last.text_range().end()) as usize,
+    )
+}
+
+enum TypeName {
+    Var(String),
+    Con(String),
+    /// A `True` / `False` literal (a keyword token, not a constructor reference).
+    BoolLit(String),
+}
+
+/// The type-expression name at `off` that has no resolver occurrence: a type
+/// VARIABLE (`a` in `Maybe a`), or the final name of a type constructor
+/// (`Cmd`, `Sub.Sub`).
+fn type_name_at(parse: &syntax::Parse, off: u32) -> Option<TypeName> {
+    let tok = parse
+        .syntax()
+        .token_at_offset(syntax::TextSize::from(off))
+        .find(|t| {
+            matches!(
+                t.kind(),
+                SyntaxKind::LowerIdent
+                    | SyntaxKind::UpperIdent
+                    | SyntaxKind::TrueKw
+                    | SyntaxKind::FalseKw
+            )
+        })?;
+    if matches!(tok.kind(), SyntaxKind::TrueKw | SyntaxKind::FalseKw) {
+        return Some(TypeName::BoolLit(tok.text().to_string()));
+    }
+    let parent = tok.parent()?;
+    match (tok.kind(), parent.kind()) {
+        (SyntaxKind::LowerIdent, SyntaxKind::TypeVar) => {
+            Some(TypeName::Var(tok.text().to_string()))
+        }
+        (SyntaxKind::UpperIdent, SyntaxKind::TypeCon) => {
+            Some(TypeName::Con(tok.text().to_string()))
+        }
+        (SyntaxKind::UpperIdent, SyntaxKind::TypeQual) => {
+            // Only the final segment names the type; the rest is the qualifier.
+            let last = parent
+                .children_with_tokens()
+                .filter_map(|e| e.into_token())
+                .filter(|t| t.kind() == SyntaxKind::UpperIdent)
+                .last()?;
+            (last == tok).then(|| TypeName::Con(tok.text().to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// Byte offset of the `module` keyword that opens a module header.
+fn module_kw_offset(text: &str) -> Option<usize> {
+    let mut off = 0;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("module ") {
+            return Some(off);
+        }
+        off += line.len();
+    }
+    None
 }
 
 fn record_field(ty: &Ty, field: &str) -> Option<Ty> {

@@ -75,15 +75,32 @@ pub struct RefOcc {
     pub owner: DefId,
 }
 
-/// A `<receiver>.field` occurrence — the field-name span, the receiver expr id
-/// within `owner`'s body, and the field name. Hover/goto resolve the receiver's
-/// inferred record type to find the field's type + declaration (doc 10).
+/// A record-field NAME occurrence — the field-name token span, how to reach the
+/// record type it names a field of (`recv`), and the field name. Hover/goto
+/// resolve the record type from `owner`'s inferred body to find the field's type
+/// and declaration (doc 10). Every syntactic site a field name appears at in an
+/// expression or pattern is recorded, not only `recv.field`.
 #[derive(Clone, Debug)]
 pub struct FieldOcc {
     pub span: Span,
-    pub receiver: ExprId,
+    pub recv: FieldRecv,
     pub field: Name,
     pub owner: DefId,
+}
+
+/// Where a [`FieldOcc`]'s record type comes from in the owner's inferred body.
+#[derive(Clone, Debug)]
+pub enum FieldRecv {
+    /// `recv.field` — the receiver expression's type is the record.
+    Access(ExprId),
+    /// `{ field = … }` / `{ r | field = … }` — the record (or update) expression
+    /// itself has the record type.
+    Record(ExprId),
+    /// `.field` accessor function — its type is `record -> field`.
+    Accessor(ExprId),
+    /// `{ field }` record pattern — the field binds `local`, whose type IS the
+    /// field's type; `fields` are every field the pattern names.
+    Pattern { local: LocalId, fields: Vec<Name> },
 }
 
 /// A type-name reference occurrence → its type constructor `DefId` (goto/hover
@@ -104,12 +121,22 @@ pub struct BinderDef {
     pub span: Span,
 }
 
-/// A record-alias field declaration — the goto-def target for a field access.
+/// A record-alias field declaration — the goto-def target for a field access,
+/// and the source of the DECLARED field type hover renders.
 #[derive(Clone, Debug)]
 pub struct FieldDecl {
     pub field: Name,
     pub siblings: Vec<Name>,
+    /// The field NAME token only (never the whole `name : T` node — rename edits
+    /// this span, and the node span would overwrite the field's type too).
     pub span: Span,
+    /// The declared field type's source span (`T` in `name : T`), if present.
+    pub ty_span: Option<Span>,
+    /// The record alias the field belongs to.
+    pub alias: Name,
+    /// Whether the alias takes type parameters (its declared field text may then
+    /// name a type variable the use site instantiates).
+    pub generic: bool,
 }
 
 /// The lexical class of an in-scope UNQUALIFIED name (for `scope_names`, the
@@ -532,6 +559,20 @@ impl<'a> Resolver<'a> {
         self.result.ref_occs.push(RefOcc { span, res, owner });
     }
 
+    fn record_field_occ(&mut self, range: syntax::TextRange, recv: FieldRecv, field: &str) {
+        if self.quiet > 0 {
+            return;
+        }
+        let span = self.span_of(range);
+        let owner = self.owner();
+        self.result.field_occs.push(FieldOcc {
+            span,
+            recv,
+            field: Name::new(field),
+            owner,
+        });
+    }
+
     fn record_binder(&mut self, range: syntax::TextRange, local: LocalId) {
         if self.quiet > 0 {
             return;
@@ -558,6 +599,27 @@ impl<'a> Resolver<'a> {
                 name: Name::new(name),
             });
         }
+    }
+
+    /// LSP: a QUALIFIED type reference (`T.User`, `Ui.Element`) → a type
+    /// occurrence over its final name token, when it resolved to a real type
+    /// constructor. Reads the identity `type_qual` already chose; interns nothing.
+    fn record_qual_type_occ(&mut self, node: &syntax::SyntaxNode, id: TypeId, name: &str) {
+        if self.quiet > 0 {
+            return;
+        }
+        let Type::Con { con: Some(tr), .. } = &self.body.types[id] else {
+            return;
+        };
+        let con = tr.con;
+        let Some(tok) = cst::last_upper_tok(node) else {
+            return;
+        };
+        self.result.type_occs.push(TypeOcc {
+            span: self.span_of(tok.text_range()),
+            con,
+            name: Name::new(name),
+        });
     }
 
     fn def(&self, module: ModuleId, name: &str, kind: DefKind) -> DefId {
@@ -1576,11 +1638,18 @@ impl<'a> Resolver<'a> {
                                 .children()
                                 .filter(|c| c.kind() == SyntaxKind::TypeRecordField)
                             {
-                                if let Some(fname) = cst::first_lower(&f) {
+                                if let Some(tok) = cst::first_lower_tok(&f) {
+                                    let ty_span = f
+                                        .children()
+                                        .find(|c| ast::Type::can_cast(c.kind()))
+                                        .map(|t| self.span_of(cst::trimmed_range(&t)));
                                     self.result.field_decls.push(FieldDecl {
-                                        field: Name::new(&fname),
+                                        field: Name::new(tok.text()),
                                         siblings: field_names.clone(),
-                                        span: self.span_of(f.text_range()),
+                                        span: self.span_of(tok.text_range()),
+                                        ty_span,
+                                        alias: Name::new(&an),
+                                        generic: arity > 0,
                                     });
                                 }
                             }
@@ -1886,7 +1955,11 @@ impl<'a> Resolver<'a> {
             }
             ast::Expr::Accessor(a) => {
                 let f = cst::first_lower(a.syntax()).unwrap_or_default();
-                self.body.expr(Expr::Accessor(Name::new(&f)))
+                let id = self.body.expr(Expr::Accessor(Name::new(&f)));
+                if let Some(tok) = cst::first_lower_tok(a.syntax()) {
+                    self.record_field_occ(tok.text_range(), FieldRecv::Accessor(id), &f);
+                }
+                id
             }
             ast::Expr::FieldAccess(fa) => {
                 let base = cst::child_exprs(fa.syntax());
@@ -1908,7 +1981,7 @@ impl<'a> Resolver<'a> {
                         let owner = self.owner();
                         self.result.field_occs.push(FieldOcc {
                             span: self.span_of(tok.text_range()),
-                            receiver: base_id,
+                            recv: FieldRecv::Access(base_id),
                             field: Name::new(&field),
                             owner,
                         });
@@ -1930,15 +2003,23 @@ impl<'a> Resolver<'a> {
             ast::Expr::Unit(_) => self.body.expr(Expr::Unit),
             ast::Expr::Record(rec) => {
                 let mut fields = Vec::new();
+                let mut toks = Vec::new();
                 for f in rec.fields() {
                     let name = f.name().map(|t| t.text().to_string()).unwrap_or_default();
+                    if let Some(t) = f.name() {
+                        toks.push((t.text_range(), name.clone()));
+                    }
                     let val = match f.value() {
                         Some(v) => self.resolve_expr(&v),
                         None => self.body.expr(Expr::Error),
                     };
                     fields.push((Name::new(&name), val));
                 }
-                self.body.expr(Expr::Record(fields))
+                let id = self.body.expr(Expr::Record(fields));
+                for (r, name) in toks {
+                    self.record_field_occ(r, FieldRecv::Record(id), &name);
+                }
+                id
             }
             ast::Expr::RecordUpdate(ru) => {
                 // The base is the ident(.ident)* run BEFORE the `|`: a bare
@@ -1981,18 +2062,26 @@ impl<'a> Resolver<'a> {
                 }
                 let base_id = self.body.expr(Expr::Var(res));
                 let mut fields = Vec::new();
+                let mut toks = Vec::new();
                 for f in ru.fields() {
                     let name = f.name().map(|t| t.text().to_string()).unwrap_or_default();
+                    if let Some(t) = f.name() {
+                        toks.push((t.text_range(), name.clone()));
+                    }
                     let val = match f.value() {
                         Some(v) => self.resolve_expr(&v),
                         None => self.body.expr(Expr::Error),
                     };
                     fields.push((Name::new(&name), val));
                 }
-                self.body.expr(Expr::Update {
+                let id = self.body.expr(Expr::Update {
                     base: base_id,
                     fields,
-                })
+                });
+                for (r, name) in toks {
+                    self.record_field_occ(r, FieldRecv::Record(id), &name);
+                }
+                id
             }
             ast::Expr::Paren(p) => match cst::child_exprs(p.syntax()).first() {
                 Some(inner) => self.resolve_expr(inner),
@@ -2423,8 +2512,24 @@ impl<'a> Resolver<'a> {
             }
             ast::Pattern::Record(r) => {
                 let mut binders = Vec::new();
-                for f in cst::lower_idents(r.syntax()) {
+                let names: Vec<Name> = cst::lower_idents(r.syntax())
+                    .iter()
+                    .map(|n| Name::new(n))
+                    .collect();
+                for tok in cst::lower_toks(r.syntax()) {
+                    let f = tok.text().to_string();
                     let id = self.bind_local(&f);
+                    // Each `{ field }` name is both a binder (goto target of its
+                    // uses) and a record-field occurrence (hover: the field).
+                    self.record_binder(tok.text_range(), id);
+                    self.record_field_occ(
+                        tok.text_range(),
+                        FieldRecv::Pattern {
+                            local: id,
+                            fields: names.clone(),
+                        },
+                        &f,
+                    );
                     binders.push((Name::new(&f), id));
                 }
                 self.body.pat(Pattern::Record(binders))
@@ -2538,7 +2643,9 @@ impl<'a> Resolver<'a> {
             }
             ast::Type::Qual(q) => {
                 let (qual, name) = cst::dotted_parts(q.syntax());
-                self.type_qual(&qual, &name, Vec::new())
+                let id = self.type_qual(&qual, &name, Vec::new());
+                self.record_qual_type_occ(q.syntax(), id, &name);
+                id
             }
             ast::Type::App(app) => {
                 let parts = cst::child_types(app.syntax());
@@ -2555,7 +2662,9 @@ impl<'a> Resolver<'a> {
                     }
                     ast::Type::Qual(q) => {
                         let (qual, name) = cst::dotted_parts(q.syntax());
-                        self.type_qual(&qual, &name, args)
+                        let id = self.type_qual(&qual, &name, args);
+                        self.record_qual_type_occ(q.syntax(), id, &name);
+                        id
                     }
                     ast::Type::Var(v) => {
                         let n = cst::first_lower(v.syntax()).unwrap_or_default();

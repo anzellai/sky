@@ -1186,18 +1186,19 @@ pub static GATES: &[Gate] = &[
         // cases passed against exactly this behaviour until their needles were
         // strengthened, and this mutation is what proves they no longer do.
         //
-        // `hover_type` is the target because its output (`type Model`) differs
-        // from the source token (`Model`) by a literal prefix, so dropping the
-        // prefix is a one-token change with no side effects on any other path.
+        // `type_def_markdown`'s declaration render is the target: its output
+        // (`type alias Model = …`, read from the type's home module) differs from
+        // the source token (`Model`), so rendering the bare name instead is a
+        // one-token change with no side effects on any other path.
         mutations: Mutations::new(&[Mutation {
             id: "lsp.hover-echoes-the-token",
             description: "make hover on a TYPE return the bare identifier instead \
-                          of `type <Name>`; the two type-hover cases must go red \
+                          of its declaration; the two type-hover cases must go red \
                           (they did not, before their needles were strengthened)",
             kind: MutationKind::ReplaceOnce {
                 path: "rust/crates/sky-lsp/src/lib.rs",
-                from: "format!(\"```sky\\ntype {}\\n```\", o.name.as_str())",
-                to: "format!(\"```sky\\n{}\\n```\", o.name.as_str())",
+                from: "format!(\"```sky\\n{decl_src}\\n```\")",
+                to: "format!(\"```sky\\n{name}\\n```\")",
             },
         }]),
         body: bodies::lsp,

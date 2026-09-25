@@ -131,11 +131,26 @@ impl<'a> Typer<'a> {
         self.world.ctors_by_def.get(&def)
     }
 
+    /// A compiler-builtin constructor's scheme (`Just`, `Ok`, `True`, …). The
+    /// builtins are seeded by bare name and carry no per-def entry, so
+    /// `ctor_sig_by_def` misses them; the tooling layer asks by name.
+    pub fn builtin_ctor_sig(&self, name: &str) -> Option<&Scheme> {
+        self.world.ctors.get(name)
+    }
+
     /// A kernel function's scheme, keyed as `Res::Kernel { module, func }` is
     /// (pseudo-module, func) — the tooling layer's hover on a stdlib call.
     pub fn kernel_sig(&self, module: &str, func: &str) -> Option<&Scheme> {
         self.world
             .kernel_sigs
+            .get(&(module.to_string(), func.to_string()))
+    }
+
+    /// The CHECK-ONLY precise scheme of a kernel function (`modBy`), when the
+    /// lowering-facing `kernel_sig` has none — what the checker holds a call to.
+    pub fn check_kernel_sig(&self, module: &str, func: &str) -> Option<&Scheme> {
+        self.world
+            .check_kernel_sigs
             .get(&(module.to_string(), func.to_string()))
     }
 

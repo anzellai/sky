@@ -11,6 +11,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.18 — (unreleased)
+
+### Fixed
+
+- **`sky lsp`: hover on record fields, imported functions and types.** A field
+  hovered only at `r.field`. It now also hovers in a record literal, a record
+  update, a record pattern, a `type alias` declaration and a `.field` accessor,
+  shows the type the alias declares (`user : User`, not the expanded record) and
+  names the alias the field belongs to. Go-to-definition on a field now reaches
+  an alias in another module. A function hover now includes its `-- |` doc
+  comment, and a builtin or kernel function (`identity`, `modBy`) shows its
+  type instead of `?`. A type hover now shows the declaration and its doc (not
+  only `type Name`), and a qualified type (`T.User`), a type variable, a builtin
+  constructor (`Just`) and a `True`/`False` literal now answer. A field
+  declaration's reference range now covers only the name. Test:
+  `rust/crates/sky-lsp/tests/hover_matrix.rs`.
+
 ## v0.25.17 — app-surface soundness sweep: Sky.Live, Sky.Spa, Std.App, Sky.Tui/Cli (2026-09-24)
 
 A patch over v0.25.16. A bug in a Sky.Spa button (a re-rendered row kept sending

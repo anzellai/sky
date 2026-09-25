@@ -26,8 +26,8 @@ pub use kernel::{
     KERNEL_MODULES, PRELUDE_PROTECTED, PRELUDE_QUALIFIERS,
 };
 pub use resolve::{
-    resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, RefKind, RefOcc, ResolveResult,
-    ScopeNameKind, TypeOcc,
+    resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, FieldRecv, RefKind, RefOcc,
+    ResolveResult, ScopeNameKind, TypeOcc,
 };
 
 #[cfg(test)]

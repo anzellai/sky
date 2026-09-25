@@ -115,6 +115,29 @@ pub fn lower_idents(n: &SyntaxNode) -> Vec<String> {
         .collect()
 }
 
+/// All lowercase ident TOKENS directly under `n` (for their spans).
+pub fn lower_toks(n: &SyntaxNode) -> Vec<SyntaxToken> {
+    sig_tokens(n)
+        .filter(|t| t.kind() == SyntaxKind::LowerIdent)
+        .collect()
+}
+
+/// The range of `n` from its first to its last non-trivia token (a node's own
+/// range may carry leading/trailing whitespace + comments).
+pub fn trimmed_range(n: &SyntaxNode) -> TextRange {
+    let mut toks = n
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .filter(|t| !t.kind().is_trivia());
+    match toks.next() {
+        Some(first) => {
+            let last = toks.last().unwrap_or_else(|| first.clone());
+            first.text_range().cover(last.text_range())
+        }
+        None => n.text_range(),
+    }
+}
+
 /// All uppercase ident tokens directly under `n`.
 pub fn upper_idents(n: &SyntaxNode) -> Vec<String> {
     sig_tokens(n)
