@@ -18,3 +18,7 @@ diagnostics = { path = "../diagnostics" }
 syntax = { path = "../syntax" }
 base = { path = "../base" }
 ffi = { path = "../ffi" }
+
+[target.'cfg(unix)'.dependencies]
+# `getrusage` for the peak-RSS column of the `--timings` report.
+nix = { version = "0.29", features = ["resource"] }
