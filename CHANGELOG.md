@@ -29,6 +29,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `runtime-go/rt/spa_persist_identity_test.go` and the `spa-identity-slot` step
   of `scripts/spa-restore-e2e.sh`. See `docs/skyspa/overview.md`, "Client
   persistence and identity".
+- **Sky.Spa SSR pages hydrate in place on a real app again.** Std.Ui no longer emits a nesting the HTML parser restructures: inside a `Ui.paragraph` a block element (for example the `el` label of a `Ui.link`) renders as a `<span>` with the same style, and a nested link, button, form or heading gets a tag the parser keeps. A form rendered by the runtime (a Sky.Spa SSR page) no longer gets the `__sky_csrf` hidden input added to it, which made every page load after the first refuse hydration. Both logged `[sky.spa] SSR hydrate skipped, full rebuild` and threw the server DOM away.
 
 ## v0.25.17 — app-surface soundness sweep: Sky.Live, Sky.Spa, Std.App, Sky.Tui/Cli (2026-09-24)
 

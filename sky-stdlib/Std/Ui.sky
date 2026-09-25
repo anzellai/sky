@@ -1991,6 +1991,13 @@ layoutWith cfg root =
 -- data-*, aria-*, etc.) attach to the wrapper alongside the style.
 renderElement : LayoutContext -> List (Attribute msg) -> Element msg -> any
 renderElement ctx extraAttrs elem =
+    renderElementIn topNesting ctx extraAttrs elem
+
+
+-- `renderElement` under the parser-safety state of the enclosing elements
+-- (see `Nesting`).
+renderElementIn : Nesting -> LayoutContext -> List (Attribute msg) -> Element msg -> any
+renderElementIn nest ctx extraAttrs elem =
     case elem of
 
         Empty ->
@@ -2009,10 +2016,10 @@ renderElement ctx extraAttrs elem =
             let
                 chosenTag = pickSemanticTag (defaultTagIn ctx) attrs
             in
-                renderNodeAs chosenTag ctx extraAttrs attrs children
+                renderNodeAs chosenTag nest ctx extraAttrs attrs children
 
         TaggedNode tag desc attrs children ->
-            renderNodeAs tag ctx extraAttrs attrs children
+            renderNodeAs tag nest ctx extraAttrs attrs children
 
         Raw node ->
             -- Pass the wrapped Std.Html VNode through unchanged.
@@ -2147,9 +2154,14 @@ tagForDescription defaultTag d =
 -- the propagated CSS (`flex-grow: 1; min-{height,width}: 0` in a
 -- flex parent / `align-self: stretch + 100 %` in the cross-axis
 -- case) matches whatever the grandparent expects.
-renderNodeAs : String -> LayoutContext -> List (Attribute msg) -> List (Attribute msg) -> List (Element msg) -> any
-renderNodeAs tag ctx extraAttrs attrs children =
+renderNodeAs : String -> Nesting -> LayoutContext -> List (Attribute msg) -> List (Attribute msg) -> List (Element msg) -> any
+renderNodeAs wantedTag nest ctx extraAttrs attrs children =
     let
+        -- The tag the HTML parser keeps where this element sits (see
+        -- `Nesting`), and the state its own children render under.
+        tag = parserSafeTag nest wantedTag
+        childNest = nestingInside nest tag
+        keptRole = keptRoleAttrs wantedTag tag
         -- `extraAttrs` is `[]` for every non-root element — the recursive
         -- `renderElement renderCtx []` below passes no extras — so the `++`
         -- would `List.append`-copy `attrs` on every child in the tree.
@@ -2236,8 +2248,8 @@ renderNodeAs tag ctx extraAttrs attrs children =
                       "data-sky-anim-rules"
                       (encodeAnimations animationEntries)
                 ]
-        renderedMain = List.map (renderElement renderCtx []) children
-        renderedNearby = List.map renderNearby nearbyChildren
+        renderedMain = List.map (renderElementIn childNest renderCtx []) children
+        renderedNearby = List.map (renderNearby childNest) nearbyChildren
         -- Nearby children are rare; when there are none `renderedNearby` is
         -- `[]` and the `++` would `List.append`-copy the whole main-child
         -- list per container. `xs ++ [] == xs`; skip the copy. Byte-identical.
@@ -2259,10 +2271,160 @@ renderNodeAs tag ctx extraAttrs attrs children =
 
             else
                 pseudoAttrs ++ transitionAttrs ++ animationAttrs ++ htmlAttrs
+        -- `keptRole` is `[]` unless the parser-safe tag replaced a heading
+        -- or a landmark; skip the copy then. It goes BEFORE the user's html
+        -- attrs so an explicit `Ui.htmlAttribute "role"` still wins.
         attrList =
-            Attr.style styleStr :: tailAttrs
+            if List.isEmpty keptRole then
+                Attr.style styleStr :: tailAttrs
+
+            else
+                Attr.style styleStr :: (keptRole ++ tailAttrs)
     in
         dispatchTag tag attrList renderedChildren
+
+
+-- ─── Parser-safe nesting ─────────────────────────────────────────
+--
+-- The HTML parser does not keep every nesting it is given. A `<div>`, `<p>`,
+-- heading, `<section>`, `<form>` or landmark start tag CLOSES an open `<p>`
+-- (even through an `<a>`, `<label>` or `<span>` between them); an `<a>` inside
+-- an `<a>`, a `<button>` inside a `<button>` and a `<form>` inside a `<form>`
+-- are split or dropped; a heading directly inside a heading closes it. The
+-- browser then shows a DOM that is not the tree Std.Ui rendered: text leaves
+-- its paragraph, a Sky.Live patch addresses a node that does not exist, and a
+-- Sky.Spa SSR page refuses hydration ("server DOM has fewer children").
+--
+-- A real app met the first case with a link whose label is an `el` inside a
+-- paragraph (`Ui.paragraph [] [ …, Ui.link [] { label = Ui.el [ Font.underline
+-- ] (Ui.text "privacy policy") } ]`), which emitted `<p><a><div>`.
+--
+-- So every element renders under a `Nesting` that says which of those
+-- ancestors are open, and `parserSafeTag` swaps a tag the parser would move
+-- for one it keeps: `<span>` inside a paragraph (phrasing content), `<span>` for
+-- a nested link or button, `<div>` for a nested form or a heading directly
+-- inside a heading. The inline style is unchanged, and every Std.Ui block
+-- carries an explicit `display` while the base CSS resets p / h* margins and
+-- font, so the box on screen is the same; a replaced heading or landmark keeps
+-- its role (`keptRoleAttrs`). The rule is pure and runs in the one renderer
+-- that Sky.Live, the Sky.Spa server (SSR) and the Sky.Spa client all share, so
+-- the three produce the same tree.
+type alias Nesting =
+    { phrasing : Bool
+    , inLink : Bool
+    , inButton : Bool
+    , inForm : Bool
+    , inHeading : Bool
+    }
+
+
+topNesting : Nesting
+topNesting =
+    { phrasing = False
+    , inLink = False
+    , inButton = False
+    , inForm = False
+    , inHeading = False
+    }
+
+
+isHeadingTag : String -> Bool
+isHeadingTag t =
+    t == "h1" || t == "h2" || t == "h3" || t == "h4" || t == "h5" || t == "h6"
+
+
+-- The Std.Ui tags that are flow content only: their start tag closes an open
+-- `<p>`, so none may sit inside a paragraph.
+isFlowOnlyTag : String -> Bool
+isFlowOnlyTag t =
+    t == "div"
+        || t == "p"
+        || isHeadingTag t
+        || t == "section"
+        || t == "form"
+        || t == "main"
+        || t == "nav"
+        || t == "footer"
+        || t == "header"
+        || t == "aside"
+
+
+parserSafeTag : Nesting -> String -> String
+parserSafeTag nest tag =
+    if nest.phrasing && isFlowOnlyTag tag then
+        "span"
+
+    else if nest.inLink && tag == "a" then
+        "span"
+
+    else if nest.inButton && tag == "button" then
+        "span"
+
+    else if nest.inForm && tag == "form" then
+        "div"
+
+    else if nest.inHeading && isHeadingTag tag then
+        "div"
+
+    else
+        tag
+
+
+-- The state the children of a `tag` element render under. `inHeading` holds
+-- only for the DIRECT children of a heading (the parser closes a heading only
+-- when the next heading is its immediate child).
+nestingInside : Nesting -> String -> Nesting
+nestingInside nest tag =
+    if tag == "p" then
+        { nest | phrasing = True, inHeading = False }
+
+    else if tag == "a" then
+        { nest | inLink = True, inHeading = False }
+
+    else if tag == "button" then
+        { nest | inButton = True, inHeading = False }
+
+    else if tag == "form" then
+        { nest | inForm = True, inHeading = False }
+
+    else if isHeadingTag tag then
+        { nest | inHeading = True }
+
+    else if nest.inHeading then
+        { nest | inHeading = False }
+
+    else
+        nest
+
+
+-- The role a heading or landmark keeps when `parserSafeTag` replaced its tag.
+keptRoleAttrs : String -> String -> List (Attr.Attribute msg)
+keptRoleAttrs wanted actual =
+    if wanted == actual then
+        []
+
+    else if isHeadingTag wanted then
+        [ Attr.attribute "role" "heading"
+        , Attr.attribute "aria-level" (String.dropLeft 1 wanted)
+        ]
+
+    else if wanted == "main" then
+        [ Attr.attribute "role" "main" ]
+
+    else if wanted == "nav" then
+        [ Attr.attribute "role" "navigation" ]
+
+    else if wanted == "footer" then
+        [ Attr.attribute "role" "contentinfo" ]
+
+    else if wanted == "header" then
+        [ Attr.attribute "role" "banner" ]
+
+    else if wanted == "aside" then
+        [ Attr.attribute "role" "complementary" ]
+
+    else
+        []
 
 
 -- ─── Flex-chain propagation (issue #63) ─────────────────────────
@@ -2476,15 +2638,17 @@ toNearbyPair a =
 
 -- Render a single nearby element with the position styles for its
 -- Location. The child is rendered first, then wrapped in a thin div
--- carrying the absolute-positioning styles.
-renderNearby : ( Location, Element msg ) -> any
-renderNearby ( loc, el ) =
+-- carrying the absolute-positioning styles. Inside a paragraph the wrapper
+-- is a <span> (see `Nesting`); its explicit `display: flex` keeps the box.
+renderNearby : Nesting -> ( Location, Element msg ) -> any
+renderNearby nest ( loc, el ) =
     let
         positionStyle =
             "position: absolute; display: flex; " ++ locationCss loc
-        rendered = renderElement AsEl [] el
+        wrapperTag = parserSafeTag nest "div"
+        rendered = renderElementIn (nestingInside nest wrapperTag) AsEl [] el
     in
-        Html.div [ Attr.style positionStyle ] [ rendered ]
+        dispatchTag wrapperTag [ Attr.style positionStyle ] [ rendered ]
 
 
 -- Map a Location to the CSS offsets that pin the absolute child to

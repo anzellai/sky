@@ -268,3 +268,232 @@ func TestSpaHydrate_textRunsSplitToTheClientStructure(t *testing.T) {
 		})
 	}
 }
+
+// ssrParseHTML parses SSR bytes the way a browser does (as the content of the
+// #app <div>) and returns the first root element.
+func ssrParseHTML(t *testing.T, body string) *html.Node {
+	t.Helper()
+	ctx := &html.Node{Type: html.ElementNode, Data: "div", DataAtom: atom.Div}
+	nodes, err := html.ParseFragment(strings.NewReader(body), ctx)
+	if err != nil {
+		t.Fatalf("parse SSR html: %v", err)
+	}
+	for _, n := range nodes {
+		if n.Type == html.ElementNode {
+			return n
+		}
+	}
+	t.Fatalf("SSR html has no root element: %q", body)
+	return nil
+}
+
+// Pinned defect (a real web:app app, v0.25.17): a returning visitor's sign-in
+// page logged "[sky.spa] SSR hydrate skipped, full rebuild: tag differs at
+// …#form.0#div: server <input>, client <div>". The SSR page is served as a
+// Sky.Http.Server HTML response, and for a request that carries the CSRF
+// cookie the server added `<input type="hidden" name="__sky_csrf">` as the
+// first child of every `<form method="post">` (injectCsrfIntoForms). The
+// renderer emits method="post" on every form with an onSubmit, so the served
+// DOM held a node the rendered tree never had. A first visit (no cookie yet)
+// hydrated; every later page load rebuilt.
+func TestSpaHydrate_csrfCookieRequestStillHydratesForms(t *testing.T) {
+	signIn := el("div", nil,
+		el("form", nil,
+			el("div", nil,
+				el("div", nil, txt("Email")),
+				VNode{Kind: "element", Tag: "input", Attrs: attrs("name", "email", "type", "email", "value", "")},
+			),
+			el("div", nil,
+				el("button", attrs("type", "submit"), txt("Sign in")),
+			),
+		),
+	)
+	signIn.Children[0].Events = map[string]any{"submit": "DoSignIn"}
+	root := withIDs(signIn)
+	body := renderVNode(*root, map[string]any{})
+	if !strings.Contains(body, `method="post"`) {
+		t.Fatalf("precondition: the renderer marks a submit form method=post: %s", body)
+	}
+	served := injectCsrfIntoForms(body, "tok123")
+	if ok, reason := spaCanHydrate(xdom(ssrParseHTML(t, served)), root); !ok {
+		t.Fatalf("the SSR page served to a request with a CSRF cookie must hydrate, refused: %s\nhtml: %s", reason, served)
+	}
+	if served != body {
+		t.Fatalf("a runtime-rendered form (it carries a sky-id) must be served as rendered\nrendered: %s\nserved:   %s", body, served)
+	}
+}
+
+// The injection itself stays for the forms it exists for: hand-written
+// Sky.Http.Server markup, which no client runtime owns.
+func TestInjectCsrfIntoForms_handWrittenPostFormsKeepTheToken(t *testing.T) {
+	cases := map[string]string{
+		"double-quoted":       `<form method="post" action="/login"><input name="u"></form>`,
+		"upper-case method":   `<FORM METHOD="POST" action="/login"><input name="u"></FORM>`,
+		"Html.render (no id)": renderVNode(func() VNode { v := el("form", attrs("method", "post"), txt("x")); return v }(), map[string]any{}),
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := injectCsrfIntoForms(in, "tok123")
+			if !strings.Contains(out, `name="__sky_csrf" value="tok123"`) {
+				t.Fatalf("a hand-written POST form must carry the CSRF token: %s", out)
+			}
+		})
+	}
+}
+
+// ── Parser-safe nesting (Std.Ui) ─────────────────────────────────────────
+//
+// Pinned defect (a real web:app app, v0.25.17): every page logged "[sky.spa]
+// SSR hydrate skipped, full rebuild: server DOM has fewer children at
+// …#p.1#a". A cookie notice put a link with an `el` label in a paragraph, and
+// Std.Ui emitted `<p>…<a><div>privacy policy</div></a>.</p>`. The HTML parser
+// closes the open <p> at the <div> start tag (through the <a>), so the served
+// DOM was not the rendered tree.
+//
+// Std.Ui now renders every element under a parser-safety state
+// (sky-stdlib/Std/Ui.sky `Nesting` / `parserSafeTag`). stdUiTag below is that
+// rule; tests/Std/UiParserSafeNestingTest.sky proves Std.Ui's markup follows
+// it (with parserRestructuresModel, the same model this test checks), and this
+// matrix proves, against a spec-conformant HTML parser and the client's own
+// hydrate decision, that (1) every nesting the rule emits hydrates, and (2)
+// the model flags every nesting the parser really restructures, so the Sky
+// check has no false negatives over the tags Std.Ui can emit.
+
+func isHeadingTagT(t string) bool {
+	switch t {
+	case "h1", "h2", "h3", "h4", "h5", "h6":
+		return true
+	}
+	return false
+}
+
+func has(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
+}
+
+// stdUiFlowOnly mirrors Std.Ui `isFlowOnlyTag`.
+func stdUiFlowOnly(t string) bool {
+	switch t {
+	case "div", "p", "section", "form", "main", "nav", "footer", "header", "aside":
+		return true
+	}
+	return isHeadingTagT(t)
+}
+
+// stdUiTag mirrors Std.Ui `parserSafeTag` for a tag emitted under the
+// (already emitted) ancestors `anc`, outermost first.
+func stdUiTag(anc []string, tag string) string {
+	last := ""
+	if len(anc) > 0 {
+		last = anc[len(anc)-1]
+	}
+	switch {
+	case has(anc, "p") && stdUiFlowOnly(tag):
+		return "span"
+	case has(anc, "a") && tag == "a":
+		return "span"
+	case has(anc, "button") && tag == "button":
+		return "span"
+	case has(anc, "form") && tag == "form":
+		return "div"
+	case isHeadingTagT(last) && isHeadingTagT(tag):
+		return "div"
+	}
+	return tag
+}
+
+// parserRestructuresModel mirrors `restructure` in
+// tests/Std/UiParserSafeNestingTest.sky.
+func parserRestructuresModel(anc []string, tag string) bool {
+	closesP := map[string]bool{"address": true, "article": true, "aside": true, "blockquote": true, "center": true,
+		"details": true, "dialog": true, "dir": true, "div": true, "dl": true, "dd": true, "dt": true, "fieldset": true,
+		"figcaption": true, "figure": true, "footer": true, "form": true, "h1": true, "h2": true, "h3": true, "h4": true,
+		"h5": true, "h6": true, "header": true, "hgroup": true, "hr": true, "li": true, "listing": true, "main": true,
+		"menu": true, "nav": true, "ol": true, "p": true, "plaintext": true, "pre": true, "search": true, "section": true,
+		"summary": true, "table": true, "ul": true, "xmp": true}
+	last := ""
+	if len(anc) > 0 {
+		last = anc[len(anc)-1]
+	}
+	return (closesP[tag] && has(anc, "p")) ||
+		(tag == "a" && has(anc, "a")) ||
+		(tag == "button" && has(anc, "button")) ||
+		(tag == "form" && has(anc, "form")) ||
+		(isHeadingTagT(tag) && isHeadingTagT(last))
+}
+
+// nestedPage builds root > anc[0] > … > anc[n-1] > tag, with text before and
+// after the innermost element at every level (a paragraph's run of text).
+func nestedPage(anc []string, tag string) VNode {
+	var inner VNode
+	switch tag {
+	case "input", "img":
+		inner = VNode{Kind: "element", Tag: tag, Attrs: attrs("name", "q")}
+	case "textarea":
+		inner = VNode{Kind: "element", Tag: tag, Attrs: map[string]string{}}
+	default:
+		inner = el(tag, nil, txt("c"))
+	}
+	cur := inner
+	for i := len(anc) - 1; i >= 0; i-- {
+		cur = el(anc[i], nil, txt("a "), cur, txt(" b"))
+	}
+	return el("div", nil, cur)
+}
+
+func TestSpaHydrate_stdUiNestingMatrix(t *testing.T) {
+	ancestors := [][]string{
+		{"p"}, {"p", "a"}, {"p", "button"}, {"p", "label"}, {"p", "span"}, {"p", "a", "span"},
+		{"p", "label", "span"}, {"a"}, {"a", "div"}, {"button"}, {"button", "div"}, {"form"},
+		{"form", "div"}, {"label"}, {"h2"}, {"h2", "div"}, {"section"}, {"div"},
+	}
+	children := []string{
+		"div", "span", "p", "h3", "section", "form", "main", "nav", "footer", "header", "aside",
+		"a", "button", "label", "img", "input", "textarea",
+	}
+	for _, anc := range ancestors {
+		for _, child := range children {
+			name := strings.Join(anc, ">") + ">" + child
+			t.Run(name, func(t *testing.T) {
+				emitted := stdUiTag(anc, child)
+				root := withIDs(nestedPage(anc, emitted))
+				if ok, reason := spaCanHydrate(xdom(ssrParse(t, root)), root); !ok {
+					t.Fatalf("Std.Ui emits <%s> here; the parser must keep it, refused: %s\nhtml: %s",
+						emitted, reason, renderVNode(*root, map[string]any{}))
+				}
+				orig := withIDs(nestedPage(anc, child))
+				if ok, reason := spaCanHydrate(xdom(ssrParse(t, orig)), orig); !ok && !parserRestructuresModel(anc, child) {
+					t.Fatalf("the parser restructures <%s> under %v (%s) but the Sky-side model does not flag it",
+						child, anc, reason)
+				}
+			})
+		}
+	}
+}
+
+// The exact shapes the real app shipped, before and after the fix.
+func TestSpaHydrate_linkWithElLabelInParagraph(t *testing.T) {
+	shape := func(labelTag string) *VNode {
+		return withIDs(el("div", nil,
+			el("p", attrs("style", "display: block;"),
+				txt("See our "),
+				el("a", attrs("href", "/privacy", "style", "display: inline;"),
+					el(labelTag, attrs("style", "display: flex; flex-direction: column; text-decoration: underline;"),
+						txt("privacy policy"))),
+				txt("."),
+			)))
+	}
+	before := shape("div")
+	if ok, _ := spaCanHydrate(xdom(ssrParse(t, before)), before); ok {
+		t.Fatalf("precondition: <p><a><div> is restructured by the parser and must be refused")
+	}
+	after := shape("span")
+	if ok, reason := spaCanHydrate(xdom(ssrParse(t, after)), after); !ok {
+		t.Fatalf("<p><a><span> (what Std.Ui emits now) must hydrate, refused: %s", reason)
+	}
+}
