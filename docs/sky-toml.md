@@ -709,6 +709,44 @@ SKY_HOST=0.0.0.0 sky run src/Main.sky
 `SKY_HOST` is prefix-affected: under `[env] prefix = "FENCE"` the runtime
 reads `FENCE_HOST`.
 
+### Native shell backend address — `SKY_APP_URL` *(v0.25.19+)*
+
+The native shells that `sky build --target mobile:ios`, `mobile:android` and
+`desktop:<os>` generate are thin web views over the Sky.Spa client, which the
+backend serves. `SKY_APP_URL` tells the build which backend address the shell
+loads. It is read by `sky build`, not by the app, and it is not
+prefix-affected.
+
+The build resolves the address in this order. The first one that is set wins:
+
+1. `SKY_APP_URL` in the build environment.
+2. `App.withAppUrl "<url>"` on the entry's `App` value (see
+   `docs/skyapp/overview.md`).
+3. The default: `http://localhost:<PORT>/` for iOS (the simulator shares the
+   host network), `http://10.0.2.2:<PORT>/` for Android (the emulator's alias
+   for the host), and `http://127.0.0.1:<PORT>/` for desktop. `PORT` is read
+   at build time and is 8951 when it is unset.
+
+```bash
+SKY_APP_URL=https://app.example.test/ sky build --target mobile:ios src/Main.sky
+```
+
+The value must be an absolute `http://` or `https://` URL with a host. The
+build refuses anything else (`ftp://x`, `not a url`, an empty value) and names
+where the value came from. It adds a missing trailing `/`. The build summary
+prints the result, for example `loads https://app.example.test/
+(SKY_APP_URL)`.
+
+A phone cannot read the build machine's environment, so the iOS and Android
+shells bake the address in at build time. The desktop shell also reads
+`SKY_APP_URL` at run time, and that value wins over the built-in one.
+
+Plain `http://` to a host that is not local works, but the build prints a
+warning: a production device build should use `https://`. The iOS shell gets
+an App Transport Security exception (`NSExceptionDomains`) for exactly that
+host, and the Android shell gets a network security config that permits
+cleartext for exactly that host.
+
 ---
 
 ## Packaging identity — `Std.Bundle` *(v0.21+)*

@@ -320,7 +320,8 @@ the inline form `main = App.run (App.app { … } |> …)`, and any import spelli
 (`import Std.App as A` + `A.run`, or `exposing (run)` + bare `run`). Every
 builder step is either carried into the client build (`withRoutes`,
 `withNotFound`, `withHead`, `withOnNavigate`, `withRequest`, `withGuard`,
-`withRpcError`), or listed in a build warning as not applying to a client
+`withRpcError`), read by the build for the native shell (`withAppUrl`, see
+below), or listed in a build warning as not applying to a client
 (`withConfig`, `withInput`, `withWindow`, `withOnKey`, `withBase`,
 `withDurable`, `withDurableId`). Anything else fails the build with an error
 that names it: an unknown builder, a function from another module applied to the
@@ -338,6 +339,41 @@ its server tasks run on the server and their result Msgs come back to the
 client, and a `Std.Native` effect runs in the client. Retry after a lost
 connection never runs a server effect twice. On a reload the client restores its
 own state, and a field that only server branches write comes from the server.
+
+### The backend address a native shell loads — `App.withAppUrl`
+
+The `mobile:ios`, `mobile:android` and `desktop:<os>` targets wrap the client
+in a native web view that loads it from the backend. `App.withAppUrl` sets that
+address:
+
+```elm
+-- doc-example: skip  (fragment — init/update/view/subscriptions elided)
+app =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound NotFound
+        |> App.withAppUrl "https://app.example.test/"
+```
+
+`withAppUrl : String -> App … -> App …`. A phone cannot read the build
+machine's environment, so the build reads the value **statically** from the
+source and bakes it into the shell. The argument must be a string literal or a
+top-level `String` constant in the entry module (followed through local
+helpers, as `withGuard` is). Anything computed at run time is a build error
+that names `App.withAppUrl` and says why. On the `web`, `tablet` and terminal
+targets the builder does nothing.
+
+`SKY_APP_URL` set at build time overrides the builder, and the desktop shell
+also reads it at run time. With neither set, the shell loads the development
+default: `http://localhost:<PORT>/` (iOS simulator), `http://10.0.2.2:<PORT>/`
+(Android emulator), `http://127.0.0.1:<PORT>/` (desktop), with `PORT` read at
+build time (default 8951). The value must be an absolute `http://` or
+`https://` URL. The build summary prints the address and its source, for
+example `loads https://app.example.test/ (App.withAppUrl)`. A plain `http://`
+address to a host that is not local gets an iOS App Transport Security
+exception and an Android cleartext permission for exactly that host, plus a
+warning that a production device build should use `https://`. If the shell
+cannot load the address, it shows a native message with the URL and the error
+instead of a blank page. Full rules: `docs/sky-toml.md` (`SKY_APP_URL`).
 
 See also: `sky doc Std.App`, `docs/skylive/overview.md`, `docs/skyspa/overview.md`,
 and the design rationale in `docs/design/unified-app-builder.md`.

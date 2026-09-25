@@ -11,6 +11,41 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.19 — (unreleased)
+
+### Set the backend address a native shell loads — `App.withAppUrl` / `SKY_APP_URL`
+
+The iOS, Android and desktop shells that `sky build --target mobile:ios`,
+`mobile:android` and `desktop:<os>` generate hard-coded the backend address
+(`http://localhost:8951/`, `http://10.0.2.2:8951/`). A device build showed a
+blank web view, because a phone cannot reach the build machine's
+`localhost`, and every build needed a hand edit of the generated `App.swift`
+that the next build overwrote.
+
+- New builder `App.withAppUrl : String -> App … -> App …` declares the
+  address. The build reads it statically from the entry: a string literal or
+  a top-level `String` constant, followed through local helpers. A value
+  computed at run time is a build error that names the builder. On `web`,
+  `tablet` and terminal targets it does nothing.
+- `SKY_APP_URL` at build time overrides the builder. The desktop shell also
+  reads it at run time.
+- With neither set, the default is unchanged: `localhost` (iOS),
+  `10.0.2.2` (Android), `127.0.0.1` (desktop) on `PORT` (8951 when unset).
+- The value must be an absolute `http://` or `https://` URL with a host. The
+  build refuses anything else and names the source. A missing trailing `/` is
+  added.
+- Plain `http://` to a host that is not local gets an iOS
+  `NSExceptionDomains` entry and an Android network security config for
+  exactly that host (never `NSAllowsArbitraryLoads`), plus a warning to use
+  `https://` for a production device build. An `https://` address permits no
+  cleartext on Android.
+- The build summary prints the address and its source, for example
+  `loads https://app.example.test/ (App.withAppUrl)`.
+- When the load fails, the iOS and Android shells show a native message with
+  the URL and the error instead of a blank page.
+
+See `docs/skyapp/overview.md` and `docs/sky-toml.md` (`SKY_APP_URL`).
+
 ## v0.25.18 — Sky.Spa restores only for the same user; pages hydrate in place; far less build memory; LSP hover (2026-09-25)
 
 A patch over v0.25.17. Every fix has a regression test that failed before it.

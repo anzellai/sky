@@ -320,6 +320,11 @@ linux` · `tablet:ipad|android` · `mobile:ios|android` → **Sky.Spa** (client 
 The build rewrites `App.run` → the target's `run<Backend>` (DCE prunes the rest)
 and, for the Spa targets, **synthesises a `Spa.app` from your `App.app`** and feeds
 the existing auto-split — so client targets need **no** separate `Std.Spa` entry.
+The native shells (`mobile:ios|android`, `desktop:<os>`) load the backend at
+`App.withAppUrl "https://app.example.test/"` (a literal or top-level `String`
+constant, read at build time), else `SKY_APP_URL` at build time (which wins over
+the builder), else the dev default `localhost` / `10.0.2.2` / `127.0.0.1` on
+`PORT` (8951).
 `web` requires `App.withNotFound` (compile-enforced). Invalid combos are rejected
 at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` checks
 the same target a bare `sky build` builds (`--target`, else `[app] target`, else

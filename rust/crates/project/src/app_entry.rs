@@ -1188,6 +1188,172 @@ pub fn read_app_value(src: &str, needs_args: &dyn Fn(&str) -> bool) -> Result<Ap
     })
 }
 
+// ---- static builder arguments ---------------------------------------------
+
+/// The value of the LAST `builder` step's single argument, evaluated
+/// statically to a `String` (see [`static_string`]). `Ok(None)` when the app
+/// value has no such step. Used for a builder whose value must be known at
+/// BUILD time (`App.withAppUrl`: a phone cannot read the build machine's env).
+///
+/// The app value is read by [`read_app_value`], so a step applied through a
+/// local helper (`pointAt u a = a |> App.withAppUrl u`) is followed and its
+/// argument traced back to the call site.
+pub fn builder_string_arg(src: &str, builder: &str) -> Result<Option<String>, String> {
+    let value = read_app_value(src, &|n: &str| n == builder)?;
+    let q = value.import.qualifier_or_default();
+    let Some(step) = value.steps.iter().rev().find(|s| s.name == builder) else {
+        return Ok(None);
+    };
+    if step.args.len() != 1 {
+        return Err(format!(
+            "`{q}.{builder}` is applied to {} argument(s) before the app; it takes one",
+            step.arity
+        ));
+    }
+    static_string(src, &step.args[0]).map(Some)
+}
+
+/// Evaluate `arg` to a `String` without running the program: a string literal,
+/// or a zero-parameter top-level binding in `src` whose body is (in turn) one of
+/// these. Anything else is an `Err` saying why the build cannot know its value.
+pub fn static_string(src: &str, arg: &ArgText) -> Result<String, String> {
+    let file = parse(src);
+    let mut decls: HashMap<String, ast::ValueDecl> = HashMap::new();
+    for d in file.decls() {
+        if let ast::Decl::Value(v) = d {
+            if let Some(n) = v.name() {
+                decls.entry(n.text().to_string()).or_insert(v);
+            }
+        }
+    }
+    let mut seen: Vec<String> = Vec::new();
+    eval_static_string(arg.text.trim(), &decls, &mut seen)
+}
+
+fn eval_static_string(
+    text: &str,
+    decls: &HashMap<String, ast::ValueDecl>,
+    seen: &mut Vec<String>,
+) -> Result<String, String> {
+    let mut t = text.trim().to_string();
+    let parenthesised = |s: &str| {
+        ArgText {
+            text: s.to_string(),
+            col: 0,
+        }
+        .is_parenthesised()
+    };
+    while t.len() >= 2 && parenthesised(&t) {
+        t = t[1..t.len() - 1].trim().to_string();
+    }
+    if t.starts_with("\"\"\"") {
+        return Err(format!(
+            "`{}` is a triple-quoted string; use a plain \"…\" string literal",
+            one_line(&t)
+        ));
+    }
+    if t.starts_with('"') {
+        return parse_string_literal(&t).ok_or_else(|| {
+            format!(
+                "`{}` is computed at run time; the build reads only a single string literal",
+                one_line(&t)
+            )
+        });
+    }
+    let is_ident = t
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_lowercase() || c == '_')
+        .unwrap_or(false)
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if is_ident {
+        if seen.iter().any(|s| s == &t) {
+            return Err(format!("`{t}` is defined in terms of itself"));
+        }
+        let Some(d) = decls.get(&t) else {
+            return Err(format!(
+                "`{t}` is not a top-level definition in this module, so its value is only \
+                 known at run time"
+            ));
+        };
+        if d.params().map(|p| p.params().count()).unwrap_or(0) > 0 {
+            return Err(format!(
+                "`{t}` is a function, so its result is only known at run time"
+            ));
+        }
+        let body = d
+            .body()
+            .ok_or_else(|| format!("`{t}` has no body"))?
+            .syntax()
+            .text()
+            .to_string();
+        seen.push(t.clone());
+        let r = eval_static_string(&body, decls, seen);
+        seen.pop();
+        return r;
+    }
+    let is_qualified = t.contains('.')
+        && t.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+    if is_qualified {
+        return Err(format!(
+            "`{t}` is defined in another module; the build reads a string literal or a \
+             top-level String constant in the entry module"
+        ));
+    }
+    Err(format!(
+        "`{}` is computed at run time; the build reads only a string literal or a \
+         top-level String constant",
+        one_line(&t)
+    ))
+}
+
+/// Decode one `"…"` Sky string literal that spans the WHOLE of `t`. `None`
+/// when `t` is not exactly one literal (`"a" ++ "b"`, trailing text).
+fn parse_string_literal(t: &str) -> Option<String> {
+    let mut chars = t.chars();
+    if chars.next()? != '"' {
+        return None;
+    }
+    let mut out = String::new();
+    loop {
+        let c = chars.next()?;
+        match c {
+            '"' => break,
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                '"' => out.push('"'),
+                '\'' => out.push('\''),
+                '\\' => out.push('\\'),
+                'u' => {
+                    if chars.next()? != '{' {
+                        return None;
+                    }
+                    let mut hex = String::new();
+                    loop {
+                        let h = chars.next()?;
+                        if h == '}' {
+                            break;
+                        }
+                        hex.push(h);
+                    }
+                    out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+                }
+                _ => return None,
+            },
+            '\n' => return None,
+            c => out.push(c),
+        }
+    }
+    if chars.as_str().trim().is_empty() {
+        Some(out)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1237,5 +1403,109 @@ mod tests {
         let b = t.render_binding("x_");
         assert!(b.starts_with("x_ =\n"), "{b}");
         assert!(b.contains("\n    case m of\n        A ->\n"), "{b}");
+    }
+
+    // ---- static builder arguments (App.withAppUrl) ----
+
+    fn url_app(step: &str, extra: &str) -> String {
+        format!(
+            "{HEAD}appDef =\n    App.app {{ init = init, update = update, view = view, subscriptions = subs }}\n        |> App.withNotFound ()\n{step}\n\n\n{extra}main =\n    App.run appDef\n"
+        )
+    }
+
+    #[test]
+    fn a_literal_builder_argument_is_read_statically() {
+        let src = url_app("        |> App.withAppUrl \"https://example.test/\"", "");
+        assert_eq!(
+            builder_string_arg(&src, "withAppUrl").unwrap().as_deref(),
+            Some("https://example.test/")
+        );
+    }
+
+    #[test]
+    fn a_top_level_string_constant_is_followed() {
+        let src = url_app(
+            "        |> App.withAppUrl backendUrl",
+            "backendUrl : String\nbackendUrl =\n    realUrl\n\n\nrealUrl =\n    \"https://example.test/app\"\n\n\n",
+        );
+        assert_eq!(
+            builder_string_arg(&src, "withAppUrl").unwrap().as_deref(),
+            Some("https://example.test/app")
+        );
+    }
+
+    #[test]
+    fn a_builder_applied_through_a_helper_is_followed() {
+        let src = url_app(
+            "        |> pointAt \"http://example.test:8000/\"",
+            "pointAt u a =\n    a |> App.withAppUrl u\n\n\n",
+        );
+        assert_eq!(
+            builder_string_arg(&src, "withAppUrl").unwrap().as_deref(),
+            Some("http://example.test:8000/")
+        );
+    }
+
+    #[test]
+    fn the_last_builder_application_wins_and_absence_is_none() {
+        let src = url_app(
+            "        |> App.withAppUrl \"https://a.example.test/\"\n        |> App.withAppUrl \"https://b.example.test/\"",
+            "",
+        );
+        assert_eq!(
+            builder_string_arg(&src, "withAppUrl").unwrap().as_deref(),
+            Some("https://b.example.test/")
+        );
+        let none = url_app("", "");
+        assert_eq!(builder_string_arg(&none, "withAppUrl").unwrap(), None);
+    }
+
+    #[test]
+    fn string_literal_escapes_are_decoded() {
+        let src = url_app(
+            "        |> App.withAppUrl \"https://example.test/a\\\"b\"",
+            "",
+        );
+        assert_eq!(
+            builder_string_arg(&src, "withAppUrl").unwrap().as_deref(),
+            Some("https://example.test/a\"b")
+        );
+    }
+
+    #[test]
+    fn a_run_time_value_is_refused_with_the_reason() {
+        for (step, extra) in [
+            (
+                "        |> App.withAppUrl (String.toLower \"HTTPS://EXAMPLE.TEST/\")",
+                "",
+            ),
+            (
+                "        |> App.withAppUrl (base ++ \"/\")",
+                "base =\n    \"https://example.test\"\n\n\n",
+            ),
+            (
+                "        |> App.withAppUrl urlFor",
+                "urlFor x =\n    x\n\n\n",
+            ),
+            ("        |> App.withAppUrl Config.url", ""),
+        ] {
+            let src = url_app(step, extra);
+            let err = builder_string_arg(&src, "withAppUrl").unwrap_err();
+            assert!(
+                err.contains("run time")
+                    || err.contains("function")
+                    || err.contains("another module"),
+                "{step}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_self_referencing_constant_does_not_loop() {
+        let src = url_app(
+            "        |> App.withAppUrl a",
+            "a =\n    b\n\n\nb =\n    a\n\n\n",
+        );
+        assert!(builder_string_arg(&src, "withAppUrl").is_err());
     }
 }
