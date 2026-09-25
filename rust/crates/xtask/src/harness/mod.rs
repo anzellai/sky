@@ -37,6 +37,7 @@ pub mod bodies;
 pub mod child;
 pub mod falsify;
 pub mod layer2;
+pub mod proof_inputs;
 pub mod registry;
 pub mod state;
 
@@ -127,6 +128,10 @@ pub fn run(args: &[String], root: &Path) -> i32 {
         return list(root);
     }
 
+    if let Some(g) = &opts.explain_inputs {
+        return explain_inputs(g, root);
+    }
+
     if opts.verify_falsifiers {
         return run_falsifiers(&opts, root);
     }
@@ -149,6 +154,13 @@ usage: xtask harness [options]
                                  goes red; records proofs to docs/coverage/. Sweeps the
                                  whole registry, or the gates of `--tier`/`--only` when
                                  given, so nightly can verify one tier at a time.
+                                 INCREMENTAL: a gate is re-proven only when the digest
+                                 of its proof inputs changed (see --explain-inputs), or
+                                 its proof is missing, not as declared, or out of the
+                                 window. Every other gate is CARRIED and reported so.
+  --all                          with --verify-falsifiers: re-prove every selected gate,
+                                 carrying nothing (nightly and release use this)
+  --explain-inputs <gate>        print the files and digest a gate's proof depends on
   --list                         print the registry and exit
   -h, --help
 
@@ -162,6 +174,8 @@ struct Opts {
     require_proofs: bool,
     fail_fast: bool,
     verify_falsifiers: bool,
+    all: bool,
+    explain_inputs: Option<String>,
     list: bool,
     help: bool,
     exec_gate: Option<String>,
@@ -203,6 +217,10 @@ impl Opts {
                 "--require-proofs" => o.require_proofs = true,
                 "--fail-fast" => o.fail_fast = true,
                 "--verify-falsifiers" => o.verify_falsifiers = true,
+                "--all" => o.all = true,
+                "--explain-inputs" => {
+                    o.explain_inputs = Some(value(args, &mut i, "--explain-inputs")?)
+                }
                 "--list" => o.list = true,
                 "-h" | "--help" => o.help = true,
                 other => return Err(format!("unknown option `{other}`")),
@@ -212,7 +230,10 @@ impl Opts {
         // An unknown gate name in `--only` must be an ERROR, never an empty
         // selection that trivially passes. This is the same class as `xtask`
         // exiting 0 on an unknown subcommand.
-        for name in &o.only {
+        if o.all && !o.verify_falsifiers {
+            return Err("--all only applies to --verify-falsifiers".into());
+        }
+        for name in o.only.iter().chain(o.explain_inputs.iter()) {
             if registry::find(name).is_none() {
                 return Err(format!(
                     "unknown gate `{name}` (see `xtask harness --list`)"
@@ -312,6 +333,14 @@ fn run_suite(o: &Opts, root: &Path) -> i32 {
     };
     let scratch = bodies::scratch(root);
     let proofs = Proofs::load(root);
+    // A proof whose inputs changed since it was taken proves nothing about the
+    // gate as it now is. Digests are computed only when they are consulted.
+    let digests = if o.require_proofs {
+        let sel: Vec<&Gate> = GATES.iter().filter(|g| selected(g, o)).collect();
+        proof_inputs::fingerprint(root, &sel)
+    } else {
+        Default::default()
+    };
     let mut generation = 0u64;
     let mut reports: Vec<Report> = Vec::new();
     let mut aborted = false;
@@ -393,7 +422,8 @@ fn run_suite(o: &Opts, root: &Path) -> i32 {
         let (mut st, detail) = classify(g, &run);
 
         // A passing gate whose falsification is unproven is NOT a pass.
-        if st == GateState::Pass && o.require_proofs && !proofs.fresh(g.name) {
+        let digest = digests.get(g.name).and_then(|d| d.as_ref().ok());
+        if st == GateState::Pass && o.require_proofs && !proofs.fresh(g.name, digest) {
             st = GateState::Unproven;
         }
 
@@ -408,7 +438,11 @@ fn run_suite(o: &Opts, root: &Path) -> i32 {
             expected: g.expected,
             elapsed_s: run.elapsed.as_secs_f64(),
             detail: if st == GateState::Unproven {
-                format!("{detail} — but no falsification proof within {PROOF_WINDOW_DAYS}d")
+                format!(
+                    "{detail} — but no falsification proof within {PROOF_WINDOW_DAYS}d \
+                     whose inputs match the tree (`harness --verify-falsifiers --only {}`)",
+                    g.name
+                )
             } else {
                 detail
             },
@@ -631,40 +665,32 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
     let mut generation = 1000u64;
     let mut all = Vec::new();
 
-    for g in GATES {
-        if !g.platforms.contains(Platform::current()) {
-            continue;
-        }
-        if !o.only.is_empty() {
-            // Deliberate selection overrides everything, as for `run_suite`.
-            if !o.only.iter().any(|n| n == g.name) {
+    let selection = falsifier_selection(o);
+
+    // Digest every selected gate's proof inputs NOW, before any mutation is
+    // applied, so a digest always describes the clean tree. A reverted mutation
+    // restores byte-identical content, so a later digest would agree — but
+    // "later" would be taken while a sibling's mutation could be journalled.
+    let digests = proof_inputs::fingerprint(root, &selection);
+    let proofs = Proofs::load(root);
+    let now = now_unix();
+    let mut carried: Vec<(&'static str, u64)> = Vec::new();
+    let mut reproved: Vec<(&'static str, String)> = Vec::new();
+
+    for g in selection {
+        let digest = digests.get(g.name).and_then(|d| d.as_ref().ok());
+        match decide(proofs.entries.get(g.name), g, digest, now, o.all) {
+            Decision::Carry { proven_at } => {
+                carried.push((g.name, proven_at));
                 continue;
             }
-        } else if let Some(tier) = o.tier {
-            // `--tier` scopes the sweep to one tier, so a nightly job can verify
-            // the falsifiers of exactly the gates it has the environment for —
-            // the full-registry sweep needs every gate's world (Neovim, real
-            // servers, a cold FFI install) at once and cannot fit one runner.
-            // Applied ONLY when a tier is named: a bare `--verify-falsifiers`
-            // with no `--tier` and no `--only` still sweeps the whole registry,
-            // which is the behaviour `tests/harness_e2e.rs` and the release
-            // path depend on.
-            if g.tier != tier {
-                continue;
+            Decision::Reprove(why) => {
+                let why = match digests.get(g.name) {
+                    Some(Err(e)) => format!("{why} (inputs unresolvable: {e})"),
+                    _ => why,
+                };
+                reproved.push((g.name, why));
             }
-        }
-        // The hang self-test never passes by design, so its baseline can never
-        // be green and falsifying it is meaningless. It is exercised by the
-        // harness's own tests instead.
-        if g.name == "selftest-hang" && o.only.is_empty() {
-            continue;
-        }
-        // A blocked gate has no green baseline to falsify — by declaration it
-        // does not run. Its own falsifying property (the expiry flipping it to
-        // FAIL) is harness logic, not a gate assertion, and is proven by
-        // `registry`'s and `state`'s unit tests instead of by a mutation run.
-        if registry::block_for(g.name).is_some() {
-            continue;
         }
         all.extend(falsify::verify_gate(g, &fopts, &mut generation));
     }
@@ -691,14 +717,36 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
 
     let bad: Vec<&falsify::FalsifyReport> = all.iter().filter(|r| !r.as_declared).collect();
     // Record proofs BEFORE deciding, so a partial run still banks what it proved.
-    if let Err(e) = Proofs::record(root, &all) {
+    if let Err(e) = Proofs::record(root, &all, &digests) {
         eprintln!("xtask harness: cannot write {PROOF_LEDGER}: {e}");
+    }
+
+    println!(
+        "\nRE-PROVEN {} gate(s), CARRIED {} gate(s){}",
+        reproved.len(),
+        carried.len(),
+        if o.all {
+            " (--all: nothing carried)"
+        } else {
+            " (inputs unchanged since their recorded proof)"
+        }
+    );
+    for (g, why) in &reproved {
+        println!("  re-proven  {g}: {why}");
+    }
+    for (g, at) in &carried {
+        println!(
+            "  carried    {g}: proof taken {}d ago, inputs digest unchanged",
+            now.saturating_sub(*at) / 86_400
+        );
     }
 
     if bad.is_empty() {
         println!(
-            "\nFALSIFIER GATE: PASS  ({} mutation(s) behaved as declared, canary included)",
-            all.len()
+            "\nFALSIFIER GATE: PASS  ({} mutation(s) behaved as declared, canary included; \
+             {} gate(s) carried)",
+            all.len(),
+            carried.len()
         );
         0
     } else {
@@ -718,6 +766,161 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
         }
         1
     }
+}
+
+/// Print the inputs a gate's proof depends on, and their digest.
+fn explain_inputs(name: &str, root: &Path) -> i32 {
+    let Some(g) = registry::find(name) else {
+        eprintln!("xtask harness: unknown gate `{name}`");
+        return 2;
+    };
+    match proof_inputs::inputs_for(root, g) {
+        Ok(inp) => {
+            println!("proof inputs of `{name}`:");
+            for p in &inp.paths {
+                println!("  {p}");
+            }
+            println!(
+                "  + the registration and the body closure ({} bytes of source)",
+                inp.registration.len()
+            );
+            println!(
+                "  body closure: {}",
+                inp.items.iter().cloned().collect::<Vec<_>>().join(", ")
+            );
+        }
+        Err(e) => {
+            println!("proof inputs of `{name}` cannot be resolved: {e}");
+            println!("  an incremental run re-proves this gate every time");
+            return 1;
+        }
+    }
+    match proof_inputs::fingerprint(root, &[g]).remove(name) {
+        Some(Ok(d)) => println!("digest {} over {} tracked file(s)", d.hash, d.files),
+        Some(Err(e)) => println!("digest unavailable: {e}"),
+        None => {}
+    }
+    0
+}
+
+/// Whether a falsifier run re-proves a gate or carries its recorded proof.
+#[derive(Debug, PartialEq, Eq)]
+enum Decision {
+    Carry { proven_at: u64 },
+    Reprove(String),
+}
+
+/// The carry rule. A proof is carried ONLY when every one of these holds:
+/// `--all` is not set; it is not the canary (the runner's own self-check runs
+/// every time, and costs nothing); the ledger has a record; the record is as
+/// declared, against a mutation the registry still declares; it is within the
+/// freshness window; and its recorded inputs digest equals the digest of the
+/// tree now. A missing digest on EITHER side (a legacy record, or inputs that
+/// cannot be resolved) re-proves.
+fn decide(
+    entry: Option<&serde_json::Value>,
+    g: &Gate,
+    digest: Option<&proof_inputs::Digest>,
+    now: u64,
+    force_all: bool,
+) -> Decision {
+    if force_all {
+        return Decision::Reprove("--all".into());
+    }
+    if g.expect == Expect::Vacuous {
+        return Decision::Reprove("the canary is re-run by every falsifier run".into());
+    }
+    let Some(e) = entry else {
+        return Decision::Reprove("no recorded proof".into());
+    };
+    if e.get("outcome").and_then(|o| o.as_str()) != Some("as-declared") {
+        return Decision::Reprove("the recorded proof is not as declared".into());
+    }
+    if !recorded_mutations_declared(e, g) {
+        return Decision::Reprove("the recorded mutation(s) differ from the registry".into());
+    }
+    let at = e
+        .get("proven_at_unix")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if now.saturating_sub(at) > PROOF_WINDOW_DAYS * 86_400 {
+        return Decision::Reprove(format!("the proof is older than {PROOF_WINDOW_DAYS}d"));
+    }
+    let Some(d) = digest else {
+        return Decision::Reprove("the inputs digest cannot be computed".into());
+    };
+    match e.get("inputs_hash").and_then(|h| h.as_str()) {
+        None => Decision::Reprove("the proof records no inputs digest".into()),
+        Some(h) if h != d.hash => Decision::Reprove("its inputs changed since the proof".into()),
+        Some(_) => Decision::Carry { proven_at: at },
+    }
+}
+
+/// Every mutation id the ledger entry records is one the gate still declares,
+/// and — when the entry lists them all — it lists every declared one.
+fn recorded_mutations_declared(e: &serde_json::Value, g: &Gate) -> bool {
+    let declared: Vec<&str> = g.mutations.as_slice().iter().map(|m| m.id).collect();
+    if let Some(list) = e.get("mutations").and_then(|m| m.as_array()) {
+        let recorded: Vec<&str> = list.iter().filter_map(|v| v.as_str()).collect();
+        return declared.iter().all(|d| recorded.contains(d))
+            && recorded.iter().all(|r| declared.contains(r));
+    }
+    let one = e
+        .get("mutation")
+        .and_then(|m| m.as_str())
+        .unwrap_or_default();
+    // A legacy single-mutation record only vouches for a single-mutation gate.
+    declared.len() == 1 && declared[0] == one
+}
+
+/// The gates a falsifier run considers, in registry order.
+fn falsifier_selection(o: &Opts) -> Vec<&'static Gate> {
+    let mut out = Vec::new();
+    for g in GATES {
+        if !g.platforms.contains(Platform::current()) {
+            continue;
+        }
+        // A blocked gate has no green baseline to falsify — by declaration it
+        // does not run. Its own falsifying property (the expiry flipping it to
+        // FAIL) is harness logic, not a gate assertion, and is proven by
+        // `registry`'s and `state`'s unit tests instead of by a mutation run.
+        if registry::block_for(g.name).is_some() {
+            continue;
+        }
+        // The canary proves the RUNNER can say "this proved nothing". It runs
+        // in every falsifier run, whatever the selection — it is instant, and a
+        // run whose runner is broken must not be able to report PASS.
+        if g.expect == Expect::Vacuous {
+            out.push(g);
+            continue;
+        }
+        if !o.only.is_empty() {
+            // Deliberate selection overrides everything, as for `run_suite`.
+            if !o.only.iter().any(|n| n == g.name) {
+                continue;
+            }
+        } else if let Some(tier) = o.tier {
+            // `--tier` scopes the sweep to one tier, so a nightly job can verify
+            // the falsifiers of exactly the gates it has the environment for —
+            // the full-registry sweep needs every gate's world (Neovim, real
+            // servers, a cold FFI install) at once and cannot fit one runner.
+            // Applied ONLY when a tier is named: a bare `--verify-falsifiers`
+            // with no `--tier` and no `--only` still sweeps the whole registry,
+            // which is the behaviour `tests/harness_e2e.rs` and the release
+            // path depend on.
+            if g.tier != tier {
+                continue;
+            }
+        }
+        // The hang self-test never passes by design, so its baseline can never
+        // be green and falsifying it is meaningless. It is exercised by the
+        // harness's own tests instead.
+        if g.name == "selftest-hang" && o.only.is_empty() {
+            continue;
+        }
+        out.push(g);
+    }
+    out
 }
 
 /// The falsification-proof ledger.
@@ -745,7 +948,7 @@ impl Proofs {
     /// PROVEN under `--require-proofs` on a record taken against
     /// `config-matrix.claim-a-dead-builder-is-alive`, which commit `4a118e39`
     /// had deleted — the same defect the coverage ledger carried.
-    fn fresh(&self, gate: &str) -> bool {
+    fn fresh(&self, gate: &str, digest: Option<&proof_inputs::Digest>) -> bool {
         let Some(e) = self.entries.get(gate) else {
             return false;
         };
@@ -768,17 +971,50 @@ impl Proofs {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let now = now_unix();
-        now.saturating_sub(at) <= PROOF_WINDOW_DAYS * 86_400
+        if now.saturating_sub(at) > PROOF_WINDOW_DAYS * 86_400 {
+            return false;
+        }
+        // A proof that records the digest of its inputs vouches only for a tree
+        // whose inputs still hash the same. A proof taken before digests were
+        // recorded has nothing to compare and is judged by its age alone.
+        match e.get("inputs_hash").and_then(|h| h.as_str()) {
+            None => true,
+            Some(h) => digest.is_some_and(|d| d.hash == h),
+        }
     }
 
-    fn record(root: &Path, reports: &[falsify::FalsifyReport]) -> std::io::Result<()> {
+    /// Bank a run's outcomes, ONE record per gate.
+    ///
+    /// A gate with several mutations used to get one record per mutation, each
+    /// overwriting the last — so a gate whose FIRST mutation stayed green and
+    /// whose second went red was recorded as proven. The record is now the
+    /// conjunction: as declared only when every mutation was.
+    fn record(
+        root: &Path,
+        reports: &[falsify::FalsifyReport],
+        digests: &std::collections::BTreeMap<String, Result<proof_inputs::Digest, String>>,
+    ) -> std::io::Result<()> {
         let path = proof_ledger_path(root);
         if let Some(p) = path.parent() {
             std::fs::create_dir_all(p)?;
         }
         let mut map = Proofs::load(root).entries;
         let now = now_unix();
+        let mut order: Vec<&'static str> = Vec::new();
         for r in reports {
+            if !order.contains(&r.gate) {
+                order.push(r.gate);
+            }
+        }
+        for gate in order {
+            let rs: Vec<&falsify::FalsifyReport> =
+                reports.iter().filter(|r| r.gate == gate).collect();
+            let inconclusive = |r: &falsify::FalsifyReport| {
+                matches!(r.outcome, falsify::Falsified::Inconclusive(_))
+            };
+            // Real evidence against the gate: a mutation that ran and did not
+            // behave as declared. It always overwrites.
+            let defect = rs.iter().find(|r| !r.as_declared && !inconclusive(r));
             // AN INCONCLUSIVE RUN MUST NOT ERASE A RECORDED PROOF.
             //
             // `INCONCLUSIVE` means the run could not establish anything —
@@ -797,35 +1033,65 @@ impl Proofs {
             // a project that did not emit locally: an environment-dependent run
             // destroying a measurement taken somewhere it WAS possible.
             //
-            // The existing record is left alone instead. It carries its own
-            // 30-day freshness window, so a proof that is never re-established
-            // still expires on its own — the signal degrades rather than being
-            // deleted. Only the timestamp of the failed attempt is noted, so
-            // the attempt is visible rather than silent.
-            if matches!(r.outcome, falsify::Falsified::Inconclusive(_)) {
-                if let Some(existing) = map.get_mut(r.gate) {
-                    if existing.get("outcome").and_then(|o| o.as_str()) == Some("as-declared") {
-                        if let Some(obj) = existing.as_object_mut() {
-                            obj.insert("last_inconclusive_at_unix".into(), serde_json::json!(now));
+            // The existing record is left alone instead — including its inputs
+            // digest, which describes the tree it WAS taken on, so an
+            // incremental run re-attempts the gate next time rather than
+            // carrying it. It carries its own 30-day freshness window, so a
+            // proof that is never re-established still expires on its own.
+            // Only the timestamp of the failed attempt is noted, so the attempt
+            // is visible rather than silent.
+            if defect.is_none() {
+                if let Some(first_inconclusive) = rs.iter().find(|r| inconclusive(r)) {
+                    if let Some(existing) = map.get_mut(gate) {
+                        if existing.get("outcome").and_then(|o| o.as_str()) == Some("as-declared") {
+                            if let Some(obj) = existing.as_object_mut() {
+                                obj.insert(
+                                    "last_inconclusive_at_unix".into(),
+                                    serde_json::json!(now),
+                                );
+                            }
+                            continue;
                         }
-                        continue;
                     }
+                    map.insert(
+                        gate.to_string(),
+                        serde_json::json!({
+                            "mutation": first_inconclusive.mutation,
+                            "mutations": rs.iter().map(|r| r.mutation).collect::<Vec<_>>(),
+                            "observed": first_inconclusive.outcome.label(),
+                            "outcome": "NOT-as-declared",
+                            "proven_at_unix": now,
+                        }),
+                    );
+                    continue;
                 }
             }
-            map.insert(
-                r.gate.to_string(),
-                serde_json::json!({
-                    "mutation": r.mutation,
-                    "observed": r.outcome.label(),
-                    "outcome": if r.as_declared { "as-declared" } else { "NOT-as-declared" },
-                    "proven_at_unix": now,
-                }),
-            );
+            let (head, as_declared) = match defect {
+                Some(d) => (*d, false),
+                None => (rs[0], true),
+            };
+            let mut entry = serde_json::json!({
+                "mutation": head.mutation,
+                "mutations": rs.iter().map(|r| r.mutation).collect::<Vec<_>>(),
+                "observed": head.outcome.label(),
+                "outcome": if as_declared { "as-declared" } else { "NOT-as-declared" },
+                "proven_at_unix": now,
+            });
+            // The digest of the inputs this proof was taken against. Absent when
+            // it could not be computed, which makes the next incremental run
+            // re-prove the gate and `--require-proofs` judge it by age.
+            if let Some(Ok(d)) = digests.get(gate) {
+                entry["inputs_hash"] = serde_json::json!(d.hash);
+                entry["inputs_files"] = serde_json::json!(d.files);
+            }
+            map.insert(gate.to_string(), entry);
         }
         let doc = serde_json::json!({
             "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, \
-                     or older than the declared window, renders UNPROVEN under \
-                     `--require-proofs`.",
+                     older than the declared window, or whose `inputs_hash` no longer \
+                     matches its proof inputs (`harness --explain-inputs <gate>`), \
+                     renders UNPROVEN under `--require-proofs` and is re-proven by the \
+                     next incremental run.",
             "window_days": PROOF_WINDOW_DAYS,
             "gates": map,
         });
@@ -891,6 +1157,7 @@ mod proof_ledger_tests {
                 "apps-fleet",
                 Falsified::Inconclusive("no DSN".into()),
             )],
+            &Default::default(),
         )
         .unwrap();
 
@@ -922,6 +1189,7 @@ mod proof_ledger_tests {
                 "apps-fleet",
                 Falsified::Inconclusive("no DSN".into()),
             )],
+            &Default::default(),
         )
         .unwrap();
 
@@ -929,7 +1197,7 @@ mod proof_ledger_tests {
         let e = after.entries.get("apps-fleet").expect("must be recorded");
         assert_eq!(e["outcome"], "NOT-as-declared");
         assert!(
-            !after.fresh("apps-fleet"),
+            !after.fresh("apps-fleet", None),
             "INCONCLUSIVE must never render a gate proven"
         );
     }
@@ -946,13 +1214,200 @@ mod proof_ledger_tests {
                 "outcome":"as-declared","proven_at_unix":1786369944}}}"#,
         );
 
-        Proofs::record(&root, &[report("roundtrip", Falsified::Vacuous)]).unwrap();
+        Proofs::record(
+            &root,
+            &[report("roundtrip", Falsified::Vacuous)],
+            &Default::default(),
+        )
+        .unwrap();
 
         let after = Proofs::load(&root);
         let e = after.entries.get("roundtrip").unwrap();
         assert_eq!(e["observed"], "VACUOUS");
         assert_eq!(e["outcome"], "NOT-as-declared");
-        assert!(!after.fresh("roundtrip"));
+        assert!(!after.fresh("roundtrip", None));
+    }
+}
+
+#[cfg(test)]
+mod incremental_tests {
+    use super::*;
+    use falsify::{Falsified, FalsifyReport};
+    use proof_inputs::Digest;
+
+    const NOW: u64 = 2_000_000_000;
+
+    fn gate(name: &str) -> &'static Gate {
+        registry::find(name).expect("registered")
+    }
+
+    fn digest(h: &str) -> Digest {
+        Digest {
+            hash: h.into(),
+            files: 1,
+        }
+    }
+
+    fn proof(mutation: &str, hash: Option<&str>, at: u64) -> serde_json::Value {
+        let mut v = serde_json::json!({
+            "mutation": mutation,
+            "observed": "PROVEN",
+            "outcome": "as-declared",
+            "proven_at_unix": at,
+        });
+        if let Some(h) = hash {
+            v["inputs_hash"] = serde_json::json!(h);
+        }
+        v
+    }
+
+    /// An unchanged input set carries the recorded proof: no re-run.
+    #[test]
+    fn an_unchanged_input_carries_the_proof() {
+        let g = gate("reject");
+        let e = proof("reject.neutralise-axis", Some("abc"), NOW - 60);
+        assert_eq!(
+            decide(Some(&e), g, Some(&digest("abc")), NOW, false),
+            Decision::Carry {
+                proven_at: NOW - 60
+            }
+        );
+    }
+
+    /// A changed input forces a re-proof.
+    #[test]
+    fn a_changed_input_forces_a_reproof() {
+        let g = gate("reject");
+        let e = proof("reject.neutralise-axis", Some("abc"), NOW - 60);
+        assert!(matches!(
+            decide(Some(&e), g, Some(&digest("abd")), NOW, false),
+            Decision::Reprove(_)
+        ));
+    }
+
+    /// A missing proof is re-proven.
+    #[test]
+    fn a_missing_proof_is_reproven() {
+        assert!(matches!(
+            decide(None, gate("reject"), Some(&digest("abc")), NOW, false),
+            Decision::Reprove(_)
+        ));
+    }
+
+    /// Every other way a carry could be wrong re-proves instead.
+    #[test]
+    fn anything_short_of_a_matching_current_proof_is_reproven() {
+        let g = gate("reject");
+        let m = "reject.neutralise-axis";
+        let d = digest("abc");
+        let mut not_declared = proof(m, Some("abc"), NOW);
+        not_declared["outcome"] = serde_json::json!("NOT-as-declared");
+        let cases: Vec<(&str, serde_json::Value, Option<&Digest>, bool)> = vec![
+            ("--all", proof(m, Some("abc"), NOW), Some(&d), true),
+            ("legacy record", proof(m, None, NOW), Some(&d), false),
+            (
+                "uncomputable digest",
+                proof(m, Some("abc"), NOW),
+                None,
+                false,
+            ),
+            (
+                "out of window",
+                proof(m, Some("abc"), NOW - (PROOF_WINDOW_DAYS + 1) * 86_400),
+                Some(&d),
+                false,
+            ),
+            (
+                "retired mutation",
+                proof("reject.gone", Some("abc"), NOW),
+                Some(&d),
+                false,
+            ),
+            ("not as declared", not_declared, Some(&d), false),
+        ];
+        for (why, e, dg, all) in cases {
+            assert!(
+                matches!(decide(Some(&e), g, dg, NOW, all), Decision::Reprove(_)),
+                "{why}: must re-prove"
+            );
+        }
+    }
+
+    /// The canary is never carried: it is the runner's own self-check, and a
+    /// narrowed run still runs it.
+    #[test]
+    fn the_canary_is_never_carried() {
+        let e = proof("canary.no-op", Some("abc"), NOW);
+        assert!(matches!(
+            decide(Some(&e), gate("canary"), Some(&digest("abc")), NOW, false),
+            Decision::Reprove(_)
+        ));
+        let o = Opts {
+            only: vec!["reject".into()],
+            ..Default::default()
+        };
+        assert!(
+            falsifier_selection(&o).iter().any(|g| g.name == "canary"),
+            "a narrowed run must still run the canary"
+        );
+    }
+
+    /// A multi-mutation gate is recorded as the CONJUNCTION of its mutations.
+    /// Before, the last mutation's record overwrote the first's, so a gate
+    /// whose first mutation stayed green could be recorded as proven.
+    #[test]
+    fn a_gate_is_proven_only_when_every_mutation_is() {
+        let root = std::env::temp_dir().join(format!("sky-proof-conj-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mk = |mutation: &'static str, proven: bool| FalsifyReport {
+            gate: "spa-diff-fuzz",
+            mutation,
+            outcome: if proven {
+                Falsified::Proven
+            } else {
+                Falsified::Vacuous
+            },
+            as_declared: proven,
+            detail: String::new(),
+        };
+        let mut digests = std::collections::BTreeMap::new();
+        digests.insert("spa-diff-fuzz".to_string(), Ok(digest("abc")));
+
+        let first_vacuous = [
+            mk("spa-diff-fuzz.drop-msgarg-rename", false),
+            mk("spa-diff-fuzz.drop-read-field", true),
+        ];
+        Proofs::record(&root, &first_vacuous, &digests).unwrap();
+        let after = Proofs::load(&root);
+        let e = &after.entries["spa-diff-fuzz"];
+        assert_eq!(e["outcome"], "NOT-as-declared");
+        assert_eq!(e["mutation"], "spa-diff-fuzz.drop-msgarg-rename");
+        assert!(!after.fresh("spa-diff-fuzz", Some(&digest("abc"))));
+
+        // Both proven: as declared, with the digest recorded and honoured.
+        let both = [
+            mk("spa-diff-fuzz.drop-msgarg-rename", true),
+            mk("spa-diff-fuzz.drop-read-field", true),
+        ];
+        Proofs::record(&root, &both, &digests).unwrap();
+        let after = Proofs::load(&root);
+        assert_eq!(after.entries["spa-diff-fuzz"]["inputs_hash"], "abc");
+        assert!(after.fresh("spa-diff-fuzz", Some(&digest("abc"))));
+        assert!(
+            !after.fresh("spa-diff-fuzz", Some(&digest("abd"))),
+            "--require-proofs must not accept a proof whose inputs changed"
+        );
+        assert!(matches!(
+            decide(
+                after.entries.get("spa-diff-fuzz"),
+                gate("spa-diff-fuzz"),
+                Some(&digest("abc")),
+                now_unix(),
+                false
+            ),
+            Decision::Carry { .. }
+        ));
     }
 }
 
