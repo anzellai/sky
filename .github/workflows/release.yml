@@ -255,7 +255,11 @@ jobs:
           # Poll up to ~10 min: the per-commit Rust CI for this commit may still
           # be finishing when the tag is pushed moments later.
           for i in $(seq 1 20); do
-            concl=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs" \
+            # Filter by name IN the query: the endpoint pages at 30 runs, and a
+            # commit with more check runs than that (a release branch carries
+            # dozens) hid `ci-green` on page 2, so this read "pending" for ten
+            # minutes on a commit whose ci-green had already passed.
+            concl=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs?check_name=ci-green&per_page=100" \
               --jq '[.check_runs[] | select(.name=="ci-green")] | sort_by(.started_at) | last | .conclusion // "pending"')
             echo "attempt $i: ci-green = $concl"
             case "$concl" in
