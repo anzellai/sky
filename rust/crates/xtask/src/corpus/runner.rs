@@ -43,6 +43,11 @@ fn workers() -> usize {
 /// out.
 const CASE_BUDGET: Duration = Duration::from_secs(120);
 
+/// Ceiling for the one case built alone before the workers start. It compiles
+/// the whole Go runtime into a cold build cache, which on a CI runner whose
+/// cache did not restore can take several minutes on its own.
+const WARMUP_BUDGET: Duration = Duration::from_secs(900);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
     /// Built, ran, and printed exactly what the generator predicted.
@@ -90,6 +95,10 @@ pub struct CaseResult {
 /// A module named `Helper.Inner.Values` becomes `src/Helper/Inner/Values.sky`,
 /// which is how the driver discovers it.
 pub fn run_case(sky: &Path, dir: &Path, case: &GenCase) -> Verdict {
+    run_case_within(sky, dir, case, CASE_BUDGET)
+}
+
+fn run_case_within(sky: &Path, dir: &Path, case: &GenCase, budget: Duration) -> Verdict {
     let src = dir.join("src");
     if let Err(e) = std::fs::create_dir_all(&src) {
         return Verdict::Crashed(format!("mkdir {}: {e}", src.display()));
@@ -117,7 +126,7 @@ pub fn run_case(sky: &Path, dir: &Path, case: &GenCase) -> Verdict {
     // ---- build -----------------------------------------------------------
     let build = match run_bounded(
         Command::new(sky).arg("build").arg(&entry).current_dir(dir),
-        CASE_BUDGET,
+        budget,
     ) {
         Ok(o) => o,
         // v2 §7.6: a run that could not fork did not test anything.
@@ -461,6 +470,32 @@ pub fn run_cases(root: &Path, cases: &[GenCase], scratch: &Path) -> Vec<CaseResu
     let done = AtomicUsize::new(0);
     let total = cases.len();
     let n_workers = workers();
+
+    // WARM-UP: build the first case alone before the workers start. With a
+    // cold Go build cache (a tag run cannot read a branch's cache) every worker
+    // otherwise compiles the whole runtime at once, and the first cases hit
+    // CASE_BUDGET: the v0.25.18 tag run reported its first 4 cases BUILD-FAILED
+    // while the other 335 passed. The warm-up case is a real case; its verdict
+    // counts like any other.
+    if total > 0 {
+        let dir = scratch.join("case-00000");
+        let t = Instant::now();
+        let verdict = run_case_within(&sky, &dir, &cases[0], WARMUP_BUDGET);
+        let elapsed = t.elapsed();
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!("  warm-up case built in {}s", elapsed.as_secs());
+        if verdict.is_red() {
+            println!("  [{:>4}/{total}] {} {}", 1, verdict.label(), cases[0].id);
+        }
+        results.lock().unwrap().push(CaseResult {
+            id: cases[0].id.clone(),
+            stratum: cases[0].stratum,
+            verdict,
+            elapsed,
+        });
+        next.store(1, Ordering::SeqCst);
+        done.store(1, Ordering::SeqCst);
+    }
 
     std::thread::scope(|s| {
         for w in 0..n_workers {

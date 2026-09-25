@@ -830,7 +830,8 @@ mod tests {
         assert!(ok, "git init failed");
         let mut files = BTreeSet::new();
         for i in 0..5000 {
-            let name = format!("rust-crates-xtask-fixtures-a-long-path-like-a-real-repo-file-{i:05}.txt");
+            let name =
+                format!("rust-crates-xtask-fixtures-a-long-path-like-a-real-repo-file-{i:05}.txt");
             std::fs::write(dir.join(&name), format!("{i}\n")).unwrap();
             files.insert(name);
         }
