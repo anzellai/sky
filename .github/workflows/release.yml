@@ -350,9 +350,12 @@ jobs:
   gate-t1:
     runs-on: ubuntu-latest
     # The T1 harness release-compiles the workspace from a cold release cache
-    # (~15-20 min) then runs ~14 min of gates; 40 gives margin over the measured
-    # 28 min so a slightly slower runner does not false-red.
-    timeout-minutes: 40
+    # (~15-20 min) then runs its gates. Measured 28 min in total when this was
+    # set to 40; at v0.25.18 the gate phase alone passed 35 min (run 36111406977,
+    # cancelled at the ceiling with no verdict). This is the ONLY full T1 run, so
+    # a ceiling that cancels it leaves T1 unproven at release. Each gate is
+    # still bounded by its own harness budget.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
