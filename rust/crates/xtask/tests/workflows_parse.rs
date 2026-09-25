@@ -1201,6 +1201,38 @@ fn the_release_workflow_is_the_full_suite() {
         "registered gate(s) whose falsifier proof no release job re-establishes: \
          {uncovered:?} — add each to one of the gate-falsifiers-* `--only` lists"
     );
+
+    // 5. The T1 harness runs in shards (`--tier t1 --only <list>`). A shard list
+    //    is hand-written, so a gate added to T1 later would run in NO release job
+    //    and the release would look green without it. A `--tier t1` line with no
+    //    `--only` runs every T1 gate and covers them all.
+    let mut t1_all = false;
+    let mut t1_covered: Vec<String> = Vec::new();
+    for r in &runs {
+        for line in r
+            .lines()
+            .filter(|l| l.contains("--tier t1") && !l.contains("--verify-falsifiers"))
+        {
+            let toks: Vec<&str> = line.split_whitespace().collect();
+            match toks.iter().position(|t| *t == "--only") {
+                Some(i) => t1_covered.extend(toks[i + 1].split(',').map(str::to_string)),
+                None => t1_all = true,
+            }
+        }
+    }
+    if !t1_all {
+        let t1_uncovered: Vec<&str> = registered
+            .iter()
+            .filter(|(_, tier)| tier == "T1")
+            .map(|(n, _)| n.as_str())
+            .filter(|n| !t1_covered.iter().any(|c| c == n))
+            .collect();
+        assert!(
+            t1_uncovered.is_empty(),
+            "T1 gate(s) that no release T1 shard runs: {t1_uncovered:?} — add each to \
+             one of the gate-t1-* `--only` lists"
+        );
+    }
 }
 
 /// The committed console_app Go must be checked against its Sky source on every

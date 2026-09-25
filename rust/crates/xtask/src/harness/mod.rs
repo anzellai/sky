@@ -410,6 +410,10 @@ fn run_suite(o: &Opts, root: &Path) -> i32 {
         }
 
         generation += 1;
+        // Progress on stderr as each gate starts and ends (see the matching
+        // note in the falsifier loop): a job cancelled at its ceiling then
+        // shows which gate was running and how long the others took.
+        eprintln!("harness: running {} (budget {}s) …", g.name, g.budget_s);
         let run = run_gate_in_child(
             &exe,
             root,
@@ -420,6 +424,12 @@ fn run_suite(o: &Opts, root: &Path) -> i32 {
         );
 
         let (mut st, detail) = classify(g, &run);
+        eprintln!(
+            "harness: {} -> {:?} ({:.0}s)",
+            g.name,
+            st,
+            run.elapsed.as_secs_f64()
+        );
 
         // A passing gate whose falsification is unproven is NOT a pass.
         let digest = digests.get(g.name).and_then(|d| d.as_ref().ok());
@@ -692,7 +702,22 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
                 reproved.push((g.name, why));
             }
         }
-        all.extend(falsify::verify_gate(g, &fopts, &mut generation));
+        // Progress on stderr as each gate finishes. The table below prints only
+        // at the end, so a CI job cancelled at its ceiling used to leave no
+        // trace of which gate was slow.
+        eprintln!("harness: proving {} …", g.name);
+        let started = std::time::Instant::now();
+        let reports = falsify::verify_gate(g, &fopts, &mut generation);
+        for r in &reports {
+            eprintln!(
+                "harness: {} / {} -> {} ({}s)",
+                r.gate,
+                r.mutation,
+                r.outcome.label(),
+                started.elapsed().as_secs()
+            );
+        }
+        all.extend(reports);
     }
 
     let w = all.iter().map(|r| r.gate.len()).max().unwrap_or(4).max(4);
