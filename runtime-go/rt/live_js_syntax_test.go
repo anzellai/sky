@@ -16,7 +16,7 @@ func TestLiveJSSyntaxValid(t *testing.T) {
 	if err != nil {
 		t.Skip("node not available; skipping embedded-JS syntax check")
 	}
-	js := liveJSWithCfgAndCsrfWithBase("sid-test", liveBannerConfig{}, "csrf-test", "")
+	js := liveClientJS
 	f, err := os.CreateTemp("", "skylive-*.js")
 	if err != nil {
 		t.Fatal(err)

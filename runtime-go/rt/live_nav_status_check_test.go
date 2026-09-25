@@ -23,11 +23,7 @@ import (
 // to a URL after session loss); both paths share the same shape and
 // both must check r.ok before calling __skyPatch.
 func TestSkyNavFetchChecksOk(t *testing.T) {
-	cfg := liveBannerConfig{
-		Reconnecting: `"Reconnecting…"`,
-		Offline:      `"Connection lost — refresh to retry"`,
-	}
-	js := liveJSWithCfgAndCsrfWithBase("test-sid", cfg, "csrf-token", "")
+	js := liveClientJS
 
 	// Two fetch sites use X-Sky-Nav: the sky-nav click handler and
 	// the popstate Back/Forward handler. Each MUST gate its .then on
@@ -76,7 +72,7 @@ func TestSkyNavFetchChecksOk(t *testing.T) {
 // of pushing a duplicate. This test pins `pushState(...href...)` before
 // `__skyPatch(t)` in the click handler.
 func TestSkyNavPushesUrlBeforePatch(t *testing.T) {
-	js := liveJSWithCfgAndCsrfWithBase("test-sid", liveBannerConfig{}, "csrf-token", "")
+	js := liveClientJS
 
 	push := strings.Index(js, `pushState({}, "", href)`)
 	if push < 0 {
@@ -118,7 +114,7 @@ func TestSkyNavPushesUrlBeforePatch(t *testing.T) {
 // A regression that drops the arg, flips either call site, or reverts
 // __skyRunPaths to an unconditional pushState reintroduces the broken-Back bug.
 func TestSkyRunPathsIntentIsExplicit(t *testing.T) {
-	js := liveJSWithCfgAndCsrfWithBase("test-sid", liveBannerConfig{}, "csrf-token", "")
+	js := liveClientJS
 
 	// __skyRunPaths must branch its history call on the intent, not always push.
 	if !strings.Contains(js, `history[push ? "pushState" : "replaceState"]`) {

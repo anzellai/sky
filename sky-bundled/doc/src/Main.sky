@@ -79,6 +79,9 @@ dispatch dir req =
         else if path == "/api/symbols.json" then
             serveJson (dir ++ "/api/symbols.json")
 
+        else if String.startsWith "/api/search." path && String.endsWith ".js" path then
+            serveJs (dir ++ path)
+
         else
             Task.succeed
                 (Server.withStatus 404 (Server.text ("not found: " ++ path)))
@@ -96,6 +99,22 @@ serveJson : String -> Task Error Response
 serveJson path =
     File.readFile path
         |> Task.andThen (\body -> Task.succeed (Server.json body))
+        |> Task.onError (notFoundFor path)
+
+
+-- The API index's search script (api/search.<hash>.js). It is a same-origin
+-- file, not an inline script, so the page runs under a strict
+-- Content-Security-Policy (script-src 'self').
+serveJs : String -> Task Error Response
+serveJs path =
+    File.readFile path
+        |> Task.andThen
+               (\body ->
+                   Task.succeed
+                       (Server.text body
+                           |> Server.withHeader
+                                  "Content-Type"
+                                  "text/javascript; charset=utf-8"))
         |> Task.onError (notFoundFor path)
 
 

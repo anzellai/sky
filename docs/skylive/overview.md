@@ -378,7 +378,7 @@ A Sky-side ergonomic API (`Live.app { subApps = [Live.subApp "/admin" "./admin-a
 
 When a Sky.Live runtime starts with `SKY_LIVE_BASE_PATH` set (which `MountSubApp` does automatically for child processes), four behaviours flip:
 
-1. `<meta name="sky-base" content="<prefix>">` injected into every page wrap. The inlined JS reads `__skyBase` and prefixes every hardcoded `/_sky/event` / `/_sky/sse` / `/_sky/config` URL — without this, sub-app fetches would hit the parent's wire endpoint and silently drop.
+1. `<meta name="sky-base" content="<prefix>">` injected into every page wrap. The client (loaded from `<prefix>/_sky/live.<hash>.js`) reads the base from its `sky-live-cfg` block into `__skyBase` and prefixes every hardcoded `/_sky/event` / `/_sky/sse` / `/_sky/config` URL — without this, sub-app fetches would hit the parent's wire endpoint and silently drop.
 2. Dev banner suppressed (no recursive "click for console" inside the console).
 3. `MountObservabilityEndpoints` skipped (the parent owns `/_sky/{healthz,readyz,metrics,buildinfo}` — sub-app duplicates would just pollute).
 4. `maybeAutoMountConsole` early-returns (sub-apps don't get to spawn sub-apps — fork-bomb prevention).

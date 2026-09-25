@@ -39,6 +39,7 @@ server/                the STATELESS Sky.Http.Server backend (SQLite store)
   src/Main.sky           - Server.api routes + Server.static for same-origin
   src/Shared.sky         → ../../shared/Shared.sky (symlink)
 public/index.html      the Go/wasm bootstrap page (served by the backend)
+public/boot.js         the wasm loader (a file, so a strict CSP runs it)
 run_roundtrip.sh       reproducible headless full-loop acceptance (below)
 run_e2e_db.sh          DB-backed boundary acceptance — curl as a hostile client (below)
 run.sh                 serve for a real browser (prints the URL)

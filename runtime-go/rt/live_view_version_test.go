@@ -25,7 +25,7 @@ import (
 
 // ── helpers ─────────────────────────────────────────────────────
 
-var viewVarRe = regexp.MustCompile(`var __skyView = "([^"]*)";`)
+var viewVarRe = regexp.MustCompile(`"view":"([^"]*)"`)
 
 // listApp is a Sky.Live app whose model is a list of item names and whose
 // view renders one delete button per item, in order. update("Delete:x")
@@ -144,7 +144,7 @@ func TestEvent_UnknownViewIsDesyncNotAnotherMsg(t *testing.T) {
 	app := listApp(newMemoryStore(30 * time.Minute))
 	_, cookie, view := getPage(t, app, "/", "")
 	if view == "" {
-		t.Fatalf("the page must embed its view id for the client (var __skyView)")
+		t.Fatalf("the page must embed its view id for the client (the sky-live-cfg view field)")
 	}
 	rr := postLiveEvent(t, app, cookie, map[string]any{"seq": 1, "msg": "_", "args": []any{}, "handlerId": "r.0#button.click", "view": "gone-render"})
 	if got := rr.Header().Get("X-Sky-Status"); got != "desync" {

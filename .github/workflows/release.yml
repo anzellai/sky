@@ -953,6 +953,8 @@ jobs:
         run: scripts/live-client-e2e.sh
       - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
         run: scripts/ui-forms-e2e.sh
+      - name: Strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
+        run: scripts/csp-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
         uses: actions/upload-artifact@v4

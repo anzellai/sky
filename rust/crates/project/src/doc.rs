@@ -178,11 +178,12 @@ fn render_doc_site_mode(
     } else {
         index.push_str("<h1>Sky API documentation</h1>");
     }
-    index.push_str(
-        "<input type=\"search\" id=\"q\" \
-         placeholder=\"Search modules and symbols…\" \
-         autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" autofocus>",
-    );
+    index.push_str(&format!(
+        "<input type=\"search\" id=\"q\"{} \
+             placeholder=\"Search modules and symbols…\" \
+             autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" autofocus>",
+        search_input_attrs(export)
+    ));
     index.push_str("<ul id=\"modlist\">");
     for DocSource { name, .. } in &mods {
         let href = if export {
@@ -198,7 +199,7 @@ fn render_doc_site_mode(
     }
     index.push_str("</ul>");
     index.push_str("<div id=\"results\" style=\"display:none\"></div>");
-    index.push_str(&search_script(export));
+    index.push_str(&search_script_tag(export));
     index.push_str("</body></html>\n");
     let index_name = if export {
         "reference.html"
@@ -206,6 +207,7 @@ fn render_doc_site_mode(
         "index.html"
     };
     std::fs::write(out_dir.join(index_name), index)?;
+    std::fs::write(out_dir.join("api").join(search_js_name()), SEARCH_JS)?;
 
     // Per-module pages + the per-symbol manifest. The manifest is shaped
     // `{"entries":[{module,name,sig,bucket,summary}]}` — the ONE format both
@@ -320,68 +322,93 @@ a{text-decoration:none;color:#0b6}a:hover{text-decoration:underline}\
 b{font-weight:600}\
 </style>";
 
-/// Inline, dependency-free search script for the API index. Fetches the symbol
-/// manifest once, then filters on every keystroke by module / name / signature
-/// substring (case-insensitive) and renders matches as links into the per-module
-/// pages. CSP-safe: no remote scripts, no `eval`. `export` picks relative
-/// (`m/<mod>.html#`, `api/…`) vs root-absolute (`/m/<mod>#`, `/api/…`) URLs so
-/// the same script works on the static Pages site and behind the serve server.
-fn search_script(export: bool) -> String {
-    let (mfetch, mprefix, msuffix) = if export {
-        ("api/symbols.json", "m/", ".html#")
-    } else {
-        ("/api/symbols.json", "/m/", "#")
-    };
-    format!(
-        r#"<script>
-(function () {{
+/// The API index's search script, dependency-free. Fetches the symbol manifest
+/// once, then filters on every keystroke by module / name / signature substring
+/// (case-insensitive) and renders matches as links into the per-module pages.
+/// It is written as the file `api/search.<hash>.js` ([`search_js_name`]), never
+/// inlined, so the page runs under a strict Content-Security-Policy
+/// (`script-src 'self'`): no inline script, no remote scripts, no `eval`. The
+/// URL shapes come from data attributes on the `#q` input
+/// ([`search_input_attrs`]), so the same file serves the static export
+/// (relative URLs) and the serve server (root-absolute).
+const SEARCH_JS: &str = r#"(function () {
   var q = document.getElementById('q');
   var modlist = document.getElementById('modlist');
   var results = document.getElementById('results');
   var SYMS = [];
-  function esc(s) {{
+  // URL shapes come from the input's data-* attributes, so one file serves
+  // the static export (relative URLs) and the serve server (root-absolute).
+  var mprefix = q.getAttribute('data-mod-prefix') || '';
+  var msuffix = q.getAttribute('data-mod-suffix') || '#';
+  function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }}
-  function render() {{
+  }
+  function render() {
     var query = q.value.trim().toLowerCase();
-    if (!query) {{
+    if (!query) {
       modlist.style.display = '';
       results.style.display = 'none';
       results.innerHTML = '';
       return;
-    }}
+    }
     modlist.style.display = 'none';
     results.style.display = '';
     var hits = [];
-    for (var i = 0; i < SYMS.length && hits.length < 300; i++) {{
+    for (var i = 0; i < SYMS.length && hits.length < 300; i++) {
       var s = SYMS[i];
       var hay = (s.module + '.' + s.name + ' ' + (s.sig || '')).toLowerCase();
       if (hay.indexOf(query) !== -1) hits.push(s);
-    }}
-    if (!hits.length) {{
+    }
+    if (!hits.length) {
       results.innerHTML = '<p class="empty">No matches for “' + esc(q.value) + '”.</p>';
       return;
-    }}
+    }
     var html = '<ul class="res">';
-    for (var j = 0; j < hits.length; j++) {{
+    for (var j = 0; j < hits.length; j++) {
       var h = hits[j];
       var sig = h.sig ? ' <span class="sig">: ' + esc(h.sig) + '</span>' : '';
       var sum = h.summary ? '<div class="sum">' + esc(h.summary) + '</div>' : '';
-      html += '<li><a href="{mprefix}' + esc(h.module) + '{msuffix}' + esc(h.name) + '">'
+      html += '<li><a href="' + mprefix + esc(h.module) + msuffix + esc(h.name) + '">'
         + '<span class="mod">' + esc(h.module) + '.</span><b>' + esc(h.name) + '</b>'
         + sig + '</a>' + sum + '</li>';
-    }}
+    }
     html += '</ul>';
     results.innerHTML = html;
-  }}
+  }
   q.addEventListener('input', render);
-  fetch('{mfetch}')
-    .then(function (r) {{ return r.json(); }})
-    .then(function (d) {{ SYMS = (d && d.entries) || []; render(); }})
-    .catch(function () {{}});
-}})();
-</script>"#
-    )
+  fetch(q.getAttribute('data-symbols'))
+    .then(function (r) { return r.json(); })
+    .then(function (d) { SYMS = (d && d.entries) || []; render(); })
+    .catch(function () {});
+})();
+"#;
+
+/// `search.<16 hex of FNV-1a 64>.js` — a content-hashed name (the name
+/// changes whenever the script does), so a static host can cache it forever.
+fn search_js_name() -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in SEARCH_JS.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("search.{h:016x}.js")
+}
+
+/// The `data-*` attributes the search script reads off the `#q` input:
+/// relative (`api/symbols.json`, `m/<mod>.html#`) for the export,
+/// root-absolute (`/api/symbols.json`, `/m/<mod>#`) behind the serve server.
+fn search_input_attrs(export: bool) -> &'static str {
+    if export {
+        " data-symbols=\"api/symbols.json\" data-mod-prefix=\"m/\" data-mod-suffix=\".html#\""
+    } else {
+        " data-symbols=\"/api/symbols.json\" data-mod-prefix=\"/m/\" data-mod-suffix=\"#\""
+    }
+}
+
+/// The `<script src>` tag that loads [`SEARCH_JS`] from `api/`.
+fn search_script_tag(export: bool) -> String {
+    let prefix = if export { "" } else { "/" };
+    format!("<script src=\"{prefix}api/{}\"></script>", search_js_name())
 }
 
 /// Minimal HTML-escape for text embedded in an element body.
@@ -1228,6 +1255,20 @@ mod tests {
         assert!(
             index.contains("/api/symbols.json"),
             "index fetches the manifest:\n{index}"
+        );
+        // Strict CSP: the search script is a same-origin FILE, never inline.
+        let script = format!("<script src=\"/api/{}\"></script>", search_js_name());
+        assert!(index.contains(&script), "index loads {script}:\n{index}");
+        for tag in index.split("<script").skip(1) {
+            let open = tag.split('>').next().unwrap_or("");
+            assert!(
+                open.contains("src="),
+                "index carries an inline <script{open}>"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(out.join("api").join(search_js_name())).unwrap(),
+            SEARCH_JS
         );
 
         let list_page = std::fs::read_to_string(out.join("m").join("Sky.Core.List.html")).unwrap();

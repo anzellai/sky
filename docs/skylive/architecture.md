@@ -530,17 +530,32 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
 
 ## Client-side runtime
 
-**The client is not a separate file and is not served at a URL.** It is a
-`fmt.Sprintf` template inlined into every HTML response
-(`runtime-go/rt/live.go:4397`, from `liveJSWithCfgAndCsrfWithBase`,
-`live.go:7113`), whose body spans roughly `live.go:7114-9031`.
+**The client is one same-origin, content-hashed file:
+`/_sky/live.<hash>.js`** (`liveClientJS` + `liveClientPath` in
+`runtime-go/rt/live_client_asset.go`; a sub-app such as the Sky Console
+serves it under its base, `/_sky/console/_sky/live.<hash>.js`). The hash is
+the first 12 hex digits of the SHA-256 of the script, so the response is
+`Cache-Control: public, max-age=31536000, immutable`: a browser downloads it
+once per runtime version, not once per page load.
 
-This paragraph used to read "`runtime-go/rt/live_client.js` (embedded,
-served at `/_sky/live.js`) — about 2 KB gzipped". There is **no `.js` file
-anywhere under `runtime-go/`** (`find runtime-go -name '*.js'` is empty),
-nothing serves `/_sky/live.js`, and ~1,900 lines of inlined JS source is an
-order of magnitude past "about 2 KB gzipped". It ships on every full-page
-response, so its size is a per-page-load cost, not a cached-asset one.
+The page carries no executable inline script. Per-page values (session id,
+CSRF token, base path, view id, reconnect-banner settings) are in a data
+block that the browser never executes:
+
+```html
+<div id="sky-root">…</div>
+<script type="application/json" id="sky-live-cfg">{"sid":"…","csrf":"…","base":"",…}</script>
+<script src="/_sky/live.3f9c2a1b7d4e.js"></script>
+```
+
+The client reads the block with `JSON.parse` at start-up. `json.Marshal`
+escapes `<`, `>` and `&`, so a value cannot close the block.
+
+Before v0.25.19 the client was a `fmt.Sprintf` template inlined into every
+HTML response, with the session id and the CSRF token spliced in as JS
+literals. A reverse proxy that sends `script-src 'self'` blocked it, and the
+page (the Sky Console included) was dead. See
+[Content-Security-Policy](#content-security-policy) below.
 
 Responsibilities:
 
@@ -550,3 +565,43 @@ Responsibilities:
 4. Handle navigation (pushState / popState) when the server routes it.
 
 No framework dependency. No bundle step.
+
+## Content-Security-Policy
+
+Sky works under a strict policy with **no hashes, no nonces, no
+`'unsafe-inline'` and no `'unsafe-eval'`**:
+
+```
+default-src 'self'; script-src 'self' 'wasm-unsafe-eval';
+style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'
+```
+
+Every script that Sky serves is a same-origin file: the Sky.Live client
+(`/_sky/live.<hash>.js`), the Sky.Spa boot loader (`/spa-boot.<hash>.js`,
+next to `wasm_exec.js` and `main.<hash>.wasm`), and the fallback console
+shell (`/_sky/console-shell.<hash>.js`). Per-page data is in
+`<script type="application/json">` blocks. No runtime path calls `eval` or
+`new Function`. The old `data-sky-eval` attribute is removed: use
+`data-sky-path`, or an event that the app handles. Only Sky.Spa needs
+`'wasm-unsafe-eval'` (it allows `WebAssembly.instantiate`, not JS eval).
+`style-src 'unsafe-inline'` stays because `Std.Ui` renders `style`
+attributes.
+
+There are two ways to get the policy:
+
+- **Behind a proxy.** Send the header from Caddy, nginx or a CDN. The
+  runtime never overwrites a `Content-Security-Policy` that the app or a
+  middleware already set.
+- **Directly.** Set `SKY_CSP=strict`. The runtime then sends this policy on
+  every page, API and static response that has no policy yet:
+  `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'
+  'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;
+  connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';
+  frame-ancestors 'self'` (or the `SKY_LIVE_FRAME_ANCESTORS` list). When
+  `SKY_CSP` is unset (the default), the headers do not change. See
+  `docs/sky-toml.md`.
+
+`scripts/csp-e2e.sh` drives the Sky Console, a Sky.Live page, a `Std.Ui`
+form and both Sky.Spa boot paths under the policy (through a proxy, and with
+`SKY_CSP=strict`). It fails on any `securitypolicyviolation`.
+

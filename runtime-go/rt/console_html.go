@@ -20,7 +20,7 @@ package rt
 // All of the above would inflate the binary without adding the
 // "I can see what's broken" value the v1.0 user actually needs.
 
-const consoleHTML = `<!DOCTYPE html>
+var consoleHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -258,8 +258,14 @@ code, .mono {
 </div>
 
 </main>
-<script>
-(function() {
+<script src="` + consoleShellPath + `"></script>
+</body>
+</html>`
+
+// consoleShellJS is the legacy shell's script. It is a same-origin file served
+// at consoleShellPath (HandleConsoleShellJS), never an inline <script>: a
+// strict Content-Security-Policy (script-src 'self') blocks inline script.
+const consoleShellJS = `(function() {
     var REFRESH_MS = 1000;
     var activeTab = "overview";
 
@@ -426,6 +432,7 @@ code, .mono {
     refresh();
     setInterval(refresh, REFRESH_MS);
 })();
-</script>
-</body>
-</html>`
+`
+
+// consoleShellPath is the content-hashed URL of consoleShellJS.
+var consoleShellPath = "/_sky/console-shell." + assetHash(consoleShellJS) + ".js"

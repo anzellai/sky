@@ -31,7 +31,7 @@ import (
 //  3. Skip disabled fields entirely (spec requires this; otherwise
 //     a disabled-but-named field leaks a stale value).
 func TestLiveJS_SubmitFilterByActualSubmitter(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		// Submitter resolution — modern browsers provide ev.submitter;
 		// fall back to document.activeElement scoped to the form.

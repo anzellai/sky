@@ -46,7 +46,7 @@ import (
 // `language=` or `for=`) MUST adjust this list AND audit the
 // browser's behaviour on the new attr.
 func TestSkyReviveScripts_AllowlistDeclaresExactly9Entries(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	mustContain := []string{
 		`var __skyScriptAttrAllowlist = {`,
 		`"src": 1`,
@@ -73,7 +73,7 @@ func TestSkyReviveScripts_AllowlistDeclaresExactly9Entries(t *testing.T) {
 // JS body itself contains "onerror" inside the comment/dev-warn
 // strings, which would false-positive a naive whole-JS grep.)
 func TestSkyReviveScripts_AllowlistOmitsEventHandlerAttrs(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	startKey := `var __skyScriptAttrAllowlist = {`
 	startIdx := strings.Index(js, startKey)
 	if startIdx < 0 {
@@ -102,7 +102,7 @@ func TestSkyReviveScripts_AllowlistOmitsEventHandlerAttrs(t *testing.T) {
 // (setAttribute before allowlist check) would silently restore
 // the XSS surface.
 func TestSkyReviveScripts_AttrCopyConsultsAllowlist(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	wants := []string{
 		// lowercase the attribute name before the lookup so
 		// `OnError` is normalised to `onerror` (which is NOT in
@@ -125,7 +125,7 @@ func TestSkyReviveScripts_AttrCopyConsultsAllowlist(t *testing.T) {
 // fresh-element clone, AND that the rejection skips the entire
 // revival path via `continue`.
 func TestSkyReviveScripts_InlineWithoutSrcRejected(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	wants := []string{
 		`var hasSrc = old.hasAttribute("src");`,
 		`var hasInline = !!(old.textContent && old.textContent.length > 0);`,
@@ -154,7 +154,7 @@ func TestSkyReviveScripts_InlineWithoutSrcRejected(t *testing.T) {
 // The pin: the setAttribute happens inside a try/catch BEFORE
 // hasSrc/hasInline are inspected.
 func TestSkyReviveScripts_RejectedNodeStillMarkedRevived(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	// Find the function body.
 	startIdx := strings.Index(js, "function __skyReviveScripts(root) {")
 	if startIdx < 0 {
@@ -187,7 +187,7 @@ func TestSkyReviveScripts_RejectedNodeStillMarkedRevived(t *testing.T) {
 // produce one warn, not five — otherwise the dev console
 // becomes unreadable).
 func TestSkyReviveScripts_NonAllowlistedAttrsBatchedWarn(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	wants := []string{
 		// Collector array starts null (lazy alloc).
 		`var droppedAttrs = null;`,
@@ -211,7 +211,7 @@ func TestSkyReviveScripts_NonAllowlistedAttrsBatchedWarn(t *testing.T) {
 // bootstrap config) must keep the inline body when src= is
 // present.
 func TestSkyReviveScripts_InlineWithSrcPreserved(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	want := `if (hasSrc && hasInline) {
       fresh.textContent = old.textContent;
     }`
@@ -226,7 +226,7 @@ func TestSkyReviveScripts_InlineWithSrcPreserved(t *testing.T) {
 // refactor strips the comment, this test fires; the maintainer
 // then either restores the reference or moves it consciously.
 func TestSkyReviveScripts_CommentReferencesAuditGap(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	if !strings.Contains(js, "gap C9") {
 		t.Errorf("revival JS comment should reference audit gap C9 for grep discoverability")
 	}

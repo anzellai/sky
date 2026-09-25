@@ -3711,10 +3711,31 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
     std::fs::write(dist.join(&wasm_name), &wasm_bytes)
         .map_err(|e| format!("write {wasm_name}: {e}"))?;
 
+    // spa-boot.<hash>.js — the wasm loader as a file, so a strict
+    // Content-Security-Policy runs it. Drop older loaders (and their
+    // precompressed variants) first, as with the wasm above.
+    let boot_name = spa_boot_name();
+    if let Ok(rd) = std::fs::read_dir(dist) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("spa-boot.")
+                && (n.ends_with(".js") || n.ends_with(".js.br") || n.ends_with(".js.gz"))
+                && n != boot_name
+                && !n.starts_with(&format!("{boot_name}."))
+            {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    std::fs::write(dist.join(&boot_name), SPA_BOOT_JS)
+        .map_err(|e| format!("write {boot_name}: {e}"))?;
+
     // index.html — always regenerated so it references the current hashed wasm.
     std::fs::write(
         dist.join("index.html"),
-        WASM_INDEX_HTML.replace("{{WASM}}", &wasm_name),
+        WASM_INDEX_HTML
+            .replace("{{WASM}}", &wasm_name)
+            .replace("{{BOOT}}", &boot_name),
     )
     .map_err(|e| format!("write index.html: {e}"))?;
     t_stage.end();
@@ -3729,6 +3750,7 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
         let cache = precompress::default_cache_dir();
         precompress_web_asset(&dist.join(&wasm_name), cache.as_deref());
         precompress_web_asset(&dist.join("wasm_exec.js"), cache.as_deref());
+        precompress_web_asset(&dist.join(&boot_name), cache.as_deref());
     }
     Ok(())
 }
@@ -5382,19 +5404,48 @@ const WASM_INDEX_HTML: &str = r#"<!doctype html>
   <body>
     <div id="app"></div>
     <script src="/wasm_exec.js"></script>
-    <script>
-      const go = new Go();
-      WebAssembly.instantiateStreaming(fetch("/{{WASM}}"), go.importObject).then((res) => {
-        go.run(res.instance);
-      });
-      // Safety net for the blocking hydration overlay: if the wasm never boots,
-      // drop `data-sky-hydrating` after 12s so the page is never locked. The
-      // client clears it on hydration first in the normal case.
-      setTimeout(function () { document.documentElement.removeAttribute("data-sky-hydrating"); }, 12000);
-    </script>
+    <!-- The boot loader is a same-origin file (SPA_BOOT_JS), never an inline
+         script, so a strict Content-Security-Policy
+         (script-src 'self' 'wasm-unsafe-eval') runs it. -->
+    <script src="/{{BOOT}}" data-wasm="/{{WASM}}"></script>
   </body>
 </html>
 "#;
+
+/// The Sky.Spa wasm boot loader, written to `dist/spa-boot.<hash>.js` by
+/// [`stage_web_bundle`]. It MUST be byte-identical to `SpaBootJS` in
+/// `runtime-go/rt/spa_boot.go`: the SSR page the backend renders references
+/// `/spa-boot.<sha256[:12]>.js` computed from the Go copy, so a drift would
+/// point every SSR page at a file the build never wrote
+/// (`spa_boot_js_matches_the_runtime` fails on it). An external file, not an
+/// inline script, so a strict Content-Security-Policy
+/// (`script-src 'self' 'wasm-unsafe-eval'`) runs it.
+const SPA_BOOT_JS: &str = r#"// Sky.Spa boot loader (runtime-go/rt/spa_boot.go). An external file so a strict
+// Content-Security-Policy (script-src 'self' 'wasm-unsafe-eval') runs it.
+const go = new Go();
+(function () {
+  var me = document.currentScript;
+  var wasm = (me && me.getAttribute("data-wasm")) || "/main.wasm";
+  WebAssembly.instantiateStreaming(fetch(wasm), go.importObject).then(function (res) {
+    go.run(res.instance);
+  });
+  // Safety net for the blocking hydration overlay: if the wasm never boots,
+  // drop data-sky-hydrating after 12s so the page is never locked. The client
+  // clears it on hydration first in the normal case.
+  setTimeout(function () {
+    document.documentElement.removeAttribute("data-sky-hydrating");
+  }, 12000);
+})();
+"#;
+
+/// The dist file name of [`SPA_BOOT_JS`]: `spa-boot.<first 12 hex of sha256>.js`
+/// (the same rule the Go runtime's `assetHash` uses).
+fn spa_boot_name() -> String {
+    format!(
+        "spa-boot.{}.js",
+        &db_provision::sha256_hex(SPA_BOOT_JS.as_bytes())[..12]
+    )
+}
 
 /// Verify an iOS build toolchain is present (full Xcode + the iPhone Simulator
 /// SDK), returning an actionable install message otherwise.
@@ -11778,6 +11829,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// The dist loader and the runtime's `SpaBootJS` must be the same bytes:
+    /// the SSR page names `/spa-boot.<hash>.js` from the Go copy.
+    #[test]
+    fn spa_boot_js_matches_the_runtime() {
+        let go = include_str!("../../../../runtime-go/rt/spa_boot.go");
+        let start = go
+            .find("const SpaBootJS = `")
+            .expect("runtime-go/rt/spa_boot.go defines SpaBootJS")
+            + "const SpaBootJS = `".len();
+        let len = go[start..].find('`').expect("SpaBootJS is a raw string");
+        assert_eq!(
+            &go[start..start + len],
+            SPA_BOOT_JS,
+            "SPA_BOOT_JS drifted from runtime-go/rt/spa_boot.go SpaBootJS; \
+             the SSR page would reference a loader the build never wrote"
+        );
+        let name = spa_boot_name();
+        assert!(name.starts_with("spa-boot.") && name.ends_with(".js") && name.len() == 24);
+    }
+
     #[test]
     fn stage_web_bundle_content_hashes_the_wasm() {
         let base = std::env::temp_dir().join(format!(
@@ -11816,13 +11887,34 @@ mod tests {
         // bare relative `main.<hash>.wasm` against `/blog/`, 404ing the wasm.
         let index = std::fs::read_to_string(dist.join("index.html")).unwrap();
         assert!(
-            index.contains(&format!("fetch(\"/{n1}\")")),
-            "index must fetch the wasm by root-absolute URL /{n1}, got:\n{index}"
+            index.contains(&format!("data-wasm=\"/{n1}\"")),
+            "index must name the wasm by root-absolute URL /{n1}, got:\n{index}"
         );
         assert!(
-            !index.contains(&format!("fetch(\"{n1}\")")),
-            "index must NOT fetch a bare relative wasm name (breaks on deep links):\n{index}"
+            !index.contains(&format!("data-wasm=\"{n1}\"")),
+            "index must NOT name a bare relative wasm (breaks on deep links):\n{index}"
         );
+        // Strict CSP: the loader is a same-origin FILE, and the page carries no
+        // inline executable script (script-src 'self' blocks one).
+        let boot = spa_boot_name();
+        assert!(
+            index.contains(&format!(
+                "<script src=\"/{boot}\" data-wasm=\"/{n1}\"></script>"
+            )),
+            "index must boot through /{boot}:\n{index}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dist.join(&boot)).unwrap(),
+            SPA_BOOT_JS,
+            "dist must carry the boot loader"
+        );
+        for tag in index.split("<script").skip(1) {
+            let open = tag.split('>').next().unwrap_or("");
+            assert!(
+                open.contains("src="),
+                "index carries an inline executable <script{open}>:\n{index}"
+            );
+        }
         assert!(
             index.contains(r#"<script src="/wasm_exec.js">"#),
             "index must load wasm_exec.js by root-absolute URL:\n{index}"

@@ -114,9 +114,11 @@ func (w *gzipStaticWriter) close() {
 
 // gzipStatic wraps a static file handler so compressible 200 responses are
 // gzipped on the wire for clients that accept it. See the file header for the
-// (deliberately narrow) conditions.
+// (deliberately narrow) conditions. Every static mount goes through here, so
+// it is also where SKY_CSP=strict (csp.go) reaches static files — a Sky.Spa
+// dist/index.html is served by Server.static.
 func gzipStatic(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return withStrictCSP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet ||
 			r.Header.Get("Range") != "" ||
 			!acceptsGzip(r.Header.Get("Accept-Encoding")) {
@@ -126,7 +128,7 @@ func gzipStatic(h http.Handler) http.Handler {
 		gw := &gzipStaticWriter{ResponseWriter: w}
 		defer gw.close()
 		h.ServeHTTP(gw, r)
-	})
+	}))
 }
 
 // acceptsGzip reports whether the Accept-Encoding header allows gzip. It honours

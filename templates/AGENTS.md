@@ -88,7 +88,7 @@ Build UI with **`Std.Ui`** — a typed, no-CSS layout DSL (`row`/`column`/`el` +
 typed attributes from `Background`/`Border`/`Font`/`Input`/`Region`). It
 HTML-escapes everything and renders identically across Sky.Live, Sky.Tui, and
 Sky.Webview. Reach for `Std.Html` only to wrap raw markup. Never write CSS
-strings; never emit raw HTML/JS (`data-sky-eval` is forbidden).
+strings; never emit raw HTML/JS (`data-sky-eval` is gone).
 
 ```elm
 import Std.Ui as Ui
@@ -650,11 +650,11 @@ cookie if you run more than one replica.
 - **Types over strings for errors** — `Result Error a` / `Task Error a`, never `Result String a`.
 - **DB defaults to `Std.Db.Store` + `Std.Codec`** — one codec per record table drives the schema, the writes, and the TYPED reads. Drop to raw `Std.Db` (`query`/`exec`) ONLY for what a `Store` cannot express (joins, aggregates, CTEs, a query no typed `Cond` states); keep those in a clearly separated section. Never hand-write a row mapper for a plain record table.
 - **Effect chains stay flat + named** — top-to-bottom `andThen`/`map` pipelines, named step functions over long inline lambdas, `sequence`/`map2` over nested `andThen`, a local `bestEffort`/`unless` over a repeated `onError`/`if`. `let … in` names PURE sub-expressions only (it does not bind a `Task` result). See **Effect and control-flow style**.
-- **No raw HTML/JS** — `Std.Ui` escapes everything; `data-sky-eval` is forbidden.
+- **No raw HTML/JS** — `Std.Ui` escapes everything. `data-sky-eval` is gone (no runtime path evaluates a string); use `data-sky-path` for URL sync.
 - **Secrets are typed** — secret-bearing args are the opaque `Sky.Core.Secret.Secret` (redacts itself in every log/JSON path): `Auth.signToken`/`verifyToken`, `Jwt.hs256`/`rs256`, the `Crypto` AEAD keys, `Http.withBearer`/`withApiKey`; `Cli.readPassword` returns one. Wrap with `Secret.fromEnv "VAR"`, unwrap only via `Secret.reveal`. Never `fmt.Sprintf("%v", secret)`.
 - **Money is `Std.Money`**, never `Float`.
 - **`sky fmt` after editing**, **`sky verify` before shipping.**
-- **Production gate**: set `ENV=production`, and `SKY_CONSOLE_AUTH` (`token` or `app`) with `SKY_CONSOLE_TOKEN`; use a shared session store (redis/postgres) + sticky sessions when you run more than one replica. `SKY_AUTH_TOKEN_SECRET` is **not** a runtime setting — nothing in the runtime reads it (`sky_sid` is unsigned random hex, and `Auth.signToken` takes its secret as a Sky-level *argument*). It is a convention in your own code that only `sky doctor` knows about: if you use `Std.Auth`, whatever variable you feed into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes nothing.
+- **Production gate**: set `ENV=production`, and `SKY_CONSOLE_AUTH` (`token` or `app`) with `SKY_CONSOLE_TOKEN`; use a shared session store (redis/postgres) + sticky sessions when you run more than one replica. Content-Security-Policy: every Sky page works under `script-src 'self' 'wasm-unsafe-eval'` with no hashes and no `'unsafe-inline'` (the scripts are same-origin files); send it from the proxy, or set `SKY_CSP=strict` so the runtime sends it (it never overwrites a policy the app set). `SKY_AUTH_TOKEN_SECRET` is **not** a runtime setting — nothing in the runtime reads it (`sky_sid` is unsigned random hex, and `Auth.signToken` takes its secret as a Sky-level *argument*). It is a convention in your own code that only `sky doctor` knows about: if you use `Std.Auth`, whatever variable you feed into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes nothing.
 - **Sky.Live resilience (automatic)**: an explicitly-configured `store` (postgres/sqlite/redis) that can't connect at boot **fails loud in production** (the app refuses to start) instead of silently using memory — so make sure `DATABASE_URL` is reachable, or set `SKY_LIVE_STORE=memory` to opt in to in-memory sessions. `/_sky/readyz` returns 503 when the store/DB is down. Keep `view` a **pure** function of the model (no `Time.now`/`Random` in `view`); enable `SKY_LIVE_VIEW_DETERMINISM_CHECK=1` in dev to catch violations.
 
 When a signature or module is unclear, run `sky doc <Module>` — it is complete

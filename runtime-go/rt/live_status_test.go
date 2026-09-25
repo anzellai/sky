@@ -20,7 +20,7 @@ import (
 // or renames it during a refactor, which would silently break the
 // reconnect UX (banner never shows; users see clicks die silently).
 func TestLiveJS_StatusBannerMarkers(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		// State variable + setter
 		`var __skyStatus = "connected";`,
@@ -47,7 +47,7 @@ func TestLiveJS_StatusBannerMarkers(t *testing.T) {
 // present + wired up. If any of these go missing, network blips and
 // deploy restarts will silently lose user clicks again.
 func TestLiveJS_QueueAndRetryMarkers(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		`var __skyEventQueue = [];`,
 		`function __skyPostEvent(body) {`,
@@ -76,7 +76,7 @@ func TestLiveJS_QueueAndRetryMarkers(t *testing.T) {
 // POST failures and miss the SSE-only outage case (server still
 // accepting POSTs but SSE blocked by a flaky proxy).
 func TestLiveJS_SSEStateTransitions(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		`__skySSE.addEventListener("open"`,
 		`__skySSE.addEventListener("error"`,
@@ -99,7 +99,7 @@ func TestLiveJS_SSEStateTransitions(t *testing.T) {
 // stopping the upstream behind Caddy and restarting it leaves the page
 // permanently disconnected (the user-reported bug).
 func TestLiveJS_ClosedReadyStateForcesReopen(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		// Error handler: if browser closed permanently, force reopen.
 		`if (__skySSE && __skySSE.readyState === 2) {`,
@@ -127,7 +127,7 @@ func TestLiveJS_ClosedReadyStateForcesReopen(t *testing.T) {
 // 404 + X-Sky-Live: 1 + "session not found" body, and triggers
 // window.location.reload() to recover automatically.
 func TestLiveJS_SessionLossProbe(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		// Probe function exists and is invoked on every force-reopen.
 		`function __skyProbeSessionLost()`,
@@ -158,7 +158,7 @@ func TestLiveJS_SessionLossProbe(t *testing.T) {
 // proxy that would otherwise leave the client stuck at "Reconnecting…"
 // indefinitely. See docs/skylive/architecture.md §SSE wedge detection.
 func TestLiveJS_HandshakeAndHeartbeat(t *testing.T) {
-	js := liveJS("test-sid")
+	js := liveClientJS
 	required := []string{
 		`__skySSE.addEventListener("hello"`,
 		`__skySSE.addEventListener("heartbeat"`,
@@ -188,12 +188,13 @@ func TestLiveJS_HandshakeAndHeartbeat(t *testing.T) {
 // case where someone removes a default and the banner ships empty
 // strings.
 func TestLiveJS_I18nDefaults(t *testing.T) {
-	js := liveJS("test-sid")
+	// The values ride in the page's sky-live-cfg block (live_client_asset.go).
+	js := liveCfgBlock(newLiveBootCfg("sid", loadLiveBannerConfig(), "", "", ""))
 	required := []string{
-		`var __skyMsgReconnecting = "Reconnecting…";`,
-		`var __skyMsgOffline = "Connection lost — refresh to retry";`,
-		`var __skyHelloTimeoutMs = 8000;`,
-		`var __skyHeartbeatTtlMs = 35000;`,
+		`"msgReconnecting":"Reconnecting…"`,
+		`"msgOffline":"Connection lost — refresh to retry"`,
+		`"helloTimeoutMs":8000`,
+		`"heartbeatTtlMs":35000`,
 	}
 	for _, want := range required {
 		if !strings.Contains(js, want) {
@@ -214,7 +215,7 @@ func TestLiveJS_I18nDefaults(t *testing.T) {
 // `</script>` — every closing-script-tag-like substring must be
 // escaped in a way that the HTML parser doesn't see it.
 func TestLiveJS_NoLiteralClosingScriptTag(t *testing.T) {
-	js := liveJSWithCfg("sid-test", loadLiveBannerConfig())
+	js := liveClientJS
 	if strings.Contains(js, "</script>") {
 		// Find the offending region to make the failure actionable.
 		idx := strings.Index(js, "</script>")
@@ -243,7 +244,7 @@ func TestLiveJS_I18nOverrides(t *testing.T) {
 	cfg := loadLiveBannerConfig()
 	cfg.Reconnecting = "Reconnexion en cours…"
 	cfg.Offline = `Connexion perdue — actualisez la page`
-	js := liveJSWithCfg("sid", cfg)
+	js := liveCfgBlock(newLiveBootCfg("sid", cfg, "", "", ""))
 	if !strings.Contains(js, `"Reconnexion en cours…"`) &&
 		!strings.Contains(js, `"Reconnexion en cours…"`) {
 		t.Errorf("user-supplied reconnecting string missing or wrongly encoded\n%s", js)
@@ -255,7 +256,7 @@ func TestLiveJS_I18nOverrides(t *testing.T) {
 	// raw must be JSON-escaped. </script> in JSON is "</script>"
 	// or "<\/script>"; either form is safe.
 	cfg.Reconnecting = `</script><img src=x onerror=alert(1)>`
-	js2 := liveJSWithCfg("sid", cfg)
+	js2 := liveCfgBlock(newLiveBootCfg("sid", cfg, "", "", ""))
 	if strings.Contains(js2, "</script><img") {
 		t.Errorf("adversarial reconnecting string leaked unescaped: must be JSON-encoded\n%s", js2)
 	}
@@ -328,13 +329,13 @@ func TestLiveJS_BannerEnvVars(t *testing.T) {
 		"SKY_LIVE_RETRY_MAX_ATTEMPTS": "5",
 		"SKY_LIVE_QUEUE_MAX":          "20",
 	}, func() {
-		js := liveJS("test-sid")
+		js := liveCfgBlock(newLiveBootCfg("sid", loadLiveBannerConfig(), "", "", ""))
 		want := []string{
-			`var __skyBannerEnabled = true;`,
-			`var __skyRetryBaseMs = 250;`,
-			`var __skyRetryMaxMs = 8000;`,
-			`var __skyRetryMaxAttempts = 5;`,
-			`var __skyEventQueueMax = 20;`,
+			`"bannerEnabled":true`,
+			`"retryBaseMs":250`,
+			`"retryMaxMs":8000`,
+			`"retryMaxAttempts":5`,
+			`"eventQueueMax":20`,
 		}
 		for _, w := range want {
 			if !strings.Contains(js, w) {
@@ -353,13 +354,13 @@ func TestLiveJS_BannerOptOut(t *testing.T) {
 	for _, val := range cases {
 		t.Run(val, func(t *testing.T) {
 			withEnv(t, map[string]string{"SKY_LIVE_BANNER": val}, func() {
-				js := liveJS("test-sid")
-				if !strings.Contains(js, `var __skyBannerEnabled = false;`) {
+				js := liveCfgBlock(newLiveBootCfg("sid", loadLiveBannerConfig(), "", "", ""))
+				if !strings.Contains(js, `"bannerEnabled":false`) {
 					t.Errorf("SKY_LIVE_BANNER=%q should disable banner", val)
 				}
 				// Queue must still be wired — silent retries keep
 				// working even when the user opts out of the chrome.
-				if !strings.Contains(js, `function __skyPostEvent(body) {`) {
+				if !strings.Contains(liveClientJS, `function __skyPostEvent(body) {`) {
 					t.Error("queue + retry should stay wired when banner is off")
 				}
 			})
@@ -381,13 +382,13 @@ func TestLiveJS_BannerInvalidEnvFallsBack(t *testing.T) {
 	for i, env := range cases {
 		t.Run(t.Name()+"_"+strString(i), func(t *testing.T) {
 			withEnv(t, env, func() {
-				js := liveJS("test-sid")
+				js := liveCfgBlock(newLiveBootCfg("sid", loadLiveBannerConfig(), "", "", ""))
 				// Defaults: 500 / 16000 / 10 / 50
 				want := []string{
-					`var __skyRetryBaseMs = 500;`,
-					`var __skyRetryMaxMs = 16000;`,
-					`var __skyRetryMaxAttempts = 10;`,
-					`var __skyEventQueueMax = 50;`,
+					`"retryBaseMs":500`,
+					`"retryMaxMs":16000`,
+					`"retryMaxAttempts":10`,
+					`"eventQueueMax":50`,
 				}
 				for _, w := range want {
 					if !strings.Contains(js, w) {

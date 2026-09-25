@@ -98,7 +98,7 @@ func TestSpaSSRPage_EndToEndDocument(t *testing.T) {
 		`id="app"`,               // mount id the client keys off
 		"hello",                  // real server-rendered body content
 		"main.deadbeef0000.wasm", // content-hashed wasm loader
-		"instantiateStreaming",   // the boot script
+		SpaBootPath,              // the boot loader, a same-origin file
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("SpaSSRPage missing %q:\n%s", want, page)
