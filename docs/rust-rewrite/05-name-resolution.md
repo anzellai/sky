@@ -557,7 +557,9 @@ is the order the work happened in.
 |---|---|---|
 | `bind_exposing_kernel`, `exposing (T)` on a kernel pseudo-module | `self.def(self.module, …)` — a FRESH `DefId` per importing module, so `Decoder` meant a different identity in every module that imported it | one `BUILTIN_MOD` `DefId`, program-wide (`kernel_implicit_type_def`) |
 | `bind_exposing_dep`, `exposing (T)` where the module re-exports `T` | `self.def(exports.module, …)` — the RE-EXPORTER's identity, so the same type reached directly and through the re-export differed | chased through the re-exporter's own import list to the declaring module (`chase_reexported_type`) |
-| `bind_exposing_dep`, `exposing (T)` with nothing authoritative left | fabricated silently | fabricated, and marked `TypeKey::Opaque` |
+| `bind_exposing_dep`, `exposing (T)` with nothing authoritative left | fabricated silently | fabricated, and marked `TypeKey::Opaque`; `[E1011]` when the source module does not even list `T` (v0.25.19; stdlib modules exempt, their kernel-backed types live in the type checker's registry) |
+| `compute_exports`, a VALUE listed in `exposing (…)` but not declared ("re-exports (lenient)") | published anyway, so `M.x` resolved to a `DefId` with no declaration: a fresh type variable in `ty`, `nil` in `lower`, `NilDereference` at run time | not published (recorded in `listed_undeclared_values` only to word the importer's error); the exporter reports `[E1015]`, every importer form reports `[E1001]` / `[E1011]` (v0.25.19). Sky has no value re-exports |
+| `type_qual`, `M.Foo` where `M` neither declares nor lists `Foo`, or `Nope.Foo` with no such qualifier | a bare nominal `Foo`, no diagnostic | `[E1001]` at the reference (v0.25.19; a listed-but-undeclared type stays lenient, as a kernel/Go re-export or an `[E1015]` the exporter reports) |
 | `bind_exposing_foreign`, `exposing (T)` on a Go FFI package | `self.def(self.module, …)`, indistinguishable from a Sky type | `TypeKey::Opaque` — a Go type's identity is a `(package, name)` pair, not a `DefId`, and cannot be compared against one |
 
 `chase_reexported_type` reads the re-exporter's PARSE, not its resolution, so it

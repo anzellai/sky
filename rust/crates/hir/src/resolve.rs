@@ -9,8 +9,8 @@ use crate::exports::ModuleExports;
 use crate::hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
 use crate::ids::{CtorRef, DefKind, LocalId, Res, TypeRes};
 use crate::kernel::{
-    kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS, KERNEL_IMPLICIT_TYPES,
-    PRELUDE_QUALIFIERS,
+    is_reserved_sky_namespace, kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS,
+    KERNEL_IMPLICIT_TYPES, PRELUDE_QUALIFIERS,
 };
 use base::{DefId, FileId, ModuleId, Name, Span};
 use diagnostics::Diagnostic;
@@ -1037,6 +1037,8 @@ impl<'a> Resolver<'a> {
         //    import order, and record what stays ambiguous (doc 05 §6b). Must run
         //    after ALL three binding phases and before `snapshot_scope_names`.
         self.settle_precedence();
+        // 5. every name in this module's own `exposing (…)` must exist.
+        self.check_own_exposing(&tree);
         // LSP: publish import qualifiers so `M.` completion can enumerate the
         // target module's exports.
         self.result.qualifiers = self.import_aliases.clone();
@@ -1065,6 +1067,168 @@ impl<'a> Resolver<'a> {
         // completion can offer Prelude + `exposing`-imported names, not just
         // locals + this module's top defs + qualifiers.
         self.snapshot_scope_names();
+    }
+
+    /// `[E1015]`: every item in this module's own `exposing (…)` clause must
+    /// name something the module has.
+    ///
+    /// Before this check a module could list a value it does not define, and
+    /// `exports::compute_exports` still published it. An importer's `M.x` then
+    /// resolved to a `DefId` with no declaration behind it: the checker gave it
+    /// a fresh type variable (fixed by whatever the use site needed), lowering
+    /// found no def and emitted `nil`, and the program panicked
+    /// (`NilDereference`) the first time the call ran. The failure is now
+    /// reported at its cause, the dangling export.
+    ///
+    /// What counts as "has":
+    /// * a value (`decode`) — a top-level value declaration in THIS module.
+    ///   Sky has no value re-exports: an imported value has no definition here
+    ///   for lowering to emit.
+    /// * a type (`Foo`) — a local union or alias, or a type the module has in
+    ///   scope from an import (a re-exported type; importers chase it to its
+    ///   real definition, see `chase_reexported_type`).
+    /// * constructors (`T(..)`, `T(A, B)`) — a local alias has none to publish,
+    ///   and each constructor listed for a local union must be one of its own.
+    fn check_own_exposing(&mut self, tree: &ast::SourceFile) {
+        let Some(list) = tree.module_header().and_then(|h| cst::header_exposing(&h)) else {
+            return;
+        };
+        if cst::read_exposing(&list).all {
+            return;
+        }
+        let mut local_values: HashSet<String> = HashSet::new();
+        let mut local_unions: HashMap<String, Vec<String>> = HashMap::new();
+        let mut local_aliases: HashSet<String> = HashSet::new();
+        for decl in tree.decls() {
+            match decl {
+                ast::Decl::Value(v) => {
+                    if let Some(n) = v.name() {
+                        if n.kind() == SyntaxKind::LowerIdent {
+                            local_values.insert(n.text().to_string());
+                        }
+                    }
+                }
+                ast::Decl::Union(u) => {
+                    if let Some(t) = u.name() {
+                        let ctors = u
+                            .variants()
+                            .iter()
+                            .filter_map(|var| var.name().map(|c| c.text().to_string()))
+                            .collect();
+                        local_unions.insert(t.text().to_string(), ctors);
+                    }
+                }
+                ast::Decl::Alias(a) => {
+                    if let Some(t) = a.name() {
+                        local_aliases.insert(t.text().to_string());
+                    }
+                }
+                ast::Decl::TypeAnno(_) | ast::Decl::Foreign(_) => {}
+            }
+        }
+        let module_name = self.self_module_name();
+        let report = |this: &mut Self, range: syntax::TextRange, msg: String, label: &str| {
+            let diag = Diagnostic::error("E1015", msg).with_label(this.span_of(range), label);
+            this.result.diagnostics.push(diag);
+        };
+        for item in list.children() {
+            match item.kind() {
+                SyntaxKind::ExposedValue => {
+                    let Some(tok) = cst::first_lower_tok(&item) else {
+                        continue;
+                    };
+                    let v = tok.text().to_string();
+                    if !local_values.contains(&v) {
+                        report(
+                            self,
+                            tok.text_range(),
+                            format!(
+                                "module `{module_name}` exposes `{v}`, but does not define it. \
+                                 Define `{v}` in `{module_name}`, or remove it from the \
+                                 `exposing` list."
+                            ),
+                            "exposed here, but never defined",
+                        );
+                    }
+                }
+                SyntaxKind::ExposedType => {
+                    let Some(tok) = cst::first_upper_tok(&item) else {
+                        continue;
+                    };
+                    let name = tok.text().to_string();
+                    let ctor_list = item
+                        .children()
+                        .find(|k| k.kind() == SyntaxKind::ExposedCtorList);
+                    let is_local =
+                        local_unions.contains_key(&name) || local_aliases.contains(&name);
+                    let in_scope = is_local
+                        || self.types.contains_key(&name)
+                        || KERNEL_IMPLICIT_TYPES.contains(&name.as_str());
+                    if !in_scope {
+                        report(
+                            self,
+                            tok.text_range(),
+                            format!(
+                                "module `{module_name}` exposes the type `{name}`, but does \
+                                 not define or import it. Define `{name}` in \
+                                 `{module_name}`, or remove it from the `exposing` list."
+                            ),
+                            "exposed here, but never defined",
+                        );
+                        continue;
+                    }
+                    let Some(cl) = ctor_list else {
+                        continue;
+                    };
+                    // `T(..)` on an IMPORTED type is a type re-export whose
+                    // constructors are not re-published (an importer that names
+                    // one gets [E1001] at the use). It opens no hole, and the
+                    // Sky.Spa split emits it for a union `Shared` now owns, so
+                    // it is not rejected here. Only a LOCAL non-union (an alias)
+                    // claiming constructors is.
+                    if !is_local {
+                        continue;
+                    }
+                    let Some(ctors) = local_unions.get(&name).cloned() else {
+                        report(
+                            self,
+                            tok.text_range(),
+                            format!(
+                                "module `{module_name}` exposes constructors of `{name}`, but \
+                                 `{name}` is not a union type defined in `{module_name}`, so \
+                                 it has no constructors to expose. Write `{name}` without \
+                                 `(..)`."
+                            ),
+                            "no constructors defined here",
+                        );
+                        continue;
+                    };
+                    for ct in cl
+                        .descendants_with_tokens()
+                        .filter_map(|e| e.into_token())
+                        .filter(|t| t.kind() == SyntaxKind::UpperIdent)
+                    {
+                        let cn = ct.text().to_string();
+                        if !ctors.contains(&cn) {
+                            let known: Vec<String> =
+                                ctors.iter().map(|c| format!("`{c}`")).collect();
+                            report(
+                                self,
+                                ct.text_range(),
+                                format!(
+                                    "module `{module_name}` exposes `{name}({cn})`, but `{cn}` \
+                                     is not a constructor of `{name}`. Its constructors are \
+                                     {}.",
+                                    join_and(&known)
+                                ),
+                                "not a constructor of this type",
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Snapshot the module-level unqualified namespaces (`vars` / `ctors` /
@@ -1316,10 +1480,15 @@ impl<'a> Resolver<'a> {
                     let res = match exports.value(v) {
                         Some(def) => Res::Def(def),
                         None => {
-                            let mut diag = Diagnostic::error(
-                                "E1011",
-                                format!("module `{module_name}` does not expose `{v}`"),
-                            );
+                            let msg = if exports.lists_undeclared_value(v) {
+                                format!(
+                                    "module `{module_name}` does not expose `{v}`. It lists \
+                                     `{v}` in its `exposing` clause, but does not define it."
+                                )
+                            } else {
+                                format!("module `{module_name}` does not expose `{v}`")
+                            };
+                            let mut diag = Diagnostic::error("E1011", msg);
                             if let Some(sp) = span {
                                 diag = diag.with_label(sp, "not exposed by the module");
                             }
@@ -1358,6 +1527,26 @@ impl<'a> Resolver<'a> {
                             TypeKey::Id(format!("kernel-implicit:{name}")),
                         )
                     } else {
+                        // Nothing authoritative. A type the source module does
+                        // not even LIST is a missing export, the type analogue of
+                        // the value [E1011] above (it used to bind silently). A
+                        // listed-but-undeclared one is a kernel / Go re-export,
+                        // or a dangling export the source reports as [E1015].
+                        // A STDLIB module is exempt: its kernel-backed types
+                        // (`Sky.Core.Dict exposing (Dict)`) live in the type
+                        // checker's kernel registry, not in the module's source.
+                        if !exports.lists_undeclared_type(name)
+                            && !is_reserved_sky_namespace(module_name)
+                        {
+                            let mut diag = Diagnostic::error(
+                                "E1011",
+                                format!("module `{module_name}` does not expose the type `{name}`"),
+                            );
+                            if let Some(sp) = span {
+                                diag = diag.with_label(sp, "not exposed by the module");
+                            }
+                            self.result.diagnostics.push(diag);
+                        }
                         let con = self.def(exports.module, name, DefKind::TypeCon);
                         (TypeRes { con, arity: 0 }, TypeKey::Opaque)
                     };
@@ -1948,7 +2137,7 @@ impl<'a> Resolver<'a> {
             }
             ast::Expr::QualRef(q) => {
                 let (qual, name) = cst::dotted_parts(q.syntax());
-                let span = Some(self.span_of(q.syntax().text_range()));
+                let span = Some(self.span_of(cst::trimmed_range(q.syntax())));
                 let res = self.resolve_qual_var(&qual, &name, span);
                 self.record_ref(q.syntax().text_range(), res.clone());
                 self.body.expr(Expr::Var(res))
@@ -2643,7 +2832,8 @@ impl<'a> Resolver<'a> {
             }
             ast::Type::Qual(q) => {
                 let (qual, name) = cst::dotted_parts(q.syntax());
-                let id = self.type_qual(&qual, &name, Vec::new());
+                let span = Some(self.span_of(cst::trimmed_range(q.syntax())));
+                let id = self.type_qual(&qual, &name, Vec::new(), span);
                 self.record_qual_type_occ(q.syntax(), id, &name);
                 id
             }
@@ -2662,7 +2852,8 @@ impl<'a> Resolver<'a> {
                     }
                     ast::Type::Qual(q) => {
                         let (qual, name) = cst::dotted_parts(q.syntax());
-                        let id = self.type_qual(&qual, &name, args);
+                        let span = Some(self.span_of(cst::trimmed_range(q.syntax())));
+                        let id = self.type_qual(&qual, &name, args, span);
                         self.record_qual_type_occ(q.syntax(), id, &name);
                         id
                     }
@@ -2763,7 +2954,13 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    fn type_qual(&mut self, qual: &str, name: &str, args: Vec<TypeId>) -> TypeId {
+    fn type_qual(
+        &mut self,
+        qual: &str,
+        name: &str,
+        args: Vec<TypeId>,
+        span: Option<Span>,
+    ) -> TypeId {
         let qentry = self.qual_types.get(qual).and_then(|m| m.get(name)).cloned();
         if let Some(entry) = qentry {
             {
@@ -2817,20 +3014,58 @@ impl<'a> Resolver<'a> {
                 let exports = self.db.module_exports(dep);
                 let con = exports
                     .type_(name)
+                    .or_else(|| self.chase_reexported_type(dep, name))
                     .map(|(def, arity)| TypeRes { con: def, arity });
+                // `M.Foo` where `M` neither declares nor lists `Foo` names no
+                // type at all. It used to resolve leniently to a bare nominal
+                // `Foo` with no diagnostic, so an annotation could mention a type
+                // that does not exist. A type `M` LISTS without declaring is a
+                // re-export (of a kernel / Go type the chase cannot follow) or a
+                // dangling export `M` itself reports as [E1015]; both stay
+                // lenient here so the cause is reported once, at the clause.
+                // A STDLIB module is exempt: its kernel-backed types
+                // (`Dict.Dict`) live in the type checker's kernel registry, not
+                // in the module's source.
+                if con.is_none()
+                    && !KERNEL_IMPLICIT_TYPES.contains(&name)
+                    && !exports.lists_undeclared_type(name)
+                    && !is_reserved_sky_namespace(self.db.module_name(dep))
+                {
+                    self.track_class_a(
+                        Some(qual.to_string()),
+                        name,
+                        RefKind::Type,
+                        "type not exported by module",
+                        span,
+                    );
+                    return self.body.ty(Type::Error);
+                }
                 self.body.ty(Type::Con {
                     con,
                     name: Name::new(name),
                     args,
                 })
             }
-            // Unknown type qualifier is not a name-resolver gap either (types
-            // are resolved by the type checker, doc 05 §12). Lenient nominal.
-            None => self.body.ty(Type::Con {
-                con: None,
-                name: Name::new(name),
-                args,
-            }),
+            // A qualifier that names no import, no kernel module and no Go
+            // package. Every legitimate qualifier is handled above, so `Nope.Foo`
+            // names no type at all. It used to resolve leniently to a bare
+            // nominal `Foo` with no diagnostic; it is now the same unknown-name
+            // error an unknown value qualifier gets.
+            None => {
+                let hint = self.did_you_mean(qual);
+                self.track_class_a(
+                    Some(qual.to_string()),
+                    name,
+                    RefKind::Type,
+                    &format!(
+                        "unknown qualifier{}",
+                        hint.map(|h| format!(" (did you mean `{h}`?)"))
+                            .unwrap_or_default()
+                    ),
+                    span,
+                );
+                self.body.ty(Type::Error)
+            }
         }
     }
 
@@ -2934,6 +3169,25 @@ impl<'a> Resolver<'a> {
                 } else if let Some((u, ct)) = exports.ctor(name) {
                     let _ = u;
                     Res::Ctor(to_ctor_ref(ct))
+                } else if exports.lists_undeclared_value(name) {
+                    // A dangling export: `M` lists `name` in `exposing (…)` but
+                    // never defines it. Never a fresh type variable (which is
+                    // how this used to reach lowering as a `nil`): an unknown
+                    // name at the use site, naming the dangling export as the
+                    // cause. `M` also reports [E1015] at its clause.
+                    let dep_name = self.db.module_name(dep).to_string();
+                    self.track_class_a_detail(
+                        Some(qual.to_string()),
+                        name,
+                        RefKind::Value,
+                        "name listed in the module's exposing clause but not defined",
+                        span,
+                        Some(format!(
+                            "module `{dep_name}` lists `{name}` in its `exposing` clause, \
+                             but does not define it"
+                        )),
+                    );
+                    Res::Error
                 } else {
                     self.track_class_a(
                         Some(qual.to_string()),
@@ -3001,6 +3255,20 @@ impl<'a> Resolver<'a> {
         reason: &str,
         span: Option<Span>,
     ) {
+        self.track_class_a_detail(qualifier, name, kind, reason, span, None);
+    }
+
+    /// [`Self::track_class_a`] with an optional user-facing `detail` appended
+    /// to the message (e.g. naming a dangling export as the cause).
+    fn track_class_a_detail(
+        &mut self,
+        qualifier: Option<String>,
+        name: &str,
+        kind: RefKind,
+        reason: &str,
+        span: Option<Span>,
+        detail: Option<String>,
+    ) {
         if self.quiet > 0 {
             return;
         }
@@ -3012,7 +3280,11 @@ impl<'a> Resolver<'a> {
         // caret + excerpt (the E2001 path already does). `reason` stays on the
         // structured `class_a` entry — it was a redundant parenthetical in the
         // user-facing message.
-        let mut diag = Diagnostic::error("E1001", format!("Undefined name: {full}"));
+        let msg = match detail {
+            Some(d) => format!("Undefined name: {full}. The {d}."),
+            None => format!("Undefined name: {full}"),
+        };
+        let mut diag = Diagnostic::error("E1001", msg);
         if let Some(sp) = span {
             diag = diag.with_label(sp, "not defined");
         }

@@ -118,9 +118,14 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
     // even when that is the project root itself), and the scratch dir (carries
     // the synth entry).
     let mut extra = vec![project_dir.join("tests")];
+    // Canonicalised, like `project_dir`: the suite path is usually RELATIVE
+    // (`tests/FooTest.sky`), so without this `tests` and `<abs>/tests` compared
+    // unequal, the same tree was loaded twice, and every diagnostic in it was
+    // printed twice.
     if let Some(root) = declared
         .as_deref()
         .and_then(|d| source_root_for_declared(suite_path, d))
+        .map(|r| r.canonicalize().unwrap_or(r))
     {
         if !extra.contains(&root) {
             extra.push(root);
@@ -137,11 +142,15 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
     // and the run reports a cheerful "0 passed" — the exact failure this guard
     // exists to make impossible. `sky build`/`sky run` print these warnings;
     // `sky test` used to drop them, which is why nothing caught it.
+    // Since v0.25.19 lowering also REFUSES that reference (a hard error naming
+    // `Suite.tests`, never a `nil`), so the build no longer emits; the guard
+    // matches either signal so the suite-specific note below still wins.
     let foreign = report
         .warnings
         .iter()
-        .find(|w| w.contains("foreign ref") && w.contains(&format!("{module}.")));
-    if report.emitted && foreign.is_some() {
+        .any(|w| w.contains("foreign ref") && w.contains(&format!("{module}.")))
+        || (!report.emitted && report.note.contains(&format!("`{module}.tests`")));
+    if foreign {
         run.emitted = false;
         run.build_ok = false;
         run.note = format!(

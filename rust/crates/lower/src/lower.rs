@@ -3526,12 +3526,55 @@ impl<'a> Ctx<'a> {
                     GoTy::Func(vec![GoTy::Any], Box::new(GoTy::Any)),
                 )
             }
-            Expr::Error => {
-                self.warnings
-                    .push("lowered an Expr::Error recovery node".into());
-                GoExpr::new(GoExprKind::Nil, GoTy::Any)
-            }
+            // A parse/resolve recovery node. Its diagnostic halts the build
+            // before lowering, so reaching it here is a compiler bug.
+            Expr::Error => self.ice("an error-recovery expression reached lowering".into()),
         }
+    }
+
+    /// The user-facing error for a Go-FFI / unknown-module reference
+    /// `pkg.fun` that lowering cannot emit. Shared by the call path and the
+    /// bare-value path so the two never drift apart.
+    fn unresolved_foreign_msg(&self, pkg: &str, fun: &str) -> String {
+        let sky_namespaced = hir::is_reserved_sky_namespace(pkg);
+        if sky_namespaced {
+            format!(
+                "unknown Sky module `{pkg}`, so `{pkg}.{fun}` cannot be resolved. \
+                 Check the spelling of the import — Sky stdlib modules live under \
+                 `Std.*` and `Sky.Core.*` / `Sky.Http.*` (e.g. `Sky.Core.List`, \
+                 `Std.Db`). This is not a Go-FFI package; `sky install` won't fetch it."
+            )
+        } else if self.ffi.has_package(pkg) {
+            format!(
+                "no such Go-FFI function `{pkg}.{fun}` — the FFI surface for `{pkg}` \
+                 is present but exports no such function, or it takes a value that \
+                 cannot be produced from Sky (such as a Go `error` parameter). It \
+                 cannot be called from Sky."
+            )
+        } else {
+            format!(
+                "`{pkg}` has no generated FFI surface, so `{pkg}.{fun}` cannot be \
+                 resolved. Run `sky install` to fetch and inspect its Go module — \
+                 the `sky-ffi/` surface is a generated build artifact (regenerated \
+                 from your `sky.toml` dependencies), not committed to the repo."
+            )
+        }
+    }
+
+    /// Record an internal compiler error and return a placeholder.
+    ///
+    /// Lowering never emits `nil` for a value it cannot resolve: a `nil` builds,
+    /// and panics at run time the first time it is used. An ICE is a hard
+    /// lowering error, so the build driver aborts before `go build` and the
+    /// placeholder below is never compiled.
+    fn ice(&mut self, what: String) -> GoExpr {
+        self.errors.push(format!(
+            "internal compiler error: {what} (in module {}). Sky refuses to emit \
+             `nil` in its place. Please report this at \
+             https://github.com/anzellai/sky/issues with the program that caused it.",
+            self.cur_module
+        ));
+        GoExpr::new(GoExprKind::Nil, GoTy::Any)
     }
 
     fn lower_var(&mut self, res: Res, actual: &GoTy, expected: &GoTy) -> GoExpr {
@@ -3689,7 +3732,21 @@ impl<'a> Ctx<'a> {
                         GoExpr::new(GoExprKind::Ident(go), ref_ty)
                     }
                 } else {
-                    GoExpr::new(GoExprKind::Ident("nil".into()), GoTy::Any)
+                    // A reference to a top-level value that has NO definition in
+                    // the program. This used to emit `nil`, which `go build`
+                    // accepts and which panicked (`NilDereference`) the first
+                    // time the value was called: a dangling `exposing` entry
+                    // reached here that way. The resolver now rejects that shape
+                    // ([E1015] / [E1001]), so arriving here is a compiler bug.
+                    // Refuse to emit a nil for it: a hard lowering error aborts
+                    // the build before `go build`.
+                    let what = match self.db.def_loc(d) {
+                        Some(l) => {
+                            format!("`{}.{}`", self.db.module_name(l.module), l.name.as_str())
+                        }
+                        None => format!("definition #{}", d.0),
+                    };
+                    self.ice(format!("a reference to {what} has no definition to emit"))
                 }
             }
             Res::Kernel { module, func } => {
@@ -3719,14 +3776,28 @@ impl<'a> Ctx<'a> {
                 self.lower_ctor_value(cr.def, actual, expected, pin)
             }
             Res::Foreign { package, name } => {
-                self.warnings.push(format!(
-                    "foreign ref {}.{}",
-                    package.as_str(),
-                    name.as_str()
-                ));
-                GoExpr::new(GoExprKind::Ident("nil".into()), GoTy::Any)
+                // A Go-FFI reference used as a VALUE. A function with a wrapper
+                // lowers to a closure over it (`ffi_value`). Anything else (an
+                // unknown module, a missing or zero-arg function) used to emit
+                // `nil` with only a warning, a silent runtime panic; it is now the
+                // same hard lowering error the call path reports. (`sky test`
+                // keys its "suite did not resolve" note on the warning, so it
+                // stays.)
+                let (pkg, fun) = (package.as_str(), name.as_str());
+                if let Some((sym, _typed)) = self.ffi.call_symbol(pkg, fun) {
+                    if let Some(v) = self.ffi_value(&sym) {
+                        self.ffi_used.insert(pkg.to_string());
+                        return v;
+                    }
+                }
+                self.warnings.push(format!("foreign ref {pkg}.{fun}"));
+                let msg = self.unresolved_foreign_msg(pkg, fun);
+                self.errors.push(msg);
+                GoExpr::new(GoExprKind::Nil, GoTy::Any)
             }
-            Res::Error => GoExpr::new(GoExprKind::Nil, GoTy::Any),
+            // The resolver reports every `Res::Error` it produces, and the build
+            // halts on those diagnostics before lowering runs.
+            Res::Error => self.ice("an unresolved name reached lowering".into()),
         }
     }
 
@@ -4441,8 +4512,9 @@ impl<'a> Ctx<'a> {
                         }
                     }
                 } else {
-                    self.warnings.push(format!("unknown ctor {cname}"));
-                    GoExpr::new(GoExprKind::Nil, GoTy::Any)
+                    self.ice(format!(
+                        "the constructor `{cname}` has no definition to emit"
+                    ))
                 }
             }
         };
@@ -4684,29 +4756,7 @@ impl<'a> Ctx<'a> {
             // used to own a private copy, and the copy was the whole reason the
             // hole stayed open: only the CALL shape carried the rule, so a value
             // reference through the same unknown module resolved to `nil`.
-            let sky_namespaced = hir::is_reserved_sky_namespace(pkg);
-            let msg = if sky_namespaced {
-                format!(
-                    "unknown Sky module `{pkg}`, so `{pkg}.{fun}` cannot be resolved. \
-                     Check the spelling of the import — Sky stdlib modules live under \
-                     `Std.*` and `Sky.Core.*` / `Sky.Http.*` (e.g. `Sky.Core.List`, \
-                     `Std.Db`). This is not a Go-FFI package; `sky install` won't fetch it."
-                )
-            } else if self.ffi.has_package(pkg) {
-                format!(
-                    "no such Go-FFI function `{pkg}.{fun}` — the FFI surface for `{pkg}` \
-                     is present but exports no such function, or it takes a value that \
-                     cannot be produced from Sky (such as a Go `error` parameter). It \
-                     cannot be called from Sky."
-                )
-            } else {
-                format!(
-                    "`{pkg}` has no generated FFI surface, so `{pkg}.{fun}` cannot be \
-                     resolved. Run `sky install` to fetch and inspect its Go module — \
-                     the `sky-ffi/` surface is a generated build artifact (regenerated \
-                     from your `sky.toml` dependencies), not committed to the repo."
-                )
-            };
+            let msg = self.unresolved_foreign_msg(pkg, fun);
             self.errors.push(msg);
             return GoExpr::new(GoExprKind::Ident("nil".into()), actual.clone());
         }
@@ -5128,6 +5178,35 @@ impl<'a> Ctx<'a> {
         )
     }
 
+    /// A Go-FFI function used as a VALUE (`Result.andThen Stripe.addressLine1`):
+    /// a curried Sky closure over its wrapper, each param narrowed exactly as the
+    /// call form narrows it. `None` when the wrapper takes no parameters (a
+    /// zero-arg Go function has no function value to pass; it must be called).
+    ///
+    /// Before v0.25.19 this shape fell through to `nil` with only a warning, and
+    /// the program panicked the first time the value was applied.
+    fn ffi_value(&mut self, sym: &str) -> Option<GoExpr> {
+        let wparams = self.ffi.wrapper_params(sym);
+        if wparams.is_empty() {
+            return None;
+        }
+        let go = format!("skyffi.{sym}");
+        let base = go
+            .strip_prefix("skyffi.")
+            .unwrap_or(&go)
+            .strip_suffix('T')
+            .unwrap_or(&go)
+            .to_string();
+        Some(self.curried_any(wparams.len(), "_f", |cx, params| {
+            let largs: Vec<GoExpr> = params
+                .into_iter()
+                .enumerate()
+                .map(|(pi, e)| cx.ffi_coerce_arg(&base, pi, e, &wparams))
+                .collect();
+            cx.ffi_emit_call(&go, largs, &GoTy::Any)
+        }))
+    }
+
     fn ffi_call(
         &mut self,
         go: &str,
@@ -5168,13 +5247,30 @@ impl<'a> Ctx<'a> {
                 continue;
             }
             let e = self.lower_expr(*a, &GoTy::Any);
+            largs.push(self.ffi_coerce_arg(base, pi, e, wrapper_params));
+            pi += 1;
+        }
+        self.ffi_emit_call(go, largs, actual)
+    }
+
+    /// Narrow one lowered argument to the Go-FFI wrapper's param slot `pi`.
+    /// Shared by the call form ([`Self::ffi_call`]) and the value form
+    /// ([`Self::ffi_value`]) so the two always pass an argument the same way.
+    fn ffi_coerce_arg(
+        &mut self,
+        base: &str,
+        pi: usize,
+        e: GoExpr,
+        wrapper_params: &[String],
+    ) -> GoExpr {
+        {
             let slot_name = format!("FfiT_{base}_P{pi}");
             if self.ffi.has_ffi_slot(&slot_name) {
                 // Non-primitive Go param: narrow to its typed slot alias (defined
                 // in `package skyffi` alongside the wrapper).
                 let slot = GoTy::Named(format!("skyffi.{slot_name}"), vec![]);
                 let from = e.ty.clone();
-                largs.push(GoExpr::new(
+                GoExpr::new(
                     GoExprKind::Coerce {
                         inner: Box::new(e),
                         from,
@@ -5182,7 +5278,7 @@ impl<'a> Ctx<'a> {
                         reason: CoerceReason::FfiReturn,
                     },
                     slot,
-                ));
+                )
             } else {
                 // Primitive Go param (no typed-slot alias). Coerce/convert the
                 // arg to the wrapper's REAL Go param type (from its parsed
@@ -5191,10 +5287,14 @@ impl<'a> Ctx<'a> {
                 // to the wrapper's `int64`, etc. A param type we don't recognise
                 // (or an already-matching one) passes the value verbatim.
                 let want = wrapper_params.get(pi).map(String::as_str);
-                largs.push(self.coerce_ffi_prim_arg(e, want));
+                self.coerce_ffi_prim_arg(e, want)
             }
-            pi += 1;
         }
+    }
+
+    /// Emit the call of Go-FFI wrapper `go` on already-narrowed `largs`,
+    /// narrowing its `any` result to `actual`.
+    fn ffi_emit_call(&mut self, go: &str, largs: Vec<GoExpr>, actual: &GoTy) -> GoExpr {
         let call = GoExpr::new(
             GoExprKind::Call(
                 Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),

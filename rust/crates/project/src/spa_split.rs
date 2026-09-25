@@ -4455,6 +4455,95 @@ fn module_mentions_word(src: &str, word: &str) -> bool {
     false
 }
 
+/// Drop, from a GENERATED module's own `exposing (…)` list, every value the
+/// module no longer defines.
+///
+/// The split removes declarations from its copies (a server-tainted `head` from
+/// the client half, a codec copied into `Shared`), and the header used to keep
+/// listing them. That was a dangling export: before v0.25.19 it compiled and a
+/// qualified use of the name lowered to `nil`; since v0.25.19 it is `[E1015]`.
+/// A generated module must never expose a value it does not define, so every
+/// rewrite that drops declarations passes its output through here. Types and
+/// operators are left alone (an imported type may be re-exposed). A list that
+/// ends up empty becomes `exposing (..)`, since `exposing ()` does not parse.
+fn prune_own_exposing(src: &str) -> String {
+    let parse = syntax::parse(src, base::FileId(0));
+    let file = parse.tree();
+    let Some(list) = file.module_header().and_then(|h| {
+        h.syntax()
+            .children()
+            .find(|c| c.kind() == SyntaxKind::ExposingList)
+    }) else {
+        return src.to_string();
+    };
+    let defined: HashSet<String> = file
+        .decls()
+        .filter_map(|d| match d {
+            syntax::ast::Decl::Value(v) => v.name().map(|t| t.text().to_string()),
+            _ => None,
+        })
+        .collect();
+    let items: Vec<syntax::SyntaxNode> = list
+        .children()
+        .filter(|c| {
+            matches!(
+                c.kind(),
+                SyntaxKind::ExposedValue | SyntaxKind::ExposedType | SyntaxKind::ExposedOperator
+            )
+        })
+        .collect();
+    if items.is_empty() {
+        return src.to_string(); // `exposing (..)`
+    }
+    let item_text = |n: &syntax::SyntaxNode| -> String {
+        n.descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| !t.kind().is_trivia())
+            .map(|t| t.text().to_string())
+            .collect::<Vec<_>>()
+            .join("")
+            .replace(',', ", ")
+    };
+    let mut dropped = false;
+    let kept: Vec<String> = items
+        .iter()
+        .filter(|n| {
+            if n.kind() != SyntaxKind::ExposedValue {
+                return true;
+            }
+            let name = n
+                .descendants_with_tokens()
+                .filter_map(|e| e.into_token())
+                .find(|t| t.kind() == SyntaxKind::LowerIdent)
+                .map(|t| t.text().to_string());
+            match name {
+                Some(v) if !defined.contains(&v) => {
+                    dropped = true;
+                    false
+                }
+                _ => true,
+            }
+        })
+        .map(item_text)
+        .collect();
+    if !dropped {
+        return src.to_string();
+    }
+    let clause = if kept.is_empty() {
+        "exposing (..)".to_string()
+    } else {
+        format!("exposing ({})", kept.join(", "))
+    };
+    let r = list.text_range();
+    let (a, b) = (usize::from(r.start()), usize::from(r.end()));
+    // The node's range carries the whitespace around the clause (the space
+    // after the module name, the newline before the first import); keep both.
+    let node_text = &src[a..b];
+    let leading = &node_text[..node_text.len() - node_text.trim_start().len()];
+    let trailing = &node_text[node_text.trim_end().len()..];
+    format!("{}{leading}{clause}{trailing}{}", &src[..a], &src[b..])
+}
+
 /// Reassemble a module's source with the declarations named in `names` REMOVED
 /// (both a `type`/`union`/`alias` decl and any same-named value/annotation).
 /// Used to give up OWNERSHIP of a moved union: `Shared` declares it once, so
@@ -4482,7 +4571,7 @@ fn strip_decls_by_name(file: &SourceFile, src: &str, names: &BTreeSet<String>) -
         out.push_str(slice(src, d.syntax()).trim_end());
         out.push_str("\n\n\n");
     }
-    out
+    prune_own_exposing(&out)
 }
 
 /// Apply `Shared`'s ownership of the moved unions to a VERBATIM module copy (a
@@ -7183,7 +7272,8 @@ fn render_module_client_subset(
     } else {
         out
     };
-    Ok(out)
+    // The dropped tainted / copied decls must leave the header too (`[E1015]`).
+    Ok(prune_own_exposing(&out))
 }
 
 // ---------------------------------------------------------------------------
@@ -7528,6 +7618,25 @@ fn nth_arrow_segment(anno: &str, n: usize) -> Option<String> {
 #[cfg(test)]
 mod fix7_tests {
     use super::*;
+
+    #[test]
+    fn prune_own_exposing_drops_values_the_module_no_longer_defines() {
+        // v0.25.19: the split dropped a server-tainted `head` from the client
+        // copy of `View` but kept `head` in its header, a dangling export that
+        // `[E1015]` rejects. Types stay (an imported type may be re-exposed).
+        let src = "module View exposing (view, head, Page(..))\n\nimport Types exposing (Page(..))\n\n\nview m =\n    m\n";
+        let out = prune_own_exposing(src);
+        assert!(
+            out.starts_with("module View exposing (view, Page(..))\n"),
+            "{out}"
+        );
+        // Nothing to drop: byte-identical.
+        let same = "module View exposing (view)\n\n\nview m =\n    m\n";
+        assert_eq!(prune_own_exposing(same), same);
+        // Everything dropped: `exposing ()` does not parse, so `(..)`.
+        let none = "module View exposing (head)\n\n\nview m =\n    m\n";
+        assert!(prune_own_exposing(none).starts_with("module View exposing (..)\n"));
+    }
 
     // Bug #3: injecting `import Shared …` after a copied module whose LAST import
     // carries a bracket-balanced MULTI-LINE `exposing ( … )` list must land the new

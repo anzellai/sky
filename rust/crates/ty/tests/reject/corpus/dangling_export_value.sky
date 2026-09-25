@@ -1,0 +1,18 @@
+-- gate: reject
+-- defect: a module lists a value in `exposing (…)` that it never defines
+-- rust: reject [E1015] unknown export, reported at the exposing clause
+--
+-- Found 2026-09-25 (v0.25.19). A module kept `decode` in its `exposing` list
+-- after the function was deleted. The dangling name was still published, so a
+-- caller's `M.decode body` resolved to a definition that did not exist: the
+-- checker gave it a fresh type variable, lowering emitted `any(nil)` for the
+-- function value, and the program panicked with `NilDereference` the first
+-- time the call ran. An if-it-compiles-it-works break.
+module Main exposing (decode, main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+main =
+    println "x"

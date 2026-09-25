@@ -247,7 +247,12 @@ fn assemble_and_emit_with(
         // Every app-code module (the project's own `src/` + any `extra_dirs`
         // like `tests/`) is type-checked. Stdlib + `.skydeps` are trusted
         // signatures, never re-checked — mirrors the `xtask infer` gate, whose
-        // zero-type-error accept-parity property this preserves.
+        // zero-type-error accept-parity property this preserves. A module
+        // reached through two source roots (`add_module` returns the existing
+        // id) is checked once, so its diagnostics are not printed twice.
+        if check_ids.contains(&id) {
+            continue;
+        }
         check_ids.push(id);
         // Key the display-path map by the REAL `ModuleId` (`id.index()`) — the
         // same id `src_map` and diagnostic spans use — so a Sky-frontend error
@@ -353,6 +358,24 @@ fn assemble_and_emit_with(
         .collect();
     if !causes.is_empty() {
         return Err(render_diags(&causes, &sources));
+    }
+    // `[E1015]` (a module exposes a name it does not define) is a CAUSE too: an
+    // importer's reference to the dangling name no longer resolves, and any type
+    // error around it is the consequence. Report the whole name-error band (the
+    // `[E1015]` at the clause plus the `[E1001]`s at each use site) ahead of the
+    // type gate.
+    if checked
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == diagnostics::Severity::Error && d.code.0 == "E1015")
+    {
+        let ds: Vec<diagnostics::Diagnostic> = checked
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == diagnostics::Severity::Error && d.code.0.starts_with("E1"))
+            .cloned()
+            .collect();
+        return Err(render_diags(&ds, &sources));
     }
     if checked.type_errors > 0 {
         // Select by the type-error BAND (`E2…`), not by an enumerated allowlist.

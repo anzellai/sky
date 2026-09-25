@@ -11,6 +11,79 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.19 — (unreleased)
+
+A patch over v0.25.18. Every fix has a regression test that failed before it.
+No public function signature changes.
+
+### Migration
+
+- **A module may only expose what it defines.** An `exposing (…)` entry that
+  names a value the module does not define, a type it neither defines nor
+  imports, or constructors of a local alias is now the
+  new error `[E1015] UNKNOWN EXPORT`. Before, such a program compiled and could
+  panic at run time (below). Fix: restore the definition or remove the name
+  from the list. Re-exposing an imported *type* is still allowed; re-exposing an
+  imported *value* never worked (it compiled to `nil`) and is now rejected,
+  so define a wrapper instead. See `docs/errors/E1015-unknown-export.md`.
+- **A qualified type the module does not export is an error.** `M.Foo` in an
+  annotation, where `M` neither declares nor lists `Foo`, and `Nope.Foo` with no
+  such import, are now `[E1001]`. `import M exposing (Foo)` for such a `Foo` is
+  `[E1011]`. Both used to resolve silently to an unrelated nominal type.
+
+### Compiler
+
+- **A dangling export compiled and then panicked.** A module kept a deleted
+  function in its `exposing` list and another module called it qualified
+  (`Responses.decodeResponse body`). `sky check` and the editor reported
+  nothing: the name was still published, the checker gave it a fresh type
+  variable that the call site then fixed, and codegen emitted `any(nil)` for the
+  function value, so the program panicked with `NilDereference`. Now the
+  exporter reports `[E1015]` at the list, and independently every use is an
+  unknown name at the use site (`[E1001]` for `M.x` and `exposing (..)`,
+  `[E1011]` for `exposing (x)`), with a message that names the dangling export.
+  Tests: `rust/crates/hir/tests/dangling_export.rs`, the reject fixture
+  `dangling_export_value.sky`, and LSP `didOpen` / two-module tests in
+  `rust/crates/sky-lsp/tests/`.
+- **A Go-FFI function passed as a value compiled to `nil`.** `List.map
+  Hex.encodedLen xs` or `r |> Result.andThen Stripe.addressLine1` passes the
+  FFI function itself rather than calling it. Lowering handled only the call
+  shape, so the bare reference became `nil` with a `foreign ref` warning, and
+  the program panicked with `NilDereference` when the value was applied.
+  `examples/13-skyshop` had four such sites on its Stripe shipping-address path.
+  The value now lowers to a closure over the FFI wrapper, with each argument
+  narrowed as the call form narrows it. Found while making lowering refuse
+  `nil`. Test: `rust/crates/sky/tests/ffi_value_flow.rs` (it panicked on
+  v0.25.18).
+- **Lowering never emits `nil` for a name it cannot resolve.** A reference with
+  no definition behind it, an error-recovery node, an unknown constructor, or a
+  Go-FFI reference used as a value with no emitted form used to lower to `nil`
+  (with at most a warning). Each is now a hard lowering error, so the build
+  stops before `go build`: an internal compiler error for the shapes the
+  front end already rejects, and the existing Go-FFI message for an FFI value.
+  Test: `rust/crates/lower/tests/no_nil_for_unresolved_ref.rs`.
+
+- **The Sky.Spa split no longer writes a dangling export.** When the split
+  dropped a server-tainted binding (`head` reading an environment variable) from
+  the client copy of a module, the module header still listed it. The split now
+  removes every value a generated module no longer defines from its `exposing`
+  list. Test: `prune_own_exposing_drops_values_the_module_no_longer_defines`
+  and `web_app_drops_server_tainted_head_from_the_client`.
+
+### Tooling
+
+- **`sky doctor` no longer asks a library for an entry file.** On a project with
+  `[lib]` in `sky.toml` and no `entry`, doctor reported "✗ entry file
+  `src/Main.sky` does not exist". A library is imported, never run. Doctor now
+  checks what a library needs instead (at least one `.sky` module under the
+  source root) and still checks an `entry` the library names explicitly.
+  Tests: two new cases in `rust/crates/sky/tests/doctor_flow.rs`.
+- **`sky test` printed every compile error twice.** A suite passed by a relative
+  path (`sky test tests/FooTest.sky`) loaded the `tests/` tree twice, because
+  `tests` and its absolute path compared unequal, so each diagnostic appeared
+  twice. The root is now canonicalised and the build checks a module reached
+  twice only once. Test: `compile_error_in_a_relative_suite_path_is_reported_once`.
+
 ## v0.25.18 — Sky.Spa restores only for the same user; pages hydrate in place; far less build memory; LSP hover (2026-09-25)
 
 A patch over v0.25.17. Every fix has a regression test that failed before it.
