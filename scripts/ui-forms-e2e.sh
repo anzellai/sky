@@ -27,15 +27,19 @@ source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 command -v node >/dev/null 2>&1 || { echo "ui-forms-e2e: 'node' is required." >&2; exit 1; }
 
-TMP="$(mktemp -d)"
-FX="$TMP/ui-forms-e2e"
+# A stable fixture directory, emptied first: the shared gate build cache
+# (scripts/lib/gate-build-cache.sh) keys on the project path, so a fresh
+# `mktemp -d` per run could never reuse a build.
+source "$ROOT/scripts/lib/gate-build-cache.sh"
+FX="$(gate_e2e_dir "$ROOT" ui-forms-e2e)"
+rm -rf "$FX"
 mkdir -p "$FX"
 cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/ui-forms-e2e/." "$FX/"
 
 echo "==> building the fixture (--target web)"
-( cd "$FX" && "$SKY" build --target web src/Main.sky )
+gate_cached_build "$SKY" "$FX" --clean --artefact .skyapp/web -- build --target web src/Main.sky
 echo "==> building the fixture (--target web:app)"
-( cd "$FX" && "$SKY" build --target web:app src/Main.sky )
+gate_cached_build "$SKY" "$FX" --clean --artefact .skyapp/web-app -- build --target web:app src/Main.sky
 
 LIVE_APP="$FX/.skyapp/web/sky-out/app"
 SPA_APP="$FX/.skyapp/web-app/.split/backend/sky-out/app"
@@ -48,4 +52,4 @@ echo "==> driving Sky.Spa"
 node "$ROOT/scripts/ui-forms-e2e-verify.mjs" "$SPA_APP" --mode spa --port "${SPA_PORT:-9263}"
 
 echo "ui-forms-e2e: PASS — onKeyDown renders + dispatches, typed forms decode strictly, literal-topic pub/sub delivers."
-rm -rf "$TMP"
+rm -rf "$FX"

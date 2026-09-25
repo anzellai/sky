@@ -536,12 +536,16 @@ jobs:
           cargo build --release -p sky --locked --manifest-path rust/Cargo.toml
           install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
           sky-out/sky --version
-      - name: 'Gate — verify T1 falsifiers actually bite (harness --verify-falsifiers --tier t1)'
+      # `--all`: re-prove every gate. A local `--verify-falsifiers` is incremental
+      # (it carries a proof whose inputs digest is unchanged); the nightly and the
+      # release carry nothing, so a whole-system interaction the digest does not
+      # model is still re-proven here.
+      - name: 'Gate — verify T1 falsifiers actually bite (harness --verify-falsifiers --all --tier t1)'
         # A mutation that no longer reddens its gate (VACUOUS), or a baseline that
         # is not green (INCONCLUSIVE), fails this job — the proof the ledger
         # credits was a lie. The run rewrites falsifier-proofs.json in the
         # workspace; nightly does not commit it, so that is ephemeral.
-        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --verify-falsifiers --tier t1
+        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --verify-falsifiers --all --tier t1
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh

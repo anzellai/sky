@@ -44,28 +44,19 @@ for arg in "$@"; do
 done
 
 
-# Build if binary is missing or older than the source tree.
-need_build=0
-if [[ ! -x "$APP_DIR/sky-out/app" ]]; then
-    need_build=1
-else
-    # Rebuild if any .sky file newer than the binary.
-    while IFS= read -r f; do
-        if [[ "$f" -nt "$APP_DIR/sky-out/app" ]]; then
-            need_build=1
-            break
-        fi
-    done < <(find "$APP_DIR/src" -name "*.sky")
-fi
-
-if [[ $need_build -eq 1 ]]; then
-    echo "[build] $APP_DIR"
-    ( cd "$APP_DIR" && rm -rf sky-out/main.go sky-out/app && \
-        with_timeout 90 env TMPDIR=/tmp "$SKY" build src/Main.sky ) || {
-            echo "FAIL — sky build failed" >&2
-            exit 1
-        }
-fi
+# Build through the shared gate build cache (scripts/lib/gate-build-cache.sh):
+# a hit restores the artefact a clean build of this exact compiler + source
+# produced (usually the example sweep's), a miss builds clean and stores.
+#
+# This used to rebuild only when a `src/*.sky` file was newer than the binary,
+# so a rebuilt COMPILER with unchanged source left the previous compiler's
+# binary under test — the ui-showcase gate then certified codegen it never ran.
+echo "[build] $APP_DIR"
+with_timeout 900 env TMPDIR=/tmp bash "$ROOT/scripts/lib/gate-build-cache.sh" build \
+    "$SKY" "$APP_DIR" --clean -- build src/Main.sky || {
+    echo "FAIL — sky build failed" >&2
+    exit 1
+}
 
 # Kill any leftover holder of the port.
 PORT="${SKY_UI_SHOWCASE_PORT:-8826}"

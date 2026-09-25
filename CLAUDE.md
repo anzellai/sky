@@ -293,13 +293,19 @@ Forbidden patterns:
   * Re-running the example sweep more than once per milestone.
 
 Concrete cadence:
-  * **Per change**: `cargo test -p <crate> <testname>` (narrowest
-    crate + test filter that proves the change)
+  * **Per change**: `scripts/gates-for-change.sh` (it maps the paths
+    changed against `origin/main` to the narrowest gates and runs them;
+    `--dry-run` prints the plan), or `cargo test -p <crate> <testname>`
+    for a single test while iterating
   * **Per phase boundary (multiple changes)**: rebuild + a couple
     of representative `cargo test -p <crate>` runs
-  * **Per milestone**: full `cargo test --workspace` + the xtask
-    gate suite (`cargo run -p xtask -- <gate>`) + example-sweep +
-    verify-cli, in background, notified when complete
+  * **Per milestone**: `scripts/gates-for-change.sh` over the whole
+    branch, in background, notified when complete. Its last step is the
+    incremental `harness --verify-falsifiers`, which re-proves only the
+    gates whose proof inputs changed; commit the updated
+    `docs/coverage/falsifier-proofs.json` with the change
+  * **Merge to `main` / release tag**: the release workflow's full suite
+    (§0.2.1), never a local subset
 
 ### 0.2.1 Merge-to-main + release gate — the FULL suite, nothing deferred to nightly — INVIOLABLE
 
@@ -323,20 +329,30 @@ could already `sky upgrade` to it. A gate we own found a defect a gate we own
 should have blocked, one tier too late.
 
 So before I **merge to `main`** or **cut / move a release tag**, the gate is
-the FULL suite run to green — not the per-commit subset. Run it locally in the
-background (per §0.2's milestone cadence), *or* confirm the workflow itself
-runs every tier; then hold the merge/tag until green:
+the FULL suite run to green — not the per-commit subset, and not the narrow set
+`scripts/gates-for-change.sh` picks. That suite is the release workflow
+(`.github/workflows/release.yml`): its concurrent `gate-*` jobs run every tier,
+`release:` waits on all of them, and `tests/workflows_parse.rs` fails the build
+if a gate job is disabled or drops out of `release: needs:`. It must be green
+before the tag is public; hold the merge/tag until it is. A 16 GB Mac cannot
+run the whole suite at once, so the workflow, not a local run, is the gate.
+Before a merge to `main`, dispatch it on the branch (`gh workflow run
+release.yml --ref <branch>`): a dispatched run executes every gate job and
+skips only the publishing jobs. It covers:
 
-1. `cargo test --workspace` (every crate, incl. `sky` + `ty`).
-2. The whole xtask gate suite at **every tier** — `cargo run -p xtask --
-   harness` (T1) **and** the T2 `behaviour-corpus` (`corpus --run` / the T2
-   harness), plus `--verify-falsifiers` (refresh **and** prove the falsifier
-   proofs) and the census (`config-surface`, `denominators`,
-   `coverage-ledger`, `config-migration`).
+1. `cargo test --workspace` (every crate, incl. `sky` + `ty`) and the heavy
+   `#[ignore]`d real-DB leg.
+2. The whole xtask gate suite at **every tier** — the harness at T1, T2 (the
+   behaviour corpus), T3 and T4, `--verify-falsifiers --all` over every
+   registered gate (the release carries no proof from the checked-in ledger),
+   and the census (`config-surface`, `denominators`, `coverage-ledger`,
+   `config-migration`, all `--check`), plus build-run and coerce-floor.
 3. The **full** `scripts/example-sweep.sh` — build **and run** every example
    on a clean slate (incl. the Std.Db / FFI / Postgres examples), not `sky
    check`.
-4. `scripts/conformance.sh` + `verify-cli`.
+4. `scripts/conformance.sh` + `verify-cli` (T1 harness gates),
+   `scripts/verify-all-web.sh`, every e2e script, `scripts/doc-examples.sh`
+   and `go test -race` over the runtime.
 
 **A gate that only runs nightly still gates the release.** If a tier is not
 wired into the release/merge gate, either wire it in or run it locally and

@@ -522,8 +522,11 @@ gate harness, which enforces each gate's budget by `killpg`, requires an exact
 assertion count, and refuses to report PASS when it cannot establish a verdict
 (`NOT RUN` / `UNPROVEN` → `UNKNOWN`, exit non-zero). Every registered gate
 declares a falsifying mutation — an empty set fails the build — and
-`--verify-falsifiers` proves the mutation makes the gate red. See
-`docs/tooling/gate-harness.md`.
+`--verify-falsifiers` proves the mutation makes the gate red — incrementally:
+it re-proves only gates whose proof inputs changed (`--all` re-proves every
+gate; the nightly and the release pass it). Per change, `scripts/gates-for-change.sh`
+runs the narrowest gates for the paths you changed; the merge/release gate is
+the release workflow's full suite. See `docs/tooling/gate-harness.md`.
 
 ## Non-negotiable code rules (enforced by `cargo test`)
 
@@ -630,10 +633,12 @@ These apply to any Sky code you write or any compiler change you make:
   build must embed may not be hidden, and a hidden file is never a compiler
   input (the freshness walks skip them too, so a runtime-written token cannot
   turn gates red).
-- **Disk hygiene.** `scripts/build.sh` + `scripts/example-sweep.sh` auto-prune the
-  Go build cache at a 5 GB threshold; the `xtask build-run` gate self-guards
-  disk before the sweep. Reclaim manually (`go clean -cache`, worktree cleanup)
-  when under 5 GB free.
+- **Disk hygiene.** `scripts/build.sh` + `scripts/example-sweep.sh` prune the Go
+  build cache only under disk pressure (over 5 GB with under 30 GB free; build.sh
+  also past 20 GB); the `xtask build-run` gate self-guards disk before the sweep;
+  the gate build cache (`scripts/lib/gate-build-cache.sh`) is bounded by
+  `SKY_GATE_CACHE_MAX_MB` (default 8192). Reclaim manually (`go clean -cache`,
+  worktree cleanup) when under 5 GB free.
 - **Template + doc sync (non-negotiable).** When stdlib / syntax / Sky.Live APIs /
   CLI verbs change, update **this file**, `templates/CLAUDE.md` (+ `templates/AGENTS.md`),
   and the matching `docs/*` in the **same commit** (see the [Deep dives](#deep-dives)

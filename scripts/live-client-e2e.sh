@@ -22,12 +22,17 @@ source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 command -v node >/dev/null 2>&1 || { echo "live-client-e2e: 'node' is required." >&2; exit 1; }
 
-FX="$(mktemp -d)/live-client"
+# A stable fixture directory, emptied first: the shared gate build cache
+# (scripts/lib/gate-build-cache.sh) keys on the project path, so a fresh
+# `mktemp -d` per run could never reuse a build.
+source "$ROOT/scripts/lib/gate-build-cache.sh"
+FX="$(gate_e2e_dir "$ROOT" live-client)"
+rm -rf "$FX"
 mkdir -p "$FX"
 cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/live-client/." "$FX/"
 
 echo "==> building the live-client fixture (--target web)"
-( cd "$FX" && "$SKY" build --target web src/Main.sky )
+gate_cached_build "$SKY" "$FX" --clean --artefact .skyapp/web -- build --target web src/Main.sky
 
 APP="$FX/.skyapp/web/sky-out/app"
 [ -x "$APP" ] || { echo "live-client-e2e: app not built at $APP" >&2; exit 1; }
@@ -36,4 +41,4 @@ echo "==> driving the Sky.Live client + webview applier"
 node "$ROOT/scripts/live-client-verify.mjs" "$APP" --port "${SKY_LIVE_PORT:-9240}"
 
 echo "live-client-e2e: PASS"
-rm -rf "$(dirname "$FX")"
+rm -rf "$FX"

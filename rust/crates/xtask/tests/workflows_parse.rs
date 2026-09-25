@@ -809,6 +809,10 @@ fn the_release_gate_runs_the_full_tier_suite() {
         .iter()
         .filter_map(|(k, v)| k.as_str().map(|n| (n, v)))
         .filter(|(n, _)| n.starts_with("gate"))
+        // A job switched off with `if: false` runs nothing. Its `run:` bodies must
+        // not vouch for a tier — that is how the interim "lean release" kept this
+        // test green while T2 and the falsifier proofs ran in no release job.
+        .filter(|(_, v)| !job_is_disabled(v))
         .collect();
     assert!(
         gate_jobs.len() >= 2,
@@ -995,5 +999,206 @@ fn release_gate_installs_the_compiler_before_build_run() {
         atext.contains("build.sh"),
         "the gate-setup composite action does not run scripts/build.sh, so a gate \
          job that only `uses:` it would NOT have a compiler installed"
+    );
+}
+
+/// Is a job switched off? `if: false` (a bool) or `if: 'false'` / `${{ false }}`.
+fn job_is_disabled(job: &serde_yaml::Value) -> bool {
+    match job.get("if") {
+        Some(serde_yaml::Value::Bool(b)) => !b,
+        Some(serde_yaml::Value::String(s)) => {
+            let t = s
+                .trim()
+                .trim_start_matches("${{")
+                .trim_end_matches("}}")
+                .trim();
+            t == "false"
+        }
+        _ => false,
+    }
+}
+
+/// The release workflow IS the full suite (CLAUDE.md §0.2.1): every tier the
+/// repo knows how to run, in a job that is enabled and that `release:` waits on.
+///
+/// # Why this exists
+///
+/// On 2026-09-13 an interim "lean release" switched the workspace tests, the T1
+/// harness, both T2 jobs and all falsifier jobs off with `if: false`, trusting
+/// the per-commit `ci-green` and the nightly instead. `ci-green` runs a light
+/// subset of T1 and no T2 at all, so that was the v0.21.0 gap reopened — and
+/// `the_release_gate_runs_the_full_tier_suite` stayed green, because it read the
+/// `run:` bodies of disabled jobs. The browser tier, the e2e scripts, the doc
+/// examples and `go test -race` had never been in the release workflow at all.
+///
+/// # What this asserts
+///
+/// 1. No `gate-*` job is disabled.
+/// 2. Every `gate-*` job is in `release: needs:` (else it can fail after the
+///    Release is published).
+/// 3. The enabled `gate-*` jobs' `run:` bodies invoke every piece of the suite.
+/// 4. Every falsifier invocation passes `--all` (a release carries nothing from
+///    the checked-in ledger), and the union of their `--only` lists is every
+///    registered gate bar the self-tests.
+#[test]
+fn the_release_workflow_is_the_full_suite() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let text = std::fs::read_to_string(root.join(".github/workflows/release.yml"))
+        .expect("read release.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("release.yml parses");
+    let jobs = doc
+        .get("jobs")
+        .and_then(|j| j.as_mapping())
+        .expect("`jobs` mapping");
+
+    let gate_jobs: Vec<(&str, &serde_yaml::Value)> = jobs
+        .iter()
+        .filter_map(|(k, v)| k.as_str().map(|n| (n, v)))
+        .filter(|(n, _)| n.starts_with("gate-"))
+        .collect();
+    assert!(
+        gate_jobs.len() >= 10,
+        "found {} gate-* jobs",
+        gate_jobs.len()
+    );
+
+    // 1. none disabled
+    let disabled: Vec<&str> = gate_jobs
+        .iter()
+        .filter(|(_, v)| job_is_disabled(v))
+        .map(|(n, _)| *n)
+        .collect();
+    assert!(
+        disabled.is_empty(),
+        "release gate job(s) switched off with `if: false`: {disabled:?} — the release \
+         gate is the FULL suite (CLAUDE.md §0.2.1); a disabled job gates nothing"
+    );
+
+    // 2. all in release.needs
+    let needs: Vec<String> = jobs
+        .get(serde_yaml::Value::from("release"))
+        .and_then(|r| r.get("needs"))
+        .and_then(|n| n.as_sequence())
+        .expect("release: needs: is a list")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    let unneeded: Vec<&str> = gate_jobs
+        .iter()
+        .map(|(n, _)| *n)
+        .filter(|n| !needs.iter().any(|x| x == n))
+        .collect();
+    assert!(
+        unneeded.is_empty(),
+        "gate job(s) not in `release: needs:` — the Release can publish while they \
+         are red: {unneeded:?}"
+    );
+
+    // 3. every piece of the suite is invoked
+    let mut runs: Vec<String> = Vec::new();
+    for (_, job) in &gate_jobs {
+        for step in job
+            .get("steps")
+            .and_then(|s| s.as_sequence())
+            .into_iter()
+            .flatten()
+        {
+            if let Some(r) = step.get("run").and_then(|r| r.as_str()) {
+                runs.push(r.to_string());
+            }
+        }
+    }
+    let hay = runs.join("\n");
+    let required: &[(&str, &str)] = &[
+        ("cargo test --workspace", "every crate's tests"),
+        ("-- --ignored", "the heavy real-DB `#[ignore]`d leg"),
+        (
+            "--tier t1",
+            "the T1 harness (conformance, verify-cli, sky-verify, lsp, ...)",
+        ),
+        ("--tier t2", "the T2 behaviour corpus"),
+        ("--tier t3", "the T3 Postgres app tier"),
+        ("--tier t4", "the T4 pre-release tier"),
+        ("--verify-falsifiers", "the falsifier proofs"),
+        ("denominators --check", "census: denominators"),
+        ("coverage-ledger --check", "census: coverage ledger"),
+        ("config-surface --check", "census: config surface"),
+        ("config-migration --check", "census: config migration"),
+        ("build-run --all", "the codegen build of every example"),
+        ("coerce-floor", "the runtime-narrowing floor"),
+        ("scripts/example-sweep.sh", "the full clean-slate sweep"),
+        ("scripts/verify-all-web.sh", "the browser tier"),
+        ("scripts/doc-examples.sh", "the live-docs examples"),
+        ("go test -race", "the Go runtime under the race detector"),
+        ("scripts/tui-e2e.sh", "e2e: terminal loops"),
+        ("scripts/spa-vdom-identity-e2e.sh", "e2e: DOM identity"),
+        ("scripts/live-client-e2e.sh", "e2e: Sky.Live client"),
+        ("scripts/spa-rpc-consistency-e2e.sh", "e2e: RPC consistency"),
+        ("scripts/ui-forms-e2e.sh", "e2e: Std.Ui forms"),
+        ("scripts/spa-stale-handler-e2e.sh", "e2e: stale handlers"),
+        ("scripts/spa-examples-e2e.sh", "e2e: Sky.Spa examples"),
+        ("scripts/spa-restore-e2e.sh", "e2e: restore"),
+    ];
+    let missing: Vec<String> = required
+        .iter()
+        .filter(|(inv, _)| !hay.contains(inv))
+        .map(|(inv, why)| format!("`{inv}` — {why}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "release.yml's enabled gate-* jobs do not run:\n  {}",
+        missing.join("\n  ")
+    );
+    assert!(
+        !hay.lines()
+            .any(|l| l.contains("example-sweep.sh") && l.contains("--build-only")),
+        "the release sweep must RUN every example, not only build it"
+    );
+
+    // 4. falsifier invocations: --all, and together they cover the registry.
+    let registry = std::fs::read_to_string(root.join("rust/crates/xtask/src/harness/registry.rs"))
+        .expect("read the registry");
+    let mut registered: Vec<(String, String)> = Vec::new(); // (name, tier)
+    let mut name: Option<String> = None;
+    for line in registry.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("name: \"") {
+            name = rest.split('"').next().map(str::to_string);
+        } else if let Some(rest) = t.strip_prefix("tier: Tier::") {
+            if let Some(n) = name.take() {
+                registered.push((n, rest.trim_end_matches(',').to_string()));
+            }
+        }
+    }
+    assert!(
+        registered.len() > 30,
+        "registry parse found {}",
+        registered.len()
+    );
+
+    let mut covered: Vec<String> = Vec::new();
+    for r in &runs {
+        for line in r.lines().filter(|l| l.contains("--verify-falsifiers")) {
+            assert!(
+                line.contains("--all"),
+                "a release falsifier run must pass `--all` — it must carry nothing \
+                 from the checked-in ledger: {line}"
+            );
+            let toks: Vec<&str> = line.split_whitespace().collect();
+            if let Some(i) = toks.iter().position(|t| *t == "--only") {
+                covered.extend(toks[i + 1].split(',').map(str::to_string));
+            }
+        }
+    }
+    let uncovered: Vec<&str> = registered
+        .iter()
+        .filter(|(_, tier)| tier != "SelfTest")
+        .map(|(n, _)| n.as_str())
+        .filter(|n| !covered.iter().any(|c| c == n))
+        .collect();
+    assert!(
+        uncovered.is_empty(),
+        "registered gate(s) whose falsifier proof no release job re-establishes: \
+         {uncovered:?} — add each to one of the gate-falsifiers-* `--only` lists"
     );
 }

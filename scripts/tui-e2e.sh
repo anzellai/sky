@@ -38,7 +38,7 @@ require_tool go "install Go (https://go.dev/dl/)"
 source "$ROOT/scripts/lib/with-timeout.sh"
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK" ${FXROOT:+"$FXROOT"}' EXIT
 
 PY=python3
 if ! python3 -c 'import pyte' >/dev/null 2>&1; then
@@ -51,11 +51,20 @@ if ! python3 -c 'import pyte' >/dev/null 2>&1; then
   PY="$WORK/venv/bin/python"
 fi
 
+# Each fixture builds in a STABLE per-worktree directory through the shared gate
+# build cache (scripts/lib/gate-build-cache.sh), which keys on the project path
+# as well as its content — a fixture under the per-run `mktemp -d` could never
+# reuse a build. $FXROOT is emptied per fixture before the copy.
+source "$ROOT/scripts/lib/gate-build-cache.sh"
+_gc_compiler_hash "$SKY" >/dev/null # hash the compiler once; each build inherits it
+FXROOT="$(gate_e2e_dir "$ROOT" tui-e2e)"
 for fx in app string forms guard cli; do
-  mkdir -p "$WORK/$fx"
-  cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/tui-e2e/$fx/." "$WORK/$fx/"
+  rm -rf "$FXROOT/$fx"
+  mkdir -p "$FXROOT/$fx"
+  cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/tui-e2e/$fx/." "$FXROOT/$fx/"
   echo "==> building the tui-e2e $fx fixture"
-  ( cd "$WORK/$fx" && with_timeout 600 "$SKY" build src/Main.sky )
+  with_timeout 600 bash "$ROOT/scripts/lib/gate-build-cache.sh" build "$SKY" "$FXROOT/$fx" \
+    --clean --artefact .skyapp --artefact sky-out -- build src/Main.sky
 done
 
 bin_of() {
@@ -65,19 +74,19 @@ bin_of() {
   [ -x "$b" ] || { echo "tui-e2e: no binary built under $dir" >&2; exit 1; }
   echo "$b"
 }
-APP_BIN="$(bin_of "$WORK/app" terminal-tui)"
-STR_BIN="$(bin_of "$WORK/string" terminal-tui)"
-FORMS_BIN="$(bin_of "$WORK/forms" terminal-tui)"
-GUARD_BIN="$(bin_of "$WORK/guard" terminal-tui)"
-CLI_BIN="$(bin_of "$WORK/cli" terminal-cli)"
+APP_BIN="$(bin_of "$FXROOT/app" terminal-tui)"
+STR_BIN="$(bin_of "$FXROOT/string" terminal-tui)"
+FORMS_BIN="$(bin_of "$FXROOT/forms" terminal-tui)"
+GUARD_BIN="$(bin_of "$FXROOT/guard" terminal-tui)"
+CLI_BIN="$(bin_of "$FXROOT/cli" terminal-cli)"
 
 echo "==> driving the terminal:tui fixtures in a pty"
-with_timeout 300 "$PY" "$ROOT/scripts/tui-e2e-drive.py" "$WORK/app" "$APP_BIN" "$WORK/string" "$STR_BIN" \
-  "$WORK/forms" "$FORMS_BIN" "$WORK/guard" "$GUARD_BIN"
+with_timeout 300 "$PY" "$ROOT/scripts/tui-e2e-drive.py" "$FXROOT/app" "$APP_BIN" "$FXROOT/string" "$STR_BIN" \
+  "$FXROOT/forms" "$FORMS_BIN" "$FXROOT/guard" "$GUARD_BIN"
 
 echo "==> running the terminal:cli fixture without an input handler"
 set +e
-( cd "$WORK/cli" && with_timeout 30 "$CLI_BIN" </dev/null >|"$WORK/cli.out" 2>&1 )
+( cd "$FXROOT/cli" && with_timeout 30 "$CLI_BIN" </dev/null >|"$WORK/cli.out" 2>&1 )
 CLI_RC=$?
 set -e
 CLI_OUT="$(cat "$WORK/cli.out")"
