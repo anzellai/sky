@@ -331,12 +331,51 @@ try {
       return !!a && a.closest("p")?.id === "nest-cookie" && a.textContent === "privacy policy";
     });
     check(inPara, "the link and its label stay inside the paragraph");
+    // The server's CSRF token input stays the form's first child through
+    // hydration and through children reconciles of the form (a child inserted
+    // before the fields, then removed), so a native POST stays valid.
+    const tokenFirst = () => page.evaluate(() => {
+      const f = document.querySelector("#nest-form");
+      const t = f && f.firstElementChild;
+      return !!t && t.tagName === "INPUT" && t.type === "hidden" && t.name === "__sky_csrf" && t.value === "e2e-csrf-token" &&
+        f.querySelectorAll("input[name=__sky_csrf]").length === 1;
+    });
+    check(await tokenFirst(), "the hydrated SSR form keeps the server's CSRF token input first");
+    await page.locator("#b-toggle").click();
+    await settle(page);
+    const extraIn = await page.locator("#nest-extra").count();
+    check(extraIn === 1 && await tokenFirst(), "a re-render that inserts a form child keeps the CSRF token input first", `extra=${extraIn}`);
+    await page.locator("#b-toggle").click();
+    await settle(page);
+    check((await page.locator("#nest-extra").count()) === 0 && await tokenFirst(),
+      "a re-render that removes a form child keeps the CSRF token input first");
     await page.locator("#nest-form input[name=email]").fill("a@b.c");
     await page.locator("#nest-form input[name=password]").fill("pw");
     await page.locator("#nest-form button[type=submit]").click();
     await settle(page);
     check((await logText(page)).includes("SignIn:a@b.c"), "the hydrated sign-in form submits to update", await logText(page));
     check(warn.length === 0, "no [sky.spa] warnings or page errors on /nested", warn.join(" | "));
+    await ctx.close();
+  }
+
+  // ── JS disabled: a native POST of the SSR form passes the CSRF check ──
+  // Before the wasm client runs (or with JS off) a submit is a native form
+  // POST. The server-injected token must travel with it: no 403.
+  if (!LIVE) {
+    const ctx = await browser.newContext({ javaScriptEnabled: false });
+    await ctx.addCookies([{ name: "__sky_csrf", value: "e2e-csrf-token", url: BASE }]);
+    const page = await ctx.newPage();
+    await page.goto(BASE + "/nested", { waitUntil: "load" });
+    await page.locator("#nest-form input[name=email]").fill("a@b.c");
+    await page.locator("#nest-form input[name=password]").fill("pw");
+    const [resp] = await Promise.all([
+      page.waitForResponse((r) => r.request().method() === "POST", { timeout: 15000 }),
+      page.locator("#nest-form button[type=submit]").click(),
+    ]);
+    const posted = resp.request().postData() || "";
+    check(posted.includes("__sky_csrf=e2e-csrf-token") && resp.status() !== 403,
+      "with JS disabled a native POST of the SSR form carries the CSRF token and is not 403",
+      `status=${resp.status()} body=${posted.slice(0, 80)}`);
     await ctx.close();
   }
 

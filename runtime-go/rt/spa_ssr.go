@@ -98,6 +98,15 @@ func SpaSSRPageSettled(headHTML, bodyHTML, wasmName, modelJSON, settled string) 
 // marker (R2): the model fields the server settled for THIS page. On a full
 // load the client takes these fields from the `#sky-model` seed and restores
 // every other field from localStorage (spaMergeStoredOverSeed).
+// spaSSRNoScriptCSS turns the first-paint loading overlay off when scripts
+// cannot run. The overlay (`data-sky-hydrating`, liveBaseCSS) blocks clicks
+// until the wasm client clears it, and only script clears it (the client, or
+// the 12 s safety timer). With JS disabled the server-rendered page was
+// covered by "Loading…" forever, so its links and its forms (a native POST
+// that the injected __sky_csrf token keeps valid) could not be used.
+const spaSSRNoScriptCSS = `<noscript><style>html[data-sky-hydrating]{cursor:auto}` +
+	`html[data-sky-hydrating]::before,html[data-sky-hydrating]::after{display:none}</style></noscript>`
+
 func SpaSSRPageSeeded(headHTML, bodyHTML, wasmName, modelJSON, settled string, seedFields []string) string {
 	var b strings.Builder
 	b.WriteString(`<!doctype html>` + "\n")
@@ -113,6 +122,7 @@ func SpaSSRPageSeeded(headHTML, bodyHTML, wasmName, modelJSON, settled string, s
 	b.WriteString(`<style>`)
 	b.WriteString(liveBaseCSS)
 	b.WriteString(`</style>`)
+	b.WriteString(spaSSRNoScriptCSS)
 	b.WriteString(`</head>` + "\n")
 	b.WriteString(`<body>`)
 	// The server-rendered view + the SSR marker so the client hydrates.

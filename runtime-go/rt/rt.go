@@ -9428,8 +9428,7 @@ func Server_html(body any) any {
 // The middleware's `r.FormValue("__sky_csrf")` fallback (see
 // csrf_middleware.go) reads it back. Net effect: AI-written
 // Sky.Http.Server form apps are CSRF-protected by construction, same
-// as Sky.Live apps. A form the runtime rendered itself (it carries a
-// `sky-id`) is left as rendered — see `runtimeRendered` below.
+// as Sky.Live apps.
 func injectCsrfIntoForms(body, token string) string {
 	if token == "" {
 		return body
@@ -9474,20 +9473,7 @@ func injectCsrfIntoForms(body, token string) string {
 		alreadyHas := strings.Contains(
 			strings.ToLower(body[tagEnd:formBodyEnd]),
 			`name="__sky_csrf"`)
-		// A form that carries a `sky-id` was written by the runtime's own
-		// renderer (renderVNodeInto stamps every element): a Sky.Spa SSR
-		// page or an inline console mount. A client runtime owns that form:
-		// it intercepts the submit and sends it with its own CSRF proof,
-		// and it adopts the served DOM node for node against the tree it
-		// rendered (spaCanHydrate). An extra first child there made every
-		// page load of a returning visitor (the request carries the CSRF
-		// cookie) refuse hydration: "tag differs at …#form.0#div: server
-		// <input>, client <div>". So the served bytes of a runtime-rendered
-		// form stay exactly the rendered ones. Hand-written markup
-		// (Server.html strings, Html.render, which stamps no sky-id) keeps
-		// the injection.
-		runtimeRendered := strings.Contains(methodLower, ` sky-id="`)
-		if isPost && !alreadyHas && !runtimeRendered {
+		if isPost && !alreadyHas {
 			out.WriteString(hidden)
 		}
 		i = tagEnd

@@ -679,8 +679,13 @@ func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 			continue
 		}
 
+		// A form's server-injected CSRF token input is not in the VNode tree,
+		// so every child rewrite below would drop it. Take it out first and
+		// put it back as the form's first child afterwards (spaIsServerCsrfInput).
+		tok := spaDetachCsrfToken(el)
 		if p.Replace != nil {
 			spaReplaceNode(el, p.ID, newRoot)
+			spaRestoreCsrfToken(tok, doc.Call("querySelector", `[sky-id="`+escAttr(p.ID)+`"]`))
 			continue
 		}
 		if p.Text != nil {
@@ -699,6 +704,7 @@ func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 		if p.Kids != nil {
 			spaApplyKids(el, p, newRoot)
 		}
+		spaRestoreCsrfToken(tok, el)
 		if p.Attrs != nil {
 			applyAttrs(el, p.Attrs, p.ID, newRoot)
 		}
@@ -707,6 +713,31 @@ func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 			el.Call("remove")
 		}
 	}
+}
+
+// spaDetachCsrfToken removes and returns the server-injected CSRF token input
+// (spaIsServerCsrfInput) when it is the first child of the form el, or a
+// zero js.Value. The token keeps a native POST valid before the client runs
+// and after it: a patch never loses it.
+func spaDetachCsrfToken(el js.Value) js.Value {
+	if tagName(el) != "FORM" {
+		return js.Value{}
+	}
+	first := el.Get("firstChild")
+	if !spaIsServerCsrfInput(spaJSDOM(first)) {
+		return js.Value{}
+	}
+	el.Call("removeChild", first)
+	return first
+}
+
+// spaRestoreCsrfToken puts a token detached by spaDetachCsrfToken back as the
+// first child of form (the patched form, or the form that replaced it).
+func spaRestoreCsrfToken(tok, form js.Value) {
+	if !tok.Truthy() || !form.Truthy() || tagName(form) != "FORM" {
+		return
+	}
+	form.Call("insertBefore", tok, form.Get("firstChild"))
 }
 
 // spaReplaceNode replaces el itself with a node built from the new tree (a

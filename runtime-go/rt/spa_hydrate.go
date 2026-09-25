@@ -153,6 +153,9 @@ func spaHydrationParity(node spaDOM, v *VNode) (bool, string) {
 		return true, ""
 	}
 	dom := node.FirstChild()
+	if v.Tag == "form" {
+		dom = spaSkipServerCsrfInput(dom)
+	}
 	for _, s := range spaSSRSlots(v) {
 		if dom == nil {
 			return false, "server DOM has fewer children at " + v.SkyID
@@ -187,6 +190,9 @@ func spaHydrateTextRuns(node spaDOM, v *VNode) {
 		return
 	}
 	dom := node.FirstChild()
+	if v.Tag == "form" {
+		dom = spaSkipServerCsrfInput(dom)
+	}
 	for _, s := range spaSSRSlots(v) {
 		if dom == nil {
 			return
@@ -224,4 +230,45 @@ func spaChildrenContainRaw(children []VNode) bool {
 		}
 	}
 	return false
+}
+
+// spaServerCsrfFieldName is the form field the server injects into every
+// `<form method="post">` of an HTML response (injectCsrfIntoForms, rt.go) and
+// the CSRF middleware reads back for a native form POST (csrf_middleware.go).
+const spaServerCsrfFieldName = "__sky_csrf"
+
+// spaIsServerCsrfInput reports whether n is the CSRF token input the server
+// injected into a form: exactly `<input type="hidden" name="__sky_csrf">`
+// with no sky-id (the renderer stamps a sky-id on every element it writes, so
+// an input from the client tree always has one).
+//
+// The input is not part of the rendered tree, but it is part of the served
+// page on purpose: before the wasm client runs (a slow load, JS disabled, the
+// wasm failed) a submit is a native POST, and the token is what lets it pass
+// the CSRF check instead of a 403. So the hydration walk steps over it, and
+// the client keeps it in the form when it patches the form
+// (spaDetachCsrfToken, dom_render_wasm.go).
+func spaIsServerCsrfInput(n spaDOM) bool {
+	if n == nil || n.NodeType() != 1 || n.Tag() != "input" {
+		return false
+	}
+	if t, _ := n.Attr("type"); t != "hidden" {
+		return false
+	}
+	if nm, _ := n.Attr("name"); nm != spaServerCsrfFieldName {
+		return false
+	}
+	_, hasID := n.Attr("sky-id")
+	return !hasID
+}
+
+// spaSkipServerCsrfInput steps over the server's CSRF token input when it is
+// `first`, the first child of a form (where injectCsrfIntoForms puts it). Any
+// other position, or any other input, is not skipped: parity still refuses a
+// server DOM that holds a node the client tree does not.
+func spaSkipServerCsrfInput(first spaDOM) spaDOM {
+	if spaIsServerCsrfInput(first) {
+		return first.NextSibling()
+	}
+	return first
 }
