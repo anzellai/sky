@@ -575,8 +575,7 @@ impl Analysis {
                 let body = resolved.bodies.get(&o.owner)?;
                 typer
                     .body_types_annotated(o.owner, body)
-                    .locals
-                    .get(l)
+                    .local(*l)
                     .map(|t| t.render_pretty())
             }
             // A Go-FFI symbol (`Uuid.newString`): render the pinned HM signature
@@ -917,11 +916,7 @@ impl Analysis {
         let ty = match &cand.res {
             Res::Local(l) => {
                 let body = resolved.bodies.get(&cand.owner)?;
-                typer
-                    .body_types_annotated(cand.owner, body)
-                    .locals
-                    .get(l)
-                    .cloned()
+                typer.body_types_annotated(cand.owner, body).local(*l)
             }
             Res::Def(d) => typer.value_sig(*d).map(|s| s.ty.clone()),
             _ => None,
@@ -1857,7 +1852,7 @@ impl Analysis {
                 let bt = body_cache
                     .entry(binder.owner)
                     .or_insert_with(|| typer.body_types_annotated(binder.owner, obody));
-                if let Some(ty) = bt.locals.get(&binder.local).cloned() {
+                if let Some(ty) = bt.local(binder.local) {
                     hints.push(type_hint(text, e, &ty.render_pretty()));
                 }
             }
@@ -2323,17 +2318,17 @@ fn field_info(typer: &Typer, resolved: &ResolveResult, o: &FieldOcc) -> FieldInf
     };
     let bt = typer.body_types_annotated(o.owner, body);
     let record = match &o.recv {
-        FieldRecv::Access(e) | FieldRecv::Record(e) => bt.exprs.get(e).cloned(),
+        FieldRecv::Access(e) | FieldRecv::Record(e) => bt.expr(*e),
         // `.f : record -> field` — the record is the argument, the field the result.
-        FieldRecv::Accessor(e) => match bt.exprs.get(e) {
+        FieldRecv::Accessor(e) => match bt.expr(*e) {
             Some(Ty::Fun(arg, res)) => {
-                info.field = Some((**res).clone());
-                Some((**arg).clone())
+                info.field = Some(*res);
+                Some(*arg)
             }
             _ => None,
         },
         FieldRecv::Pattern { local, fields } => {
-            info.field = bt.locals.get(local).cloned();
+            info.field = bt.local(*local);
             info.names = fields.iter().map(|n| n.as_str().to_string()).collect();
             return info;
         }

@@ -107,7 +107,7 @@ impl SkyDb for ScopedDb<'_> {
     fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports> {
         self.inner.module_exports(m)
     }
-    fn resolve(&self, m: ModuleId) -> Rc<hir::ResolveResult> {
+    fn resolve(&self, m: ModuleId) -> std::sync::Arc<hir::ResolveResult> {
         self.inner.resolve(m)
     }
     /// The narrowed set — the one method that differs.

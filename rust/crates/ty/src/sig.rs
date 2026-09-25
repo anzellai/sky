@@ -298,8 +298,14 @@ impl World {
         for m in db.module_ids() {
             let resolved = db.resolve(m);
             for body in resolved.bodies.values() {
+                // Only the argument types of calls to UNANNOTATED defs are read
+                // below, so only those are read back (see `infer_def_selected`).
+                let (want_e, want_l) = call_arg_ids(body, |f| !self.value_sigs.contains_key(&f));
+                if want_e.is_empty() {
+                    continue;
+                }
                 let mut infer = Infer::new(self, db).with_inferred(true);
-                let (_r, _s, exprs, locals) = infer.infer_def_typed(body);
+                let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
                 for (_eid, expr) in body.exprs.iter() {
                     let (callee, args) = match expr {
                         hir::Expr::Call(c, a) => (*c, a),
@@ -350,6 +356,39 @@ impl World {
     }
 }
 
+/// The expression ids of every argument of a direct call `f a b …` in `body`
+/// whose callee `f` is a top-level def accepted by `want`, plus the local ids of
+/// the arguments that are a bare local reference — exactly the entries the two
+/// call-site harvests read from a caller's typed table.
+fn call_arg_ids(
+    body: &hir::Body,
+    want: impl Fn(DefId) -> bool,
+) -> (
+    std::collections::HashSet<hir::ExprId>,
+    std::collections::HashSet<hir::LocalId>,
+) {
+    let mut exprs = std::collections::HashSet::new();
+    let mut locals = std::collections::HashSet::new();
+    for (_, expr) in body.exprs.iter() {
+        let hir::Expr::Call(c, args) = expr else {
+            continue;
+        };
+        let hir::Expr::Var(hir::Res::Def(f)) = &body.exprs[*c] else {
+            continue;
+        };
+        if !want(*f) {
+            continue;
+        }
+        for arg in args {
+            exprs.insert(*arg);
+            if let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*arg] {
+                locals.insert(*l);
+            }
+        }
+    }
+    (exprs, locals)
+}
+
 /// Per-callee variant of the call-site harvest (see
 /// [`World::harvest_callsite_param_records`]) — the CONCRETE record each caller
 /// passes at each param position of a single `callee`. The salsa lowering path
@@ -373,8 +412,9 @@ pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) 
             if !calls_it {
                 continue;
             }
+            let (want_e, want_l) = call_arg_ids(body, |f| f == callee);
             let mut infer = Infer::new(world, db).with_inferred(true);
-            let (_r, _s, exprs, locals) = infer.infer_def_typed(body);
+            let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
             for (_eid, expr) in body.exprs.iter() {
                 let (c, args) = match expr {
                     hir::Expr::Call(c, a) => (*c, a),

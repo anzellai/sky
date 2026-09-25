@@ -107,7 +107,7 @@ pub struct SourceDb {
     kernel: HashMap<String, String>,
     defs: RefCell<DefTable>,
     /// Memoised `resolve(m)`. Invalidated by `add_module` per the rule above.
-    resolved: RefCell<HashMap<ModuleId, Rc<crate::ResolveResult>>>,
+    resolved: RefCell<HashMap<ModuleId, std::sync::Arc<crate::ResolveResult>>>,
     /// (hits, misses) — observability for the memo, so a test can *prove* the
     /// memo memoises rather than asserting it. Not part of the db's value.
     resolve_hits: std::cell::Cell<u64>,
@@ -296,10 +296,12 @@ pub trait SkyDb {
     /// `skydb::SkyDatabase` routes this to the `#[salsa::tracked]` `resolve_query`
     /// (so the parse/exports → resolve dependency edges are captured for
     /// incremental invalidation); the eager [`SourceDb`] recomputes on demand.
-    /// Returned behind `Rc` so both backends share one owning shape (the tracked
-    /// query clones out of its memo, `SourceDb` computes fresh), mirroring
-    /// [`SkyDb::module_exports`].
-    fn resolve(&self, m: ModuleId) -> Rc<crate::ResolveResult>;
+    /// Returned behind `Arc` so both backends share one owning shape and a call
+    /// is a reference-count bump: the tracked query memoises the `Arc` itself,
+    /// `SourceDb` caches it. (It used to deep-clone the memo on every call —
+    /// every body of the module — and the type-name resolver calls this once per
+    /// type reference, so a large module paid O(references × module size).)
+    fn resolve(&self, m: ModuleId) -> std::sync::Arc<crate::ResolveResult>;
     /// All registered module ids, in insertion order (deterministic, L4).
     fn module_ids(&self) -> Vec<ModuleId>;
     /// Mint / recover the stable `DefId` for `(module, name, kind)` — the
@@ -329,7 +331,7 @@ impl SkyDb for SourceDb {
     fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports> {
         SourceDb::module_exports(self, m)
     }
-    fn resolve(&self, m: ModuleId) -> Rc<crate::ResolveResult> {
+    fn resolve(&self, m: ModuleId) -> std::sync::Arc<crate::ResolveResult> {
         // Memoised per module — see the measurement + invalidation rule on
         // `SourceDb` and `SourceDb::add_module`. `resolve` does not re-enter
         // `resolve` (it reaches other modules only through `module_exports` /
@@ -341,7 +343,7 @@ impl SkyDb for SourceDb {
             return r.clone();
         }
         self.resolve_misses.set(self.resolve_misses.get() + 1);
-        let r = Rc::new(crate::resolve::resolve(self, m));
+        let r = std::sync::Arc::new(crate::resolve::resolve(self, m));
         self.resolved.borrow_mut().insert(m, r.clone());
         r
     }
@@ -375,7 +377,7 @@ mod resolve_memo_tests {
         for _ in 0..10 {
             let b = SkyDb::resolve(&db, m);
             // Same memo entry, not a recomputation.
-            assert!(Rc::ptr_eq(&a, &b));
+            assert!(std::sync::Arc::ptr_eq(&a, &b));
         }
         assert_eq!(
             db.resolve_memo_stats(),
@@ -411,7 +413,7 @@ mod resolve_memo_tests {
 
         let after = SkyDb::resolve(&db, m);
         assert!(
-            !Rc::ptr_eq(&before, &after),
+            !std::sync::Arc::ptr_eq(&before, &after),
             "stale memo served after an overwrite"
         );
         let names: Vec<String> = after
@@ -449,7 +451,7 @@ mod resolve_memo_tests {
             "dependent App was not invalidated when its dependency Lib was overwritten"
         );
         let app_after = SkyDb::resolve(&db, app);
-        assert!(!Rc::ptr_eq(&app_before, &app_after));
+        assert!(!std::sync::Arc::ptr_eq(&app_before, &app_after));
     }
 
     /// Adding a NEW module invalidates dependents whose import of that name had

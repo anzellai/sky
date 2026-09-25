@@ -349,8 +349,7 @@ fn def_of(db: &SkyDatabase, m: ModuleId, name: &str) -> DefId {
 fn project_bt(bt: &ty::BodyTypes) -> String {
     let mut s = format!("result {:?}\n", bt.result);
     let mut es: Vec<(String, String)> = bt
-        .exprs
-        .iter()
+        .exprs()
         .map(|(k, v)| (format!("{k:?}"), format!("{v:?}")))
         .collect();
     es.sort();
@@ -358,8 +357,7 @@ fn project_bt(bt: &ty::BodyTypes) -> String {
         s += &format!("expr {k} = {v}\n");
     }
     let mut ls: Vec<(String, String)> = bt
-        .locals
-        .iter()
+        .locals()
         .map(|(k, v)| (format!("{k:?}"), format!("{v:?}")))
         .collect();
     ls.sort();

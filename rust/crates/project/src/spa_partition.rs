@@ -2221,7 +2221,7 @@ fn classify_update_body(
             &ctx,
             model_local,
             &src,
-            &types.locals,
+            &types,
             branches,
         );
     }
@@ -2253,7 +2253,7 @@ fn classify_case_arms(
     ctx: &CollectCtx,
     model_local: Option<LocalId>,
     src: &str,
-    locals: &HashMap<LocalId, ty::Ty>,
+    locals: &ty::BodyTypes,
     out: &mut Vec<BranchVerdict>,
 ) {
     let facts: Vec<ArmFacts> = arms
@@ -4842,7 +4842,7 @@ fn msg_arg_field_tys(
     body: &Body,
     pat: PatId,
     src: &str,
-    locals: &HashMap<LocalId, ty::Ty>,
+    locals: &ty::BodyTypes,
 ) -> Vec<ModelFieldTy> {
     let mut out: Vec<ModelFieldTy> = Vec::new();
     if let Pattern::Ctor { args, .. } = &body.pats[pat] {
@@ -4853,12 +4853,8 @@ fn msg_arg_field_tys(
     out
 }
 
-fn field_for_local(
-    name: String,
-    local: Option<LocalId>,
-    locals: &HashMap<LocalId, ty::Ty>,
-) -> ModelFieldTy {
-    let ty = local.and_then(|l| locals.get(&l)).cloned();
+fn field_for_local(name: String, local: Option<LocalId>, locals: &ty::BodyTypes) -> ModelFieldTy {
+    let ty = local.and_then(|l| locals.local(l));
     let mut f = match &ty {
         Some(t) => field_ty_codec(t),
         None => ModelFieldTy {
@@ -4876,7 +4872,7 @@ fn collect_binder_fields(
     body: &Body,
     pat: PatId,
     src: &str,
-    locals: &HashMap<LocalId, ty::Ty>,
+    locals: &ty::BodyTypes,
     out: &mut Vec<ModelFieldTy>,
 ) {
     match &body.pats[pat] {

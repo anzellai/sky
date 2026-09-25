@@ -8,12 +8,14 @@ use crate::dictkey;
 use crate::exhaustive;
 use crate::infer::Infer;
 use crate::sig::World;
+use crate::tytable::{TyRef, TyTable, TyTableBuilder};
 use crate::{Scheme, Ty};
 use base::{DefId, ModuleId, Span};
 use diagnostics::{Code, Diagnostic, Severity};
 use hir::{Body, ExprId, LocalId};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// The kind of type-error emitted (all currently map to a unify clash).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -57,6 +59,12 @@ pub struct CheckOutput {
 /// a salsa output (recompute-on-demand is fine; the lowerer is not yet a query),
 /// but derives `Clone` so the trait accessor can hand an owned copy back out of
 /// the memo, mirroring `SkyDb::resolve`'s `Rc`-clone.
+///
+/// The per-expression and per-local types are stored hash-consed in a
+/// [`TyTable`] (see `tytable.rs` for the measurement that motivates it) behind
+/// an `Arc`, so a clone is cheap and a table costs O(distinct types), not
+/// O(sum of type sizes). [`BodyTypes::expr`] / [`BodyTypes::local`] rebuild the
+/// stored owned `Ty`, so every reader sees exactly the value inference produced.
 #[derive(Default, Clone)]
 pub struct BodyTypes {
     pub result: Option<Ty>,
@@ -67,8 +75,85 @@ pub struct BodyTypes {
     /// `result` alone. STRICTLY ADDITIVE + tooling-only: the lowerer reads
     /// `result`/`exprs`/`locals` and never this field, so codegen is unchanged.
     pub signature: Option<Ty>,
-    pub exprs: HashMap<ExprId, Ty>,
-    pub locals: HashMap<LocalId, Ty>,
+    tables: Arc<BodyTables>,
+}
+
+#[derive(Default)]
+struct BodyTables {
+    exprs: HashMap<ExprId, TyRef>,
+    locals: HashMap<LocalId, TyRef>,
+    table: TyTable,
+}
+
+impl BodyTypes {
+    /// Build a table from inference's owned per-expression / per-local maps,
+    /// interning every type into one shared [`TyTable`].
+    pub fn new(
+        result: Option<Ty>,
+        signature: Option<Ty>,
+        exprs: HashMap<ExprId, Ty>,
+        locals: HashMap<LocalId, Ty>,
+    ) -> Self {
+        let mut b = TyTableBuilder::new();
+        // Intern in a fixed key order, so the table layout is deterministic
+        // (the values read back are identical in any order).
+        let mut es: Vec<(ExprId, Ty)> = exprs.into_iter().collect();
+        es.sort_by_key(|(k, _)| u32::from(k.into_raw()));
+        let exprs = es.iter().map(|(k, t)| (*k, b.intern(t))).collect();
+        let mut ls: Vec<(LocalId, Ty)> = locals.into_iter().collect();
+        ls.sort_by_key(|(k, _)| k.0);
+        let locals = ls.iter().map(|(k, t)| (*k, b.intern(t))).collect();
+        BodyTypes {
+            result,
+            signature,
+            tables: Arc::new(BodyTables {
+                exprs,
+                locals,
+                table: b.finish(),
+            }),
+        }
+    }
+
+    /// The inferred type of expression `e`, if one was recorded.
+    pub fn expr(&self, e: ExprId) -> Option<Ty> {
+        let t = &self.tables;
+        t.exprs.get(&e).map(|r| t.table.get(*r))
+    }
+
+    /// The inferred type of local `l`, if one was recorded.
+    pub fn local(&self, l: LocalId) -> Option<Ty> {
+        let t = &self.tables;
+        t.locals.get(&l).map(|r| t.table.get(*r))
+    }
+
+    /// The head name of expression `e`'s type when it is a nominal application
+    /// (`Ty::App(name, _)`) — a cheap test that does not rebuild the arguments.
+    pub fn expr_app_name(&self, e: ExprId) -> Option<&base::Name> {
+        let t = &self.tables;
+        t.exprs.get(&e).and_then(|r| t.table.app_name(*r))
+    }
+
+    /// Every recorded expression type (unordered).
+    pub fn exprs(&self) -> impl Iterator<Item = (ExprId, Ty)> + '_ {
+        let t = &self.tables;
+        t.exprs.iter().map(|(k, r)| (*k, t.table.get(*r)))
+    }
+
+    /// Every recorded local type (unordered).
+    pub fn locals(&self) -> impl Iterator<Item = (LocalId, Ty)> + '_ {
+        let t = &self.tables;
+        t.locals.iter().map(|(k, r)| (*k, t.table.get(*r)))
+    }
+
+    /// Number of recorded expression types.
+    pub fn expr_count(&self) -> usize {
+        self.tables.exprs.len()
+    }
+
+    /// Distinct type nodes held by this table — its memory measure.
+    pub fn distinct_type_nodes(&self) -> usize {
+        self.tables.table.node_count()
+    }
 }
 
 /// A reusable typed view of a whole program (stdlib + deps + entry). The world
@@ -113,12 +198,7 @@ impl<'a> Typer<'a> {
             .with_inferred(true)
             .with_expected(self.world.value_sigs.get(&def).cloned());
         let (result, signature, exprs, locals) = infer.infer_def_typed(body);
-        BodyTypes {
-            result,
-            signature,
-            exprs,
-            locals,
-        }
+        BodyTypes::new(result, signature, exprs, locals)
     }
 
     /// The declared/derived scheme for a top-level value def, if known.

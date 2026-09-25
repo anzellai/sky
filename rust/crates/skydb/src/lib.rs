@@ -178,8 +178,12 @@ impl ResolveDb for SkyDatabase {
 /// `module_exports` is: `file` carries the invalidation edge, `module` pins the
 /// `ModuleId` the interned `DefKey`s mint under.
 #[salsa::tracked(no_eq)]
-pub fn resolve_query(db: &dyn ResolveDb, module: ModuleId, _file: SourceFile) -> ResolveResult {
-    hir::resolve(db.sky_db(), module)
+pub fn resolve_query(
+    db: &dyn ResolveDb,
+    module: ModuleId,
+    _file: SourceFile,
+) -> std::sync::Arc<ResolveResult> {
+    std::sync::Arc::new(hir::resolve(db.sky_db(), module))
 }
 
 /// `type_world` as a `#[salsa::tracked]` query (Stage D-2 — doc 01's `infer`
@@ -607,12 +611,12 @@ impl SkyDb for SkyDatabase {
     fn module_exports(&self, m: ModuleId) -> Rc<ModuleExports> {
         Rc::new(module_exports(self, m, self.modules[m.index() as usize].file).clone())
     }
-    fn resolve(&self, m: ModuleId) -> Rc<ResolveResult> {
+    fn resolve(&self, m: ModuleId) -> std::sync::Arc<ResolveResult> {
         // Salsa build path: route to the tracked `resolve_query` so the
         // parse/exports → resolve edges are memoised + invalidated natively.
         // Clone out of the memo into an `Rc` (the shared owning shape both
         // backends return), exactly like `module_exports` above.
-        Rc::new(resolve_query(self, m, self.modules[m.index() as usize].file).clone())
+        resolve_query(self, m, self.modules[m.index() as usize].file).clone()
     }
     fn module_ids(&self) -> Vec<ModuleId> {
         (0..self.modules.len() as u32).map(ModuleId).collect()

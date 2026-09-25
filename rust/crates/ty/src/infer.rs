@@ -212,11 +212,88 @@ impl<'a> Infer<'a> {
         std::collections::HashMap<ExprId, Ty>,
         std::collections::HashMap<LocalId, Ty>,
     ) {
-        self.record_exprs = true;
-        let root = match body.root {
-            Some(r) => r,
-            None => return (None, None, Default::default(), Default::default()),
+        let Some((v, param_vars)) = self.infer_def_vars(body) else {
+            return (None, None, Default::default(), Default::default());
         };
+        let result = self.read_back(v);
+        // Full inferred signature: fold the (read-back) top-level param types over
+        // the result to recover the arrow spine `p0 -> … -> result`. `read_back`
+        // only path-compresses the union-find + walks a local `seen` set — it does
+        // NOT touch `expr_vars`/`local_vars`, so the per-expr/per-local tables
+        // recorded below are byte-identical whether or not this runs. Tooling-only.
+        let signature = {
+            let mut sig = result.clone();
+            for &pv in param_vars.iter().rev() {
+                let pt = self.read_back(pv);
+                sig = Ty::Fun(Box::new(pt), Box::new(sig));
+            }
+            sig
+        };
+        let mut exprs = std::collections::HashMap::new();
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        for (e, tv) in recorded {
+            let t = self.read_back(tv);
+            exprs.insert(e, t);
+        }
+        let mut locals = std::collections::HashMap::new();
+        let recorded_locals: Vec<(LocalId, TyVarId)> = std::mem::take(&mut self.local_vars);
+        for (lid, tv) in recorded_locals {
+            let t = self.read_back(tv);
+            locals.insert(lid, t);
+        }
+        (Some(result), Some(signature), exprs, locals)
+    }
+
+    /// Infer a body exactly as [`Infer::infer_def_typed`] does, but read back
+    /// ONLY the recorded types of the expressions in `exprs` and the locals in
+    /// `locals`. Read-back is pure over the solved union-find (it only
+    /// path-compresses), so each returned entry is identical to the one
+    /// `infer_def_typed` records; the other entries are never built.
+    ///
+    /// For the call-site harvests, which infer a caller only to read the types
+    /// of a few call arguments. Reading back every expression there cost
+    /// O(sum of expression type sizes) per caller, which a large generated
+    /// module makes quadratic (a `Codec.object` pipeline's step types each
+    /// carry the whole N-field constructor).
+    pub fn infer_def_selected(
+        &mut self,
+        body: &Body,
+        exprs: &std::collections::HashSet<ExprId>,
+        locals: &std::collections::HashSet<LocalId>,
+    ) -> (
+        std::collections::HashMap<ExprId, Ty>,
+        std::collections::HashMap<LocalId, Ty>,
+    ) {
+        let mut out_e = std::collections::HashMap::new();
+        let mut out_l = std::collections::HashMap::new();
+        if self.infer_def_vars(body).is_none() {
+            return (out_e, out_l);
+        }
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        for (e, tv) in recorded {
+            if exprs.contains(&e) {
+                let t = self.read_back(tv);
+                out_e.insert(e, t);
+            }
+        }
+        let recorded_locals: Vec<(LocalId, TyVarId)> = std::mem::take(&mut self.local_vars);
+        for (lid, tv) in recorded_locals {
+            if locals.contains(&lid) {
+                let t = self.read_back(tv);
+                out_l.insert(lid, t);
+            }
+        }
+        (out_e, out_l)
+    }
+
+    /// The inference half of [`Infer::infer_def_typed`]: type the params, seed
+    /// them from the expected scheme (tooling path), infer the body, and unify
+    /// the expected result. Returns the body's result var and the param vars;
+    /// every expression / local var is recorded for read-back. `None` for a
+    /// bodyless def.
+    fn infer_def_vars(&mut self, body: &Body) -> Option<(TyVarId, Vec<TyVarId>)> {
+        self.record_exprs = true;
+        let root = body.root?;
         // Type + bind the top-level params first, so references in the body pick
         // up the same type-var and the locals table carries their inferred type.
         let param_pats: Vec<PatId> = body.params.clone();
@@ -257,33 +334,7 @@ impl<'a> Infer<'a> {
         if let Some(ev) = expected_result {
             self.unify(v, ev);
         }
-        let result = self.read_back(v);
-        // Full inferred signature: fold the (read-back) top-level param types over
-        // the result to recover the arrow spine `p0 -> … -> result`. `read_back`
-        // only path-compresses the union-find + walks a local `seen` set — it does
-        // NOT touch `expr_vars`/`local_vars`, so the per-expr/per-local tables
-        // recorded below are byte-identical whether or not this runs. Tooling-only.
-        let signature = {
-            let mut sig = result.clone();
-            for &pv in param_vars.iter().rev() {
-                let pt = self.read_back(pv);
-                sig = Ty::Fun(Box::new(pt), Box::new(sig));
-            }
-            sig
-        };
-        let mut exprs = std::collections::HashMap::new();
-        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
-        for (e, tv) in recorded {
-            let t = self.read_back(tv);
-            exprs.insert(e, t);
-        }
-        let mut locals = std::collections::HashMap::new();
-        let recorded_locals: Vec<(LocalId, TyVarId)> = std::mem::take(&mut self.local_vars);
-        for (lid, tv) in recorded_locals {
-            let t = self.read_back(tv);
-            locals.insert(lid, t);
-        }
-        (Some(result), Some(signature), exprs, locals)
+        Some((v, param_vars))
     }
 
     /// Enforce a top-level def's body against its DECLARED annotation (the
@@ -1380,5 +1431,73 @@ impl<'a> Infer<'a> {
         };
         seen.remove(&r);
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hir::SourceDb;
+    use std::collections::HashSet;
+
+    const SRC: &str = "module Main exposing (main)\n\
+        type alias P = { name : String, tags : List String, inner : { a : String, b : ( String, String ) } }\n\
+        type Msg = Go P | Stop\n\
+        mk n = { name = n, tags = [ n, n ], inner = { a = n, b = ( n, n ) } }\n\
+        rename p n = { p | name = n }\n\
+        pick m = case m of\n\
+        \x20   Go p -> p.inner.b\n\
+        \x20   Stop -> ( \"x\", \"y\" )\n\
+        main =\n\
+        \x20   let\n\
+        \x20       p = mk \"a\"\n\
+        \x20       q = rename p \"b\"\n\
+        \x20       f = \\x -> ( x, q.tags )\n\
+        \x20   in\n\
+        \x20   ( pick (Go q), f p.name, [ mk \"c\", q ] )\n";
+
+    /// `infer_def_selected` returns exactly the entries `infer_def_typed`
+    /// records, for the full key set and for a sparse subset.
+    #[test]
+    fn selected_readback_matches_full_readback() {
+        let mut db = SourceDb::new();
+        let m = db.add_module("Main", syntax::parse(SRC, base::FileId(0)));
+        let world = World::build(&db);
+        let resolved = db.resolve(m);
+        assert!(resolved.bodies.len() >= 4, "fixture defs resolved");
+        for (def, body) in resolved.bodies.iter() {
+            let (_, _, all_e, all_l) = Infer::new(&world, &db)
+                .with_self_def(Some(*def))
+                .with_inferred(true)
+                .infer_def_typed(body);
+            let keys_e: HashSet<ExprId> = all_e.keys().copied().collect();
+            let keys_l: HashSet<LocalId> = all_l.keys().copied().collect();
+            let (sel_e, sel_l) = Infer::new(&world, &db)
+                .with_self_def(Some(*def))
+                .with_inferred(true)
+                .infer_def_selected(body, &keys_e, &keys_l);
+            assert_eq!(sel_e, all_e);
+            assert_eq!(sel_l, all_l);
+
+            // Every other expression / local only.
+            let half_e: HashSet<ExprId> = keys_e.iter().copied().step_by(2).collect();
+            let half_l: HashSet<LocalId> = keys_l.iter().copied().step_by(2).collect();
+            let (sub_e, sub_l) = Infer::new(&world, &db)
+                .with_self_def(Some(*def))
+                .with_inferred(true)
+                .infer_def_selected(body, &half_e, &half_l);
+            let want_e: HashMap<ExprId, Ty> = all_e
+                .iter()
+                .filter(|(k, _)| half_e.contains(k))
+                .map(|(k, v)| (*k, v.clone()))
+                .collect();
+            let want_l: HashMap<LocalId, Ty> = all_l
+                .iter()
+                .filter(|(k, _)| half_l.contains(k))
+                .map(|(k, v)| (*k, v.clone()))
+                .collect();
+            assert_eq!(sub_e, want_e);
+            assert_eq!(sub_l, want_l);
+        }
     }
 }

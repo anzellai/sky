@@ -882,6 +882,7 @@ dependencies = [
  "ffi",
  "hir",
  "lower",
+ "nix",
  "pulldown-cmark",
  "serde_json",
  "serde_yaml",
@@ -1431,6 +1432,7 @@ dependencies = [
  "base",
  "diagnostics",
  "hir",
+ "rustc-hash 2.1.3",
  "syntax",
 ]
 
