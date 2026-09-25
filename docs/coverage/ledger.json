@@ -1954,7 +1954,7 @@
         "class": "Asserted",
         "evidence": [
           {
-            "by": ".github/workflows/rust-ci.yml: scripts/doc-examples.sh (`script:scripts/doc-examples.sh` is not harness-registered — no proven falsifier)",
+            "by": ".github/workflows/release.yml: scripts/doc-examples.sh (`script:scripts/doc-examples.sh` is not harness-registered — no proven falsifier)",
             "class": "Asserted",
             "strength": 3
           }
@@ -9150,6 +9150,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
@@ -11713,6 +11718,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -12153,6 +12163,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -12186,6 +12201,11 @@
             "by": "examples/52-blog-analytics (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
@@ -12212,6 +12232,11 @@
             "by": "examples/52-blog-analytics (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
           }
         ],
         "strength": 3
@@ -14168,7 +14193,7 @@
           ]
         },
         "Std.Html": {
-          "count": 73,
+          "count": 72,
           "symbols": [
             "a",
             "area",
@@ -14180,7 +14205,6 @@
             "blockquote",
             "body",
             "br",
-            "button",
             "canvas",
             "code",
             "codeNode",
@@ -14668,8 +14692,8 @@
           ]
         }
       },
-      "count": 731,
-      "pct_of_denominator": 37.2
+      "count": 730,
+      "pct_of_denominator": 37.1
     }
   },
   "units": [
@@ -14677,10 +14701,10 @@
       "db_drivers": [],
       "gate": "apps-bundled",
       "id": "apps:bundled",
-      "modules_imported": 23,
+      "modules_imported": 24,
       "path": "sky-bundled",
-      "refs_generous": 124,
-      "refs_qualified": 119,
+      "refs_generous": 127,
+      "refs_qualified": 121,
       "role": "Layer2",
       "sky_files": 13,
       "sky_toml_sections": []
@@ -14689,10 +14713,10 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 39,
+      "modules_imported": 41,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 249,
-      "refs_qualified": 239,
+      "refs_generous": 252,
+      "refs_qualified": 242,
       "role": "Layer2",
       "sky_files": 149,
       "sky_toml_sections": []
@@ -15835,12 +15859,12 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Std",
-      "modules_imported": 14,
+      "modules_imported": 15,
       "path": "tests/Std",
-      "refs_generous": 105,
-      "refs_qualified": 103,
+      "refs_generous": 137,
+      "refs_qualified": 135,
       "role": "SkySuite",
-      "sky_files": 7,
+      "sky_files": 8,
       "sky_toml_sections": []
     },
     {
