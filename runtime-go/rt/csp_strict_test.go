@@ -197,11 +197,12 @@ func TestLegacyConsoleShellHasNoInlineScript(t *testing.T) {
 // and every non-test Go source in the runtime, is scanned.
 func TestRuntimeJSHasNoEval(t *testing.T) {
 	forbidden := []string{"new Function", "eval(", "data-sky-eval", `setTimeout("`, `setInterval("`, "document.write("}
+	// webviewSharedJS is checked in csp_strict_webview_test.go: webview.go is
+	// `cgo && darwin` only, so the constant does not exist on Linux CI.
 	scripts := map[string]string{
-		"liveClientJS":    liveClientJS,
-		"SpaBootJS":       SpaBootJS,
-		"consoleShellJS":  consoleShellJS,
-		"webviewSharedJS": webviewSharedJS,
+		"liveClientJS":   liveClientJS,
+		"SpaBootJS":      SpaBootJS,
+		"consoleShellJS": consoleShellJS,
 	}
 	for name, js := range scripts {
 		for _, f := range forbidden {
