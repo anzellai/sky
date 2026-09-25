@@ -299,6 +299,47 @@ try {
     await page.close();
   }
 
+  // ── Hydration of shapes the HTML parser restructured (a real app) ────
+  // /nested holds a paragraph whose link label is an `el` (Std.Ui emitted
+  // <p><a><div>, and the parser closed the <p> at the <div>: "server DOM has
+  // fewer children at …#p.1#a"), block elements inside a paragraph, and a
+  // sign-in Ui.form. The request carries the CSRF cookie, as every page load
+  // after a visitor's first does: the server used to add a hidden
+  // `__sky_csrf` input as the form's first child ("tag differs at
+  // …#form.0#div: server <input>, client <div>"). Both made the client rebuild.
+  if (!LIVE) {
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "__sky_csrf", value: "e2e-csrf-token", url: BASE }]);
+    const page = await ctx.newPage();
+    const warn = [];
+    watch(page, warn);
+    let served = "";
+    await page.route(BASE + "/nested", async (route) => {
+      const resp = await route.fetch();
+      served = await resp.text();
+      const mark = `<script>for (const s of ["#nest-cookie", "#nest-blocks", "#nest-form"]) { const n = document.querySelector(s); if (n) n.__skySsr = 1; }</script>`;
+      await route.fulfill({ response: resp, body: served.replace(`<script src="/wasm_exec.js">`, mark + `<script src="/wasm_exec.js">`) });
+    });
+    await boot(page, "/nested");
+    check(served.includes("data-sky-ssr") && served.includes("nest-form"), "/nested is server-rendered");
+    check(!warn.some((w) => w.includes("hydrate skipped")),
+      "a link-with-el-label paragraph, blocks in a paragraph and a form served with the CSRF cookie hydrate", warn.join(" | "));
+    const kept = await page.evaluate(() => ["#nest-cookie", "#nest-blocks", "#nest-form"].every((s) => document.querySelector(s)?.__skySsr === 1));
+    check(kept, "hydration keeps the server-rendered paragraph and form nodes");
+    const inPara = await page.evaluate(() => {
+      const a = document.querySelector("#nest-cookie a");
+      return !!a && a.closest("p")?.id === "nest-cookie" && a.textContent === "privacy policy";
+    });
+    check(inPara, "the link and its label stay inside the paragraph");
+    await page.locator("#nest-form input[name=email]").fill("a@b.c");
+    await page.locator("#nest-form input[name=password]").fill("pw");
+    await page.locator("#nest-form button[type=submit]").click();
+    await settle(page);
+    check((await logText(page)).includes("SignIn:a@b.c"), "the hydrated sign-in form submits to update", await logText(page));
+    check(warn.length === 0, "no [sky.spa] warnings or page errors on /nested", warn.join(" | "));
+    await ctx.close();
+  }
+
   // ── Hydration parity: a server page that differs is rebuilt ──────────
   if (!LIVE) {
     const page = await browser.newPage();

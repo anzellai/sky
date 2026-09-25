@@ -30,6 +30,12 @@ module Main exposing (main)
 --                  textarea (Input.multiline) all hydrate in place, with no
 --                  "hydrate skipped"; the server nodes survive and the
 --                  select still shows "c" (F5)
+--   /nested   hydration of shapes the HTML parser used to restructure: a link
+--                  whose label is an `el` inside a paragraph (a cookie notice),
+--                  block elements, a heading and a checkbox caption inside a
+--                  paragraph, and a sign-in `Ui.form` with an onSubmit, served
+--                  to a request that carries the CSRF cookie. No "hydrate
+--                  skipped" may be logged.
 --   navs      Back / Forward (popstate) runs onNavigate once per step, on
 --                  Sky.Spa and on Sky.Live alike
 --
@@ -44,6 +50,8 @@ import Std.Ui as Ui exposing (Element)
 import Std.Ui.Input as Input
 import Std.Ui.Keyed as Keyed
 import Std.Ui.Background as Background
+import Std.Ui.Font as Font
+import Std.Ui.Region as Region
 import Std.Html as Html
 import Std.Html.Attributes as HA
 import Std.Html.Events as HE
@@ -52,6 +60,7 @@ type Page
     = Home
     | UserPage String
     | Plain
+    | Nested
     | NotFoundPage
 
 type alias Model =
@@ -94,6 +103,9 @@ type Msg
     | Ime String
     | Toggle
     | Navigated Page
+    | DoSignIn { email : String
+, password : String
+}
 
 
 init : () -> ( Model, Cmd Msg )
@@ -206,6 +218,9 @@ update msg model =
         Navigated p ->
             ( { model | navs = model.navs ++ [ pageName p ] }, Cmd.none )
 
+        DoSignIn creds ->
+            ( logm ("SignIn:" ++ creds.email) model, Cmd.none )
+
 
 pageName : Page -> String
 pageName p =
@@ -219,6 +234,9 @@ pageName p =
 
         Plain ->
             "plain"
+
+        Nested ->
+            "nested"
 
         NotFoundPage ->
             "notfound"
@@ -442,6 +460,9 @@ view model =
                               model.opts))
                 ]
 
+        Nested ->
+            nested model
+
         NotFoundPage ->
             Ui.column [] [ Ui.text "No such page here" ]
 
@@ -461,6 +482,7 @@ app =
         |> App.withRoutes
                [ App.route "/" Home
                , App.route "/plain" Plain
+               , App.route "/nested" Nested
                , App.routeParam "/u/:name" UserPage
                ]
         |> App.withNotFound NotFoundPage
@@ -469,3 +491,71 @@ app =
 
 main =
     App.run app
+
+
+-- /nested: the Std.Ui shapes the HTML parser used to restructure, and a
+-- sign-in form. Each must hydrate in place.
+nested : Model -> Element Msg
+nested model =
+    Ui.column
+        []
+        [ Ui.paragraph
+              [ Ui.htmlAttribute "id" "nest-cookie" ]
+              [ Ui.text "We use one essential cookie. See our "
+              , Ui.link
+                    []
+                    { url = "/u/privacy"
+                    , label =
+                        Ui.el [ Font.underline ] (Ui.text "privacy policy")
+                    }
+              , Ui.text "."
+              ]
+        , Ui.paragraph
+              [ Ui.htmlAttribute "id" "nest-blocks" ]
+              [ Ui.text "a "
+              , Ui.row [] [ Ui.text "row" ]
+              , Ui.column [] [ Ui.text "column" ]
+              , Ui.el [ Region.heading 3 ] (Ui.text "heading")
+              , Ui.paragraph [] [ Ui.text "inner" ]
+              , Ui.button
+                    []
+                    { onPress = Just Toggle, label = Ui.el [] (Ui.text "btn") }
+              , Input.checkbox
+                    []
+                    { onChange = Accept
+                    , icon = \b -> Ui.text (flag b)
+                    , checked = model.accept
+                    , label = Input.labelRight [] (Ui.text "tick")
+                    }
+              , Ui.text " b"
+              ]
+        , Ui.form
+              [ Ui.htmlAttribute "id" "nest-form", Ui.onSubmit DoSignIn ]
+              [ Ui.column
+                    []
+                    [ Ui.el [] (Ui.text "Email")
+                    , Ui.input
+                          [ Ui.name "email"
+                          , Ui.htmlAttribute "type" "email"
+                          , Ui.htmlAttribute "value" ""
+                          ]
+                    ]
+              , Ui.column
+                    []
+                    [ Ui.el [] (Ui.text "Password")
+                    , Ui.input
+                          [ Ui.name "password"
+                          , Ui.htmlAttribute "type" "password"
+                          ]
+                    ]
+              , Ui.el
+                    []
+                    (Ui.html
+                        (Html.button
+                            [ HA.type_ "submit" ]
+                            [ Html.text "Sign in" ]))
+              ]
+        , Ui.el
+              [ Ui.htmlAttribute "id" "log" ]
+              (Ui.text (String.join "," (List.reverse model.log)))
+        ]

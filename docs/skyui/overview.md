@@ -117,6 +117,8 @@ Ui.text   String                       -- bare text (no wrapping element)
 Ui.none                                -- empty placeholder (`Element msg`)
 ```
 
+**Markup the HTML parser keeps.** Std.Ui never emits a nesting the browser's HTML parser restructures. Inside a `Ui.paragraph` (at any depth, for example in a link label or a checkbox caption) a block element renders as a `<span>` with the same inline style, so the box on screen does not change. A link inside a link and a button inside a button render the inner one as a `<span>`, and a form inside a form or a heading directly inside a heading renders the inner one as a `<div>`. A heading or landmark that loses its tag keeps its role (`role="heading" aria-level`, `role="navigation"`, and so on). Sky.Live, the Sky.Spa server and the Sky.Spa client share this renderer, so the served page hydrates in place.
+
 `row` and `column` use flexbox under the hood, with `gap` driven by `Ui.spacing`. The default flex direction matches the helper name. Mix freely:
 
 ```elm

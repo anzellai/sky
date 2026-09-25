@@ -11,6 +11,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.18 — (unreleased)
+
+- **Sky.Spa SSR pages hydrate in place on a real app again.** Std.Ui no longer emits a nesting the HTML parser restructures: inside a `Ui.paragraph` a block element (for example the `el` label of a `Ui.link`) renders as a `<span>` with the same style, and a nested link, button, form or heading gets a tag the parser keeps. A form rendered by the runtime (a Sky.Spa SSR page) no longer gets the `__sky_csrf` hidden input added to it, which made every page load after the first refuse hydration. Both logged `[sky.spa] SSR hydrate skipped, full rebuild` and threw the server DOM away.
+
 ## v0.25.17 — app-surface soundness sweep: Sky.Live, Sky.Spa, Std.App, Sky.Tui/Cli (2026-09-24)
 
 A patch over v0.25.16. A bug in a Sky.Spa button (a re-rendered row kept sending

@@ -1,0 +1,451 @@
+module Std.UiParserSafeNestingTest exposing (tests)
+
+-- Std.Ui must never emit markup that the HTML parser restructures.
+--
+-- THE BUG. A real web:app app put a link with an `el` label in a paragraph
+-- (a cookie notice: "See our <privacy policy>."):
+--
+--     Ui.paragraph []
+--         [ Ui.text "See our "
+--         , Ui.link [] { url = "/privacy"
+--                      , label = Ui.el [ Font.underline ] (Ui.text "privacy policy") }
+--         , Ui.text "."
+--         ]
+--
+-- Std.Ui emitted `<p><a><div>privacy policy</div></a>.</p>`. A `<div>` start
+-- tag closes an open `<p>` even through the `<a>`, so the browser built
+-- `<p>… <a></a></p><div><a>privacy policy</a></div>.<p></p>`: the link text
+-- left the paragraph, and the DOM no longer matched the tree the renderer
+-- built. On Sky.Spa that refused the SSR hydration of every page ("server DOM
+-- has fewer children at …#p.1#a", a full rebuild on each load); on Sky.Live
+-- every later patch addressed a DOM shape the server never rendered.
+--
+-- THE RULE. Inside a `<p>` (at any depth) Std.Ui emits phrasing tags only; a
+-- block tag becomes a `<span>` with the same inline style, so the box does not
+-- change (every Std.Ui block carries an explicit `display`). A link inside a
+-- link, a button inside a button and a form inside a form become a `<span>` /
+-- `<div>`, and a heading directly inside a heading a `<div>`, because the parser
+-- restructures each of those too. A landmark or heading that loses its tag keeps
+-- its role.
+--
+-- THE CHECK. `violation` is a small model of the HTML parser's restructuring
+-- rules for the tags Std.Ui can emit (the same rules the Go hydrate test pins
+-- against golang.org/x/net/html in runtime-go/rt/spa_hydrate_test.go). The
+-- matrix renders every container primitive around every child primitive
+-- through `Ui.layout` + `Html.render` and asserts the markup has none.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Font as Font
+import Std.Ui.Input as Input
+import Std.Ui.Region as Region
+import Sky.Test as Test exposing (Test)
+
+type Msg
+    = Noop
+    | Picked String
+    | Ticked Bool
+
+
+render : Element Msg -> String
+render el =
+    Html.render (Ui.layout [] el)
+
+
+-- ─── A model of the parser's restructuring rules ─────────────────────
+-- Start tags that close an open <p> ("in body" insertion mode).
+closesP : String -> Bool
+closesP t =
+    List.member
+        t
+        [ "address"
+        , "article"
+        , "aside"
+        , "blockquote"
+        , "center"
+        , "details"
+        , "dialog"
+        , "dir"
+        , "div"
+        , "dl"
+        , "dd"
+        , "dt"
+        , "fieldset"
+        , "figcaption"
+        , "figure"
+        , "footer"
+        , "form"
+        , "h1"
+        , "h2"
+        , "h3"
+        , "h4"
+        , "h5"
+        , "h6"
+        , "header"
+        , "hgroup"
+        , "hr"
+        , "li"
+        , "listing"
+        , "main"
+        , "menu"
+        , "nav"
+        , "ol"
+        , "p"
+        , "plaintext"
+        , "pre"
+        , "search"
+        , "section"
+        , "summary"
+        , "table"
+        , "ul"
+        , "xmp"
+        ]
+
+
+isHeading : String -> Bool
+isHeading t =
+    List.member t [ "h1", "h2", "h3", "h4", "h5", "h6" ]
+
+
+isVoid : String -> Bool
+isVoid t =
+    List.member
+        t
+        [ "area"
+        , "base"
+        , "br"
+        , "col"
+        , "embed"
+        , "hr"
+        , "img"
+        , "input"
+        , "link"
+        , "meta"
+        , "source"
+        , "track"
+        , "wbr"
+        ]
+
+
+firstOf : List String -> String
+firstOf xs =
+    case xs of
+
+        x :: _ ->
+            x
+
+        [] ->
+            ""
+
+
+-- The tag name at the start of the text after a `<`.
+tagName : String -> String
+tagName s =
+    firstOf
+        (String.split
+            "/"
+            (firstOf (String.split ">" (firstOf (String.split " " s)))))
+
+
+-- Pop the stack down to (and including) the innermost `name`; an end tag
+-- with no open element is ignored.
+popTo : String -> List String -> List String
+popTo name stack =
+    if List.member name stack then
+        popToHelp name stack
+
+    else
+        stack
+
+
+popToHelp : String -> List String -> List String
+popToHelp name stack =
+    case stack of
+
+        [] ->
+            []
+
+        t :: rest ->
+            if t == name then
+                rest
+
+            else
+                popToHelp name rest
+
+
+-- Why the parser would restructure a start tag `name` with `stack` open
+-- (innermost first); "" when it would not.
+restructure : String -> List String -> String
+restructure name stack =
+    if closesP name && List.member "p" stack then
+        "<" ++ name ++ "> inside <p>"
+
+    else if name == "a" && List.member "a" stack then
+        "<a> inside <a>"
+
+    else if name == "button" && List.member "button" stack then
+        "<button> inside <button>"
+
+    else if name == "form" && List.member "form" stack then
+        "<form> inside <form>"
+
+    else if isHeading name && isHeading (firstOf stack) then
+        "<" ++ name ++ "> directly inside <" ++ firstOf stack ++ ">"
+
+    else
+        ""
+
+
+walk : List String -> List String -> String
+walk stack pieces =
+    case pieces of
+
+        [] ->
+            ""
+
+        piece :: rest ->
+            if String.startsWith "/" piece then
+                walk (popTo (tagName (String.dropLeft 1 piece)) stack) rest
+
+            else
+                let
+                    name = tagName piece
+                in
+                    if name == "" || String.startsWith "!" piece then
+                        walk stack rest
+
+                    else
+                        let
+                            why = restructure name stack
+                        in
+                            if why /= "" then
+                                why
+
+                            else if isVoid name then
+                                walk stack rest
+
+                            else
+                                walk (name :: stack) rest
+
+
+-- "" when the HTML parser keeps `markup` as written, else the first reason.
+violation : String -> String
+violation markup =
+    walk [] (List.drop 1 (String.split "<" markup))
+
+
+-- ─── The matrix ──────────────────────────────────────────────────────
+containers : List ( String, Element Msg -> Element Msg )
+containers =
+    [ ( "paragraph", \k -> Ui.paragraph [] [ Ui.text "a ", k, Ui.text " b" ] )
+    , ( "link in paragraph"
+      , \k ->
+            Ui.paragraph
+                []
+                [ Ui.text "See "
+                , Ui.link [] { url = "/x", label = k }
+                , Ui.text "."
+                ]
+      )
+    , ( "button in paragraph"
+      , \k ->
+            Ui.paragraph [] [ Ui.button [] { onPress = Just Noop, label = k } ]
+      )
+    , ( "checkbox caption in paragraph"
+      , \k ->
+            Ui.paragraph
+                []
+                [ Input.checkbox
+                      []
+                      { onChange = Ticked
+                      , icon = \_ -> Ui.none
+                      , checked = False
+                      , label = Input.labelRight [] k
+                      }
+                ]
+      )
+    , ( "nearby of an el in paragraph"
+      , \k -> Ui.paragraph [] [ Ui.el [ Ui.below k ] (Ui.text "x") ]
+      )
+    , ( "row in paragraph", \k -> Ui.paragraph [] [ Ui.row [] [ k ] ] )
+    , ( "paragraph in textColumn"
+      , \k -> Ui.textColumn [] [ Ui.paragraph [] [ k ] ]
+      )
+    , ( "link", \k -> Ui.link [] { url = "/x", label = k } )
+    , ( "button", \k -> Ui.button [] { onPress = Just Noop, label = k } )
+    , ( "form", \k -> Ui.form [] [ k ] )
+    , ( "heading", \k -> Ui.el [ Region.heading 2 ] k )
+    , ( "column", \k -> Ui.column [] [ k ] )
+    ]
+
+
+children : List ( String, Element Msg )
+children =
+    [ ( "el", Ui.el [ Font.underline ] (Ui.text "c") )
+    , ( "row", Ui.row [] [ Ui.text "c" ] )
+    , ( "column", Ui.column [] [ Ui.text "c" ] )
+    , ( "wrappedRow", Ui.wrappedRow [] [ Ui.text "c" ] )
+    , ( "grid", Ui.grid [] [ Ui.text "c" ] )
+    , ( "paragraph", Ui.paragraph [] [ Ui.text "c" ] )
+    , ( "textColumn", Ui.textColumn [] [ Ui.text "c" ] )
+    , ( "form", Ui.form [] [ Ui.text "c" ] )
+    , ( "mainContent", Ui.el [ Region.mainContent ] (Ui.text "c") )
+    , ( "navigation", Ui.el [ Region.navigation ] (Ui.text "c") )
+    , ( "footer", Ui.el [ Region.footer ] (Ui.text "c") )
+    , ( "aside", Ui.el [ Region.aside ] (Ui.text "c") )
+    , ( "heading", Ui.el [ Region.heading 3 ] (Ui.text "c") )
+    , ( "link", Ui.link [] { url = "/y", label = Ui.text "c" } )
+    , ( "link with el label"
+      , Ui.link [] { url = "/y", label = Ui.el [] (Ui.text "c") }
+      )
+    , ( "button"
+      , Ui.button [] { onPress = Just Noop, label = Ui.el [] (Ui.text "c") }
+      )
+    , ( "image", Ui.image [] { src = "/i.png", description = "i" } )
+    , ( "input", Ui.input [ Ui.name "q" ] )
+    , ( "Input.text"
+      , Input.text
+            []
+            { onChange = Picked
+            , text = ""
+            , placeholder = Nothing
+            , label = Input.labelAbove [] (Ui.text "Name")
+            }
+      )
+    , ( "Input.multiline"
+      , Input.multiline
+            []
+            { onChange = Picked
+            , text = "t"
+            , placeholder = Nothing
+            , label = Input.labelHidden "notes"
+            , spellcheck = False
+            }
+      )
+    , ( "Input.radio"
+      , Input.radio
+            []
+            { onChange = Picked
+            , options =
+                [ Input.option "a" (Ui.text "A")
+                , Input.option "b" (Ui.text "B")
+                ]
+            , selected = "a"
+            , label = Input.labelAbove [] (Ui.text "Pick")
+            }
+      )
+    , ( "Input.checkbox"
+      , Input.checkbox
+            []
+            { onChange = Ticked
+            , icon = \_ -> Ui.el [] (Ui.text "i")
+            , checked = True
+            , label = Input.labelRight [] (Ui.text "Agree")
+            }
+      )
+    ]
+
+
+matrixTests : List Test
+matrixTests =
+    List.concatMap
+        (\( cName, wrapIn ) ->
+            List.map
+                (\( kName, child ) ->
+                    Test.test
+                        (kName ++ " in " ++ cName)
+                        (\_ -> Test.equal "" (violation (render (wrapIn child)))))
+                children)
+        containers
+
+
+-- The exact shape the real app shipped.
+cookieNotice : Element Msg
+cookieNotice =
+    Ui.paragraph
+        []
+        [ Ui.text "See our "
+        , Ui.link
+              []
+              { url = "/privacy"
+              , label = Ui.el [ Font.underline ] (Ui.text "privacy policy")
+              }
+        , Ui.text "."
+        ]
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui never emits markup the HTML parser restructures"
+          (matrixTests
+              ++ [ Test.test
+                       "the model flags the pre-fix shape (<div> in <a> in <p>)"
+                       (\_ ->
+                           Test.equal
+                               "<div> inside <p>"
+                               (violation
+                                   "<p>See <a href=\"/x\"><div>c</div></a>.</p>"))
+                 , Test.test
+                       "a link label el inside a paragraph is a span with the same flex style"
+                       (\_ ->
+                           Test.isTrue
+                               (String.contains
+                                   "<a href=\"/privacy\" style=\"display: inline;\"><span style=\"display: flex; flex-direction: column; text-decoration: underline;\">privacy policy</span></a>"
+                                   (render cookieNotice)))
+                 , Test.test
+                       "a heading inside a paragraph keeps its heading role and level"
+                       (\_ ->
+                           Test.isTrue
+                               (String.contains
+                                   "aria-level=\"3\""
+                                   (render
+                                       (Ui.paragraph
+                                           []
+                                           [ Ui.el
+                                                 [ Region.heading 3 ]
+                                                 (Ui.text "h")
+                                           ]))))
+                 , Test.test
+                       "a navigation landmark inside a paragraph keeps its role"
+                       (\_ ->
+                           Test.isTrue
+                               (String.contains
+                                   "role=\"navigation\""
+                                   (render
+                                       (Ui.paragraph
+                                           []
+                                           [ Ui.el
+                                                 [ Region.navigation ]
+                                                 (Ui.text "n")
+                                           ]))))
+                 , Test.test
+                       "an el label inside a link OUTSIDE a paragraph is still a <div>"
+                       (\_ ->
+                           Test.isTrue
+                               (String.contains
+                                   "<a href=\"/y\" style=\"display: flex; flex-direction: column;\"><div "
+                                   (render
+                                       (Ui.link
+                                           []
+                                           { url = "/y"
+                                           , label = Ui.el [] (Ui.text "c")
+                                           }))))
+                 , Test.test
+                       "a heading outside a paragraph is still an <h2>"
+                       (\_ ->
+                           Test.isTrue
+                               (String.contains
+                                   "<h2 "
+                                   (render
+                                       (Ui.column
+                                           []
+                                           [ Ui.el
+                                                 [ Region.heading 2 ]
+                                                 (Ui.text "h")
+                                           ]))))
+                 ])
+    ]
