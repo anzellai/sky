@@ -111,6 +111,29 @@ sky build --embed src/Main.sky
 
 `--embed` belongs on `sky build`, not on `sky run` — see below.
 
+**`--timings`** (or `SKY_TIMINGS=1` in the environment) prints a wall-clock
+table of the build's phases to stderr when the build ends: loading the sources,
+parse, canonicalise + typecheck, lower + emit Go, writing `sky-out/`, `go build`,
+and for a client build the split, both legs, the `dist/` bundle and its
+precompression. A split build runs its backend and frontend legs as child
+`sky build`s; each leg prints its own table under its own `== … ==` header, and
+the parent's table gives the wall-clock of each leg. `sky check --timings` works
+the same way. Use it to see where a slow build spends its time before you report
+it.
+
+```bash
+sky build --timings --target web:app src/Main.sky
+```
+
+What a rebuild reuses. Go's build cache keys on content, and Sky's emitted Go
+is deterministic, so an unchanged module is never recompiled. A client build
+keeps each leg's `sky-out/` between builds, so a rebuild whose Go did not change
+does not re-link the backend or the wasm client either. The `.gz` / `.br`
+variants in `dist/` are cached by the SHA-256 of the file they compress (in
+`~/.cache/sky/precompress`, or under `$XDG_CACHE_HOME`), so brotli-11 runs only
+when the wasm bytes change. `sky run` does not write them at all: its backend
+serves the bundle itself and compresses on the fly.
+
 ### `sky spa-split <path> --out <dir> [--build | --target <t>]`
 
 The **explicit Sky.Spa auto-split** generator — the form of the split that

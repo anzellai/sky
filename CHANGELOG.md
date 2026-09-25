@@ -11,6 +11,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.18 — (unreleased)
+
+- **Faster Sky.Spa (`--target web:app`) rebuilds, smaller server binaries.** A
+  rebuild no longer wipes the split legs' `sky-out/`, so an unchanged backend or
+  wasm client is not re-linked. The `.gz` / `.br` bundle variants are cached by
+  content hash, so brotli-11 (the slowest single step of the build) runs only
+  when the wasm changes, and `sky run` skips them (its backend compresses on the
+  fly). The embedded console is compiled without Go inlining: its generated
+  closure chains made the Go compiler emit symbol names of up to 50 MB, which
+  put 179 MB of names into every Sky.Live / Sky.Spa backend binary (229 MB
+  → 46 MB, with a shorter link). New `sky build --timings` / `SKY_TIMINGS=1`
+  prints a per-phase wall-clock table (`docs/tooling/cli.md`).
+
 ## v0.25.17 — app-surface soundness sweep: Sky.Live, Sky.Spa, Std.App, Sky.Tui/Cli (2026-09-24)
 
 A patch over v0.25.16. A bug in a Sky.Spa button (a re-rendered row kept sending

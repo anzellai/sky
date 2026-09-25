@@ -542,3 +542,150 @@ fn web_app_warns_on_a_set_model_field_the_ssr_embed_cannot_round_trip() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Build `dir` with `sky build <args>` under a private cache root and the phase
+/// report on; returns the combined log (asserting success).
+fn build_timed(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = Command::new(SKY)
+        .arg("build")
+        .args(args)
+        .current_dir(dir)
+        .env("XDG_CACHE_HOME", dir.join("xdg"))
+        .env("SKY_TIMINGS", "1")
+        // A Go build cache no other `sky` touches. Sky's own `~/.sky/go-build` is
+        // cleaned whenever a `sky` with a different embedded runtime builds (a
+        // sibling worktree, an installed release), and a clean between the two
+        // builds here would force the re-link this test asserts does not happen.
+        .env("GOCACHE", test_gocache())
+        .output()
+        .expect("run sky build");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "sky build {args:?} failed:\n{log}");
+    log
+}
+
+fn test_gocache() -> std::path::PathBuf {
+    match std::env::var("GOCACHE") {
+        Ok(v) if !v.trim().is_empty() => std::path::PathBuf::from(v),
+        _ => std::env::temp_dir().join("sky-spatarget-gocache"),
+    }
+}
+
+/// The file's inode. `go build` on an up-to-date target only touches it (same
+/// inode, new mtime); a re-link writes a new file, so a new inode.
+#[cfg(unix)]
+fn inode(p: &std::path::Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(p)
+        .map(|m| m.ino())
+        .unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// A no-change rebuild of a `--target web:app` app does no avoidable work:
+///   * the emitted Go of both legs is byte-identical (deterministic codegen,
+///     so Go's content-addressed cache hits),
+///   * neither the native backend nor the wasm client is re-linked (the
+///     restage keeps the legs' `sky-out/`, so `go build` sees them up to date),
+///   * the `.gz` / `.br` bundle variants come from the content-hash cache
+///     instead of re-running gzip / brotli-11,
+///   * the backend binary is not bloated by the console's inlined closure names
+///     (it was 218-229 MB; it is ~46 MB with the console compiled without
+///     inlining).
+/// Before the fix every rebuild wiped `.skyapp/web-app/`, re-linked both legs
+/// and re-ran brotli-11 on the multi-MB wasm (measured: 19 s warm, most of it
+/// brotli). A second part pins the internal `--no-precompress` flag the
+/// `sky run` path passes to its frontend leg.
+///
+/// Heavy (two full web:app builds + a wasm build) — #[ignore]d for the T1
+/// budget; nightly via `--ignored`. Per-commit legs: the `precompress::tests`
+/// cache tests, `tests::restage_keeps_only_the_go_build_outputs` and
+/// `console_gcflags_disable_inlining_unless_the_user_passes_gcflags`.
+#[cfg(unix)]
+#[ignore = "heavy web:app build; nightly via --ignored; per-commit legs: sky precompress::tests + restage_keeps_only_the_go_build_outputs"]
+#[test]
+fn web_app_no_change_rebuild_reuses_outputs() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("rebuild");
+    std::fs::write(dir.join("src").join("Main.sky"), RPC_ERROR_APP).unwrap();
+    let split = dir.join(".skyapp").join("web-app").join(".split");
+    let backend_bin = split.join("backend").join("sky-out").join("app");
+    let wasm = split.join("frontend").join("sky-out").join("main.wasm");
+    let backend_go = split.join("backend").join("sky-out").join("main.go");
+    let frontend_go = split.join("frontend").join("sky-out").join("main.go");
+
+    let first = build_timed(&dir, &["--target", "web:app", "src/Main.sky"]);
+    assert!(
+        first.contains("sky timings"),
+        "SKY_TIMINGS=1 must print the phase report:\n{first}"
+    );
+    let go_b1 = std::fs::read(&backend_go).unwrap();
+    let go_f1 = std::fs::read(&frontend_go).unwrap();
+    let (bin_t1, wasm_t1) = (inode(&backend_bin), inode(&wasm));
+    if String::from_utf8_lossy(&go_b1).contains("sky-app/rt/console_app") {
+        let size = std::fs::metadata(&backend_bin).unwrap().len();
+        assert!(
+            size < 120 * 1024 * 1024,
+            "backend binary is {size} bytes: the console's inlined closure names are back"
+        );
+    }
+
+    let second = build_timed(&dir, &["--target", "web:app", "src/Main.sky"]);
+    assert_eq!(
+        std::fs::read(&backend_go).unwrap(),
+        go_b1,
+        "backend Go must be byte-identical across a no-change rebuild"
+    );
+    assert_eq!(
+        std::fs::read(&frontend_go).unwrap(),
+        go_f1,
+        "frontend Go must be byte-identical across a no-change rebuild"
+    );
+    assert_eq!(
+        inode(&backend_bin),
+        bin_t1,
+        "a no-change rebuild must not re-link the backend:\n{second}"
+    );
+    assert_eq!(
+        inode(&wasm),
+        wasm_t1,
+        "a no-change rebuild must not re-link the wasm client:\n{second}"
+    );
+    assert!(
+        second.contains("precompress gzip -9 (cached)"),
+        "a no-change rebuild must take the .gz from the content cache:\n{second}"
+    );
+    let dist = split.join("frontend").join("dist");
+    let has = |suffix: &str| {
+        std::fs::read_dir(&dist)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().ends_with(suffix))
+    };
+    assert!(has(".wasm.gz"), "the cached .gz must be staged into dist/");
+
+    // `--no-precompress` (what `sky run` passes its frontend leg) stages the
+    // bundle without the `.gz` / `.br` variants.
+    let web = scratch("noprecompress");
+    build_timed(
+        &web,
+        &["--target", "web", "--no-precompress", "src/Main.sky"],
+    );
+    let variants: Vec<String> = std::fs::read_dir(web.join("dist"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".gz") || n.ends_with(".br"))
+        .collect();
+    assert!(
+        variants.is_empty(),
+        "--no-precompress must not write .gz / .br: {variants:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&web);
+}
