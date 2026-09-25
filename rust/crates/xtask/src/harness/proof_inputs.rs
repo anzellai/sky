@@ -672,16 +672,22 @@ fn blob_hashes(root: &Path, files: &BTreeSet<String>) -> Result<BTreeMap<String,
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("git hash-object: {e}"))?;
-    {
-        let mut stdin = child.stdin.take().ok_or("git hash-object: no stdin")?;
-        let list: String = present.iter().map(|f| format!("{f}\n")).collect();
-        stdin
-            .write_all(list.as_bytes())
-            .map_err(|e| format!("git hash-object stdin: {e}"))?;
-    }
+    // The path list is written from its own thread while this one drains
+    // stdout. `--stdin-paths` prints a hash per path as it reads, so writing
+    // the whole list first deadlocks once the hashes fill the stdout pipe
+    // (~64 KiB, ~1,600 paths): git blocks on stdout, stops reading stdin, and
+    // the write blocks for ever. A release T1 shard and a falsifier group hung
+    // exactly so until their CI ceiling, printing nothing.
+    let mut stdin = child.stdin.take().ok_or("git hash-object: no stdin")?;
+    let list: String = present.iter().map(|f| format!("{f}\n")).collect();
+    let writer = std::thread::spawn(move || stdin.write_all(list.as_bytes()));
     let res = child
         .wait_with_output()
         .map_err(|e| format!("git hash-object: {e}"))?;
+    writer
+        .join()
+        .map_err(|_| "git hash-object stdin writer panicked".to_string())?
+        .map_err(|e| format!("git hash-object stdin: {e}"))?;
     if !res.status.success() {
         return Err(format!(
             "git hash-object failed: {}",
@@ -716,15 +722,17 @@ fn hash_text(root: &Path, text: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("git hash-object: {e}"))?;
-    {
-        let mut stdin = child.stdin.take().ok_or("git hash-object: no stdin")?;
-        stdin
-            .write_all(text.as_bytes())
-            .map_err(|e| format!("git hash-object stdin: {e}"))?;
-    }
+    // Same shape as `blob_hashes`: write from a thread while stdout drains.
+    let mut stdin = child.stdin.take().ok_or("git hash-object: no stdin")?;
+    let text = text.to_string();
+    let writer = std::thread::spawn(move || stdin.write_all(text.as_bytes()));
     let res = child
         .wait_with_output()
         .map_err(|e| format!("git hash-object: {e}"))?;
+    writer
+        .join()
+        .map_err(|_| "git hash-object stdin writer panicked".to_string())?
+        .map_err(|e| format!("git hash-object stdin: {e}"))?;
     if !res.status.success() {
         return Err("git hash-object --stdin failed".into());
     }
@@ -802,6 +810,41 @@ mod tests {
     use crate::harness::registry::{
         Expect, GateCtx, GateOutcome, Mutation, Mutations, Tier, ALL_PLATFORMS,
     };
+
+    /// THE REGRESSION for the release hang: hashing enough files to fill git's
+    /// stdout pipe (~1,600 paths) deadlocked when the whole path list was
+    /// written before stdout was read. Runs on a thread with a deadline so a
+    /// regression fails here instead of hanging the test binary.
+    #[test]
+    fn hashing_thousands_of_files_does_not_deadlock() {
+        let dir = std::env::temp_dir().join(format!("pi-deadlock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["init", "-q"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "git init failed");
+        let mut files = BTreeSet::new();
+        for i in 0..5000 {
+            let name = format!("rust-crates-xtask-fixtures-a-long-path-like-a-real-repo-file-{i:05}.txt");
+            std::fs::write(dir.join(&name), format!("{i}\n")).unwrap();
+            files.insert(name);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let d = dir.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(blob_hashes(&d, &files).map(|m| m.len()));
+        });
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .expect("blob_hashes did not return within 60s: the stdin/stdout pipe deadlocked");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(got.unwrap(), 5000);
+    }
 
     fn body(_: &GateCtx) -> GateOutcome {
         GateOutcome::new(true, 1, "")
