@@ -1512,6 +1512,22 @@ fn registry_declares_mutation(gate: &str, mutation: &str) -> bool {
         .is_some_and(|g| g.mutations.as_slice().iter().any(|m| m.id == mutation))
 }
 
+/// The mutation the ledger credits for a gate's recorded proof: the first one
+/// the registry declares when the proof holds (it holds under every declared
+/// mutation), else the one the proof failed on.
+fn ledger_mutation(gate: &str, p: &RecordedProof) -> String {
+    if p.proven && registry_declares_mutation(gate, &p.mutation) {
+        GATES
+            .iter()
+            .find(|g| g.name == gate)
+            .and_then(|g| g.mutations.as_slice().first())
+            .map(|m| m.id.to_string())
+            .unwrap_or_else(|| p.mutation.clone())
+    } else {
+        p.mutation.clone()
+    }
+}
+
 /// Gates whose recorded proof credits a mutation the registry no longer
 /// declares, as violation strings.
 ///
@@ -2288,9 +2304,17 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                         "falsifier_proven": proofs
                             .get(g.name)
                             .is_some_and(|p| p.proven && registry_declares_mutation(g.name, &p.mutation)),
+                        // A gate proven under several mutations is proven under
+                        // ALL of them (the harness records the conjunction), so
+                        // the ledger names the first one the REGISTRY declares.
+                        // The proof record's own `mutation` field depended on
+                        // run order, and a falsifier run earlier in the same CI
+                        // job flipped it, making `--check` report a stale ledger
+                        // for a tree that had not changed. A failed proof keeps
+                        // the mutation it failed on: that is the evidence.
                         "falsifier_mutation": proofs
                             .get(g.name)
-                            .map(|p| p.mutation.clone())
+                            .map(|p| ledger_mutation(g.name, p))
                             .unwrap_or_default(),
                         "surfaces": ids,
                     }),
@@ -3645,6 +3669,33 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A gate with several mutations: the ledger must name the same mutation
+    /// whichever one the proof record happens to hold, or a falsifier run
+    /// earlier in a CI job makes `coverage-ledger --check` fail on an unchanged
+    /// tree (seen on apps-relay: disable-rate-limiting -> break-health-identity).
+    #[test]
+    fn the_ledger_mutation_does_not_depend_on_proof_order() {
+        let g = GATES
+            .iter()
+            .find(|g| g.mutations.as_slice().len() >= 2)
+            .expect("some gate declares two mutations");
+        let ms = g.mutations.as_slice();
+        let first = ms[0].id.to_string();
+        for m in ms {
+            let p = RecordedProof {
+                proven: true,
+                mutation: m.id.to_string(),
+            };
+            assert_eq!(ledger_mutation(g.name, &p), first, "gate {}", g.name);
+        }
+        // A failed proof keeps the mutation it failed on.
+        let failed = RecordedProof {
+            proven: false,
+            mutation: ms[1].id.to_string(),
+        };
+        assert_eq!(ledger_mutation(g.name, &failed), ms[1].id);
+    }
 
     fn repo_root() -> PathBuf {
         // crates/xtask -> crates -> rust -> repo root

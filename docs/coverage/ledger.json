@@ -197,7 +197,7 @@
     },
     "apps-relay": {
       "expected_assertions": 12,
-      "falsifier_mutation": "apps-relay.disable-rate-limiting",
+      "falsifier_mutation": "apps-relay.break-health-identity",
       "falsifier_proven": true,
       "summary": "member B — headless HTTP: auth refusal, rate limiting, CORS, asserted live",
       "surfaces": [
@@ -288,7 +288,7 @@
     },
     "corpus": {
       "expected_assertions": 339,
-      "falsifier_mutation": "corpus.wrong-stdlib-digest",
+      "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
       "surfaces": [
@@ -326,7 +326,7 @@
     },
     "corpus-emit-shape": {
       "expected_assertions": 46,
-      "falsifier_mutation": "corpus-emit-shape.delete-the-probe-use",
+      "falsifier_mutation": "corpus-emit-shape.erase-the-signature",
       "falsifier_proven": true,
       "summary": "properties of the generated Go (no `go build`): no erasure, no `any` in a concrete signature, no raw `.(T)`, declared field order, fieldset selected by TYPE",
       "surfaces": [
@@ -358,7 +358,7 @@
     },
     "corpus-reject": {
       "expected_assertions": 270,
-      "falsifier_mutation": "corpus-reject.break-the-twin",
+      "falsifier_mutation": "corpus-reject.repair-the-defect",
       "falsifier_proven": true,
       "summary": "reject matrix: rejection by DIAGNOSTIC CODE, each with an accepted twin",
       "surfaces": [
@@ -506,7 +506,7 @@
     },
     "spa-diff-fuzz": {
       "expected_assertions": 10,
-      "falsifier_mutation": "spa-diff-fuzz.drop-read-field",
+      "falsifier_mutation": "spa-diff-fuzz.drop-msgarg-rename",
       "falsifier_proven": true,
       "summary": "Sky.Spa differential split fuzzer: split leg == direct update over random (Model, Msg)",
       "surfaces": [
