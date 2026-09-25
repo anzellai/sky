@@ -14703,8 +14703,8 @@
       "id": "apps:bundled",
       "modules_imported": 24,
       "path": "sky-bundled",
-      "refs_generous": 127,
-      "refs_qualified": 121,
+      "refs_generous": 129,
+      "refs_qualified": 123,
       "role": "Layer2",
       "sky_files": 13,
       "sky_toml_sections": []
