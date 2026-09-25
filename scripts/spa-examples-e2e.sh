@@ -32,14 +32,21 @@ require_fresh_compiler "$SKY" "$ROOT"
 source "$ROOT/scripts/lib/with-timeout.sh"
 command -v node >/dev/null 2>&1 || { echo "spa-examples-e2e: 'node' is required." >&2; exit 1; }
 
-TMP="$(mktemp -d)"
+# Projects build in STABLE per-worktree directories through the shared gate
+# build cache (scripts/lib/gate-build-cache.sh), which keys on the project path
+# as well as its content — under a per-run `mktemp -d` nothing could be reused.
+source "$ROOT/scripts/lib/gate-build-cache.sh"
+_gc_compiler_hash "$SKY" >/dev/null # hash the compiler once; each build inherits it
+TMP="$(gate_e2e_dir "$ROOT" spa-examples-e2e)"
 build_example() { # build_example <example-dir-name>
   local name="$1"
+  rm -rf "$TMP/$name"
   mkdir -p "$TMP/$name"
   cp -Rf "$ROOT/examples/$name/." "$TMP/$name/"
   rm -rf "$TMP/$name/.skyapp" "$TMP/$name/sky-out" "$TMP/$name/.skycache"
   echo "==> building examples/$name (--target web:app)"
-  ( cd "$TMP/$name" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky )
+  with_timeout 1200 bash "$ROOT/scripts/lib/gate-build-cache.sh" build "$SKY" "$TMP/$name" \
+    --clean --artefact .skyapp/web-app -- build --target web:app src/Main.sky
   local app="$TMP/$name/.skyapp/web-app/.split/backend/sky-out/app"
   [ -x "$app" ] || { echo "spa-examples-e2e: backend not built at $app" >&2; exit 1; }
 }
@@ -53,10 +60,12 @@ build_example 63-app-chat
 # backend binary, where the reads resolve.
 build_fixture() { # build_fixture <fixture-dir-name>
   local name="$1"
+  rm -rf "$TMP/$name"
   mkdir -p "$TMP/$name"
   cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/$name/." "$TMP/$name/"
   echo "==> building fixture $name (--target web:app)"
-  ( cd "$TMP/$name" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky )
+  with_timeout 1200 bash "$ROOT/scripts/lib/gate-build-cache.sh" build "$SKY" "$TMP/$name" \
+    --clean --artefact .skyapp/web-app -- build --target web:app src/Main.sky
   local be="$TMP/$name/.skyapp/web-app/.split/backend"
   [ -x "$be/sky-out/app" ] || { echo "spa-examples-e2e: backend not built at $be/sky-out/app" >&2; exit 1; }
   mkdir -p "$be/data"

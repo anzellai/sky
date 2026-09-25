@@ -21,12 +21,17 @@ source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 command -v node >/dev/null 2>&1 || { echo "spa-rpc-consistency-e2e: 'node' is required." >&2; exit 1; }
 
-FX="$(mktemp -d)/spa-rpc-consistency"
+# A stable fixture directory, emptied first: the shared gate build cache
+# (scripts/lib/gate-build-cache.sh) keys on the project path, so a fresh
+# `mktemp -d` per run could never reuse a build.
+source "$ROOT/scripts/lib/gate-build-cache.sh"
+FX="$(gate_e2e_dir "$ROOT" spa-rpc-consistency)"
+rm -rf "$FX"
 mkdir -p "$FX"
 cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-rpc-consistency/." "$FX/"
 
 echo "==> building the rpc-consistency fixture (--target web:app)"
-( cd "$FX" && "$SKY" build --target web:app src/Main.sky )
+gate_cached_build "$SKY" "$FX" --clean --artefact .skyapp/web-app -- build --target web:app src/Main.sky
 
 APP="$FX/.skyapp/web-app/.split/backend/sky-out/app"
 [ -x "$APP" ] || { echo "spa-rpc-consistency-e2e: backend app not built at $APP" >&2; exit 1; }
@@ -35,4 +40,4 @@ echo "==> driving the wasm client"
 node "$ROOT/scripts/spa-rpc-consistency-verify.mjs" "$APP" --port "${PORT:-9221}"
 
 echo "spa-rpc-consistency-e2e: PASS — web:app matches Sky.Live."
-rm -rf "$(dirname "$FX")"
+rm -rf "$FX"

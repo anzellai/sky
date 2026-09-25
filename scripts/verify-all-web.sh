@@ -19,6 +19,11 @@ source "$REPO_ROOT/scripts/lib/require-tool.sh"
 # that is out of date rather than missing. See scripts/lib/fresh-compiler.sh.
 source "$REPO_ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$REPO_ROOT/sky-out/sky" "$REPO_ROOT"
+SKY="$REPO_ROOT/sky-out/sky"
+# The shared gate build cache — see the build step in the loop below.
+GATE_CACHE_LIB="$REPO_ROOT/scripts/lib/gate-build-cache.sh"
+source "$GATE_CACHE_LIB"
+_gc_compiler_hash "$SKY" >/dev/null
 
 # Every sub-gate below drives a browser through a Node verifier. Without node
 # each one returns 127 and reports itself as a product failure; the truth is
@@ -82,41 +87,54 @@ for entry in "${TESTS[@]}"; do
     set -- $entry
     name=$1; scenario=$2; port=$3
     buildlog=""   # per-iteration: never report the PREVIOUS example's build log
-    # Build the app if its binary is missing OR older than the compiler under
-    # test — robust to clean checkouts and to artifacts pruned by disk hygiene
-    # (the example sweep normally pre-builds them; without this, a pruned
-    # example fails with "binary missing" rather than being verified).
+    # Make sure the binary under test is built from THIS tree — this compiler
+    # and this example's current source — then drive it.
     #
-    # The `-ot` half matters as much as the existence check: this script is
-    # step 5 of the release preflight, and step 1 rebuilds sky-out/sky. Without
-    # it, a binary left behind by ANY earlier compiler satisfies the existence
-    # test, so the browser gate certifies the previous release's codegen and a
-    # codegen regression sails through green.
+    # It used to rebuild only when the binary was missing or older than the
+    # compiler. That caught a rebuilt compiler (this script is step 5 of the
+    # release preflight, and step 1 rebuilds sky-out/sky), but not an edited
+    # example: a changed `src/*.sky` with the same compiler left the old binary
+    # in place, and the browser gate certified source it never compiled.
+    #
+    # Now every example goes through the shared gate build cache
+    # (scripts/lib/gate-build-cache.sh), keyed on the compiler, the project's
+    # full content, the arguments and the Go toolchain. A hit restores the
+    # artefact the example sweep (or an earlier run) built clean from identical
+    # inputs; a miss builds clean and stores. An example with floating
+    # `[go.dependencies]` is never cached; it is rebuilt when its binary is
+    # missing, older than the compiler, or older than any file of the project.
     #
     # `sky install` FIRST for any example with external Go dependencies. Their
     # `sky-ffi/` surface is a GENERATED build artifact and `.gitignore`s line
     # 138 keeps it out of the repo, so on a clean checkout — which is every CI
     # runner — `sky build` stops at
     #   "`Github.Com.Gorilla.Mux` has no generated FFI surface … Run `sky install`"
-    # in half a second. Locally the surface is left over from an earlier sweep,
-    # so the step is invisible; on the browser tier's first nightly run
-    # 05-mux-server and 08-notes-app failed for exactly this and NOTHING else.
-    # `scripts/example-sweep.sh` has always run it under the same condition;
-    # this script was the one build site that did not.
-    app="$REPO_ROOT/examples/$name/sky-out/app"
-    if [ -x "$REPO_ROOT/sky-out/sky" ] && { [ ! -x "$app" ] || [ "$app" -ot "$REPO_ROOT/sky-out/sky" ]; }; then
-        echo "  building $name (binary missing or older than the compiler) ..."
-        buildlog="$RESULTS_DIR/build-$name.log"
+    # in half a second. `scripts/example-sweep.sh` has always run it under the
+    # same condition.
+    dir="$REPO_ROOT/examples/$name"
+    app="$dir/sky-out/app"
+    buildlog="$RESULTS_DIR/build-$name.log"
+    if gate_cache_project_cacheable "$dir"; then
         (
-            cd "$REPO_ROOT/examples/$name" || exit 2
-            if [ -f sky.toml ] && grep -qE '^\["?go\.dependencies"?\]' sky.toml; then
-                echo "--- sky install ---"
-                # 20 min: the same ceiling example-sweep.sh uses, for the same
-                # reason (13-skyshop introspects 76k Stripe/Firebase symbols).
-                with_timeout 1200 "$REPO_ROOT/sky-out/sky" install 2>&1 || exit 2
-            fi
+            cd "$dir" || exit 2
+            with_timeout 900 bash "$GATE_CACHE_LIB" build "$SKY" "$dir" --clean -- \
+                build src/Main.sky 2>&1
+        ) >"$buildlog" 2>&1
+        echo "(exit $?)" >>"$buildlog"
+        echo "  $name: $(grep -h '^gate-cache: ' "$buildlog" | head -1 | cut -d' ' -f2) (gate build cache)"
+    elif [ ! -x "$app" ] || [ "$app" -ot "$SKY" ] \
+        || [ -n "$(find "$dir" \( -name sky-out -o -name 'sky-out-*' -o -name .skycache -o -name .skyapp \
+                -o -name .sky -o -name node_modules \) -prune \
+                -o -type f -newer "$app" ! -name '*.db*' ! -name '*.log' -print 2>/dev/null | head -1)" ]; then
+        echo "  building $name (binary missing, or older than the compiler or its source) ..."
+        (
+            cd "$dir" || exit 2
+            echo "--- sky install ---"
+            # 20 min: the same ceiling example-sweep.sh uses, for the same
+            # reason (13-skyshop introspects 76k Stripe/Firebase symbols).
+            with_timeout 1200 "$SKY" install 2>&1 || exit 2
             echo "--- sky build ---"
-            with_timeout 900 "$REPO_ROOT/sky-out/sky" build src/Main.sky 2>&1
+            with_timeout 900 "$SKY" build src/Main.sky 2>&1
         ) >"$buildlog" 2>&1
         # Deliberately NOT `|| exit`: a build failure is not the verdict here.
         # The verdict is the browser run below, which reports "binary missing"
@@ -124,6 +142,8 @@ for entry in "${TESTS[@]}"; do
         # was going to run anyway, and its exit status is recorded rather than
         # acted on twice.
         echo "(exit $?)" >>"$buildlog"
+    else
+        buildlog=""
     fi
     # Kill any process on this port pre-flight
     pid=$(lsof -ti ":$port" 2>/dev/null || true)

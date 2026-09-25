@@ -175,9 +175,15 @@ fi
 
 # ─── post-build hygiene: keep go-build cache from growing without bound ───
 # CLAUDE.md §6 — Sky compiler rebuilds + example sweeps accumulate multi-GB
-# go-build entries that auto-prune doesn't catch on macOS. Reclaim
-# aggressively when cache exceeds 5 GB. Safe: fresh builds always work,
-# next build adds ~1-2 min to repopulate hot paths.
+# go-build entries that auto-prune doesn't catch on macOS.
+#
+# It used to wipe the whole cache whenever it passed 5 GB, on EVERY run. This
+# script runs before almost every gate (it installs the compiler every gate
+# measures), and a routine session's cache sits above 5 GB, so each run threw
+# away the cache the next gate's `go build` / `go test` needed and paid ~1-2 min
+# to repopulate it — on a machine with room to spare. Wipe now only when it
+# matters: the cache is over 5 GB AND the disk has under 30 GB free (the policy
+# example-sweep.sh already used), or the cache alone passes 20 GB.
 #
 # Cross-platform cache path detection — Linux uses $XDG_CACHE_HOME or
 # ~/.cache/go-build; macOS uses ~/Library/Caches/go-build. Pre-fix,
@@ -190,9 +196,11 @@ go_cache_dir="${HOME}/Library/Caches/go-build"
 if [[ -d "$go_cache_dir" ]]; then
     cache_kb=$(du -sk "$go_cache_dir" 2>/dev/null | awk '{print $1}')
     cache_kb=${cache_kb:-0}
-    if [[ "$cache_kb" -gt 5242880 ]]; then
+    free_kb=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}')
+    free_kb=${free_kb:-999999999}
+    if [[ "$cache_kb" -gt 20971520 ]] || { [[ "$cache_kb" -gt 5242880 ]] && [[ "$free_kb" -lt 31457280 ]]; }; then
         cache_gb=$(( cache_kb / 1048576 ))
-        say "go-build cache is ${cache_gb} GB — running 'go clean -cache'"
+        say "go-build cache is ${cache_gb} GB with $(( free_kb / 1048576 )) GB free — running 'go clean -cache'"
         go clean -cache 2>/dev/null || true
     fi
 fi

@@ -147,6 +147,40 @@ fn sky_binary(root: &Path) -> std::path::PathBuf {
         .unwrap_or_else(|| root.join("sky-out").join("sky"))
 }
 
+/// `sky build src/Main.sky` in `dir`, through the shared gate build cache
+/// (`scripts/lib/gate-build-cache.sh`) — the SAME cache the example sweep, the
+/// browser gate and the e2e scripts use, so an example one of them built clean
+/// from identical inputs is reused here, and a build here is reused there. The
+/// key covers the compiler binary's hash, the project's full content, the
+/// arguments and the Go toolchain; a project with floating Go dependencies is
+/// never cached, and `SKY_GATE_CACHE=off` disables it. A miss builds CLEAN
+/// (`--clean` removes the artefacts and the compiler's incremental output
+/// first), so what is stored is what a fresh checkout builds. The output carries
+/// the build's own stdout/stderr plus one `gate-cache: HIT|MISS|…` line.
+fn cached_sky_build(
+    root: &Path,
+    sky: &Path,
+    dir: &Path,
+    artefacts: &[&str],
+) -> std::io::Result<std::process::Output> {
+    let lib = root.join("scripts/lib/gate-build-cache.sh");
+    if !lib.is_file() {
+        return Command::new(sky)
+            .arg("build")
+            .arg("src/Main.sky")
+            .current_dir(dir)
+            .output();
+    }
+    let mut cmd = Command::new("bash");
+    cmd.arg(&lib).arg("build").arg(sky).arg(dir).arg("--clean");
+    for a in artefacts {
+        cmd.arg("--artefact").arg(a);
+    }
+    cmd.args(["--", "build", "src/Main.sky"])
+        .current_dir(dir)
+        .output()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Shape {
     Cli,
@@ -1005,11 +1039,9 @@ fn verify_std_app(
     verbose: bool,
 ) -> Row {
     let sky = sky_binary(root);
-    let build = Command::new(&sky)
-        .arg("build")
-        .arg("src/Main.sky")
-        .current_dir(dir)
-        .output();
+    // `sky-out` holds the dispatched binary this gate runs — the same artefact
+    // (and so the same cache key) the example sweep and the browser gate use.
+    let build = cached_sky_build(root, &sky, dir, &["sky-out"]);
     let mut row = Row {
         name: name.into(),
         shape,
@@ -1157,12 +1189,12 @@ fn verify_manual_split(
         ] {
             let _ = std::fs::remove_dir_all(subdir.join(gen));
         }
-        let out = match Command::new(&sky)
-            .arg("build")
-            .arg("src/Main.sky")
-            .current_dir(&subdir)
-            .output()
-        {
+        let out = match cached_sky_build(
+            root,
+            &sky,
+            &subdir,
+            &[".split", ".skyapp", "sky-out", "dist"],
+        ) {
             Ok(o) => o,
             Err(e) => {
                 row.blocker = format!("{sub}: sky build spawn: {e}");

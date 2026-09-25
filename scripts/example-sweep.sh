@@ -118,6 +118,14 @@ fi
 
 export SKY_RUNTIME_DIR="$ROOT/runtime-go"
 
+# The shared build cache. Hash the compiler ONCE here, in the parent, so the
+# xargs workers inherit the digest instead of each re-hashing a 100+ MB binary.
+GATE_CACHE_LIB="$ROOT/scripts/lib/gate-build-cache.sh"
+source "$GATE_CACHE_LIB"
+if [[ $LIST_ONLY -eq 0 ]]; then
+    _gc_compiler_hash "$SKY" >/dev/null
+fi
+
 # Workdir mode (bug #381): copy examples/* into $WORKDIR/examples/ and
 # point EXAMPLES_ROOT at the copies. Stops cabal-test ExampleSweep from
 # rm -rf'ing the in-tree sky-out/ + .skycache/go directories that
@@ -396,7 +404,17 @@ run_example() {
         if [[ -f sky.toml ]] && grep -qE '^\["?go\.dependencies"?\]' sky.toml; then
             with_timeout 1200 "$SKY" install >/tmp/sky-install-"$name".log 2>&1 || { echo "install failed"; exit 2; }
         fi
-        with_timeout 900 "$SKY" build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
+        # Through the content-addressed gate build cache
+        # (scripts/lib/gate-build-cache.sh): an identical compiler + project +
+        # arguments + toolchain reuses the artefact a previous CLEAN build
+        # stored; anything else builds. Only a clean-slate build stores
+        # (`--clean`; the sweep's `--no-clean` omits it), and a project with floating
+        # `[go.dependencies]` always builds. SKY_GATE_CACHE=off disables it.
+        clean_flag=""
+        [[ $CLEAN -eq 1 ]] && clean_flag="--clean"
+        # shellcheck disable=SC2086 # clean_flag is empty or one word
+        with_timeout 900 bash "$GATE_CACHE_LIB" build "$SKY" "$dir" $clean_flag -- \
+            build src/Main.sky >/tmp/sky-build-"$name".log 2>&1
     ) || { printf 'FAIL build failed — /tmp/sky-build-%s.log\n' "$name" > "$result_file"; return; }
 
     if [[ $BUILD_ONLY -eq 1 || "$kind" == "gui" ]]; then
@@ -523,7 +541,7 @@ sweep_worker() {
 # unbounded, or (before this shim existed) reported a pass for not running it.
 export -f run_example sweep_worker with_timeout _sky_with_timeout_resolve _sky_with_timeout_which
 export _SKY_WITH_TIMEOUT_PERL_PROG SKY_WITH_TIMEOUT_KILL_AFTER
-export EXAMPLES_ROOT SKY SKY_RUNTIME_DIR CLEAN BUILD_ONLY
+export EXAMPLES_ROOT SKY SKY_RUNTIME_DIR CLEAN BUILD_ONLY GATE_CACHE_LIB
 export RESULTS_DIR SKIP_GUI_LINUX
 
 # Display banner + parallel summary.
@@ -579,6 +597,19 @@ if [[ $skip -gt 0 ]]; then
     printf '  ~ %s\n' "${skipped[@]}"
 fi
 echo "sweep: $pass passed, $fail failed"
+# Which builds the shared gate cache served — a run says what it reused.
+gc_hit=0; gc_miss=0; gc_other=0
+for entry in "${EXAMPLES[@]}"; do
+    IFS=':' read -r name _ _ _ <<<"$entry"
+    case "$(head -1 "$RESULTS_DIR/$name.result" 2>/dev/null)" in SKIP*) continue ;; esac
+    gc_line=$(grep -h '^gate-cache: ' "/tmp/sky-build-$name.log" 2>/dev/null | head -1)
+    case "$gc_line" in
+        "gate-cache: HIT"*)  gc_hit=$((gc_hit+1)) ;;
+        "gate-cache: MISS"*) gc_miss=$((gc_miss+1)) ;;
+        "gate-cache: "*)     gc_other=$((gc_other+1)) ;;
+    esac
+done
+echo "gate-cache: $gc_hit reused, $gc_miss built and stored, $gc_other built uncached (floating Go deps or SKY_GATE_CACHE=off)"
 if [[ $fail -gt 0 ]]; then
     printf '  - %s\n' "${failures[@]}"
     # Dump the build log for every failed example so CI shows the real
