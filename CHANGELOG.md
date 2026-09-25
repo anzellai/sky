@@ -23,6 +23,17 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   put 179 MB of names into every Sky.Live / Sky.Spa backend binary (229 MB
   → 46 MB, with a shorter link). New `sky build --timings` / `SKY_TIMINGS=1`
   prints a per-phase wall-clock table (`docs/tooling/cli.md`).
+- **Sky.Spa legs run in parallel only when memory allows.** The backend and
+  frontend legs run together only when available memory holds two leg peaks
+  (measured on the previous build, else estimated from the generated sources)
+  plus 1 GB; otherwise they run serially. `SKY_BUILD_SERIAL=1` forces serial,
+  new `SKY_BUILD_PARALLEL=1` forces parallel. The decision is printed.
+- **Fixed: one `sky` version no longer wipes another's Go build cache.** A build
+  by a `sky` with a different embedded runtime ran `go clean -cache` on the
+  shared `~/.sky/go-build`, so two versions in use at once (a release and a dev
+  build, or an upgrade while an editor runs the old one) forced each other into
+  cold compiles. The cache is content-addressed, so the clean is gone; the size
+  cap and Go's own trim still reclaim old entries.
 
 ## v0.25.17 — app-surface soundness sweep: Sky.Live, Sky.Spa, Std.App, Sky.Tui/Cli (2026-09-24)
 

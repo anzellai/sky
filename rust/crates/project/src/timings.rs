@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 static PHASES: Mutex<Vec<(String, Duration)>> = Mutex::new(Vec::new());
+static NOTES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// True when the user asked for the phase report (`SKY_TIMINGS` set to anything
 /// but empty / `0` / `false` / `no`).
@@ -27,6 +28,13 @@ pub fn enabled() -> bool {
 pub fn record(label: &str, d: Duration) {
     if let Ok(mut v) = PHASES.lock() {
         v.push((label.to_string(), d));
+    }
+}
+
+/// Record a decision the build took (printed under the phase table).
+pub fn note(text: impl Into<String>) {
+    if let Ok(mut v) = NOTES.lock() {
+        v.push(text.into());
     }
 }
 
@@ -89,6 +97,11 @@ pub fn render(scope: &str, total: Duration) -> String {
         total.as_secs_f64(),
         width = width
     ));
+    if let Ok(notes) = NOTES.lock() {
+        for n in notes.iter() {
+            out.push_str(&format!("  note: {n}\n"));
+        }
+    }
     out
 }
 
@@ -113,11 +126,13 @@ mod tests {
             let _p = phase("alpha");
         }
         record("beta", Duration::from_millis(1500));
+        note("legs: serial (test)");
         let s = render("unit", Duration::from_secs(2));
         let a = s.find("alpha").expect("alpha rendered");
         let b = s.find("beta").expect("beta rendered");
         assert!(a < b, "phases keep their recording order:\n{s}");
         assert!(s.contains("1.50s"), "{s}");
         assert!(s.contains("total (wall)"), "{s}");
+        assert!(s.contains("note: legs: serial (test)"), "{s}");
     }
 }

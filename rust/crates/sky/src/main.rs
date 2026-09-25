@@ -44,6 +44,7 @@ use project::{
 use testrunner::run_test;
 
 mod bundled;
+mod leg_plan;
 mod precompress;
 mod target;
 
@@ -2797,18 +2798,46 @@ fn spa_split_and_build(
     // skips any project carrying the `[spa] generated = true` marker (both trees
     // this generator wrote have it), and the backend is a `Sky.Http.Server` with no
     // `Std.Spa` import anyway.
+    // Serial or parallel, decided from this machine's free memory against the
+    // legs' peak (measured on this project's previous split build, else
+    // estimated from the generated sources) — see `leg_plan`.
+    let backend_dir = od.join("backend");
+    let frontend_dir = od.join("frontend");
+    let peak_record = backend_dir.join("sky-out").join(leg_plan::PEAK_RECORD);
+    let env_flag = |k: &str| {
+        std::env::var(k)
+            .map(|v| !matches!(v.trim(), "" | "0" | "false" | "no"))
+            .unwrap_or(false)
+    };
+    let (per_leg_peak, peak_source) = match leg_plan::recorded_peak(&peak_record) {
+        Some(b) => (b, "measured last build"),
+        None => (
+            leg_plan::estimate_from_source(
+                leg_plan::sky_source_bytes(&backend_dir.join("src"))
+                    .max(leg_plan::sky_source_bytes(&frontend_dir.join("src"))),
+            ),
+            "estimated from sources",
+        ),
+    };
+    let plan = leg_plan::decide(
+        env_flag("SKY_BUILD_SERIAL"),
+        env_flag("SKY_BUILD_PARALLEL"),
+        per_leg_peak,
+        &format!("({peak_source})"),
+        leg_plan::available_memory(),
+    );
+    project::timings::note(format!("legs: {}", plan.reason));
     println!(
-        "\n== building backend (native{}) + frontend (--target {target}) in parallel ==",
-        if embed { ", --embed" } else { "" }
+        "\n== building backend (native{}) + frontend (--target {target}): {} ==",
+        if embed { ", --embed" } else { "" },
+        plan.reason
     );
     // The two Go builds are independent and write disjoint dirs (backend/ vs
-    // frontend/), so run them CONCURRENTLY: the SPA wall-clock becomes
-    // max(backend, frontend) instead of their sum. Output is captured per leg and
+    // frontend/), so when memory allows they run CONCURRENTLY: the SPA wall-clock
+    // becomes max(backend, frontend) instead of their sum. Output is captured per leg and
     // printed grouped afterwards, so the two streams never interleave and every
     // error is still surfaced. (--embed belongs on the BACKEND: it owns the DB.)
     let sky_ref = &sky;
-    let backend_dir = od.join("backend");
-    let frontend_dir = od.join("frontend");
     let build_backend = || {
         let mut c = Command::new(sky_ref);
         c.arg("build");
@@ -2831,18 +2860,8 @@ fn spa_split_and_build(
         t.end();
         out
     };
-    // `SKY_BUILD_SERIAL=1` runs the two legs one after the other. Each leg is a
-    // whole `sky build` (a Sky front-end of ~1.4 GB on a mid-size app, plus the
-    // Go toolchain), so the concurrent default peaks at roughly twice that: on
-    // a 2-core / 7 GB hosted CI runner the job was killed (exit 143) every
-    // time, while the same build passes on a laptop. Serial trades wall-clock
-    // for a peak of max(leg) instead of their sum.
-    let serial = std::env::var("SKY_BUILD_SERIAL")
-        .map(|v| !matches!(v.trim(), "" | "0" | "false" | "no"))
-        .unwrap_or(false);
     let t_legs = project::timings::phase("both legs (wall)");
-    let (backend_res, frontend_res) = if serial {
-        println!("   (SKY_BUILD_SERIAL is set: building the two legs one after the other)");
+    let (backend_res, frontend_res) = if !plan.parallel {
         (Ok(build_backend()), Ok(build_frontend()))
     } else {
         std::thread::scope(|s| {
@@ -2852,6 +2871,14 @@ fn spa_split_and_build(
         })
     };
     t_legs.end();
+    // Record the per-leg peak for the next build's decision. Keep the larger of
+    // this build's and the recorded one: a no-change rebuild skips the link and
+    // peaks far lower than an edit that re-links, so the latest alone would
+    // under-state the next build.
+    if let Some(peak) = leg_plan::children_peak_rss() {
+        let keep = leg_plan::recorded_peak(&peak_record).map_or(peak, |p| p.max(peak));
+        let _ = std::fs::write(&peak_record, keep.to_string());
+    }
     let report_leg =
         |label: &str, res: std::thread::Result<std::io::Result<std::process::Output>>| -> bool {
             use std::io::Write;

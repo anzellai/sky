@@ -636,12 +636,11 @@ fn build_inner(
     // Output binary name honours the sky.toml `bin` key (default `app`).
     t_write.end();
     let bin_name = configured_bin_name(&opts.example_dir);
-    // Maintain Sky's isolated Go build cache before `go build`: clean it when the
-    // compiler's embedded runtime fingerprint changed (a `sky upgrade` — reclaims
-    // the now-dead objects) and bound its size. Best-effort + Sky-owned-only; a
-    // user GOCACHE and any failure are left untouched (go_cache.rs).
+    // Maintain Sky's isolated Go build cache before `go build`: bound its size.
+    // Best-effort + Sky-owned-only; a user GOCACHE and any failure are left
+    // untouched (go_cache.rs).
     let t_cache = crate::timings::phase("go cache maintain");
-    crate::go_cache::maintain(ffi::assets::embed_fingerprint());
+    crate::go_cache::maintain();
     t_cache.end();
     // `--wasm`: compile the client for the browser (GOOS=js GOARCH=wasm) and
     // drop the matching wasm_exec.js. The native cgo-detection path is skipped —

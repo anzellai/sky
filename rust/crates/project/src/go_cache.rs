@@ -11,8 +11,8 @@
 //     so stale objects are simply never reused — but the disk is not reclaimed.)
 //
 // So Sky ISOLATES its build cache to `~/.sky/go-build`. That single decision lets
-// Sky safely (a) CLEAN the cache when the embedded runtime fingerprint changes on
-// an upgrade, and (b) BOUND its size — WITHOUT ever touching the build cache the
+// Sky safely BOUND its size (the dead objects of an old runtime are reclaimed by
+// that cap and by Go's own five-day trim) — WITHOUT ever touching the build cache the
 // user relies on for their other, non-Sky Go projects. When the user has set an
 // explicit `GOCACHE`, Sky honours it and manages nothing (their cache, their
 // rules).
@@ -26,12 +26,10 @@ use std::process::Command;
 use std::time::Duration;
 
 const GOCACHE: &str = "GOCACHE";
-const FP_STAMP: &str = ".sky-embed-fp";
 const CAP_MARKER: &str = ".sky-cap-checked";
 /// Advisory lock file inside the cache dir. A build holds it SHARED for the
 /// whole `go build`; a clean needs it EXCLUSIVE. Without it, one `sky build`
-/// could wipe the cache (fingerprint change after a compiler rebuild, or the
-/// size cap) while a concurrent build was still reading from it — the objects
+/// could wipe the cache (the size cap) while a concurrent build was still reading from it — the objects
 /// vanish mid-build and `go` reports "could not import X: no such file" and
 /// "package X is not in std". Seen as flaky gate failures under `cargo test`.
 const LOCK_FILE: &str = ".sky-lock";
@@ -90,22 +88,36 @@ pub(crate) fn apply(cmd: &mut Command) {
     }
 }
 
-/// Maintain Sky's build cache before a build: clean it when the embedded runtime
-/// fingerprint has changed since the last build (a `sky upgrade` or first run),
-/// then bound its size. Sky-owned-only and best-effort — a user `GOCACHE` and a
-/// non-writable environment are both left entirely alone.
-pub(crate) fn maintain(embed_fingerprint: &str) {
+/// Maintain Sky's build cache before a build: bound its size. Sky-owned-only and
+/// best-effort — a user `GOCACHE` and a non-writable environment are both left
+/// entirely alone.
+///
+/// It does NOT clean the cache when the compiler changes. It used to: a build by
+/// a `sky` whose embedded runtime fingerprint differed from the stamp in the
+/// cache ran `go clean -cache`. Every `sky` on the machine shares this one
+/// cache, so two binaries in use at once (an installed release and a dev build,
+/// two worktrees, `sky upgrade` while an editor's LSP still runs the old one)
+/// wiped each other's objects on every alternation, and each wipe cost the next
+/// build a cold compile of the runtime and its dependencies. The clean bought
+/// nothing for correctness: the Go cache is content-addressed, so a different
+/// runtime has different action IDs and is never served another runtime's
+/// objects. The dead objects of an old runtime are reclaimed by Go's own trim
+/// (entries unused for five days) and by the size cap below.
+pub(crate) fn maintain() {
     let Some(dir) = owned_cache_dir() else {
         return;
     };
+    maintain_in(&dir);
+}
+
+fn maintain_in(dir: &Path) {
     // Only ever clean with the cache to ourselves. Another `sky build` holding
-    // the shared lock means "leave it alone this time": stale or oversized
-    // objects are harmless (content-addressed) and the next build retries.
-    let Some(_exclusive) = try_exclusive_in(&dir) else {
+    // the shared lock means "leave it alone this time": oversized objects are
+    // harmless (content-addressed) and the next build retries.
+    let Some(_exclusive) = try_exclusive_in(dir) else {
         return;
     };
-    invalidate_if_stale(&dir, embed_fingerprint);
-    enforce_cap(&dir);
+    enforce_cap(dir);
 }
 
 /// A shared hold on Sky's cache for the duration of one `go build`. Keep the
@@ -159,25 +171,8 @@ fn try_exclusive_in(dir: &Path) -> Option<CacheGuard> {
     Some(CacheGuard(Some(f)))
 }
 
-/// Clean the Sky cache when the compiler's embedded fingerprint has changed. The
-/// stamp records the fingerprint the cache was last populated for; a mismatch
-/// means a new compiler (its `rt`/deps differ), so the old objects are dead
-/// weight worth reclaiming. Correctness never depends on this — it is disk
-/// hygiene + a clean slate for the new runtime.
-fn invalidate_if_stale(dir: &Path, fp: &str) {
-    let stamp = dir.join(FP_STAMP);
-    if std::fs::read_to_string(&stamp).unwrap_or_default().trim() == fp {
-        return;
-    }
-    clean(dir);
-    let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(&stamp, fp);
-}
-
 /// Bound the Sky cache size. The directory walk is throttled (CAP_CHECK_EVERY) so
-/// an ordinary build never pays for it. Over the cap ⇒ clean; the fingerprint
-/// stamp is preserved across the clean so a size-prune does not also trip a
-/// fingerprint re-clean on the next build.
+/// an ordinary build never pays for it. Over the cap ⇒ clean.
 fn enforce_cap(dir: &Path) {
     let marker = dir.join(CAP_MARKER);
     if let Ok(m) = std::fs::metadata(&marker) {
@@ -197,12 +192,8 @@ fn enforce_cap(dir: &Path) {
     if cap == 0 || dir_size_bytes(dir) <= cap {
         return;
     }
-    let fp = std::fs::read_to_string(dir.join(FP_STAMP)).unwrap_or_default();
     clean(dir);
     let _ = std::fs::create_dir_all(dir);
-    if !fp.trim().is_empty() {
-        let _ = std::fs::write(dir.join(FP_STAMP), fp.trim());
-    }
 }
 
 fn cap_gb() -> u64 {
@@ -266,11 +257,8 @@ pub fn prime() -> String {
     if !runtime_dir.join("go.mod").exists() {
         return "Go cache prime skipped: embedded runtime has no go.mod".to_string();
     }
-    // Record the fingerprint up front so the first real build does not re-clean
-    // the cache we are about to warm.
     if let Some(dir) = owned_cache_dir() {
         let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(FP_STAMP), ffi::assets::embed_fingerprint());
     }
     let targets: [(&str, Option<&str>, Option<&str>); 2] =
         [("native", None, None), ("wasm", Some("js"), Some("wasm"))];
@@ -316,6 +304,30 @@ mod tests {
         std::fs::write(d.join("a"), b"12345").unwrap();
         std::fs::write(d.join("sub").join("b"), b"678").unwrap();
         assert_eq!(dir_size_bytes(&d), 8);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A build by a `sky` with a different embedded runtime must not clean the
+    /// shared cache. It used to (`go clean -cache` on a fingerprint mismatch), so
+    /// two `sky` binaries in use at once wiped each other's objects on every
+    /// alternation and forced cold compiles. The cache is content-addressed, so
+    /// there is nothing stale to remove.
+    #[test]
+    fn maintenance_never_cleans_the_cache_for_a_different_compiler() {
+        let d = std::env::temp_dir().join(format!("sky-gocache-fp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("ab")).unwrap();
+        let object = d.join("ab").join("ab12-d");
+        std::fs::write(&object, b"compiled package").unwrap();
+        // The stamp an older Sky left behind, naming another runtime.
+        std::fs::write(d.join(".sky-embed-fp"), "sky-embed-fp-v1:another-runtime").unwrap();
+        maintain_in(&d);
+        maintain_in(&d);
+        assert_eq!(
+            std::fs::read(&object).unwrap(),
+            b"compiled package",
+            "maintenance must keep the cached objects"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
