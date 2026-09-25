@@ -111,6 +111,41 @@ sky build --embed src/Main.sky
 
 `--embed` belongs on `sky build`, not on `sky run` — see below.
 
+**`--timings`** (or `SKY_TIMINGS=1` in the environment) prints a wall-clock
+table of the build's phases to stderr when the build ends: loading the sources,
+parse, canonicalise + typecheck, lower + emit Go, writing `sky-out/`, `go build`,
+and for a client build the split, both legs, the `dist/` bundle and its
+precompression. A split build runs its backend and frontend legs as child
+`sky build`s; each leg prints its own table under its own `== … ==` header, and
+the parent's table gives the wall-clock of each leg. `sky check --timings` works
+the same way. Use it to see where a slow build spends its time before you report
+it.
+
+```bash
+sky build --timings --target web:app src/Main.sky
+```
+
+What a rebuild reuses. Go's build cache keys on content, and Sky's emitted Go
+is deterministic, so an unchanged module is never recompiled. A client build
+keeps each leg's `sky-out/` between builds, so a rebuild whose Go did not change
+does not re-link the backend or the wasm client either. The `.gz` / `.br`
+variants in `dist/` are cached by the SHA-256 of the file they compress (in
+`~/.cache/sky/precompress`, or under `$XDG_CACHE_HOME`), so brotli-11 runs only
+when the wasm bytes change. `sky run` does not write them at all: its backend
+serves the bundle itself and compresses on the fly.
+
+Serial or parallel legs. The backend and frontend legs of a client build run in
+parallel only when the machine's available memory holds two leg peaks plus a
+1 GB reserve; otherwise they run one after the other. Available memory is
+`free + inactive + speculative` pages on macOS (`vm_stat`) and `MemAvailable` on
+Linux, capped by the cgroup's remaining limit in a container. The leg peak is the
+one measured on the project's previous split build (the largest seen is kept in the
+backend leg's `sky-out/.sky-leg-peak-bytes`), else an estimate from the size of
+the generated leg sources. When memory cannot be read, the legs run serially.
+`SKY_BUILD_SERIAL=1` forces serial and `SKY_BUILD_PARALLEL=1` forces parallel.
+The build prints its decision in the `== building … ==` line and in the
+`--timings` report.
+
 ### `sky spa-split <path> --out <dir> [--build | --target <t>]`
 
 The **explicit Sky.Spa auto-split** generator — the form of the split that
@@ -459,8 +494,12 @@ without ever touching the cache your other Go projects rely on.
   `sky upgrade` runs this automatically for the new version.
 - **Size is bounded.** The cache is pruned when it grows past a cap (default
   10 GB, set `SKY_GO_CACHE_MAX_GB` to change it), so it never fills your disk.
-- **Upgrade refresh.** A new compiler embeds a new runtime; the first build after
-  an upgrade reclaims the previous version's now-dead cache entries.
+- **Shared safely across versions.** A new compiler embeds a new runtime, and
+  its objects get new content-addressed keys, so two `sky` versions (an
+  installed release and a dev build, or an upgrade while an editor still runs
+  the old one) share the cache without cleaning it for each other. The old
+  version's entries are reclaimed by Go's own trim (unused for five days) and by
+  the size cap.
 - **Escape hatch.** Set your own `GOCACHE` and Sky uses it as-is and manages
   nothing (its size and lifetime become yours to control).
 

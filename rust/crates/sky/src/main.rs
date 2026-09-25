@@ -44,6 +44,8 @@ use project::{
 use testrunner::run_test;
 
 mod bundled;
+mod leg_plan;
+mod precompress;
 mod target;
 
 fn main() -> ExitCode {
@@ -58,6 +60,27 @@ fn main() -> ExitCode {
     // Best-effort "newer version available" nudge — cached, non-blocking, TTY-only.
     maybe_notify_update(args.first().map(String::as_str));
 
+    // `--timings` on build / check: the per-phase wall-clock report. It is
+    // carried as `SKY_TIMINGS=1` so the child `sky build`s a Sky.Spa or Std.App
+    // build spawns (its backend + frontend legs) report their own phases too.
+    let timed = matches!(args.first().map(String::as_str), Some("build" | "check"));
+    if timed && args.iter().any(|a| a == "--timings") {
+        std::env::set_var("SKY_TIMINGS", "1");
+    }
+    let started = std::time::Instant::now();
+    let code = dispatch(&args);
+    if timed {
+        let here = std::env::current_dir()
+            .ok()
+            .and_then(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let verb = args.first().map(String::as_str).unwrap_or_default();
+        project::timings::report(&format!("sky {verb} in {here}/"), started.elapsed());
+    }
+    code
+}
+
+fn dispatch(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("--version") | Some("-V") | Some("version") => {
             println!("{}", version_string());
@@ -994,11 +1017,52 @@ fn apply_spa_data_dir(cmd: &mut Command, project_dir: &Path) {
     }
 }
 
+/// Build outputs [`stage_std_app_derived`] keeps across a restage, relative to
+/// the staged root: the derived project's own `sky-out/` and the Sky.Spa split
+/// legs' `sky-out/`s.
+const PRESERVED_BUILD_OUTPUTS: &[&str] = &[
+    "sky-out",
+    ".split/backend/sky-out",
+    ".split/frontend/sky-out",
+];
+
+/// Remove everything under `dir` except the paths in `keep` (relative to the
+/// root the walk started at; `rel` is `dir`'s own relative path). A directory
+/// that only CONTAINS a kept path is walked, not removed. Symlinks are removed,
+/// never followed.
+fn remove_all_except(dir: &Path, rel: &Path, keep: &[&str]) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let child_rel = rel.join(entry.file_name());
+        let child_str = child_rel.to_string_lossy().replace('\\', "/");
+        if keep.iter().any(|k| *k == child_str) {
+            continue;
+        }
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path)?;
+        let holds_kept = keep.iter().any(|k| k.starts_with(&format!("{child_str}/")));
+        if meta.is_dir() && holds_kept {
+            remove_all_except(&path, &child_rel, keep)?;
+        } else if meta.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
 /// The derived entry is always built by explicit path, so the copied `sky.toml`
 /// `entry` field is left untouched.
 fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf, ExitCode> {
+    // Clean the staged tree, but keep the Go build outputs (`sky-out/`) of the
+    // derived project and of the two split legs. They are regenerated in full by
+    // every build, so keeping them changes no output; what it keeps is `go
+    // build`'s up-to-date check: an unchanged program is not re-linked. Removing
+    // them made every Sky.Spa rebuild re-link a native backend and a wasm client
+    // from scratch.
     if out_root.exists() {
-        if let Err(e) = std::fs::remove_dir_all(out_root) {
+        if let Err(e) = remove_all_except(out_root, Path::new(""), PRESERVED_BUILD_OUTPUTS) {
             eprintln!("sky build: clean {}: {e}", out_root.display());
             return Err(ExitCode::FAILURE);
         }
@@ -2345,6 +2409,7 @@ fn build_std_app(
     // EXISTING, UNCHANGED auto-split can partition `update` — then split + build.
     if kind == StdAppBuild::Spa {
         let entry_src = std::fs::read_to_string(entry_file).unwrap_or_default();
+        let t_stage = project::timings::phase("synthesise + stage Spa entry (.skyapp)");
         let synthesized = match synthesize_spa_source(&entry_src, false) {
             Ok(s) => s,
             Err(e) => {
@@ -2373,6 +2438,7 @@ fn build_std_app(
         // uploads (an admin image write to `public/products/<uuid>`), which the
         // build-time `dist` snapshot cannot hold.
         let static_mount = project::spa_split::declared_static_mount(&entry_src, project_dir);
+        t_stage.end();
         return match spa_split_and_build(
             repo_root,
             &out_root,
@@ -2383,8 +2449,10 @@ fn build_std_app(
             embed,
             true,
             static_mount,
+            !run,
         ) {
             Ok(od) => {
+                let t_static = project::timings::phase("stage static assets (dist + backend)");
                 // FINDING C: copy the app's DECLARED static-file dir into the
                 // frontend `dist/` from the ORIGINAL project — the authority,
                 // since the synthesised Spa entry the split saw has dropped the
@@ -2413,6 +2481,7 @@ fn build_std_app(
                     eprintln!("sky build --target {}: {e}", tgt.canonical());
                     return ExitCode::FAILURE;
                 }
+                t_static.end();
                 let backend = od.join("backend").join("sky-out").join("app");
                 println!(
                     "\nBuilt Std.App entry ({}) → {}  (wasm frontend + /_rpc).",
@@ -2664,7 +2733,11 @@ fn spa_split_and_build(
     // the split sees has dropped the declaration (the `--target web:app` synth
     // entry). `None` → `generate` reads it from its own entry + `sky.toml`.
     static_mount: Option<(String, String)>,
+    // Write the `.gz` / `.br` bundle variants (false for a `sky run`, whose
+    // backend serves the bundle itself).
+    precompress: bool,
 ) -> Result<PathBuf, ExitCode> {
+    let t_split = project::timings::phase("spa split (partition + generate)");
     let report = match project::spa_split::generate(
         repo_root,
         project_dir,
@@ -2679,6 +2752,7 @@ fn spa_split_and_build(
             return Err(ExitCode::FAILURE);
         }
     };
+    t_split.end();
     println!("client/server split → {}", report.out_dir);
     let joined = |v: &[String]| {
         if v.is_empty() {
@@ -2724,43 +2798,70 @@ fn spa_split_and_build(
     // skips any project carrying the `[spa] generated = true` marker (both trees
     // this generator wrote have it), and the backend is a `Sky.Http.Server` with no
     // `Std.Spa` import anyway.
+    // Serial or parallel, decided from this machine's free memory against the
+    // legs' peak (measured on this project's previous split build, else
+    // estimated from the generated sources) — see `leg_plan`.
+    let backend_dir = od.join("backend");
+    let frontend_dir = od.join("frontend");
+    let peak_record = backend_dir.join("sky-out").join(leg_plan::PEAK_RECORD);
+    let env_flag = |k: &str| {
+        std::env::var(k)
+            .map(|v| !matches!(v.trim(), "" | "0" | "false" | "no"))
+            .unwrap_or(false)
+    };
+    let (per_leg_peak, peak_source) = match leg_plan::recorded_peak(&peak_record) {
+        Some(b) => (b, "measured last build"),
+        None => (
+            leg_plan::estimate_from_source(
+                leg_plan::sky_source_bytes(&backend_dir.join("src"))
+                    .max(leg_plan::sky_source_bytes(&frontend_dir.join("src"))),
+            ),
+            "estimated from sources",
+        ),
+    };
+    let plan = leg_plan::decide(
+        env_flag("SKY_BUILD_SERIAL"),
+        env_flag("SKY_BUILD_PARALLEL"),
+        per_leg_peak,
+        &format!("({peak_source})"),
+        leg_plan::available_memory(),
+    );
+    project::timings::note(format!("legs: {}", plan.reason));
     println!(
-        "\n== building backend (native{}) + frontend (--target {target}) in parallel ==",
-        if embed { ", --embed" } else { "" }
+        "\n== building backend (native{}) + frontend (--target {target}): {} ==",
+        if embed { ", --embed" } else { "" },
+        plan.reason
     );
     // The two Go builds are independent and write disjoint dirs (backend/ vs
-    // frontend/), so run them CONCURRENTLY: the SPA wall-clock becomes
-    // max(backend, frontend) instead of their sum. Output is captured per leg and
+    // frontend/), so when memory allows they run CONCURRENTLY: the SPA wall-clock
+    // becomes max(backend, frontend) instead of their sum. Output is captured per leg and
     // printed grouped afterwards, so the two streams never interleave and every
     // error is still surfaced. (--embed belongs on the BACKEND: it owns the DB.)
     let sky_ref = &sky;
-    let backend_dir = od.join("backend");
-    let frontend_dir = od.join("frontend");
     let build_backend = || {
         let mut c = Command::new(sky_ref);
         c.arg("build");
         if embed {
             c.arg("--embed");
         }
-        c.arg("src/Main.sky").current_dir(&backend_dir).output()
+        let t = project::timings::phase("backend leg (child sky build, native)");
+        let out = c.arg("src/Main.sky").current_dir(&backend_dir).output();
+        t.end();
+        out
     };
     let build_frontend = || {
-        Command::new(sky_ref)
-            .args(["build", "--target", target, "src/Main.sky"])
-            .current_dir(&frontend_dir)
-            .output()
+        let t = project::timings::phase("frontend leg (child sky build, wasm)");
+        let mut c = Command::new(sky_ref);
+        c.args(["build", "--target", target, "src/Main.sky"]);
+        if !precompress {
+            c.arg("--no-precompress");
+        }
+        let out = c.current_dir(&frontend_dir).output();
+        t.end();
+        out
     };
-    // `SKY_BUILD_SERIAL=1` runs the two legs one after the other. Each leg is a
-    // whole `sky build` (a Sky front-end of ~1.4 GB on a mid-size app, plus the
-    // Go toolchain), so the concurrent default peaks at roughly twice that: on
-    // a 2-core / 7 GB hosted CI runner the job was killed (exit 143) every
-    // time, while the same build passes on a laptop. Serial trades wall-clock
-    // for a peak of max(leg) instead of their sum.
-    let serial = std::env::var("SKY_BUILD_SERIAL")
-        .map(|v| !matches!(v.trim(), "" | "0" | "false" | "no"))
-        .unwrap_or(false);
-    let (backend_res, frontend_res) = if serial {
-        println!("   (SKY_BUILD_SERIAL is set: building the two legs one after the other)");
+    let t_legs = project::timings::phase("both legs (wall)");
+    let (backend_res, frontend_res) = if !plan.parallel {
         (Ok(build_backend()), Ok(build_frontend()))
     } else {
         std::thread::scope(|s| {
@@ -2769,6 +2870,15 @@ fn spa_split_and_build(
             (b.join(), f.join())
         })
     };
+    t_legs.end();
+    // Record the per-leg peak for the next build's decision. Keep the larger of
+    // this build's and the recorded one: a no-change rebuild skips the link and
+    // peaks far lower than an edit that re-links, so the latest alone would
+    // under-state the next build.
+    if let Some(peak) = leg_plan::children_peak_rss() {
+        let keep = leg_plan::recorded_peak(&peak_record).map_or(peak, |p| p.max(peak));
+        let _ = std::fs::write(&peak_record, keep.to_string());
+    }
     let report_leg =
         |label: &str, res: std::thread::Result<std::io::Result<std::process::Output>>| -> bool {
             use std::io::Write;
@@ -3135,6 +3245,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
         // Direct `sky spa-split`: the entry still carries its static declaration,
         // so `generate` reads the mount itself.
         None,
+        true,
     ) {
         Ok(od) => od,
         Err(code) => return code,
@@ -3159,6 +3270,10 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     // (GOOS=js GOARCH=wasm) + drops wasm_exec.js; `--target <t>` bundles that
     // client for a delivery surface (web / desktop / ios / android). See
     // `cmd_build_target`.
+    // `--no-precompress`: skip the `.gz` / `.br` bundle variants. Internal — the
+    // `sky run` path passes it to its frontend leg, whose backend serves the
+    // bundle itself and never reads them.
+    let precompress = !args.iter().any(|a| a == "--no-precompress");
     let wasm = args.iter().any(|a| a == "--wasm");
     let target = args
         .iter()
@@ -3329,6 +3444,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             true,
             // Direct Spa entry: `generate` reads the static mount from the entry.
             None,
+            precompress,
         ) {
             Ok(od) => {
                 let entry = positional
@@ -3440,7 +3556,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     }
     // `--target`: bundle the freshly-built wasm client for a delivery surface.
     if let Some(t) = &target {
-        return cmd_build_target(t, &project_dir, &out_dir);
+        return cmd_build_target(t, &project_dir, &out_dir, precompress);
     }
     ExitCode::SUCCESS
 }
@@ -3450,12 +3566,17 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
 /// wasm_exec.js), then, per delivery surface, either finish (web/tablet), point
 /// the user at the native shell (desktop), or — for ios/android — verify the
 /// platform toolchain is installed, warning + exiting if it is not.
-fn cmd_build_target(target: &str, project_dir: &Path, out_dir: &Path) -> ExitCode {
+fn cmd_build_target(
+    target: &str,
+    project_dir: &Path,
+    out_dir: &Path,
+    precompress: bool,
+) -> ExitCode {
     // (Platform toolchains for ios/android were verified in cmd_build before the
     // build ran — see the --target parse block there.)
     // Stage the servable bundle (shared by every surface).
     let dist = project_dir.join("dist");
-    if let Err(e) = stage_web_bundle(out_dir, &dist) {
+    if let Err(e) = stage_web_bundle(out_dir, &dist, precompress) {
         eprintln!("sky build --target {target}: {e}");
         return ExitCode::FAILURE;
     }
@@ -3539,7 +3660,8 @@ fn cmd_build_target(target: &str, project_dir: &Path, out_dir: &Path) -> ExitCod
 /// one app's wasm to another. A content-addressed name changes whenever the bytes
 /// change, so the cache is always correct (and the file can be cached forever).
 /// `index.html` is regenerated every build to point at the current hash.
-fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
+fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<(), String> {
+    let t_stage = project::timings::phase("stage dist bundle (hash + copy)");
     std::fs::create_dir_all(dist).map_err(|e| format!("create {}: {e}", dist.display()))?;
 
     // wasm_exec.js — the Go runtime glue; copy as-is (it changes only with the
@@ -3592,13 +3714,19 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
         WASM_INDEX_HTML.replace("{{WASM}}", &wasm_name),
     )
     .map_err(|e| format!("write index.html: {e}"))?;
+    t_stage.end();
 
     // Precompress the wasm + loader so a static host / Caddy can serve them with
     // `precompressed br gzip` — brotli-11 is ~27% smaller than gzip on wasm. gzip
     // is near-universal; brotli is optional (warned + skipped if the tool is
-    // absent, leaving the gzip fallback).
-    precompress_web_asset(&dist.join(&wasm_name));
-    precompress_web_asset(&dist.join("wasm_exec.js"));
+    // absent, leaving the gzip fallback). Skipped for a `sky run` build: its
+    // backend serves the bundle itself (gzip on the fly) and never reads the
+    // `.gz` / `.br` files, so brotli-11 there is pure wait.
+    if precompress {
+        let cache = precompress::default_cache_dir();
+        precompress_web_asset(&dist.join(&wasm_name), cache.as_deref());
+        precompress_web_asset(&dist.join("wasm_exec.js"), cache.as_deref());
+    }
     Ok(())
 }
 
@@ -3608,30 +3736,55 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path) -> Result<(), String> {
 /// accept neither. Missing tools are non-fatal: gzip is warned once, brotli is
 /// warned once with the install hint, and the build proceeds with whatever
 /// compression is available (down to raw).
-fn precompress_web_asset(file: &Path) {
+///
+/// The two tools run concurrently, and each result is cached under the input's
+/// content hash (`precompress::compress`), so an unchanged wasm is never
+/// compressed twice.
+fn precompress_web_asset(file: &Path, cache: Option<&Path>) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static BROTLI_WARNED: AtomicBool = AtomicBool::new(false);
     static GZIP_WARNED: AtomicBool = AtomicBool::new(false);
     if !file.is_file() {
         return;
     }
-    // gzip (fallback tier) — keep the original (`-k`), force overwrite (`-f`).
-    let gz = std::process::Command::new("gzip")
-        .args(["-9", "-k", "-f"])
-        .arg(file)
-        .status();
-    if !matches!(gz, Ok(s) if s.success()) && !GZIP_WARNED.swap(true, Ordering::Relaxed) {
+    let timed = |tool: &precompress::Tool, label: &'static str, hit: &'static str| {
+        let start = Instant::now();
+        let outcome = precompress::compress(file, tool, cache);
+        let label = if outcome == precompress::Outcome::CacheHit {
+            hit
+        } else {
+            label
+        };
+        project::timings::record(label, start.elapsed());
+        outcome
+    };
+    let (gz, br) = std::thread::scope(|s| {
+        let gz = s.spawn(|| {
+            timed(
+                &precompress::GZIP,
+                "precompress gzip -9",
+                "precompress gzip -9 (cached)",
+            )
+        });
+        let br = s.spawn(|| {
+            timed(
+                &precompress::BROTLI,
+                "precompress brotli -11",
+                "precompress brotli -11 (cached)",
+            )
+        });
+        (
+            gz.join().unwrap_or(precompress::Outcome::Failed),
+            br.join().unwrap_or(precompress::Outcome::Failed),
+        )
+    });
+    if gz == precompress::Outcome::Failed && !GZIP_WARNED.swap(true, Ordering::Relaxed) {
         eprintln!(
             "sky build: `gzip` not available — serving the wasm uncompressed. \
              Install gzip (or let your host compress on the fly) for smaller transfers."
         );
     }
-    // brotli (best tier) — optional. Warn once with the install hint, fall back.
-    let br = std::process::Command::new("brotli")
-        .args(["-q", "11", "-k", "-f"])
-        .arg(file)
-        .status();
-    if !matches!(br, Ok(s) if s.success()) && !BROTLI_WARNED.swap(true, Ordering::Relaxed) {
+    if br == precompress::Outcome::Failed && !BROTLI_WARNED.swap(true, Ordering::Relaxed) {
         eprintln!(
             "sky build: `brotli` not found — the wasm client is served gzip-compressed \
              (the fallback). Install `brotli` for a ~27% smaller download (Homebrew: \
@@ -5459,6 +5612,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
             true,
             // Direct Spa entry: `generate` reads the static mount from the entry.
             None,
+            false,
         ) {
             Ok(od) => od,
             Err(code) => return code,
@@ -10375,7 +10529,7 @@ fn print_help() {
         "sky — the Sky compiler CLI (rust bring-up)\n\n\
          USAGE:\n  sky <command> [args]\n\n\
          WIRED COMMANDS:\n\
-         \x20 build <file>     compile → sky-out/ + go build (--embed bundles PostgreSQL)\n\
+         \x20 build <file>     compile → sky-out/ + go build (--embed bundles PostgreSQL; --timings prints a per-phase table)\n\
          \x20                   a Std.App entry (`main = App.run app`) picks its backend from\n\
          \x20                   --target (below); a Sky.Spa entry AUTO-SPLITS → wasm frontend\n\
          \x20                   + native backend under .split/ (--out to override)\n\
@@ -11568,6 +11722,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Restaging a Std.App build tree keeps the Go outputs of the derived project
+    /// and of both split legs (so an unchanged program is not re-linked) and
+    /// removes everything else, including a module the user deleted.
+    #[test]
+    fn restage_keeps_only_the_go_build_outputs() {
+        let d = std::env::temp_dir().join(format!("sky-restage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let w = |rel: &str| {
+            let p = d.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, rel).unwrap();
+        };
+        w("src/Main.sky");
+        w("src/Deleted.sky");
+        w("sky.toml");
+        w("sky-out/app");
+        w(".split/backend/src/Main.sky");
+        w(".split/backend/sky-out/app");
+        w(".split/backend/sky-out/rt/live.go");
+        w(".split/frontend/src/Main.sky");
+        w(".split/frontend/dist/main.abc.wasm");
+        w(".split/frontend/sky-out/main.wasm");
+        w(".split/shared/Shared.sky");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(d.join("src"), d.join("sky-ffi")).unwrap();
+
+        remove_all_except(&d, Path::new(""), PRESERVED_BUILD_OUTPUTS).unwrap();
+
+        for kept in [
+            "sky-out/app",
+            ".split/backend/sky-out/app",
+            ".split/backend/sky-out/rt/live.go",
+            ".split/frontend/sky-out/main.wasm",
+        ] {
+            assert!(d.join(kept).is_file(), "{kept} must survive a restage");
+        }
+        for gone in [
+            "src",
+            "sky.toml",
+            "sky-ffi",
+            ".split/backend/src",
+            ".split/frontend/src",
+            ".split/frontend/dist",
+            ".split/shared",
+        ] {
+            assert!(
+                std::fs::symlink_metadata(d.join(gone)).is_err(),
+                "{gone} must be removed by a restage"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn stage_web_bundle_content_hashes_the_wasm() {
         let base = std::env::temp_dir().join(format!(
@@ -11584,7 +11791,7 @@ mod tests {
         std::fs::write(out.join("main.wasm"), b"AAAA-wasm-bytes").unwrap();
         std::fs::write(out.join("wasm_exec.js"), b"// go glue").unwrap();
 
-        stage_web_bundle(&out, &dist).unwrap();
+        stage_web_bundle(&out, &dist, false).unwrap();
 
         let wasm_name = |d: &std::path::Path| -> String {
             std::fs::read_dir(d)
@@ -11622,7 +11829,7 @@ mod tests {
         // Different bytes → different name, and the old wasm is removed (no
         // accumulation): exactly one main.*.wasm remains.
         std::fs::write(out.join("main.wasm"), b"BBBB-different").unwrap();
-        stage_web_bundle(&out, &dist).unwrap();
+        stage_web_bundle(&out, &dist, false).unwrap();
         let n2 = wasm_name(&dist);
         assert_ne!(n1, n2, "changed content must change the hashed name");
         let count = std::fs::read_dir(&dist)

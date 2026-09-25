@@ -139,6 +139,7 @@ fn assemble_and_emit_with(
     // module is a `SourceFile` input, `parse`/`module_exports` are tracked queries,
     // and `DefId`s are `#[salsa::interned]`. `load_dir` mints the inputs under a
     // shared `&db` borrow that closes before each `&mut db` registration.
+    let t_load = crate::timings::phase("load sources (stdlib + app)");
     let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
     let stdlib = load_dir(&db, &mut next_id, &repo_root.join("sky-stdlib"));
@@ -195,6 +196,8 @@ fn assemble_and_emit_with(
     // this map is filled there, alongside `src_map`, so both key off the same id.
     let mut path_map: std::collections::HashMap<base::FileId, String> =
         std::collections::HashMap::new();
+    t_load.end();
+    let t_parse = crate::timings::phase("parse (app modules)");
     if progress {
         println!("-- Discovering modules");
         println!("   Found {} project module(s)", locals.len());
@@ -269,6 +272,7 @@ fn assemble_and_emit_with(
     // its offending source line + caret instead of a flat `[code] message`. A
     // diagnostic span's `file.index()` is the module's `ModuleId` index, so the
     // map keys straight off `check_ids`.
+    t_parse.end();
     let src_map: std::collections::HashMap<base::FileId, String> = check_ids
         .iter()
         .map(|m| {
@@ -316,7 +320,9 @@ fn assemble_and_emit_with(
     // Halt HERE — before `write_out` + `go build` — so the failure surfaces as a
     // check-time diagnostic. Name-resolution + exhaustiveness handling stays with
     // the existing lowering path; only the type-clash hole is closed here.
+    let t_check = crate::timings::phase("canonicalise + typecheck");
     let checked = ty::check_modules(&db, &check_ids);
+    t_check.end();
     // Ambiguity (`[E1012]`) is reported BEFORE the type gate, because it is the
     // CAUSE and any type error under it is the consequence. When a bare name is
     // bound by two imports, the resolver still has to hand lowering one of them
@@ -449,6 +455,7 @@ fn assemble_and_emit_with(
     // it is memoised (re-demand is a cache hit) and invalidated natively by any
     // `SourceFile` edit (the LSP/incremental path). Emitted bytes are byte-for-byte
     // the prior eager `lower_program_cfg` + `emit_program` pair.
+    let t_lower = crate::timings::phase("lower + emit Go");
     let config = skydb::BuildConfig::new(&db, cfg);
     let prog = skydb::go_program(&db, entry, config);
     if !prog.entry_ok {
@@ -473,6 +480,7 @@ fn assemble_and_emit_with(
     // `sky check ≡ sky build` and is the structural lock for codegen holes.
     let abi_diags =
         crate::abi_guard::check_abi_symbols(&source, crate::abi_guard::runtime_exports(repo_root));
+    t_lower.end();
     if !abi_diags.is_empty() {
         return Err(render_diags(&abi_diags, &sources));
     }
@@ -562,6 +570,7 @@ fn build_inner(
         .out_dir_abs
         .clone()
         .unwrap_or_else(|| opts.example_dir.join(&opts.out_dir_name));
+    let t_write = crate::timings::phase("write sky-out (Go + runtime + ffi)");
     if let Err(e) = write_out(&opts.repo_root, &out_dir, &source, console_needed) {
         report.note = format!("write failed: {e}");
         return report;
@@ -625,22 +634,26 @@ fn build_inner(
     // no-op at runtime, so the static-first probe must be skipped there. Matches
     // the oracle (`app/Main.hs`) + CLAUDE.md §"Sky.Webview" cgo-detect note.
     // Output binary name honours the sky.toml `bin` key (default `app`).
+    t_write.end();
     let bin_name = configured_bin_name(&opts.example_dir);
-    // Maintain Sky's isolated Go build cache before `go build`: clean it when the
-    // compiler's embedded runtime fingerprint changed (a `sky upgrade` — reclaims
-    // the now-dead objects) and bound its size. Best-effort + Sky-owned-only; a
-    // user GOCACHE and any failure are left untouched (go_cache.rs).
-    crate::go_cache::maintain(ffi::assets::embed_fingerprint());
+    // Maintain Sky's isolated Go build cache before `go build`: bound its size.
+    // Best-effort + Sky-owned-only; a user GOCACHE and any failure are left
+    // untouched (go_cache.rs).
+    let t_cache = crate::timings::phase("go cache maintain");
+    crate::go_cache::maintain();
+    t_cache.end();
     // `--wasm`: compile the client for the browser (GOOS=js GOARCH=wasm) and
     // drop the matching wasm_exec.js. The native cgo-detection path is skipped —
     // a Sky.Spa client imports `syscall/js` and must NOT native-build.
     if opts.wasm {
+        let _t = crate::timings::phase("go build (wasm, GOOS=js)");
         match run_wasm_build(&out_dir) {
             Ok(()) => report.go_build_ok = true,
             Err(e) => report.go_build_stderr = e,
         }
         return report;
     }
+    let t_go = crate::timings::phase("go build (native)");
     match run_go_build_detecting_cgo(&out_dir, &source, &bin_name) {
         Ok(outcome) => {
             report.go_build_ok = outcome.ok;
@@ -652,6 +665,7 @@ fn build_inner(
             return report;
         }
     }
+    t_go.end();
 
     // ---- run ----
     if opts.run && report.go_build_ok {
@@ -839,9 +853,39 @@ fn sky_build_goflags_from(existing: &str) -> String {
     flags.join(" ")
 }
 
+/// `go build` flag that compiles the embedded console package without inlining.
+///
+/// `rt/console_app/main.go` is generated Sky (the console is a `Std.Ui` app), so
+/// `Std.Ui`'s tag dispatch is a chain of ~25 nested immediately-called closures,
+/// one per line after `gofmt`. When the Go compiler (measured on go1.26.1)
+/// inlines such a chain, each inlined closure's symbol name repeats its parent's
+/// name, so the names double at every level: the longest is 50 MB, and the
+/// names alone were 179 MB of a 229 MB server binary (`runtime.pclntab`'s
+/// funcname table). Every Sky.Live / Sky.Http.Server / Sky.Spa backend that
+/// links the console paid it: in the link time of every build, in the binary
+/// size, and in the upload of every deploy. With inlining off for this one
+/// package the same binary is 46 MB and the longest name is under 1 kB. The
+/// console is an operator UI, so its lost inlining is not on any hot path. The
+/// pattern only matches `sky-app/rt/console_app`, so a build without the
+/// console is unaffected, and no other package's cache key changes.
+pub(crate) const CONSOLE_APP_GCFLAGS: &str = "-gcflags=sky-app/rt/console_app=-l";
+
+/// [`CONSOLE_APP_GCFLAGS`], unless the user already passes `-gcflags` through
+/// `GOFLAGS` (a debug build's `all=-N -l`): a command-line `-gcflags` replaces
+/// the `GOFLAGS` one, so adding ours would silently drop theirs.
+fn console_gcflags(user_goflags: &str) -> Option<&'static str> {
+    let user_sets_gcflags = user_goflags
+        .split_whitespace()
+        .any(|f| f.starts_with("-gcflags") || f.starts_with("--gcflags"));
+    (!user_sets_gcflags).then_some(CONSOLE_APP_GCFLAGS)
+}
+
 fn run_go_build_once(out_dir: &Path, cgo: &str, bin_name: &str) -> Result<GoBuildAttempt, String> {
     let mut cmd = Command::new("go");
     cmd.arg("build")
+        .args(console_gcflags(
+            &std::env::var("GOFLAGS").unwrap_or_default(),
+        ))
         .arg("-o")
         .arg(bin_name)
         .arg(".")
@@ -2522,6 +2566,22 @@ mod sky_toml_tests {
         driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, sky_toml_flag,
         sky_toml_section_key, unknown_config_keys,
     };
+
+    /// The console package is compiled without inlining (its generated closure
+    /// chains otherwise produce 50 MB symbol names), but never over a user's own
+    /// `-gcflags` in `GOFLAGS`: a command-line `-gcflags` would replace it.
+    #[test]
+    fn console_gcflags_disable_inlining_unless_the_user_passes_gcflags() {
+        use super::{console_gcflags, CONSOLE_APP_GCFLAGS};
+        assert_eq!(CONSOLE_APP_GCFLAGS, "-gcflags=sky-app/rt/console_app=-l");
+        assert_eq!(console_gcflags(""), Some(CONSOLE_APP_GCFLAGS));
+        assert_eq!(
+            console_gcflags("-mod=mod -trimpath"),
+            Some(CONSOLE_APP_GCFLAGS)
+        );
+        assert_eq!(console_gcflags("-gcflags=all=-N -l"), None);
+        assert_eq!(console_gcflags("-trimpath --gcflags=-m"), None);
+    }
 
     #[test]
     fn goflags_preserve_user_flags_and_force_mod_and_buildvcs() {
