@@ -53,7 +53,9 @@ const repoRoot = path.resolve(__dirname, '..');
 // example that has a Sub.every tick, ensuring msg_dispatch logs
 // flow + the trace ring fills + metrics accumulate.
 const PARENT_EXAMPLE = '09-live-counter';
-const PARENT_PORT    = 8500;
+// SKY_CONSOLE_E2E_PORT moves the parent off 8500 when that port is taken
+// (another app, or a sibling run of this script).
+const PARENT_PORT    = Number(process.env.SKY_CONSOLE_E2E_PORT || 8500);
 const ARTEFACT_DIR   = path.join(repoRoot, '.skycache', 'verify', 'console-e2e');
 
 mkdirSync(ARTEFACT_DIR, { recursive: true });
@@ -240,12 +242,20 @@ try {
         recordVideo: process.env.SKY_RECORD ? { dir: ARTEFACT_DIR } : undefined,
     });
     const page = await context.newPage();
+    // A browser console error or an uncaught page error is a failure, not a
+    // log line: a console whose wire client throws still paints its first
+    // frame, so the tab clicks alone would pass.
+    const browserErrors = [];
     page.on('console', msg => {
         if (msg.type() === 'error') {
+            browserErrors.push('console: ' + msg.text());
             console.error('[browser console error] ' + msg.text());
         }
     });
-    page.on('pageerror', e => console.error('[page-error] ' + e.message));
+    page.on('pageerror', e => {
+        browserErrors.push('pageerror: ' + e.message);
+        console.error('[page-error] ' + e.message);
+    });
     // Log every failing response so we know WHICH URL 500'd.
     page.on('response', async r => {
         const s = r.status();
@@ -270,7 +280,7 @@ try {
     // an EXTENDED dwell (~10 s) because the original hang only
     // surfaced after several refresh ticks accumulated re-render
     // pressure on the larger metric series payload.
-    const tabs = ['Overview', 'Metrics', 'Logs', 'Traces', 'Errors'];
+    const tabs = ['Overview', 'Metrics', 'Logs', 'Traces', 'Errors', 'Analytics'];
     for (const tab of tabs) {
         console.error(`[e2e] clicking tab: ${tab}`);
         await page.locator('text=' + tab).first().click({ timeout: 10_000 });
@@ -318,6 +328,11 @@ try {
     console.error('[e2e] logs filter UI present');
 
     await browser.close();
+
+    if (browserErrors.length > 0) {
+        fail(browserErrors.length + ' browser console / page error(s)', browserErrors.slice(0, 10).join('\n  '));
+    }
+    console.error('[e2e] no browser console or page errors');
 
     // ─── assertion 4: server log is clean ──────────────────────────
     await new Promise(r => setTimeout(r, 500));

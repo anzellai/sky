@@ -110,16 +110,12 @@ say "using $($SKY --version 2>&1 | head -1)"
 
 CONSOLE_SRC="${SKY_CONSOLE_SRC:-$ROOT/sky-bundled/console}"
 if [ ! -f "$CONSOLE_SRC/src/Main.sky" ]; then
+    # The console source lives in-tree at sky-bundled/console. A missing
+    # source is a broken checkout (or a wrong SKY_CONSOLE_SRC), never a
+    # reason to skip: the CI drift check depends on this script running.
     warn "console Sky source not found at $CONSOLE_SRC/src/Main.sky."
-    warn ""
-    warn "v0.16.0 PR 2 deleted the in-tree sky-bundled/console/ tree —"
-    warn "the canonical artefact is runtime-go/rt/console_app/main.go"
-    warn "(committed). Set SKY_CONSOLE_SRC to point at an external"
-    warn "checkout of the Sky source to re-run this script."
-    warn ""
-    warn "Drift detection (CI): when sky-bundled/console is absent,"
-    warn "this script's exit-code-1 is treated as 'no-op' by the"
-    warn "calling workflow."
+    warn "The source lives in-tree at sky-bundled/console; SKY_CONSOLE_SRC"
+    warn "overrides it. Without it there is nothing to regenerate from."
     exit 2
 fi
 

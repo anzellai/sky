@@ -59,11 +59,16 @@ func init() {
 //   - Update: `Main_update(msg State_Msg, model State_Model_R) rt.T2[State_Model_R, any]`
 //     — the mount's sky_call2 reflect path coerces the opaque msg +
 //     model back to the typed shape.
-//   - View: `Main_viewWrapped(model State_Model_R) any` — the Live
-//     wrapper that returns `Ui.layout [] (view model)`, i.e. a
+//   - View: `Main_viewWrapped(model State_Model_R) Std_Html_Html` — the
+//     Live wrapper that returns `Ui.layout [] (view model)`, i.e. a
 //     renderable `Html`. (The bare `view` in View.sky returns a raw
 //     `Element` for the Tui backend; the Live mount's HtmlToVNode needs
 //     the layout-wrapped Html, so we point at the wrapper.)
+//     Every symbol named here must be REACHABLE from `main` in Main.sky:
+//     the compiler drops unreached bindings and cannot see this Go
+//     reference. Main.sky routes its App view through `viewWrapped` for
+//     that reason, and scripts/regenerate-console.sh builds this package
+//     after regenerating, so a dropped symbol fails the generator.
 //   - Subscriptions: `Main_subscriptions(model State_Model_R) any`.
 //   - Store: "memory" — the inline console doesn't need to survive
 //     restarts; admin tools that need history use the persistent
