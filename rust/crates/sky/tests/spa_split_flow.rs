@@ -548,15 +548,17 @@ fn backend_default_port_matches_the_generated_shell() {
             .join("\n")
     );
 
-    // The shell generator (this crate's main.rs) must bake the SAME default, or
-    // the two drift apart again. Pin them together.
-    let main_rs = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+    // The shell generator must default to the SAME port, or the two drift apart
+    // again. The shells' default address (`app_url.rs`, used by the iOS /
+    // Android / desktop templates when neither `App.withAppUrl` nor
+    // `SKY_APP_URL` is set) is built from `DEFAULT_PORT`. Pin them together.
+    let app_url_rs = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app_url.rs"),
     )
     .unwrap();
     assert!(
-        main_rs.contains("getenvOr \"PORT\" \"8951\"") && main_rs.contains("localhost:8951"),
-        "the generated shell (main.rs) must load the same 8951 the backend serves"
+        app_url_rs.contains("pub const DEFAULT_PORT: u16 = 8951;"),
+        "the generated shells (app_url.rs) must default to the same 8951 the backend serves"
     );
 
     let _ = std::fs::remove_dir_all(&out);
