@@ -70,6 +70,7 @@ pub use driver::{
 };
 /// Re-exported so `sky init` can scaffold an embedded template (`CLAUDE.md`)
 /// when running standalone, outside the repo tree (doc 09 §E).
+pub use ffi::assets::embed_fingerprint;
 pub use ffi::extract_template;
 pub use ffi_ops::{
     add as ffi_add, add_sky as ffi_add_sky, add_smart as ffi_add_smart, install as ffi_install,

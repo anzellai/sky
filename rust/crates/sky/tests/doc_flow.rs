@@ -201,9 +201,34 @@ fn doc_serve_answers_http_200() {
         panic!("/api/symbols.json connection failed");
     }
 
+    // Strict CSP: the search script is a same-origin file the server answers,
+    // not an inline <script>.
+    let src = index
+        .split("<script src=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .unwrap_or("")
+        .to_string();
+    let search = if src.starts_with("/api/search.") && src.ends_with(".js") {
+        http_get(port, &src)
+    } else {
+        None
+    };
+
     kill_group(&child);
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);
+
+    match search {
+        Some((code, body)) => {
+            assert_eq!(code, 200, "{src} did not return 200");
+            assert!(
+                body.contains("data-symbols"),
+                "{src} is not the search script:\n{body}"
+            );
+        }
+        None => panic!("index does not load a served /api/search.<hash>.js (src={src:?})"),
+    }
 }
 
 /// `sky doc --diagram wire --target web:app` on an `App.app` (`Std.App`) app

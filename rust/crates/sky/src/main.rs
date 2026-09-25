@@ -7302,7 +7302,7 @@ fn cmd_doc_serve(port: u16) -> ExitCode {
         "doc",
         "live",
         bundled::ENTRY_LIVE,
-        &version_slug(),
+        &bundled_cache_slug(),
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -7350,7 +7350,7 @@ fn cmd_doc_tui() -> ExitCode {
         "doc",
         "tui",
         bundled::ENTRY_TUI,
-        &version_slug(),
+        &bundled_cache_slug(),
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -7398,7 +7398,7 @@ fn cmd_console(args: &[String]) -> ExitCode {
         "console",
         variant,
         entry,
-        &version_slug(),
+        &bundled_cache_slug(),
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -7465,7 +7465,7 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
     }
 
     // Build the hub binary into the per-version cache (one-time per version).
-    let hub_dir = bundled::cache_root().join(format!("hub-{}", version_slug()));
+    let hub_dir = bundled::cache_root().join(format!("hub-{}", bundled_cache_slug()));
     let hub_bin = hub_dir.join("sky-hub");
     if !hub_bin.is_file() {
         if let Err(e) = std::fs::create_dir_all(&hub_dir) {
@@ -7574,6 +7574,19 @@ fn version_slug() -> String {
             }
         })
         .collect()
+}
+
+/// The cache-dir key of a bundled app build (`sky doc --serve`, `--tui`, the
+/// console hub): the version slug PLUS the first 12 hex digits of the embedded
+/// asset fingerprint (`sky-embed-fp-v1:<sha256>`, which covers the stdlib, the
+/// runtime and `sky-bundled/`). Keyed on the version alone, a compiler whose
+/// bundled source or runtime changed within one version (every dev build, a
+/// rebuilt release candidate) reused the OLD app binary: `sky doc --serve`
+/// kept serving a doc server that 404'd the new `api/search.<hash>.js`.
+fn bundled_cache_slug() -> String {
+    let fp = project::embed_fingerprint();
+    let hex = fp.rsplit(':').next().unwrap_or(fp);
+    format!("{}-{}", version_slug(), &hex[..hex.len().min(12)])
 }
 
 /// Parse `--port N` / `-p N` / `--port=N` from `args`, falling back to `default`.
@@ -11827,6 +11840,18 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A bundled-app cache dir changes with the embedded assets, not only
+    /// with the version string.
+    #[test]
+    fn bundled_cache_slug_carries_the_embed_fingerprint() {
+        let fp = project::embed_fingerprint();
+        let hex = fp.rsplit(':').next().unwrap();
+        assert!(hex.len() >= 12, "fingerprint {fp}");
+        let slug = bundled_cache_slug();
+        assert!(slug.starts_with(&version_slug()), "{slug}");
+        assert!(slug.ends_with(&hex[..12]), "{slug} lacks {}", &hex[..12]);
     }
 
     /// The dist loader and the runtime's `SpaBootJS` must be the same bytes:
