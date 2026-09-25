@@ -130,6 +130,19 @@
 #             38-composite-ui-multibackend 326 -> 325 (-1): its checkbox icon
 #             is a check mark beside the native box instead of a drawn box.
 #     No row rose. Blessed so the lower floor is locked.
+#
+# ── Recorded transition, 2026-09-25 — v0.25.18 parser-safe Std.Ui nesting ──
+#     narrow +4 in each of 7 rows (+28, 12991 -> 13019); adapter and dispatch
+#     unchanged (0). Rows: 52-blog-analytics, 61-app-kanban, 62-app-notes,
+#     63-app-chat, 64-app-native, apps/fieldbook, examples/60-spa-todos/client.
+#     Cause (2), a STDLIB source change: Std.Ui renders every element under a
+#     `Nesting` state so it never emits a nesting the HTML parser restructures
+#     (a block inside <p>, a link inside a link, …), which made Sky.Spa SSR
+#     hydration refuse and rebuild the page. Per-function token diff of
+#     63-app-chat's emitted Go against v0.25.17: every delta sits in a function
+#     whose source changed — renderElement -> renderElementIn, renderNodeAs,
+#     layoutWith, and the new keptRoleAttrs. No function whose source is
+#     unchanged moved.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -180,25 +193,25 @@
 49-xmodule-adt	adapter=0	dispatch=0	narrow=2
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=2
-52-blog-analytics	adapter=0	dispatch=0	narrow=471
+52-blog-analytics	adapter=0	dispatch=0	narrow=475
 53-record-update-map	adapter=0	dispatch=0	narrow=25
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=5
 55-store-partial-update	adapter=0	dispatch=0	narrow=135
-61-app-kanban	adapter=0	dispatch=0	narrow=269
-62-app-notes	adapter=0	dispatch=0	narrow=451
-63-app-chat	adapter=0	dispatch=0	narrow=450
-64-app-native	adapter=0	dispatch=0	narrow=346
+61-app-kanban	adapter=0	dispatch=0	narrow=273
+62-app-notes	adapter=0	dispatch=0	narrow=455
+63-app-chat	adapter=0	dispatch=0	narrow=454
+64-app-native	adapter=0	dispatch=0	narrow=350
 65-metadata-service	adapter=0	dispatch=0	narrow=41
 66-slack-agent	adapter=0	dispatch=0	narrow=160
 67-durable-counter	adapter=0	dispatch=0	narrow=89
 apps/dispatch	adapter=0	dispatch=0	narrow=469
-apps/fieldbook	adapter=0	dispatch=0	narrow=704
+apps/fieldbook	adapter=0	dispatch=0	narrow=708
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=571
 apps/relay	adapter=0	dispatch=0	narrow=244
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=83
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=82
-examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=272
+examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=276
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=227
 simple	adapter=0	dispatch=0	narrow=3

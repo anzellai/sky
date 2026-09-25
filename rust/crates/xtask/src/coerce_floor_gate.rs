@@ -709,6 +709,18 @@ fn assert_adapter_monotone(
     ))
 }
 
+/// The leading `#` comment block of an existing golden, with its line ends, or
+/// `None` when the file is missing or starts with a data row.
+fn existing_header(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let header: String = text
+        .lines()
+        .take_while(|l| l.starts_with('#'))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    (!header.is_empty()).then_some(header)
+}
+
 fn bless_golden(
     root: &Path,
     counts: &BTreeMap<String, Counts>,
@@ -754,9 +766,13 @@ fn bless_golden(
         return 1;
     }
 
-    let mut out = String::new();
-    out.push_str(
-        "# coerce-floor golden — emitted-Go runtime-narrowing token census, BY COST CLASS.\n\
+    // The golden's comment header is its history: every recorded transition
+    // (why a row moved, measured how) lives there. A bless rewrites the rows,
+    // never that record, so an existing header is kept verbatim. The literal
+    // below seeds a golden that has none yet.
+    let mut out = existing_header(&golden_path(root)).unwrap_or_else(|| {
+        String::from(
+            "# coerce-floor golden — emitted-Go runtime-narrowing token census, BY COST CLASS.\n\
          #\n\
          # adapter  — the site produces a `reflect.MakeFunc` thunk (`rt.Coerce[func(…)…]`).\n\
          #            Cost is paid per INVOCATION of the adapted func — once per element of\n\
@@ -825,7 +841,8 @@ fn bless_golden(
          # closed adapters the golden still reserved slack for, and that slack is now\n\
          # gone. The `narrow` fall is a decrease in SITE count and is not a speedup\n\
          # measurement — nothing here weights a site by how often it runs.\n",
-    );
+        )
+    });
     // A project that did not emit HERE keeps the floor it was last measured at.
     //
     // This is not politeness, it is a correctness requirement. `no_emit` means
@@ -1764,6 +1781,58 @@ u := rt.AsList[int](g); t := rt.AsListT[int](h)
             err.to_string().contains("CLASSIFIED"),
             "the error must name the migration, got: {err}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The header is the golden's history. A bless used to rewrite it from a
+    // literal holding only the first two transition records, so every later
+    // record ("why this row moved") was silently deleted on each bless.
+    #[test]
+    fn bless_keeps_the_recorded_transitions_in_the_header() {
+        let dir = std::env::temp_dir().join(format!("cf-hdr-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(dir.join("rust/crates/xtask"));
+        let header = "# coerce-floor golden — test header\n\
+                      #\n\
+                      # ── Recorded transition, 2099-01-01 — a later record ──\n\
+                      #     narrow +2 in p: new stdlib code.\n";
+        std::fs::write(
+            golden_path(&dir),
+            format!("{header}p\tadapter=0\tdispatch=0\tnarrow=5\n"),
+        )
+        .unwrap();
+        let counts = BTreeMap::from([(
+            "p".to_string(),
+            Counts {
+                by_class: Classed {
+                    adapter: 0,
+                    dispatch: 0,
+                    narrow: 7,
+                },
+                per_family: BTreeMap::new(),
+            },
+        )]);
+        assert_eq!(bless_golden(&dir, &counts, &[]), 0);
+        let text = std::fs::read_to_string(golden_path(&dir)).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            text.starts_with(header),
+            "the existing header must survive a bless verbatim, got:\n{text}"
+        );
+        assert!(text.contains("p\tadapter=0\tdispatch=0\tnarrow=7\n"));
+        assert_eq!(text.matches("Recorded transition").count(), 1);
+    }
+
+    #[test]
+    fn a_golden_with_no_header_is_seeded_with_the_default_one() {
+        let dir = std::env::temp_dir().join(format!("cf-seed-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        assert_eq!(existing_header(&dir.join("absent.golden")), None);
+        std::fs::write(
+            dir.join("rows.golden"),
+            "p\tadapter=0\tdispatch=0\tnarrow=1\n",
+        )
+        .unwrap();
+        assert_eq!(existing_header(&dir.join("rows.golden")), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
