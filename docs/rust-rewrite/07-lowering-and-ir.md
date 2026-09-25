@@ -512,3 +512,30 @@ argument is a `GoTy`, every name is an interned already-mangled `GoName`, and
 every `Coerce` is justified**. Codegen ([`08`](08-go-codegen.md)) never asks "what
 type is this?" — it only renders. That separation is L9 realised: the *lowering*
 owns types; the *codegen* owns bytes.
+
+### The Go it hands over must be cheap to compile (v0.25.18)
+
+The shape of the IR also sets what `go tool compile` pays. Two shapes cost the
+Go compiler far more than their size, because Go inlines every directly-called
+closure and copies nested bodies once per enclosing level:
+
+- **Tail `if` / `case` / `let`.** Each lowers to a typed IIFE
+  (`GoExprKind::Block`). In tail position, `return func() T { … }()` nested one
+  closure per `else if` or per inner `case`. The last lowering step,
+  `shape::flatten_tail_blocks` (`rust/crates/lower/src/shape.rs`), splices such
+  a block into the enclosing body as statements (a `GoStmt::Scope` when it
+  declares locals) whenever its type is the enclosing result type. An IIFE in
+  any other position, or of another type, stays.
+- **Curried function values of arity ≥ 3.** A record constructor handed to
+  `Codec.object`, or a boxed multi-argument function, was one `func(any) any`
+  per parameter, each capturing all the parameters before it (O(n²) for the
+  compiler). `Ctx::curried_any` emits one flat closure over an argument slice
+  instead, `rt.CurryN(n, func(_ps []any) any { … })`
+  (`runtime-go/rt/curry.go`). Arity 1 and 2 keep the nest.
+
+On a 22k-line Sky.Spa app these took the compile of package `main` from 5.6 GB
+to 2.2 GB (go1.26.1), and the embedded console's package from 4.8 GB to 0.5 GB,
+which also let the console build with inlining on again.
+`rust/crates/sky/tests/go_compile_shape.rs` pins both: no emitted function nests
+closures more than 10 deep, and the build's largest Go process stays under a
+measured budget.

@@ -1514,17 +1514,15 @@ func Main_appDef() Std_App_App {
 }
 
 func Main_subscriptions(v_0 State_Model_R) any {
-	return func() any {
-		if Main_hasStoreSource(v_0) {
-			return rt.Sub_every(any(Main_tickIntervalMs(v_0.Tab)), any(State_Msg_Tick()))
-		} else {
-			return rt.Sub_none()
-		}
-	}()
+	if Main_hasStoreSource(v_0) {
+		return rt.Sub_every(any(Main_tickIntervalMs(v_0.Tab)), any(State_Msg_Tick()))
+	} else {
+		return rt.Sub_none()
+	}
 }
 
 func Main_tickIntervalMs(v_0 State_Tab) int {
-	return func() int {
+	{
 		_subj := v_0
 		if _subj == State_Tab_LogsTab {
 			return 1500
@@ -1534,7 +1532,7 @@ func Main_tickIntervalMs(v_0 State_Tab) int {
 		}
 		return 3000
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Main_hasStoreSource(v_0 State_Model_R) bool {
@@ -1572,7 +1570,7 @@ func Std_Ui_width(v_0 Std_Ui_Length) Std_Ui_Attribute {
 }
 
 func View_encodeFilters(v_0 State_Model_R) string {
-	return func() string {
+	{
 		rangePart_1 := func() string {
 			if /* FFI return */ rt.AsBool(rt.Eq(any(v_0.Range), any(State_Range_Last24h))) {
 				return ""
@@ -1598,11 +1596,11 @@ func View_encodeFilters(v_0 State_Model_R) string {
 		}()
 		_ = svcPart_3
 		return View_joinQueryParts(rt.List_filterT[string](func(v_4 string) bool { return (v_4 != "") }, []string{rangePart_1, qPart_2, svcPart_3}))
-	}()
+	}
 }
 
 func View_joinQueryParts(v_0 []string) string {
-	return func() string {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return ""
@@ -1620,11 +1618,11 @@ func View_joinQueryParts(v_0 []string) string {
 			return (v_2 + ("&" + View_joinQueryParts(v_3)))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func State_rangeKey(v_0 State_Range) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == State_Range_Last15m {
 			return "15m"
@@ -1642,7 +1640,7 @@ func State_rangeKey(v_0 State_Range) string {
 			return "all"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_htmlAttribute(v_0 string, v_1 string) Std_Ui_Attribute {
@@ -1654,7 +1652,7 @@ func Std_Ui_el(v_0 []Std_Ui_Attribute, v_1 Std_Ui_Element) Std_Ui_Element {
 }
 
 func View_content(v_0 State_Model_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		threshold_1 := View_rangeThresholdIso(v_0.Range, v_0.NowMs)
 		_ = threshold_1
 		q_2 := /* FFI return */ rt.AsString(rt.String_toLower(any( /* FFI return */ rt.AsString(rt.String_trim(any(v_0.GlobalQuery))))))
@@ -1702,56 +1700,46 @@ func View_content(v_0 State_Model_R) Std_Ui_Element {
 		return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_padding(20), Std_Ui_spacing(16)}, func() []Std_Ui_Element {
 			_subj := v_0.Tab
 			if _subj == State_Tab_OverviewTab {
-				return func() []Std_Ui_Element {
-					if v_0.HubDbPath != "" {
-						return Overview_viewOverview(v_0)
-					} else {
-						return View_overviewView(v_0.Overview)
-					}
-				}()
+				if v_0.HubDbPath != "" {
+					return Overview_viewOverview(v_0)
+				} else {
+					return View_overviewView(v_0.Overview)
+				}
 			}
 			if _subj == State_Tab_MetricsTab {
-				return func() []Std_Ui_Element {
-					if v_0.HubDbPath != "" {
-						return MetricsTab_viewMetricsTab(v_0)
-					} else {
-						return View_metricsView(v_0.Metrics)
-					}
-				}()
+				if v_0.HubDbPath != "" {
+					return MetricsTab_viewMetricsTab(v_0)
+				} else {
+					return View_metricsView(v_0.Metrics)
+				}
 			}
 			if _subj == State_Tab_LogsTab {
-				return func() []Std_Ui_Element {
-					if v_0.HubDbPath != "" {
-						return LogsTab_viewLogsTab(v_0, logsFinal_5)
-					} else {
-						return View_logsView(v_0, logsFinal_5)
-					}
-				}()
+				if v_0.HubDbPath != "" {
+					return LogsTab_viewLogsTab(v_0, logsFinal_5)
+				} else {
+					return View_logsView(v_0, logsFinal_5)
+				}
 			}
 			if _subj == State_Tab_TracesTab {
-				return func() []Std_Ui_Element {
-					if v_0.HubDbPath != "" {
-						return TracesTab_viewTracesTab(v_0, tracesFinal_6)
-					} else {
-						return View_tracesView(v_0.TraceQuery, tracesFinal_6)
-					}
-				}()
+				if v_0.HubDbPath != "" {
+					return TracesTab_viewTracesTab(v_0, tracesFinal_6)
+				} else {
+					return View_tracesView(v_0.TraceQuery, tracesFinal_6)
+				}
 			}
 			if _subj == State_Tab_ErrorsTab {
-				return func() []Std_Ui_Element {
-					if v_0.HubDbPath != "" {
-						return ErrorsTab_viewErrorsTab(v_0)
-					} else {
-						return View_errorsView(v_0.Errors)
-					}
-				}()
+				if v_0.HubDbPath != "" {
+					return ErrorsTab_viewErrorsTab(v_0)
+				} else {
+					return View_errorsView(v_0.Errors)
+				}
 			}
 			if _subj == State_Tab_AnalyticsTab {
 				return AnalyticsTab_analyticsView(v_0.Analytics)
 			}
 			panic(rt.Unreachable("case"))
 		}())
-	}()
+	}
 }
 
 func AnalyticsTab_analyticsView(v_0 State_Analytics_R) []Std_Ui_Element {
@@ -1769,7 +1757,7 @@ func AnalyticsTab_recentPanel(v_0 State_Analytics_R) Std_Ui_Element {
 }
 
 func AnalyticsTab_recentRowView(v_0 State_AnalyticsEvent_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		who_1 := func() string {
 			if v_0.UserId == "" {
 				return "anonymous"
@@ -1790,7 +1778,7 @@ func AnalyticsTab_recentRowView(v_0 State_AnalyticsEvent_R) Std_Ui_Element {
 				return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(v_0.Path))
 			}
 		}()}), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(AnalyticsTab_textMuted()), Std_Ui_Font_family(AnalyticsTab_mono())}, Std_Ui_text(who_1))})
-	}()
+	}
 }
 
 func Std_Ui_text(v_0 string) Std_Ui_Element {
@@ -1921,13 +1909,11 @@ func Std_Ui_padding(v_0 int) Std_Ui_Attribute {
 }
 
 func AnalyticsTab_windowLabel(v_0 State_Analytics_R) string {
-	return func() string {
-		if v_0.WindowDays == 1 {
-			return "day"
-		} else {
-			return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.WindowDays))) + " days")
-		}
-	}()
+	if v_0.WindowDays == 1 {
+		return "day"
+	} else {
+		return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.WindowDays))) + " days")
+	}
 }
 
 func AnalyticsTab_panel(v_0 string, v_1 []Std_Ui_Element) Std_Ui_Element {
@@ -2071,17 +2057,15 @@ func AnalyticsTab_scopeNote(v_0 State_Analytics_R) Std_Ui_Element {
 }
 
 func AnalyticsTab_scopeText(v_0 State_Analytics_R) string {
-	return func() string {
+	{
 		base_1 := ("Scope: the last " + (AnalyticsTab_windowLabel(v_0) + (", newest " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.RowCap))) + " events — not an all-time total."))))
 		_ = base_1
-		return func() string {
-			if v_0.RowCapHit {
-				return (base_1 + " The row cap was reached, so revenue is a floor (≥), not a full sum.")
-			} else {
-				return base_1
-			}
-		}()
-	}()
+		if v_0.RowCapHit {
+			return (base_1 + " The row cap was reached, so revenue is a floor (≥), not a full sum.")
+		} else {
+			return base_1
+		}
+	}
 }
 
 func View_errorsView(v_0 []State_ErrorRow_R) []Std_Ui_Element {
@@ -2215,7 +2199,7 @@ func ErrorsTab_bgRaised() Std_Ui_Color {
 }
 
 func ErrorsTab_scopeBanner(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		label_1 := func() string {
 			if v_0 == "" {
 				return "All services"
@@ -2225,11 +2209,11 @@ func ErrorsTab_scopeBanner(v_0 string) Std_Ui_Element {
 		}()
 		_ = label_1
 		return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(ErrorsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(ErrorsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(ErrorsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05)}, Std_Ui_text("SCOPE")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(ErrorsTab_textPrimary())}, Std_Ui_text(label_1)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), ErrorsTab_allServicesChip((v_0 == ""))})
-	}()
+	}
 }
 
 func ErrorsTab_allServicesChip(v_0 bool) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		bg_1 := func() Std_Ui_Color {
 			if v_0 {
 				return ErrorsTab_accent()
@@ -2247,7 +2231,7 @@ func ErrorsTab_allServicesChip(v_0 bool) Std_Ui_Element {
 		}()
 		_ = fg_2
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_paddingXY(10, 6), Std_Ui_Background_color(bg_1), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectService("")), Std_Ui_Font_color(fg_2), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text("All services"))
-	}()
+	}
 }
 
 func Std_Ui_onClick(v_0 any) Std_Ui_Attribute {
@@ -2289,7 +2273,7 @@ func ErrorsTab_accent() Std_Ui_Color {
 }
 
 func View_tracesView(v_0 string, v_1 []State_TraceRow_R) []Std_Ui_Element {
-	return func() []Std_Ui_Element {
+	{
 		lq_2 := /* FFI return */ rt.AsString(rt.String_toLower(any( /* FFI return */ rt.AsString(rt.String_trim(any(v_0))))))
 		_ = lq_2
 		matches_3 := func(v_6 State_TraceRow_R) bool {
@@ -2312,24 +2296,22 @@ func View_tracesView(v_0 string, v_1 []State_TraceRow_R) []Std_Ui_Element {
 			if rt.List_isEmptyT[State_TraceRow_R](v_1) {
 				return []Std_Ui_Element{View_emptyState("No traces captured yet.")}
 			} else {
-				return func() []Std_Ui_Element {
-					if rt.List_isEmptyT[string](visibleIds_5) {
-						return []Std_Ui_Element{View_emptyState("No traces match the filter.")}
-					} else {
-						return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
-							_p0 := _e1
-							_ = _p0
-							return View_traceGroupView(v_1 /* FFI return */, rt.AsString(_p0))
-						}, visibleIds_5)
-					}
-				}()
+				if rt.List_isEmptyT[string](visibleIds_5) {
+					return []Std_Ui_Element{View_emptyState("No traces match the filter.")}
+				} else {
+					return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
+						_p0 := _e1
+						_ = _p0
+						return View_traceGroupView(v_1 /* FFI return */, rt.AsString(_p0))
+					}, visibleIds_5)
+				}
 			}
 		}())}
-	}()
+	}
 }
 
 func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		spans_2 := rt.List_filterT[State_TraceRow_R](func(v_5 State_TraceRow_R) bool { return (v_5.TraceId == v_1) }, v_0)
 		_ = spans_2
 		shortId_3 := func() string {
@@ -2348,7 +2330,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 				return /* FFI return */ rt.AsString(rt.Field(v_7, "Name"))
 			}
 			if _subj.Tag == 1 {
-				return func() string {
+				{
 					_subj := Sky_Core_List_head( /* primitive join */ rt.AsListT[any](spans_2))
 					if _subj.Tag == 0 {
 						v_8 := _subj.JustValue
@@ -2359,7 +2341,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 						return "(trace)"
 					}
 					panic(rt.Unreachable("case"))
-				}()
+				}
 			}
 			panic(rt.Unreachable("case"))
 		}()
@@ -2374,11 +2356,11 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 			_ = _p0
 			return View_spanRowView(v_0 /* FFI return */, rt.Coerce[State_TraceRow_R](_p0))
 		}, spans_2)))))
-	}()
+	}
 }
 
 func View_spanRowView(v_0 []State_TraceRow_R, v_1 State_TraceRow_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		statusErr_2 := (v_1.Status == "error")
 		_ = statusErr_2
 		depth_3 := View_spanDepth(v_0, 32, v_1.ParentId)
@@ -2409,11 +2391,11 @@ func View_spanRowView(v_0 []State_TraceRow_R, v_1 State_TraceRow_R) Std_Ui_Eleme
 				return ""
 			}
 		}() + v_1.Name))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}, Std_Ui_text((View_formatFloat(v_1.DurationMs) + "ms")))})
-	}()
+	}
 }
 
 func View_formatFloat(v_0 float64) string {
-	return func() string {
+	{
 		scaled_1 := /* FFI return */ rt.AsInt(rt.Math_round(rt.Mul(any(v_0), any(100.0))))
 		_ = scaled_1
 		whole_2 := /* FFI return */ rt.AsInt(rt.IntDiv(any(scaled_1), any(100)))
@@ -2428,14 +2410,12 @@ func View_formatFloat(v_0 float64) string {
 			}
 		}()
 		_ = fracS_4
-		return func() string {
-			if frac_3 == 0 {
-				return /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2)))
-			} else {
-				return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + fracS_4))
-			}
-		}()
-	}()
+		if frac_3 == 0 {
+			return /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2)))
+		} else {
+			return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + fracS_4))
+		}
+	}
 }
 
 var View_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
@@ -2445,7 +2425,7 @@ func View_textSecondary() Std_Ui_Color {
 }
 
 func View_compactTime(v_0 string) string {
-	return func() string {
+	{
 		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("T"), any(v_0)))
 		if rt.SkyLenT(_subj) == 2 {
 			v_1 := rt.SkyElemT(_subj, 0)
@@ -2456,7 +2436,7 @@ func View_compactTime(v_0 string) string {
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_paddingEach(v_0 struct {
@@ -2469,24 +2449,22 @@ func Std_Ui_paddingEach(v_0 struct {
 }
 
 func View_spanDepth(v_0 []State_TraceRow_R, v_1 int, v_2 string) int {
-	return func() int {
-		if (v_1 <= 0) || (v_2 == "") {
-			return 0
-		} else {
-			return func() int {
-				_subj := Sky_Core_List_find(func(v_3 any) bool { return /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_3, "SpanId"), any(v_2))) } /* primitive join */, rt.AsListT[any](v_0))
-				if _subj.Tag == 0 {
-					v_4 := _subj.JustValue
-					_ = v_4
-					return (1 + View_spanDepth(v_0, (v_1-1) /* FFI return */, rt.AsString(rt.Field(v_4, "ParentId"))))
-				}
-				if _subj.Tag == 1 {
-					return 0
-				}
-				panic(rt.Unreachable("case"))
-			}()
+	if (v_1 <= 0) || (v_2 == "") {
+		return 0
+	} else {
+		{
+			_subj := Sky_Core_List_find(func(v_3 any) bool { return /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_3, "SpanId"), any(v_2))) } /* primitive join */, rt.AsListT[any](v_0))
+			if _subj.Tag == 0 {
+				v_4 := _subj.JustValue
+				_ = v_4
+				return (1 + View_spanDepth(v_0, (v_1-1) /* FFI return */, rt.AsString(rt.Field(v_4, "ParentId"))))
+			}
+			if _subj.Tag == 1 {
+				return 0
+			}
+			panic(rt.Unreachable("case"))
 		}
-	}()
+	}
 }
 
 func Sky_Core_List_find(v_0 func(any) bool, v_1 []any) rt.SkyMaybe[any] {
@@ -2527,7 +2505,7 @@ func View_accent() Std_Ui_Color {
 }
 
 func Sky_Core_List_head(v_0 []any) rt.SkyMaybe[any] {
-	return func() rt.SkyMaybe[any] {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return rt.Nothing[any]()
@@ -2538,7 +2516,7 @@ func Sky_Core_List_head(v_0 []any) rt.SkyMaybe[any] {
 			return rt.Just[any](v_1)
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func View_tracesFilterPanel(v_0 string) Std_Ui_Element {
@@ -2560,13 +2538,11 @@ func Std_Ui_input(v_0 []Std_Ui_Attribute) Std_Ui_Element {
 func View_distinctTraceIds(v_0 []State_TraceRow_R) []string {
 	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ func() func(any, any) any {
 		_s := any(func(v_1 any, v_2 []string) []string {
-			return func() []string {
-				if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
-					return v_2
-				} else {
-					return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
-				}
-			}()
+			if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
+				return v_2
+			} else {
+				return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
+			}
 		})
 		if _f, _ok := _s.(func(any, any) any); _ok {
 			return _f
@@ -2656,7 +2632,7 @@ func TracesTab_viewTracesTab(v_0 State_Model_R, v_1 []State_TraceRow_R) []Std_Ui
 }
 
 func TracesTab_tracesPanel(v_0 string, v_1 []State_TraceRow_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		lq_2 := /* FFI return */ rt.AsString(rt.String_toLower(any( /* FFI return */ rt.AsString(rt.String_trim(any(v_0))))))
 		_ = lq_2
 		matches_3 := func(v_6 State_TraceRow_R) bool {
@@ -2679,24 +2655,22 @@ func TracesTab_tracesPanel(v_0 string, v_1 []State_TraceRow_R) Std_Ui_Element {
 			if rt.List_isEmptyT[State_TraceRow_R](v_1) {
 				return []Std_Ui_Element{TracesTab_emptyState("No traces captured for this service yet.")}
 			} else {
-				return func() []Std_Ui_Element {
-					if rt.List_isEmptyT[string](visibleIds_5) {
-						return []Std_Ui_Element{TracesTab_emptyState("No traces match the filter.")}
-					} else {
-						return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
-							_p0 := _e1
-							_ = _p0
-							return TracesTab_traceGroupView(v_1 /* FFI return */, rt.AsString(_p0))
-						}, visibleIds_5)
-					}
-				}()
+				if rt.List_isEmptyT[string](visibleIds_5) {
+					return []Std_Ui_Element{TracesTab_emptyState("No traces match the filter.")}
+				} else {
+					return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
+						_p0 := _e1
+						_ = _p0
+						return TracesTab_traceGroupView(v_1 /* FFI return */, rt.AsString(_p0))
+					}, visibleIds_5)
+				}
 			}
 		}())
-	}()
+	}
 }
 
 func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		spans_2 := rt.List_filterT[State_TraceRow_R](func(v_5 State_TraceRow_R) bool { return (v_5.TraceId == v_1) }, v_0)
 		_ = spans_2
 		shortId_3 := func() string {
@@ -2715,7 +2689,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 				return /* FFI return */ rt.AsString(rt.Field(v_7, "Name"))
 			}
 			if _subj.Tag == 1 {
-				return func() string {
+				{
 					_subj := Sky_Core_List_head( /* primitive join */ rt.AsListT[any](spans_2))
 					if _subj.Tag == 0 {
 						v_8 := _subj.JustValue
@@ -2726,7 +2700,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 						return "(trace)"
 					}
 					panic(rt.Unreachable("case"))
-				}()
+				}
 			}
 			panic(rt.Unreachable("case"))
 		}()
@@ -2741,11 +2715,11 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 			_ = _p0
 			return TracesTab_spanRowView(v_0 /* FFI return */, rt.Coerce[State_TraceRow_R](_p0))
 		}, spans_2)))))
-	}()
+	}
 }
 
 func TracesTab_spanRowView(v_0 []State_TraceRow_R, v_1 State_TraceRow_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		statusErr_2 := (v_1.Status == "error")
 		_ = statusErr_2
 		depth_3 := TracesTab_spanDepth(v_0, 32, v_1.ParentId)
@@ -2776,11 +2750,11 @@ func TracesTab_spanRowView(v_0 []State_TraceRow_R, v_1 State_TraceRow_R) Std_Ui_
 				return ""
 			}
 		}() + v_1.Name))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(TracesTab_textSecondary()), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12)}, Std_Ui_text((TracesTab_formatFloat(v_1.DurationMs) + "ms")))})
-	}()
+	}
 }
 
 func TracesTab_formatFloat(v_0 float64) string {
-	return func() string {
+	{
 		scaled_1 := /* FFI return */ rt.AsInt(rt.Math_round(rt.Mul(any(v_0), any(100.0))))
 		_ = scaled_1
 		whole_2 := /* FFI return */ rt.AsInt(rt.IntDiv(any(scaled_1), any(100)))
@@ -2795,14 +2769,12 @@ func TracesTab_formatFloat(v_0 float64) string {
 			}
 		}()
 		_ = fracS_4
-		return func() string {
-			if frac_3 == 0 {
-				return /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2)))
-			} else {
-				return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + fracS_4))
-			}
-		}()
-	}()
+		if frac_3 == 0 {
+			return /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2)))
+		} else {
+			return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + fracS_4))
+		}
+	}
 }
 
 var TracesTab_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
@@ -2830,7 +2802,7 @@ func TracesTab_err() Std_Ui_Color {
 }
 
 func TracesTab_compactTime(v_0 string) string {
-	return func() string {
+	{
 		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("T"), any(v_0)))
 		if rt.SkyLenT(_subj) == 2 {
 			v_1 := rt.SkyElemT(_subj, 0)
@@ -2841,28 +2813,26 @@ func TracesTab_compactTime(v_0 string) string {
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func TracesTab_spanDepth(v_0 []State_TraceRow_R, v_1 int, v_2 string) int {
-	return func() int {
-		if (v_1 <= 0) || (v_2 == "") {
-			return 0
-		} else {
-			return func() int {
-				_subj := Sky_Core_List_find(func(v_3 any) bool { return /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_3, "SpanId"), any(v_2))) } /* primitive join */, rt.AsListT[any](v_0))
-				if _subj.Tag == 0 {
-					v_4 := _subj.JustValue
-					_ = v_4
-					return (1 + TracesTab_spanDepth(v_0, (v_1-1) /* FFI return */, rt.AsString(rt.Field(v_4, "ParentId"))))
-				}
-				if _subj.Tag == 1 {
-					return 0
-				}
-				panic(rt.Unreachable("case"))
-			}()
+	if (v_1 <= 0) || (v_2 == "") {
+		return 0
+	} else {
+		{
+			_subj := Sky_Core_List_find(func(v_3 any) bool { return /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_3, "SpanId"), any(v_2))) } /* primitive join */, rt.AsListT[any](v_0))
+			if _subj.Tag == 0 {
+				v_4 := _subj.JustValue
+				_ = v_4
+				return (1 + TracesTab_spanDepth(v_0, (v_1-1) /* FFI return */, rt.AsString(rt.Field(v_4, "ParentId"))))
+			}
+			if _subj.Tag == 1 {
+				return 0
+			}
+			panic(rt.Unreachable("case"))
 		}
-	}()
+	}
 }
 
 var TracesTab_bgCode__caf rt.LazyCaf[Std_Ui_Color]
@@ -2906,13 +2876,11 @@ func TracesTab_bgRaised() Std_Ui_Color {
 func TracesTab_distinctTraceIds(v_0 []State_TraceRow_R) []string {
 	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ func() func(any, any) any {
 		_s := any(func(v_1 any, v_2 []string) []string {
-			return func() []string {
-				if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
-					return v_2
-				} else {
-					return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
-				}
-			}()
+			if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
+				return v_2
+			} else {
+				return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
+			}
 		})
 		if _f, _ok := _s.(func(any, any) any); _ok {
 			return _f
@@ -2929,7 +2897,7 @@ func TracesTab_tracesFilterPanel(v_0 string) Std_Ui_Element {
 }
 
 func TracesTab_scopeBanner(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		label_1 := func() string {
 			if v_0 == "" {
 				return "All services"
@@ -2939,11 +2907,11 @@ func TracesTab_scopeBanner(v_0 string) Std_Ui_Element {
 		}()
 		_ = label_1
 		return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(TracesTab_textMuted()), Std_Ui_Font_letterSpacing(0.05)}, Std_Ui_text("SCOPE")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(TracesTab_textPrimary())}, Std_Ui_text(label_1)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), TracesTab_allServicesChip((v_0 == ""))})
-	}()
+	}
 }
 
 func TracesTab_allServicesChip(v_0 bool) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		bg_1 := func() Std_Ui_Color {
 			if v_0 {
 				return TracesTab_accent()
@@ -2961,7 +2929,7 @@ func TracesTab_allServicesChip(v_0 bool) Std_Ui_Element {
 		}()
 		_ = fg_2
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_paddingXY(10, 6), Std_Ui_Background_color(bg_1), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectService("")), Std_Ui_Font_color(fg_2), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text("All services"))
-	}()
+	}
 }
 
 var TracesTab_bgPage__caf rt.LazyCaf[Std_Ui_Color]
@@ -2971,7 +2939,7 @@ func TracesTab_bgPage() Std_Ui_Color {
 }
 
 func View_logsView(v_0 State_Model_R, v_1 []State_LogEntry_R) []Std_Ui_Element {
-	return func() []Std_Ui_Element {
+	{
 		filtered_2 := rt.List_filterT[State_LogEntry_R](func(_e1 State_LogEntry_R) bool {
 			_p0 := _e1
 			_ = _p0
@@ -2985,7 +2953,7 @@ func View_logsView(v_0 State_Model_R, v_1 []State_LogEntry_R) []Std_Ui_Element {
 				return rt.List_mapT[State_LogEntry_R, Std_Ui_Element](View_logRow, filtered_2)
 			}
 		}())}
-	}()
+	}
 }
 
 func View_logRow(v_0 State_LogEntry_R) Std_Ui_Element {
@@ -2998,7 +2966,7 @@ func View_logRow(v_0 State_LogEntry_R) Std_Ui_Element {
 }
 
 func View_levelTextColor(v_0 string) Std_Ui_Color {
-	return func() Std_Ui_Color {
+	{
 		_subj := v_0
 		if _subj == "warn" {
 			return View_warn()
@@ -3008,7 +2976,7 @@ func View_levelTextColor(v_0 string) Std_Ui_Color {
 		}
 		return View_textPrimary()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 var View_warn__caf rt.LazyCaf[Std_Ui_Color]
@@ -3018,37 +2986,31 @@ func View_warn() Std_Ui_Color {
 }
 
 func View_traceBadge(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
-		if v_0 == "" {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92))}, Std_Ui_text(""))
-		} else {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text(("trace " + /* FFI return */ rt.AsString(rt.String_left(any(8), any(v_0))))))
-		}
-	}()
+	if v_0 == "" {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92))}, Std_Ui_text(""))
+	} else {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text(("trace " + /* FFI return */ rt.AsString(rt.String_left(any(8), any(v_0))))))
+	}
 }
 
 func View_sessionBadge(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
-		if v_0 == "" {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80))}, Std_Ui_text(""))
-		} else {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent())}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_left(any(8), any(v_0)))))
-		}
-	}()
+	if v_0 == "" {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80))}, Std_Ui_text(""))
+	} else {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_accent())}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_left(any(8), any(v_0)))))
+	}
 }
 
 func View_subappBadge(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
-		if v_0 == "" {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(70))}, Std_Ui_text(""))
-		} else {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(70)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text(v_0))
-		}
-	}()
+	if v_0 == "" {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(70))}, Std_Ui_text(""))
+	} else {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(70)), Std_Ui_Background_color(View_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textSecondary())}, Std_Ui_text(v_0))
+	}
 }
 
 func View_levelColor(v_0 string) Std_Ui_Color {
-	return func() Std_Ui_Color {
+	{
 		_subj := v_0
 		if _subj == "warn" {
 			return View_warn()
@@ -3058,7 +3020,7 @@ func View_levelColor(v_0 string) Std_Ui_Color {
 		}
 		return View_textMuted()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func View_logsFilterPanel(v_0 State_LogFilter_R) Std_Ui_Element {
@@ -3072,7 +3034,7 @@ func View_logsFilterPanel(v_0 State_LogFilter_R) Std_Ui_Element {
 }
 
 func View_levelToggle(v_0 string, v_1 bool) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		bg_2 := func() Std_Ui_Color {
 			if v_1 {
 				return View_bgCode()
@@ -3090,7 +3052,7 @@ func View_levelToggle(v_0 string, v_1 bool) Std_Ui_Element {
 		}()
 		_ = fg_3
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Background_color(bg_2), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterToggleLevel(v_0)), Std_Ui_Font_color(fg_3), Std_Ui_Font_bold(), Std_Ui_Font_size(11)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))
-	}()
+	}
 }
 
 var View_bgSurface__caf rt.LazyCaf[Std_Ui_Color]
@@ -3100,7 +3062,7 @@ func View_bgSurface() Std_Ui_Color {
 }
 
 func View_matchFilter(v_0 State_LogFilter_R, v_1 State_LogEntry_R) bool {
-	return func() bool {
+	{
 		levelOk_2 := func() bool {
 			_subj := v_1.Level
 			if _subj == "debug" {
@@ -3124,7 +3086,7 @@ func View_matchFilter(v_0 State_LogFilter_R, v_1 State_LogEntry_R) bool {
 		queryOk_4 := ((v_0.Query == "") || /* FFI return */ rt.AsBool(rt.String_contains(any( /* FFI return */ rt.AsString(rt.String_toLower(any(v_0.Query)))), any( /* FFI return */ rt.AsString(rt.String_toLower(any((v_1.Message+(" "+(v_1.Route+(" "+v_1.Subapp)))))))))))
 		_ = queryOk_4
 		return (levelOk_2 && (sessionOk_3 && queryOk_4))
-	}()
+	}
 }
 
 func LogsTab_viewLogsTab(v_0 State_Model_R, v_1 []State_LogEntry_R) []Std_Ui_Element {
@@ -3151,7 +3113,7 @@ func LogsTab_logRow(v_0 State_LogEntry_R) Std_Ui_Element {
 }
 
 func LogsTab_levelTextColor(v_0 string) Std_Ui_Color {
-	return func() Std_Ui_Color {
+	{
 		_subj := v_0
 		if _subj == "warn" {
 			return LogsTab_warn()
@@ -3161,7 +3123,7 @@ func LogsTab_levelTextColor(v_0 string) Std_Ui_Color {
 		}
 		return LogsTab_textPrimary()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 var LogsTab_textPrimary__caf rt.LazyCaf[Std_Ui_Color]
@@ -3183,13 +3145,11 @@ func LogsTab_warn() Std_Ui_Color {
 }
 
 func LogsTab_traceBadge(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
-		if v_0 == "" {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92))}, Std_Ui_text(""))
-		} else {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}, Std_Ui_text(("trace " + /* FFI return */ rt.AsString(rt.String_left(any(8), any(v_0))))))
-		}
-	}()
+	if v_0 == "" {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92))}, Std_Ui_text(""))
+	} else {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(92)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_PivotToTrace(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}, Std_Ui_text(("trace " + /* FFI return */ rt.AsString(rt.String_left(any(8), any(v_0))))))
+	}
 }
 
 var LogsTab_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
@@ -3205,13 +3165,11 @@ func LogsTab_bgCode() Std_Ui_Color {
 }
 
 func LogsTab_sessionBadge(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
-		if v_0 == "" {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80))}, Std_Ui_text(""))
-		} else {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_accent())}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_left(any(8), any(v_0)))))
-		}
-	}()
+	if v_0 == "" {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80))}, Std_Ui_text(""))
+	} else {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(80)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterPickSession(v_0)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_accent())}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_left(any(8), any(v_0)))))
+	}
 }
 
 var LogsTab_accent__caf rt.LazyCaf[Std_Ui_Color]
@@ -3221,17 +3179,15 @@ func LogsTab_accent() Std_Ui_Color {
 }
 
 func LogsTab_subappBadge(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
-		if v_0 == "" {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(70))}, Std_Ui_text(""))
-		} else {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(70)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}, Std_Ui_text(v_0))
-		}
-	}()
+	if v_0 == "" {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(70))}, Std_Ui_text(""))
+	} else {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(70)), Std_Ui_Background_color(LogsTab_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textSecondary())}, Std_Ui_text(v_0))
+	}
 }
 
 func LogsTab_levelColor(v_0 string) Std_Ui_Color {
-	return func() Std_Ui_Color {
+	{
 		_subj := v_0
 		if _subj == "warn" {
 			return LogsTab_warn()
@@ -3241,7 +3197,7 @@ func LogsTab_levelColor(v_0 string) Std_Ui_Color {
 		}
 		return LogsTab_textMuted()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 var LogsTab_textMuted__caf rt.LazyCaf[Std_Ui_Color]
@@ -3251,7 +3207,7 @@ func LogsTab_textMuted() Std_Ui_Color {
 }
 
 func LogsTab_compactTime(v_0 string) string {
-	return func() string {
+	{
 		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("T"), any(v_0)))
 		if rt.SkyLenT(_subj) == 2 {
 			v_1 := rt.SkyElemT(_subj, 0)
@@ -3262,7 +3218,7 @@ func LogsTab_compactTime(v_0 string) string {
 		}
 		return v_0
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 var LogsTab_borderSoft__caf rt.LazyCaf[Std_Ui_Color]
@@ -3302,7 +3258,7 @@ func LogsTab_filterPanel(v_0 State_LogFilter_R) Std_Ui_Element {
 }
 
 func LogsTab_levelToggle(v_0 string, v_1 bool) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		bg_2 := func() Std_Ui_Color {
 			if v_1 {
 				return LogsTab_bgCode()
@@ -3320,7 +3276,7 @@ func LogsTab_levelToggle(v_0 string, v_1 bool) Std_Ui_Element {
 		}()
 		_ = fg_3
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Background_color(bg_2), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_LogFilterToggleLevel(v_0)), Std_Ui_Font_color(fg_3), Std_Ui_Font_bold(), Std_Ui_Font_size(11)}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))))
-	}()
+	}
 }
 
 var LogsTab_bgSurface__caf rt.LazyCaf[Std_Ui_Color]
@@ -3330,7 +3286,7 @@ func LogsTab_bgSurface() Std_Ui_Color {
 }
 
 func LogsTab_scopeBanner(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		label_1 := func() string {
 			if v_0 == "" {
 				return "All services"
@@ -3340,11 +3296,11 @@ func LogsTab_scopeBanner(v_0 string) Std_Ui_Element {
 		}()
 		_ = label_1
 		return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(LogsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(LogsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(LogsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05)}, Std_Ui_text("SCOPE")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(LogsTab_textPrimary())}, Std_Ui_text(label_1)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), LogsTab_allServicesChip((v_0 == ""))})
-	}()
+	}
 }
 
 func LogsTab_allServicesChip(v_0 bool) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		bg_1 := func() Std_Ui_Color {
 			if v_0 {
 				return LogsTab_accent()
@@ -3362,7 +3318,7 @@ func LogsTab_allServicesChip(v_0 bool) Std_Ui_Element {
 		}()
 		_ = fg_2
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_paddingXY(10, 6), Std_Ui_Background_color(bg_1), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectService("")), Std_Ui_Font_color(fg_2), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text("All services"))
-	}()
+	}
 }
 
 var LogsTab_bgPage__caf rt.LazyCaf[Std_Ui_Color]
@@ -3382,7 +3338,7 @@ func View_metricsView(v_0 []State_MetricRow_R) []Std_Ui_Element {
 }
 
 func View_metricRowView(v_0 State_MetricRow_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		valueStr_1 := func() string {
 			_subj := v_0.Typ
 			if _subj == "histogram" {
@@ -3398,7 +3354,7 @@ func View_metricRowView(v_0 State_MetricRow_R) Std_Ui_Element {
 			Right  int
 			Top    int
 		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(60)), Std_Ui_Font_size(10), Std_Ui_Font_color(View_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0.Typ))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(260)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(View_textPrimary())}, Std_Ui_text(v_0.Name)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(180)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(View_textMuted())}, Std_Ui_text(v_0.Labels)), View_codeBadge(valueStr_1)})
-	}()
+	}
 }
 
 func View_codeBadge(v_0 string) Std_Ui_Element {
@@ -3406,13 +3362,11 @@ func View_codeBadge(v_0 string) Std_Ui_Element {
 }
 
 func View_formatAvg(v_0 float64, v_1 float64) string {
-	return func() string {
-		if v_1 == 0.0 {
-			return "—"
-		} else {
-			return View_formatFloat( /* FFI return */ rt.AsFloat(rt.Div(any(v_0), any(v_1))))
-		}
-	}()
+	if v_1 == 0.0 {
+		return "—"
+	} else {
+		return View_formatFloat( /* FFI return */ rt.AsFloat(rt.Div(any(v_0), any(v_1))))
+	}
 }
 
 func MetricsTab_viewMetricsTab(v_0 State_Model_R) []Std_Ui_Element {
@@ -3430,7 +3384,7 @@ func MetricsTab_metricsPanel(v_0 []State_MetricRow_R) Std_Ui_Element {
 }
 
 func MetricsTab_metricRowView(v_0 State_MetricRow_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		valueStr_1 := func() string {
 			_subj := v_0.Typ
 			if _subj == "histogram" {
@@ -3446,7 +3400,7 @@ func MetricsTab_metricRowView(v_0 State_MetricRow_R) Std_Ui_Element {
 			Right  int
 			Top    int
 		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(MetricsTab_borderSoft())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(60)), Std_Ui_Font_size(10), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text( /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0.Typ))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(260)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(12), Std_Ui_Font_color(MetricsTab_textPrimary())}, Std_Ui_text(v_0.Name)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_px(180)), Std_Ui_Font_family("ui-monospace, Menlo, monospace"), Std_Ui_Font_size(11), Std_Ui_Font_color(MetricsTab_textMuted())}, Std_Ui_text(v_0.Labels)), MetricsTab_codeBadge(valueStr_1)})
-	}()
+	}
 }
 
 func MetricsTab_codeBadge(v_0 string) Std_Ui_Element {
@@ -3478,7 +3432,7 @@ func MetricsTab_borderSoft() Std_Ui_Color {
 }
 
 func MetricsTab_formatFloat(v_0 float64) string {
-	return func() string {
+	{
 		scaled_1 := /* FFI return */ rt.AsInt(rt.Math_round(rt.Mul(any(v_0), any(100.0))))
 		_ = scaled_1
 		whole_2 := /* FFI return */ rt.AsInt(rt.IntDiv(any(scaled_1), any(100)))
@@ -3493,24 +3447,20 @@ func MetricsTab_formatFloat(v_0 float64) string {
 			}
 		}()
 		_ = fracS_4
-		return func() string {
-			if frac_3 == 0 {
-				return /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2)))
-			} else {
-				return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + fracS_4))
-			}
-		}()
-	}()
+		if frac_3 == 0 {
+			return /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2)))
+		} else {
+			return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + fracS_4))
+		}
+	}
 }
 
 func MetricsTab_formatAvg(v_0 float64, v_1 float64) string {
-	return func() string {
-		if v_1 == 0.0 {
-			return "—"
-		} else {
-			return MetricsTab_formatFloat( /* FFI return */ rt.AsFloat(rt.Div(any(v_0), any(v_1))))
-		}
-	}()
+	if v_1 == 0.0 {
+		return "—"
+	} else {
+		return MetricsTab_formatFloat( /* FFI return */ rt.AsFloat(rt.Div(any(v_0), any(v_1))))
+	}
 }
 
 func MetricsTab_emptyState(v_0 string) Std_Ui_Element {
@@ -3534,7 +3484,7 @@ func MetricsTab_bgRaised() Std_Ui_Color {
 }
 
 func MetricsTab_scopeBanner(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		label_1 := func() string {
 			if v_0 == "" {
 				return "All services"
@@ -3544,11 +3494,11 @@ func MetricsTab_scopeBanner(v_0 string) Std_Ui_Element {
 		}()
 		_ = label_1
 		return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(MetricsTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(MetricsTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(MetricsTab_textMuted()), Std_Ui_Font_letterSpacing(0.05)}, Std_Ui_text("SCOPE")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(MetricsTab_textPrimary())}, Std_Ui_text(label_1)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), MetricsTab_allServicesChip((v_0 == ""))})
-	}()
+	}
 }
 
 func MetricsTab_allServicesChip(v_0 bool) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		bg_1 := func() Std_Ui_Color {
 			if v_0 {
 				return MetricsTab_accent()
@@ -3566,7 +3516,7 @@ func MetricsTab_allServicesChip(v_0 bool) Std_Ui_Element {
 		}()
 		_ = fg_2
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_paddingXY(10, 6), Std_Ui_Background_color(bg_1), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectService("")), Std_Ui_Font_color(fg_2), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text("All services"))
-	}()
+	}
 }
 
 var MetricsTab_textSecondary__caf rt.LazyCaf[Std_Ui_Color]
@@ -3611,19 +3561,15 @@ func View_infoRow(v_0 string, v_1 string) Std_Ui_Element {
 }
 
 func View_formatUptime(v_0 int) string {
-	return func() string {
-		if v_0 < 60 {
-			return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0))) + "s")
+	if v_0 < 60 {
+		return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0))) + "s")
+	} else {
+		if v_0 < 3600 {
+			return ( /* FFI return */ rt.AsString(rt.String_fromInt(rt.IntDiv(any(v_0), any(60)))) + "m")
 		} else {
-			return func() string {
-				if v_0 < 3600 {
-					return ( /* FFI return */ rt.AsString(rt.String_fromInt(rt.IntDiv(any(v_0), any(60)))) + "m")
-				} else {
-					return ( /* FFI return */ rt.AsString(rt.String_fromInt(rt.IntDiv(any(v_0), any(3600)))) + "h")
-				}
-			}()
+			return ( /* FFI return */ rt.AsString(rt.String_fromInt(rt.IntDiv(any(v_0), any(3600)))) + "h")
 		}
-	}()
+	}
 }
 
 func View_kpiRow(v_0 State_Overview_R) Std_Ui_Element {
@@ -3635,7 +3581,7 @@ func View_kpiCard(v_0 string, v_1 string) Std_Ui_Element {
 }
 
 func View_formatPercent(v_0 float64) string {
-	return func() string {
+	{
 		scaled_1 := /* FFI return */ rt.AsInt(rt.Math_round(rt.Mul(any(v_0), any(10000.0))))
 		_ = scaled_1
 		whole_2 := /* FFI return */ rt.AsInt(rt.IntDiv(any(scaled_1), any(100)))
@@ -3651,7 +3597,7 @@ func View_formatPercent(v_0 float64) string {
 		}()
 		_ = fracStr_4
 		return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + (fracStr_4 + "%")))
-	}()
+	}
 }
 
 func Std_Ui_gridColumns(v_0 int) Std_Ui_Attribute {
@@ -3677,20 +3623,18 @@ func Overview_twoPaneLayout(v_0 State_Model_R) Std_Ui_Element {
 }
 
 func Overview_rightPane(v_0 State_Model_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
-		if v_0.SelectedService == "" {
-			return Overview_aggregatePane(v_0.ServiceStats)
-		} else {
-			return Overview_focusedPane(v_0)
-		}
-	}()
+	if v_0.SelectedService == "" {
+		return Overview_aggregatePane(v_0.ServiceStats)
+	} else {
+		return Overview_focusedPane(v_0)
+	}
 }
 
 func Overview_focusedPane(v_0 State_Model_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		maybeStat_1 := Overview_findStat(v_0.SelectedService, v_0.ServiceStats)
 		_ = maybeStat_1
-		return func() Std_Ui_Element {
+		{
 			_subj := maybeStat_1
 			if _subj.Tag == 1 {
 				return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(10), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_color(Overview_textSecondary()), Std_Ui_Font_italic()}, Std_Ui_text(("Service \"" + (v_0.SelectedService + ("\" has no recent samples yet — " + "click All services to return to aggregate.")))))})
@@ -3701,8 +3645,8 @@ func Overview_focusedPane(v_0 State_Model_R) Std_Ui_Element {
 				return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}, []Std_Ui_Element{Overview_focusedHeader(v_2), Overview_focusedCharts(v_2), Overview_focusedHint()})
 			}
 			panic(rt.Unreachable("case"))
-		}()
-	}()
+		}
+	}
 }
 
 var Overview_focusedHint__caf rt.LazyCaf[Std_Ui_Element]
@@ -3736,13 +3680,11 @@ func Overview_pillWarn() Std_Ui_Color {
 }
 
 func Overview_singleSeries(v_0 string, v_1 []float64, v_2 Std_Ui_Color) []Std_Ui_Chart_Series_R {
-	return func() []Std_Ui_Chart_Series_R {
-		if rt.List_isEmptyT[float64](v_1) {
-			return []Std_Ui_Chart_Series_R{}
-		} else {
-			return []Std_Ui_Chart_Series_R{Std_Ui_Chart_withSeriesColor(v_2, Std_Ui_Chart_withSeriesLabel(v_0, Std_Ui_Chart_series(rt.List_indexedMapT[float64, rt.T2[float64, float64]](Overview_pairIndex, v_1))))}
-		}
-	}()
+	if rt.List_isEmptyT[float64](v_1) {
+		return []Std_Ui_Chart_Series_R{}
+	} else {
+		return []Std_Ui_Chart_Series_R{Std_Ui_Chart_withSeriesColor(v_2, Std_Ui_Chart_withSeriesLabel(v_0, Std_Ui_Chart_series(rt.List_indexedMapT[float64, rt.T2[float64, float64]](Overview_pairIndex, v_1))))}
+	}
 }
 
 func Overview_pairIndex(v_0 int, v_1 float64) rt.T2[float64, float64] {
@@ -3750,7 +3692,7 @@ func Overview_pairIndex(v_0 int, v_1 float64) rt.T2[float64, float64] {
 }
 
 func Overview_intToFloat(v_0 int) float64 {
-	return func() float64 {
+	{
 		_subj := /* FFI return */ rt.MaybeCoerce[float64](rt.String_toFloat(any( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0))))))
 		if _subj.Tag == 0 {
 			v_1 := /* generic erase */ rt.AsFloat(_subj.JustValue)
@@ -3761,7 +3703,7 @@ func Overview_intToFloat(v_0 int) float64 {
 			return 0.0
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_series(v_0 []rt.T2[float64, float64]) Std_Ui_Chart_Series_R {
@@ -3769,11 +3711,19 @@ func Std_Ui_Chart_series(v_0 []rt.T2[float64, float64]) Std_Ui_Chart_Series_R {
 }
 
 func Std_Ui_Chart_withSeriesLabel(v_0 string, v_1 Std_Ui_Chart_Series_R) Std_Ui_Chart_Series_R {
-	return func() Std_Ui_Chart_Series_R { _u := v_1; _u.Label = rt.Just[string](v_0); return _u }()
+	{
+		_u := v_1
+		_u.Label = rt.Just[string](v_0)
+		return _u
+	}
 }
 
 func Std_Ui_Chart_withSeriesColor(v_0 Std_Ui_Color, v_1 Std_Ui_Chart_Series_R) Std_Ui_Chart_Series_R {
-	return func() Std_Ui_Chart_Series_R { _u := v_1; _u.Color = rt.Just[Std_Ui_Color](v_0); return _u }()
+	{
+		_u := v_1
+		_u.Color = rt.Just[Std_Ui_Color](v_0)
+		return _u
+	}
 }
 
 func Overview_aggregateChartPanel(v_0 string, v_1 []Std_Ui_Chart_Series_R) Std_Ui_Element {
@@ -3781,21 +3731,19 @@ func Overview_aggregateChartPanel(v_0 string, v_1 []Std_Ui_Chart_Series_R) Std_U
 }
 
 func Overview_chartOrEmpty(v_0 []Std_Ui_Chart_Series_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
-		if rt.List_isEmptyT[Std_Ui_Chart_Series_R](v_0) {
-			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_padding(16), Std_Ui_centerX(), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_italic(), Std_Ui_Font_size(12)}, Std_Ui_text("Waiting for samples…"))
-		} else {
-			return func() Std_Ui_Element {
-				cfg_1 := Std_Ui_Chart_withColor(Overview_accent(), Std_Ui_Chart_withHeight(160, Std_Ui_Chart_withWidth(600, Std_Ui_Chart_defaultCfg())))
-				_ = cfg_1
-				return Std_Ui_Chart_line(cfg_1, v_0)
-			}()
+	if rt.List_isEmptyT[Std_Ui_Chart_Series_R](v_0) {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_padding(16), Std_Ui_centerX(), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_italic(), Std_Ui_Font_size(12)}, Std_Ui_text("Waiting for samples…"))
+	} else {
+		{
+			cfg_1 := Std_Ui_Chart_withColor(Overview_accent(), Std_Ui_Chart_withHeight(160, Std_Ui_Chart_withWidth(600, Std_Ui_Chart_defaultCfg())))
+			_ = cfg_1
+			return Std_Ui_Chart_line(cfg_1, v_0)
 		}
-	}()
+	}
 }
 
 func Std_Ui_Chart_line(v_0 Std_Ui_Chart_Cfg_R, v_1 []Std_Ui_Chart_Series_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		xR_2 := Std_Ui_Chart_xRangeAll(v_1)
 		_ = xR_2
 		yR_3 := Std_Ui_Chart_effectiveYRange(v_0, v_1)
@@ -3811,7 +3759,7 @@ func Std_Ui_Chart_line(v_0 Std_Ui_Chart_Cfg_R, v_1 []Std_Ui_Chart_Series_R) Std_
 		children_6 := Std_Ui_Chart_maybeCons(Std_Ui_Chart_titleNode(v_0), baseChildren_5)
 		_ = children_6
 		return Std_Ui_html(Std_Html_node("svg", Std_Ui_Chart_svgRootAttrs(v_0), children_6))
-	}()
+	}
 }
 
 func Std_Ui_Chart_svgRootAttrs(v_0 Std_Ui_Chart_Cfg_R) []Std_Html_Attributes_Attribute {
@@ -3835,7 +3783,7 @@ func Std_Ui_html(v_0 any) Std_Ui_Element {
 }
 
 func Std_Ui_Chart_titleNode(v_0 Std_Ui_Chart_Cfg_R) rt.SkyMaybe[Std_Html_Html] {
-	return func() rt.SkyMaybe[Std_Html_Html] {
+	{
 		_subj := v_0.Title
 		if _subj.Tag == 1 {
 			return rt.Nothing[Std_Html_Html]()
@@ -3846,7 +3794,7 @@ func Std_Ui_Chart_titleNode(v_0 Std_Ui_Chart_Cfg_R) rt.SkyMaybe[Std_Html_Html] {
 			return rt.Just[Std_Html_Html](Std_Html_node("text", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("x" /* FFI return */, rt.AsString(rt.String_fromInt(rt.IntDiv(any(v_0.Width), any(2))))), Std_Html_Attributes_attribute("y", "14"), Std_Html_Attributes_attribute("text-anchor", "middle"), Std_Html_Attributes_attribute("fill", "#1a1a2e"), Std_Html_Attributes_attribute("font-size", "12"), Std_Html_Attributes_attribute("font-weight", "600")}, []Std_Html_Html{Std_Html_text(v_1)}))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Html_text(v_0 string) Std_Html_Html {
@@ -3854,7 +3802,7 @@ func Std_Html_text(v_0 string) Std_Html_Html {
 }
 
 func Std_Ui_Chart_maybeCons(v_0 rt.SkyMaybe[Std_Html_Html], v_1 []Std_Html_Html) []Std_Html_Html {
-	return func() []Std_Html_Html {
+	{
 		_subj := v_0
 		if _subj.Tag == 1 {
 			return v_1
@@ -3865,11 +3813,11 @@ func Std_Ui_Chart_maybeCons(v_0 rt.SkyMaybe[Std_Html_Html], v_1 []Std_Html_Html)
 			return /* FFI return */ rt.AsListT[Std_Html_Html](rt.List_cons(any(v_2), any( /* primitive join */ rt.AsListT[any](v_1))))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_axesNodes(v_0 Std_Ui_Chart_Cfg_R) []Std_Html_Html {
-	return func() []Std_Html_Html {
+	{
 		plotW_1 := ((v_0.Width - Std_Ui_Chart_plotInset().Left) - Std_Ui_Chart_plotInset().Right)
 		_ = plotW_1
 		plotH_2 := ((v_0.Height - Std_Ui_Chart_plotInset().Top) - Std_Ui_Chart_plotInset().Bottom)
@@ -3883,7 +3831,7 @@ func Std_Ui_Chart_axesNodes(v_0 Std_Ui_Chart_Cfg_R) []Std_Html_Html {
 		bottomStr_6 := /* FFI return */ rt.AsString(rt.String_fromInt(any((Std_Ui_Chart_plotInset().Top + plotH_2))))
 		_ = bottomStr_6
 		return []Std_Html_Html{Std_Html_node("line", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("x1", leftStr_3), Std_Html_Attributes_attribute("y1", bottomStr_6), Std_Html_Attributes_attribute("x2", rightStr_4), Std_Html_Attributes_attribute("y2", bottomStr_6), Std_Html_Attributes_attribute("stroke", "#9ca3af"), Std_Html_Attributes_attribute("stroke-width", "1")}, []Std_Html_Html{}), Std_Html_node("line", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("x1", leftStr_3), Std_Html_Attributes_attribute("y1", topStr_5), Std_Html_Attributes_attribute("x2", leftStr_3), Std_Html_Attributes_attribute("y2", bottomStr_6), Std_Html_Attributes_attribute("stroke", "#9ca3af"), Std_Html_Attributes_attribute("stroke-width", "1")}, []Std_Html_Html{})}
-	}()
+	}
 }
 
 var Std_Ui_Chart_plotInset__caf rt.LazyCaf[struct {
@@ -3915,29 +3863,27 @@ func Std_Ui_Chart_plotInset() struct {
 }
 
 func Std_Ui_Chart_gridLines(v_0 Std_Ui_Chart_Cfg_R) []Std_Html_Html {
-	return func() []Std_Html_Html {
-		if v_0.GridLines {
-			return func() []Std_Html_Html {
-				plotH_1 := ((v_0.Height - Std_Ui_Chart_plotInset().Top) - Std_Ui_Chart_plotInset().Bottom)
-				_ = plotH_1
-				plotW_2 := ((v_0.Width - Std_Ui_Chart_plotInset().Left) - Std_Ui_Chart_plotInset().Right)
-				_ = plotW_2
-				x1_3 := /* FFI return */ rt.AsString(rt.String_fromInt(any(Std_Ui_Chart_plotInset().Left)))
-				_ = x1_3
-				x2_4 := /* FFI return */ rt.AsString(rt.String_fromInt(any((Std_Ui_Chart_plotInset().Left + plotW_2))))
-				_ = x2_4
-				ys_5 := []int{0, 1, 2, 3, 4}
-				_ = ys_5
-				return rt.List_mapT[int, Std_Html_Html](func(v_6 int) Std_Html_Html { return Std_Ui_Chart_gridLine(x1_3, x2_4, v_0.Height, plotH_1, v_6) }, ys_5)
-			}()
-		} else {
-			return []Std_Html_Html{}
+	if v_0.GridLines {
+		{
+			plotH_1 := ((v_0.Height - Std_Ui_Chart_plotInset().Top) - Std_Ui_Chart_plotInset().Bottom)
+			_ = plotH_1
+			plotW_2 := ((v_0.Width - Std_Ui_Chart_plotInset().Left) - Std_Ui_Chart_plotInset().Right)
+			_ = plotW_2
+			x1_3 := /* FFI return */ rt.AsString(rt.String_fromInt(any(Std_Ui_Chart_plotInset().Left)))
+			_ = x1_3
+			x2_4 := /* FFI return */ rt.AsString(rt.String_fromInt(any((Std_Ui_Chart_plotInset().Left + plotW_2))))
+			_ = x2_4
+			ys_5 := []int{0, 1, 2, 3, 4}
+			_ = ys_5
+			return rt.List_mapT[int, Std_Html_Html](func(v_6 int) Std_Html_Html { return Std_Ui_Chart_gridLine(x1_3, x2_4, v_0.Height, plotH_1, v_6) }, ys_5)
 		}
-	}()
+	} else {
+		return []Std_Html_Html{}
+	}
 }
 
 func Std_Ui_Chart_gridLine(v_0 string, v_1 string, _ int, v_2 int, v_3 int) Std_Html_Html {
-	return func() Std_Html_Html {
+	{
 		plotHf_4 := Std_Ui_Chart_intToFloat(v_2)
 		_ = plotHf_4
 		idxf_5 := Std_Ui_Chart_intToFloat(v_3)
@@ -3947,11 +3893,11 @@ func Std_Ui_Chart_gridLine(v_0 string, v_1 string, _ int, v_2 int, v_3 int) Std_
 		yStr_7 := /* FFI return */ rt.AsString(rt.String_fromFloat(any(yPx_6)))
 		_ = yStr_7
 		return Std_Html_node("line", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("x1", v_0), Std_Html_Attributes_attribute("y1", yStr_7), Std_Html_Attributes_attribute("x2", v_1), Std_Html_Attributes_attribute("y2", yStr_7), Std_Html_Attributes_attribute("stroke", "#e6e8ec"), Std_Html_Attributes_attribute("stroke-width", "1")}, []Std_Html_Html{})
-	}()
+	}
 }
 
 func Std_Ui_Chart_intToFloat(v_0 int) float64 {
-	return func() float64 {
+	{
 		_subj := /* FFI return */ rt.MaybeCoerce[float64](rt.String_toFloat(any( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0))))))
 		if _subj.Tag == 0 {
 			v_1 := /* generic erase */ rt.AsFloat(_subj.JustValue)
@@ -3962,11 +3908,11 @@ func Std_Ui_Chart_intToFloat(v_0 int) float64 {
 			return 0.0
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_lineOne(v_0 Std_Ui_Chart_Cfg_R, v_1 rt.T2[float64, float64], v_2 rt.T2[float64, float64], v_3 Std_Ui_Chart_Series_R) []Std_Html_Html {
-	return func() []Std_Html_Html {
+	{
 		col_4 := Std_Ui_colorCss(Std_Ui_Chart_seriesColor(v_0, v_3))
 		_ = col_4
 		projected_5 := rt.List_mapT[rt.T2[float64, float64], rt.T2[float64, float64]](func(_e1 rt.T2[float64, float64]) rt.T2[float64, float64] {
@@ -3979,7 +3925,7 @@ func Std_Ui_Chart_lineOne(v_0 Std_Ui_Chart_Cfg_R, v_1 rt.T2[float64, float64], v
 		_ = pathD_6
 		pathNode_7 := Std_Html_node("path", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("d", pathD_6), Std_Html_Attributes_attribute("fill", "none"), Std_Html_Attributes_attribute("stroke", col_4), Std_Html_Attributes_attribute("stroke-width", "2"), Std_Html_Attributes_attribute("stroke-linejoin", "round"), Std_Html_Attributes_attribute("stroke-linecap", "round")}, Std_Ui_Chart_labelTitle(v_3.Label))
 		_ = pathNode_7
-		return func() []Std_Html_Html {
+		{
 			_subj := projected_5
 			if rt.SkyLenT(_subj) == 0 {
 				return []Std_Html_Html{}
@@ -3991,12 +3937,12 @@ func Std_Ui_Chart_lineOne(v_0 Std_Ui_Chart_Cfg_R, v_1 rt.T2[float64, float64], v
 			}
 			return []Std_Html_Html{pathNode_7}
 			panic(rt.Unreachable("case"))
-		}()
-	}()
+		}
+	}
 }
 
 func Std_Ui_Chart_labelTitle(v_0 rt.SkyMaybe[string]) []Std_Html_Html {
-	return func() []Std_Html_Html {
+	{
 		_subj := v_0
 		if _subj.Tag == 1 {
 			return []Std_Html_Html{}
@@ -4007,11 +3953,11 @@ func Std_Ui_Chart_labelTitle(v_0 rt.SkyMaybe[string]) []Std_Html_Html {
 			return []Std_Html_Html{Std_Html_node("title", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text(v_1)})}
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_singlePointCircle(v_0 string, v_1 rt.T2[float64, float64], v_2 []Std_Html_Html) Std_Html_Html {
-	return func() Std_Html_Html {
+	{
 		_t0 := v_1
 		_ = _t0
 		v_3 := _t0.V0
@@ -4019,11 +3965,11 @@ func Std_Ui_Chart_singlePointCircle(v_0 string, v_1 rt.T2[float64, float64], v_2
 		_ = v_3
 		_ = v_4
 		return Std_Html_node("circle", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("cx" /* FFI return */, rt.AsString(rt.String_fromFloat(any(v_3)))), Std_Html_Attributes_attribute("cy" /* FFI return */, rt.AsString(rt.String_fromFloat(any(v_4)))), Std_Html_Attributes_attribute("r", "3"), Std_Html_Attributes_attribute("fill", v_0)}, v_2)
-	}()
+	}
 }
 
 func Std_Ui_Chart_buildPathD(v_0 []rt.T2[float64, float64]) string {
-	return func() string {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return ""
@@ -4038,11 +3984,11 @@ func Std_Ui_Chart_buildPathD(v_0 []rt.T2[float64, float64]) string {
 			return ("M " + ( /* FFI return */ rt.AsString(rt.String_fromFloat(any(v_1))) + ("," + ( /* FFI return */ rt.AsString(rt.String_fromFloat(any(v_2))) + rt.List_foldlElemFirstT[rt.T2[float64, float64], string](Std_Ui_Chart_appendLineSeg, "", v_3)))))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_appendLineSeg(v_0 rt.T2[float64, float64], v_1 string) string {
-	return func() string {
+	{
 		_t0 := v_0
 		_ = _t0
 		v_2 := _t0.V0
@@ -4050,11 +3996,11 @@ func Std_Ui_Chart_appendLineSeg(v_0 rt.T2[float64, float64], v_1 string) string 
 		_ = v_2
 		_ = v_3
 		return (v_1 + (" L " + ( /* FFI return */ rt.AsString(rt.String_fromFloat(any(v_2))) + ("," + /* FFI return */ rt.AsString(rt.String_fromFloat(any(v_3)))))))
-	}()
+	}
 }
 
 func Std_Ui_Chart_projectPoint(v_0 int, v_1 int, v_2 rt.T2[float64, float64], v_3 rt.T2[float64, float64], v_4 rt.T2[float64, float64]) rt.T2[float64, float64] {
-	return func() rt.T2[float64, float64] {
+	{
 		_t0 := v_4
 		_ = _t0
 		v_17 := _t0.V0
@@ -4110,11 +4056,11 @@ func Std_Ui_Chart_projectPoint(v_0 int, v_1 int, v_2 rt.T2[float64, float64], v_
 		py_16 := /* FFI return */ rt.AsFloat(rt.Add(any(topF_12), rt.Mul(rt.Sub(any(1.0), any(ny_14)), any(plotHf_10))))
 		_ = py_16
 		return rt.T2[float64, float64]{V0: px_15, V1: py_16}
-	}()
+	}
 }
 
 func Std_Ui_Chart_seriesColor(v_0 Std_Ui_Chart_Cfg_R, v_1 Std_Ui_Chart_Series_R) Std_Ui_Color {
-	return func() Std_Ui_Color {
+	{
 		_subj := v_1.Color
 		if _subj.Tag == 0 {
 			v_2 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.JustValue)
@@ -4125,11 +4071,11 @@ func Std_Ui_Chart_seriesColor(v_0 Std_Ui_Chart_Cfg_R, v_1 Std_Ui_Chart_Series_R)
 			return v_0.Color
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_colorCss(v_0 Std_Ui_Color) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj.Tag == 0 {
 			v_1 := /* generic erase */ rt.AsInt(_subj.Fields[0])
@@ -4143,11 +4089,11 @@ func Std_Ui_colorCss(v_0 Std_Ui_Color) string {
 			return ("rgba(" + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1))) + (", " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_2))) + (", " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_3))) + (", " + ( /* FFI return */ rt.AsString(rt.String_fromFloat(any(v_4))) + ")"))))))))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_effectiveYRange(v_0 Std_Ui_Chart_Cfg_R, v_1 []Std_Ui_Chart_Series_R) rt.T2[float64, float64] {
-	return func() rt.T2[float64, float64] {
+	{
 		_subj := v_0.YRange
 		if _subj.Tag == 0 {
 			v_2 := /* generic erase */ rt.Coerce[rt.T2[float64, float64]](_subj.JustValue)
@@ -4155,7 +4101,7 @@ func Std_Ui_Chart_effectiveYRange(v_0 Std_Ui_Chart_Cfg_R, v_1 []Std_Ui_Chart_Ser
 			return v_2
 		}
 		if _subj.Tag == 1 {
-			return func() rt.T2[float64, float64] {
+			{
 				_t0 := Std_Ui_Chart_yRangeAll(v_1)
 				_ = _t0
 				v_6 := _t0.V0
@@ -4168,21 +4114,19 @@ func Std_Ui_Chart_effectiveYRange(v_0 Std_Ui_Chart_Cfg_R, v_1 []Std_Ui_Chart_Ser
 				_ = pad_4
 				hi2_5 := /* FFI return */ rt.AsFloat(rt.Add(any(v_7), any(pad_4)))
 				_ = hi2_5
-				return func() rt.T2[float64, float64] {
-					if hi2_5 <= lo2_3 {
-						return rt.T2[float64, float64]{V0: lo2_3, V1: /* FFI return */ rt.AsFloat(rt.Add(any(lo2_3), any(1.0)))}
-					} else {
-						return rt.T2[float64, float64]{V0: lo2_3, V1: hi2_5}
-					}
-				}()
-			}()
+				if hi2_5 <= lo2_3 {
+					return rt.T2[float64, float64]{V0: lo2_3, V1: /* FFI return */ rt.AsFloat(rt.Add(any(lo2_3), any(1.0)))}
+				} else {
+					return rt.T2[float64, float64]{V0: lo2_3, V1: hi2_5}
+				}
+			}
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_yRangeAll(v_0 []Std_Ui_Chart_Series_R) rt.T2[float64, float64] {
-	return func() rt.T2[float64, float64] {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return rt.T2[float64, float64]{V0: 0.0, V1: 1.0}
@@ -4195,11 +4139,11 @@ func Std_Ui_Chart_yRangeAll(v_0 []Std_Ui_Chart_Series_R) rt.T2[float64, float64]
 			return Std_Ui_Chart_yRangeAllHelp(Std_Ui_Chart_yRange(v_1.Points), v_2)
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_yRange(v_0 []rt.T2[float64, float64]) rt.T2[float64, float64] {
-	return func() rt.T2[float64, float64] {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return rt.T2[float64, float64]{V0: 0.0, V1: 1.0}
@@ -4212,7 +4156,7 @@ func Std_Ui_Chart_yRange(v_0 []rt.T2[float64, float64]) rt.T2[float64, float64] 
 			return Std_Ui_Chart_yRangeHelp(v_1, v_1, v_2)
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_yRangeHelp(v_0 float64, v_1 float64, v_2 []rt.T2[float64, float64]) rt.T2[float64, float64] {
@@ -4272,7 +4216,7 @@ func Std_Ui_Chart_yRangeAllHelp(v_0 rt.T2[float64, float64], v_1 []Std_Ui_Chart_
 }
 
 func Std_Ui_Chart_xRangeAll(v_0 []Std_Ui_Chart_Series_R) rt.T2[float64, float64] {
-	return func() rt.T2[float64, float64] {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return rt.T2[float64, float64]{V0: 0.0, V1: 1.0}
@@ -4285,11 +4229,11 @@ func Std_Ui_Chart_xRangeAll(v_0 []Std_Ui_Chart_Series_R) rt.T2[float64, float64]
 			return Std_Ui_Chart_xRangeAllHelp(Std_Ui_Chart_xRange(v_1.Points), v_2)
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_xRange(v_0 []rt.T2[float64, float64]) rt.T2[float64, float64] {
-	return func() rt.T2[float64, float64] {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return rt.T2[float64, float64]{V0: 0.0, V1: 1.0}
@@ -4302,7 +4246,7 @@ func Std_Ui_Chart_xRange(v_0 []rt.T2[float64, float64]) rt.T2[float64, float64] 
 			return Std_Ui_Chart_xRangeHelp(v_1, v_1, v_2)
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_xRangeHelp(v_0 float64, v_1 float64, v_2 []rt.T2[float64, float64]) rt.T2[float64, float64] {
@@ -4370,11 +4314,19 @@ func Std_Ui_Chart_defaultCfg() Std_Ui_Chart_Cfg_R {
 }
 
 func Std_Ui_Chart_withWidth(v_0 int, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
-	return func() Std_Ui_Chart_Cfg_R { _u := v_1; _u.Width = v_0; return _u }()
+	{
+		_u := v_1
+		_u.Width = v_0
+		return _u
+	}
 }
 
 func Std_Ui_Chart_withHeight(v_0 int, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
-	return func() Std_Ui_Chart_Cfg_R { _u := v_1; _u.Height = v_0; return _u }()
+	{
+		_u := v_1
+		_u.Height = v_0
+		return _u
+	}
 }
 
 var Overview_accent__caf rt.LazyCaf[Std_Ui_Color]
@@ -4384,7 +4336,11 @@ func Overview_accent() Std_Ui_Color {
 }
 
 func Std_Ui_Chart_withColor(v_0 Std_Ui_Color, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
-	return func() Std_Ui_Chart_Cfg_R { _u := v_1; _u.Color = v_0; return _u }()
+	{
+		_u := v_1
+		_u.Color = v_0
+		return _u
+	}
 }
 
 var Overview_textMuted__caf rt.LazyCaf[Std_Ui_Color]
@@ -4410,7 +4366,7 @@ func Overview_focusedHeader(v_0 State_ServiceStat_R) Std_Ui_Element {
 }
 
 func Overview_formatPercent(v_0 float64) string {
-	return func() string {
+	{
 		scaled_1 := /* FFI return */ rt.AsInt(rt.Math_round(rt.Mul(any(v_0), any(10000.0))))
 		_ = scaled_1
 		whole_2 := /* FFI return */ rt.AsInt(rt.IntDiv(any(scaled_1), any(100)))
@@ -4426,7 +4382,7 @@ func Overview_formatPercent(v_0 float64) string {
 		}()
 		_ = fracStr_4
 		return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + (fracStr_4 + "%")))
-	}()
+	}
 }
 
 func Overview_statBlock(v_0 string, v_1 string) Std_Ui_Element {
@@ -4440,7 +4396,7 @@ func Overview_textPrimary() Std_Ui_Color {
 }
 
 func Overview_formatFloat(v_0 float64) string {
-	return func() string {
+	{
 		scaled_1 := /* FFI return */ rt.AsInt(rt.Math_round(rt.Mul(any(v_0), any(100.0))))
 		_ = scaled_1
 		whole_2 := /* FFI return */ rt.AsInt(rt.IntDiv(any(scaled_1), any(100)))
@@ -4455,24 +4411,22 @@ func Overview_formatFloat(v_0 float64) string {
 			}
 		}()
 		_ = fracS_4
-		return func() string {
-			if frac_3 == 0 {
-				return /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2)))
-			} else {
-				return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + fracS_4))
-			}
-		}()
-	}()
+		if frac_3 == 0 {
+			return /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2)))
+		} else {
+			return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(whole_2))) + ("." + fracS_4))
+		}
+	}
 }
 
 func Overview_statusPill(v_0 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		color_1 := Overview_statusColor(v_0)
 		_ = color_1
 		label_2 := /* FFI return */ rt.AsString(rt.String_toUpper(any(v_0)))
 		_ = label_2
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Background_color(color_1), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 2), Std_Ui_Font_color(Overview_bgPage()), Std_Ui_Font_size(10), Std_Ui_Font_bold()}, Std_Ui_text(label_2))
-	}()
+	}
 }
 
 var Overview_bgPage__caf rt.LazyCaf[Std_Ui_Color]
@@ -4482,7 +4436,7 @@ func Overview_bgPage() Std_Ui_Color {
 }
 
 func Overview_statusColor(v_0 string) Std_Ui_Color {
-	return func() Std_Ui_Color {
+	{
 		_subj := v_0
 		if _subj == "ok" {
 			return Overview_pillOk()
@@ -4495,7 +4449,7 @@ func Overview_statusColor(v_0 string) Std_Ui_Color {
 		}
 		return Overview_textMuted()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 var Overview_pillErr__caf rt.LazyCaf[Std_Ui_Color]
@@ -4554,11 +4508,11 @@ func Overview_aggregateP95Series(v_0 []State_ServiceStat_R) []Std_Ui_Chart_Serie
 }
 
 func Overview_seriesFromValues(v_0 string, v_1 []float64) Std_Ui_Chart_Series_R {
-	return func() Std_Ui_Chart_Series_R {
+	{
 		points_2 := rt.List_indexedMapT[float64, rt.T2[float64, float64]](Overview_pairIndex, v_1)
 		_ = points_2
 		return Std_Ui_Chart_withSeriesLabel(v_0, Std_Ui_Chart_series(points_2))
-	}()
+	}
 }
 
 func Overview_aggregateRpsSeries(v_0 []State_ServiceStat_R) []Std_Ui_Chart_Series_R {
@@ -4586,7 +4540,7 @@ func Overview_serviceCardScroller(v_0 State_Model_R) Std_Ui_Element {
 }
 
 func Overview_serviceCard(v_0 string, v_1 State_ServiceStat_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		isSelected_2 := (v_0 == v_1.Name)
 		_ = isSelected_2
 		borderColor_3 := func() Std_Ui_Color {
@@ -4598,7 +4552,7 @@ func Overview_serviceCard(v_0 string, v_1 State_ServiceStat_R) Std_Ui_Element {
 		}()
 		_ = borderColor_3
 		return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(borderColor_3), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectService(v_1.Name))}, []Std_Ui_Element{Overview_cardHeader(v_1), Overview_cardMetricsRow(v_1), Overview_cardSparklines(v_1)})
-	}()
+	}
 }
 
 func Overview_cardSparklines(v_0 State_ServiceStat_R) Std_Ui_Element {
@@ -4606,21 +4560,19 @@ func Overview_cardSparklines(v_0 State_ServiceStat_R) Std_Ui_Element {
 }
 
 func Overview_sparkOrPlaceholder(v_0 []float64, v_1 Std_Ui_Color) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		cfg_2 := Std_Ui_Chart_withGridLines(false, Std_Ui_Chart_withColor(v_1, Std_Ui_Chart_withHeight(28, Std_Ui_Chart_withWidth(120, Std_Ui_Chart_defaultCfg()))))
 		_ = cfg_2
-		return func() Std_Ui_Element {
-			if rt.List_isEmptyT[float64](v_0) {
-				return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 6), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_size(10)}, Std_Ui_text("no data"))
-			} else {
-				return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_padding(2)}, Std_Ui_Chart_sparkline(cfg_2, v_0))
-			}
-		}()
-	}()
+		if rt.List_isEmptyT[float64](v_0) {
+			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_paddingXY(6, 6), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_size(10)}, Std_Ui_text("no data"))
+		} else {
+			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(3), Std_Ui_padding(2)}, Std_Ui_Chart_sparkline(cfg_2, v_0))
+		}
+	}
 }
 
 func Std_Ui_Chart_sparkline(v_0 Std_Ui_Chart_Cfg_R, v_1 []float64) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		n_2 := rt.List_lengthT[float64](v_1)
 		_ = n_2
 		col_3 := Std_Ui_colorCss(v_0.Color)
@@ -4637,7 +4589,7 @@ func Std_Ui_Chart_sparkline(v_0 Std_Ui_Chart_Cfg_R, v_1 []float64) Std_Ui_Elemen
 				return v_13
 			}
 			if _subj.Tag == 1 {
-				return func() rt.T2[float64, float64] {
+				{
 					_t0 := Std_Ui_Chart_yRangeOfFloats(v_1)
 					_ = _t0
 					v_15 := _t0.V0
@@ -4646,14 +4598,12 @@ func Std_Ui_Chart_sparkline(v_0 Std_Ui_Chart_Cfg_R, v_1 []float64) Std_Ui_Elemen
 					_ = v_16
 					pad_14 := /* FFI return */ rt.AsFloat(rt.Mul(rt.Sub(any(v_16), any(v_15)), any(0.1)))
 					_ = pad_14
-					return func() rt.T2[float64, float64] {
-						if v_16 <= v_15 {
-							return rt.T2[float64, float64]{V0: /* FFI return */ rt.AsFloat(rt.Sub(any(v_15), any(0.5))), V1: /* FFI return */ rt.AsFloat(rt.Add(any(v_15), any(0.5)))}
-						} else {
-							return rt.T2[float64, float64]{V0: /* FFI return */ rt.AsFloat(rt.Sub(any(v_15), any(pad_14))), V1: /* FFI return */ rt.AsFloat(rt.Add(any(v_16), any(pad_14)))}
-						}
-					}()
-				}()
+					if v_16 <= v_15 {
+						return rt.T2[float64, float64]{V0: /* FFI return */ rt.AsFloat(rt.Sub(any(v_15), any(0.5))), V1: /* FFI return */ rt.AsFloat(rt.Add(any(v_15), any(0.5)))}
+					} else {
+						return rt.T2[float64, float64]{V0: /* FFI return */ rt.AsFloat(rt.Sub(any(v_15), any(pad_14))), V1: /* FFI return */ rt.AsFloat(rt.Add(any(v_16), any(pad_14)))}
+					}
+				}
 			}
 			panic(rt.Unreachable("case"))
 		}()
@@ -4669,7 +4619,7 @@ func Std_Ui_Chart_sparkline(v_0 Std_Ui_Chart_Cfg_R, v_1 []float64) Std_Ui_Elemen
 		nF_8 := Std_Ui_Chart_intToFloat( /* FFI return */ rt.AsInt(rt.Math_max(any(1), any((n_2 - 1)))))
 		_ = nF_8
 		projected_9 := rt.List_indexedMapT[float64, rt.T2[float64, float64]](func(v_17 int, v_18 float64) rt.T2[float64, float64] {
-			return func() rt.T2[float64, float64] {
+			{
 				iF_19 := Std_Ui_Chart_intToFloat(v_17)
 				_ = iF_19
 				x_20 := /* FFI return */ rt.AsFloat(rt.Mul(rt.Div(any(iF_19), any(nF_8)), any(wf_4)))
@@ -4685,17 +4635,17 @@ func Std_Ui_Chart_sparkline(v_0 Std_Ui_Chart_Cfg_R, v_1 []float64) Std_Ui_Elemen
 				y_22 := /* FFI return */ rt.AsFloat(rt.Mul(rt.Sub(any(1.0), any(ny_21)), any(hf_5)))
 				_ = y_22
 				return rt.T2[float64, float64]{V0: x_20, V1: y_22}
-			}()
+			}
 		}, v_1)
 		_ = projected_9
 		pathD_10 := Std_Ui_Chart_buildPathD(projected_9)
 		_ = pathD_10
 		return Std_Ui_html(Std_Html_node("svg", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("viewBox", ("0 0 " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.Width))) + (" " + /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.Height))))))), Std_Html_Attributes_attribute("xmlns", "http://www.w3.org/2000/svg"), Std_Html_Attributes_attribute("role", "img"), Std_Html_Attributes_attribute("preserveAspectRatio", "none"), Std_Html_Attributes_style("display: block; width: 100%; height: 100%;")}, []Std_Html_Html{Std_Html_node("path", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("d", pathD_10), Std_Html_Attributes_attribute("fill", "none"), Std_Html_Attributes_attribute("stroke", col_3), Std_Html_Attributes_attribute("stroke-width", "1.5"), Std_Html_Attributes_attribute("stroke-linejoin", "round"), Std_Html_Attributes_attribute("stroke-linecap", "round")}, []Std_Html_Html{})}))
-	}()
+	}
 }
 
 func Std_Ui_Chart_yRangeOfFloats(v_0 []float64) rt.T2[float64, float64] {
-	return func() rt.T2[float64, float64] {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return rt.T2[float64, float64]{V0: 0.0, V1: 1.0}
@@ -4708,7 +4658,7 @@ func Std_Ui_Chart_yRangeOfFloats(v_0 []float64) rt.T2[float64, float64] {
 			return Std_Ui_Chart_yRangeOfFloatsHelp(v_1, v_1, v_2)
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_Chart_yRangeOfFloatsHelp(v_0 float64, v_1 float64, v_2 []float64) rt.T2[float64, float64] {
@@ -4735,7 +4685,11 @@ func Std_Ui_Chart_yRangeOfFloatsHelp(v_0 float64, v_1 float64, v_2 []float64) rt
 }
 
 func Std_Ui_Chart_withGridLines(v_0 bool, v_1 Std_Ui_Chart_Cfg_R) Std_Ui_Chart_Cfg_R {
-	return func() Std_Ui_Chart_Cfg_R { _u := v_1; _u.GridLines = v_0; return _u }()
+	{
+		_u := v_1
+		_u.GridLines = v_0
+		return _u
+	}
 }
 
 func Overview_cardMetricsRow(v_0 State_ServiceStat_R) Std_Ui_Element {
@@ -4761,7 +4715,7 @@ func Std_Ui_alignTop() Std_Ui_Attribute {
 }
 
 func Overview_selectorHeader(v_0 State_Model_R) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		scoped_1 := func() string {
 			if v_0.SelectedService == "" {
 				return "All services"
@@ -4771,11 +4725,11 @@ func Overview_selectorHeader(v_0 State_Model_R) Std_Ui_Element {
 		}()
 		_ = scoped_1
 		return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(10), Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_paddingXY(14, 10)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(Overview_textMuted()), Std_Ui_Font_letterSpacing(0.05)}, Std_Ui_text("SCOPE")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(14), Std_Ui_Font_bold(), Std_Ui_Font_color(Overview_textPrimary())}, Std_Ui_text(scoped_1)), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), Overview_allServicesChip((v_0.SelectedService == ""))})
-	}()
+	}
 }
 
 func Overview_allServicesChip(v_0 bool) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		bg_1 := func() Std_Ui_Color {
 			if v_0 {
 				return Overview_accent()
@@ -4793,7 +4747,7 @@ func Overview_allServicesChip(v_0 bool) Std_Ui_Element {
 		}()
 		_ = fg_2
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_paddingXY(10, 6), Std_Ui_Background_color(bg_1), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectService("")), Std_Ui_Font_color(fg_2), Std_Ui_Font_size(12), Std_Ui_Font_bold()}, Std_Ui_text("All services"))
-	}()
+	}
 }
 
 func View_matchTraceText(v_0 string, v_1 State_TraceRow_R) bool {
@@ -4805,24 +4759,22 @@ func View_matchLogText(v_0 string, v_1 State_LogEntry_R) bool {
 }
 
 func View_rangeThresholdIso(v_0 State_Range, v_1 int) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == State_Range_RangeAll {
 			return ""
 		}
-		return func() string {
-			if v_1 <= 0 {
-				return ""
-			} else {
-				return /* FFI return */ rt.AsString(rt.Time_formatISO8601(any((v_1 - State_rangeMillis(v_0)))))
-			}
-		}()
+		if v_1 <= 0 {
+			return ""
+		} else {
+			return /* FFI return */ rt.AsString(rt.Time_formatISO8601(any((v_1 - State_rangeMillis(v_0)))))
+		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func State_rangeMillis(v_0 State_Range) int {
-	return func() int {
+	{
 		_subj := v_0
 		if _subj == State_Range_Last15m {
 			return ((15 * 60) * 1000)
@@ -4840,7 +4792,7 @@ func State_rangeMillis(v_0 State_Range) int {
 			return 0
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func View_globalFilterStrip(v_0 State_Model_R) Std_Ui_Element {
@@ -4877,7 +4829,7 @@ func View_serviceRow(v_0 string, v_1 []State_ServiceStat_R) Std_Ui_Element {
 }
 
 func View_serviceChip(v_0 string, v_1 string) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		label_2 := func() string {
 			if v_1 == "" {
 				return "All"
@@ -4905,7 +4857,7 @@ func View_serviceChip(v_0 string, v_1 string) Std_Ui_Element {
 		}()
 		_ = fg_5
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_paddingXY(10, 4), Std_Ui_Background_color(bg_4), Std_Ui_Font_color(fg_5), Std_Ui_Font_size(11), Std_Ui_Border_rounded(10), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectService(v_1))}, Std_Ui_text(label_2))
-	}()
+	}
 }
 
 func View_rangeRow(v_0 State_Range) Std_Ui_Element {
@@ -4913,7 +4865,7 @@ func View_rangeRow(v_0 State_Range) Std_Ui_Element {
 }
 
 func View_rangeChip(v_0 State_Range, v_1 State_Range) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		isActive_2 := /* FFI return */ rt.AsBool(rt.Eq(any(v_0), any(v_1)))
 		_ = isActive_2
 		bg_3 := func() Std_Ui_Color {
@@ -4933,11 +4885,11 @@ func View_rangeChip(v_0 State_Range, v_1 State_Range) Std_Ui_Element {
 		}()
 		_ = fg_4
 		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_paddingXY(10, 4), Std_Ui_Background_color(bg_3), Std_Ui_Font_color(fg_4), Std_Ui_Font_size(11), Std_Ui_Border_rounded(10), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectRange(v_1))}, Std_Ui_text(State_rangeLabel(v_1)))
-	}()
+	}
 }
 
 func State_rangeLabel(v_0 State_Range) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == State_Range_Last15m {
 			return "15m"
@@ -4955,7 +4907,7 @@ func State_rangeLabel(v_0 State_Range) string {
 			return "All"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func View_tabStrip(v_0 State_Tab) Std_Ui_Element {
@@ -4972,7 +4924,7 @@ func View_tabStrip(v_0 State_Tab) Std_Ui_Element {
 }
 
 func View_tabButton(v_0 State_Tab, v_1 State_Tab) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		isActive_2 := /* FFI return */ rt.AsBool(rt.Eq(any(v_0), any(v_1)))
 		_ = isActive_2
 		underlineColor_3 := func() Std_Ui_Color {
@@ -4997,11 +4949,11 @@ func View_tabButton(v_0 State_Tab, v_1 State_Tab) Std_Ui_Element {
 			Right  int
 			Top    int
 		}{Top: 0, Right: 0, Bottom: 2, Left: 0}), Std_Ui_Border_color(underlineColor_3), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_SelectTab(v_1))}, Std_Ui_text(State_tabLabel(v_1)))
-	}()
+	}
 }
 
 func State_tabLabel(v_0 State_Tab) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == State_Tab_OverviewTab {
 			return "Overview"
@@ -5022,7 +4974,7 @@ func State_tabLabel(v_0 State_Tab) string {
 			return "Analytics"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func View_header(v_0 State_Model_R) Std_Ui_Element {
@@ -5047,15 +4999,15 @@ func Std_Ui_link(v_0 []Std_Ui_Attribute, v_1 struct {
 	Label Std_Ui_Element
 	Url   string
 }) Std_Ui_Element {
-	return func() Std_Ui_Element {
+	{
 		nodeAttrs_2 := /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrAttribute("href", v_1.Url)), any(v_0)))
 		_ = nodeAttrs_2
 		return Std_Ui_Element_TaggedNode("a", Std_Ui_Description_NoDescription(), nodeAttrs_2, []Std_Ui_Element{v_1.Label})
-	}()
+	}
 }
 
 func View_headerMeta(v_0 State_Overview_R) string {
-	return func() string {
+	{
 		mode_1 := func() string {
 			if v_0.ProductionMode {
 				return "prod"
@@ -5065,7 +5017,7 @@ func View_headerMeta(v_0 State_Overview_R) string {
 		}()
 		_ = mode_1
 		return ("Sky " + (v_0.SkyVersion + (" · " + (mode_1 + (" · uptime " + View_formatUptime(v_0.UptimeSeconds))))))
-	}()
+	}
 }
 
 func Std_Ui_layout(v_0 []Std_Ui_Attribute, v_1 Std_Ui_Element) Std_Html_Html {
@@ -5079,7 +5031,7 @@ func Std_Ui_layoutWith(v_0 struct {
 	RootAttrs    []Std_Ui_Attribute
 	WrapperAttrs []Std_Ui_Attribute
 }, v_1 Std_Ui_Element) Std_Html_Html {
-	return func() Std_Html_Html {
+	{
 		defaultWrapperStyle_2 := "min-height: 100vh; display: flex; flex-direction: column;"
 		_ = defaultWrapperStyle_2
 		wrapperExtraStyle_3 := Std_Ui_buildStyleString(false, Std_Ui_LayoutContext_AsColumn, Std_Ui_LayoutContext_AsColumn, v_0.WrapperAttrs)
@@ -5095,7 +5047,7 @@ func Std_Ui_layoutWith(v_0 struct {
 		wrapperHtmlAttrs_5 := /* primitive join */ rt.AsListT[Std_Html_Attributes_Attribute](Std_Ui_collectHtmlAttrs(v_0.WrapperAttrs))
 		_ = wrapperHtmlAttrs_5
 		return Std_Html_div( /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(wrapperStyle_4)), any(wrapperHtmlAttrs_5))), []Std_Html_Html{Std_Html_node("style", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")}) /* FFI return */, rt.Coerce[Std_Html_Html](Std_Ui_renderElement(Std_Ui_LayoutContext_AsColumn, v_0.RootAttrs, v_1))})
-	}()
+	}
 }
 
 func Std_Ui_renderElement(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attribute, v_2 Std_Ui_Element) Std_Html_Html {
@@ -5111,7 +5063,7 @@ func Std_Ui_topNesting() Std_Ui_Nesting_R {
 }
 
 func Std_Ui_renderElementIn(v_0 Std_Ui_Nesting_R, v_1 Std_Ui_LayoutContext, v_2 []Std_Ui_Attribute, v_3 Std_Ui_Element) Std_Html_Html {
-	return func() Std_Html_Html {
+	{
 		_subj := v_3
 		if _subj.Tag == 0 {
 			return Std_Html_text("")
@@ -5128,11 +5080,11 @@ func Std_Ui_renderElementIn(v_0 Std_Ui_Nesting_R, v_1 Std_Ui_LayoutContext, v_2 
 			_ = v_5
 			_ = v_6
 			_ = v_7
-			return func() Std_Html_Html {
+			{
 				chosenTag_8 := Std_Ui_pickSemanticTag(Std_Ui_defaultTagIn(v_1), v_6)
 				_ = chosenTag_8
 				return Std_Ui_renderNodeAs(chosenTag_8, v_0, v_1, v_2, v_6, v_7)
-			}()
+			}
 		}
 		if _subj.Tag == 3 {
 			v_9 := /* generic erase */ rt.AsString(_subj.Fields[0])
@@ -5151,11 +5103,11 @@ func Std_Ui_renderElementIn(v_0 Std_Ui_Nesting_R, v_1 Std_Ui_LayoutContext, v_2 
 			return v_13
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_Nesting_R, v_2 Std_Ui_LayoutContext, v_3 []Std_Ui_Attribute, v_4 []Std_Ui_Attribute, v_5 []Std_Ui_Element) Std_Html_Html {
-	return func() Std_Html_Html {
+	{
 		tag_6 := Std_Ui_parserSafeTag(v_1, v_0)
 		_ = tag_6
 		childNest_7 := Std_Ui_nestingInside(v_1, tag_6)
@@ -5272,137 +5224,97 @@ func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_Nesting_R, v_2 Std_Ui_LayoutCont
 		}()
 		_ = attrList_29
 		return Std_Ui_dispatchTag(tag_6, attrList_29, renderedChildren_27)
-	}()
+	}
 }
 
 func Std_Ui_dispatchTag(v_0 string, v_1 []Std_Html_Attributes_Attribute, v_2 []Std_Html_Html) Std_Html_Html {
-	return func() Std_Html_Html {
-		if v_0 == "a" {
-			return Std_Html_a(v_1, v_2)
+	if v_0 == "a" {
+		return Std_Html_a(v_1, v_2)
+	} else {
+		if v_0 == "p" {
+			return Std_Html_p(v_1, v_2)
 		} else {
-			return func() Std_Html_Html {
-				if v_0 == "p" {
-					return Std_Html_p(v_1, v_2)
+			if v_0 == "h1" {
+				return Std_Html_h1(v_1, v_2)
+			} else {
+				if v_0 == "h2" {
+					return Std_Html_h2(v_1, v_2)
 				} else {
-					return func() Std_Html_Html {
-						if v_0 == "h1" {
-							return Std_Html_h1(v_1, v_2)
+					if v_0 == "h3" {
+						return Std_Html_h3(v_1, v_2)
+					} else {
+						if v_0 == "h4" {
+							return Std_Html_h4(v_1, v_2)
 						} else {
-							return func() Std_Html_Html {
-								if v_0 == "h2" {
-									return Std_Html_h2(v_1, v_2)
+							if v_0 == "h5" {
+								return Std_Html_h5(v_1, v_2)
+							} else {
+								if v_0 == "h6" {
+									return Std_Html_h6(v_1, v_2)
 								} else {
-									return func() Std_Html_Html {
-										if v_0 == "h3" {
-											return Std_Html_h3(v_1, v_2)
+									if v_0 == "button" {
+										return Std_Html_button(v_1, v_2)
+									} else {
+										if v_0 == "form" {
+											return Std_Html_form(v_1, v_2)
 										} else {
-											return func() Std_Html_Html {
-												if v_0 == "h4" {
-													return Std_Html_h4(v_1, v_2)
+											if v_0 == "label" {
+												return Std_Html_label(v_1, v_2)
+											} else {
+												if v_0 == "section" {
+													return Std_Html_section(v_1, v_2)
 												} else {
-													return func() Std_Html_Html {
-														if v_0 == "h5" {
-															return Std_Html_h5(v_1, v_2)
+													if v_0 == "span" {
+														return Std_Html_span(v_1, v_2)
+													} else {
+														if v_0 == "nav" {
+															return Std_Html_nav(v_1, v_2)
 														} else {
-															return func() Std_Html_Html {
-																if v_0 == "h6" {
-																	return Std_Html_h6(v_1, v_2)
+															if v_0 == "footer" {
+																return Std_Html_footer(v_1, v_2)
+															} else {
+																if v_0 == "header" {
+																	return Std_Html_header(v_1, v_2)
 																} else {
-																	return func() Std_Html_Html {
-																		if v_0 == "button" {
-																			return Std_Html_button(v_1, v_2)
+																	if v_0 == "main" {
+																		return Std_Html_mainNode(v_1, v_2)
+																	} else {
+																		if v_0 == "aside" {
+																			return Std_Html_aside(v_1, v_2)
 																		} else {
-																			return func() Std_Html_Html {
-																				if v_0 == "form" {
-																					return Std_Html_form(v_1, v_2)
+																			if v_0 == "img" {
+																				_ = v_2
+																				return Std_Html_img(v_1)
+																			} else {
+																				if v_0 == "input" {
+																					_ = v_2
+																					return Std_Html_input(v_1)
 																				} else {
-																					return func() Std_Html_Html {
-																						if v_0 == "label" {
-																							return Std_Html_label(v_1, v_2)
-																						} else {
-																							return func() Std_Html_Html {
-																								if v_0 == "section" {
-																									return Std_Html_section(v_1, v_2)
-																								} else {
-																									return func() Std_Html_Html {
-																										if v_0 == "span" {
-																											return Std_Html_span(v_1, v_2)
-																										} else {
-																											return func() Std_Html_Html {
-																												if v_0 == "nav" {
-																													return Std_Html_nav(v_1, v_2)
-																												} else {
-																													return func() Std_Html_Html {
-																														if v_0 == "footer" {
-																															return Std_Html_footer(v_1, v_2)
-																														} else {
-																															return func() Std_Html_Html {
-																																if v_0 == "header" {
-																																	return Std_Html_header(v_1, v_2)
-																																} else {
-																																	return func() Std_Html_Html {
-																																		if v_0 == "main" {
-																																			return Std_Html_mainNode(v_1, v_2)
-																																		} else {
-																																			return func() Std_Html_Html {
-																																				if v_0 == "aside" {
-																																					return Std_Html_aside(v_1, v_2)
-																																				} else {
-																																					return func() Std_Html_Html {
-																																						if v_0 == "img" {
-																																							return func() Std_Html_Html { _ = v_2; return Std_Html_img(v_1) }()
-																																						} else {
-																																							return func() Std_Html_Html {
-																																								if v_0 == "input" {
-																																									return func() Std_Html_Html { _ = v_2; return Std_Html_input(v_1) }()
-																																								} else {
-																																									return func() Std_Html_Html {
-																																										if v_0 == "textarea" {
-																																											return Std_Html_textarea(v_1, v_2)
-																																										} else {
-																																											return Std_Html_div(v_1, v_2)
-																																										}
-																																									}()
-																																								}
-																																							}()
-																																						}
-																																					}()
-																																				}
-																																			}()
-																																		}
-																																	}()
-																																}
-																															}()
-																														}
-																													}()
-																												}
-																											}()
-																										}
-																									}()
-																								}
-																							}()
-																						}
-																					}()
+																					if v_0 == "textarea" {
+																						return Std_Html_textarea(v_1, v_2)
+																					} else {
+																						return Std_Html_div(v_1, v_2)
+																					}
 																				}
-																			}()
+																			}
 																		}
-																	}()
+																	}
 																}
-															}()
+															}
 														}
-													}()
+													}
 												}
-											}()
+											}
 										}
-									}()
+									}
 								}
-							}()
+							}
 						}
-					}()
+					}
 				}
-			}()
+			}
 		}
-	}()
+	}
 }
 
 func Std_Html_div(v_0 []Std_Html_Attributes_Attribute, v_1 []Std_Html_Html) Std_Html_Html {
@@ -5496,7 +5408,7 @@ func Std_Html_a(v_0 []Std_Html_Attributes_Attribute, v_1 []Std_Html_Html) Std_Ht
 func Std_Ui_renderNearby(v_0 Std_Ui_Nesting_R, _t0 rt.T2[Std_Ui_Location, Std_Ui_Element]) Std_Html_Html {
 	v_1 := _t0.V0
 	v_2 := _t0.V1
-	return func() Std_Html_Html {
+	{
 		positionStyle_3 := ("position: absolute; display: flex; " + Std_Ui_locationCss(v_1))
 		_ = positionStyle_3
 		wrapperTag_4 := Std_Ui_parserSafeTag(v_0, "div")
@@ -5504,47 +5416,63 @@ func Std_Ui_renderNearby(v_0 Std_Ui_Nesting_R, _t0 rt.T2[Std_Ui_Location, Std_Ui
 		rendered_5 := Std_Ui_renderElementIn(Std_Ui_nestingInside(v_0, wrapperTag_4), Std_Ui_LayoutContext_AsEl, []Std_Ui_Attribute{}, v_2)
 		_ = rendered_5
 		return Std_Ui_dispatchTag(wrapperTag_4, []Std_Html_Attributes_Attribute{Std_Html_Attributes_style(positionStyle_3)}, []Std_Html_Html{rendered_5})
-	}()
+	}
 }
 
 func Std_Ui_nestingInside(v_0 Std_Ui_Nesting_R, v_1 string) Std_Ui_Nesting_R {
-	return func() Std_Ui_Nesting_R {
-		if v_1 == "p" {
-			return func() Std_Ui_Nesting_R { _u := v_0; _u.Phrasing = true; _u.InHeading = false; return _u }()
-		} else {
-			return func() Std_Ui_Nesting_R {
-				if v_1 == "a" {
-					return func() Std_Ui_Nesting_R { _u := v_0; _u.InLink = true; _u.InHeading = false; return _u }()
-				} else {
-					return func() Std_Ui_Nesting_R {
-						if v_1 == "button" {
-							return func() Std_Ui_Nesting_R { _u := v_0; _u.InButton = true; _u.InHeading = false; return _u }()
-						} else {
-							return func() Std_Ui_Nesting_R {
-								if v_1 == "form" {
-									return func() Std_Ui_Nesting_R { _u := v_0; _u.InForm = true; _u.InHeading = false; return _u }()
-								} else {
-									return func() Std_Ui_Nesting_R {
-										if Std_Ui_isHeadingTag(v_1) {
-											return func() Std_Ui_Nesting_R { _u := v_0; _u.InHeading = true; return _u }()
-										} else {
-											return func() Std_Ui_Nesting_R {
-												if v_0.InHeading {
-													return func() Std_Ui_Nesting_R { _u := v_0; _u.InHeading = false; return _u }()
-												} else {
-													return v_0
-												}
-											}()
-										}
-									}()
-								}
-							}()
-						}
-					}()
-				}
-			}()
+	if v_1 == "p" {
+		{
+			_u := v_0
+			_u.Phrasing = true
+			_u.InHeading = false
+			return _u
 		}
-	}()
+	} else {
+		if v_1 == "a" {
+			{
+				_u := v_0
+				_u.InLink = true
+				_u.InHeading = false
+				return _u
+			}
+		} else {
+			if v_1 == "button" {
+				{
+					_u := v_0
+					_u.InButton = true
+					_u.InHeading = false
+					return _u
+				}
+			} else {
+				if v_1 == "form" {
+					{
+						_u := v_0
+						_u.InForm = true
+						_u.InHeading = false
+						return _u
+					}
+				} else {
+					if Std_Ui_isHeadingTag(v_1) {
+						{
+							_u := v_0
+							_u.InHeading = true
+							return _u
+						}
+					} else {
+						if v_0.InHeading {
+							{
+								_u := v_0
+								_u.InHeading = false
+								return _u
+							}
+						} else {
+							return v_0
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 func Std_Ui_isHeadingTag(v_0 string) bool {
@@ -5552,37 +5480,27 @@ func Std_Ui_isHeadingTag(v_0 string) bool {
 }
 
 func Std_Ui_parserSafeTag(v_0 Std_Ui_Nesting_R, v_1 string) string {
-	return func() string {
-		if v_0.Phrasing && Std_Ui_isFlowOnlyTag(v_1) {
+	if v_0.Phrasing && Std_Ui_isFlowOnlyTag(v_1) {
+		return "span"
+	} else {
+		if v_0.InLink && (v_1 == "a") {
 			return "span"
 		} else {
-			return func() string {
-				if v_0.InLink && (v_1 == "a") {
-					return "span"
+			if v_0.InButton && (v_1 == "button") {
+				return "span"
+			} else {
+				if v_0.InForm && (v_1 == "form") {
+					return "div"
 				} else {
-					return func() string {
-						if v_0.InButton && (v_1 == "button") {
-							return "span"
-						} else {
-							return func() string {
-								if v_0.InForm && (v_1 == "form") {
-									return "div"
-								} else {
-									return func() string {
-										if v_0.InHeading && Std_Ui_isHeadingTag(v_1) {
-											return "div"
-										} else {
-											return v_1
-										}
-									}()
-								}
-							}()
-						}
-					}()
+					if v_0.InHeading && Std_Ui_isHeadingTag(v_1) {
+						return "div"
+					} else {
+						return v_1
+					}
 				}
-			}()
+			}
 		}
-	}()
+	}
 }
 
 func Std_Ui_isFlowOnlyTag(v_0 string) bool {
@@ -5590,7 +5508,7 @@ func Std_Ui_isFlowOnlyTag(v_0 string) bool {
 }
 
 func Std_Ui_locationCss(v_0 Std_Ui_Location) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_Location_Above {
 			return "left: 0; right: 0; bottom: 100%; height: max-content;"
@@ -5611,7 +5529,7 @@ func Std_Ui_locationCss(v_0 Std_Ui_Location) string {
 			return "left: 0; right: 0; top: 0; bottom: 0; z-index: -1;"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_encodeAnimations(v_0 []Std_Ui_AnimationEntry) string {
@@ -5619,7 +5537,7 @@ func Std_Ui_encodeAnimations(v_0 []Std_Ui_AnimationEntry) string {
 }
 
 func Std_Ui_encodeAnimationEntry(v_0 Std_Ui_AnimationEntry) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj.Tag == 0 {
 			v_1 := /* generic erase */ rt.AsString(_subj.Fields[0])
@@ -5639,7 +5557,7 @@ func Std_Ui_encodeAnimationEntry(v_0 Std_Ui_AnimationEntry) string {
 			}()))))))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_collectAnimations(v_0 []Std_Ui_Attribute) []Std_Ui_AnimationEntry {
@@ -5647,7 +5565,7 @@ func Std_Ui_collectAnimations(v_0 []Std_Ui_Attribute) []Std_Ui_AnimationEntry {
 }
 
 func Std_Ui_pickAnimation(v_0 Std_Ui_Attribute) rt.SkyMaybe[Std_Ui_AnimationEntry] {
-	return func() rt.SkyMaybe[Std_Ui_AnimationEntry] {
+	{
 		_subj := v_0
 		if _subj.Tag == 37 {
 			v_1 := /* generic erase */ rt.AsString(_subj.Fields[0])
@@ -5658,36 +5576,34 @@ func Std_Ui_pickAnimation(v_0 Std_Ui_Attribute) rt.SkyMaybe[Std_Ui_AnimationEntr
 			_ = v_2
 			_ = v_3
 			_ = v_4
-			return func() rt.SkyMaybe[Std_Ui_AnimationEntry] {
-				if ( /* FFI return */ rt.AsInt(rt.String_length(any(v_1))) == 0) || ( /* FFI return */ rt.AsInt(rt.String_length(any(v_3))) == 0) {
-					return rt.Nothing[Std_Ui_AnimationEntry]()
-				} else {
-					return rt.Just[Std_Ui_AnimationEntry](Std_Ui_AnimationEntry_AnimationEntry(v_1, v_2, v_3, v_4))
-				}
-			}()
+			if ( /* FFI return */ rt.AsInt(rt.String_length(any(v_1))) == 0) || ( /* FFI return */ rt.AsInt(rt.String_length(any(v_3))) == 0) {
+				return rt.Nothing[Std_Ui_AnimationEntry]()
+			} else {
+				return rt.Just[Std_Ui_AnimationEntry](Std_Ui_AnimationEntry_AnimationEntry(v_1, v_2, v_3, v_4))
+			}
 		}
 		return rt.Nothing[Std_Ui_AnimationEntry]()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_collectTransitions(v_0 []Std_Ui_Attribute) rt.T2[string, bool] {
-	return func() rt.T2[string, bool] {
+	{
 		rules_1 := rt.List_filterMapT[Std_Ui_Attribute, string](Std_Ui_pickTransitionShorthand, v_0)
 		_ = rules_1
-		return func() rt.T2[string, bool] {
+		{
 			_subj := rules_1
 			if rt.SkyLenT(_subj) == 0 {
 				return rt.T2[string, bool]{V0: "", V1: false}
 			}
 			return rt.T2[string, bool]{V0: /* FFI return */ rt.AsString(rt.String_join(any(", "), any(rules_1))), V1: rt.List_anyT[Std_Ui_Attribute](Std_Ui_isTransitionOptOut, v_0)}
 			panic(rt.Unreachable("case"))
-		}()
-	}()
+		}
+	}
 }
 
 func Std_Ui_isTransitionOptOut(v_0 Std_Ui_Attribute) bool {
-	return func() bool {
+	{
 		_subj := v_0
 		if _subj.Tag == 36 {
 			v_1 := /* generic erase */ rt.AsBool(_subj.Fields[1])
@@ -5696,26 +5612,24 @@ func Std_Ui_isTransitionOptOut(v_0 Std_Ui_Attribute) bool {
 		}
 		return false
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_pickTransitionShorthand(v_0 Std_Ui_Attribute) rt.SkyMaybe[string] {
-	return func() rt.SkyMaybe[string] {
+	{
 		_subj := v_0
 		if _subj.Tag == 36 {
 			v_1 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_1
-			return func() rt.SkyMaybe[string] {
-				if /* FFI return */ rt.AsInt(rt.String_length(any(v_1))) == 0 {
-					return rt.Nothing[string]()
-				} else {
-					return rt.Just[string](v_1)
-				}
-			}()
+			if /* FFI return */ rt.AsInt(rt.String_length(any(v_1))) == 0 {
+				return rt.Nothing[string]()
+			} else {
+				return rt.Just[string](v_1)
+			}
 		}
 		return rt.Nothing[string]()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_encodePseudoRules(v_0 []rt.T2[string, string]) string {
@@ -5723,7 +5637,7 @@ func Std_Ui_encodePseudoRules(v_0 []rt.T2[string, string]) string {
 }
 
 func Std_Ui_encodeOneEntry(v_0 rt.T2[string, string]) string {
-	return func() string {
+	{
 		_subj := v_0
 		v_1 := _subj.V0
 		v_2 := _subj.V1
@@ -5731,7 +5645,7 @@ func Std_Ui_encodeOneEntry(v_0 rt.T2[string, string]) string {
 		_ = v_2
 		return (v_1 + ("|" + v_2))
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_collectPseudoRules(v_0 []Std_Ui_Attribute) []rt.T2[string, string] {
@@ -5739,28 +5653,26 @@ func Std_Ui_collectPseudoRules(v_0 []Std_Ui_Attribute) []rt.T2[string, string] {
 }
 
 func Std_Ui_pseudoRuleEntry(v_0 Std_Ui_Attribute) rt.SkyMaybe[rt.T2[string, string]] {
-	return func() rt.SkyMaybe[rt.T2[string, string]] {
+	{
 		_subj := v_0
 		if _subj.Tag == 35 {
 			v_1 := /* generic erase */ rt.Coerce[Std_Ui_PseudoClass](_subj.Fields[0])
 			v_2 := /* generic erase */ rt.AsString(_subj.Fields[1])
 			_ = v_1
 			_ = v_2
-			return func() rt.SkyMaybe[rt.T2[string, string]] {
-				if /* FFI return */ rt.AsInt(rt.String_length(any(v_2))) == 0 {
-					return rt.Nothing[rt.T2[string, string]]()
-				} else {
-					return rt.Just[rt.T2[string, string]](rt.T2[string, string]{V0: Std_Ui_pseudoClassTag(v_1), V1: v_2})
-				}
-			}()
+			if /* FFI return */ rt.AsInt(rt.String_length(any(v_2))) == 0 {
+				return rt.Nothing[rt.T2[string, string]]()
+			} else {
+				return rt.Just[rt.T2[string, string]](rt.T2[string, string]{V0: Std_Ui_pseudoClassTag(v_1), V1: v_2})
+			}
 		}
 		return rt.Nothing[rt.T2[string, string]]()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_pseudoClassTag(v_0 Std_Ui_PseudoClass) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_PseudoClass_Hover {
 			return "h"
@@ -5778,7 +5690,7 @@ func Std_Ui_pseudoClassTag(v_0 Std_Ui_PseudoClass) string {
 			return "d"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_collectHtmlAttrs(v_0 []Std_Ui_Attribute) []any {
@@ -5786,7 +5698,7 @@ func Std_Ui_collectHtmlAttrs(v_0 []Std_Ui_Attribute) []any {
 }
 
 func Std_Ui_toAttrAttribute(v_0 Std_Ui_Attribute) rt.SkyMaybe[any] {
-	return func() rt.SkyMaybe[any] {
+	{
 		_subj := v_0
 		if _subj.Tag == 12 {
 			v_1 := /* generic erase */ rt.AsString(_subj.Fields[0])
@@ -5812,11 +5724,11 @@ func Std_Ui_toAttrAttribute(v_0 Std_Ui_Attribute) rt.SkyMaybe[any] {
 		}
 		return /* primitive join */ rt.MaybeCoerce[any](rt.Nothing[Std_Html_Attributes_Attribute]())
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_ariaForDescription(v_0 Std_Ui_Description) rt.SkyMaybe[any] {
-	return func() rt.SkyMaybe[any] {
+	{
 		_subj := v_0
 		if _subj.Tag == 6 {
 			v_1 := /* generic erase */ rt.AsString(_subj.Fields[0])
@@ -5831,95 +5743,67 @@ func Std_Ui_ariaForDescription(v_0 Std_Ui_Description) rt.SkyMaybe[any] {
 		}
 		return rt.Nothing[any]()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_kernelAttr(v_0 string, v_1 string) Std_Html_Attributes_Attribute {
-	return func() Std_Html_Attributes_Attribute {
-		if v_0 == "href" {
-			return Std_Html_Attributes_href(v_1)
+	if v_0 == "href" {
+		return Std_Html_Attributes_href(v_1)
+	} else {
+		if v_0 == "src" {
+			return Std_Html_Attributes_src(v_1)
 		} else {
-			return func() Std_Html_Attributes_Attribute {
-				if v_0 == "src" {
-					return Std_Html_Attributes_src(v_1)
+			if v_0 == "alt" {
+				return Std_Html_Attributes_alt(v_1)
+			} else {
+				if v_0 == "name" {
+					return Std_Html_Attributes_name(v_1)
 				} else {
-					return func() Std_Html_Attributes_Attribute {
-						if v_0 == "alt" {
-							return Std_Html_Attributes_alt(v_1)
+					if v_0 == "value" {
+						return Std_Html_Attributes_value(v_1)
+					} else {
+						if v_0 == "id" {
+							return Std_Html_Attributes_id(v_1)
 						} else {
-							return func() Std_Html_Attributes_Attribute {
-								if v_0 == "name" {
-									return Std_Html_Attributes_name(v_1)
+							if v_0 == "type" {
+								return Std_Html_Attributes_type_(v_1)
+							} else {
+								if v_0 == "placeholder" {
+									return Std_Html_Attributes_placeholder(v_1)
 								} else {
-									return func() Std_Html_Attributes_Attribute {
-										if v_0 == "value" {
-											return Std_Html_Attributes_value(v_1)
+									if v_0 == "title" {
+										return Std_Html_Attributes_title(v_1)
+									} else {
+										if v_0 == "for" {
+											return Std_Html_Attributes_for_(v_1)
 										} else {
-											return func() Std_Html_Attributes_Attribute {
-												if v_0 == "id" {
-													return Std_Html_Attributes_id(v_1)
+											if v_0 == "rel" {
+												return Std_Html_Attributes_rel(v_1)
+											} else {
+												if v_0 == "target" {
+													return Std_Html_Attributes_target(v_1)
 												} else {
-													return func() Std_Html_Attributes_Attribute {
-														if v_0 == "type" {
-															return Std_Html_Attributes_type_(v_1)
+													if v_0 == "method" {
+														return Std_Html_Attributes_method(v_1)
+													} else {
+														if v_0 == "action" {
+															return Std_Html_Attributes_action(v_1)
 														} else {
-															return func() Std_Html_Attributes_Attribute {
-																if v_0 == "placeholder" {
-																	return Std_Html_Attributes_placeholder(v_1)
-																} else {
-																	return func() Std_Html_Attributes_Attribute {
-																		if v_0 == "title" {
-																			return Std_Html_Attributes_title(v_1)
-																		} else {
-																			return func() Std_Html_Attributes_Attribute {
-																				if v_0 == "for" {
-																					return Std_Html_Attributes_for_(v_1)
-																				} else {
-																					return func() Std_Html_Attributes_Attribute {
-																						if v_0 == "rel" {
-																							return Std_Html_Attributes_rel(v_1)
-																						} else {
-																							return func() Std_Html_Attributes_Attribute {
-																								if v_0 == "target" {
-																									return Std_Html_Attributes_target(v_1)
-																								} else {
-																									return func() Std_Html_Attributes_Attribute {
-																										if v_0 == "method" {
-																											return Std_Html_Attributes_method(v_1)
-																										} else {
-																											return func() Std_Html_Attributes_Attribute {
-																												if v_0 == "action" {
-																													return Std_Html_Attributes_action(v_1)
-																												} else {
-																													return Std_Html_Attributes_attribute(v_0, v_1)
-																												}
-																											}()
-																										}
-																									}()
-																								}
-																							}()
-																						}
-																					}()
-																				}
-																			}()
-																		}
-																	}()
-																}
-															}()
+															return Std_Html_Attributes_attribute(v_0, v_1)
 														}
-													}()
+													}
 												}
-											}()
+											}
 										}
-									}()
+									}
 								}
-							}()
+							}
 						}
-					}()
+					}
 				}
-			}()
+			}
 		}
-	}()
+	}
 }
 
 func Std_Html_Attributes_action(v_0 string) Std_Html_Attributes_Attribute {
@@ -5983,20 +5867,18 @@ func Std_Html_Attributes_class(v_0 string) Std_Html_Attributes_Attribute {
 }
 
 func Std_Ui_buildStyleStringWith(v_0 Std_Ui_MarkerFlags_R, v_1 bool, v_2 Std_Ui_LayoutContext, v_3 Std_Ui_LayoutContext, v_4 []Std_Ui_Attribute) string {
-	return func() string {
+	{
 		gridOn_5 := v_0.Grid
 		_ = gridOn_5
 		baseDisplay_6 := func() string {
 			if /* FFI return */ rt.AsBool(rt.Basics_not(any(v_1))) {
 				return ""
 			} else {
-				return func() string {
-					if gridOn_5 {
-						return (Std_Ui_gridDisplayIn(v_2) + Std_Ui_findGridTemplate(v_4))
-					} else {
-						return Std_Ui_displayIn(v_2, v_3)
-					}
-				}()
+				if gridOn_5 {
+					return (Std_Ui_gridDisplayIn(v_2) + Std_Ui_findGridTemplate(v_4))
+				} else {
+					return Std_Ui_displayIn(v_2, v_3)
+				}
 			}
 		}()
 		_ = baseDisplay_6
@@ -6025,11 +5907,11 @@ func Std_Ui_buildStyleStringWith(v_0 Std_Ui_MarkerFlags_R, v_1 bool, v_2 Std_Ui_
 		}()
 		_ = borderStyleDefault_9
 		return (baseDisplay_6 + (wrapPart_7 + (attrParts_8 + borderStyleDefault_9)))
-	}()
+	}
 }
 
 func Std_Ui_collectStyle(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_Attribute, v_3 string) string {
-	return func() string {
+	{
 		_subj := v_2
 		if _subj.Tag == 0 {
 			return v_3
@@ -6075,55 +5957,39 @@ func Std_Ui_collectStyle(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_LayoutContext, v_2
 			v_14 := /* generic erase */ rt.AsString(_subj.Fields[1])
 			_ = v_13
 			_ = v_14
-			return func() string {
-				if v_13 == "__row" {
+			if v_13 == "__row" {
+				return v_3
+			} else {
+				if v_13 == "__col" {
 					return v_3
 				} else {
-					return func() string {
-						if v_13 == "__col" {
+					if v_13 == "__paragraph" {
+						return v_3
+					} else {
+						if v_13 == "__textcolumn" {
 							return v_3
 						} else {
-							return func() string {
-								if v_13 == "__paragraph" {
+							if v_13 == "__wrap" {
+								return v_3
+							} else {
+								if v_13 == "__grid" {
 									return v_3
 								} else {
-									return func() string {
-										if v_13 == "__textcolumn" {
+									if v_13 == "__gridMin" {
+										return v_3
+									} else {
+										if v_13 == "__gridTracks" {
 											return v_3
 										} else {
-											return func() string {
-												if v_13 == "__wrap" {
-													return v_3
-												} else {
-													return func() string {
-														if v_13 == "__grid" {
-															return v_3
-														} else {
-															return func() string {
-																if v_13 == "__gridMin" {
-																	return v_3
-																} else {
-																	return func() string {
-																		if v_13 == "__gridTracks" {
-																			return v_3
-																		} else {
-																			return (v_3 + (" " + (v_13 + (": " + (v_14 + ";")))))
-																		}
-																	}()
-																}
-															}()
-														}
-													}()
-												}
-											}()
+											return (v_3 + (" " + (v_13 + (": " + (v_14 + ";")))))
 										}
-									}()
+									}
 								}
-							}()
+							}
 						}
-					}()
+					}
 				}
-			}()
+			}
 		}
 		if _subj.Tag == 9 {
 			return v_3
@@ -6278,14 +6144,14 @@ func Std_Ui_collectStyle(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_LayoutContext, v_2
 			return v_3
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_alignSelfY(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsColumn {
-			return func() string {
+			{
 				_subj := v_1
 				if _subj == Std_Ui_VAlign_AlignTop {
 					return "margin-bottom: auto;"
@@ -6297,9 +6163,9 @@ func Std_Ui_alignSelfY(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
 					return "margin-top: auto;"
 				}
 				panic(rt.Unreachable("case"))
-			}()
+			}
 		}
-		return func() string {
+		{
 			_subj := v_1
 			if _subj == Std_Ui_VAlign_AlignTop {
 				return "align-self: flex-start;"
@@ -6311,16 +6177,16 @@ func Std_Ui_alignSelfY(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
 				return "align-self: flex-end;"
 			}
 			panic(rt.Unreachable("case"))
-		}()
+		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_alignYCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsRow {
-			return func() string {
+			{
 				_subj := v_1
 				if _subj == Std_Ui_VAlign_AlignTop {
 					return "align-items: flex-start;"
@@ -6332,9 +6198,9 @@ func Std_Ui_alignYCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
 					return "align-items: flex-end;"
 				}
 				panic(rt.Unreachable("case"))
-			}()
+			}
 		}
-		return func() string {
+		{
 			_subj := v_1
 			if _subj == Std_Ui_VAlign_AlignTop {
 				return "justify-content: flex-start;"
@@ -6346,16 +6212,16 @@ func Std_Ui_alignYCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_VAlign) string {
 				return "justify-content: flex-end;"
 			}
 			panic(rt.Unreachable("case"))
-		}()
+		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_alignSelfX(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsRow {
-			return func() string {
+			{
 				_subj := v_1
 				if _subj == Std_Ui_HAlign_AlignLeft {
 					return "margin-right: auto;"
@@ -6367,9 +6233,9 @@ func Std_Ui_alignSelfX(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
 					return "margin-left: auto;"
 				}
 				panic(rt.Unreachable("case"))
-			}()
+			}
 		}
-		return func() string {
+		{
 			_subj := v_1
 			if _subj == Std_Ui_HAlign_AlignLeft {
 				return "align-self: flex-start;"
@@ -6381,16 +6247,16 @@ func Std_Ui_alignSelfX(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
 				return "align-self: flex-end;"
 			}
 			panic(rt.Unreachable("case"))
-		}()
+		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_alignXCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsRow {
-			return func() string {
+			{
 				_subj := v_1
 				if _subj == Std_Ui_HAlign_AlignLeft {
 					return "justify-content: flex-start;"
@@ -6402,9 +6268,9 @@ func Std_Ui_alignXCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
 					return "justify-content: flex-end;"
 				}
 				panic(rt.Unreachable("case"))
-			}()
+			}
 		}
-		return func() string {
+		{
 			_subj := v_1
 			if _subj == Std_Ui_HAlign_AlignLeft {
 				return "align-items: flex-start;"
@@ -6416,13 +6282,13 @@ func Std_Ui_alignXCss(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_HAlign) string {
 				return "align-items: flex-end;"
 			}
 			panic(rt.Unreachable("case"))
-		}()
+		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_heightCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
-	return func() string {
+	{
 		_subj := v_1
 		if _subj.Tag == 0 {
 			v_2 := /* generic erase */ rt.AsInt(_subj.Fields[0])
@@ -6462,11 +6328,11 @@ func Std_Ui_heightCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 			return ("height: " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_9))) + "vw;"))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_heightFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			return ""
@@ -6484,11 +6350,11 @@ func Std_Ui_heightFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
 			return ("flex-grow: " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1))) + "; min-height: 0;"))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_widthCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
-	return func() string {
+	{
 		_subj := v_1
 		if _subj.Tag == 0 {
 			v_2 := /* generic erase */ rt.AsInt(_subj.Fields[0])
@@ -6528,11 +6394,11 @@ func Std_Ui_widthCssIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Length) string {
 			return ("width: " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_9))) + "vw;"))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_widthFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			return ("flex-grow: " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1))) + "; min-width: 0;"))
@@ -6550,14 +6416,14 @@ func Std_Ui_widthFillFor(v_0 Std_Ui_LayoutContext, v_1 int) string {
 			return "width: 100%;"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_displayIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_LayoutContext) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsParagraph {
-			return func() string {
+			{
 				_subj := v_1
 				if _subj == Std_Ui_LayoutContext_AsRow {
 					return "display: inline-flex; flex-direction: row;"
@@ -6575,15 +6441,15 @@ func Std_Ui_displayIn(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_LayoutContext) string
 					return "display: block;"
 				}
 				panic(rt.Unreachable("case"))
-			}()
+			}
 		}
 		return Std_Ui_displayFor(v_1)
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_displayFor(v_0 Std_Ui_LayoutContext) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			return "display: flex; flex-direction: row;"
@@ -6601,47 +6467,45 @@ func Std_Ui_displayFor(v_0 Std_Ui_LayoutContext) string {
 			return "display: flex; flex-direction: column;"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_findGridTemplate(v_0 []Std_Ui_Attribute) string {
-	return func() string {
+	{
 		raw_1 := Std_Ui_findGridTracksRaw(v_0)
 		_ = raw_1
-		return func() string {
-			if raw_1 == "" {
-				return (" grid-template-columns: repeat(auto-fill, minmax(" + (Std_Ui_findGridMin(v_0) + "px, 1fr));"))
-			} else {
-				return func() string {
-					cols_2 := Std_Ui_takeBeforePipe(raw_1)
-					_ = cols_2
-					rows_3 := Std_Ui_takeAfterPipe(raw_1)
-					_ = rows_3
-					colsCss_4 := func() string {
-						if cols_2 == "" {
-							return ""
-						} else {
-							return (" grid-template-columns: " + (cols_2 + ";"))
-						}
-					}()
-					_ = colsCss_4
-					rowsCss_5 := func() string {
-						if rows_3 == "" {
-							return ""
-						} else {
-							return (" grid-template-rows: " + (rows_3 + ";"))
-						}
-					}()
-					_ = rowsCss_5
-					return (colsCss_4 + rowsCss_5)
+		if raw_1 == "" {
+			return (" grid-template-columns: repeat(auto-fill, minmax(" + (Std_Ui_findGridMin(v_0) + "px, 1fr));"))
+		} else {
+			{
+				cols_2 := Std_Ui_takeBeforePipe(raw_1)
+				_ = cols_2
+				rows_3 := Std_Ui_takeAfterPipe(raw_1)
+				_ = rows_3
+				colsCss_4 := func() string {
+					if cols_2 == "" {
+						return ""
+					} else {
+						return (" grid-template-columns: " + (cols_2 + ";"))
+					}
 				}()
+				_ = colsCss_4
+				rowsCss_5 := func() string {
+					if rows_3 == "" {
+						return ""
+					} else {
+						return (" grid-template-rows: " + (rows_3 + ";"))
+					}
+				}()
+				_ = rowsCss_5
+				return (colsCss_4 + rowsCss_5)
 			}
-		}()
-	}()
+		}
+	}
 }
 
 func Std_Ui_takeAfterPipe(v_0 string) string {
-	return func() string {
+	{
 		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("|"), any(v_0)))
 		if rt.SkyLenT(_subj) >= 1 {
 			v_1 := rt.SkyTailSliceT(_subj)
@@ -6652,11 +6516,11 @@ func Std_Ui_takeAfterPipe(v_0 string) string {
 			return ""
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_joinWithPipe(v_0 []string) string {
-	return func() string {
+	{
 		_subj := v_0
 		if rt.SkyLenT(_subj) == 0 {
 			return ""
@@ -6674,11 +6538,11 @@ func Std_Ui_joinWithPipe(v_0 []string) string {
 			return (v_2 + ("|" + Std_Ui_joinWithPipe(v_3)))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_takeBeforePipe(v_0 string) string {
-	return func() string {
+	{
 		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("|"), any(v_0)))
 		if rt.SkyLenT(_subj) >= 1 {
 			v_1 := rt.SkyElemT(_subj, 0)
@@ -6689,7 +6553,7 @@ func Std_Ui_takeBeforePipe(v_0 string) string {
 			return ""
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_findGridMin(v_0 []Std_Ui_Attribute) string {
@@ -6761,14 +6625,14 @@ func Std_Ui_findGridTracksRaw(v_0 []Std_Ui_Attribute) string {
 }
 
 func Std_Ui_gridDisplayIn(v_0 Std_Ui_LayoutContext) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsParagraph {
 			return "display: inline-grid;"
 		}
 		return "display: grid;"
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_collectNearby(v_0 []Std_Ui_Attribute) []rt.T2[Std_Ui_Location, Std_Ui_Element] {
@@ -6776,7 +6640,7 @@ func Std_Ui_collectNearby(v_0 []Std_Ui_Attribute) []rt.T2[Std_Ui_Location, Std_U
 }
 
 func Std_Ui_toNearbyPair(v_0 Std_Ui_Attribute) rt.SkyMaybe[rt.T2[Std_Ui_Location, Std_Ui_Element]] {
-	return func() rt.SkyMaybe[rt.T2[Std_Ui_Location, Std_Ui_Element]] {
+	{
 		_subj := v_0
 		if _subj.Tag == 5 {
 			v_1 := /* generic erase */ rt.Coerce[Std_Ui_Location](_subj.Fields[0])
@@ -6787,7 +6651,7 @@ func Std_Ui_toNearbyPair(v_0 Std_Ui_Attribute) rt.SkyMaybe[rt.T2[Std_Ui_Location
 		}
 		return rt.Nothing[rt.T2[Std_Ui_Location, Std_Ui_Element]]()
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_markerFlags(v_0 []Std_Ui_Attribute) Std_Ui_MarkerFlags_R {
@@ -6803,98 +6667,102 @@ func Std_Ui_noMarkerFlags() Std_Ui_MarkerFlags_R {
 }
 
 func Std_Ui_markerFlagStep(v_0 Std_Ui_Attribute, v_1 Std_Ui_MarkerFlags_R) Std_Ui_MarkerFlags_R {
-	return func() Std_Ui_MarkerFlags_R {
+	{
 		_subj := v_0
 		if _subj.Tag == 8 {
 			v_2 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_2
-			return func() Std_Ui_MarkerFlags_R {
-				if v_2 == "__row" {
-					return func() Std_Ui_MarkerFlags_R { _u := v_1; _u.Row = true; return _u }()
-				} else {
-					return func() Std_Ui_MarkerFlags_R {
-						if v_2 == "__col" {
-							return func() Std_Ui_MarkerFlags_R { _u := v_1; _u.Col = true; return _u }()
-						} else {
-							return func() Std_Ui_MarkerFlags_R {
-								if v_2 == "__paragraph" {
-									return func() Std_Ui_MarkerFlags_R { _u := v_1; _u.Paragraph = true; return _u }()
-								} else {
-									return func() Std_Ui_MarkerFlags_R {
-										if v_2 == "__textcolumn" {
-											return func() Std_Ui_MarkerFlags_R { _u := v_1; _u.Textcolumn = true; return _u }()
-										} else {
-											return func() Std_Ui_MarkerFlags_R {
-												if v_2 == "__grid" {
-													return func() Std_Ui_MarkerFlags_R { _u := v_1; _u.Grid = true; return _u }()
-												} else {
-													return func() Std_Ui_MarkerFlags_R {
-														if v_2 == "__wrap" {
-															return func() Std_Ui_MarkerFlags_R { _u := v_1; _u.Wrap = true; return _u }()
-														} else {
-															return v_1
-														}
-													}()
-												}
-											}()
-										}
-									}()
-								}
-							}()
-						}
-					}()
+			if v_2 == "__row" {
+				{
+					_u := v_1
+					_u.Row = true
+					return _u
 				}
-			}()
+			} else {
+				if v_2 == "__col" {
+					{
+						_u := v_1
+						_u.Col = true
+						return _u
+					}
+				} else {
+					if v_2 == "__paragraph" {
+						{
+							_u := v_1
+							_u.Paragraph = true
+							return _u
+						}
+					} else {
+						if v_2 == "__textcolumn" {
+							{
+								_u := v_1
+								_u.Textcolumn = true
+								return _u
+							}
+						} else {
+							if v_2 == "__grid" {
+								{
+									_u := v_1
+									_u.Grid = true
+									return _u
+								}
+							} else {
+								if v_2 == "__wrap" {
+									{
+										_u := v_1
+										_u.Wrap = true
+										return _u
+									}
+								} else {
+									return v_1
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 		return v_1
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_propagateFillToContainer(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attribute, v_2 []Std_Ui_Element) []Std_Ui_Attribute {
-	return func() []Std_Ui_Attribute {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsParagraph {
 			return v_1
 		}
 		if _subj == Std_Ui_LayoutContext_AsRow {
-			return func() []Std_Ui_Attribute {
-				if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsRow, v_2) && /* FFI return */ rt.AsBool(rt.Basics_not(any(Std_Ui_hasExplicitWidth(v_1)))) {
-					return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrWidth(Std_Ui_Length_Fill(1))), any(v_1)))
-				} else {
-					return v_1
-				}
-			}()
+			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsRow, v_2) && /* FFI return */ rt.AsBool(rt.Basics_not(any(Std_Ui_hasExplicitWidth(v_1)))) {
+				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrWidth(Std_Ui_Length_Fill(1))), any(v_1)))
+			} else {
+				return v_1
+			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsColumn {
-			return func() []Std_Ui_Attribute {
-				if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsColumn, v_2) && /* FFI return */ rt.AsBool(rt.Basics_not(any(Std_Ui_hasExplicitHeight(v_1)))) {
-					return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
-				} else {
-					return v_1
-				}
-			}()
+			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsColumn, v_2) && /* FFI return */ rt.AsBool(rt.Basics_not(any(Std_Ui_hasExplicitHeight(v_1)))) {
+				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+			} else {
+				return v_1
+			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsEl {
-			return func() []Std_Ui_Attribute {
-				if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsEl, v_2) && /* FFI return */ rt.AsBool(rt.Basics_not(any(Std_Ui_hasExplicitHeight(v_1)))) {
-					return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
-				} else {
-					return v_1
-				}
-			}()
+			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsEl, v_2) && /* FFI return */ rt.AsBool(rt.Basics_not(any(Std_Ui_hasExplicitHeight(v_1)))) {
+				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+			} else {
+				return v_1
+			}
 		}
 		if _subj == Std_Ui_LayoutContext_AsTextColumn {
-			return func() []Std_Ui_Attribute {
-				if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsTextColumn, v_2) && /* FFI return */ rt.AsBool(rt.Basics_not(any(Std_Ui_hasExplicitHeight(v_1)))) {
-					return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
-				} else {
-					return v_1
-				}
-			}()
+			if Std_Ui_anyChildMainAxisFill(Std_Ui_LayoutContext_AsTextColumn, v_2) && /* FFI return */ rt.AsBool(rt.Basics_not(any(Std_Ui_hasExplicitHeight(v_1)))) {
+				return /* FFI return */ rt.AsListT[Std_Ui_Attribute](rt.List_cons(any(Std_Ui_Attribute_AttrHeight(Std_Ui_Length_Fill(1))), any(v_1)))
+			} else {
+				return v_1
+			}
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_hasExplicitHeight(v_0 []Std_Ui_Attribute) bool {
@@ -6902,14 +6770,14 @@ func Std_Ui_hasExplicitHeight(v_0 []Std_Ui_Attribute) bool {
 }
 
 func Std_Ui_isHeightAttr(v_0 Std_Ui_Attribute) bool {
-	return func() bool {
+	{
 		_subj := v_0
 		if _subj.Tag == 2 {
 			return true
 		}
 		return false
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_anyChildMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Element) bool {
@@ -6921,7 +6789,7 @@ func Std_Ui_anyChildMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Element)
 }
 
 func Std_Ui_elementHasMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Element) bool {
-	return func() bool {
+	{
 		_subj := v_1
 		if _subj.Tag == 0 {
 			return false
@@ -6943,11 +6811,11 @@ func Std_Ui_elementHasMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 Std_Ui_Element)
 			return false
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_attrsHaveMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attribute) bool {
-	return func() bool {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsRow {
 			return rt.List_anyT[Std_Ui_Attribute](Std_Ui_isWidthFillAttr, v_1)
@@ -6965,11 +6833,11 @@ func Std_Ui_attrsHaveMainAxisFill(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attribu
 			return false
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_isHeightFillAttr(v_0 Std_Ui_Attribute) bool {
-	return func() bool {
+	{
 		_subj := v_0
 		if _subj.Tag == 2 {
 			v_1 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[0])
@@ -6978,7 +6846,7 @@ func Std_Ui_isHeightFillAttr(v_0 Std_Ui_Attribute) bool {
 		}
 		return false
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_isFillLength(v_0 Std_Ui_Length) bool {
@@ -7009,7 +6877,7 @@ func Std_Ui_isFillLength(v_0 Std_Ui_Length) bool {
 }
 
 func Std_Ui_isWidthFillAttr(v_0 Std_Ui_Attribute) bool {
-	return func() bool {
+	{
 		_subj := v_0
 		if _subj.Tag == 1 {
 			v_1 := /* generic erase */ rt.Coerce[Std_Ui_Length](_subj.Fields[0])
@@ -7018,7 +6886,7 @@ func Std_Ui_isWidthFillAttr(v_0 Std_Ui_Attribute) bool {
 		}
 		return false
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_hasExplicitWidth(v_0 []Std_Ui_Attribute) bool {
@@ -7026,99 +6894,77 @@ func Std_Ui_hasExplicitWidth(v_0 []Std_Ui_Attribute) bool {
 }
 
 func Std_Ui_isWidthAttr(v_0 Std_Ui_Attribute) bool {
-	return func() bool {
+	{
 		_subj := v_0
 		if _subj.Tag == 1 {
 			return true
 		}
 		return false
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_layoutContextFromFlags(v_0 Std_Ui_MarkerFlags_R) Std_Ui_LayoutContext {
-	return func() Std_Ui_LayoutContext {
-		if v_0.Row {
-			return Std_Ui_LayoutContext_AsRow
+	if v_0.Row {
+		return Std_Ui_LayoutContext_AsRow
+	} else {
+		if v_0.Col {
+			return Std_Ui_LayoutContext_AsColumn
 		} else {
-			return func() Std_Ui_LayoutContext {
-				if v_0.Col {
-					return Std_Ui_LayoutContext_AsColumn
+			if v_0.Paragraph {
+				return Std_Ui_LayoutContext_AsParagraph
+			} else {
+				if v_0.Textcolumn {
+					return Std_Ui_LayoutContext_AsTextColumn
 				} else {
-					return func() Std_Ui_LayoutContext {
-						if v_0.Paragraph {
-							return Std_Ui_LayoutContext_AsParagraph
-						} else {
-							return func() Std_Ui_LayoutContext {
-								if v_0.Textcolumn {
-									return Std_Ui_LayoutContext_AsTextColumn
-								} else {
-									return Std_Ui_LayoutContext_AsEl
-								}
-							}()
-						}
-					}()
+					return Std_Ui_LayoutContext_AsEl
 				}
-			}()
+			}
 		}
-	}()
+	}
 }
 
 func Std_Ui_keptRoleAttrs(v_0 string, v_1 string) []Std_Html_Attributes_Attribute {
-	return func() []Std_Html_Attributes_Attribute {
-		if v_0 == v_1 {
-			return []Std_Html_Attributes_Attribute{}
+	if v_0 == v_1 {
+		return []Std_Html_Attributes_Attribute{}
+	} else {
+		if Std_Ui_isHeadingTag(v_0) {
+			return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "heading"), Std_Html_Attributes_attribute("aria-level" /* FFI return */, rt.AsString(rt.String_dropLeft(any(1), any(v_0))))}
 		} else {
-			return func() []Std_Html_Attributes_Attribute {
-				if Std_Ui_isHeadingTag(v_0) {
-					return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "heading"), Std_Html_Attributes_attribute("aria-level" /* FFI return */, rt.AsString(rt.String_dropLeft(any(1), any(v_0))))}
+			if v_0 == "main" {
+				return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "main")}
+			} else {
+				if v_0 == "nav" {
+					return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "navigation")}
 				} else {
-					return func() []Std_Html_Attributes_Attribute {
-						if v_0 == "main" {
-							return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "main")}
+					if v_0 == "footer" {
+						return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "contentinfo")}
+					} else {
+						if v_0 == "header" {
+							return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "banner")}
 						} else {
-							return func() []Std_Html_Attributes_Attribute {
-								if v_0 == "nav" {
-									return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "navigation")}
-								} else {
-									return func() []Std_Html_Attributes_Attribute {
-										if v_0 == "footer" {
-											return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "contentinfo")}
-										} else {
-											return func() []Std_Html_Attributes_Attribute {
-												if v_0 == "header" {
-													return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "banner")}
-												} else {
-													return func() []Std_Html_Attributes_Attribute {
-														if v_0 == "aside" {
-															return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "complementary")}
-														} else {
-															return []Std_Html_Attributes_Attribute{}
-														}
-													}()
-												}
-											}()
-										}
-									}()
-								}
-							}()
+							if v_0 == "aside" {
+								return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "complementary")}
+							} else {
+								return []Std_Html_Attributes_Attribute{}
+							}
 						}
-					}()
+					}
 				}
-			}()
+			}
 		}
-	}()
+	}
 }
 
 func Std_Ui_defaultTagIn(v_0 Std_Ui_LayoutContext) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Std_Ui_LayoutContext_AsParagraph {
 			return "span"
 		}
 		return "div"
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_pickSemanticTag(v_0 string, v_1 []Std_Ui_Attribute) string {
@@ -7146,7 +6992,7 @@ func Std_Ui_pickSemanticTag(v_0 string, v_1 []Std_Ui_Attribute) string {
 }
 
 func Std_Ui_tagForDescription(v_0 string, v_1 Std_Ui_Description) string {
-	return func() string {
+	{
 		_subj := v_1
 		if _subj.Tag == 0 {
 			return v_0
@@ -7197,7 +7043,7 @@ func Std_Ui_tagForDescription(v_0 string, v_1 Std_Ui_Description) string {
 			return "p"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_Ui_buildStyleString(v_0 bool, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_LayoutContext, v_3 []Std_Ui_Attribute) string {
@@ -7205,7 +7051,7 @@ func Std_Ui_buildStyleString(v_0 bool, v_1 Std_Ui_LayoutContext, v_2 Std_Ui_Layo
 }
 
 func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
-	return func() rt.T2[State_Model_R, any] {
+	{
 		_subj := v_0
 		if _subj.Tag == 0 {
 			v_2 := /* generic erase */ rt.Coerce[State_Tab](_subj.Fields[0])
@@ -7302,67 +7148,67 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 		if _subj.Tag == 8 {
 			v_15 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_15
-			return func() rt.T2[State_Model_R, any] {
+			{
 				f_16 := v_1.LogFilter
 				_ = f_16
 				f2_17 := func() State_LogFilter_R { _u := f_16; _u.Query = v_15; return _u }()
 				_ = f2_17
 				return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.LogFilter = f2_17; return _u }(), V1: Main_fetchLogsOnly(v_1, f2_17)}
-			}()
+			}
 		}
 		if _subj.Tag == 9 {
 			v_18 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_18
-			return func() rt.T2[State_Model_R, any] {
+			{
 				f_19 := v_1.LogFilter
 				_ = f_19
 				f2_20 := func() State_LogFilter_R {
 					_subj := v_18
 					if _subj == "debug" {
-						return func() State_LogFilter_R {
+						{
 							_u := f_19
 							_u.ShowDebug = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_19.ShowDebug)))
 							return _u
-						}()
+						}
 					}
 					if _subj == "info" {
-						return func() State_LogFilter_R {
+						{
 							_u := f_19
 							_u.ShowInfo = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_19.ShowInfo)))
 							return _u
-						}()
+						}
 					}
 					if _subj == "warn" {
-						return func() State_LogFilter_R {
+						{
 							_u := f_19
 							_u.ShowWarn = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_19.ShowWarn)))
 							return _u
-						}()
+						}
 					}
 					if _subj == "error" {
-						return func() State_LogFilter_R {
+						{
 							_u := f_19
 							_u.ShowError = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_19.ShowError)))
 							return _u
-						}()
+						}
 					}
 					return f_19
 					panic(rt.Unreachable("case"))
 				}()
 				_ = f2_20
 				return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.LogFilter = f2_20; return _u }(), V1: Main_fetchLogsOnly(v_1, f2_20)}
-			}()
+			}
 		}
 		if _subj.Tag == 10 {
 			v_21 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_21
-			return func() rt.T2[State_Model_R, any] {
+			{
 				f_22 := v_1.LogFilter
 				_ = f_22
 				f2_23 := func() State_LogFilter_R { _u := f_22; _u.Session = v_21; return _u }()
 				_ = f2_23
 				return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.LogFilter = f2_23; _u.Tab = State_Tab_LogsTab; return _u }(), V1: Main_fetchLogsOnly(v_1, f2_23)}
-			}()
+			}
 		}
 		if _subj.Tag == 11 {
 			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.LogFilter = State_emptyLogFilter(); return _u }(), V1: Main_fetchLogsOnly(v_1, State_emptyLogFilter())}
@@ -7380,11 +7226,11 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 		if _subj.Tag == 14 {
 			v_26 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_26
-			return func() rt.T2[State_Model_R, any] {
+			{
 				newModel_27 := func() State_Model_R { _u := v_1; _u.SelectedService = v_26; return _u }()
 				_ = newModel_27
 				return rt.T2[State_Model_R, any]{V0: newModel_27, V1: Main_fetchForTab(newModel_27, newModel_27.Tab, newModel_27.LogFilter)}
-			}()
+			}
 		}
 		if (_subj.Tag == 15) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
 			v_28 := /* FFI return */ rt.AsListT[State_ServiceStat_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
@@ -7403,7 +7249,7 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 		if (_subj.Tag == 16) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
 			v_30 := /* FFI return */ rt.Coerce[Std_Live_Console_Identity_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
 			_ = v_30
-			return func() rt.T2[State_Model_R, any] {
+			{
 				tenant_31 := /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any]( /* FFI return */ rt.MaybeCoerce[string](rt.Dict_get(any("tenant"), any(v_30.Claims))))))
 				_ = tenant_31
 				return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
@@ -7412,7 +7258,7 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 					_u.TenantPrefix = tenant_31
 					return _u
 				}(), V1: rt.Cmd_none()}
-			}()
+			}
 		}
 		if (_subj.Tag == 16) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
 			return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_none()}
@@ -7436,11 +7282,11 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.GlobalQuery = v_34; return _u }(), V1: rt.Cmd_none()}
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Sky_Core_Maybe_withDefault(v_0 any, v_1 rt.SkyMaybe[any]) any {
-	return func() any {
+	{
 		_subj := v_1
 		if _subj.Tag == 0 {
 			v_2 := _subj.JustValue
@@ -7451,69 +7297,65 @@ func Sky_Core_Maybe_withDefault(v_0 any, v_1 rt.SkyMaybe[any]) any {
 			return v_0
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Main_fetchForTab(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) any {
-	return func() any {
-		if Main_hasStoreSource(v_0) {
-			return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotOverview(_p0)) })), any(Main_tabFetches(v_0, v_1, v_2))))
-		} else {
-			return rt.Cmd_none()
-		}
-	}()
+	if Main_hasStoreSource(v_0) {
+		return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotOverview(_p0)) })), any(Main_tabFetches(v_0, v_1, v_2))))
+	} else {
+		return rt.Cmd_none()
+	}
 }
 
 func Main_tabFetches(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) []any {
-	return func() []any {
-		if v_0.HubDbPath != "" {
-			return func() []any {
-				_subj := v_1
-				if _subj == State_Tab_OverviewTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotServiceStats(_p0)) }))}
-				}
-				if _subj == State_Tab_LogsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_2)), any(func(_p1 any) any { return any(State_Msg_GotLogs(_p1)) }))}
-				}
-				if _subj == State_Tab_MetricsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredMetrics(v_0.SelectedService)), any(func(_p2 any) any { return any(State_Msg_GotMetrics(_p2)) }))}
-				}
-				if _subj == State_Tab_TracesTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredTraces(v_0.SelectedService)), any(func(_p3 any) any { return any(State_Msg_GotTraces(_p3)) }))}
-				}
-				if _subj == State_Tab_ErrorsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredErrors(v_0.SelectedService)), any(func(_p4 any) any { return any(State_Msg_GotErrors(_p4)) }))}
-				}
-				if _subj == State_Tab_AnalyticsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p5 any) any { return any(State_Msg_GotAnalytics(_p5)) }))}
-				}
-				panic(rt.Unreachable("case"))
-			}()
-		} else {
-			return func() []any {
-				_subj := v_1
-				if _subj == State_Tab_OverviewTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p6 any) any { return any(State_Msg_GotServiceStats(_p6)) }))}
-				}
-				if _subj == State_Tab_LogsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadLogs(v_2)), any(func(_p7 any) any { return any(State_Msg_GotLogs(_p7)) }))}
-				}
-				if _subj == State_Tab_MetricsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadMetrics(struct{}{})), any(func(_p8 any) any { return any(State_Msg_GotMetrics(_p8)) }))}
-				}
-				if _subj == State_Tab_TracesTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadTraces(struct{}{})), any(func(_p9 any) any { return any(State_Msg_GotTraces(_p9)) }))}
-				}
-				if _subj == State_Tab_ErrorsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadErrors(struct{}{})), any(func(_p10 any) any { return any(State_Msg_GotErrors(_p10)) }))}
-				}
-				if _subj == State_Tab_AnalyticsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p11 any) any { return any(State_Msg_GotAnalytics(_p11)) }))}
-				}
-				panic(rt.Unreachable("case"))
-			}()
+	if v_0.HubDbPath != "" {
+		{
+			_subj := v_1
+			if _subj == State_Tab_OverviewTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotServiceStats(_p0)) }))}
+			}
+			if _subj == State_Tab_LogsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_2)), any(func(_p1 any) any { return any(State_Msg_GotLogs(_p1)) }))}
+			}
+			if _subj == State_Tab_MetricsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredMetrics(v_0.SelectedService)), any(func(_p2 any) any { return any(State_Msg_GotMetrics(_p2)) }))}
+			}
+			if _subj == State_Tab_TracesTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredTraces(v_0.SelectedService)), any(func(_p3 any) any { return any(State_Msg_GotTraces(_p3)) }))}
+			}
+			if _subj == State_Tab_ErrorsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredErrors(v_0.SelectedService)), any(func(_p4 any) any { return any(State_Msg_GotErrors(_p4)) }))}
+			}
+			if _subj == State_Tab_AnalyticsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p5 any) any { return any(State_Msg_GotAnalytics(_p5)) }))}
+			}
+			panic(rt.Unreachable("case"))
 		}
-	}()
+	} else {
+		{
+			_subj := v_1
+			if _subj == State_Tab_OverviewTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p6 any) any { return any(State_Msg_GotServiceStats(_p6)) }))}
+			}
+			if _subj == State_Tab_LogsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadLogs(v_2)), any(func(_p7 any) any { return any(State_Msg_GotLogs(_p7)) }))}
+			}
+			if _subj == State_Tab_MetricsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadMetrics(struct{}{})), any(func(_p8 any) any { return any(State_Msg_GotMetrics(_p8)) }))}
+			}
+			if _subj == State_Tab_TracesTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadTraces(struct{}{})), any(func(_p9 any) any { return any(State_Msg_GotTraces(_p9)) }))}
+			}
+			if _subj == State_Tab_ErrorsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadErrors(struct{}{})), any(func(_p10 any) any { return any(State_Msg_GotErrors(_p10)) }))}
+			}
+			if _subj == State_Tab_AnalyticsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p11 any) any { return any(State_Msg_GotAnalytics(_p11)) }))}
+			}
+			panic(rt.Unreachable("case"))
+		}
+	}
 }
 
 var State_emptyLogFilter__caf rt.LazyCaf[State_LogFilter_R]
@@ -7525,23 +7367,19 @@ func State_emptyLogFilter() State_LogFilter_R {
 }
 
 func Main_fetchLogsOnly(v_0 State_Model_R, v_1 State_LogFilter_R) any {
-	return func() any {
-		if Main_hasStoreSource(v_0) {
-			return func() any {
-				if v_0.HubDbPath != "" {
-					return rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_1)), any(func(_p0 any) any { return any(State_Msg_GotLogs(_p0)) }))
-				} else {
-					return rt.Cmd_perform(any(v_0.Store.ReadLogs(v_1)), any(func(_p1 any) any { return any(State_Msg_GotLogs(_p1)) }))
-				}
-			}()
+	if Main_hasStoreSource(v_0) {
+		if v_0.HubDbPath != "" {
+			return rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_1)), any(func(_p0 any) any { return any(State_Msg_GotLogs(_p0)) }))
 		} else {
-			return rt.Cmd_none()
+			return rt.Cmd_perform(any(v_0.Store.ReadLogs(v_1)), any(func(_p1 any) any { return any(State_Msg_GotLogs(_p1)) }))
 		}
-	}()
+	} else {
+		return rt.Cmd_none()
+	}
 }
 
 func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
-	return func() rt.T2[State_Model_R, any] {
+	{
 		parent_1 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_PARENT_URL"), any("")))
 		_ = parent_1
 		hubDbPath_2 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_CONSOLE_HUB_DB"), any("")))
@@ -7587,7 +7425,7 @@ func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
 		}()
 		_ = identityCmd_10
 		return rt.T2[State_Model_R, any]{V0: startModel_9, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(startModel_9, startModel_9.Tab, startModel_9.LogFilter), identityCmd_10, rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(any(struct{}{})))), any(func(_p1 any) any { return any(State_Msg_GotNowMs(_p1)) }))}))}
-	}()
+	}
 }
 
 var State_emptyAnalytics__caf rt.LazyCaf[State_Analytics_R]
@@ -7662,23 +7500,9 @@ var Main_analyticsDecoder__caf rt.LazyCaf[any]
 
 func Main_analyticsDecoder() any {
 	return Main_analyticsDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("rowCap"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("rowCapHit"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("windowDays"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 any) any {
-			return any(func(_p1 any) any {
-				return any(func(_p2 any) any {
-					return any(func(_p3 any) any {
-						return any(func(_p4 any) any {
-							return any(func(_p5 any) any {
-								return any(func(_p6 any) any {
-									return any(func(_p7 any) any {
-										return any(State_Analytics( /* FFI return */ rt.AsInt(_p0) /* FFI return */, rt.AsInt(_p1) /* FFI return */, rt.AsListT[State_EventCount_R](_p2) /* FFI return */, rt.AsListT[State_AnalyticsEvent_R](_p3) /* FFI return */, rt.AsListT[State_CurrencyTotal_R](_p4) /* FFI return */, rt.AsInt(_p5) /* FFI return */, rt.AsBool(_p6) /* FFI return */, rt.AsInt(_p7)))
-									})
-								})
-							})
-						})
-					})
-				})
-			})
-		}))))))))))
+		return rt.JsonDecP_optional(any("rowCap"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("rowCapHit"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("windowDays"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(rt.CurryN(8, func(_ps0 []any) any {
+			return any(State_Analytics( /* FFI return */ rt.AsInt(_ps0[0]) /* FFI return */, rt.AsInt(_ps0[1]) /* FFI return */, rt.AsListT[State_EventCount_R](_ps0[2]) /* FFI return */, rt.AsListT[State_AnalyticsEvent_R](_ps0[3]) /* FFI return */, rt.AsListT[State_CurrencyTotal_R](_ps0[4]) /* FFI return */, rt.AsInt(_ps0[5]) /* FFI return */, rt.AsBool(_ps0[6]) /* FFI return */, rt.AsInt(_ps0[7])))
+		})))))))))))
 	})
 }
 
@@ -7698,15 +7522,9 @@ var Main_analyticsEventDecoder__caf rt.LazyCaf[any]
 
 func Main_analyticsEventDecoder() any {
 	return Main_analyticsEventDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("path"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 any) any {
-			return any(func(_p1 any) any {
-				return any(func(_p2 any) any {
-					return any(func(_p3 any) any {
-						return any(State_AnalyticsEvent( /* FFI return */ rt.AsInt(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsString(_p3)))
-					})
-				})
-			})
-		}))))))
+		return rt.JsonDecP_optional(any("path"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(rt.CurryN(4, func(_ps0 []any) any {
+			return any(State_AnalyticsEvent( /* FFI return */ rt.AsInt(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsString(_ps0[3])))
+		})))))))
 	})
 }
 
@@ -7714,13 +7532,9 @@ var Main_currencyTotalDecoder__caf rt.LazyCaf[any]
 
 func Main_currencyTotalDecoder() any {
 	return Main_currencyTotalDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("amount"), rt.JsonDec_string(), any("0"), rt.JsonDecP_optional(any("currency"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 any) any {
-			return any(func(_p1 any) any {
-				return any(func(_p2 any) any {
-					return any(State_CurrencyTotal( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsInt(_p2)))
-				})
-			})
-		})))))
+		return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("amount"), rt.JsonDec_string(), any("0"), rt.JsonDecP_optional(any("currency"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(3, func(_ps0 []any) any {
+			return any(State_CurrencyTotal( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsInt(_ps0[2])))
+		}))))))
 	})
 }
 
@@ -7768,23 +7582,9 @@ var Main_traceRowDecoder__caf rt.LazyCaf[any]
 
 func Main_traceRowDecoder() any {
 	return Main_traceRowDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("durationMs"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("startTime"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("kind"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("parentId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spanId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("traceId"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 any) any {
-			return any(func(_p1 any) any {
-				return any(func(_p2 any) any {
-					return any(func(_p3 any) any {
-						return any(func(_p4 any) any {
-							return any(func(_p5 any) any {
-								return any(func(_p6 any) any {
-									return any(func(_p7 any) any {
-										return any(State_TraceRow( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsString(_p3) /* FFI return */, rt.AsString(_p4) /* FFI return */, rt.AsString(_p5) /* FFI return */, rt.AsFloat(_p6) /* FFI return */, rt.AsString(_p7)))
-									})
-								})
-							})
-						})
-					})
-				})
-			})
-		}))))))))))
+		return rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("durationMs"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("startTime"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("kind"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("parentId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spanId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("traceId"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(8, func(_ps0 []any) any {
+			return any(State_TraceRow( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsString(_ps0[3]) /* FFI return */, rt.AsString(_ps0[4]) /* FFI return */, rt.AsString(_ps0[5]) /* FFI return */, rt.AsFloat(_ps0[6]) /* FFI return */, rt.AsString(_ps0[7])))
+		})))))))))))
 	})
 }
 
@@ -7806,19 +7606,9 @@ var Main_metricRowDecoder__caf rt.LazyCaf[any]
 
 func Main_metricRowDecoder() any {
 	return Main_metricRowDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("count"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("sum"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("value"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("labels"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("type"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 any) any {
-			return any(func(_p1 any) any {
-				return any(func(_p2 any) any {
-					return any(func(_p3 any) any {
-						return any(func(_p4 any) any {
-							return any(func(_p5 any) any {
-								return any(State_MetricRow( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsFloat(_p3) /* FFI return */, rt.AsFloat(_p4) /* FFI return */, rt.AsFloat(_p5)))
-							})
-						})
-					})
-				})
-			})
-		}))))))))
+		return rt.JsonDecP_optional(any("count"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("sum"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("value"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("labels"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("type"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(6, func(_ps0 []any) any {
+			return any(State_MetricRow( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsFloat(_ps0[3]) /* FFI return */, rt.AsFloat(_ps0[4]) /* FFI return */, rt.AsFloat(_ps0[5])))
+		})))))))))
 	})
 }
 
@@ -7831,7 +7621,7 @@ func Main_fetchLogs(v_0 string, v_1 State_LogFilter_R) rt.SkyTask[Sky_Core_Error
 }
 
 func Main_buildLogQuery(v_0 State_LogFilter_R) string {
-	return func() string {
+	{
 		levels_1 := rt.List_appendT[string](func() []string {
 			if v_0.ShowDebug {
 				return []string{"debug"}
@@ -7858,14 +7648,12 @@ func Main_buildLogQuery(v_0 State_LogFilter_R) string {
 			}
 		}())))
 		_ = levels_1
-		return func() string {
-			if rt.List_lengthT[string](levels_1) == 4 {
-				return ""
-			} else {
-				return ("&level=" + /* FFI return */ rt.AsString(rt.String_join(any(","), any(levels_1))))
-			}
-		}()
-	}()
+		if rt.List_lengthT[string](levels_1) == 4 {
+			return ""
+		} else {
+			return ("&level=" + /* FFI return */ rt.AsString(rt.String_join(any(","), any(levels_1))))
+		}
+	}
 }
 
 var Main_logsDecoder__caf rt.LazyCaf[any]
@@ -7878,27 +7666,9 @@ var Main_logEntryDecoder__caf rt.LazyCaf[any]
 
 func Main_logEntryDecoder() any {
 	return Main_logEntryDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("LatencyMS"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Status"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Route"), rt.JsonDec_string(), any(""), rt.JsonDecP_custom(Main_fieldFromFields("user_label"), rt.JsonDecP_custom(Main_fieldFromFields("session_id"), rt.JsonDecP_optional(any("ReqID"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Subapp"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Level"), rt.JsonDec_string(), any("info"), rt.JsonDecP_optional(any("TS"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 any) any {
-			return any(func(_p1 any) any {
-				return any(func(_p2 any) any {
-					return any(func(_p3 any) any {
-						return any(func(_p4 any) any {
-							return any(func(_p5 any) any {
-								return any(func(_p6 any) any {
-									return any(func(_p7 any) any {
-										return any(func(_p8 any) any {
-											return any(func(_p9 any) any {
-												return any(State_LogEntry( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsString(_p3) /* FFI return */, rt.AsString(_p4) /* FFI return */, rt.AsString(_p5) /* FFI return */, rt.AsString(_p6) /* FFI return */, rt.AsString(_p7) /* FFI return */, rt.AsFloat(_p8) /* FFI return */, rt.AsFloat(_p9)))
-											})
-										})
-									})
-								})
-							})
-						})
-					})
-				})
-			})
-		}))))))))))))
+		return rt.JsonDecP_optional(any("LatencyMS"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Status"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Route"), rt.JsonDec_string(), any(""), rt.JsonDecP_custom(Main_fieldFromFields("user_label"), rt.JsonDecP_custom(Main_fieldFromFields("session_id"), rt.JsonDecP_optional(any("ReqID"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Subapp"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Level"), rt.JsonDec_string(), any("info"), rt.JsonDecP_optional(any("TS"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(rt.CurryN(10, func(_ps0 []any) any {
+			return any(State_LogEntry( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsString(_ps0[3]) /* FFI return */, rt.AsString(_ps0[4]) /* FFI return */, rt.AsString(_ps0[5]) /* FFI return */, rt.AsString(_ps0[6]) /* FFI return */, rt.AsString(_ps0[7]) /* FFI return */, rt.AsFloat(_ps0[8]) /* FFI return */, rt.AsFloat(_ps0[9])))
+		})))))))))))))
 	})
 }
 
@@ -7918,25 +7688,9 @@ var Main_overviewDecoder__caf rt.LazyCaf[any]
 
 func Main_overviewDecoder() any {
 	return Main_overviewDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("productionMode"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("bufferTraceUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("bufferLogUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("errorRate5xx"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("requestsTotal"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("uptimeSeconds"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("builtAt"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("commit"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("skyVersion"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 any) any {
-			return any(func(_p1 any) any {
-				return any(func(_p2 any) any {
-					return any(func(_p3 any) any {
-						return any(func(_p4 any) any {
-							return any(func(_p5 any) any {
-								return any(func(_p6 any) any {
-									return any(func(_p7 any) any {
-										return any(func(_p8 any) any {
-											return any(State_Overview( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsInt(_p3) /* FFI return */, rt.AsInt(_p4) /* FFI return */, rt.AsFloat(_p5) /* FFI return */, rt.AsInt(_p6) /* FFI return */, rt.AsInt(_p7) /* FFI return */, rt.AsBool(_p8)))
-										})
-									})
-								})
-							})
-						})
-					})
-				})
-			})
-		})))))))))))
+		return rt.JsonDecP_optional(any("productionMode"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("bufferTraceUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("bufferLogUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("errorRate5xx"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("requestsTotal"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("uptimeSeconds"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("builtAt"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("commit"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("skyVersion"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(rt.CurryN(9, func(_ps0 []any) any {
+			return any(State_Overview( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsInt(_ps0[3]) /* FFI return */, rt.AsInt(_ps0[4]) /* FFI return */, rt.AsFloat(_ps0[5]) /* FFI return */, rt.AsInt(_ps0[6]) /* FFI return */, rt.AsInt(_ps0[7]) /* FFI return */, rt.AsBool(_ps0[8])))
+		}))))))))))))
 	})
 }
 
@@ -8638,12 +8392,12 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 			ViewImpl      Std_App_ViewImpl
 		}](_s)
 	}(_t0.Fields[0])
-	return func() rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+	{
 		_subj := v_0.NotFound
 		if _subj.Tag == 0 {
 			v_1 := _subj.JustValue
 			_ = v_1
-			return func() rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+			{
 				w_2 := Std_App_findWeb(v_0.Configs)
 				_ = w_2
 				base_3 := rt.Live_config(any(struct {
@@ -8661,14 +8415,14 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 					Path    string
 					Query   string
 				}) rt.T2[any, any] {
-					return func() rt.T2[any, any] {
+					{
 						_t1 := v_0.Init(struct{}{})
 						_ = _t1
 						v_18 := _t1.V0
 						v_19 := _t1.V1
 						_ = v_18
 						_ = v_19
-						return func() rt.T2[any, any] {
+						{
 							_subj := v_0.OnRequest
 							if _subj.Tag == 0 {
 								v_20 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.T2[any, any] {
@@ -8684,7 +8438,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 									return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_s)
 								}()
 								_ = v_20
-								return func() rt.T2[any, any] {
+								{
 									_t2 := v_20(Std_App_requestFromSeed_(v_17), v_18)
 									_ = _t2
 									v_21 := _t2.V0
@@ -8692,16 +8446,16 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 									_ = v_21
 									_ = v_22
 									return rt.T2[any, any]{V0: v_21, V1: rt.Cmd_batch(any([]any{v_19, v_22}))}
-								}()
+								}
 							}
 							if _subj.Tag == 1 {
 								return rt.T2[any, any]{V0: v_18, V1: v_19}
 							}
 							panic(rt.Unreachable("case"))
-						}()
-					}()
+						}
+					}
 				}, Update: v_0.Update, View: func(v_23 any) Std_Html_Html {
-					return func() Std_Html_Html {
+					{
 						_subj := v_0.ViewImpl
 						if _subj.Tag == 0 {
 							v_24 := /* generic erase */ func() func(any) Std_Ui_Element {
@@ -8746,7 +8500,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 							return Std_Html_text(v_26(v_23))
 						}
 						panic(rt.Unreachable("case"))
-					}()
+					}
 				}, Subscriptions: v_0.Subscriptions, Routes: /* FFI return */ rt.AsListT[any](rt.List_mapAny(any(func(_w3 any) any { return Std_App_liveRoute_( /* FFI return */ rt.Coerce[Std_App_Route](_w3)) }), any(v_0.Routes))), NotFound: v_1}))
 				_ = base_3
 				withStore__4 := func() any {
@@ -8972,13 +8726,13 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				}()
 				_ = withDur__16
 				return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.Live_app(withDur__16))
-			}()
+			}
 		}
 		if _subj.Tag == 1 {
 			return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.AnyTaskFail(any(Sky_Core_Error_invalidInput("target 'web' requires a fallback page — add `|> App.withNotFound <page>`"))))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Sky_Core_Error_invalidInput(v_0 string) Sky_Core_Error_Error {
@@ -9099,7 +8853,7 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 		RunId               any
 		Setup               any
 	}{Enabled: v_2.Enabled, Setup: v_2.Setup, Restore: v_2.Restore, Persist: v_2.Persist, ApplyRestore: v_2.ApplyRestore, RunId: v_2.RunId, ApplyRestoreRequest: func(v_3 any, v_4 rt.SkyResult[any, rt.SkyMaybe[any]], v_5 any) any {
-		return func() any {
+		{
 			_subj := v_1
 			if _subj.Tag == 0 {
 				v_6 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.T2[any, any] {
@@ -9115,33 +8869,33 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 					return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_s)
 				}()
 				_ = v_6
-				return func() any {
+				{
 					_subj := v_4
 					if (_subj.Tag == 0) && ( /* generic erase */ rt.MaybeCoerce[any](_subj.OkValue).Tag == 0) {
 						v_7 := /* generic erase */ rt.MaybeCoerce[any](_subj.OkValue).JustValue
 						_ = v_7
-						return func() any {
+						{
 							_t0 := v_6( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](v_0(v_3)), v_7)
 							_ = _t0
 							v_8 := _t0.V0
 							_ = v_8
 							return v_8
-						}()
+						}
 					}
 					return v_5
 					panic(rt.Unreachable("case"))
-				}()
+				}
 			}
 			if _subj.Tag == 1 {
 				return v_2.ApplyRestore( /* primitive join */ rt.ResultCoerceOk[Sky_Core_Error_Error, rt.SkyMaybe[any]](v_4, func(_v any) rt.SkyMaybe[any] { return rt.MaybeCoerce[any](_v) }), v_5)
 			}
 			panic(rt.Unreachable("case"))
-		}()
+		}
 	}})
 }
 
 func Std_App_liveRoute_(v_0 Std_App_Route) any {
-	return func() any {
+	{
 		_subj := v_0
 		if _subj.Tag == 0 {
 			v_1 := /* generic erase */ rt.AsString(_subj.Fields[0])
@@ -9185,7 +8939,7 @@ func Std_App_liveRoute_(v_0 Std_App_Route) any {
 			return rt.Live_api(any(v_5), any(func(_w1 any) any { return any(v_6( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](_w1))) }))
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_App_renderHtmlRoot_(v_0 Std_Html_Html) Std_Html_Html {
@@ -9224,14 +8978,14 @@ func Std_App_findWeb(v_0 []Std_App_Config) Std_App_WebOpts_R {
 }
 
 func Std_App_guardTerminalView_(v_0 Std_App_ViewImpl, v_1 rt.SkyTask[Sky_Core_Error_Error, struct{}]) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
-	return func() rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+	{
 		_subj := v_0
 		if _subj.Tag == 2 {
 			return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}]( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, any](rt.AnyTaskFail(any(Sky_Core_Error_invalidInput("this app has a String view (App.cli / App.tui) — build it with --target terminal:cli or terminal:tui; use App.app for a cross-platform Std.Ui view that also renders on the web")))))
 		}
 		return v_1
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Std_App_applyBase_(v_0 Std_App_BaseConfig_R, v_1 rt.SkyTask[Sky_Core_Error_Error, struct{}]) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
@@ -9243,7 +8997,7 @@ func Std_App_applyBase_(v_0 Std_App_BaseConfig_R, v_1 rt.SkyTask[Sky_Core_Error_
 }
 
 func Std_App_baseToConfig_(v_0 Std_App_BaseConfig_R) any {
-	return func() any {
+	{
 		withLog__1 := Sky_Config_withLog(v_0.LogFormat, v_0.LogLevel, rt.Config_default())
 		_ = withLog__1
 		withDb__2 := func() any {
@@ -9273,7 +9027,7 @@ func Std_App_baseToConfig_(v_0 Std_App_BaseConfig_R) any {
 		}()
 		_ = withTel__3
 		return withTel__3
-	}()
+	}
 }
 
 func Sky_Config_withTelemetry(v_0 Sky_Config_Telemetry, v_1 any) any {
@@ -9281,7 +9035,7 @@ func Sky_Config_withTelemetry(v_0 Sky_Config_Telemetry, v_1 any) any {
 }
 
 func Sky_Config_telemetryEndpoint(v_0 Sky_Config_Telemetry) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _v0, _ok1 := _subj.(Sky_Config_Telemetry_Otlp_V); _ok1 {
 			v_1 := /* generic erase */ rt.AsString(_v0.V0)
@@ -9289,7 +9043,7 @@ func Sky_Config_telemetryEndpoint(v_0 Sky_Config_Telemetry) string {
 			return v_1
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Sky_Config_withDatabase(v_0 Sky_Config_Database, v_1 any) any {
@@ -9297,7 +9051,7 @@ func Sky_Config_withDatabase(v_0 Sky_Config_Database, v_1 any) any {
 }
 
 func Sky_Config_databaseValue(v_0 Sky_Config_Database) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _v0, _ok1 := _subj.(Sky_Config_Database_Sqlite_V); _ok1 {
 			v_1 := /* generic erase */ rt.AsString(_v0.V0)
@@ -9310,11 +9064,11 @@ func Sky_Config_databaseValue(v_0 Sky_Config_Database) string {
 			return v_2
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Sky_Config_databaseKind(v_0 Sky_Config_Database) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _, _ok1 := _subj.(Sky_Config_Database_Sqlite_V); _ok1 {
 			return "sqlite"
@@ -9323,7 +9077,7 @@ func Sky_Config_databaseKind(v_0 Sky_Config_Database) string {
 			return "postgres"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Sky_Config_withLog(v_0 Sky_Config_LogFormat, v_1 Sky_Config_LogLevel, v_2 any) any {
@@ -9331,7 +9085,7 @@ func Sky_Config_withLog(v_0 Sky_Config_LogFormat, v_1 Sky_Config_LogLevel, v_2 a
 }
 
 func Sky_Config_logLevelName(v_0 Sky_Config_LogLevel) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Sky_Config_LogLevel_Debug {
 			return "debug"
@@ -9346,11 +9100,11 @@ func Sky_Config_logLevelName(v_0 Sky_Config_LogLevel) string {
 			return "error"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func Sky_Config_logFormatName(v_0 Sky_Config_LogFormat) string {
-	return func() string {
+	{
 		_subj := v_0
 		if _subj == Sky_Config_LogFormat_Json {
 			return "json"
@@ -9359,7 +9113,7 @@ func Sky_Config_logFormatName(v_0 Sky_Config_LogFormat) string {
 			return "text"
 		}
 		panic(rt.Unreachable("case"))
-	}()
+	}
 }
 
 func init() {

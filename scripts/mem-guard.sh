@@ -24,7 +24,14 @@
 #   Always-kill at PROC_MB:  sky, sky-ffi-inspect, cargo, rustc,
 #                            rust-analyzer, cabal, ghc, ghc-iserv,
 #                            cc1, ld64, haskell-language-server, hls-wrapper,
-#                            gopls, go (when child of a sky/cargo/cabal build)
+#                            gopls, go, and the Go toolchain's own children
+#                            `compile` / `link` / `asm` / `cgo` (matched only
+#                            under a `…/pkg/tool/<os_arch>/` path, so an
+#                            unrelated `link` binary is never a target).
+#                            `go build` does the work in those children: one
+#                            `compile` of a large generated Sky `main` package
+#                            measured 5.6 GB, and `go build` runs several
+#                            compiles at once — the parent `go` stays small.
 #   Last-resort at PANIC_MB: claude, node, ghostty
 #                            (these are the host of *this* session — only kill
 #                             when they themselves are the runaway, not their
@@ -43,8 +50,26 @@ LOG="${MEM_GUARD_LOG:-/tmp/mem-guard.log}"
 DRY="${MEM_GUARD_DRY:-}"
 
 # basename(comm) regexes
-ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cargo|rustc|rust-analyzer|cabal|ghc|ghc-iserv|cc1|ld64|ld|haskell-language-server|hls-wrapper|gopls)$'
+ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cargo|rustc|rust-analyzer|cabal|ghc|ghc-iserv|cc1|ld64|ld|haskell-language-server|hls-wrapper|gopls|go)$'
+# The Go toolchain's children, by their full path: `<GOROOT>/pkg/tool/<os_arch>/<tool>`.
+GO_TOOL_RE='/pkg/tool/[^/]+/(compile|link|asm|cgo)$'
 PANIC_KILL_RE='^(claude|node|ghostty)$'
+
+# Which limit applies to a process, from its full `comm` path: `always`
+# (PROC_MB, and first in line under pressure), `panic` (PANIC_MB, the session
+# host) or `none`. Sets WATCH_CLASS rather than printing it, so the per-tick
+# loop over every process forks nothing. scripts/test-mem-guard.sh extracts
+# and tests this function.
+watch_class() {
+    local comm="$1" base="${1##*/}"
+    if [[ "$base" =~ $ALWAYS_KILL_RE ]] || [[ "$comm" =~ $GO_TOOL_RE ]]; then
+        WATCH_CLASS=always
+    elif [[ "$base" =~ $PANIC_KILL_RE ]]; then
+        WATCH_CLASS=panic
+    else
+        WATCH_CLASS=none
+    fi
+}
 
 log() {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG" >&2
@@ -173,16 +198,18 @@ while :; do
     fi
 
     # Snapshot watched processes by RSS desc. ps RSS is in KB.
-    # We strip directory prefix from comm so /Applications/Ghostty.app/.../ghostty matches "ghostty".
+    # watch_class matches the basename of comm (so /Applications/Ghostty.app/.../ghostty
+    # matches "ghostty") and, for the Go toolchain's children, the full path.
     # Tolerant for the same reason as the memory probe above: ps is a fork, and
     # a failed snapshot must skip the tick rather than kill the watchdog.
     if ! snap=$(ps -A -o pid=,rss=,comm= 2>/dev/null | awk '
         {
+            # Keep the FULL path (a Go tool is matched by its
+            # `/pkg/tool/<os_arch>/` directory) and any spaces in it.
             pid = $1; rss = $2;
-            comm = $3;
-            n = split(comm, parts, "/");
-            base = parts[n];
-            print pid, rss, base
+            comm = $0;
+            sub(/^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+/, "", comm);
+            print pid, rss, comm
         }
     ' | sort -k2 -rn); then
         probe_fails=$(( probe_fails + 1 ))
@@ -198,7 +225,9 @@ while :; do
         [[ -z "${pid:-}" ]] && continue
         rss_mb=$(( rss / 1024 ))
 
-        if [[ "$comm" =~ $ALWAYS_KILL_RE ]]; then
+        watch_class "$comm"
+        comm="${comm##*/}"
+        if [[ "$WATCH_CLASS" == always ]]; then
             if (( rss_mb > PROC_LIMIT_MB )); then
                 kill_proc "$pid" "$rss_mb" "$comm" "exceeded per-proc limit ${PROC_LIMIT_MB}MB"
                 continue
@@ -208,7 +237,7 @@ while :; do
                 pressure=0  # one kill per pass; recheck next iteration
                 continue
             fi
-        elif [[ "$comm" =~ $PANIC_KILL_RE ]]; then
+        elif [[ "$WATCH_CLASS" == panic ]]; then
             if (( rss_mb > PANIC_LIMIT_MB )); then
                 kill_proc "$pid" "$rss_mb" "$comm" "exceeded panic limit ${PANIC_LIMIT_MB}MB"
                 continue

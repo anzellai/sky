@@ -31,6 +31,11 @@ mod doc;
 mod driver;
 mod ffi_ops;
 pub mod go_cache;
+/// `go build -p`: how many packages compile at once, from available memory.
+pub mod go_jobs;
+/// Available memory and the per-project peak records (`go_jobs`, the Sky.Spa
+/// leg plan).
+pub mod memory;
 /// `sky doc --api openapi` — a valid OpenAPI 3.1 spec generated statically from
 /// the app's typed source, reusing the `diagram::wire` analysis.
 pub mod openapi;
