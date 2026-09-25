@@ -313,11 +313,11 @@ local tests = {
     end,
 
     -- Hover on `Model` in `stringify : Model -> String` (line 10 0-based, col 13).
-    -- The `type ` prefix is the assertion: "Model" alone is the token under the
-    -- cursor, so it was satisfied by an echo.
+    -- The assertion is the alias DEFINITION: "Model" alone is the token under
+    -- the cursor, so it was satisfied by an echo; the declared body is not.
     ["hover-type-name"] = function()
         local bufnr = start_lsp(project_dir .. "/src/Main.sky")
-        return test_hover(bufnr, 10, 13, "type Model")
+        return test_hover(bufnr, 10, 13, { "type alias Model =", "label : String" })
     end,
 
     -- Completion at `Ui.|` — verify `Ui.layout` appears AND insertText

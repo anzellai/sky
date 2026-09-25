@@ -61,6 +61,25 @@ From `serverCapabilities` in the Rust LSP crate (`rust/crates/sky-lsp`):
 | `textDocument/completion` | yes | Triggered on `.` (qualified-name) |
 | `workspace/symbol` | **yes** | Project-wide symbol search. This row said "no — use `documentSymbol` per-file"; the server advertises `workspace_symbol_provider: Some(OneOf::Left(true))` (`rust/crates/sky-lsp/src/server.rs:86`), handles it at `:243`, and has a dedicated test (`sky-lsp/tests/workspace_symbol.rs`) |
 
+## What hover shows
+
+| Cursor on | Hover |
+|-----------|-------|
+| A function or value (local, imported, qualified, stdlib, kernel) | `name : type`, then its `-- \|` (or `{-\| -}`) doc comment |
+| A record field: `r.f`, `{ f = … }`, `{ r \| f = … }`, `{ f }` pattern, `.f` accessor, or `f : T` in a `type alias` | `f : T` with the type the alias declares (`user : User`), then ``Field of `Alias` `` |
+| A type name (in an annotation, qualified `T.User`, or a declaration) | The declaration source (`type alias User = { … }`, `type Shape = Circle Float \| …`), then its doc |
+| A builtin type (`Maybe`, `Result`, `List`, `Task`, `Int`, …) | Its definition and a one-line description |
+| A constructor (in an expression or a pattern) | `Ctor : args -> Type`, then the doc of its type |
+| A type variable | `a` — Type variable |
+
+A field names its alias when the record type at the cursor is closed and has
+the same field set as exactly one alias, or when one alias alone has a
+compatible field set. Otherwise hover shows the inferred field type without an
+alias. Go-to-definition uses the same match, so a field jumps to the alias
+declaration in whichever module declares it. Hover works in a file with a type
+error elsewhere and on unsaved edits (`didChange`). Positions are UTF-16, as
+the LSP specifies.
+
 ## What gets indexed
 
 The LSP discovers symbols from:
