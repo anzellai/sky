@@ -1087,8 +1087,8 @@ impl<'a> Resolver<'a> {
     /// * a type (`Foo`) — a local union or alias, or a type the module has in
     ///   scope from an import (a re-exported type; importers chase it to its
     ///   real definition, see `chase_reexported_type`).
-    /// * constructors (`T(..)`, `T(A, B)`) — only a union declared here has
-    ///   constructors to publish, and each listed one must be one of them.
+    /// * constructors (`T(..)`, `T(A, B)`) — a local alias has none to publish,
+    ///   and each constructor listed for a local union must be one of its own.
     fn check_own_exposing(&mut self, tree: &ast::SourceFile) {
         let Some(list) = tree.module_header().and_then(|h| cst::header_exposing(&h)) else {
             return;
@@ -1180,6 +1180,15 @@ impl<'a> Resolver<'a> {
                     let Some(cl) = ctor_list else {
                         continue;
                     };
+                    // `T(..)` on an IMPORTED type is a type re-export whose
+                    // constructors are not re-published (an importer that names
+                    // one gets [E1001] at the use). It opens no hole, and the
+                    // Sky.Spa split emits it for a union `Shared` now owns, so
+                    // it is not rejected here. Only a LOCAL non-union (an alias)
+                    // claiming constructors is.
+                    if !is_local {
+                        continue;
+                    }
                     let Some(ctors) = local_unions.get(&name).cloned() else {
                         report(
                             self,

@@ -23,7 +23,7 @@ Added in v0.25.19.
 |---|---|
 | `exposing (decode)` | the module has no top-level `decode = …` |
 | `exposing (Foo)` | the module neither declares `Foo` nor imports it |
-| `exposing (Foo(..))` | `Foo` is not a union type declared in the module (an alias or an imported type has no constructors to expose) |
+| `exposing (Foo(..))` | `Foo` is an alias declared in the module (an alias has no constructors to expose) |
 | `exposing (Shape(Circle, Hexagon))` | `Hexagon` is not a constructor of `Shape` |
 
 A module *can* re-expose a type it imports (`import Std.Ui.Transition exposing

@@ -20,7 +20,7 @@ No public function signature changes.
 
 - **A module may only expose what it defines.** An `exposing (…)` entry that
   names a value the module does not define, a type it neither defines nor
-  imports, or constructors of something that is not its own union is now the
+  imports, or constructors of a local alias is now the
   new error `[E1015] UNKNOWN EXPORT`. Before, such a program compiled and could
   panic at run time (below). Fix: restore the definition or remove the name
   from the list. Re-exposing an imported *type* is still allowed; re-exposing an
@@ -52,6 +52,13 @@ No public function signature changes.
   stops before `go build`: an internal compiler error for the shapes the
   front end already rejects, and the existing Go-FFI message for an FFI value.
   Test: `rust/crates/lower/tests/no_nil_for_unresolved_ref.rs`.
+
+- **The Sky.Spa split no longer writes a dangling export.** When the split
+  dropped a server-tainted binding (`head` reading an environment variable) from
+  the client copy of a module, the module header still listed it. The split now
+  removes every value a generated module no longer defines from its `exposing`
+  list. Test: `prune_own_exposing_drops_values_the_module_no_longer_defines`
+  and `web_app_drops_server_tainted_head_from_the_client`.
 
 ### Tooling
 

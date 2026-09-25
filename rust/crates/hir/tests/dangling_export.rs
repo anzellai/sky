@@ -186,8 +186,9 @@ fn defined_exports_and_reexported_types_stay_clean() {
     let base_src = "module Lib.Base exposing (Easing(..), linear)\n\n\
                     type Easing\n    = Linear\n    | Ease\n\n\
                     linear : Easing\nlinear =\n    Linear\n";
-    // Re-exposes the imported `Easing` type: a supported re-export.
-    let anim = "module Lib.Anim exposing (Easing, fast)\n\
+    // Re-exposes the imported `Easing` type (with `(..)`): a supported type
+    // re-export; the Sky.Spa split emits it for a union `Shared` owns.
+    let anim = "module Lib.Anim exposing (Easing(..), fast)\n\
                 import Lib.Base exposing (Easing)\n\n\
                 fast : Int\nfast =\n    1\n";
     let main = "module Main exposing (main)\n\
