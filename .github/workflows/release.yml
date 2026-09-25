@@ -519,6 +519,16 @@ jobs:
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t4
 
+      # `ai_memory_pg_flow` needs the pgvector extension in the apt cluster the
+      # gate-setup composite installs (it installs postgresql-16 only). The
+      # nightly job installs the same package for the same test.
+      - name: pgvector for the real-DB e2e leg
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq postgresql-16-pgvector
+          [ -f /usr/share/postgresql/16/extension/vector.control ] || {
+            echo "::error::pgvector did not install (no vector.control)" >&2; exit 1; }
+
       # The heavy real-DB e2e leg: the `#[ignore]`d sky-crate tests (nightly
       # harness-t3 runs the same line). They drive real clusters, so they sit
       # with the Postgres tier.
