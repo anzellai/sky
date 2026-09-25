@@ -755,9 +755,30 @@ jobs:
         with:
           cache-key: falsifiers-7
           postgres: 'true'
-      - name: Falsifier verification (group 7 — runtime safety + coverage ledger)
+      - name: Falsifier verification (group 7 — analytics safety + coverage ledger)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,coverage-ledger
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-falsifiers-8 — split from group 7. Each runtime-safety proof rebuilds
+  # and re-runs the Go runtime tests twice (baseline + mutation); eight of them
+  # passed a 45-min ceiling on the runner (run 36122173135) though they take
+  # ~5 min on a laptop.
+  gate-falsifiers-8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: falsifiers-8
+          postgres: 'true'
+      - name: Falsifier verification (group 8 — runtime loops and locks)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -951,6 +972,7 @@ jobs:
       - gate-falsifiers-5
       - gate-falsifiers-6
       - gate-falsifiers-7
+      - gate-falsifiers-8
       - gate-race
       - gate-web
       - gate-sweep
