@@ -605,16 +605,16 @@ jobs:
   # only place they are gated — they ride here.
   gate-falsifiers-3:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: falsifiers-3
           postgres: 'true'
-      - name: Falsifier verification (group 3 — apps / runtime safety)
+      - name: Falsifier verification (group 3 — Layer-2 apps)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only sky-verify,apps-bundled,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only sky-verify,apps-bundled,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay
 
       # Denominator + ledger + config-migration ratchets. These do not test the
       # compiler; they assert that the coverage + config-migration claims shipped
@@ -712,6 +712,25 @@ jobs:
       - name: Falsifier verification (group 6 — T4 FFI scale)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only apps-ffi-scale
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-falsifiers-7 — split out of group 3, which ran past its 30-minute
+  # ceiling once the Layer-2 app gates and the runtime-safety gates shared a job.
+  gate-falsifiers-7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: falsifiers-7
+          postgres: 'true'
+      - name: Falsifier verification (group 7 — runtime safety + coverage ledger)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -903,6 +922,7 @@ jobs:
       - gate-falsifiers-4
       - gate-falsifiers-5
       - gate-falsifiers-6
+      - gate-falsifiers-7
       - gate-race
       - gate-web
       - gate-sweep
