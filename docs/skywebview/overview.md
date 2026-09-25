@@ -142,6 +142,16 @@ you (no separate `Std.Spa` entry). One Sky.Spa app spans web, desktop,
 and mobile with no per-platform app logic. Worked example:
 [`examples/60-spa-todos/desktop`](../../examples/60-spa-todos/desktop).
 
+**Which backend the shell loads.** Set it with `App.withAppUrl
+"https://app.example.test/"` on the `App` value, or with `SKY_APP_URL` at
+build time (which wins). The iOS and Android shells bake the address in at
+build time, because a phone cannot reach the build machine's `localhost`. The
+desktop shell also reads `SKY_APP_URL` at run time. With neither set, the
+shell loads the development default on `PORT` (8951 when unset):
+`localhost` on the iOS simulator, `10.0.2.2` on the Android emulator, and
+`127.0.0.1` on desktop. The build summary prints the address and its source.
+See `docs/skyapp/overview.md` and `docs/sky-toml.md` (`SKY_APP_URL`).
+
 > **Low-level mechanism.** The native shell is the `Std.Webview`
 > runtime loading a URL (`Webview.url "http://127.0.0.1:8951/" …`);
 > `Std.App`'s desktop/mobile targets drive it for you. Reach for the

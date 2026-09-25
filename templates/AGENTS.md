@@ -497,7 +497,11 @@ synthesises a Spa app and runs the Sky.Spa auto-split: `sky build src/Main.sky`
 derives + builds a wasm frontend + native backend under `.split/` (no manual
 `sky spa-split`), and `sky run src/Main.sky` runs the backend — it serves the
 frontend + `/_rpc` same-origin. `--target desktop|ios|android` (frontend shell)
-and `--embed` (bundle PostgreSQL into the backend) COMPOSE with the split. `sky
+and `--embed` (bundle PostgreSQL into the backend) COMPOSE with the split. A
+native shell (`mobile:ios|android`, `desktop:<os>`) loads the backend at
+`App.withAppUrl "https://app.example.test/"` (read at build time; a literal or
+a top-level `String` constant), or `SKY_APP_URL` at build time, which wins; with
+neither it loads the dev default on `PORT` (8951). `sky
 check` type-checks the shared source without splitting; `sky spa-split <entry>
 --out <dir>` is the explicit form when you want the split trees kept at a path.
 

@@ -64,6 +64,7 @@ module Std.App exposing
     , withOnNavigate
     , withRequest
     , withRpcError
+    , withAppUrl
     , withDurable
     , withDurableId
     , DurableWiring
@@ -832,6 +833,32 @@ withRequest onReq (App a) =
 withRpcError : (Error -> msg) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withRpcError onErr (App a) =
     App { a | rpcError = Just onErr }
+
+
+-- | Set the backend address the NATIVE shells load: `mobile:ios`,
+-- `mobile:android` and `desktop:<os>` wrap the wasm client in a native web
+-- view that loads it from this absolute `http://` or `https://` URL.
+--
+--     app { init = init, update = update, view = view, subscriptions = subs }
+--         |> withNotFound NotFound
+--         |> withAppUrl "https://app.example.test/"
+--
+-- A phone cannot read the build machine's environment, so the BUILD reads
+-- this value from the source and bakes it into the shell. The argument must be
+-- a string literal or a top-level `String` constant in the entry module; a
+-- value computed at run time is a build error. `SKY_APP_URL` set at build time
+-- overrides it (and the desktop shell also reads `SKY_APP_URL` at run time).
+-- With neither set, the shell loads the development default on `PORT`
+-- (`localhost` on the iOS simulator, `10.0.2.2` on the Android emulator,
+-- `127.0.0.1` on desktop). Plain `http://` to a host that is not local gets a
+-- cleartext exception for exactly that host and a build warning; use
+-- `https://` for a production device build.
+--
+-- On the `web`, `tablet` and terminal targets there is no shell, and this
+-- builder does nothing.
+withAppUrl : String -> App fallback seed page model msg key -> App fallback seed page model msg key
+withAppUrl _ appVal =
+    appVal
 
 
 -- | The unified entry: `main = App.run app`. The build resolves `--target` and

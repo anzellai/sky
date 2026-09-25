@@ -767,3 +767,144 @@ fn a_desktop_window_whose_live_server_fails_to_start_exits_at_once_naming_the_ca
         "the exit must name the server's start failure and its cause:\n{out}"
     );
 }
+
+// ---- App.withAppUrl: the backend address a native shell loads ----
+
+/// Stage the dispatch fixture with `step` added to its App value (and `extra`
+/// top-level definitions appended). Returns the temp project dir.
+fn app_url_fixture(tag: &str, step: &str, extra: &str) -> PathBuf {
+    let dir = copy_fixture_to_temp(dispatch_fixture_dir(), tag);
+    let main = dir.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main).expect("read fixture entry");
+    let src = src.replace(
+        "        |> App.withInput Line\n",
+        &format!("        |> App.withInput Line\n{step}\n"),
+    );
+    assert!(src.contains(step), "the fixture step was not added");
+    std::fs::write(&main, format!("{src}\n\n{extra}")).expect("write fixture entry");
+    dir
+}
+
+fn build_output(dir: &std::path::Path, target: &str, env: &[(&str, &str)]) -> (bool, String) {
+    let mut cmd = Command::new(SKY);
+    cmd.arg("build")
+        .arg("--target")
+        .arg(target)
+        .arg(dir.join("src/Main.sky"))
+        .env_remove("SKY_APP_URL");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("sky build");
+    (
+        out.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+/// A builder argument the build cannot evaluate statically is a build error
+/// that names the builder and says why — the phone shells bake the address in
+/// at build time. It fails before any Go build, so no toolchain is needed.
+#[test]
+fn app_url_from_a_run_time_value_is_a_build_error_naming_the_builder() {
+    let dir = app_url_fixture(
+        "appurl-dynamic",
+        "        |> App.withAppUrl (urlFor ())",
+        "urlFor : () -> String\nurlFor _ =\n    \"https://example.test/\"\n",
+    );
+    let (ok, out) = build_output(&dir, "mobile:android", &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !ok,
+        "a non-static App.withAppUrl must fail the build:\n{out}"
+    );
+    assert!(
+        out.contains("App.withAppUrl") && out.contains("run time"),
+        "the error must name the builder and say why:\n{out}"
+    );
+}
+
+/// An invalid address is refused, naming where it came from: the builder, or
+/// SKY_APP_URL (which overrides the builder).
+#[test]
+fn an_invalid_app_url_is_refused_naming_its_source() {
+    let dir = app_url_fixture("appurl-ftp", "        |> App.withAppUrl \"ftp://x\"", "");
+    let (ok, out) = build_output(&dir, "mobile:ios", &[]);
+    assert!(!ok, "ftp:// must be refused:\n{out}");
+    assert!(
+        out.contains("App.withAppUrl") && out.contains("ftp"),
+        "the error must name the builder value:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dir = app_url_fixture(
+        "appurl-env",
+        "        |> App.withAppUrl backendUrl",
+        "backendUrl : String\nbackendUrl =\n    \"https://example.test/\"\n",
+    );
+    let (ok, out) = build_output(&dir, "mobile:android", &[("SKY_APP_URL", "not a url")]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!ok, "a bad SKY_APP_URL must be refused:\n{out}");
+    assert!(
+        out.contains("SKY_APP_URL") && out.contains("not a url"),
+        "the error must name SKY_APP_URL:\n{out}"
+    );
+}
+
+/// `sky check` ≡ `sky build`: the builder type-checks on the web target (where
+/// it does nothing), and a client-target check rejects a non-static argument.
+#[test]
+fn app_url_checks_on_web_and_is_read_statically_by_a_client_check() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
+    let dir = app_url_fixture(
+        "appurl-check",
+        "        |> App.withAppUrl \"https://example.test/\"",
+        "",
+    );
+    let out = Command::new(SKY)
+        .arg("check")
+        .arg(dir.join("src/Main.sky"))
+        .output()
+        .expect("sky check");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "App.withAppUrl must type-check on web:\n{text}"
+    );
+
+    let dir = app_url_fixture(
+        "appurl-check-dyn",
+        "        |> App.withAppUrl (urlFor ())",
+        "urlFor : () -> String\nurlFor _ =\n    \"https://example.test/\"\n",
+    );
+    let out = Command::new(SKY)
+        .arg("check")
+        .arg("--target")
+        .arg("mobile:ios")
+        .arg(dir.join("src/Main.sky"))
+        .env_remove("SKY_APP_URL")
+        .output()
+        .expect("sky check --target mobile:ios");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !out.status.success() && text.contains("App.withAppUrl"),
+        "a client-target check must reject a non-static App.withAppUrl:\n{text}"
+    );
+}

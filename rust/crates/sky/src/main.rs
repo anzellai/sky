@@ -43,6 +43,7 @@ use project::{
 };
 use testrunner::run_test;
 
+mod app_url;
 mod bundled;
 mod leg_plan;
 mod precompress;
@@ -1291,6 +1292,14 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: target::Target) -> 
     if out.status.success() {
         print!("{}", String::from_utf8_lossy(&out.stdout));
         eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        // `sky check` ≡ `sky build`: a client target reads `App.withAppUrl`
+        // statically, so a value the build cannot read fails the check too.
+        if std_app_runner(tgt).1 == StdAppBuild::Spa {
+            if let Err(e) = std_app_builder_url(&entry_src, tgt) {
+                eprintln!("sky check --target {}: {e}", tgt.canonical());
+                return ExitCode::FAILURE;
+            }
+        }
         ExitCode::SUCCESS
     } else {
         let combined = format!(
@@ -1304,6 +1313,34 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: target::Target) -> 
         }
         ExitCode::FAILURE
     }
+}
+
+/// `Std.App` builders the BUILD reads for the native shell around the client
+/// (not carried into the synthesised entry, and not warned about as dropped):
+/// `withAppUrl` is read by [`std_app_builder_url`].
+const SPA_SHELL_BUILDERS: &[&str] = &["withAppUrl"];
+
+/// Read `App.withAppUrl` from a Std.App entry statically, and validate the
+/// address the target's native shell would load (so a bad value fails before
+/// the build). `Ok(None)` when the app has no such builder.
+fn std_app_builder_url(entry_src: &str, tgt: target::Target) -> Result<Option<String>, String> {
+    let url = project::app_entry::builder_string_arg(entry_src, "withAppUrl").map_err(|e| {
+        format!(
+            "`{b}` needs a value the build can read: {e}.\n  \
+             The iOS and Android shells bake the backend address in at build time, so \
+             write a string literal (`{b} \"https://example.test/\"`) or a top-level \
+             `String` constant, or set {env} when you build.",
+            b = app_url::BUILDER,
+            env = app_url::ENV_VAR
+        )
+    })?;
+    if let Some(shell) = tgt
+        .frontend_shell()
+        .and_then(app_url::Shell::from_frontend_shell)
+    {
+        app_url::resolve_from_process(shell, url.as_deref())?;
+    }
+    Ok(url)
 }
 
 /// The `App.app { … } |> with…` fields the Spa synthesis needs. Values are the
@@ -1454,6 +1491,9 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let mut dropped_builders: Vec<String> = Vec::new();
     for step in &value.steps {
         let name = step.name.as_str();
+        if SPA_SHELL_BUILDERS.contains(&name) {
+            continue;
+        }
         if SPA_IGNORED_BUILDERS.contains(&name) {
             if !dropped_builders.iter().any(|d| d == name) {
                 dropped_builders.push(name.to_string());
@@ -2420,6 +2460,15 @@ fn build_std_app(
                 return ExitCode::FAILURE;
             }
         };
+        // `App.withAppUrl`: read statically (a phone cannot read this machine's
+        // env) and validated before the build, then handed to the frontend leg.
+        let builder_app_url = match std_app_builder_url(&entry_src, tgt) {
+            Ok(u) => u,
+            Err(e) => {
+                eprintln!("sky build --target {}: {e}", tgt.canonical());
+                return ExitCode::FAILURE;
+            }
+        };
         let src_to = match stage_std_app_derived(project_dir, &out_root) {
             Ok(p) => p,
             Err(code) => return code,
@@ -2450,6 +2499,7 @@ fn build_std_app(
             true,
             static_mount,
             !run,
+            builder_app_url.as_deref(),
         ) {
             Ok(od) => {
                 let t_static = project::timings::phase("stage static assets (dist + backend)");
@@ -2736,6 +2786,9 @@ fn spa_split_and_build(
     // Write the `.gz` / `.br` bundle variants (false for a `sky run`, whose
     // backend serves the bundle itself).
     precompress: bool,
+    // `App.withAppUrl`, read from the Std.App entry, for the frontend leg's
+    // native shell (`None` for a direct Spa entry, which has no such builder).
+    builder_app_url: Option<&str>,
 ) -> Result<PathBuf, ExitCode> {
     let t_split = project::timings::phase("spa split (partition + generate)");
     let report = match project::spa_split::generate(
@@ -2859,6 +2912,9 @@ fn spa_split_and_build(
         let t = project::timings::phase("frontend leg (child sky build, wasm)");
         let mut c = Command::new(sky_ref);
         c.args(["build", "--target", target, "src/Main.sky"]);
+        if let Some(u) = builder_app_url {
+            c.arg(format!("{}{u}", app_url::BUILDER_FLAG));
+        }
         if !precompress {
             c.arg("--no-precompress");
         }
@@ -3249,6 +3305,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
         // so `generate` reads the mount itself.
         None,
         true,
+        None,
     ) {
         Ok(od) => od,
         Err(code) => return code,
@@ -3388,6 +3445,15 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     // non-frontend-shell target (terminal) here, and verify the platform toolchain
     // before the slower wasm build. Every delivery target is a wasm client under a
     // native/browser shell, so `--target` implies `--wasm`.
+    //
+    // `--builder-app-url=<url>` is internal: the Std.App build reads
+    // `App.withAppUrl` from the user's entry and hands the value to the
+    // generated frontend leg, which no longer has that entry.
+    let builder_app_url = args
+        .iter()
+        .find_map(|a| a.strip_prefix(app_url::BUILDER_FLAG))
+        .map(str::to_string);
+    let mut shell_app_url: Option<app_url::AppUrl> = None;
     let target = if let Some(tgt) = parsed_target {
         let Some(shell) = tgt.frontend_shell() else {
             eprintln!(
@@ -3398,6 +3464,17 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             );
             return ExitCode::FAILURE;
         };
+        // The backend address a native shell loads: resolved + validated now, so
+        // a bad `SKY_APP_URL` / `App.withAppUrl` value fails before the build.
+        if let Some(sh) = app_url::Shell::from_frontend_shell(shell) {
+            match app_url::resolve_from_process(sh, builder_app_url.as_deref()) {
+                Ok(u) => shell_app_url = Some(u),
+                Err(e) => {
+                    eprintln!("sky build --target {}: {e}", tgt.canonical());
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
         let toolchain = match shell {
             "ios" => detect_ios_toolchain(),
             "android" => detect_android_toolchain(),
@@ -3448,6 +3525,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             // Direct Spa entry: `generate` reads the static mount from the entry.
             None,
             precompress,
+            builder_app_url.as_deref(),
         ) {
             Ok(od) => {
                 let entry = positional
@@ -3559,7 +3637,13 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     }
     // `--target`: bundle the freshly-built wasm client for a delivery surface.
     if let Some(t) = &target {
-        return cmd_build_target(t, &project_dir, &out_dir, precompress);
+        return cmd_build_target(
+            t,
+            &project_dir,
+            &out_dir,
+            precompress,
+            shell_app_url.as_ref(),
+        );
     }
     ExitCode::SUCCESS
 }
@@ -3574,6 +3658,7 @@ fn cmd_build_target(
     project_dir: &Path,
     out_dir: &Path,
     precompress: bool,
+    app_url: Option<&app_url::AppUrl>,
 ) -> ExitCode {
     // (Platform toolchains for ios/android were verified in cmd_build before the
     // build ran — see the --target parse block there.)
@@ -3591,22 +3676,45 @@ fn cmd_build_target(
     let dist_name = "dist";
     println!("Bundled web client → {dist_name}/ (index.html + main.<hash>.wasm + wasm_exec.js)");
 
-    match target {
-        "web" | "tablet" => {
+    // The backend address a native shell loads (resolved and validated in
+    // `cmd_build` before the wasm build ran). A shell target without one is
+    // resolved here from the environment alone.
+    let shell_url = match app_url::Shell::from_frontend_shell(target) {
+        Some(shell) => match app_url
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| app_url::resolve_from_process(shell, None))
+        {
+            Ok(u) => Some(u),
+            Err(e) => {
+                eprintln!("sky build --target {target}: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    if let Some(w) = shell_url.as_ref().and_then(|u| u.cleartext_warning()) {
+        eprintln!("{w}");
+    }
+
+    match (target, shell_url.as_ref()) {
+        ("web" | "tablet", _) => {
             println!(
                 "\nServe it with any static host, or from a Sky backend:\n  \
                  Server.static \"/\" \"../{dist_name}\"   -- serves the client same-origin with your /api routes\n\
                  (tablet == responsive web — Std.Ui adapts to the viewport)"
             );
         }
-        "desktop" => {
+        ("desktop", Some(url)) => {
             // Generate a tiny Sky.Webview shell and build it to a native binary.
-            match build_desktop_shell(project_dir, out_dir) {
+            match build_desktop_shell(project_dir, out_dir, url) {
                 Ok(bin) => println!(
                     "\nDesktop app built → {}\n  \
-                     A native window over the SAME wasm client. Start your backend\n  \
-                     (serving the dist/ bundle on PORT, default 8951), then run the binary.",
-                    bin.display()
+                     A native window over the SAME wasm client. It {}.\n  \
+                     Start that backend (it serves the dist/ bundle), then run the binary.\n  \
+                     SKY_APP_URL set when the binary runs overrides the address.",
+                    bin.display(),
+                    url.summary()
                 ),
                 Err(e) => {
                     eprintln!("sky build --target desktop: {e}");
@@ -3614,16 +3722,18 @@ fn cmd_build_target(
                 }
             }
         }
-        "ios" => {
+        ("ios", Some(url)) => {
             // Generate a SwiftUI + WKWebView shell + build it for the simulator.
-            match build_ios_app(project_dir, out_dir) {
+            match build_ios_app(project_dir, out_dir, url) {
                 Ok(app) => println!(
                     "\niOS app built → {}\n  \
                      Install:  xcrun simctl install booted {}\n  \
-                     A WKWebView over the SAME client. The simulator shares the host\n  \
-                     network, so it loads http://localhost:8951/ — start your backend first.",
+                     A WKWebView over the SAME client. It {}.\n  \
+                     Start that backend first. Set the address with App.withAppUrl or\n  \
+                     SKY_APP_URL (a device cannot reach this machine's localhost).",
                     app.display(),
-                    app.display()
+                    app.display(),
+                    url.summary()
                 ),
                 Err(e) => {
                     eprintln!("sky build --target ios: {e}");
@@ -3631,16 +3741,18 @@ fn cmd_build_target(
                 }
             }
         }
-        "android" => {
+        ("android", Some(url)) => {
             // Generate a WebView shell project + build a signed APK.
-            match build_android_apk(project_dir, out_dir) {
+            match build_android_apk(project_dir, out_dir, url) {
                 Ok(apk) => println!(
                     "\nAndroid APK built → {}\n  \
                      Install:  adb install -r {}\n  \
-                     A WebView over the SAME client. It loads http://10.0.2.2:8951/\n  \
-                     (the emulator's alias for the host) — start your backend on the host first.",
+                     A WebView over the SAME client. It {}.\n  \
+                     Start that backend first (10.0.2.2 is the emulator's alias for the\n  \
+                     host). Set the address with App.withAppUrl or SKY_APP_URL.",
                     apk.display(),
-                    apk.display()
+                    apk.display(),
+                    url.summary()
                 ),
                 Err(e) => {
                     eprintln!("sky build --target android: {e}");
@@ -3816,7 +3928,11 @@ fn precompress_web_asset(file: &Path, cache: Option<&Path>) {
 // (P3) and survives on every shell regardless. NOTE: device-level verification
 // (relaunch on a real iOS/Android device restores the cart) needs an emulator and
 // has not been run here; the storage config is present and correct.
-fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+fn build_desktop_shell(
+    project_dir: &Path,
+    out_dir: &Path,
+    url: &app_url::AppUrl,
+) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let app = &id.display_name;
     // The shell PROJECT is generated in a temp dir, NOT under `out_dir`: the
@@ -3843,7 +3959,7 @@ fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, St
     let title = sky_str_escape(&format!("{app} — Desktop"));
     std::fs::write(
         shell.join("src").join("Main.sky"),
-        DESKTOP_SHELL_MAIN.replace("{{TITLE}}", &title),
+        render_desktop_shell(&title, url),
     )
     .map_err(|e| format!("write Main.sky: {e}"))?;
 
@@ -3873,8 +3989,8 @@ fn build_desktop_shell(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, St
 }
 
 /// Desktop shell template. `{{TITLE}}` is substituted with the app's window
-/// title. Reads `PORT` (default 8951) for the backend it points the window at,
-/// matching the web-served bundle's origin.
+/// title and `{{APP_URL}}` with the Sky expression for the backend address
+/// (`app_url::desktop_url_expr`). `SKY_APP_URL` at run time overrides it.
 const DESKTOP_SHELL_MAIN: &str = r#"module Main exposing (main)
 
 -- Native desktop shell for a Sky.Spa client (generated by `sky build --target
@@ -3890,6 +4006,7 @@ const DESKTOP_SHELL_MAIN: &str = r#"module Main exposing (main)
 import Std.Webview as Webview
 import Sky.Core.System as System
 import Sky.Core.Http as Http
+import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Sky.Core.Time as Time
 
@@ -3897,11 +4014,21 @@ import Sky.Core.Time as Time
 main : Task Error ()
 main =
     let
-        port =
-            System.getenvOr "PORT" "8951"
+        -- The address the build resolved: `App.withAppUrl`, else SKY_APP_URL at
+        -- build time, else the loopback address on PORT.
+        builtUrl =
+            {{APP_URL}}
+
+        -- SKY_APP_URL at RUN time wins: this shell runs on the machine that sets it.
+        runUrl =
+            String.trim (System.getenvOr "SKY_APP_URL" "")
 
         appUrl =
-            "http://127.0.0.1:" ++ port ++ "/"
+            if String.isEmpty runUrl then
+                builtUrl
+
+            else
+                runUrl
     in
     Task.andThen
         (\_ ->
@@ -4591,7 +4718,11 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
 /// (aapt2 → javac → d8 → zipalign → apksigner) via a generated build script — no
 /// Gradle, no Android Studio. Requires the SDK (checked before the build ran)
 /// plus a JDK on PATH.
-fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+fn build_android_apk(
+    project_dir: &Path,
+    out_dir: &Path,
+    url: &app_url::AppUrl,
+) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let package = &id.bundle_id;
     let pkg_path = package.replace('.', "/");
@@ -4642,6 +4773,19 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
     let (perm_imports, webchrome, runtime_request) =
         android_permission_java(&perms, want_location, want_media);
 
+    // Cleartext policy for the backend address: the development default keeps
+    // the global flag; a plain-http remote host gets a network security config
+    // for exactly that host; https permits no cleartext.
+    let (cleartext_attr, network_config) = app_url::android_cleartext(url);
+    let xml_dir = res_root.join("xml");
+    let _ = std::fs::remove_file(xml_dir.join("network_security_config.xml"));
+    if let Some(cfg) = &network_config {
+        std::fs::create_dir_all(&xml_dir)
+            .map_err(|e| format!("create {}: {e}", xml_dir.display()))?;
+        std::fs::write(xml_dir.join("network_security_config.xml"), cfg)
+            .map_err(|e| format!("write network_security_config.xml: {e}"))?;
+    }
+
     std::fs::write(
         root.join("app/src/main/AndroidManifest.xml"),
         ANDROID_MANIFEST
@@ -4650,6 +4794,7 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
             .replace("{{VERSION_NAME}}", &xml_escape(&id.short_version))
             .replace("{{VERSION_CODE}}", &version_code)
             .replace("{{ICON_ATTR}}", icon_attr)
+            .replace("{{CLEARTEXT_ATTR}}", &cleartext_attr)
             .replace("{{USES_PERMISSIONS}}", &manifest_perms),
     )
     .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
@@ -4660,8 +4805,7 @@ fn build_android_apk(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, Stri
     .map_err(|e| format!("write strings.xml: {e}"))?;
     std::fs::write(
         java_dir.join("MainActivity.java"),
-        ANDROID_MAIN_ACTIVITY
-            .replace("{{PACKAGE}}", package)
+        render_android_main_activity(package, url)
             .replace("{{PERMISSION_IMPORTS}}", &perm_imports)
             .replace("{{WEBCHROME}}", &webchrome)
             .replace("{{RUNTIME_REQUEST}}", &runtime_request),
@@ -4833,7 +4977,11 @@ final class SkyNativeRegistry {
 let skyNativeRegistry = SkyNativeRegistry()
 "#;
 
-fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+fn build_ios_app(
+    project_dir: &Path,
+    out_dir: &Path,
+    url: &app_url::AppUrl,
+) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let name = &id.exe_name;
     let icon_src = bundle_icon_source(project_dir, &id);
@@ -4861,8 +5009,7 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
     std::fs::create_dir_all(&src).map_err(|e| format!("create {}: {e}", src.display()))?;
     std::fs::write(
         src.join("App.swift"),
-        IOS_APP_SWIFT
-            .replace("{{NAME}}", name)
+        render_ios_app_swift(name, url)
             .replace("{{LOCATION_IMPORT}}", loc_import)
             .replace("{{LOCATION_MANAGER}}", loc_manager)
             .replace("{{LOCATION_ONAPPEAR}}", loc_onappear),
@@ -4917,7 +5064,8 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
             .replace("{{SHORT_VERSION}}", &xml_escape(&id.short_version))
             .replace("{{BUILD_NUMBER}}", &xml_escape(&id.build_number))
             .replace("{{ICONS}}", if do_icons { IOS_ICON_PLIST } else { "" })
-            .replace("{{PERMISSIONS}}", &format!("{plist_perms}{ext_plist}")),
+            .replace("{{PERMISSIONS}}", &format!("{plist_perms}{ext_plist}"))
+            .replace("{{ATS}}", &render_ios_ats(url)),
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
     if !entitlements.trim().is_empty() {
@@ -4949,6 +5097,34 @@ fn build_ios_app(project_dir: &Path, out_dir: &Path) -> Result<PathBuf, String> 
     Ok(app)
 }
 
+/// `App.swift` with the app name and the backend address filled in. The
+/// `{{LOCATION_*}}` placeholders are left for the caller.
+fn render_ios_app_swift(name: &str, url: &app_url::AppUrl) -> String {
+    IOS_APP_SWIFT
+        .replace("{{NAME}}", name)
+        .replace("{{APP_URL}}", &app_url::swift_string_literal(&url.url))
+}
+
+/// The `NSAppTransportSecurity` entry of `Info.plist` for the backend address.
+fn render_ios_ats(url: &app_url::AppUrl) -> String {
+    app_url::ios_ats_plist(url)
+}
+
+/// `MainActivity.java` with the package and the backend address filled in.
+/// The permission placeholders are left for the caller.
+fn render_android_main_activity(package: &str, url: &app_url::AppUrl) -> String {
+    ANDROID_MAIN_ACTIVITY
+        .replace("{{PACKAGE}}", package)
+        .replace("{{APP_URL}}", &app_url::java_string_literal(&url.url))
+}
+
+/// The desktop shell's `Main.sky`. `title` is already Sky-string-escaped.
+fn render_desktop_shell(title: &str, url: &app_url::AppUrl) -> String {
+    DESKTOP_SHELL_MAIN
+        .replace("{{TITLE}}", title)
+        .replace("{{APP_URL}}", &app_url::desktop_url_expr(url))
+}
+
 const IOS_APP_SWIFT: &str = r#"import SwiftUI
 {{LOCATION_IMPORT}}
 // Native iOS/iPadOS shell for a Sky.Spa client (generated by
@@ -4956,12 +5132,14 @@ const IOS_APP_SWIFT: &str = r#"import SwiftUI
 // / desktop / Android builds use, served over HTTP by its own stateless backend.
 // Client and server stay separate; only the shell is native.
 //
-// The iOS SIMULATOR shares the host network, so http://localhost:8951/ (a dev
-// backend on the host) works as-is. A REAL device cannot see the host's
-// localhost — point appURL at the deployed backend over https.
+// The backend address is set at BUILD time: `App.withAppUrl "https://…"` on the
+// App value, or SKY_APP_URL (which wins). With neither, it is the host's
+// localhost on PORT, which the SIMULATOR can reach because it shares the host
+// network. A REAL device cannot see the host's localhost — set an https address.
+// Do not edit this file: the next build regenerates it.
 @main
 struct {{NAME}}App: App {
-    static let appURL = URL(string: "http://localhost:8951/")!
+    static let appURL = URL(string: {{APP_URL}})!
 {{LOCATION_MANAGER}}
     var body: some Scene {
         WindowGroup {
@@ -5011,6 +5189,7 @@ struct WebView: UIViewRepresentable {
             context.coordinator, contentWorld: .page, name: "skyNative")
         let web = WKWebView(frame: .zero, configuration: cfg)
         web.uiDelegate = context.coordinator
+        web.navigationDelegate = context.coordinator   // a failed load shows a native message
         UNUserNotificationCenter.current().delegate = context.coordinator
         installSkyNativeExtensions()   // register any native/ios/* bridge handlers
         web.load(URLRequest(url: url))
@@ -5019,10 +5198,47 @@ struct WebView: UIViewRepresentable {
 
     func updateUIView(_ web: WKWebView, context: Context) {}
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
 
-    final class Coordinator: NSObject, WKUIDelegate, WKScriptMessageHandlerWithReply,
-        UNUserNotificationCenterDelegate {
+    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate,
+        WKScriptMessageHandlerWithReply, UNUserNotificationCenterDelegate {
+        let url: URL
+        init(url: URL) { self.url = url }
+
+        // A load that fails (the backend is down, the address is wrong, ATS
+        // refused it) shows a native message naming the address and the error,
+        // instead of a blank page. A cancelled load (a new navigation replaced it)
+        // is not an error.
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
+                     withError error: Error) {
+            showLoadError(webView, error)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!,
+                     withError error: Error) {
+            showLoadError(webView, error)
+        }
+
+        private func showLoadError(_ webView: WKWebView, _ error: Error) {
+            let ns = error as NSError
+            if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
+            func esc(_ s: String) -> String {
+                s.replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;")
+                    .replacingOccurrences(of: ">", with: "&gt;")
+                    .replacingOccurrences(of: "\"", with: "&quot;")
+            }
+            let target = esc(url.absoluteString)
+            let html = "<!doctype html><html><head><meta name=\"viewport\" "
+                + "content=\"width=device-width,initial-scale=1\"><style>body{font-family:"
+                + "-apple-system,sans-serif;padding:24px;color:#222}code{word-break:break-all}"
+                + "</style></head><body><h3>Cannot reach the app</h3>"
+                + "<p>The app loads <code>\(target)</code>.</p>"
+                + "<p>\(esc(ns.localizedDescription))</p>"
+                + "<p><a href=\"\(target)\">Try again</a></p></body></html>"
+            webView.loadHTMLString(html, baseURL: nil)
+        }
+
         @available(iOS 15.0, *)
         func webView(_ webView: WKWebView,
                      requestMediaCapturePermissionFor origin: WKSecurityOrigin,
@@ -5099,11 +5315,7 @@ const IOS_INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>17.0</string>
     <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
-    <key>UILaunchScreen</key><dict/>{{ICONS}}{{PERMISSIONS}}
-    <!-- Dev only: allow cleartext to the local backend (localhost). Production
-         uses https, so remove this. -->
-    <key>NSAppTransportSecurity</key>
-    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+    <key>UILaunchScreen</key><dict/>{{ICONS}}{{PERMISSIONS}}{{ATS}}
 </dict>
 </plist>
 "#;
@@ -5134,8 +5346,7 @@ const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
     <uses-permission android:name="android.permission.INTERNET" />{{USES_PERMISSIONS}}
 
     <application
-        android:label="{{LABEL}}"{{ICON_ATTR}}
-        android:usesCleartextTraffic="true"
+        android:label="{{LABEL}}"{{ICON_ATTR}}{{CLEARTEXT_ATTR}}
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"
@@ -5163,6 +5374,8 @@ import android.graphics.Insets;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowInsets;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -5178,13 +5391,20 @@ import android.content.Context;{{PERMISSION_IMPORTS}}
  * web + desktop builds use, served over HTTP by its own stateless backend.
  * Client and server stay separate; only the shell is native.
  *
- * 10.0.2.2 is the emulator's alias for the host's localhost, so this loads a
- * backend started on the host (default port 8951). For a real device /
- * production, point APP_URL at the deployed backend over https.
+ * The backend address is set at BUILD time: `App.withAppUrl "https://…"` on the
+ * App value, or SKY_APP_URL (which wins). With neither, it is 10.0.2.2 (the
+ * emulator's alias for the host's localhost) on PORT. A real device needs the
+ * deployed backend's https address. Do not edit: the next build regenerates it.
  */
 public class MainActivity extends Activity {
 
-    private static final String APP_URL = "http://10.0.2.2:8951/";
+    private static final String APP_URL = {{APP_URL}};
+
+    // HTML-escape a string for the load-error page.
+    private static String html(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\"", "&quot;");
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -5196,7 +5416,26 @@ public class MainActivity extends Activity {
         if (android.os.Build.VERSION.SDK_INT >= 19) {
             WebView.setWebContentsDebuggingEnabled(true);  // dev: chrome://inspect
         }
-        web.setWebViewClient(new WebViewClient());  // keep navigation inside the WebView
+        // Keep navigation inside the WebView. A main-frame load that fails (the
+        // backend is down, the address is wrong) shows a native message naming
+        // the address and the error, instead of a blank page.
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request,
+                                        WebResourceError error) {
+                if (request == null || !request.isForMainFrame()) return;
+                String target = html(APP_URL);
+                String page = "<!doctype html><html><head><meta name=\"viewport\" "
+                    + "content=\"width=device-width,initial-scale=1\"><style>body{font-family:"
+                    + "sans-serif;padding:24px;color:#222}code{word-break:break-all}</style>"
+                    + "</head><body><h3>Cannot reach the app</h3>"
+                    + "<p>The app loads <code>" + target + "</code>.</p>"
+                    + "<p>" + html(String.valueOf(error.getDescription()))
+                    + " (" + error.getErrorCode() + ")</p>"
+                    + "<p><a href=\"" + target + "\">Try again</a></p></body></html>";
+                view.loadDataWithBaseURL(null, page, "text/html", "utf-8", null);
+            }
+        });
 {{WEBCHROME}}
         // Android 15 (targetSdk 35) draws edge-to-edge by default, so the WebView
         // would render UNDER the status bar (header/clock overlap) and the
@@ -5616,17 +5855,16 @@ fn cmd_run(args: &[String]) -> ExitCode {
             // Direct Spa entry: `generate` reads the static mount from the entry.
             None,
             false,
+            None,
         ) {
             Ok(od) => od,
             Err(code) => return code,
         };
         let backend = od.join("backend");
         let app = backend.join("sky-out").join("app");
-        // The generated backend reads PORT (default 8951) — mirror that in the hint.
-        let port = std::env::var("PORT")
-            .ok()
-            .and_then(|p| p.trim().parse::<u16>().ok())
-            .unwrap_or(8951);
+        // The generated backend reads PORT (default 8951) — mirror that in the hint,
+        // with the same parse the native shells' default address uses.
+        let port = app_url::parse_port(std::env::var("PORT").ok().as_deref());
         println!(
             "\n== running Sky.Spa backend (serves the frontend + /_rpc{}) ==",
             if embed { ", embedded PostgreSQL" } else { "" }
@@ -12024,6 +12262,120 @@ mod tests {
             assert!(
                 ANDROID_MAIN_ACTIVITY.contains(needle),
                 "Android shell must wire the notification bridge: missing `{needle}`"
+            );
+        }
+    }
+
+    // ---- App.withAppUrl / SKY_APP_URL: the backend address the shells load ----
+
+    fn url(
+        shell: app_url::Shell,
+        env: Option<&str>,
+        builder: Option<&str>,
+        port: Option<&str>,
+    ) -> app_url::AppUrl {
+        app_url::resolve(shell, env, builder, port).expect("resolve")
+    }
+
+    /// The builder value, read statically from the entry, reaches every shell
+    /// source and the old hard-coded 8951 does not.
+    #[test]
+    fn a_builder_url_reaches_the_ios_android_and_desktop_shells() {
+        let src = "module Main exposing (main)\n\nimport Std.App as App\n\n\nappDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withAppUrl \"https://example.test/\"\n\n\nmain =\n    App.run appDef\n";
+        let builder = project::app_entry::builder_string_arg(src, "withAppUrl")
+            .expect("static read")
+            .expect("a builder value");
+        let ios = render_ios_app_swift(
+            "Todos",
+            &url(app_url::Shell::Ios, None, Some(&builder), None),
+        );
+        assert!(
+            ios.contains("URL(string: \"https://example.test/\")!"),
+            "{ios}"
+        );
+        assert!(!ios.contains("8951"), "{ios}");
+        let android = render_android_main_activity(
+            "com.example.todos",
+            &url(app_url::Shell::Android, None, Some(&builder), None),
+        );
+        assert!(
+            android.contains("APP_URL = \"https://example.test/\";"),
+            "{android}"
+        );
+        assert!(!android.contains("8951"), "{android}");
+        let desktop = render_desktop_shell(
+            "Todos",
+            &url(app_url::Shell::Desktop, None, Some(&builder), None),
+        );
+        assert!(desktop.contains("\"https://example.test/\""), "{desktop}");
+        assert!(
+            desktop.contains("System.getenvOr \"SKY_APP_URL\""),
+            "{desktop}"
+        );
+        assert!(!desktop.contains("8951"), "{desktop}");
+    }
+
+    /// No builder, no SKY_APP_URL: the default follows the build-time PORT.
+    #[test]
+    fn with_no_setting_the_shells_follow_port() {
+        let ios =
+            render_ios_app_swift("Todos", &url(app_url::Shell::Ios, None, None, Some("8000")));
+        assert!(
+            ios.contains("URL(string: \"http://localhost:8000/\")!"),
+            "{ios}"
+        );
+        let android = render_android_main_activity(
+            "com.example.todos",
+            &url(app_url::Shell::Android, None, None, Some("8000")),
+        );
+        assert!(
+            android.contains("APP_URL = \"http://10.0.2.2:8000/\";"),
+            "{android}"
+        );
+        let desktop = render_desktop_shell(
+            "Todos",
+            &url(app_url::Shell::Desktop, None, None, Some("8000")),
+        );
+        assert!(
+            desktop.contains("System.getenvOr \"PORT\" \"8000\""),
+            "{desktop}"
+        );
+    }
+
+    /// Plain http to a remote host: the iOS plist gets an ATS exception for
+    /// exactly that host (never NSAllowsArbitraryLoads).
+    #[test]
+    fn plain_http_to_a_remote_host_gets_a_scoped_ats_exception() {
+        let u = url(
+            app_url::Shell::Ios,
+            None,
+            Some("http://example.test/"),
+            None,
+        );
+        let plist = render_ios_ats(&u);
+        assert!(plist.contains("<key>example.test</key>"), "{plist}");
+        assert!(!plist.contains("NSAllowsArbitraryLoads"), "{plist}");
+        assert!(u.cleartext_warning().is_some());
+    }
+
+    /// A failed load shows a native message with the URL and the error, not a
+    /// blank web view.
+    #[test]
+    fn the_shells_show_a_native_error_instead_of_a_blank_page() {
+        for needle in [
+            "didFailProvisionalNavigation",
+            "didFail navigation",
+            "WKNavigationDelegate",
+        ] {
+            assert!(
+                IOS_WEBVIEW_SWIFT.contains(needle),
+                "iOS shell: missing `{needle}`"
+            );
+        }
+        for needle in ["onReceivedError", "isForMainFrame()", "loadDataWithBaseURL"] {
+            assert!(
+                ANDROID_MAIN_ACTIVITY.contains(needle),
+                "Android shell: missing `{needle}`"
             );
         }
     }
