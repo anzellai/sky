@@ -25,6 +25,7 @@ pub mod pubsub_topic;
 pub mod reject_corpus;
 pub mod shared;
 mod sig;
+pub mod tytable;
 mod unify;
 
 pub use check::{

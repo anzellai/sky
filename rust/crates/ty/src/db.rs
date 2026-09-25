@@ -91,12 +91,7 @@ pub fn compute_body_types(
     // `result`/`exprs`/`locals`. It is populated so a stray read stays consistent
     // with the tooling path, but codegen never consumes it (bug-b additivity).
     let (result, signature, exprs, locals) = infer.infer_def_typed(body);
-    BodyTypes {
-        result,
-        signature,
-        exprs,
-        locals,
-    }
+    BodyTypes::new(result, signature, exprs, locals)
 }
 
 /// Eager backend. `SourceDb` has no incremental store, so every call recomputes —

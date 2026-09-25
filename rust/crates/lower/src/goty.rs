@@ -96,7 +96,30 @@ pub struct TypeEnv {
     /// context-tainted and never cached), so a cache hit is byte-for-byte what a
     /// fresh resolution would produce. Determinism (L4): lookups only; iteration
     /// order is never emitted.
-    pub goty_cache: std::cell::RefCell<HashMap<(Ty, Option<String>), GoTy>>,
+    ///
+    /// Keys are hash-consed ([`GotyCache`]): a key is a [`ty::tytable::TyRef`]
+    /// into one shared table, not an owned `Ty` clone. `go_ty` recurses through
+    /// every sub-tree of a type and caches each one, so owned keys stored the
+    /// sum of all sub-tree sizes — quadratic for an N-ary constructor arrow over
+    /// large records (a `Codec.object` pipeline), and measured as the largest
+    /// live structure left in lowering once the typed tables were interned.
+    pub goty_cache: std::cell::RefCell<GotyCache>,
+}
+
+/// The `go_ty` memo: `(type, cur_mod) -> GoTy`, with the type interned in a
+/// [`ty::tytable::TyTableBuilder`] so equal sub-trees share one key node. Two
+/// keys are equal exactly when the types are structurally equal (the same
+/// equality the owned-`Ty` key used), so hits and misses are unchanged.
+#[derive(Default)]
+pub struct GotyCache {
+    keys: ty::tytable::TyTableBuilder,
+    map: HashMap<(ty::tytable::TyRef, Option<String>), GoTy>,
+}
+
+impl GotyCache {
+    fn key(&mut self, t: &Ty, cur_mod: Option<&str>) -> (ty::tytable::TyRef, Option<String>) {
+        (self.keys.intern(t), cur_mod.map(str::to_string))
+    }
 }
 
 /// Map a Sky type to its structural Go type. `cur_mod` is the module the type is
@@ -167,8 +190,8 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
             return go_ty_uncached(t, env, cur_mod, params);
         }
     }
-    let key = (t.clone(), cur_mod.map(str::to_string));
-    if let Some(hit) = env.goty_cache.borrow().get(&key).cloned() {
+    let key = env.goty_cache.borrow_mut().key(t, cur_mod);
+    if let Some(hit) = env.goty_cache.borrow().map.get(&key).cloned() {
         return hit;
     }
     // Isolate this subtree's guard hits, compute, then decide cacheability and
@@ -180,7 +203,7 @@ fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, Go
     MIN_GUARD_HIT.with(|m| m.set(saved.min(subtree_min)));
     // Context-free ⇔ no guard hit against a fieldset that predated this call.
     if subtree_min >= depth {
-        env.goty_cache.borrow_mut().insert(key, result.clone());
+        env.goty_cache.borrow_mut().map.insert(key, result.clone());
     }
     result
 }

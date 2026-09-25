@@ -111,8 +111,9 @@ sky build --embed src/Main.sky
 
 `--embed` belongs on `sky build`, not on `sky run` — see below.
 
-**`--timings`** (or `SKY_TIMINGS=1` in the environment) prints a wall-clock
-table of the build's phases to stderr when the build ends: loading the sources,
+**`--timings`** (or `SKY_TIMINGS=1` in the environment) prints a table of the
+build's phases, each with its wall-clock and the process's peak resident
+memory when the phase ended, to stderr when the build ends: loading the sources,
 parse, canonicalise + typecheck, lower + emit Go, writing `sky-out/`, `go build`,
 and for a client build the split, both legs, the `dist/` bundle and its
 precompression. A split build runs its backend and frontend legs as child

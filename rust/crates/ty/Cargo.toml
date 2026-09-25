@@ -7,6 +7,7 @@ edition = "2021"
 workspace = true
 
 [dependencies]
+rustc-hash = "2.1"
 base = { path = "../base" }
 hir = { path = "../hir" }
 syntax = { path = "../syntax" }

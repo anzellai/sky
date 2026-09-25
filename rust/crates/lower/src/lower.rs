@@ -517,12 +517,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         let mut ptys = Vec::new();
         for (i, p) in e.body.params.iter().enumerate() {
             let inferred = || match &e.body.pats[*p] {
-                Pattern::Var(lid) => e
-                    .types
-                    .locals
-                    .get(lid)
-                    .cloned()
-                    .unwrap_or(Ty::Var(Name::new("any"))),
+                Pattern::Var(lid) => e.types.local(*lid).unwrap_or(Ty::Var(Name::new("any"))),
                 _ => Ty::Var(Name::new("any")),
             };
             // Take the sig param type when it is concrete enough to be useful
@@ -2213,7 +2208,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn expr_ty(&mut self, e: ExprId) -> GoTy {
-        match self.types.exprs.get(&e).cloned() {
+        match self.types.expr(e) {
             Some(t) => self.goty(&t),
             None => GoTy::Any,
         }
@@ -2223,11 +2218,11 @@ impl<'a> Ctx<'a> {
     /// through the per-local type table when the expr node itself carries no
     /// recorded type (a bare local reference often does not).
     fn sky_ty_of(&self, e: ExprId) -> Option<Ty> {
-        if let Some(t) = self.types.exprs.get(&e) {
-            return Some(t.clone());
+        if let Some(t) = self.types.expr(e) {
+            return Some(t);
         }
         if let Expr::Var(Res::Local(l)) = &self.body.exprs[e] {
-            return self.types.locals.get(l).cloned();
+            return self.types.local(*l);
         }
         None
     }
@@ -2322,7 +2317,7 @@ impl<'a> Ctx<'a> {
     /// for a call to an unannotated def whose result the caller inferred as a
     /// flex var — the callee's own inferred result type.
     fn expr_is_task(&self, e: ExprId) -> bool {
-        if let Some(Ty::App(n, _)) = self.types.exprs.get(&e) {
+        if let Some(n) = self.types.expr_app_name(e) {
             if ty::nominal::base(n.as_str()) == "Task" {
                 return true;
             }
@@ -2338,7 +2333,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn local_ty(&mut self, l: LocalId) -> GoTy {
-        match self.types.locals.get(&l).cloned() {
+        match self.types.local(l) {
             Some(t) => self.goty(&t),
             None => GoTy::Any,
         }
@@ -2371,7 +2366,7 @@ impl<'a> Ctx<'a> {
                 .params
                 .iter()
                 .filter_map(|p| match &body.pats[*p] {
-                    Pattern::Var(id) => types.locals.get(id).cloned(),
+                    Pattern::Var(id) => types.local(*id),
                     _ => None,
                 })
                 .collect();
@@ -2831,7 +2826,7 @@ impl<'a> Ctx<'a> {
             }
             self.lower_main_body(body, out);
         } else {
-            let ty = self.types.exprs.get(&e).cloned();
+            let ty = self.types.expr(e);
             let is_task = self.expr_is_task(e);
             // A Unit `in ()` has already run its effects via the let-discards; a
             // non-Unit entry is force-run (runtime auto-forces a Task-typed main).
@@ -3018,11 +3013,11 @@ impl<'a> Ctx<'a> {
         let param_tys: Vec<Option<Ty>> = params
             .iter()
             .map(|p| match &self.body.pats[*p] {
-                Pattern::Var(id) => self.types.locals.get(id).cloned(),
+                Pattern::Var(id) => self.types.local(*id),
                 _ => None,
             })
             .collect();
-        let result_ty = self.types.exprs.get(&body).cloned();
+        let result_ty = self.types.expr(body);
         let tys: Vec<Ty> = param_tys
             .iter()
             .flatten()
@@ -7562,7 +7557,7 @@ impl<'a> Ctx<'a> {
                 // ctor access type-checks. Narrowing-only: guarded on the
                 // subject being `any`, so typed containers keep their exact
                 // element type (and the coercion elides via `from == to`).
-                let recorded = self.types.locals.get(id).cloned().map(|t| self.goty(&t));
+                let recorded = self.types.local(*id).map(|t| self.goty(&t));
                 let bound = match recorded {
                     Some(rt) if subj.ty == GoTy::Any && rt != GoTy::Any => {
                         self.coerce_if_needed(subj.clone(), &rt)
@@ -8286,7 +8281,7 @@ fn row_poly_flags(
         .params
         .iter()
         .map(|p| match &body.pats[*p] {
-            Pattern::Var(id) => types.locals.get(id).cloned(),
+            Pattern::Var(id) => types.local(*id),
             _ => None,
         })
         .collect();
