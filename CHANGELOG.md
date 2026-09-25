@@ -11,58 +11,112 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.25.18 — (unreleased)
+## v0.25.18 — Sky.Spa restores only for the same user; pages hydrate in place; faster builds; LSP hover (unreleased)
 
-### Fixed
+A patch over v0.25.17. Every fix has a regression test that failed before it.
+No public function signature changes.
 
-- **Sky.Spa: a reload restored another identity's model.** `localStorage` held
-  one model for every tab of an origin. With a practitioner signed in in one tab
+### Migration
+
+- **Sky.Spa saved state now belongs to one signed-in identity.** A `web:app`
+  app restores its saved model on a full load only when the session identity
+  it was saved under equals the identity the server sends. Signing in, signing
+  out or a different user in another tab restores nothing, deletes the saved
+  copy and starts from the server's page. A basket filled before sign-in is not
+  carried over. The storage key is now `sky:spa:model:v2`; the old
+  `sky:spa:model` key is deleted on the first load, so every user starts once
+  from the server's page after the upgrade. See `docs/skyspa/overview.md`,
+  "Client persistence and identity".
+
+### Sky.Spa (`--target web:app`)
+
+- **A full load could show another person's data.** `localStorage` held one
+  model for every tab of an origin. With a practitioner signed in in one tab
   and a patient link (another session identity) in a second tab, a full load of
   the first tab restored the patient's page and data under the practitioner's
-  session. Found in a real app. A stored model now restores only when the
-  identity it was stored under (the session fields) equals the identity of the
-  SSR seed. Any change of identity, including signed out to signed in, restores
-  nothing and removes the stored copy; the page boots from the seed. A sign-out
-  in the page removes the stored copy. The model is now stored under
-  `sky:spa:model:v2`; the old `sky:spa:model` key is deleted on the first load
-  and is restored only for an app with no session field. Tests:
-  `runtime-go/rt/spa_persist_identity_test.go` and the `spa-identity-slot` step
-  of `scripts/spa-restore-e2e.sh`. See `docs/skyspa/overview.md`, "Client
-  persistence and identity".
-- **Sky.Spa SSR pages hydrate in place on a real app again.** Std.Ui no longer emits a nesting the HTML parser restructures: inside a `Ui.paragraph` a block element (for example the `el` label of a `Ui.link`) renders as a `<span>` with the same style, and a nested link, button, form or heading gets a tag the parser keeps. The Sky.Spa client now steps over the `__sky_csrf` hidden input the server puts first in each POST form (it keeps a native POST valid before the client runs), and keeps it when it patches the form; before, that input made every page load after the first refuse hydration. With JS disabled, the SSR page no longer stays covered by the "Loading…" overlay, so its links and native form POSTs work. Both logged `[sky.spa] SSR hydrate skipped, full rebuild` and threw the server DOM away.
-- **`sky lsp`: hover on record fields, imported functions and types.** A field
-  hovered only at `r.field`. It now also hovers in a record literal, a record
-  update, a record pattern, a `type alias` declaration and a `.field` accessor,
-  shows the type the alias declares (`user : User`, not the expanded record) and
-  names the alias the field belongs to. Go-to-definition on a field now reaches
-  an alias in another module. A function hover now includes its `-- |` doc
-  comment, and a builtin or kernel function (`identity`, `modBy`) shows its
-  type instead of `?`. A type hover now shows the declaration and its doc (not
-  only `type Name`), and a qualified type (`T.User`), a type variable, a builtin
-  constructor (`Just`) and a `True`/`False` literal now answer. A field
-  declaration's reference range now covers only the name. Test:
+  session. Found in a real app. Fixed by the identity rule above. Tests:
+  `runtime-go/rt/spa_persist_identity_test.go` and the two-tab
+  `spa-identity-slot` step of `scripts/spa-restore-e2e.sh`.
+- **Pages hydrate in place on a real app.** Two causes made the client throw the
+  server's page away and rebuild it (`[sky.spa] SSR hydrate skipped, full
+  rebuild`):
+  - Std.Ui emitted nestings the HTML parser rearranges, for example the `el`
+    label of a `Ui.link` inside a `Ui.paragraph` (`<p><a><div>`). Inside a
+    paragraph a block element now renders as a `<span>` with the same style,
+    and a nested link, button, form or heading gets a tag the parser keeps. The
+    page looks the same. 136 container/child pairs rearranged before; none do
+    now (`tests/Std/UiParserSafeNestingTest.sky`).
+  - From a visitor's second load on, the server puts a `__sky_csrf` hidden input
+    first in each POST form. The client now steps over exactly that input and
+    keeps it when it patches the form, so a form posted before the client runs
+    stays valid.
+- **With JavaScript off, the page was covered by the "Loading…" overlay
+  forever.** A `<noscript>` style now hides it, so links and native form posts
+  work.
+
+### Tooling
+
+- **`sky lsp` hover and go-to-definition.** A record field now answers in a
+  record literal, an update, a pattern, a `type alias` declaration and a
+  `.field` accessor, not only at `r.field`. It shows the declared type
+  (`user : User`) and names the alias. Go-to-definition reaches a field of an
+  alias in another module. A function hover includes its `-- |` doc comment,
+  and a builtin or kernel function (`identity`, `modBy`) shows its type instead
+  of `?`. A type hover shows the declaration and its doc, not only `type Name`.
+  A qualified type (`T.User`), a type variable, a builtin constructor (`Just`)
+  and `True`/`False` now answer. Renaming a local bound by a record pattern
+  (`{ age }`) is refused, because it would rename the field. Test:
   `rust/crates/sky-lsp/tests/hover_matrix.rs`.
-- **Faster Sky.Spa (`--target web:app`) rebuilds, smaller server binaries.** A
-  rebuild no longer wipes the split legs' `sky-out/`, so an unchanged backend or
-  wasm client is not re-linked. The `.gz` / `.br` bundle variants are cached by
-  content hash, so brotli-11 (the slowest single step of the build) runs only
-  when the wasm changes, and `sky run` skips them (its backend compresses on the
-  fly). The embedded console is compiled without Go inlining: its generated
-  closure chains made the Go compiler emit symbol names of up to 50 MB, which
-  put 179 MB of names into every Sky.Live / Sky.Spa backend binary (229 MB
-  → 46 MB, with a shorter link). New `sky build --timings` / `SKY_TIMINGS=1`
-  prints a per-phase wall-clock table (`docs/tooling/cli.md`).
-- **Sky.Spa legs run in parallel only when memory allows.** The backend and
-  frontend legs run together only when available memory holds two leg peaks
-  (measured on the previous build, else estimated from the generated sources)
-  plus 1 GB; otherwise they run serially. `SKY_BUILD_SERIAL=1` forces serial,
-  new `SKY_BUILD_PARALLEL=1` forces parallel. The decision is printed.
-- **Fixed: one `sky` version no longer wipes another's Go build cache.** A build
-  by a `sky` with a different embedded runtime ran `go clean -cache` on the
-  shared `~/.sky/go-build`, so two versions in use at once (a release and a dev
-  build, or an upgrade while an editor runs the old one) forced each other into
-  cold compiles. The cache is content-addressed, so the clean is gone; the size
-  cap and Go's own trim still reclaim old entries.
+- **Faster rebuilds and smaller server binaries.**
+  - A rebuild with no change no longer re-links both Sky.Spa halves: on a
+    10k-line app it takes 4.4 s instead of 32 s.
+  - The `.gz` / `.br` files are cached by content, so brotli level 11 runs only
+    when the wasm changes. The level is unchanged. `sky run` skips them.
+  - The embedded Sky Console is compiled without Go inlining. Its generated
+    closures made Go emit symbol names of up to 50 MB, so every Sky.Live and
+    Sky.Spa server binary shrinks from 229–499 MB to about 46 MB, and links
+    faster.
+  - New `sky build --timings` (or `SKY_TIMINGS=1`) prints the time of each
+    build phase.
+- **The two Sky.Spa halves build in parallel only when memory allows.** They
+  run together only when free memory holds two leg peaks plus 1 GB (the peak is
+  measured on the previous build, else estimated); otherwise one after the
+  other. A 22k-line app peaks near 7 GB per half, so two at once could exhaust a
+  16 GB machine. `SKY_BUILD_SERIAL=1` forces serial and the new
+  `SKY_BUILD_PARALLEL=1` forces parallel. The build prints its choice.
+- **One `sky` version no longer wipes another's Go build cache.** A `sky` with a
+  different embedded runtime ran `go clean -cache` on the shared
+  `~/.sky/go-build`, so two versions in use at once forced each other into cold
+  compiles. The cache is content-addressed, so the clean is gone; the size cap
+  and Go's own trim still reclaim old entries.
+
+### Sky Console
+
+- The Console's generated Go (`runtime-go/rt/console_app/main.go`) had drifted
+  from its Sky source since v0.25.16, so the shipped Console did not have the
+  newer stdlib and compiler fixes. It is regenerated and checked in a browser
+  (all six tabs). `ci-green` now regenerates it on every commit and fails on
+  any difference.
+
+### Gates and CI
+
+- **The release workflow runs the full suite again.** A "lean release" setting
+  had switched off the workspace tests, T1, both T2 jobs and the falsifier
+  proofs at release time, so v0.25.17 was tagged without them (they passed
+  afterwards in a nightly run on the tag). They are back, and the release
+  workflow now also runs the browser and terminal tests, `verify-all-web`,
+  `doc-examples`, the Postgres race tests and falsifier proofs for T2–T4. A new
+  test fails if a release gate is switched off or dropped from the release's
+  `needs:`.
+- **Falsifier proofs are incremental.** Each proof records a hash of the gate's
+  inputs; a run proves again only the gates whose inputs changed (`--all` proves
+  every gate, and nightly and release pass it). Two harness bugs are fixed: a
+  gate with two mutations was recorded by the last one alone, and two runs at
+  once could overwrite each other's results.
+- **`scripts/gates-for-change.sh`** picks the narrowest gates for the files a
+  change touches, for local runs.
+- **Gates share built examples** through a content-keyed cache
+  (`scripts/lib/gate-build-cache.sh`; `SKY_GATE_CACHE=off` disables it).
 
 ## v0.25.17 — app-surface soundness sweep: Sky.Live, Sky.Spa, Std.App, Sky.Tui/Cli (2026-09-24)
 
