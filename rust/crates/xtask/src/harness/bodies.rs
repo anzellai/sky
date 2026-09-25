@@ -2748,7 +2748,18 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///   when the rendered value changes; no client re-assert marker).
 ///
 /// 398 + 1 = 399.
-pub const SKY_SUITES_EXPECTED: u64 = 399;
+///
+/// 399 -> 669:
+///
+/// * `Std/UiParserSafeNestingTest` (+270) — every Std.Ui container against
+///   every child primitive, checking that `Ui.layout` output never holds a
+///   nesting the HTML parser restructures (a block inside `<p>`, a link inside
+///   a link, …), which made Sky.Spa SSR hydration refuse and rebuild the page.
+///   The cases are generated from the container × child matrix, so the count is
+///   the matrix size.
+///
+/// 399 + 270 = 669.
+pub const SKY_SUITES_EXPECTED: u64 = 669;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
