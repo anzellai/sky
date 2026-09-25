@@ -56,6 +56,20 @@ No public function signature changes.
 
 ### Tooling
 
+- **The compiler uses far less memory on a large module.** The backend leg of a
+  22k-line Sky.Spa app (its generated `Shared` module has 12,300 lines) peaked
+  at 6.6 GB in `sky` and the memory guard stopped it. It now peaks at 0.74 GB,
+  and typecheck plus lowering take 15 s instead of about 60 s. A 10k-line app's
+  backend leg falls from 534 MB to 145 MB. The cause was one shape: each step of
+  a `Codec.object … |> Codec.field …` pipeline has a type that holds the full
+  record constructor, and the compiler kept one expanded copy per expression.
+  The per-definition type tables and the Go-type memo now share equal types,
+  `resolve` no longer copies a whole module per call, and the call-site record
+  harvest reads back only the call arguments it needs. The emitted Go is
+  byte-identical. Test: `rust/crates/project/tests/large_module_memory.rs`.
+- **`--timings` shows peak memory.** Each phase line now also gives the
+  process's peak resident memory when the phase ended, so the phase that
+  allocates is the first one whose figure jumps.
 - **`sky lsp` hover and go-to-definition.** A record field now answers in a
   record literal, an update, a pattern, a `type alias` declaration and a
   `.field` accessor, not only at `r.field`. It shows the declared type
