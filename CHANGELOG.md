@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.25.18 — Sky.Spa restores only for the same user; pages hydrate in place; faster builds; LSP hover (unreleased)
+## v0.25.18 — Sky.Spa restores only for the same user; pages hydrate in place; far less build memory; LSP hover (2026-09-25)
 
 A patch over v0.25.17. Every fix has a regression test that failed before it.
 No public function signature changes.
@@ -160,6 +160,28 @@ No public function signature changes.
   every gate, and nightly and release pass it). Two harness bugs are fixed: a
   gate with two mutations was recorded by the last one alone, and two runs at
   once could overwrite each other's results.
+- **The release workflow now passes on the full suite.** With every gate back on,
+  several jobs had outgrown their time limits or had never run in a release:
+  - `verify-ci-green` listed a commit's check runs without paging. A commit
+    with more than 30 check runs hid `ci-green` on page 2, so a release was
+    refused although `ci-green` had passed. It now asks for `ci-green` by name.
+  - The gate harness hung while hashing proof inputs for a large gate set. It
+    wrote the whole path list to `git hash-object --stdin-paths` before reading
+    its output, so the two blocked each other once the pipe filled. Two release
+    jobs sat silent until their time limit. The list is now written from a
+    thread; a test hashes 5,000 long paths under a 60 s limit.
+  - The harness prints each gate's verdict and time as it finishes, so a job
+    stopped at its limit shows what ran.
+  - T1 runs as four parallel shards, and the workspace tests, the corpus gates
+    and the falsifier groups are split so each job fits its limit. A workflow
+    test fails if a T1 gate is in no shard.
+  - The real-database tests install pgvector, as the nightly job does.
+  - `coerce-floor --bless` kept only the first two recorded transitions in the
+    golden's header and deleted every later one. It now keeps the header.
+  - The coverage ledger named whichever mutation of a multi-mutation gate was
+    recorded last, so a falsifier run earlier in the same CI job made
+    `coverage-ledger --check` fail on an unchanged tree. It now names the first
+    mutation the registry declares.
 - **`scripts/gates-for-change.sh`** picks the narrowest gates for the files a
   change touches, for local runs.
 - **Gates share built examples** through a content-keyed cache
