@@ -30,6 +30,11 @@ No public function signature changes.
   annotation, where `M` neither declares nor lists `Foo`, and `Nope.Foo` with no
   such import, are now `[E1001]`. `import M exposing (Foo)` for such a `Foo` is
   `[E1011]`. Both used to resolve silently to an unrelated nominal type.
+- If your app emitted `data-sky-eval`, it no longer runs. Use
+  `data-sky-path` (URL sync), a Sky message, or a same-origin script file
+  that watches for a marker element.
+- A test or tool that read `var __skyCsrfToken = "…"` out of the page must
+  read the `sky-live-cfg` JSON block instead.
 
 ### Compiler
 
@@ -161,14 +166,6 @@ paths in Chromium, through a proxy that sends the policy and with
 `SKY_CSP=strict`, with zero `securitypolicyviolation` events). On the
 previous runtime the e2e reports a `script-src` violation and a dead page
 for every scenario.
-
-### Migration
-
-- If your app emitted `data-sky-eval`, it no longer runs. Use
-  `data-sky-path` (URL sync), a Sky message, or a same-origin script file
-  that watches for a marker element.
-- A test or tool that read `var __skyCsrfToken = "…"` out of the page must
-  read the `sky-live-cfg` JSON block instead.
 
 ## v0.25.18 — Sky.Spa restores only for the same user; pages hydrate in place; far less build memory; LSP hover (2026-09-25)
 
