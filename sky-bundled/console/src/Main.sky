@@ -30,6 +30,8 @@ import Sky.Core.Encoding as Encoding
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.App as App
+import Std.Html exposing (Html)
+import Std.Ui as Ui
 import State exposing (..)
 import View exposing (view)
 import HubStore exposing (hubStore, hubCurrentIdentity)
@@ -761,11 +763,27 @@ tickIntervalMs tab =
             3000
 
 
+-- The Live view: the shared `View.view` Element wrapped into a page-tall
+-- Html document. It is a NAMED binding, and `appDef` routes the view
+-- through it, on purpose. The embedded console is mounted by hand-written
+-- glue (runtime-go/rt/console_app/register_v3.go). That glue hands `init`,
+-- `update`, `viewWrapped` and `subscriptions` to the Sky.Live mount of the
+-- host app. The compiler drops every binding that `main` does not reach,
+-- and it cannot see a reference from Go glue. So each binding that the
+-- glue names must be reachable from `main`. With `App.app` and the bare
+-- `view`, `viewWrapped` is not emitted and the regenerated console_app
+-- package does not build. scripts/regenerate-console.sh builds the package
+-- after it writes it, so a break here fails the generator itself.
+viewWrapped : Model -> Html Msg
+viewWrapped model =
+    Ui.layout [] (view model)
+
+
 appDef =
-    App.app
+    App.web
         { init = init
         , update = update
-        , view = view
+        , view = viewWrapped
         , subscriptions = subscriptions
         }
         |> App.withRoutes [ App.route "/" () ]

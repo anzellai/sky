@@ -16,6 +16,97 @@ import rt "sky-app/rt"
 
 var _ = rt.AsInt
 
+type Sky_Config_Database interface {
+	SkyVariantTag() int
+	SkyVariantName() string
+}
+type Sky_Config_Database_Sqlite_V struct{ V0 string }
+
+func (Sky_Config_Database_Sqlite_V) SkyVariantTag() int     { return 0 }
+func (Sky_Config_Database_Sqlite_V) SkyVariantName() string { return "Sqlite" }
+
+type Sky_Config_Database_Postgres_V struct{ V0 string }
+
+func (Sky_Config_Database_Postgres_V) SkyVariantTag() int     { return 1 }
+func (Sky_Config_Database_Postgres_V) SkyVariantName() string { return "Postgres" }
+
+func Sky_Config_Database_Sqlite(v0 string) Sky_Config_Database {
+	return Sky_Config_Database_Sqlite_V{V0: v0}
+}
+
+func Sky_Config_Database_Postgres(v0 string) Sky_Config_Database {
+	return Sky_Config_Database_Postgres_V{V0: v0}
+}
+
+func init() {
+	rt.RegisterAdtTag("console_app.Sky_Config_Database", "Sqlite", 0)
+	rt.RegisterMsgVariant("Sky_Config_Database", "Sqlite", 0, 1)
+	rt.GobRegister(Sky_Config_Database_Sqlite_V{})
+	rt.RegisterAdtVariant("console_app.Sky_Config_Database", "Sqlite", func(raw []rt.JsonRawMessage) any {
+		var v0 string
+		if len(raw) >= 1 {
+			_ = rt.JsonUnmarshal(raw[0], &v0)
+		}
+		return Sky_Config_Database_Sqlite_V{V0: v0}
+	})
+	rt.RegisterAdtTag("console_app.Sky_Config_Database", "Postgres", 1)
+	rt.RegisterMsgVariant("Sky_Config_Database", "Postgres", 1, 1)
+	rt.GobRegister(Sky_Config_Database_Postgres_V{})
+	rt.RegisterAdtVariant("console_app.Sky_Config_Database", "Postgres", func(raw []rt.JsonRawMessage) any {
+		var v0 string
+		if len(raw) >= 1 {
+			_ = rt.JsonUnmarshal(raw[0], &v0)
+		}
+		return Sky_Config_Database_Postgres_V{V0: v0}
+	})
+}
+
+type Sky_Config_LogFormat = int
+
+const (
+	Sky_Config_LogFormat_Json Sky_Config_LogFormat = iota
+	Sky_Config_LogFormat_Text
+)
+
+func init() { rt.RegisterEnum("Sky_Config_LogFormat", []string{"Json", "Text"}) }
+
+type Sky_Config_LogLevel = int
+
+const (
+	Sky_Config_LogLevel_Debug Sky_Config_LogLevel = iota
+	Sky_Config_LogLevel_Info
+	Sky_Config_LogLevel_Warn
+	Sky_Config_LogLevel_Error
+)
+
+func init() { rt.RegisterEnum("Sky_Config_LogLevel", []string{"Debug", "Info", "Warn", "Error"}) }
+
+type Sky_Config_Telemetry interface {
+	SkyVariantTag() int
+	SkyVariantName() string
+}
+type Sky_Config_Telemetry_Otlp_V struct{ V0 string }
+
+func (Sky_Config_Telemetry_Otlp_V) SkyVariantTag() int     { return 0 }
+func (Sky_Config_Telemetry_Otlp_V) SkyVariantName() string { return "Otlp" }
+
+func Sky_Config_Telemetry_Otlp(v0 string) Sky_Config_Telemetry {
+	return Sky_Config_Telemetry_Otlp_V{V0: v0}
+}
+
+func init() {
+	rt.RegisterAdtTag("console_app.Sky_Config_Telemetry", "Otlp", 0)
+	rt.RegisterMsgVariant("Sky_Config_Telemetry", "Otlp", 0, 1)
+	rt.GobRegister(Sky_Config_Telemetry_Otlp_V{})
+	rt.RegisterAdtVariant("console_app.Sky_Config_Telemetry", "Otlp", func(raw []rt.JsonRawMessage) any {
+		var v0 string
+		if len(raw) >= 1 {
+			_ = rt.JsonUnmarshal(raw[0], &v0)
+		}
+		return Sky_Config_Telemetry_Otlp_V{V0: v0}
+	})
+}
+
 type Sky_Core_Error_Error = rt.SkyADT
 
 func Sky_Core_Error_Error_Error(v0 any, v1 any) Sky_Core_Error_Error {
@@ -115,16 +206,42 @@ func Sky_Core_Error_TypeInfo(p0 string, p1 string) Sky_Core_Error_TypeInfo_R {
 	return Sky_Core_Error_TypeInfo_R{Expected: p0, Actual: p1}
 }
 
-type Sky_Core_Http_HttpResponse_R struct {
-	Status  int               `sky:"status,int"`
-	Body    string            `sky:"body,string"`
-	Headers map[string]string `sky:"headers,map[string]string"`
-}
+type Sky_Core_Http_HttpResponse_R = rt.HttpResponse
 
 func init() { rt.RegisterGobType(Sky_Core_Http_HttpResponse_R{}) }
 
 func Sky_Core_Http_HttpResponse(p0 int, p1 string, p2 map[string]string) Sky_Core_Http_HttpResponse_R {
 	return Sky_Core_Http_HttpResponse_R{Status: p0, Body: p1, Headers: p2}
+}
+
+type Sky_Http_Server_Request_R struct {
+	Method     string            `sky:"method,string"`
+	Path       string            `sky:"path,string"`
+	Body       string            `sky:"body,string"`
+	Headers    map[string]string `sky:"headers,map[string]string"`
+	Params     map[string]string `sky:"params,map[string]string"`
+	Query      map[string]string `sky:"query,map[string]string"`
+	Cookies    map[string]string `sky:"cookies,map[string]string"`
+	RemoteAddr string            `sky:"remoteAddr,string"`
+}
+
+func init() { rt.RegisterGobType(Sky_Http_Server_Request_R{}) }
+
+func Sky_Http_Server_Request(p0 string, p1 string, p2 string, p3 map[string]string, p4 map[string]string, p5 map[string]string, p6 map[string]string, p7 string) Sky_Http_Server_Request_R {
+	return Sky_Http_Server_Request_R{Method: p0, Path: p1, Body: p2, Headers: p3, Params: p4, Query: p5, Cookies: p6, RemoteAddr: p7}
+}
+
+type Sky_Http_Server_Response_R struct {
+	Status      int               `sky:"status,int"`
+	Body        string            `sky:"body,string"`
+	Headers     map[string]string `sky:"headers,map[string]string"`
+	ContentType string            `sky:"contentType,string"`
+}
+
+func init() { rt.RegisterGobType(Sky_Http_Server_Response_R{}) }
+
+func Sky_Http_Server_Response(p0 int, p1 string, p2 map[string]string, p3 string) Sky_Http_Server_Response_R {
+	return Sky_Http_Server_Response_R{Status: p0, Body: p1, Headers: p2, ContentType: p3}
 }
 
 type State_AnalyticsEvent_R struct {
@@ -504,6 +621,198 @@ func init() { rt.RegisterGobType(State_TraceRow_R{}) }
 
 func State_TraceRow(p0 string, p1 string, p2 string, p3 string, p4 string, p5 string, p6 float64, p7 string) State_TraceRow_R {
 	return State_TraceRow_R{TraceId: p0, SpanId: p1, ParentId: p2, Name: p3, Kind: p4, StartTime: p5, DurationMs: p6, Status: p7}
+}
+
+type Std_Ai_Provider_Message_R struct {
+	Role    string `sky:"role,string"`
+	Content string `sky:"content,string"`
+}
+
+func init() { rt.RegisterGobType(Std_Ai_Provider_Message_R{}) }
+
+func Std_Ai_Provider_Message(p0 string, p1 string) Std_Ai_Provider_Message_R {
+	return Std_Ai_Provider_Message_R{Role: p0, Content: p1}
+}
+
+type Std_Ai_Provider_Request_R struct {
+	Model    string                      `sky:"model,string"`
+	Messages []Std_Ai_Provider_Message_R `sky:"messages,[]Std_Ai_Provider_Message_R"`
+}
+
+func init() { rt.RegisterGobType(Std_Ai_Provider_Request_R{}) }
+
+func Std_Ai_Provider_Request(p0 string, p1 []Std_Ai_Provider_Message_R) Std_Ai_Provider_Request_R {
+	return Std_Ai_Provider_Request_R{Model: p0, Messages: p1}
+}
+
+type Std_App_App = rt.SkyADT
+
+func Std_App_App_App(v0 any) Std_App_App {
+	return Std_App_App{Tag: 0, SkyName: "App", Fields: []any{v0}}
+}
+
+func init() {
+	rt.RegisterAdtTag("console_app.Std_App_App", "App", 0)
+	rt.RegisterMsgVariant("Std_App_App", "App", 0, 1)
+}
+
+type Std_App_BaseConfig_R struct {
+	LogFormat Sky_Config_LogFormat              `sky:"logFormat,Sky_Config_LogFormat"`
+	LogLevel  Sky_Config_LogLevel               `sky:"logLevel,Sky_Config_LogLevel"`
+	Database  rt.SkyMaybe[Sky_Config_Database]  `sky:"database,rt.SkyMaybe[Sky_Config_Database]"`
+	Telemetry rt.SkyMaybe[Sky_Config_Telemetry] `sky:"telemetry,rt.SkyMaybe[Sky_Config_Telemetry]"`
+}
+
+func init() { rt.RegisterGobType(Std_App_BaseConfig_R{}) }
+
+func Std_App_BaseConfig(p0 Sky_Config_LogFormat, p1 Sky_Config_LogLevel, p2 rt.SkyMaybe[Sky_Config_Database], p3 rt.SkyMaybe[Sky_Config_Telemetry]) Std_App_BaseConfig_R {
+	return Std_App_BaseConfig_R{LogFormat: p0, LogLevel: p1, Database: p2, Telemetry: p3}
+}
+
+type Std_App_Config = rt.SkyADT
+
+func Std_App_Config_WebConfig(v0 any) Std_App_Config {
+	return Std_App_Config{Tag: 0, SkyName: "WebConfig", Fields: []any{v0}}
+}
+
+func Std_App_Config_DesktopConfig(v0 any) Std_App_Config {
+	return Std_App_Config{Tag: 1, SkyName: "DesktopConfig", Fields: []any{v0}}
+}
+
+func Std_App_Config_TabletConfig(v0 any) Std_App_Config {
+	return Std_App_Config{Tag: 2, SkyName: "TabletConfig", Fields: []any{v0}}
+}
+
+func Std_App_Config_MobileConfig(v0 any) Std_App_Config {
+	return Std_App_Config{Tag: 3, SkyName: "MobileConfig", Fields: []any{v0}}
+}
+
+func Std_App_Config_TerminalConfig(v0 any) Std_App_Config {
+	return Std_App_Config{Tag: 4, SkyName: "TerminalConfig", Fields: []any{v0}}
+}
+
+func init() {
+	rt.RegisterAdtTag("console_app.Std_App_Config", "WebConfig", 0)
+	rt.RegisterMsgVariant("Std_App_Config", "WebConfig", 0, 1)
+	rt.RegisterAdtTag("console_app.Std_App_Config", "DesktopConfig", 1)
+	rt.RegisterMsgVariant("Std_App_Config", "DesktopConfig", 1, 1)
+	rt.RegisterAdtTag("console_app.Std_App_Config", "TabletConfig", 2)
+	rt.RegisterMsgVariant("Std_App_Config", "TabletConfig", 2, 1)
+	rt.RegisterAdtTag("console_app.Std_App_Config", "MobileConfig", 3)
+	rt.RegisterMsgVariant("Std_App_Config", "MobileConfig", 3, 1)
+	rt.RegisterAdtTag("console_app.Std_App_Config", "TerminalConfig", 4)
+	rt.RegisterMsgVariant("Std_App_Config", "TerminalConfig", 4, 1)
+}
+
+type Std_App_DesktopOpts_R struct {
+	Title  string `sky:"title,string"`
+	Width  int    `sky:"width,int"`
+	Height int    `sky:"height,int"`
+}
+
+func init() { rt.RegisterGobType(Std_App_DesktopOpts_R{}) }
+
+func Std_App_DesktopOpts(p0 string, p1 int, p2 int) Std_App_DesktopOpts_R {
+	return Std_App_DesktopOpts_R{Title: p0, Width: p1, Height: p2}
+}
+
+type Std_App_DurableWiring_R[T1 any] struct {
+	Enabled      bool
+	Setup        rt.SkyTask[Sky_Core_Error_Error, struct{}]
+	Restore      func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[T1]]
+	Persist      func(string, T1) rt.SkyTask[Sky_Core_Error_Error, struct{}]
+	ApplyRestore func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[T1]], T1) T1
+	RunId        string
+}
+
+func init() { rt.RegisterGobType(Std_App_DurableWiring_R[any]{}) }
+
+func Std_App_DurableWiring[T1 any](p0 bool, p1 rt.SkyTask[Sky_Core_Error_Error, struct{}], p2 func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[T1]], p3 func(string, T1) rt.SkyTask[Sky_Core_Error_Error, struct{}], p4 func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[T1]], T1) T1, p5 string) Std_App_DurableWiring_R[T1] {
+	return Std_App_DurableWiring_R[T1]{Enabled: p0, Setup: p1, Restore: p2, Persist: p3, ApplyRestore: p4, RunId: p5}
+}
+
+type Std_App_MobileOpts_R struct {
+	BundleId string `sky:"bundleId,string"`
+}
+
+func init() { rt.RegisterGobType(Std_App_MobileOpts_R{}) }
+
+func Std_App_MobileOpts(p0 string) Std_App_MobileOpts_R { return Std_App_MobileOpts_R{BundleId: p0} }
+
+type Std_App_Route = rt.SkyADT
+
+func Std_App_Route_RouteStatic(v0 any, v1 any) Std_App_Route {
+	return Std_App_Route{Tag: 0, SkyName: "RouteStatic", Fields: []any{v0, v1}}
+}
+
+func Std_App_Route_RouteParam(v0 any, v1 any) Std_App_Route {
+	return Std_App_Route{Tag: 1, SkyName: "RouteParam", Fields: []any{v0, v1}}
+}
+
+func Std_App_Route_RouteApi(v0 any, v1 any) Std_App_Route {
+	return Std_App_Route{Tag: 2, SkyName: "RouteApi", Fields: []any{v0, v1}}
+}
+
+func init() {
+	rt.RegisterAdtTag("console_app.Std_App_Route", "RouteStatic", 0)
+	rt.RegisterMsgVariant("Std_App_Route", "RouteStatic", 0, 2)
+	rt.RegisterAdtTag("console_app.Std_App_Route", "RouteParam", 1)
+	rt.RegisterMsgVariant("Std_App_Route", "RouteParam", 1, 2)
+	rt.RegisterAdtTag("console_app.Std_App_Route", "RouteApi", 2)
+	rt.RegisterMsgVariant("Std_App_Route", "RouteApi", 2, 2)
+}
+
+type Std_App_TerminalOpts_R struct {
+	CanvasWidth  int `sky:"canvasWidth,int"`
+	CanvasHeight int `sky:"canvasHeight,int"`
+}
+
+func init() { rt.RegisterGobType(Std_App_TerminalOpts_R{}) }
+
+func Std_App_TerminalOpts(p0 int, p1 int) Std_App_TerminalOpts_R {
+	return Std_App_TerminalOpts_R{CanvasWidth: p0, CanvasHeight: p1}
+}
+
+type Std_App_ViewImpl = rt.SkyADT
+
+func Std_App_ViewImpl_ViewUi(v0 any) Std_App_ViewImpl {
+	return Std_App_ViewImpl{Tag: 0, SkyName: "ViewUi", Fields: []any{v0}}
+}
+
+func Std_App_ViewImpl_ViewHtml(v0 any) Std_App_ViewImpl {
+	return Std_App_ViewImpl{Tag: 1, SkyName: "ViewHtml", Fields: []any{v0}}
+}
+
+func Std_App_ViewImpl_ViewString(v0 any) Std_App_ViewImpl {
+	return Std_App_ViewImpl{Tag: 2, SkyName: "ViewString", Fields: []any{v0}}
+}
+
+func init() {
+	rt.RegisterAdtTag("console_app.Std_App_ViewImpl", "ViewUi", 0)
+	rt.RegisterMsgVariant("Std_App_ViewImpl", "ViewUi", 0, 1)
+	rt.RegisterAdtTag("console_app.Std_App_ViewImpl", "ViewHtml", 1)
+	rt.RegisterMsgVariant("Std_App_ViewImpl", "ViewHtml", 1, 1)
+	rt.RegisterAdtTag("console_app.Std_App_ViewImpl", "ViewString", 2)
+	rt.RegisterMsgVariant("Std_App_ViewImpl", "ViewString", 2, 1)
+}
+
+type Std_App_WebOpts_R struct {
+	Port         int                                   `sky:"port,int"`
+	Store        rt.SkyMaybe[string]                   `sky:"store,rt.SkyMaybe[string]"`
+	Static       rt.SkyMaybe[string]                   `sky:"static,rt.SkyMaybe[string]"`
+	StaticUrl    rt.SkyMaybe[string]                   `sky:"staticUrl,rt.SkyMaybe[string]"`
+	Ttl          rt.SkyMaybe[string]                   `sky:"ttl,rt.SkyMaybe[string]"`
+	IdleEvict    rt.SkyMaybe[string]                   `sky:"idleEvict,rt.SkyMaybe[string]"`
+	MaxBodyBytes rt.SkyMaybe[int]                      `sky:"maxBodyBytes,rt.SkyMaybe[int]"`
+	InputMode    rt.SkyMaybe[string]                   `sky:"inputMode,rt.SkyMaybe[string]"`
+	Analytics    rt.SkyMaybe[struct{ PageViews bool }] `sky:"analytics,rt.SkyMaybe[struct{ PageViews bool }]"`
+	Csrf         bool                                  `sky:"csrf,bool"`
+}
+
+func init() { rt.RegisterGobType(Std_App_WebOpts_R{}) }
+
+func Std_App_WebOpts(p0 int, p1 rt.SkyMaybe[string], p2 rt.SkyMaybe[string], p3 rt.SkyMaybe[string], p4 rt.SkyMaybe[string], p5 rt.SkyMaybe[string], p6 rt.SkyMaybe[int], p7 rt.SkyMaybe[string], p8 rt.SkyMaybe[struct{ PageViews bool }], p9 bool) Std_App_WebOpts_R {
+	return Std_App_WebOpts_R{Port: p0, Store: p1, Static: p2, StaticUrl: p3, Ttl: p4, IdleEvict: p5, MaxBodyBytes: p6, InputMode: p7, Analytics: p8, Csrf: p9}
 }
 
 type Std_Html_Attributes_Attribute = rt.SkyADT
@@ -1088,6 +1397,20 @@ func Std_Ui_MarkerFlags(p0 bool, p1 bool, p2 bool, p3 bool, p4 bool, p5 bool) St
 	return Std_Ui_MarkerFlags_R{Row: p0, Col: p1, Paragraph: p2, Textcolumn: p3, Grid: p4, Wrap: p5}
 }
 
+type Std_Ui_Nesting_R struct {
+	Phrasing  bool `sky:"phrasing,bool"`
+	InLink    bool `sky:"inLink,bool"`
+	InButton  bool `sky:"inButton,bool"`
+	InForm    bool `sky:"inForm,bool"`
+	InHeading bool `sky:"inHeading,bool"`
+}
+
+func init() { rt.RegisterGobType(Std_Ui_Nesting_R{}) }
+
+func Std_Ui_Nesting(p0 bool, p1 bool, p2 bool, p3 bool, p4 bool) Std_Ui_Nesting_R {
+	return Std_Ui_Nesting_R{Phrasing: p0, InLink: p1, InButton: p2, InForm: p3, InHeading: p4}
+}
+
 type Std_Ui_PseudoClass = int
 
 const (
@@ -1113,6 +1436,82 @@ const (
 func init() { rt.RegisterEnum("Std_Ui_VAlign", []string{"AlignTop", "CenterY", "AlignBottom"}) }
 
 // SKY-ORIGIN: entry
+
+var Main_appDef__caf rt.LazyCaf[Std_App_App]
+
+func Main_appDef() Std_App_App {
+	return Main_appDef__caf.Get(func() Std_App_App {
+		return Std_App_withConfig(Std_App_Config_WebConfig(func() Std_App_WebOpts_R { _u := Std_App_webDefaults(); _u.Port = 8025; return _u }()), Std_App_withNotFound(struct{}{}, Std_App_withRoutes([]Std_App_Route{Std_App_route("/", struct{}{})}, Std_App_web( /* primitive join */ func(_s any) struct {
+			Init          func(any) rt.T2[any, any]
+			Subscriptions func(any) any
+			Update        func(any, any) rt.T2[any, any]
+			View          func(any) Std_Html_Html
+		} {
+			if _m, _ok := _s.(struct {
+				Init          any
+				Subscriptions any
+				Update        any
+				View          any
+			}); _ok {
+				return struct {
+					Init          func(any) rt.T2[any, any]
+					Subscriptions func(any) any
+					Update        func(any, any) rt.T2[any, any]
+					View          func(any) Std_Html_Html
+				}{Init: func() func(any) rt.T2[any, any] {
+					_s := any(_m.Init)
+					if _f, _ok := _s.(func(any) rt.T2[any, any]); _ok {
+						return _f
+					}
+					if _g, _ok := _s.(func(any) any); _ok {
+						return func(_a0 any) rt.T2[any, any] { return rt.Coerce[rt.T2[any, any]](_g(any(_a0))) }
+					}
+					return rt.CoerceFuncSlot[func(any) rt.T2[any, any]](_s)
+				}(), Subscriptions: func() func(any) any {
+					_s := any(_m.Subscriptions)
+					if _f, _ok := _s.(func(any) any); _ok {
+						return _f
+					}
+					if _g, _ok := _s.(func(any) any); _ok {
+						return func(_a0 any) any { return rt.Coerce[any](_g(any(_a0))) }
+					}
+					return rt.CoerceFuncSlot[func(any) any](_s)
+				}(), Update: func() func(any, any) rt.T2[any, any] {
+					_s := any(_m.Update)
+					if _f, _ok := _s.(func(any, any) rt.T2[any, any]); _ok {
+						return _f
+					}
+					if _c, _ok := _s.(func(any) any); _ok {
+						return func(_a0 any, _a1 any) rt.T2[any, any] {
+							return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+						}
+					}
+					return rt.CoerceFuncSlot[func(any, any) rt.T2[any, any]](_s)
+				}(), View: func() func(any) Std_Html_Html {
+					_s := any(_m.View)
+					if _f, _ok := _s.(func(any) Std_Html_Html); _ok {
+						return _f
+					}
+					if _g, _ok := _s.(func(any) any); _ok {
+						return func(_a0 any) Std_Html_Html { return rt.Coerce[Std_Html_Html](_g(any(_a0))) }
+					}
+					return rt.CoerceFuncSlot[func(any) Std_Html_Html](_s)
+				}()}
+			}
+			return rt.Coerce[struct {
+				Init          func(any) rt.T2[any, any]
+				Subscriptions func(any) any
+				Update        func(any, any) rt.T2[any, any]
+				View          func(any) Std_Html_Html
+			}](_s)
+		}(struct {
+			Init          any
+			Subscriptions any
+			Update        any
+			View          any
+		}{Init: Main_init_, Update: Main_update, View: Main_viewWrapped, Subscriptions: Main_subscriptions})))))
+	})
+}
 
 func Main_subscriptions(v_0 State_Model_R) any {
 	return func() any {
@@ -1142,7 +1541,7 @@ func Main_hasStoreSource(v_0 State_Model_R) bool {
 	return ((v_0.ParentUrl != "") || (v_0.HubDbPath != ""))
 }
 
-func Main_viewWrapped(v_0 State_Model_R) any {
+func Main_viewWrapped(v_0 State_Model_R) Std_Html_Html {
 	return Std_Ui_layout([]Std_Ui_Attribute{}, View_view(v_0))
 }
 
@@ -2159,15 +2558,24 @@ func Std_Ui_input(v_0 []Std_Ui_Attribute) Std_Ui_Element {
 }
 
 func View_distinctTraceIds(v_0 []State_TraceRow_R) []string {
-	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ rt.Coerce[func(any, any) any](func(v_1 any, v_2 []string) []string {
-		return func() []string {
-			if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
-				return v_2
-			} else {
-				return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
-			}
-		}()
-	}), []string{} /* primitive join */, rt.AsListT[any](v_0)))
+	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ func() func(any, any) any {
+		_s := any(func(v_1 any, v_2 []string) []string {
+			return func() []string {
+				if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
+					return v_2
+				} else {
+					return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
+				}
+			}()
+		})
+		if _f, _ok := _s.(func(any, any) any); _ok {
+			return _f
+		}
+		if _c, _ok := _s.(func(any) any); _ok {
+			return func(_a0 any, _a1 any) any { return rt.Coerce[any]((_c(any(_a0))).(func(any) any)(any(_a1))) }
+		}
+		return rt.CoerceFuncSlot[func(any, any) any](_s)
+	}(), []string{} /* primitive join */, rt.AsListT[any](v_0)))
 }
 
 func Sky_Core_List_member(v_0 any, v_1 []any) bool {
@@ -2496,15 +2904,24 @@ func TracesTab_bgRaised() Std_Ui_Color {
 }
 
 func TracesTab_distinctTraceIds(v_0 []State_TraceRow_R) []string {
-	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ rt.Coerce[func(any, any) any](func(v_1 any, v_2 []string) []string {
-		return func() []string {
-			if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
-				return v_2
-			} else {
-				return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
-			}
-		}()
-	}), []string{} /* primitive join */, rt.AsListT[any](v_0)))
+	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ func() func(any, any) any {
+		_s := any(func(v_1 any, v_2 []string) []string {
+			return func() []string {
+				if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
+					return v_2
+				} else {
+					return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
+				}
+			}()
+		})
+		if _f, _ok := _s.(func(any, any) any); _ok {
+			return _f
+		}
+		if _c, _ok := _s.(func(any) any); _ok {
+			return func(_a0 any, _a1 any) any { return rt.Coerce[any]((_c(any(_a0))).(func(any) any)(any(_a1))) }
+		}
+		return rt.CoerceFuncSlot[func(any, any) any](_s)
+	}(), []string{} /* primitive join */, rt.AsListT[any](v_0)))
 }
 
 func TracesTab_tracesFilterPanel(v_0 string) Std_Ui_Element {
@@ -3383,8 +3800,10 @@ func Std_Ui_Chart_line(v_0 Std_Ui_Chart_Cfg_R, v_1 []Std_Ui_Chart_Series_R) Std_
 		_ = xR_2
 		yR_3 := Std_Ui_Chart_effectiveYRange(v_0, v_1)
 		_ = yR_3
-		seriesPaths_4 := /* FFI return */ rt.AsListT[Std_Html_Html](rt.List_concatMap(any(func(_p0 any) []Std_Html_Html {
-			return Std_Ui_Chart_lineOne(v_0, xR_2, yR_3 /* FFI return */, rt.Coerce[Std_Ui_Chart_Series_R](_p0))
+		seriesPaths_4 := /* FFI return */ rt.AsListT[Std_Html_Html](rt.List_concatMap(any(func(_w1 any) any {
+			return any(func(_p0 any) []Std_Html_Html {
+				return Std_Ui_Chart_lineOne(v_0, xR_2, yR_3 /* FFI return */, rt.Coerce[Std_Ui_Chart_Series_R](_p0))
+			}(_w1))
 		}), any(v_1)))
 		_ = seriesPaths_4
 		baseChildren_5 := rt.List_appendT[Std_Html_Html](Std_Ui_Chart_gridLines(v_0), rt.List_appendT[Std_Html_Html](Std_Ui_Chart_axesNodes(v_0), seriesPaths_4))
@@ -4675,105 +5094,129 @@ func Std_Ui_layoutWith(v_0 struct {
 		_ = wrapperStyle_4
 		wrapperHtmlAttrs_5 := /* primitive join */ rt.AsListT[Std_Html_Attributes_Attribute](Std_Ui_collectHtmlAttrs(v_0.WrapperAttrs))
 		_ = wrapperHtmlAttrs_5
-		return Std_Html_div( /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(wrapperStyle_4)), any(wrapperHtmlAttrs_5))), []Std_Html_Html{Std_Html_node("style", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")}), Std_Ui_renderElement(Std_Ui_LayoutContext_AsColumn, v_0.RootAttrs, v_1)})
+		return Std_Html_div( /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(wrapperStyle_4)), any(wrapperHtmlAttrs_5))), []Std_Html_Html{Std_Html_node("style", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text("html,body{min-height:100%;margin:0;padding:0}")}) /* FFI return */, rt.Coerce[Std_Html_Html](Std_Ui_renderElement(Std_Ui_LayoutContext_AsColumn, v_0.RootAttrs, v_1))})
 	}()
 }
 
 func Std_Ui_renderElement(v_0 Std_Ui_LayoutContext, v_1 []Std_Ui_Attribute, v_2 Std_Ui_Element) Std_Html_Html {
+	return Std_Ui_renderElementIn(Std_Ui_topNesting(), v_0, v_1, v_2)
+}
+
+var Std_Ui_topNesting__caf rt.LazyCaf[Std_Ui_Nesting_R]
+
+func Std_Ui_topNesting() Std_Ui_Nesting_R {
+	return Std_Ui_topNesting__caf.Get(func() Std_Ui_Nesting_R {
+		return Std_Ui_Nesting_R{Phrasing: false, InLink: false, InButton: false, InForm: false, InHeading: false}
+	})
+}
+
+func Std_Ui_renderElementIn(v_0 Std_Ui_Nesting_R, v_1 Std_Ui_LayoutContext, v_2 []Std_Ui_Attribute, v_3 Std_Ui_Element) Std_Html_Html {
 	return func() Std_Html_Html {
-		_subj := v_2
+		_subj := v_3
 		if _subj.Tag == 0 {
 			return Std_Html_text("")
 		}
 		if _subj.Tag == 1 {
-			v_3 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_3
-			return Std_Html_text(v_3)
+			v_4 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_4
+			return Std_Html_text(v_4)
 		}
 		if _subj.Tag == 2 {
-			v_4 := /* generic erase */ rt.Coerce[Std_Ui_Description](_subj.Fields[0])
-			v_5 := /* generic erase */ rt.AsListT[Std_Ui_Attribute](_subj.Fields[1])
-			v_6 := /* generic erase */ rt.AsListT[Std_Ui_Element](_subj.Fields[2])
-			_ = v_4
+			v_5 := /* generic erase */ rt.Coerce[Std_Ui_Description](_subj.Fields[0])
+			v_6 := /* generic erase */ rt.AsListT[Std_Ui_Attribute](_subj.Fields[1])
+			v_7 := /* generic erase */ rt.AsListT[Std_Ui_Element](_subj.Fields[2])
 			_ = v_5
 			_ = v_6
+			_ = v_7
 			return func() Std_Html_Html {
-				chosenTag_7 := Std_Ui_pickSemanticTag(Std_Ui_defaultTagIn(v_0), v_5)
-				_ = chosenTag_7
-				return Std_Ui_renderNodeAs(chosenTag_7, v_0, v_1, v_5, v_6)
+				chosenTag_8 := Std_Ui_pickSemanticTag(Std_Ui_defaultTagIn(v_1), v_6)
+				_ = chosenTag_8
+				return Std_Ui_renderNodeAs(chosenTag_8, v_0, v_1, v_2, v_6, v_7)
 			}()
 		}
 		if _subj.Tag == 3 {
-			v_8 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			v_9 := /* generic erase */ rt.Coerce[Std_Ui_Description](_subj.Fields[1])
-			v_10 := /* generic erase */ rt.AsListT[Std_Ui_Attribute](_subj.Fields[2])
-			v_11 := /* generic erase */ rt.AsListT[Std_Ui_Element](_subj.Fields[3])
-			_ = v_8
+			v_9 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			v_10 := /* generic erase */ rt.Coerce[Std_Ui_Description](_subj.Fields[1])
+			v_11 := /* generic erase */ rt.AsListT[Std_Ui_Attribute](_subj.Fields[2])
+			v_12 := /* generic erase */ rt.AsListT[Std_Ui_Element](_subj.Fields[3])
 			_ = v_9
 			_ = v_10
 			_ = v_11
-			return Std_Ui_renderNodeAs(v_8, v_0, v_1, v_10, v_11)
+			_ = v_12
+			return Std_Ui_renderNodeAs(v_9, v_0, v_1, v_2, v_11, v_12)
 		}
 		if _subj.Tag == 4 {
-			v_12 := /* generic erase */ rt.Coerce[Std_Html_Html](_subj.Fields[0])
-			_ = v_12
-			return v_12
+			v_13 := /* generic erase */ rt.Coerce[Std_Html_Html](_subj.Fields[0])
+			_ = v_13
+			return v_13
 		}
 		panic(rt.Unreachable("case"))
 	}()
 }
 
-func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_LayoutContext, v_2 []Std_Ui_Attribute, v_3 []Std_Ui_Attribute, v_4 []Std_Ui_Element) Std_Html_Html {
+func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_Nesting_R, v_2 Std_Ui_LayoutContext, v_3 []Std_Ui_Attribute, v_4 []Std_Ui_Attribute, v_5 []Std_Ui_Element) Std_Html_Html {
 	return func() Std_Html_Html {
-		allAttrs_5 := rt.List_appendT[Std_Ui_Attribute](v_2, v_3)
-		_ = allAttrs_5
-		layoutFlags_6 := Std_Ui_markerFlags(allAttrs_5)
-		_ = layoutFlags_6
-		renderCtx_7 := Std_Ui_layoutContextFromFlags(layoutFlags_6)
-		_ = renderCtx_7
-		propagatedAttrs_8 := Std_Ui_propagateFillToContainer(renderCtx_7, allAttrs_5, v_4)
-		_ = propagatedAttrs_8
-		styleFlags_9 := Std_Ui_markerFlags(propagatedAttrs_8)
-		_ = styleFlags_9
-		nearbyChildren_10 := Std_Ui_collectNearby(propagatedAttrs_8)
-		_ = nearbyChildren_10
-		positionPrefix_11 := func() string {
-			if rt.List_isEmptyT[rt.T2[Std_Ui_Location, Std_Ui_Element]](nearbyChildren_10) {
+		tag_6 := Std_Ui_parserSafeTag(v_1, v_0)
+		_ = tag_6
+		childNest_7 := Std_Ui_nestingInside(v_1, tag_6)
+		_ = childNest_7
+		keptRole_8 := Std_Ui_keptRoleAttrs(v_0, tag_6)
+		_ = keptRole_8
+		allAttrs_9 := func() []Std_Ui_Attribute {
+			if rt.List_isEmptyT[Std_Ui_Attribute](v_3) {
+				return v_4
+			} else {
+				return rt.List_appendT[Std_Ui_Attribute](v_3, v_4)
+			}
+		}()
+		_ = allAttrs_9
+		layoutFlags_10 := Std_Ui_markerFlags(allAttrs_9)
+		_ = layoutFlags_10
+		renderCtx_11 := Std_Ui_layoutContextFromFlags(layoutFlags_10)
+		_ = renderCtx_11
+		propagatedAttrs_12 := Std_Ui_propagateFillToContainer(renderCtx_11, allAttrs_9, v_5)
+		_ = propagatedAttrs_12
+		styleFlags_13 := Std_Ui_markerFlags(propagatedAttrs_12)
+		_ = styleFlags_13
+		nearbyChildren_14 := Std_Ui_collectNearby(propagatedAttrs_12)
+		_ = nearbyChildren_14
+		positionPrefix_15 := func() string {
+			if rt.List_isEmptyT[rt.T2[Std_Ui_Location, Std_Ui_Element]](nearbyChildren_14) {
 				return ""
 			} else {
 				return "position: relative; "
 			}
 		}()
-		_ = positionPrefix_11
-		isReplaced_12 := ((v_0 == "img") || (v_0 == "input"))
-		_ = isReplaced_12
-		styleStr_13 := (positionPrefix_11 + Std_Ui_buildStyleStringWith(styleFlags_9 /* FFI return */, rt.AsBool(rt.Basics_not(any(isReplaced_12))), v_1, renderCtx_7, propagatedAttrs_8))
-		_ = styleStr_13
-		htmlAttrs_14 := /* primitive join */ rt.AsListT[Std_Html_Attributes_Attribute](Std_Ui_collectHtmlAttrs(propagatedAttrs_8))
-		_ = htmlAttrs_14
-		pseudoEntries_15 := Std_Ui_collectPseudoRules(propagatedAttrs_8)
-		_ = pseudoEntries_15
-		pseudoAttrs_16 := func() []Std_Html_Attributes_Attribute {
-			if rt.List_isEmptyT[rt.T2[string, string]](pseudoEntries_15) {
+		_ = positionPrefix_15
+		isReplaced_16 := ((tag_6 == "img") || (tag_6 == "input"))
+		_ = isReplaced_16
+		styleStr_17 := (positionPrefix_15 + Std_Ui_buildStyleStringWith(styleFlags_13 /* FFI return */, rt.AsBool(rt.Basics_not(any(isReplaced_16))), v_2, renderCtx_11, propagatedAttrs_12))
+		_ = styleStr_17
+		htmlAttrs_18 := /* primitive join */ rt.AsListT[Std_Html_Attributes_Attribute](Std_Ui_collectHtmlAttrs(propagatedAttrs_12))
+		_ = htmlAttrs_18
+		pseudoEntries_19 := Std_Ui_collectPseudoRules(propagatedAttrs_12)
+		_ = pseudoEntries_19
+		pseudoAttrs_20 := func() []Std_Html_Attributes_Attribute {
+			if rt.List_isEmptyT[rt.T2[string, string]](pseudoEntries_19) {
 				return []Std_Html_Attributes_Attribute{}
 			} else {
-				return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("data-sky-pc-rules", Std_Ui_encodePseudoRules(pseudoEntries_15))}
+				return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("data-sky-pc-rules", Std_Ui_encodePseudoRules(pseudoEntries_19))}
 			}
 		}()
-		_ = pseudoAttrs_16
-		transitionPair_17 := Std_Ui_collectTransitions(propagatedAttrs_8)
-		_ = transitionPair_17
-		transitionAttrs_18 := func() []Std_Html_Attributes_Attribute {
-			_subj := transitionPair_17
+		_ = pseudoAttrs_20
+		transitionPair_21 := Std_Ui_collectTransitions(propagatedAttrs_12)
+		_ = transitionPair_21
+		transitionAttrs_22 := func() []Std_Html_Attributes_Attribute {
+			_subj := transitionPair_21
 			if _subj.V0 == "" {
 				return []Std_Html_Attributes_Attribute{}
 			}
-			v_25 := _subj.V0
-			v_26 := _subj.V1
-			_ = v_25
-			_ = v_26
-			return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("data-sky-tr-rules", v_25), Std_Html_Attributes_attribute("data-sky-tr-respect", func() string {
-				if v_26 {
+			v_30 := _subj.V0
+			v_31 := _subj.V1
+			_ = v_30
+			_ = v_31
+			return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("data-sky-tr-rules", v_30), Std_Html_Attributes_attribute("data-sky-tr-respect", func() string {
+				if v_31 {
 					return "0"
 				} else {
 					return "1"
@@ -4781,30 +5224,54 @@ func Std_Ui_renderNodeAs(v_0 string, v_1 Std_Ui_LayoutContext, v_2 []Std_Ui_Attr
 			}())}
 			panic(rt.Unreachable("case"))
 		}()
-		_ = transitionAttrs_18
-		animationEntries_19 := Std_Ui_collectAnimations(propagatedAttrs_8)
-		_ = animationEntries_19
-		animationAttrs_20 := func() []Std_Html_Attributes_Attribute {
-			if rt.List_isEmptyT[Std_Ui_AnimationEntry](animationEntries_19) {
+		_ = transitionAttrs_22
+		animationEntries_23 := Std_Ui_collectAnimations(propagatedAttrs_12)
+		_ = animationEntries_23
+		animationAttrs_24 := func() []Std_Html_Attributes_Attribute {
+			if rt.List_isEmptyT[Std_Ui_AnimationEntry](animationEntries_23) {
 				return []Std_Html_Attributes_Attribute{}
 			} else {
-				return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("data-sky-anim-rules", Std_Ui_encodeAnimations(animationEntries_19))}
+				return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("data-sky-anim-rules", Std_Ui_encodeAnimations(animationEntries_23))}
 			}
 		}()
-		_ = animationAttrs_20
-		renderedMain_21 := rt.List_mapT[Std_Ui_Element, Std_Html_Html](func(_e1 Std_Ui_Element) Std_Html_Html {
+		_ = animationAttrs_24
+		renderedMain_25 := rt.List_mapT[Std_Ui_Element, Std_Html_Html](func(_e1 Std_Ui_Element) Std_Html_Html {
 			_p0 := _e1
 			_ = _p0
-			return Std_Ui_renderElement(renderCtx_7, []Std_Ui_Attribute{} /* FFI return */, rt.Coerce[Std_Ui_Element](_p0))
-		}, v_4)
-		_ = renderedMain_21
-		renderedNearby_22 := rt.List_mapT[rt.T2[Std_Ui_Location, Std_Ui_Element], Std_Html_Html](Std_Ui_renderNearby, nearbyChildren_10)
-		_ = renderedNearby_22
-		renderedChildren_23 := rt.List_appendT[Std_Html_Html](renderedMain_21, renderedNearby_22)
-		_ = renderedChildren_23
-		attrList_24 := /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(styleStr_13)), any(rt.List_appendT[Std_Html_Attributes_Attribute](pseudoAttrs_16, rt.List_appendT[Std_Html_Attributes_Attribute](transitionAttrs_18, rt.List_appendT[Std_Html_Attributes_Attribute](animationAttrs_20, htmlAttrs_14))))))
-		_ = attrList_24
-		return Std_Ui_dispatchTag(v_0, attrList_24, renderedChildren_23)
+			return Std_Ui_renderElementIn(childNest_7, renderCtx_11, []Std_Ui_Attribute{} /* FFI return */, rt.Coerce[Std_Ui_Element](_p0))
+		}, v_5)
+		_ = renderedMain_25
+		renderedNearby_26 := rt.List_mapT[rt.T2[Std_Ui_Location, Std_Ui_Element], Std_Html_Html](func(_e3 rt.T2[Std_Ui_Location, Std_Ui_Element]) Std_Html_Html {
+			_p2 := _e3
+			_ = _p2
+			return Std_Ui_renderNearby(childNest_7 /* FFI return */, rt.Coerce[rt.T2[Std_Ui_Location, Std_Ui_Element]](_p2))
+		}, nearbyChildren_14)
+		_ = renderedNearby_26
+		renderedChildren_27 := func() []Std_Html_Html {
+			if rt.List_isEmptyT[Std_Html_Html](renderedNearby_26) {
+				return renderedMain_25
+			} else {
+				return rt.List_appendT[Std_Html_Html](renderedMain_25, renderedNearby_26)
+			}
+		}()
+		_ = renderedChildren_27
+		tailAttrs_28 := func() []Std_Html_Attributes_Attribute {
+			if rt.List_isEmptyT[Std_Html_Attributes_Attribute](pseudoAttrs_20) && (rt.List_isEmptyT[Std_Html_Attributes_Attribute](transitionAttrs_22) && rt.List_isEmptyT[Std_Html_Attributes_Attribute](animationAttrs_24)) {
+				return htmlAttrs_18
+			} else {
+				return rt.List_appendT[Std_Html_Attributes_Attribute](pseudoAttrs_20, rt.List_appendT[Std_Html_Attributes_Attribute](transitionAttrs_22, rt.List_appendT[Std_Html_Attributes_Attribute](animationAttrs_24, htmlAttrs_18)))
+			}
+		}()
+		_ = tailAttrs_28
+		attrList_29 := func() []Std_Html_Attributes_Attribute {
+			if rt.List_isEmptyT[Std_Html_Attributes_Attribute](keptRole_8) {
+				return /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(styleStr_17)), any(tailAttrs_28)))
+			} else {
+				return /* FFI return */ rt.AsListT[Std_Html_Attributes_Attribute](rt.List_cons(any(Std_Html_Attributes_style(styleStr_17)), any(rt.List_appendT[Std_Html_Attributes_Attribute](keptRole_8, tailAttrs_28))))
+			}
+		}()
+		_ = attrList_29
+		return Std_Ui_dispatchTag(tag_6, attrList_29, renderedChildren_27)
 	}()
 }
 
@@ -5026,16 +5493,100 @@ func Std_Html_a(v_0 []Std_Html_Attributes_Attribute, v_1 []Std_Html_Html) Std_Ht
 	return Std_Html_Html_HElement("a", v_0, v_1)
 }
 
-func Std_Ui_renderNearby(_t0 rt.T2[Std_Ui_Location, Std_Ui_Element]) Std_Html_Html {
-	v_0 := _t0.V0
-	v_1 := _t0.V1
+func Std_Ui_renderNearby(v_0 Std_Ui_Nesting_R, _t0 rt.T2[Std_Ui_Location, Std_Ui_Element]) Std_Html_Html {
+	v_1 := _t0.V0
+	v_2 := _t0.V1
 	return func() Std_Html_Html {
-		positionStyle_2 := ("position: absolute; display: flex; " + Std_Ui_locationCss(v_0))
-		_ = positionStyle_2
-		rendered_3 := Std_Ui_renderElement(Std_Ui_LayoutContext_AsEl, []Std_Ui_Attribute{}, v_1)
-		_ = rendered_3
-		return Std_Html_div([]Std_Html_Attributes_Attribute{Std_Html_Attributes_style(positionStyle_2)}, []Std_Html_Html{rendered_3})
+		positionStyle_3 := ("position: absolute; display: flex; " + Std_Ui_locationCss(v_1))
+		_ = positionStyle_3
+		wrapperTag_4 := Std_Ui_parserSafeTag(v_0, "div")
+		_ = wrapperTag_4
+		rendered_5 := Std_Ui_renderElementIn(Std_Ui_nestingInside(v_0, wrapperTag_4), Std_Ui_LayoutContext_AsEl, []Std_Ui_Attribute{}, v_2)
+		_ = rendered_5
+		return Std_Ui_dispatchTag(wrapperTag_4, []Std_Html_Attributes_Attribute{Std_Html_Attributes_style(positionStyle_3)}, []Std_Html_Html{rendered_5})
 	}()
+}
+
+func Std_Ui_nestingInside(v_0 Std_Ui_Nesting_R, v_1 string) Std_Ui_Nesting_R {
+	return func() Std_Ui_Nesting_R {
+		if v_1 == "p" {
+			return func() Std_Ui_Nesting_R { _u := v_0; _u.Phrasing = true; _u.InHeading = false; return _u }()
+		} else {
+			return func() Std_Ui_Nesting_R {
+				if v_1 == "a" {
+					return func() Std_Ui_Nesting_R { _u := v_0; _u.InLink = true; _u.InHeading = false; return _u }()
+				} else {
+					return func() Std_Ui_Nesting_R {
+						if v_1 == "button" {
+							return func() Std_Ui_Nesting_R { _u := v_0; _u.InButton = true; _u.InHeading = false; return _u }()
+						} else {
+							return func() Std_Ui_Nesting_R {
+								if v_1 == "form" {
+									return func() Std_Ui_Nesting_R { _u := v_0; _u.InForm = true; _u.InHeading = false; return _u }()
+								} else {
+									return func() Std_Ui_Nesting_R {
+										if Std_Ui_isHeadingTag(v_1) {
+											return func() Std_Ui_Nesting_R { _u := v_0; _u.InHeading = true; return _u }()
+										} else {
+											return func() Std_Ui_Nesting_R {
+												if v_0.InHeading {
+													return func() Std_Ui_Nesting_R { _u := v_0; _u.InHeading = false; return _u }()
+												} else {
+													return v_0
+												}
+											}()
+										}
+									}()
+								}
+							}()
+						}
+					}()
+				}
+			}()
+		}
+	}()
+}
+
+func Std_Ui_isHeadingTag(v_0 string) bool {
+	return ((v_0 == "h1") || ((v_0 == "h2") || ((v_0 == "h3") || ((v_0 == "h4") || ((v_0 == "h5") || (v_0 == "h6"))))))
+}
+
+func Std_Ui_parserSafeTag(v_0 Std_Ui_Nesting_R, v_1 string) string {
+	return func() string {
+		if v_0.Phrasing && Std_Ui_isFlowOnlyTag(v_1) {
+			return "span"
+		} else {
+			return func() string {
+				if v_0.InLink && (v_1 == "a") {
+					return "span"
+				} else {
+					return func() string {
+						if v_0.InButton && (v_1 == "button") {
+							return "span"
+						} else {
+							return func() string {
+								if v_0.InForm && (v_1 == "form") {
+									return "div"
+								} else {
+									return func() string {
+										if v_0.InHeading && Std_Ui_isHeadingTag(v_1) {
+											return "div"
+										} else {
+											return v_1
+										}
+									}()
+								}
+							}()
+						}
+					}()
+				}
+			}()
+		}
+	}()
+}
+
+func Std_Ui_isFlowOnlyTag(v_0 string) bool {
+	return ((v_0 == "div") || ((v_0 == "p") || (Std_Ui_isHeadingTag(v_0) || ((v_0 == "section") || ((v_0 == "form") || ((v_0 == "main") || ((v_0 == "nav") || ((v_0 == "footer") || ((v_0 == "header") || (v_0 == "aside"))))))))))
 }
 
 func Std_Ui_locationCss(v_0 Std_Ui_Location) string {
@@ -5124,9 +5675,14 @@ func Std_Ui_collectTransitions(v_0 []Std_Ui_Attribute) rt.T2[string, bool] {
 	return func() rt.T2[string, bool] {
 		rules_1 := rt.List_filterMapT[Std_Ui_Attribute, string](Std_Ui_pickTransitionShorthand, v_0)
 		_ = rules_1
-		anyOptOut_2 := rt.List_anyT[Std_Ui_Attribute](Std_Ui_isTransitionOptOut, v_0)
-		_ = anyOptOut_2
-		return rt.T2[string, bool]{V0: /* FFI return */ rt.AsString(rt.String_join(any(", "), any(rules_1))), V1: anyOptOut_2}
+		return func() rt.T2[string, bool] {
+			_subj := rules_1
+			if rt.SkyLenT(_subj) == 0 {
+				return rt.T2[string, bool]{V0: "", V1: false}
+			}
+			return rt.T2[string, bool]{V0: /* FFI return */ rt.AsString(rt.String_join(any(", "), any(rules_1))), V1: rt.List_anyT[Std_Ui_Attribute](Std_Ui_isTransitionOptOut, v_0)}
+			panic(rt.Unreachable("case"))
+		}()
 	}()
 }
 
@@ -5226,7 +5782,7 @@ func Std_Ui_pseudoClassTag(v_0 Std_Ui_PseudoClass) string {
 }
 
 func Std_Ui_collectHtmlAttrs(v_0 []Std_Ui_Attribute) []any {
-	return /* FFI return */ rt.AsListT[any](rt.List_filterMap(any(Std_Ui_toAttrAttribute), any(v_0)))
+	return rt.List_filterMapT[Std_Ui_Attribute, any](Std_Ui_toAttrAttribute, v_0)
 }
 
 func Std_Ui_toAttrAttribute(v_0 Std_Ui_Attribute) rt.SkyMaybe[any] {
@@ -6508,6 +7064,52 @@ func Std_Ui_layoutContextFromFlags(v_0 Std_Ui_MarkerFlags_R) Std_Ui_LayoutContex
 	}()
 }
 
+func Std_Ui_keptRoleAttrs(v_0 string, v_1 string) []Std_Html_Attributes_Attribute {
+	return func() []Std_Html_Attributes_Attribute {
+		if v_0 == v_1 {
+			return []Std_Html_Attributes_Attribute{}
+		} else {
+			return func() []Std_Html_Attributes_Attribute {
+				if Std_Ui_isHeadingTag(v_0) {
+					return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "heading"), Std_Html_Attributes_attribute("aria-level" /* FFI return */, rt.AsString(rt.String_dropLeft(any(1), any(v_0))))}
+				} else {
+					return func() []Std_Html_Attributes_Attribute {
+						if v_0 == "main" {
+							return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "main")}
+						} else {
+							return func() []Std_Html_Attributes_Attribute {
+								if v_0 == "nav" {
+									return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "navigation")}
+								} else {
+									return func() []Std_Html_Attributes_Attribute {
+										if v_0 == "footer" {
+											return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "contentinfo")}
+										} else {
+											return func() []Std_Html_Attributes_Attribute {
+												if v_0 == "header" {
+													return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "banner")}
+												} else {
+													return func() []Std_Html_Attributes_Attribute {
+														if v_0 == "aside" {
+															return []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("role", "complementary")}
+														} else {
+															return []Std_Html_Attributes_Attribute{}
+														}
+													}()
+												}
+											}()
+										}
+									}()
+								}
+							}()
+						}
+					}()
+				}
+			}()
+		}
+	}()
+}
+
 func Std_Ui_defaultTagIn(v_0 Std_Ui_LayoutContext) string {
 	return func() string {
 		_subj := v_0
@@ -6611,7 +7213,7 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Tab = v_2; return _u }(), V1: Main_fetchForTab(v_1, v_2, v_1.LogFilter)}
 		}
 		if _subj.Tag == 1 {
-			return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(v_1, v_1.Tab, v_1.LogFilter), rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(any(struct{}{})))), any(func(_p0 any) State_Msg { return State_Msg_GotNowMs(_p0) }))}))}
+			return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(v_1, v_1.Tab, v_1.LogFilter), rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(any(struct{}{})))), any(func(_p0 any) any { return any(State_Msg_GotNowMs(_p0)) }))}))}
 		}
 		if (_subj.Tag == 2) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
 			v_3 := /* FFI return */ rt.Coerce[State_Overview_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
@@ -6773,7 +7375,7 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 		if _subj.Tag == 13 {
 			v_25 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_25
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Tab = State_Tab_TracesTab; _u.TraceQuery = v_25; return _u }(), V1: rt.Cmd_perform(any(v_1.Store.ReadTraces(struct{}{})), any(func(_p1 any) State_Msg { return State_Msg_GotTraces(_p1) }))}
+			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Tab = State_Tab_TracesTab; _u.TraceQuery = v_25; return _u }(), V1: rt.Cmd_perform(any(v_1.Store.ReadTraces(struct{}{})), any(func(_p1 any) any { return any(State_Msg_GotTraces(_p1)) }))}
 		}
 		if _subj.Tag == 14 {
 			v_26 := /* generic erase */ rt.AsString(_subj.Fields[0])
@@ -6855,7 +7457,7 @@ func Sky_Core_Maybe_withDefault(v_0 any, v_1 rt.SkyMaybe[any]) any {
 func Main_fetchForTab(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) any {
 	return func() any {
 		if Main_hasStoreSource(v_0) {
-			return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) State_Msg { return State_Msg_GotOverview(_p0) })), any(Main_tabFetches(v_0, v_1, v_2))))
+			return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotOverview(_p0)) })), any(Main_tabFetches(v_0, v_1, v_2))))
 		} else {
 			return rt.Cmd_none()
 		}
@@ -6868,22 +7470,22 @@ func Main_tabFetches(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) []
 			return func() []any {
 				_subj := v_1
 				if _subj == State_Tab_OverviewTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p0 any) State_Msg { return State_Msg_GotServiceStats(_p0) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotServiceStats(_p0)) }))}
 				}
 				if _subj == State_Tab_LogsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_2)), any(func(_p1 any) State_Msg { return State_Msg_GotLogs(_p1) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_2)), any(func(_p1 any) any { return any(State_Msg_GotLogs(_p1)) }))}
 				}
 				if _subj == State_Tab_MetricsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredMetrics(v_0.SelectedService)), any(func(_p2 any) State_Msg { return State_Msg_GotMetrics(_p2) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredMetrics(v_0.SelectedService)), any(func(_p2 any) any { return any(State_Msg_GotMetrics(_p2)) }))}
 				}
 				if _subj == State_Tab_TracesTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredTraces(v_0.SelectedService)), any(func(_p3 any) State_Msg { return State_Msg_GotTraces(_p3) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredTraces(v_0.SelectedService)), any(func(_p3 any) any { return any(State_Msg_GotTraces(_p3)) }))}
 				}
 				if _subj == State_Tab_ErrorsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredErrors(v_0.SelectedService)), any(func(_p4 any) State_Msg { return State_Msg_GotErrors(_p4) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredErrors(v_0.SelectedService)), any(func(_p4 any) any { return any(State_Msg_GotErrors(_p4)) }))}
 				}
 				if _subj == State_Tab_AnalyticsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p5 any) State_Msg { return State_Msg_GotAnalytics(_p5) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p5 any) any { return any(State_Msg_GotAnalytics(_p5)) }))}
 				}
 				panic(rt.Unreachable("case"))
 			}()
@@ -6891,22 +7493,22 @@ func Main_tabFetches(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) []
 			return func() []any {
 				_subj := v_1
 				if _subj == State_Tab_OverviewTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p6 any) State_Msg { return State_Msg_GotServiceStats(_p6) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p6 any) any { return any(State_Msg_GotServiceStats(_p6)) }))}
 				}
 				if _subj == State_Tab_LogsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadLogs(v_2)), any(func(_p7 any) State_Msg { return State_Msg_GotLogs(_p7) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadLogs(v_2)), any(func(_p7 any) any { return any(State_Msg_GotLogs(_p7)) }))}
 				}
 				if _subj == State_Tab_MetricsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadMetrics(struct{}{})), any(func(_p8 any) State_Msg { return State_Msg_GotMetrics(_p8) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadMetrics(struct{}{})), any(func(_p8 any) any { return any(State_Msg_GotMetrics(_p8)) }))}
 				}
 				if _subj == State_Tab_TracesTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadTraces(struct{}{})), any(func(_p9 any) State_Msg { return State_Msg_GotTraces(_p9) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadTraces(struct{}{})), any(func(_p9 any) any { return any(State_Msg_GotTraces(_p9)) }))}
 				}
 				if _subj == State_Tab_ErrorsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadErrors(struct{}{})), any(func(_p10 any) State_Msg { return State_Msg_GotErrors(_p10) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadErrors(struct{}{})), any(func(_p10 any) any { return any(State_Msg_GotErrors(_p10)) }))}
 				}
 				if _subj == State_Tab_AnalyticsTab {
-					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p11 any) State_Msg { return State_Msg_GotAnalytics(_p11) }))}
+					return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p11 any) any { return any(State_Msg_GotAnalytics(_p11)) }))}
 				}
 				panic(rt.Unreachable("case"))
 			}()
@@ -6927,9 +7529,9 @@ func Main_fetchLogsOnly(v_0 State_Model_R, v_1 State_LogFilter_R) any {
 		if Main_hasStoreSource(v_0) {
 			return func() any {
 				if v_0.HubDbPath != "" {
-					return rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_1)), any(func(_p0 any) State_Msg { return State_Msg_GotLogs(_p0) }))
+					return rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_1)), any(func(_p0 any) any { return any(State_Msg_GotLogs(_p0)) }))
 				} else {
-					return rt.Cmd_perform(any(v_0.Store.ReadLogs(v_1)), any(func(_p1 any) State_Msg { return State_Msg_GotLogs(_p1) }))
+					return rt.Cmd_perform(any(v_0.Store.ReadLogs(v_1)), any(func(_p1 any) any { return any(State_Msg_GotLogs(_p1)) }))
 				}
 			}()
 		} else {
@@ -6978,13 +7580,13 @@ func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
 		_ = startModel_9
 		identityCmd_10 := func() any {
 			if hubDbPath_2 != "" {
-				return rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Std_Live_Console_Identity_R](rt.Hub_currentIdentity(any(hubDbPath_2)))), any(func(_p0 any) State_Msg { return State_Msg_GotIdentity(_p0) }))
+				return rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Std_Live_Console_Identity_R](rt.Hub_currentIdentity(any(hubDbPath_2)))), any(func(_p0 any) any { return any(State_Msg_GotIdentity(_p0)) }))
 			} else {
 				return rt.Cmd_none()
 			}
 		}()
 		_ = identityCmd_10
-		return rt.T2[State_Model_R, any]{V0: startModel_9, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(startModel_9, startModel_9.Tab, startModel_9.LogFilter), identityCmd_10, rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(any(struct{}{})))), any(func(_p1 any) State_Msg { return State_Msg_GotNowMs(_p1) }))}))}
+		return rt.T2[State_Model_R, any]{V0: startModel_9, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(startModel_9, startModel_9.Tab, startModel_9.LogFilter), identityCmd_10, rt.Cmd_perform(any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, int](rt.Time_unixMillis(any(struct{}{})))), any(func(_p1 any) any { return any(State_Msg_GotNowMs(_p1)) }))}))}
 	}()
 }
 
@@ -7049,8 +7651,10 @@ func Main_httpStore(v_0 string) State_Store_R {
 }
 
 func Main_fetchAnalytics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Analytics_R](rt.Task_andThenResult(any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, State_Analytics_R] {
-		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, State_Analytics_R](rt.JsonDec_decodeString(Main_analyticsDecoder(), any(v_1.Body)))
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Analytics_R](rt.Task_andThenResult(any(func(_w0 any) any {
+		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, State_Analytics_R] {
+			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, State_Analytics_R](rt.JsonDec_decodeString(Main_analyticsDecoder(), any(v_1.Body)), func(_v any) State_Analytics_R { return rt.Coerce[State_Analytics_R](_v) })
+		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/analytics")))))))
 }
 
@@ -7058,8 +7662,22 @@ var Main_analyticsDecoder__caf rt.LazyCaf[any]
 
 func Main_analyticsDecoder() any {
 	return Main_analyticsDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("rowCap"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("rowCapHit"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("windowDays"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 int, _p2 []State_EventCount_R, _p3 []State_AnalyticsEvent_R, _p4 []State_CurrencyTotal_R, _p5 int, _p6 bool, _p7 int) State_Analytics_R {
-			return State_Analytics(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7)
+		return rt.JsonDecP_optional(any("rowCap"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("rowCapHit"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("windowDays"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(func(_p2 any) any {
+					return any(func(_p3 any) any {
+						return any(func(_p4 any) any {
+							return any(func(_p5 any) any {
+								return any(func(_p6 any) any {
+									return any(func(_p7 any) any {
+										return any(State_Analytics( /* FFI return */ rt.AsInt(_p0) /* FFI return */, rt.AsInt(_p1) /* FFI return */, rt.AsListT[State_EventCount_R](_p2) /* FFI return */, rt.AsListT[State_AnalyticsEvent_R](_p3) /* FFI return */, rt.AsListT[State_CurrencyTotal_R](_p4) /* FFI return */, rt.AsInt(_p5) /* FFI return */, rt.AsBool(_p6) /* FFI return */, rt.AsInt(_p7)))
+									})
+								})
+							})
+						})
+					})
+				})
+			})
 		}))))))))))
 	})
 }
@@ -7068,7 +7686,11 @@ var Main_eventCountDecoder__caf rt.LazyCaf[any]
 
 func Main_eventCountDecoder() any {
 	return Main_eventCountDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 int) State_EventCount_R { return State_EventCount(_p0, _p1) }))))
+		return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(State_EventCount( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsInt(_p1)))
+			})
+		}))))
 	})
 }
 
@@ -7076,8 +7698,14 @@ var Main_analyticsEventDecoder__caf rt.LazyCaf[any]
 
 func Main_analyticsEventDecoder() any {
 	return Main_analyticsEventDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("path"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string, _p2 string, _p3 string) State_AnalyticsEvent_R {
-			return State_AnalyticsEvent(_p0, _p1, _p2, _p3)
+		return rt.JsonDecP_optional(any("path"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("userId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("event"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(func(_p2 any) any {
+					return any(func(_p3 any) any {
+						return any(State_AnalyticsEvent( /* FFI return */ rt.AsInt(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsString(_p3)))
+					})
+				})
+			})
 		}))))))
 	})
 }
@@ -7086,13 +7714,21 @@ var Main_currencyTotalDecoder__caf rt.LazyCaf[any]
 
 func Main_currencyTotalDecoder() any {
 	return Main_currencyTotalDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("amount"), rt.JsonDec_string(), any("0"), rt.JsonDecP_optional(any("currency"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 int) State_CurrencyTotal_R { return State_CurrencyTotal(_p0, _p1, _p2) })))))
+		return rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("amount"), rt.JsonDec_string(), any("0"), rt.JsonDecP_optional(any("currency"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(func(_p2 any) any {
+					return any(State_CurrencyTotal( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsInt(_p2)))
+				})
+			})
+		})))))
 	})
 }
 
 func Main_fetchErrors(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Task_andThenResult(any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_ErrorRow_R] {
-		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, []State_ErrorRow_R](rt.JsonDec_decodeString(Main_errorsDecoder(), any(v_1.Body)))
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Task_andThenResult(any(func(_w0 any) any {
+		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_ErrorRow_R] {
+			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_ErrorRow_R](rt.JsonDec_decodeString(Main_errorsDecoder(), any(v_1.Body)), func(_v any) []State_ErrorRow_R { return rt.AsListT[State_ErrorRow_R](_v) })
+		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/errors")))))))
 }
 
@@ -7106,13 +7742,19 @@ var Main_errorRowDecoder__caf rt.LazyCaf[any]
 
 func Main_errorRowDecoder() any {
 	return Main_errorRowDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 int, _p1 string) State_ErrorRow_R { return State_ErrorRow(_p0, _p1) }))))
+		return rt.JsonDecP_optional(any("message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("count"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(State_ErrorRow( /* FFI return */ rt.AsInt(_p0) /* FFI return */, rt.AsString(_p1)))
+			})
+		}))))
 	})
 }
 
 func Main_fetchTraces(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Task_andThenResult(any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_TraceRow_R] {
-		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, []State_TraceRow_R](rt.JsonDec_decodeString(Main_tracesDecoder(), any(v_1.Body)))
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Task_andThenResult(any(func(_w0 any) any {
+		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_TraceRow_R] {
+			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_TraceRow_R](rt.JsonDec_decodeString(Main_tracesDecoder(), any(v_1.Body)), func(_v any) []State_TraceRow_R { return rt.AsListT[State_TraceRow_R](_v) })
+		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/traces?limit=100")))))))
 }
 
@@ -7126,15 +7768,31 @@ var Main_traceRowDecoder__caf rt.LazyCaf[any]
 
 func Main_traceRowDecoder() any {
 	return Main_traceRowDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("durationMs"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("startTime"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("kind"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("parentId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spanId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("traceId"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 string, _p4 string, _p5 string, _p6 float64, _p7 string) State_TraceRow_R {
-			return State_TraceRow(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7)
+		return rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("durationMs"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("startTime"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("kind"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("parentId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spanId"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("traceId"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(func(_p2 any) any {
+					return any(func(_p3 any) any {
+						return any(func(_p4 any) any {
+							return any(func(_p5 any) any {
+								return any(func(_p6 any) any {
+									return any(func(_p7 any) any {
+										return any(State_TraceRow( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsString(_p3) /* FFI return */, rt.AsString(_p4) /* FFI return */, rt.AsString(_p5) /* FFI return */, rt.AsFloat(_p6) /* FFI return */, rt.AsString(_p7)))
+									})
+								})
+							})
+						})
+					})
+				})
+			})
 		}))))))))))
 	})
 }
 
 func Main_fetchMetrics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Task_andThenResult(any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_MetricRow_R] {
-		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, []State_MetricRow_R](rt.JsonDec_decodeString(Main_metricsDecoder(), any(v_1.Body)))
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Task_andThenResult(any(func(_w0 any) any {
+		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_MetricRow_R] {
+			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_MetricRow_R](rt.JsonDec_decodeString(Main_metricsDecoder(), any(v_1.Body)), func(_v any) []State_MetricRow_R { return rt.AsListT[State_MetricRow_R](_v) })
+		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/metrics-summary")))))))
 }
 
@@ -7148,15 +7806,27 @@ var Main_metricRowDecoder__caf rt.LazyCaf[any]
 
 func Main_metricRowDecoder() any {
 	return Main_metricRowDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("count"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("sum"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("value"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("labels"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("type"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 float64, _p4 float64, _p5 float64) State_MetricRow_R {
-			return State_MetricRow(_p0, _p1, _p2, _p3, _p4, _p5)
+		return rt.JsonDecP_optional(any("count"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("sum"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("value"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("labels"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("type"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("name"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(func(_p2 any) any {
+					return any(func(_p3 any) any {
+						return any(func(_p4 any) any {
+							return any(func(_p5 any) any {
+								return any(State_MetricRow( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsFloat(_p3) /* FFI return */, rt.AsFloat(_p4) /* FFI return */, rt.AsFloat(_p5)))
+							})
+						})
+					})
+				})
+			})
 		}))))))))
 	})
 }
 
 func Main_fetchLogs(v_0 string, v_1 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Task_andThenResult(any(func(v_2 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_LogEntry_R] {
-		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, []State_LogEntry_R](rt.JsonDec_decodeString(Main_logsDecoder(), any(v_2.Body)))
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Task_andThenResult(any(func(_w0 any) any {
+		return any(func(v_2 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_LogEntry_R] {
+			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_LogEntry_R](rt.JsonDec_decodeString(Main_logsDecoder(), any(v_2.Body)), func(_v any) []State_LogEntry_R { return rt.AsListT[State_LogEntry_R](_v) })
+		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + ("/_sky/console/api/logs?limit=200" + Main_buildLogQuery(v_1)))))))))
 }
 
@@ -7208,8 +7878,26 @@ var Main_logEntryDecoder__caf rt.LazyCaf[any]
 
 func Main_logEntryDecoder() any {
 	return Main_logEntryDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("LatencyMS"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Status"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Route"), rt.JsonDec_string(), any(""), rt.JsonDecP_custom(Main_fieldFromFields("user_label"), rt.JsonDecP_custom(Main_fieldFromFields("session_id"), rt.JsonDecP_optional(any("ReqID"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Subapp"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Level"), rt.JsonDec_string(), any("info"), rt.JsonDecP_optional(any("TS"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 string, _p4 string, _p5 string, _p6 string, _p7 string, _p8 float64, _p9 float64) State_LogEntry_R {
-			return State_LogEntry(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8, _p9)
+		return rt.JsonDecP_optional(any("LatencyMS"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Status"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Route"), rt.JsonDec_string(), any(""), rt.JsonDecP_custom(Main_fieldFromFields("user_label"), rt.JsonDecP_custom(Main_fieldFromFields("session_id"), rt.JsonDecP_optional(any("ReqID"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Subapp"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Level"), rt.JsonDec_string(), any("info"), rt.JsonDecP_optional(any("TS"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(func(_p2 any) any {
+					return any(func(_p3 any) any {
+						return any(func(_p4 any) any {
+							return any(func(_p5 any) any {
+								return any(func(_p6 any) any {
+									return any(func(_p7 any) any {
+										return any(func(_p8 any) any {
+											return any(func(_p9 any) any {
+												return any(State_LogEntry( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsString(_p3) /* FFI return */, rt.AsString(_p4) /* FFI return */, rt.AsString(_p5) /* FFI return */, rt.AsString(_p6) /* FFI return */, rt.AsString(_p7) /* FFI return */, rt.AsFloat(_p8) /* FFI return */, rt.AsFloat(_p9)))
+											})
+										})
+									})
+								})
+							})
+						})
+					})
+				})
+			})
 		}))))))))))))
 	})
 }
@@ -7219,8 +7907,10 @@ func Main_fieldFromFields(v_0 string) any {
 }
 
 func Main_fetchOverview(v_0 string) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.Task_andThenResult(any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, State_Overview_R] {
-		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, State_Overview_R](rt.JsonDec_decodeString(Main_overviewDecoder(), any(v_1.Body)))
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.Task_andThenResult(any(func(_w0 any) any {
+		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, State_Overview_R] {
+			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, State_Overview_R](rt.JsonDec_decodeString(Main_overviewDecoder(), any(v_1.Body)), func(_v any) State_Overview_R { return rt.Coerce[State_Overview_R](_v) })
+		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
 	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/overview")))))))
 }
 
@@ -7228,8 +7918,24 @@ var Main_overviewDecoder__caf rt.LazyCaf[any]
 
 func Main_overviewDecoder() any {
 	return Main_overviewDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("productionMode"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("bufferTraceUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("bufferLogUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("errorRate5xx"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("requestsTotal"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("uptimeSeconds"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("builtAt"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("commit"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("skyVersion"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 string, _p1 string, _p2 string, _p3 int, _p4 int, _p5 float64, _p6 int, _p7 int, _p8 bool) State_Overview_R {
-			return State_Overview(_p0, _p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8)
+		return rt.JsonDecP_optional(any("productionMode"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("bufferTraceUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("bufferLogUsed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("errorRate5xx"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("requestsTotal"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("uptimeSeconds"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("builtAt"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("commit"), rt.JsonDec_string(), any("—"), rt.JsonDecP_optional(any("skyVersion"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(func(_p0 any) any {
+			return any(func(_p1 any) any {
+				return any(func(_p2 any) any {
+					return any(func(_p3 any) any {
+						return any(func(_p4 any) any {
+							return any(func(_p5 any) any {
+								return any(func(_p6 any) any {
+									return any(func(_p7 any) any {
+										return any(func(_p8 any) any {
+											return any(State_Overview( /* FFI return */ rt.AsString(_p0) /* FFI return */, rt.AsString(_p1) /* FFI return */, rt.AsString(_p2) /* FFI return */, rt.AsInt(_p3) /* FFI return */, rt.AsInt(_p4) /* FFI return */, rt.AsFloat(_p5) /* FFI return */, rt.AsInt(_p6) /* FFI return */, rt.AsInt(_p7) /* FFI return */, rt.AsBool(_p8)))
+										})
+									})
+								})
+							})
+						})
+					})
+				})
+			})
 		})))))))))))
 	})
 }
@@ -7238,7 +7944,9 @@ var Main_intFromFloat__caf rt.LazyCaf[any]
 
 func Main_intFromFloat() any {
 	return Main_intFromFloat__caf.Get(func() any {
-		return rt.JsonDec_map(any(func(v_0 float64) int { return /* FFI return */ rt.AsInt(rt.Math_round(any(v_0))) }), rt.JsonDec_float())
+		return rt.JsonDec_map(any(func(_w0 any) any {
+			return any(func(v_0 float64) int { return /* FFI return */ rt.AsInt(rt.Math_round(any(v_0))) }( /* FFI return */ rt.AsFloat(_w0)))
+		}), rt.JsonDec_float())
 	})
 }
 
@@ -7270,6 +7978,1390 @@ func HubStore_hubStore(v_0 string) State_Store_R {
 	}}
 }
 
+func Std_App_web(v_0 struct {
+	Init          func(any) rt.T2[any, any]
+	Subscriptions func(any) any
+	Update        func(any, any) rt.T2[any, any]
+	View          func(any) Std_Html_Html
+}) Std_App_App {
+	return Std_App_App_App(struct {
+		Base          any
+		Configs       any
+		Durable       any
+		Guard         any
+		Head          any
+		Init          any
+		NotFound      any
+		OnInput       any
+		OnKey         any
+		OnNavigate    any
+		OnRequest     any
+		Routes        any
+		RpcError      any
+		Subscriptions any
+		Update        any
+		ViewImpl      any
+	}{Init: v_0.Init, Update: v_0.Update, ViewImpl: Std_App_ViewImpl_ViewHtml(v_0.View), Subscriptions: v_0.Subscriptions, Routes: []Std_App_Route{}, NotFound: rt.Nothing[any](), OnInput: rt.Nothing[func(string) any](), Base: Std_App_baseDefaults(), Configs: []Std_App_Config{}, Head: rt.Nothing[func(any) []Std_Html_Html](), Guard: rt.Nothing[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](), OnKey: rt.Nothing[func(any) any](), OnNavigate: rt.Nothing[func(any) any](), OnRequest: rt.Nothing[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](), RpcError: rt.Nothing[func(Sky_Core_Error_Error) any](), Durable: Std_App_noDurableWiring()})
+}
+
+var Std_App_noDurableWiring__caf rt.LazyCaf[Std_App_DurableWiring_R[any]]
+
+func Std_App_noDurableWiring() Std_App_DurableWiring_R[any] {
+	return Std_App_noDurableWiring__caf.Get(func() Std_App_DurableWiring_R[any] {
+		return /* primitive join */ rt.Coerce[Std_App_DurableWiring_R[any]](struct {
+			ApplyRestore any
+			Enabled      any
+			Persist      any
+			Restore      any
+			RunId        any
+			Setup        any
+		}{Enabled: false, Setup: /* FFI return */ rt.TaskCoerceT[any, struct{}](rt.AnyTaskSucceed(any(struct{}{}))), Restore: func(_ any) rt.SkyTask[any, rt.SkyMaybe[any]] {
+			return /* FFI return */ rt.TaskCoerceT[any, rt.SkyMaybe[any]](rt.AnyTaskSucceed(any(rt.Nothing[any]())))
+		}, Persist: func(_ any, _ any) rt.SkyTask[any, struct{}] {
+			return /* FFI return */ rt.TaskCoerceT[any, struct{}](rt.AnyTaskSucceed(any(struct{}{})))
+		}, ApplyRestore: func(_ any, v_0 any) any { return v_0 }, RunId: ""})
+	})
+}
+
+var Std_App_baseDefaults__caf rt.LazyCaf[Std_App_BaseConfig_R]
+
+func Std_App_baseDefaults() Std_App_BaseConfig_R {
+	return Std_App_baseDefaults__caf.Get(func() Std_App_BaseConfig_R {
+		return Std_App_BaseConfig_R{LogFormat: Sky_Config_LogFormat_Text, LogLevel: Sky_Config_LogLevel_Info, Database: /* primitive join */ rt.MaybeCoerce[Sky_Config_Database](rt.Nothing[any]()), Telemetry: /* primitive join */ rt.MaybeCoerce[Sky_Config_Telemetry](rt.Nothing[any]())}
+	})
+}
+
+func Std_App_route(v_0 string, v_1 any) Std_App_Route {
+	return Std_App_Route_RouteStatic(v_0, v_1)
+}
+
+func Std_App_withRoutes(v_0 []Std_App_Route, _t0 Std_App_App) Std_App_App {
+	v_1 := /* generic erase */ func(_s any) struct {
+		Base          Std_App_BaseConfig_R
+		Configs       []Std_App_Config
+		Durable       Std_App_DurableWiring_R[any]
+		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+		Init          func(any) rt.T2[any, any]
+		NotFound      rt.SkyMaybe[any]
+		OnInput       rt.SkyMaybe[func(string) any]
+		OnKey         rt.SkyMaybe[func(any) any]
+		OnNavigate    rt.SkyMaybe[func(any) any]
+		OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+		Routes        []Std_App_Route
+		RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+		Subscriptions func(any) any
+		Update        func(any, any) rt.T2[any, any]
+		ViewImpl      Std_App_ViewImpl
+	} {
+		if _m, _ok := _s.(struct {
+			Base          any
+			Configs       any
+			Durable       any
+			Guard         any
+			Head          any
+			Init          any
+			NotFound      any
+			OnInput       any
+			OnKey         any
+			OnNavigate    any
+			OnRequest     any
+			Routes        any
+			RpcError      any
+			Subscriptions any
+			Update        any
+			ViewImpl      any
+		}); _ok {
+			return struct {
+				Base          Std_App_BaseConfig_R
+				Configs       []Std_App_Config
+				Durable       Std_App_DurableWiring_R[any]
+				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+				Init          func(any) rt.T2[any, any]
+				NotFound      rt.SkyMaybe[any]
+				OnInput       rt.SkyMaybe[func(string) any]
+				OnKey         rt.SkyMaybe[func(any) any]
+				OnNavigate    rt.SkyMaybe[func(any) any]
+				OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+				Routes        []Std_App_Route
+				RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+				Subscriptions func(any) any
+				Update        func(any, any) rt.T2[any, any]
+				ViewImpl      Std_App_ViewImpl
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
+				_s := any(_m.Init)
+				if _f, _ok := _s.(func(any) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any) rt.T2[any, any] { return rt.Coerce[rt.T2[any, any]](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(any) rt.T2[any, any]](_s)
+			}(), NotFound: rt.MaybeCoerce[any](_m.NotFound), OnInput: rt.MaybeCoerce[func(string) any](_m.OnInput), OnKey: rt.MaybeCoerce[func(any) any](_m.OnKey), OnNavigate: rt.MaybeCoerce[func(any) any](_m.OnNavigate), OnRequest: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_m.OnRequest), Routes: rt.AsListT[Std_App_Route](_m.Routes), RpcError: rt.MaybeCoerce[func(Sky_Core_Error_Error) any](_m.RpcError), Subscriptions: func() func(any) any {
+				_s := any(_m.Subscriptions)
+				if _f, _ok := _s.(func(any) any); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any) any { return rt.Coerce[any](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(any) any](_s)
+			}(), Update: func() func(any, any) rt.T2[any, any] {
+				_s := any(_m.Update)
+				if _f, _ok := _s.(func(any, any) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _c, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any, _a1 any) rt.T2[any, any] {
+						return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(any, any) rt.T2[any, any]](_s)
+			}(), ViewImpl: rt.Coerce[Std_App_ViewImpl](_m.ViewImpl)}
+		}
+		return rt.Coerce[struct {
+			Base          Std_App_BaseConfig_R
+			Configs       []Std_App_Config
+			Durable       Std_App_DurableWiring_R[any]
+			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+			Init          func(any) rt.T2[any, any]
+			NotFound      rt.SkyMaybe[any]
+			OnInput       rt.SkyMaybe[func(string) any]
+			OnKey         rt.SkyMaybe[func(any) any]
+			OnNavigate    rt.SkyMaybe[func(any) any]
+			OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+			Routes        []Std_App_Route
+			RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+			Subscriptions func(any) any
+			Update        func(any, any) rt.T2[any, any]
+			ViewImpl      Std_App_ViewImpl
+		}](_s)
+	}(_t0.Fields[0])
+	return Std_App_App_App(func() struct {
+		Base          Std_App_BaseConfig_R
+		Configs       []Std_App_Config
+		Durable       Std_App_DurableWiring_R[any]
+		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+		Init          func(any) rt.T2[any, any]
+		NotFound      rt.SkyMaybe[any]
+		OnInput       rt.SkyMaybe[func(string) any]
+		OnKey         rt.SkyMaybe[func(any) any]
+		OnNavigate    rt.SkyMaybe[func(any) any]
+		OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+		Routes        []Std_App_Route
+		RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+		Subscriptions func(any) any
+		Update        func(any, any) rt.T2[any, any]
+		ViewImpl      Std_App_ViewImpl
+	} {
+		_u := v_1
+		_u.Routes = v_0
+		return _u
+	}())
+}
+
+func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
+	v_1 := /* generic erase */ func(_s any) struct {
+		Base          Std_App_BaseConfig_R
+		Configs       []Std_App_Config
+		Durable       Std_App_DurableWiring_R[any]
+		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+		Init          func(any) rt.T2[any, any]
+		NotFound      rt.SkyMaybe[any]
+		OnInput       rt.SkyMaybe[func(string) any]
+		OnKey         rt.SkyMaybe[func(any) any]
+		OnNavigate    rt.SkyMaybe[func(any) any]
+		OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+		Routes        []Std_App_Route
+		RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+		Subscriptions func(any) any
+		Update        func(any, any) rt.T2[any, any]
+		ViewImpl      Std_App_ViewImpl
+	} {
+		if _m, _ok := _s.(struct {
+			Base          any
+			Configs       any
+			Durable       any
+			Guard         any
+			Head          any
+			Init          any
+			NotFound      any
+			OnInput       any
+			OnKey         any
+			OnNavigate    any
+			OnRequest     any
+			Routes        any
+			RpcError      any
+			Subscriptions any
+			Update        any
+			ViewImpl      any
+		}); _ok {
+			return struct {
+				Base          Std_App_BaseConfig_R
+				Configs       []Std_App_Config
+				Durable       Std_App_DurableWiring_R[any]
+				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+				Init          func(any) rt.T2[any, any]
+				NotFound      rt.SkyMaybe[any]
+				OnInput       rt.SkyMaybe[func(string) any]
+				OnKey         rt.SkyMaybe[func(any) any]
+				OnNavigate    rt.SkyMaybe[func(any) any]
+				OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+				Routes        []Std_App_Route
+				RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+				Subscriptions func(any) any
+				Update        func(any, any) rt.T2[any, any]
+				ViewImpl      Std_App_ViewImpl
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
+				_s := any(_m.Init)
+				if _f, _ok := _s.(func(any) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any) rt.T2[any, any] { return rt.Coerce[rt.T2[any, any]](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(any) rt.T2[any, any]](_s)
+			}(), NotFound: rt.MaybeCoerce[any](_m.NotFound), OnInput: rt.MaybeCoerce[func(string) any](_m.OnInput), OnKey: rt.MaybeCoerce[func(any) any](_m.OnKey), OnNavigate: rt.MaybeCoerce[func(any) any](_m.OnNavigate), OnRequest: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_m.OnRequest), Routes: rt.AsListT[Std_App_Route](_m.Routes), RpcError: rt.MaybeCoerce[func(Sky_Core_Error_Error) any](_m.RpcError), Subscriptions: func() func(any) any {
+				_s := any(_m.Subscriptions)
+				if _f, _ok := _s.(func(any) any); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any) any { return rt.Coerce[any](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(any) any](_s)
+			}(), Update: func() func(any, any) rt.T2[any, any] {
+				_s := any(_m.Update)
+				if _f, _ok := _s.(func(any, any) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _c, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any, _a1 any) rt.T2[any, any] {
+						return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(any, any) rt.T2[any, any]](_s)
+			}(), ViewImpl: rt.Coerce[Std_App_ViewImpl](_m.ViewImpl)}
+		}
+		return rt.Coerce[struct {
+			Base          Std_App_BaseConfig_R
+			Configs       []Std_App_Config
+			Durable       Std_App_DurableWiring_R[any]
+			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+			Init          func(any) rt.T2[any, any]
+			NotFound      rt.SkyMaybe[any]
+			OnInput       rt.SkyMaybe[func(string) any]
+			OnKey         rt.SkyMaybe[func(any) any]
+			OnNavigate    rt.SkyMaybe[func(any) any]
+			OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+			Routes        []Std_App_Route
+			RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+			Subscriptions func(any) any
+			Update        func(any, any) rt.T2[any, any]
+			ViewImpl      Std_App_ViewImpl
+		}](_s)
+	}(_t0.Fields[0])
+	return Std_App_App_App(func() struct {
+		Base          Std_App_BaseConfig_R
+		Configs       []Std_App_Config
+		Durable       Std_App_DurableWiring_R[any]
+		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+		Init          func(any) rt.T2[any, any]
+		NotFound      rt.SkyMaybe[any]
+		OnInput       rt.SkyMaybe[func(string) any]
+		OnKey         rt.SkyMaybe[func(any) any]
+		OnNavigate    rt.SkyMaybe[func(any) any]
+		OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+		Routes        []Std_App_Route
+		RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+		Subscriptions func(any) any
+		Update        func(any, any) rt.T2[any, any]
+		ViewImpl      Std_App_ViewImpl
+	} {
+		_u := v_1
+		_u.NotFound = rt.Just[any](v_0)
+		return _u
+	}())
+}
+
+var Std_App_webDefaults__caf rt.LazyCaf[Std_App_WebOpts_R]
+
+func Std_App_webDefaults() Std_App_WebOpts_R {
+	return Std_App_webDefaults__caf.Get(func() Std_App_WebOpts_R {
+		return Std_App_WebOpts_R{Port: 8080, Store: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Static: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), StaticUrl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Ttl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), IdleEvict: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), MaxBodyBytes: /* primitive join */ rt.MaybeCoerce[int](rt.Nothing[any]()), InputMode: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Analytics: /* primitive join */ rt.MaybeCoerce[struct{ PageViews bool }](rt.Nothing[any]()), Csrf: true}
+	})
+}
+
+func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
+	v_1 := /* generic erase */ func(_s any) struct {
+		Base          Std_App_BaseConfig_R
+		Configs       []Std_App_Config
+		Durable       Std_App_DurableWiring_R[any]
+		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+		Init          func(any) rt.T2[any, any]
+		NotFound      rt.SkyMaybe[any]
+		OnInput       rt.SkyMaybe[func(string) any]
+		OnKey         rt.SkyMaybe[func(any) any]
+		OnNavigate    rt.SkyMaybe[func(any) any]
+		OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+		Routes        []Std_App_Route
+		RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+		Subscriptions func(any) any
+		Update        func(any, any) rt.T2[any, any]
+		ViewImpl      Std_App_ViewImpl
+	} {
+		if _m, _ok := _s.(struct {
+			Base          any
+			Configs       any
+			Durable       any
+			Guard         any
+			Head          any
+			Init          any
+			NotFound      any
+			OnInput       any
+			OnKey         any
+			OnNavigate    any
+			OnRequest     any
+			Routes        any
+			RpcError      any
+			Subscriptions any
+			Update        any
+			ViewImpl      any
+		}); _ok {
+			return struct {
+				Base          Std_App_BaseConfig_R
+				Configs       []Std_App_Config
+				Durable       Std_App_DurableWiring_R[any]
+				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+				Init          func(any) rt.T2[any, any]
+				NotFound      rt.SkyMaybe[any]
+				OnInput       rt.SkyMaybe[func(string) any]
+				OnKey         rt.SkyMaybe[func(any) any]
+				OnNavigate    rt.SkyMaybe[func(any) any]
+				OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+				Routes        []Std_App_Route
+				RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+				Subscriptions func(any) any
+				Update        func(any, any) rt.T2[any, any]
+				ViewImpl      Std_App_ViewImpl
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
+				_s := any(_m.Init)
+				if _f, _ok := _s.(func(any) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any) rt.T2[any, any] { return rt.Coerce[rt.T2[any, any]](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(any) rt.T2[any, any]](_s)
+			}(), NotFound: rt.MaybeCoerce[any](_m.NotFound), OnInput: rt.MaybeCoerce[func(string) any](_m.OnInput), OnKey: rt.MaybeCoerce[func(any) any](_m.OnKey), OnNavigate: rt.MaybeCoerce[func(any) any](_m.OnNavigate), OnRequest: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_m.OnRequest), Routes: rt.AsListT[Std_App_Route](_m.Routes), RpcError: rt.MaybeCoerce[func(Sky_Core_Error_Error) any](_m.RpcError), Subscriptions: func() func(any) any {
+				_s := any(_m.Subscriptions)
+				if _f, _ok := _s.(func(any) any); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any) any { return rt.Coerce[any](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(any) any](_s)
+			}(), Update: func() func(any, any) rt.T2[any, any] {
+				_s := any(_m.Update)
+				if _f, _ok := _s.(func(any, any) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _c, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any, _a1 any) rt.T2[any, any] {
+						return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(any, any) rt.T2[any, any]](_s)
+			}(), ViewImpl: rt.Coerce[Std_App_ViewImpl](_m.ViewImpl)}
+		}
+		return rt.Coerce[struct {
+			Base          Std_App_BaseConfig_R
+			Configs       []Std_App_Config
+			Durable       Std_App_DurableWiring_R[any]
+			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+			Init          func(any) rt.T2[any, any]
+			NotFound      rt.SkyMaybe[any]
+			OnInput       rt.SkyMaybe[func(string) any]
+			OnKey         rt.SkyMaybe[func(any) any]
+			OnNavigate    rt.SkyMaybe[func(any) any]
+			OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+			Routes        []Std_App_Route
+			RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+			Subscriptions func(any) any
+			Update        func(any, any) rt.T2[any, any]
+			ViewImpl      Std_App_ViewImpl
+		}](_s)
+	}(_t0.Fields[0])
+	return Std_App_App_App(func() struct {
+		Base          Std_App_BaseConfig_R
+		Configs       []Std_App_Config
+		Durable       Std_App_DurableWiring_R[any]
+		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+		Init          func(any) rt.T2[any, any]
+		NotFound      rt.SkyMaybe[any]
+		OnInput       rt.SkyMaybe[func(string) any]
+		OnKey         rt.SkyMaybe[func(any) any]
+		OnNavigate    rt.SkyMaybe[func(any) any]
+		OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+		Routes        []Std_App_Route
+		RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+		Subscriptions func(any) any
+		Update        func(any, any) rt.T2[any, any]
+		ViewImpl      Std_App_ViewImpl
+	} {
+		_u := v_1
+		_u.Configs = /* FFI return */ rt.AsListT[Std_App_Config](rt.List_cons(any(v_0), any(v_1.Configs)))
+		return _u
+	}())
+}
+
+func Std_App_runLive(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+	v_0 := /* generic erase */ func(_s any) struct {
+		Base          Std_App_BaseConfig_R
+		Configs       []Std_App_Config
+		Durable       Std_App_DurableWiring_R[any]
+		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+		Init          func(struct{}) rt.T2[any, any]
+		NotFound      rt.SkyMaybe[any]
+		OnInput       rt.SkyMaybe[func(string) any]
+		OnKey         rt.SkyMaybe[func(any) any]
+		OnNavigate    rt.SkyMaybe[func(any) any]
+		OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+		Routes        []Std_App_Route
+		RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+		Subscriptions func(any) any
+		Update        func(any, any) rt.T2[any, any]
+		ViewImpl      Std_App_ViewImpl
+	} {
+		if _m, _ok := _s.(struct {
+			Base          any
+			Configs       any
+			Durable       any
+			Guard         any
+			Head          any
+			Init          any
+			NotFound      any
+			OnInput       any
+			OnKey         any
+			OnNavigate    any
+			OnRequest     any
+			Routes        any
+			RpcError      any
+			Subscriptions any
+			Update        any
+			ViewImpl      any
+		}); _ok {
+			return struct {
+				Base          Std_App_BaseConfig_R
+				Configs       []Std_App_Config
+				Durable       Std_App_DurableWiring_R[any]
+				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+				Init          func(struct{}) rt.T2[any, any]
+				NotFound      rt.SkyMaybe[any]
+				OnInput       rt.SkyMaybe[func(string) any]
+				OnKey         rt.SkyMaybe[func(any) any]
+				OnNavigate    rt.SkyMaybe[func(any) any]
+				OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+				Routes        []Std_App_Route
+				RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+				Subscriptions func(any) any
+				Update        func(any, any) rt.T2[any, any]
+				ViewImpl      Std_App_ViewImpl
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(struct{}) rt.T2[any, any] {
+				_s := any(_m.Init)
+				if _f, _ok := _s.(func(struct{}) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 struct{}) rt.T2[any, any] { return rt.Coerce[rt.T2[any, any]](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(struct{}) rt.T2[any, any]](_s)
+			}(), NotFound: rt.MaybeCoerce[any](_m.NotFound), OnInput: rt.MaybeCoerce[func(string) any](_m.OnInput), OnKey: rt.MaybeCoerce[func(any) any](_m.OnKey), OnNavigate: rt.MaybeCoerce[func(any) any](_m.OnNavigate), OnRequest: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_m.OnRequest), Routes: rt.AsListT[Std_App_Route](_m.Routes), RpcError: rt.MaybeCoerce[func(Sky_Core_Error_Error) any](_m.RpcError), Subscriptions: func() func(any) any {
+				_s := any(_m.Subscriptions)
+				if _f, _ok := _s.(func(any) any); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any) any { return rt.Coerce[any](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(any) any](_s)
+			}(), Update: func() func(any, any) rt.T2[any, any] {
+				_s := any(_m.Update)
+				if _f, _ok := _s.(func(any, any) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _c, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any, _a1 any) rt.T2[any, any] {
+						return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(any, any) rt.T2[any, any]](_s)
+			}(), ViewImpl: rt.Coerce[Std_App_ViewImpl](_m.ViewImpl)}
+		}
+		return rt.Coerce[struct {
+			Base          Std_App_BaseConfig_R
+			Configs       []Std_App_Config
+			Durable       Std_App_DurableWiring_R[any]
+			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+			Init          func(struct{}) rt.T2[any, any]
+			NotFound      rt.SkyMaybe[any]
+			OnInput       rt.SkyMaybe[func(string) any]
+			OnKey         rt.SkyMaybe[func(any) any]
+			OnNavigate    rt.SkyMaybe[func(any) any]
+			OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+			Routes        []Std_App_Route
+			RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+			Subscriptions func(any) any
+			Update        func(any, any) rt.T2[any, any]
+			ViewImpl      Std_App_ViewImpl
+		}](_s)
+	}(_t0.Fields[0])
+	return Std_App_applyBase_(v_0.Base, Std_App_guardTerminalView_(v_0.ViewImpl, Std_App_runLiveBoot_(Std_App_App_App(v_0))))
+}
+
+func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+	v_0 := /* generic erase */ func(_s any) struct {
+		Base          Std_App_BaseConfig_R
+		Configs       []Std_App_Config
+		Durable       Std_App_DurableWiring_R[any]
+		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+		Init          func(struct{}) rt.T2[any, any]
+		NotFound      rt.SkyMaybe[any]
+		OnInput       rt.SkyMaybe[func(string) any]
+		OnKey         rt.SkyMaybe[func(any) any]
+		OnNavigate    rt.SkyMaybe[func(any) any]
+		OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+		Routes        []Std_App_Route
+		RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+		Subscriptions func(any) any
+		Update        func(any, any) rt.T2[any, any]
+		ViewImpl      Std_App_ViewImpl
+	} {
+		if _m, _ok := _s.(struct {
+			Base          any
+			Configs       any
+			Durable       any
+			Guard         any
+			Head          any
+			Init          any
+			NotFound      any
+			OnInput       any
+			OnKey         any
+			OnNavigate    any
+			OnRequest     any
+			Routes        any
+			RpcError      any
+			Subscriptions any
+			Update        any
+			ViewImpl      any
+		}); _ok {
+			return struct {
+				Base          Std_App_BaseConfig_R
+				Configs       []Std_App_Config
+				Durable       Std_App_DurableWiring_R[any]
+				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+				Init          func(struct{}) rt.T2[any, any]
+				NotFound      rt.SkyMaybe[any]
+				OnInput       rt.SkyMaybe[func(string) any]
+				OnKey         rt.SkyMaybe[func(any) any]
+				OnNavigate    rt.SkyMaybe[func(any) any]
+				OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+				Routes        []Std_App_Route
+				RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+				Subscriptions func(any) any
+				Update        func(any, any) rt.T2[any, any]
+				ViewImpl      Std_App_ViewImpl
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(struct{}) rt.T2[any, any] {
+				_s := any(_m.Init)
+				if _f, _ok := _s.(func(struct{}) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 struct{}) rt.T2[any, any] { return rt.Coerce[rt.T2[any, any]](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(struct{}) rt.T2[any, any]](_s)
+			}(), NotFound: rt.MaybeCoerce[any](_m.NotFound), OnInput: rt.MaybeCoerce[func(string) any](_m.OnInput), OnKey: rt.MaybeCoerce[func(any) any](_m.OnKey), OnNavigate: rt.MaybeCoerce[func(any) any](_m.OnNavigate), OnRequest: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_m.OnRequest), Routes: rt.AsListT[Std_App_Route](_m.Routes), RpcError: rt.MaybeCoerce[func(Sky_Core_Error_Error) any](_m.RpcError), Subscriptions: func() func(any) any {
+				_s := any(_m.Subscriptions)
+				if _f, _ok := _s.(func(any) any); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any) any { return rt.Coerce[any](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(any) any](_s)
+			}(), Update: func() func(any, any) rt.T2[any, any] {
+				_s := any(_m.Update)
+				if _f, _ok := _s.(func(any, any) rt.T2[any, any]); _ok {
+					return _f
+				}
+				if _c, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any, _a1 any) rt.T2[any, any] {
+						return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(any, any) rt.T2[any, any]](_s)
+			}(), ViewImpl: rt.Coerce[Std_App_ViewImpl](_m.ViewImpl)}
+		}
+		return rt.Coerce[struct {
+			Base          Std_App_BaseConfig_R
+			Configs       []Std_App_Config
+			Durable       Std_App_DurableWiring_R[any]
+			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
+			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
+			Init          func(struct{}) rt.T2[any, any]
+			NotFound      rt.SkyMaybe[any]
+			OnInput       rt.SkyMaybe[func(string) any]
+			OnKey         rt.SkyMaybe[func(any) any]
+			OnNavigate    rt.SkyMaybe[func(any) any]
+			OnRequest     rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]]
+			Routes        []Std_App_Route
+			RpcError      rt.SkyMaybe[func(Sky_Core_Error_Error) any]
+			Subscriptions func(any) any
+			Update        func(any, any) rt.T2[any, any]
+			ViewImpl      Std_App_ViewImpl
+		}](_s)
+	}(_t0.Fields[0])
+	return func() rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+		_subj := v_0.NotFound
+		if _subj.Tag == 0 {
+			v_1 := _subj.JustValue
+			_ = v_1
+			return func() rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+				w_2 := Std_App_findWeb(v_0.Configs)
+				_ = w_2
+				base_3 := rt.Live_config(any(struct {
+					Init          any
+					NotFound      any
+					Routes        any
+					Subscriptions any
+					Update        any
+					View          any
+				}{Init: func(v_17 struct {
+					Cookies map[string]string
+					Headers map[string]string
+					Method  string
+					Params  map[string]string
+					Path    string
+					Query   string
+				}) rt.T2[any, any] {
+					return func() rt.T2[any, any] {
+						_t1 := v_0.Init(struct{}{})
+						_ = _t1
+						v_18 := _t1.V0
+						v_19 := _t1.V1
+						_ = v_18
+						_ = v_19
+						return func() rt.T2[any, any] {
+							_subj := v_0.OnRequest
+							if _subj.Tag == 0 {
+								v_20 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.T2[any, any] {
+									_s := any(_subj.JustValue)
+									if _f, _ok := _s.(func(Sky_Http_Server_Request_R, any) rt.T2[any, any]); _ok {
+										return _f
+									}
+									if _c, _ok := _s.(func(any) any); _ok {
+										return func(_a0 Sky_Http_Server_Request_R, _a1 any) rt.T2[any, any] {
+											return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+										}
+									}
+									return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_s)
+								}()
+								_ = v_20
+								return func() rt.T2[any, any] {
+									_t2 := v_20(Std_App_requestFromSeed_(v_17), v_18)
+									_ = _t2
+									v_21 := _t2.V0
+									v_22 := _t2.V1
+									_ = v_21
+									_ = v_22
+									return rt.T2[any, any]{V0: v_21, V1: rt.Cmd_batch(any([]any{v_19, v_22}))}
+								}()
+							}
+							if _subj.Tag == 1 {
+								return rt.T2[any, any]{V0: v_18, V1: v_19}
+							}
+							panic(rt.Unreachable("case"))
+						}()
+					}()
+				}, Update: v_0.Update, View: func(v_23 any) Std_Html_Html {
+					return func() Std_Html_Html {
+						_subj := v_0.ViewImpl
+						if _subj.Tag == 0 {
+							v_24 := /* generic erase */ func() func(any) Std_Ui_Element {
+								_s := any(_subj.Fields[0])
+								if _f, _ok := _s.(func(any) Std_Ui_Element); _ok {
+									return _f
+								}
+								if _g, _ok := _s.(func(any) any); _ok {
+									return func(_a0 any) Std_Ui_Element { return rt.Coerce[Std_Ui_Element](_g(any(_a0))) }
+								}
+								return rt.CoerceFuncSlot[func(any) Std_Ui_Element](_s)
+							}()
+							_ = v_24
+							return Std_App_renderUiRoot_(v_24(v_23))
+						}
+						if _subj.Tag == 1 {
+							v_25 := /* generic erase */ func() func(any) Std_Html_Html {
+								_s := any(_subj.Fields[0])
+								if _f, _ok := _s.(func(any) Std_Html_Html); _ok {
+									return _f
+								}
+								if _g, _ok := _s.(func(any) any); _ok {
+									return func(_a0 any) Std_Html_Html { return rt.Coerce[Std_Html_Html](_g(any(_a0))) }
+								}
+								return rt.CoerceFuncSlot[func(any) Std_Html_Html](_s)
+							}()
+							_ = v_25
+							return Std_App_renderHtmlRoot_(v_25(v_23))
+						}
+						if _subj.Tag == 2 {
+							v_26 := /* generic erase */ func() func(any) string {
+								_s := any(_subj.Fields[0])
+								if _f, _ok := _s.(func(any) string); _ok {
+									return _f
+								}
+								if _g, _ok := _s.(func(any) any); _ok {
+									return func(_a0 any) string { return rt.AsString(_g(any(_a0))) }
+								}
+								return rt.CoerceFuncSlot[func(any) string](_s)
+							}()
+							_ = v_26
+							return Std_Html_text(v_26(v_23))
+						}
+						panic(rt.Unreachable("case"))
+					}()
+				}, Subscriptions: v_0.Subscriptions, Routes: /* FFI return */ rt.AsListT[any](rt.List_mapAny(any(func(_w3 any) any { return Std_App_liveRoute_( /* FFI return */ rt.Coerce[Std_App_Route](_w3)) }), any(v_0.Routes))), NotFound: v_1}))
+				_ = base_3
+				withStore__4 := func() any {
+					_subj := w_2.Store
+					if _subj.Tag == 0 {
+						v_27 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_27
+						return rt.Live_withStore(any(v_27), base_3)
+					}
+					if _subj.Tag == 1 {
+						return base_3
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withStore__4
+				withStatic__5 := func() any {
+					_subj := w_2.Static
+					if _subj.Tag == 0 {
+						v_28 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_28
+						return rt.Live_withStatic(any(v_28), withStore__4)
+					}
+					if _subj.Tag == 1 {
+						return withStore__4
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withStatic__5
+				withStaticUrl__6 := func() any {
+					_subj := w_2.StaticUrl
+					if _subj.Tag == 0 {
+						v_29 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_29
+						return rt.Live_withStaticUrl(any(v_29), withStatic__5)
+					}
+					if _subj.Tag == 1 {
+						return withStatic__5
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withStaticUrl__6
+				withTtl__7 := func() any {
+					_subj := w_2.Ttl
+					if _subj.Tag == 0 {
+						v_30 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_30
+						return rt.Live_withTtl(any(v_30), withStaticUrl__6)
+					}
+					if _subj.Tag == 1 {
+						return withStaticUrl__6
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withTtl__7
+				withIdle__8 := func() any {
+					_subj := w_2.IdleEvict
+					if _subj.Tag == 0 {
+						v_31 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_31
+						return rt.Live_withIdleEvict(any(v_31), withTtl__7)
+					}
+					if _subj.Tag == 1 {
+						return withTtl__7
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withIdle__8
+				withMaxBody__9 := func() any {
+					_subj := w_2.MaxBodyBytes
+					if _subj.Tag == 0 {
+						v_32 := /* generic erase */ rt.AsInt(_subj.JustValue)
+						_ = v_32
+						return rt.Live_withMaxBodyBytes(any(v_32), withIdle__8)
+					}
+					if _subj.Tag == 1 {
+						return withIdle__8
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withMaxBody__9
+				withInputMode__10 := func() any {
+					_subj := w_2.InputMode
+					if _subj.Tag == 0 {
+						v_33 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_33
+						return rt.Live_withInput(any(v_33), withMaxBody__9)
+					}
+					if _subj.Tag == 1 {
+						return withMaxBody__9
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withInputMode__10
+				withPort__11 := rt.Live_withPort(any(w_2.Port), withInputMode__10)
+				_ = withPort__11
+				withAnalytics__12 := func() any {
+					_subj := w_2.Analytics
+					if _subj.Tag == 0 {
+						v_34 := /* generic erase */ func(_s any) struct{ PageViews bool } {
+							if _m, _ok := _s.(struct{ PageViews any }); _ok {
+								return struct{ PageViews bool }{PageViews: rt.AsBool(_m.PageViews)}
+							}
+							return rt.Coerce[struct{ PageViews bool }](_s)
+						}(_subj.JustValue)
+						_ = v_34
+						return rt.Live_withAnalytics(any(v_34), withPort__11)
+					}
+					if _subj.Tag == 1 {
+						return withPort__11
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withAnalytics__12
+				withHead__13 := func() any {
+					_subj := v_0.Head
+					if _subj.Tag == 0 {
+						v_35 := /* generic erase */ func() func(any) []Std_Html_Html {
+							_s := any(_subj.JustValue)
+							if _f, _ok := _s.(func(any) []Std_Html_Html); _ok {
+								return _f
+							}
+							if _g, _ok := _s.(func(any) any); _ok {
+								return func(_a0 any) []Std_Html_Html { return rt.AsListT[Std_Html_Html](_g(any(_a0))) }
+							}
+							return rt.CoerceFuncSlot[func(any) []Std_Html_Html](_s)
+						}()
+						_ = v_35
+						return rt.Live_withHead(any(func(_w4 any) any { return any(v_35(_w4)) }), withAnalytics__12)
+					}
+					if _subj.Tag == 1 {
+						return withAnalytics__12
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withHead__13
+				withGuard__14 := func() any {
+					_subj := v_0.Guard
+					if _subj.Tag == 0 {
+						v_36 := /* generic erase */ func() func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}] {
+							_s := any(_subj.JustValue)
+							if _f, _ok := _s.(func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]); _ok {
+								return _f
+							}
+							if _c, _ok := _s.(func(any) any); _ok {
+								return func(_a0 any, _a1 any) rt.SkyResult[Sky_Core_Error_Error, struct{}] {
+									return rt.ResultCoerceOk[Sky_Core_Error_Error, struct{}]((_c(any(_a0))).(func(any) any)(any(_a1)), func(_v any) struct{} { return rt.Coerce[struct{}](_v) })
+								}
+							}
+							return rt.CoerceFuncSlot[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_s)
+						}()
+						_ = v_36
+						return rt.Live_withGuard(any(func(_w5 any) any { return any(func(_w6 any) any { return any(v_36(_w5, _w6)) }) }), withHead__13)
+					}
+					if _subj.Tag == 1 {
+						return withHead__13
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withGuard__14
+				withNav__15 := func() any {
+					_subj := v_0.OnNavigate
+					if _subj.Tag == 0 {
+						v_37 := /* generic erase */ func() func(any) any {
+							_s := any(_subj.JustValue)
+							if _f, _ok := _s.(func(any) any); _ok {
+								return _f
+							}
+							if _g, _ok := _s.(func(any) any); _ok {
+								return func(_a0 any) any { return rt.Coerce[any](_g(any(_a0))) }
+							}
+							return rt.CoerceFuncSlot[func(any) any](_s)
+						}()
+						_ = v_37
+						return rt.Live_withOnNavigate(any(v_37), withGuard__14)
+					}
+					if _subj.Tag == 1 {
+						return withGuard__14
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withNav__15
+				withDur__16 := func() any {
+					if v_0.Durable.Enabled {
+						return rt.Live_withDurable(any(Std_App_liveDurable_(func(_e7 any) Sky_Http_Server_Request_R {
+							return Std_App_requestFromSeed_( /* generic erase */ func(_s any) struct {
+								Cookies map[string]string
+								Headers map[string]string
+								Method  string
+								Params  map[string]string
+								Path    string
+								Query   string
+							} {
+								if _m, _ok := _s.(struct {
+									Cookies any
+									Headers any
+									Method  any
+									Params  any
+									Path    any
+									Query   any
+								}); _ok {
+									return struct {
+										Cookies map[string]string
+										Headers map[string]string
+										Method  string
+										Params  map[string]string
+										Path    string
+										Query   string
+									}{Cookies: rt.AsMapT[string](_m.Cookies), Headers: rt.AsMapT[string](_m.Headers), Method: rt.AsString(_m.Method), Params: rt.AsMapT[string](_m.Params), Path: rt.AsString(_m.Path), Query: rt.AsString(_m.Query)}
+								}
+								return rt.Coerce[struct {
+									Cookies map[string]string
+									Headers map[string]string
+									Method  string
+									Params  map[string]string
+									Path    string
+									Query   string
+								}](_s)
+							}(_e7))
+						}, v_0.OnRequest, v_0.Durable)), withNav__15)
+					} else {
+						return withNav__15
+					}
+				}()
+				_ = withDur__16
+				return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.Live_app(withDur__16))
+			}()
+		}
+		if _subj.Tag == 1 {
+			return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.AnyTaskFail(any(Sky_Core_Error_invalidInput("target 'web' requires a fallback page — add `|> App.withNotFound <page>`"))))
+		}
+		panic(rt.Unreachable("case"))
+	}()
+}
+
+func Sky_Core_Error_invalidInput(v_0 string) Sky_Core_Error_Error {
+	return Sky_Core_Error_Error_Error(Sky_Core_Error_ErrorKind_InvalidInput, Sky_Core_Error_mkInfo(v_0))
+}
+
+func Sky_Core_Error_mkInfo(v_0 string) Sky_Core_Error_ErrorInfo_R {
+	return Sky_Core_Error_ErrorInfo_R{Message: v_0, Details: /* primitive join */ rt.MaybeCoerce[Sky_Core_Error_ErrorDetails](rt.Nothing[any]())}
+}
+
+func Std_App_requestFromSeed_(v_0 struct {
+	Cookies map[string]string
+	Headers map[string]string
+	Method  string
+	Params  map[string]string
+	Path    string
+	Query   string
+}) Sky_Http_Server_Request_R {
+	return Sky_Http_Server_Request_R{Method: v_0.Method, Path: v_0.Path, Body: "", Headers: v_0.Headers, Params: v_0.Params, Query: /* FFI return */ rt.AsMapT[string](rt.Http_parseQuery(any(v_0.Query))), Cookies: v_0.Cookies, RemoteAddr: ""}
+}
+
+func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]], v_2 Std_App_DurableWiring_R[any]) struct {
+	ApplyRestore        func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+	ApplyRestoreRequest func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+	Enabled             bool
+	Persist             func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]
+	Restore             func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]
+	RunId               string
+	Setup               rt.SkyTask[Sky_Core_Error_Error, struct{}]
+} {
+	return /* primitive join */ func(_s any) struct {
+		ApplyRestore        func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+		ApplyRestoreRequest func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+		Enabled             bool
+		Persist             func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]
+		Restore             func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]
+		RunId               string
+		Setup               rt.SkyTask[Sky_Core_Error_Error, struct{}]
+	} {
+		if _m, _ok := _s.(struct {
+			ApplyRestore        any
+			ApplyRestoreRequest any
+			Enabled             any
+			Persist             any
+			Restore             any
+			RunId               any
+			Setup               any
+		}); _ok {
+			return struct {
+				ApplyRestore        func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+				ApplyRestoreRequest func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+				Enabled             bool
+				Persist             func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]
+				Restore             func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]
+				RunId               string
+				Setup               rt.SkyTask[Sky_Core_Error_Error, struct{}]
+			}{ApplyRestore: func() func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any {
+				_s := any(_m.ApplyRestore)
+				if _f, _ok := _s.(func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any); _ok {
+					return _f
+				}
+				if _c, _ok := _s.(func(any) any); _ok {
+					return func(_a0 rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], _a1 any) any {
+						return rt.Coerce[any]((_c(any(_a0))).(func(any) any)(any(_a1)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any](_s)
+			}(), ApplyRestoreRequest: func() func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any {
+				_s := any(_m.ApplyRestoreRequest)
+				if _f, _ok := _s.(func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any); _ok {
+					return _f
+				}
+				if _c, _ok := _s.(func(any) any); _ok {
+					return func(_a0 any, _a1 rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], _a2 any) any {
+						return rt.Coerce[any](((_c(any(_a0))).(func(any) any)(any(_a1))).(func(any) any)(any(_a2)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any](_s)
+			}(), Enabled: rt.AsBool(_m.Enabled), Persist: func() func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+				_s := any(_m.Persist)
+				if _f, _ok := _s.(func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]); _ok {
+					return _f
+				}
+				if _c, _ok := _s.(func(any) any); _ok {
+					return func(_a0 string, _a1 any) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+						return rt.TaskCoerceT[Sky_Core_Error_Error, struct{}]((_c(any(_a0))).(func(any) any)(any(_a1)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]](_s)
+			}(), Restore: func() func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]] {
+				_s := any(_m.Restore)
+				if _f, _ok := _s.(func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]] {
+						return rt.TaskCoerceT[Sky_Core_Error_Error, rt.SkyMaybe[any]](_g(any(_a0)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]](_s)
+			}(), RunId: rt.AsString(_m.RunId), Setup: rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](_m.Setup)}
+		}
+		return rt.Coerce[struct {
+			ApplyRestore        func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+			ApplyRestoreRequest func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+			Enabled             bool
+			Persist             func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]
+			Restore             func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]
+			RunId               string
+			Setup               rt.SkyTask[Sky_Core_Error_Error, struct{}]
+		}](_s)
+	}(struct {
+		ApplyRestore        any
+		ApplyRestoreRequest any
+		Enabled             any
+		Persist             any
+		Restore             any
+		RunId               any
+		Setup               any
+	}{Enabled: v_2.Enabled, Setup: v_2.Setup, Restore: v_2.Restore, Persist: v_2.Persist, ApplyRestore: v_2.ApplyRestore, RunId: v_2.RunId, ApplyRestoreRequest: func(v_3 any, v_4 rt.SkyResult[any, rt.SkyMaybe[any]], v_5 any) any {
+		return func() any {
+			_subj := v_1
+			if _subj.Tag == 0 {
+				v_6 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.T2[any, any] {
+					_s := any(_subj.JustValue)
+					if _f, _ok := _s.(func(Sky_Http_Server_Request_R, any) rt.T2[any, any]); _ok {
+						return _f
+					}
+					if _c, _ok := _s.(func(any) any); _ok {
+						return func(_a0 Sky_Http_Server_Request_R, _a1 any) rt.T2[any, any] {
+							return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+						}
+					}
+					return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_s)
+				}()
+				_ = v_6
+				return func() any {
+					_subj := v_4
+					if (_subj.Tag == 0) && ( /* generic erase */ rt.MaybeCoerce[any](_subj.OkValue).Tag == 0) {
+						v_7 := /* generic erase */ rt.MaybeCoerce[any](_subj.OkValue).JustValue
+						_ = v_7
+						return func() any {
+							_t0 := v_6( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](v_0(v_3)), v_7)
+							_ = _t0
+							v_8 := _t0.V0
+							_ = v_8
+							return v_8
+						}()
+					}
+					return v_5
+					panic(rt.Unreachable("case"))
+				}()
+			}
+			if _subj.Tag == 1 {
+				return v_2.ApplyRestore( /* primitive join */ rt.ResultCoerceOk[Sky_Core_Error_Error, rt.SkyMaybe[any]](v_4, func(_v any) rt.SkyMaybe[any] { return rt.MaybeCoerce[any](_v) }), v_5)
+			}
+			panic(rt.Unreachable("case"))
+		}()
+	}})
+}
+
+func Std_App_liveRoute_(v_0 Std_App_Route) any {
+	return func() any {
+		_subj := v_0
+		if _subj.Tag == 0 {
+			v_1 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			v_2 := _subj.Fields[1]
+			_ = v_1
+			_ = v_2
+			return rt.Live_route(any(v_1), v_2)
+		}
+		if _subj.Tag == 1 {
+			v_3 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			v_4 := /* generic erase */ func() func(string) any {
+				_s := any(_subj.Fields[1])
+				if _f, _ok := _s.(func(string) any); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 string) any { return rt.Coerce[any](_g(any(_a0))) }
+				}
+				return rt.CoerceFuncSlot[func(string) any](_s)
+			}()
+			_ = v_3
+			_ = v_4
+			return rt.Live_route(any(v_3), any(func(_w0 any) any { return v_4( /* FFI return */ rt.AsString(_w0)) }))
+		}
+		if _subj.Tag == 2 {
+			v_5 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			v_6 := /* generic erase */ func() func(Sky_Http_Server_Request_R) rt.SkyTask[Sky_Core_Error_Error, Sky_Http_Server_Response_R] {
+				_s := any(_subj.Fields[1])
+				if _f, _ok := _s.(func(Sky_Http_Server_Request_R) rt.SkyTask[Sky_Core_Error_Error, Sky_Http_Server_Response_R]); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 Sky_Http_Server_Request_R) rt.SkyTask[Sky_Core_Error_Error, Sky_Http_Server_Response_R] {
+						return rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Http_Server_Response_R](_g(any(_a0)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R) rt.SkyTask[Sky_Core_Error_Error, Sky_Http_Server_Response_R]](_s)
+			}()
+			_ = v_5
+			_ = v_6
+			return rt.Live_api(any(v_5), any(func(_w1 any) any { return any(v_6( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](_w1))) }))
+		}
+		panic(rt.Unreachable("case"))
+	}()
+}
+
+func Std_App_renderHtmlRoot_(v_0 Std_Html_Html) Std_Html_Html {
+	return Std_App_renderUiRoot_( /* FFI return */ rt.Coerce[Std_Ui_Element](rt.Std_App_asElement(any(v_0))))
+}
+
+func Std_App_renderUiRoot_(v_0 Std_Ui_Element) Std_Html_Html {
+	return /* FFI return */ rt.Coerce[Std_Html_Html](rt.Std_App_htmlDocOrDefault(any(v_0), any(Std_Ui_layout([]Std_Ui_Attribute{}, v_0))))
+}
+
+func Std_App_findWeb(v_0 []Std_App_Config) Std_App_WebOpts_R {
+	for {
+		_subj0 := v_0
+		if rt.SkyLenT(_subj0) == 0 {
+			return Std_App_webDefaults()
+		}
+		if (rt.SkyLenT(_subj0) >= 1) && (rt.SkyElemT(_subj0, 0).Tag == 0) {
+			v_1 := /* generic erase */ rt.Coerce[Std_App_WebOpts_R](rt.SkyElemT(_subj0, 0).Fields[0])
+			_ = v_1
+			return v_1
+		}
+		if (rt.SkyLenT(_subj0) >= 1) && (rt.SkyElemT(_subj0, 0).Tag == 2) {
+			v_2 := /* generic erase */ rt.Coerce[Std_App_WebOpts_R](rt.SkyElemT(_subj0, 0).Fields[0])
+			_ = v_2
+			return v_2
+		}
+		if rt.SkyLenT(_subj0) >= 1 {
+			v_3 := rt.SkyTailSliceT(_subj0)
+			_ = v_3
+			_t1 := v_3
+			v_0 = _t1
+			continue
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_App_guardTerminalView_(v_0 Std_App_ViewImpl, v_1 rt.SkyTask[Sky_Core_Error_Error, struct{}]) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+	return func() rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+		_subj := v_0
+		if _subj.Tag == 2 {
+			return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}]( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, any](rt.AnyTaskFail(any(Sky_Core_Error_invalidInput("this app has a String view (App.cli / App.tui) — build it with --target terminal:cli or terminal:tui; use App.app for a cross-platform Std.Ui view that also renders on the web")))))
+		}
+		return v_1
+		panic(rt.Unreachable("case"))
+	}()
+}
+
+func Std_App_applyBase_(v_0 Std_App_BaseConfig_R, v_1 rt.SkyTask[Sky_Core_Error_Error, struct{}]) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}]( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, any](rt.AnyTaskAndThen(any(func(_w0 any) any {
+		return any(func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, any] {
+			return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, any](v_1)
+		}( /* FFI return */ rt.Coerce[struct{}](_w0)))
+	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.Config_apply(Std_App_baseToConfig_(v_0)))))))
+}
+
+func Std_App_baseToConfig_(v_0 Std_App_BaseConfig_R) any {
+	return func() any {
+		withLog__1 := Sky_Config_withLog(v_0.LogFormat, v_0.LogLevel, rt.Config_default())
+		_ = withLog__1
+		withDb__2 := func() any {
+			_subj := v_0.Database
+			if _subj.Tag == 0 {
+				v_4 := /* generic erase */ rt.Coerce[Sky_Config_Database](_subj.JustValue)
+				_ = v_4
+				return Sky_Config_withDatabase(v_4, withLog__1)
+			}
+			if _subj.Tag == 1 {
+				return withLog__1
+			}
+			panic(rt.Unreachable("case"))
+		}()
+		_ = withDb__2
+		withTel__3 := func() any {
+			_subj := v_0.Telemetry
+			if _subj.Tag == 0 {
+				v_5 := /* generic erase */ rt.Coerce[Sky_Config_Telemetry](_subj.JustValue)
+				_ = v_5
+				return Sky_Config_withTelemetry(v_5, withDb__2)
+			}
+			if _subj.Tag == 1 {
+				return withDb__2
+			}
+			panic(rt.Unreachable("case"))
+		}()
+		_ = withTel__3
+		return withTel__3
+	}()
+}
+
+func Sky_Config_withTelemetry(v_0 Sky_Config_Telemetry, v_1 any) any {
+	return rt.Config_withTelemetry(any(Sky_Config_telemetryEndpoint(v_0)), v_1)
+}
+
+func Sky_Config_telemetryEndpoint(v_0 Sky_Config_Telemetry) string {
+	return func() string {
+		_subj := v_0
+		if _v0, _ok1 := _subj.(Sky_Config_Telemetry_Otlp_V); _ok1 {
+			v_1 := /* generic erase */ rt.AsString(_v0.V0)
+			_ = v_1
+			return v_1
+		}
+		panic(rt.Unreachable("case"))
+	}()
+}
+
+func Sky_Config_withDatabase(v_0 Sky_Config_Database, v_1 any) any {
+	return rt.Config_withDatabase(any(Sky_Config_databaseKind(v_0)), any(Sky_Config_databaseValue(v_0)), v_1)
+}
+
+func Sky_Config_databaseValue(v_0 Sky_Config_Database) string {
+	return func() string {
+		_subj := v_0
+		if _v0, _ok1 := _subj.(Sky_Config_Database_Sqlite_V); _ok1 {
+			v_1 := /* generic erase */ rt.AsString(_v0.V0)
+			_ = v_1
+			return v_1
+		}
+		if _v2, _ok3 := _subj.(Sky_Config_Database_Postgres_V); _ok3 {
+			v_2 := /* generic erase */ rt.AsString(_v2.V0)
+			_ = v_2
+			return v_2
+		}
+		panic(rt.Unreachable("case"))
+	}()
+}
+
+func Sky_Config_databaseKind(v_0 Sky_Config_Database) string {
+	return func() string {
+		_subj := v_0
+		if _, _ok1 := _subj.(Sky_Config_Database_Sqlite_V); _ok1 {
+			return "sqlite"
+		}
+		if _, _ok3 := _subj.(Sky_Config_Database_Postgres_V); _ok3 {
+			return "postgres"
+		}
+		panic(rt.Unreachable("case"))
+	}()
+}
+
+func Sky_Config_withLog(v_0 Sky_Config_LogFormat, v_1 Sky_Config_LogLevel, v_2 any) any {
+	return rt.Config_withLog(any(Sky_Config_logFormatName(v_0)), any(Sky_Config_logLevelName(v_1)), v_2)
+}
+
+func Sky_Config_logLevelName(v_0 Sky_Config_LogLevel) string {
+	return func() string {
+		_subj := v_0
+		if _subj == Sky_Config_LogLevel_Debug {
+			return "debug"
+		}
+		if _subj == Sky_Config_LogLevel_Info {
+			return "info"
+		}
+		if _subj == Sky_Config_LogLevel_Warn {
+			return "warn"
+		}
+		if _subj == Sky_Config_LogLevel_Error {
+			return "error"
+		}
+		panic(rt.Unreachable("case"))
+	}()
+}
+
+func Sky_Config_logFormatName(v_0 Sky_Config_LogFormat) string {
+	return func() string {
+		_subj := v_0
+		if _subj == Sky_Config_LogFormat_Json {
+			return "json"
+		}
+		if _subj == Sky_Config_LogFormat_Text {
+			return "text"
+		}
+		panic(rt.Unreachable("case"))
+	}()
+}
+
 func init() {
-	rt.RegisterSkyGobTypes([]any{Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Core_Http_HttpResponse_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Overview_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}})
+	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Overview_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Provider_Message_R{}, Std_Ai_Provider_Request_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
 }

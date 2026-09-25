@@ -1202,3 +1202,124 @@ fn the_release_workflow_is_the_full_suite() {
          {uncovered:?} — add each to one of the gate-falsifiers-* `--only` lists"
     );
 }
+
+/// The committed console_app Go must be checked against its Sky source on every
+/// pull request, in a job the required check fans in.
+///
+/// # Why this exists
+///
+/// `runtime-go/rt/console_app/main.go` is generated from
+/// `sky-bundled/console/src` by `scripts/regenerate-console.sh` and committed.
+/// The script header said "CI runs this + `git diff --exit-code
+/// runtime-go/rt/console_app/`". No workflow did. The Std.App migration of the
+/// console changed the Sky source without a regeneration, and the file drifted
+/// for a month: the next regeneration was a 6,298-line diff, and the result did
+/// not build, because the hand-written glue (`register_v3.go`) named a binding
+/// (`Main_viewWrapped`) the source no longer defined.
+///
+/// # What this asserts
+///
+/// In one `rust-ci.yml` job that `ci-green` needs, and that is not disabled,
+/// a step runs `scripts/regenerate-console.sh` with `SKY_REGEN_SKIP_BUILD=1`
+/// (the compiler the job built, not a stale `sky-out/sky`), and the same or a
+/// later step runs `git diff --exit-code runtime-go/rt/console_app`. Neither
+/// step may be `continue-on-error` or conditional. It also asserts the script
+/// still builds the regenerated package, so glue that names a symbol the
+/// compiler no longer emits fails the regeneration and not a user build.
+/// Parsed, never grepped as raw text: a comment must not vouch for a step.
+#[test]
+fn the_console_drift_check_runs_on_a_pull_request() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let text = std::fs::read_to_string(root.join(".github/workflows/rust-ci.yml"))
+        .expect("read rust-ci.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("rust-ci.yml parses");
+    let jobs = doc
+        .get("jobs")
+        .and_then(|j| j.as_mapping())
+        .expect("`jobs` mapping");
+    let fanned: Vec<String> = jobs
+        .get(serde_yaml::Value::from("ci-green"))
+        .and_then(|g| g.get("needs"))
+        .and_then(|n| n.as_sequence())
+        .map(|s| {
+            s.iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .expect("ci-green declares a `needs` list");
+
+    let step_is_unconditional = |step: &serde_yaml::Value| {
+        let soft = matches!(
+            step.get("continue-on-error"),
+            Some(serde_yaml::Value::Bool(true))
+        ) || step
+            .get("continue-on-error")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.trim() == "true");
+        !soft && step.get("if").is_none()
+    };
+
+    let mut found_in: Option<String> = None;
+    for (name, job) in jobs {
+        let Some(name) = name.as_str() else { continue };
+        if !fanned.iter().any(|f| f == name) || job_is_disabled(job) {
+            continue;
+        }
+        let Some(steps) = job.get("steps").and_then(|s| s.as_sequence()) else {
+            continue;
+        };
+        let mut regen_at: Option<usize> = None;
+        for (i, step) in steps.iter().enumerate() {
+            if !step_is_unconditional(step) {
+                continue;
+            }
+            let run = step.get("run").and_then(|r| r.as_str()).unwrap_or("");
+            // Executable lines only — a `#` comment inside a `run:` body must
+            // not vouch for the invocation either.
+            let code: Vec<&str> = run
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.starts_with('#'))
+                .collect();
+            if regen_at.is_none()
+                && code.iter().any(|l| {
+                    l.contains("scripts/regenerate-console.sh")
+                        && l.contains("SKY_REGEN_SKIP_BUILD=1")
+                })
+            {
+                regen_at = Some(i);
+            }
+            if regen_at.is_some_and(|r| r <= i)
+                && code
+                    .iter()
+                    .any(|l| l.contains("git diff --exit-code runtime-go/rt/console_app"))
+            {
+                found_in = Some(name.to_string());
+                break;
+            }
+        }
+        if found_in.is_some() {
+            break;
+        }
+    }
+    assert!(
+        found_in.is_some(),
+        "no `rust-ci.yml` job that `ci-green` needs runs \
+         `SKY_REGEN_SKIP_BUILD=1 bash scripts/regenerate-console.sh` followed by \
+         `git diff --exit-code runtime-go/rt/console_app/` as unconditional steps. \
+         Without it the committed console_app Go drifts from \
+         sky-bundled/console/src unnoticed, which is how it went stale for a \
+         month and stopped building on regeneration."
+    );
+
+    let script = std::fs::read_to_string(root.join("scripts/regenerate-console.sh"))
+        .expect("read scripts/regenerate-console.sh");
+    assert!(
+        script.contains("go build ./rt/console_app"),
+        "scripts/regenerate-console.sh no longer builds the regenerated \
+         console_app package. The glue in register_v3.go names generated \
+         symbols; without the build a regeneration can leave a package that \
+         does not compile, and the drift check alone would bless it."
+    );
+}

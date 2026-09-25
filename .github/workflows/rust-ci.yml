@@ -668,6 +668,28 @@ jobs:
         run: cargo run -q -p xtask -- coerce-floor
       - name: Gate — runtime rt tests (go test)
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
+      # runtime-go/rt/console_app/main.go is GENERATED from
+      # sky-bundled/console/src by scripts/regenerate-console.sh and committed.
+      # The script header always said CI runs this drift check; no workflow
+      # did. So the Std.App migration of the console (658f8cf99) changed the
+      # Sky source without a regeneration, and the next regeneration produced
+      # a 6,298-line diff and a package that did not build (the glue named a
+      # binding the source no longer had). Regenerate with the compiler this
+      # job just built and require a clean diff. The script also builds and
+      # vets the regenerated package, so glue that names a symbol the
+      # compiler no longer emits fails here too. It runs AFTER the rt tests,
+      # so those test the committed file, not the regenerated one.
+      - name: Gate — console_app matches its Sky source (regenerate + drift check)
+        working-directory: .
+        run: |
+          mkdir -p sky-out
+          cp -f rust/target/debug/sky sky-out/sky
+          SKY_REGEN_SKIP_BUILD=1 bash scripts/regenerate-console.sh
+          git diff --stat -- runtime-go/rt/console_app/
+          git diff --exit-code runtime-go/rt/console_app/ || {
+            echo "::error::runtime-go/rt/console_app/ is stale against sky-bundled/console/src. Run scripts/regenerate-console.sh, then ./scripts/build.sh, and commit the result."
+            exit 1
+          }
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
