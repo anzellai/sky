@@ -11,6 +11,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.18 — (unreleased)
+
+### Fixed
+
+- **Sky.Spa: a reload restored another identity's model.** `localStorage` held
+  one model for every tab of an origin. With a practitioner signed in in one tab
+  and a patient link (another session identity) in a second tab, a full load of
+  the first tab restored the patient's page and data under the practitioner's
+  session. Found in a real app. A stored model now restores only when the
+  identity it was stored under (the session fields) equals the identity of the
+  SSR seed. Any change of identity, including signed out to signed in, restores
+  nothing and removes the stored copy; the page boots from the seed. A sign-out
+  in the page removes the stored copy. The model is now stored under
+  `sky:spa:model:v2`; the old `sky:spa:model` key is deleted on the first load
+  and is restored only for an app with no session field. Tests:
+  `runtime-go/rt/spa_persist_identity_test.go` and the `spa-identity-slot` step
+  of `scripts/spa-restore-e2e.sh`. See `docs/skyspa/overview.md`, "Client
+  persistence and identity".
+
 ## v0.25.17 — app-surface soundness sweep: Sky.Live, Sky.Spa, Std.App, Sky.Tui/Cli (2026-09-24)
 
 A patch over v0.25.16. A bug in a Sky.Spa button (a re-rendered row kept sending

@@ -3648,7 +3648,7 @@ fn precompress_web_asset(file: &Path) {
 /// full cgo/WebKit build path (`Webview.url` → cgo).
 ///
 // P2 persistence across shells (client scratch-state restore, spa_persist_wasm.go
-// keyed on `sky:spa:model`): the native shells enable persistent DOM web storage
+// keyed on `sky:spa:model:v2`): the native shells enable persistent DOM web storage
 // (localStorage), so cart / banner / form inputs survive a relaunch —
 //   * Android WebView: `settings.domStorageEnabled = true` (set in the shell
 //     above); localStorage persists to the app's data dir.
@@ -4847,7 +4847,7 @@ struct WebView: UIViewRepresentable {
         let cfg = WKWebViewConfiguration()
         // Persist Web Storage (localStorage) across relaunches, so the Sky.Spa
         // client's scratch-state restore (spa_persist_wasm.go, keyed on
-        // `sky:spa:model`) survives. `.default()` is already the persistent store;
+        // `sky:spa:model:v2`) survives. `.default()` is already the persistent store;
         // set it explicitly so a later `.nonPersistent()` edit cannot silently
         // wipe scratch-state on every launch.
         cfg.websiteDataStore = WKWebsiteDataStore.default()

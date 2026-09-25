@@ -1,0 +1,5 @@
+[project]
+name = "identity-slot"
+
+[app]
+target = "web:app"

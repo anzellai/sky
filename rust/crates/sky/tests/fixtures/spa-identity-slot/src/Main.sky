@@ -1,0 +1,143 @@
+module Main exposing (main)
+
+-- The identity rule of Sky.Spa client persistence (spa_persist.go
+-- spaRestoreStored). A stored model restores ONLY for the session identity it
+-- was stored under.
+--
+-- Found in a real app: one browser, two tabs on one origin, a practitioner
+-- signed in in one tab and a patient link (another session identity) in the
+-- other. localStorage held ONE model for both, so a full load of the first tab
+-- restored the patient's page and data under the practitioner's session.
+--
+-- `session : Maybe Session` is the protected (session) field: `SignIn` is a
+-- server branch that writes it, so the backend signs it into `sky_sid` and the
+-- SSR seed carries it. `Bump` and `Note` are client scratch state that
+-- persistence restores. `SignOut` clears the session in the client.
+-- Driver: scripts/spa-identity-verify.mjs (run by scripts/spa-restore-e2e.sh).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Events as Ev
+
+type alias Session =
+    { kind : String
+    , userId : String
+    }
+
+type alias Model =
+    { session : Maybe Session
+    , page : String
+    , note : String
+    , clicks : Int
+    }
+
+type Msg
+    = PageLink String
+    | SignIn String String
+    | SignOut
+    | Bump
+    | Note
+
+
+gateOpen : () -> Bool
+gateOpen _ =
+    String.trim
+        (Result.withDefault "" (Task.run (File.readFile "data/gate.txt")))
+        == "open"
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { session = Nothing, page = "home", note = "", clicks = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        PageLink p ->
+            ( { model | page = p }, Cmd.none )
+
+        SignIn kind uid ->
+            if gateOpen () then
+                ( { model | session = Just { kind = kind, userId = uid } }
+                , Cmd.none
+                )
+
+            else
+                ( model, Cmd.none )
+
+        SignOut ->
+            ( { model | session = Nothing }, Cmd.none )
+
+        Bump ->
+            ( { model | clicks = model.clicks + 1 }, Cmd.none )
+
+        Note ->
+            case model.session of
+
+                Just s ->
+                    ( { model | note = s.userId ++ "-private" }, Cmd.none )
+
+                Nothing ->
+                    ( { model | note = "anon-note" }, Cmd.none )
+
+
+row : String -> String -> Element Msg
+row key txt =
+    Ui.el [ Ui.htmlAttribute "id" key ] (Ui.text txt)
+
+
+button : String -> Msg -> Element Msg
+button label msg =
+    Ui.el [ Ev.onClick msg ] (Ui.text label)
+
+
+who : Model -> String
+who model =
+    case model.session of
+
+        Just s ->
+            s.kind ++ ":" ++ s.userId
+
+        Nothing ->
+            "anon"
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ row "who" ("who=" ++ who model)
+        , row "note" ("note=" ++ model.note)
+        , row "clicks" ("clicks=" ++ String.fromInt model.clicks)
+        , button "signin-practitioner" (SignIn "practitioner" "u1")
+        , button "signin-patient" (SignIn "patient" "p1")
+        , button "signout" SignOut
+        , button "bump" Bump
+        , button "note" Note
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" "home" ]
+        |> App.withNotFound "home"
+
+
+main =
+    App.run app

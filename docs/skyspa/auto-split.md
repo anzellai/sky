@@ -956,6 +956,18 @@ session model and runs `onNavigate` over it, so a notice that `onNavigate` clear
 is cleared, and one it does not clear stays. A restore does not cancel `init`'s
 own command.
 
+**Persistence is per identity.** The stored model restores only when the
+identity it was stored under equals the identity of the SSR seed. The identity
+is the value of the session fields (`Spa.withPersistProtectedFields`),
+canonically serialised (`spa_persist.go` `spaIdentityOf`). Any change of
+identity (one user to another, signed out to signed in, signed in to signed out)
+restores nothing, removes the stored copy, and boots from the seed
+(`spaRestoreStored`). Two tabs with two identities share one `localStorage`, so
+without this rule a full load of one tab restored the other identity's model
+under its own session. An `update` that clears the session removes the stored
+copy, and the page then writes no signed-out model (`spaPersistWrite`). See
+[overview.md](overview.md), "Client persistence and identity".
+
 **Seeded boot (SPA-10).** When the page is server-rendered, the client boots
 from the `#sky-model` seed: the model the server rendered, with `init`'s read
 and the route's `onNavigate` load already settled into it. The page carries

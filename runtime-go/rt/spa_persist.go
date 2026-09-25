@@ -19,10 +19,22 @@ package rt
 // without a browser. The js wiring (localStorage reads/writes, the sign-out
 // fetch) lives in the //go:build js driver.
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+)
 
-// spaPersistKey is the localStorage key holding the serialised model.
-const spaPersistKey = "sky:spa:model"
+// spaPersistKey is the localStorage key holding the serialised model. It holds
+// ONE model, the last one written on this origin, whatever identity wrote it;
+// spaRestoreStored restores it only for the identity it was written under.
+//
+// v2: before v0.25.18 the model sat under spaPersistLegacyKey with no identity
+// rule, and an app with a session wrote a signed-out user's leftover data into
+// it. That blob cannot prove whose data it holds, so it is deleted on boot.
+const (
+	spaPersistKey       = "sky:spa:model:v2"
+	spaPersistLegacyKey = "sky:spa:model"
+)
 
 // spaPersistMaxBytes caps both the stored blob we will accept on boot and the
 // blob we write per step. A model larger than this is not persisted (localStorage
@@ -216,4 +228,152 @@ func spaIsNullRaw(r json.RawMessage) bool {
 		return true
 	}
 	return false
+}
+
+// spaKV is the storage the persistence rule reads and writes: window.localStorage
+// in the wasm client (spa_persist_wasm.go), a map in host tests. Get reports
+// whether the key is present; every method swallows a storage failure.
+type spaKV interface {
+	Get(key string) (string, bool)
+	Set(key, value string)
+	Remove(key string)
+}
+
+// spaPersistLife is what one page lifetime knows about the identity it persists
+// under. known is false until the boot or the first write settles it. id is the
+// canonical identity (spaIdentityOf) of the model the page holds; "" is signed
+// out. heldSignedIn is true once the page held a signed-in identity: from then
+// on the page never writes a signed-out model, because that model still carries
+// the signed-in user's data (an update that signs out usually clears only the
+// session field).
+type spaPersistLife struct {
+	known        bool
+	id           string
+	heldSignedIn bool
+}
+
+func spaLifeFor(id string) spaPersistLife {
+	return spaPersistLife{known: true, id: id, heldSignedIn: id != ""}
+}
+
+// spaIdentityOf returns the identity a model blob belongs to: the values of its
+// protected (session) fields, canonically serialised (object keys sorted, numbers
+// kept as written). A field that is absent or JSON null does not count, so a
+// model with no session value is signed out and returns "". ok is false when the
+// blob is not a JSON object. With no protected fields every model is "": an app
+// without a session has one identity. Never panics.
+func spaIdentityOf(modelJSON string, protected []string) (id string, ok bool) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(modelJSON), &m); err != nil || m == nil {
+		return "", false
+	}
+	out := map[string]any{}
+	for _, f := range protected {
+		for _, k := range spaFieldKeys(f) {
+			raw, present := m[k]
+			if !present {
+				continue
+			}
+			if spaIsNullRaw(raw) {
+				break
+			}
+			dec := json.NewDecoder(bytes.NewReader(raw))
+			dec.UseNumber()
+			var v any
+			if err := dec.Decode(&v); err != nil {
+				return "", false
+			}
+			out[f] = v
+			break
+		}
+	}
+	if len(out) == 0 {
+		return "", true
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+// spaRestoreStored is the boot decision: which stored model, if any, the client
+// restores over the SSR seed. It returns the merged model (spaMergeStoredOverSeed
+// with winFields) and the page lifetime's starting identity.
+//
+// The rule (identity = spaIdentityOf over the protected fields):
+//   - The stored model restores ONLY when its identity equals the seed's. Any
+//     change of identity (signed out -> signed in, signed in -> signed out, one
+//     user -> another) restores nothing, REMOVES the stored copy and boots from
+//     the seed. Two tabs with different identities on one origin share the one
+//     key; each tab's full load then boots from its own seed and never shows
+//     the other identity's data.
+//   - No SSR seed (a static deploy, a native shell): there is no server
+//     identity to compare, so the stored model restores as-is, as before.
+//   - A seed that is present but not a JSON object: nothing restores.
+//   - The legacy key is always deleted. Its blob restores only for an app with
+//     no protected fields (one identity for everyone); an app with a session
+//     cannot tell whose data it holds.
+//
+// Never panics; every failure boots from the seed.
+func spaRestoreStored(st spaKV, seedJSON string, protected, winFields []string, maxBytes int) (merged string, useIt bool, life spaPersistLife) {
+	legacy, hadLegacy := st.Get(spaPersistLegacyKey)
+	if hadLegacy {
+		st.Remove(spaPersistLegacyKey)
+	}
+	stored, ok := st.Get(spaPersistKey)
+	if !ok && hadLegacy && len(protected) == 0 {
+		stored, ok = legacy, true
+	}
+	seedID, seedOK := "", false
+	if seedJSON != "" {
+		if seedID, seedOK = spaIdentityOf(seedJSON, protected); seedOK {
+			life = spaLifeFor(seedID)
+		}
+	}
+	if !ok {
+		return "", false, life
+	}
+	storedID, storedOK := spaIdentityOf(stored, protected)
+	if seedJSON == "" {
+		if storedOK {
+			life = spaLifeFor(storedID)
+		}
+		merged, useIt = spaMergeStoredOverSeed(stored, "", winFields, maxBytes)
+		return merged, useIt, life
+	}
+	if !seedOK {
+		return "", false, life
+	}
+	if !storedOK || storedID != seedID {
+		st.Remove(spaPersistKey)
+		return "", false, life
+	}
+	merged, useIt = spaMergeStoredOverSeed(stored, seedJSON, winFields, maxBytes)
+	return merged, useIt, life
+}
+
+// spaPersistWrite stores the model a step produced. When the model's identity
+// differs from the one the page held, the stored copy (the old identity's) is
+// removed first. A signed-out model is never written by a page that held a
+// signed-in identity (see spaPersistLife). An oversized model is not written.
+// Never panics.
+func spaPersistWrite(st spaKV, life *spaPersistLife, modelJSON string, protected []string, maxBytes int) {
+	id, ok := spaIdentityOf(modelJSON, protected)
+	if !ok {
+		return
+	}
+	if life.known && life.id != id {
+		st.Remove(spaPersistKey)
+	}
+	life.known, life.id = true, id
+	if id != "" {
+		life.heldSignedIn = true
+	} else if life.heldSignedIn {
+		return
+	}
+	if maxBytes > 0 && len(modelJSON) > maxBytes {
+		return
+	}
+	st.Set(spaPersistKey, modelJSON)
 }

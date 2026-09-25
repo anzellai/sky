@@ -46,7 +46,7 @@ const EXPECT = arg("--expect", "");
 const DBSPEC = arg("--db", "");
 const PORT = Number(arg("--port", "8996"));
 // --restore-patch '<json>': the localStorage-restore first-paint test. After the
-// first load, read the client-persisted model (`sky:spa:model`), merge this JSON
+// first load, read the client-persisted model (`sky:spa:model:v2`), merge this JSON
 // patch over it, write it back, and RELOAD. The reloaded page SSR-renders the
 // (unchanged) seed, so the client must hydrate that seed render and then patch to
 // the restored model — the exact bug the two-step first paint fixes. `--expect`
@@ -111,7 +111,7 @@ try {
   // reload so the client must hydrate the SSR seed render and patch to the restore.
   if (RESTORE_PATCH) {
     const merged = await page.evaluate((patch) => {
-      const KEY = "sky:spa:model";
+      const KEY = "sky:spa:model:v2";
       let cur = {};
       try {
         cur = JSON.parse(localStorage.getItem(KEY) || "{}");
@@ -133,7 +133,7 @@ try {
     }
     const persisted = await page.evaluate(() => {
       try {
-        return localStorage.getItem("sky:spa:model") || "";
+        return localStorage.getItem("sky:spa:model:v2") || "";
       } catch {
         return "";
       }
