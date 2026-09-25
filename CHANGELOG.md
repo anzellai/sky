@@ -45,6 +45,16 @@ No public function signature changes.
   Tests: `rust/crates/hir/tests/dangling_export.rs`, the reject fixture
   `dangling_export_value.sky`, and LSP `didOpen` / two-module tests in
   `rust/crates/sky-lsp/tests/`.
+- **A Go-FFI function passed as a value compiled to `nil`.** `List.map
+  Hex.encodedLen xs` or `r |> Result.andThen Stripe.addressLine1` passes the
+  FFI function itself rather than calling it. Lowering handled only the call
+  shape, so the bare reference became `nil` with a `foreign ref` warning, and
+  the program panicked with `NilDereference` when the value was applied.
+  `examples/13-skyshop` had four such sites on its Stripe shipping-address path.
+  The value now lowers to a closure over the FFI wrapper, with each argument
+  narrowed as the call form narrows it. Found while making lowering refuse
+  `nil`. Test: `rust/crates/sky/tests/ffi_value_flow.rs` (it panicked on
+  v0.25.18).
 - **Lowering never emits `nil` for a name it cannot resolve.** A reference with
   no definition behind it, an error-recovery node, an unknown constructor, or a
   Go-FFI reference used as a value with no emitted form used to lower to `nil`

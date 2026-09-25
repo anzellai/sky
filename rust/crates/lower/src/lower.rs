@@ -3776,13 +3776,20 @@ impl<'a> Ctx<'a> {
                 self.lower_ctor_value(cr.def, actual, expected, pin)
             }
             Res::Foreign { package, name } => {
-                // A Go-FFI / unknown-module reference used as a VALUE that no FFI
-                // arm above claimed. This used to emit `nil` with only a warning,
-                // a silent runtime panic. It is the same user error the call path
-                // reports, so report it the same way: a hard lowering error.
-                // (`sky test` keys its "suite did not resolve" note on the
-                // warning, so it stays.)
+                // A Go-FFI reference used as a VALUE. A function with a wrapper
+                // lowers to a closure over it (`ffi_value`). Anything else (an
+                // unknown module, a missing or zero-arg function) used to emit
+                // `nil` with only a warning, a silent runtime panic; it is now the
+                // same hard lowering error the call path reports. (`sky test`
+                // keys its "suite did not resolve" note on the warning, so it
+                // stays.)
                 let (pkg, fun) = (package.as_str(), name.as_str());
+                if let Some((sym, _typed)) = self.ffi.call_symbol(pkg, fun) {
+                    if let Some(v) = self.ffi_value(&sym) {
+                        self.ffi_used.insert(pkg.to_string());
+                        return v;
+                    }
+                }
                 self.warnings.push(format!("foreign ref {pkg}.{fun}"));
                 let msg = self.unresolved_foreign_msg(pkg, fun);
                 self.errors.push(msg);
@@ -5171,6 +5178,35 @@ impl<'a> Ctx<'a> {
         )
     }
 
+    /// A Go-FFI function used as a VALUE (`Result.andThen Stripe.addressLine1`):
+    /// a curried Sky closure over its wrapper, each param narrowed exactly as the
+    /// call form narrows it. `None` when the wrapper takes no parameters (a
+    /// zero-arg Go function has no function value to pass; it must be called).
+    ///
+    /// Before v0.25.19 this shape fell through to `nil` with only a warning, and
+    /// the program panicked the first time the value was applied.
+    fn ffi_value(&mut self, sym: &str) -> Option<GoExpr> {
+        let wparams = self.ffi.wrapper_params(sym);
+        if wparams.is_empty() {
+            return None;
+        }
+        let go = format!("skyffi.{sym}");
+        let base = go
+            .strip_prefix("skyffi.")
+            .unwrap_or(&go)
+            .strip_suffix('T')
+            .unwrap_or(&go)
+            .to_string();
+        Some(self.curried_any(wparams.len(), "_f", |cx, params| {
+            let largs: Vec<GoExpr> = params
+                .into_iter()
+                .enumerate()
+                .map(|(pi, e)| cx.ffi_coerce_arg(&base, pi, e, &wparams))
+                .collect();
+            cx.ffi_emit_call(&go, largs, &GoTy::Any)
+        }))
+    }
+
     fn ffi_call(
         &mut self,
         go: &str,
@@ -5211,13 +5247,30 @@ impl<'a> Ctx<'a> {
                 continue;
             }
             let e = self.lower_expr(*a, &GoTy::Any);
+            largs.push(self.ffi_coerce_arg(base, pi, e, wrapper_params));
+            pi += 1;
+        }
+        self.ffi_emit_call(go, largs, actual)
+    }
+
+    /// Narrow one lowered argument to the Go-FFI wrapper's param slot `pi`.
+    /// Shared by the call form ([`Self::ffi_call`]) and the value form
+    /// ([`Self::ffi_value`]) so the two always pass an argument the same way.
+    fn ffi_coerce_arg(
+        &mut self,
+        base: &str,
+        pi: usize,
+        e: GoExpr,
+        wrapper_params: &[String],
+    ) -> GoExpr {
+        {
             let slot_name = format!("FfiT_{base}_P{pi}");
             if self.ffi.has_ffi_slot(&slot_name) {
                 // Non-primitive Go param: narrow to its typed slot alias (defined
                 // in `package skyffi` alongside the wrapper).
                 let slot = GoTy::Named(format!("skyffi.{slot_name}"), vec![]);
                 let from = e.ty.clone();
-                largs.push(GoExpr::new(
+                GoExpr::new(
                     GoExprKind::Coerce {
                         inner: Box::new(e),
                         from,
@@ -5225,7 +5278,7 @@ impl<'a> Ctx<'a> {
                         reason: CoerceReason::FfiReturn,
                     },
                     slot,
-                ));
+                )
             } else {
                 // Primitive Go param (no typed-slot alias). Coerce/convert the
                 // arg to the wrapper's REAL Go param type (from its parsed
@@ -5234,10 +5287,14 @@ impl<'a> Ctx<'a> {
                 // to the wrapper's `int64`, etc. A param type we don't recognise
                 // (or an already-matching one) passes the value verbatim.
                 let want = wrapper_params.get(pi).map(String::as_str);
-                largs.push(self.coerce_ffi_prim_arg(e, want));
+                self.coerce_ffi_prim_arg(e, want)
             }
-            pi += 1;
         }
+    }
+
+    /// Emit the call of Go-FFI wrapper `go` on already-narrowed `largs`,
+    /// narrowing its `any` result to `actual`.
+    fn ffi_emit_call(&mut self, go: &str, largs: Vec<GoExpr>, actual: &GoTy) -> GoExpr {
         let call = GoExpr::new(
             GoExprKind::Call(
                 Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
