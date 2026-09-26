@@ -318,7 +318,13 @@ async function newPage(browser) {
     const ct = r.headers()["content-type"] || "";
     const st = r.status();
     if (st === 304) return void checkedAssets.add(p);
-    if (st !== 200 || !want.test(ct)) badAssets.push(`${p} -> ${st} ${ct}`);
+    if (st !== 200 || !want.test(ct)) {
+      // An intermittent 206 was seen once for dist files served from the gate
+      // build cache; record enough to tell where it came from next time.
+      const h = r.headers();
+      const rq = r.request().headers();
+      badAssets.push(`${p} -> ${st} ${ct} [content-range=${h["content-range"] || "-"} accept-ranges=${h["accept-ranges"] || "-"} server=${h["server"] || "-"} req-range=${rq["range"] || "-"} req-if-range=${rq["if-range"] || "-"}]`);
+    }
     else checkedAssets.add(p);
   });
   page.on("pageerror", (e) => {
@@ -484,7 +490,8 @@ async function scenarioNotes(browser) {
       const r = await fetch(APP_ORIGIN + boot);
       const ct = r.headers.get("content-type") || "";
       check(`${boot} is served as JavaScript`,
-        r.status === 200 && ct.startsWith("text/javascript"), `${r.status} ${ct}`);
+        r.status === 200 && ct.startsWith("text/javascript"),
+        `${r.status} ${ct}` + (r.status === 200 ? "" : ` [content-range=${r.headers.get("content-range") || "-"} accept-ranges=${r.headers.get("accept-ranges") || "-"} server=${r.headers.get("server") || "-"} length=${r.headers.get("content-length") || "-"}]`));
     }
   }
   const loaded = page.waitForResponse((r) => r.url().includes("/_rpc/Load"), { timeout: 20000 });
