@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.25.22 — a native tool call can carry provider state to the next turn
+## v0.26.0 — a native tool call can carry provider state to the next turn (2026-09-26)
 
 ### ⚠ Breaking changes
 
