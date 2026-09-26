@@ -45,6 +45,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   run after every gate was green. The fetch now retries up to five times with
   back-off, and the build then runs with `GOPROXY=off`, so it cannot reach the
   network again (`.github/workflows/release.yml`).
+- **The exporter hot-path test counts slow calls.** It bounded the single
+  slowest of 10,000 `Submit` calls, so one GC pause on a shared macOS runner
+  failed it (p99 2.2 µs, one 64.7 ms sample). It now fails when more than 10
+  calls take over 1 ms. That also catches a sparse stall the old bound let
+  through: 25 calls slowed to 2 ms passed before and fail now
+  (`runtime-go/rt/exporter_test.go`).
 
 ## v0.25.20 — Sky.Spa boots behind any proxy; streams outlive 30 s; the Console shows live data (2026-09-26)
 

@@ -74,17 +74,32 @@ func TestHubExporter_HotPathNeverBlocks(t *testing.T) {
 
 	// Gate: the hot path must not BLOCK. A non-blocking channel send is
 	// O(µs); a blocking architecture (a send waiting on a full channel behind
-	// a slow drainer) shows up as tens-to-hundreds of ms. We gate on p99 —
-	// stable across runs — which proves the common case never blocks. We do
-	// NOT gate tightly on p99.99: its single worst-of-10000 sample is dominated
-	// by Go GC / goroutine-preemption noise on shared CI runners (a lone 1-2ms
-	// tail spike is scheduler noise, not an architectural regression), so it
-	// keeps only a loose sanity bound that real blocking would blow past.
+	// a wedged drainer) makes EVERY submit after the queue fills slow, or
+	// hangs outright, because this transport never returns. So blocking is a
+	// property of how MANY calls are slow, not of how slow the single worst
+	// one is.
+	//
+	// The tail check used to bound the worst sample (index 9999 of 10000 is
+	// the maximum, whatever it was called). One descheduled goroutine or one
+	// GC pause on a shared runner decides that sample: a macOS runner read
+	// p99=2.2µs and a lone 64.7ms maximum, and failed a 50ms bound on a path
+	// with no lock held across I/O. Counting slow calls separates the two
+	// cases. Noise gives a handful, blocking gives thousands.
 	if p99 > time.Millisecond {
 		t.Errorf("p99 latency %v exceeds 1ms — the hot path is blocking (architectural failure)", p99)
 	}
-	if p99_99 > 50*time.Millisecond {
-		t.Errorf("p99.99 latency %v exceeds 50ms — the hot path is blocking (architectural failure)", p99_99)
+	slow := 0
+	for _, l := range latencies {
+		if l > time.Millisecond {
+			slow++
+		}
+	}
+	const maxSlow = N / 1000 // 0.1%: ten calls, far below what any blocking send produces
+	if slow > maxSlow {
+		t.Errorf("%d of %d submits took over 1ms (limit %d) — the hot path is blocking (architectural failure)", slow, N, maxSlow)
+	}
+	if max := latencies[N-1]; max > time.Second {
+		t.Errorf("a single submit took %v — the hot path blocked", max)
 	}
 }
 
