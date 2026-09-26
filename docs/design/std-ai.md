@@ -66,6 +66,16 @@ vendor-neutral: provider-specific logic lives in a user module or a Sky package
 (for example a `sky-openai` that models Chat Completions plus the Responses API),
 never in the stdlib.
 
+Some native tool wires need state from one response to send the next request.
+The OpenAI Responses API continues with `previous_response_id`, and Gemini needs
+each function call's `thoughtSignature` sent back. `ToolCall.continuation :
+Maybe String` carries that state. It is provider-owned and opaque: the provider
+sets it in its `chatTools` result, `nativeToolLoop` journals it with the call and
+hands it back in the `Called` and `Returned` turns, and the tool executor never
+sees it. The built-in chat-completions backend sets `Nothing`. Behind a `router`
+a provider can receive a value another backend set, so it checks that it
+recognises the value and replays the history when it does not.
+
 ## `Std.Ai.Agent` — an agent as a durable workflow
 
 `oneShot` is one system prompt plus the caller's messages, one journalled model

@@ -1,0 +1,203 @@
+module Main exposing (main)
+
+{-| Fixture: `ToolCall.continuation` — provider-owned state that a native tool
+loop carries from one model turn to the next. Offline, no HTTP:
+
+  * turn 1 — the `customTools` test double returns one `lookup` call with
+    `continuation = Just "resp_1"` (what a Responses provider sets from the
+    response id);
+  * `Agent.nativeToolLoop` runs `lookup` as a journalled durable step. The tool
+    receives the arguments only;
+  * turn 2 — the double reads `continuation` back from the `Returned` turn and
+    answers with it.
+
+It also decodes a journalled `ToolResponse` written before the field existed, so
+a run journalled by an older Sky resumes.
+
+Expected stdout (asserted by `ai_toolcall_continuation_flow.rs`):
+
+    legacy continuation=none
+    continuation answer=FINAL cont=resp_1 args={"q":"code"} status=done
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Error exposing (Error)
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Codec as Codec exposing (Codec)
+import Std.Durable as Durable
+import Std.Ai.Provider as Provider exposing (ToolCall, ToolResponse, Turn(..))
+import Std.Ai.Agent as Agent
+import Std.Ai.Tool as Tool
+
+
+noUsage : Provider.Usage
+noUsage =
+    { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
+
+
+returned : List Turn -> Maybe ( String, String )
+returned turns =
+    List.head
+        (List.filterMap
+            (\turn ->
+                case turn of
+
+                    Returned call result ->
+                        Just
+                            ( Maybe.withDefault "none" call.continuation
+                            , result
+                            )
+
+                    _ ->
+                        Nothing)
+            turns)
+
+
+chatTools : List Turn -> List Provider.ToolSpec -> Task Error ToolResponse
+chatTools turns _ =
+    case returned turns of
+
+        Nothing ->
+            Task.succeed
+                { content = ""
+                , toolCalls =
+                    [ { id = "call_1"
+                      , name = "lookup"
+                      , arguments = "{\"q\":\"code\"}"
+                      , continuation = Just "resp_1"
+                      }
+                    ]
+                , usage = noUsage
+                }
+
+        Just ( cont, result ) ->
+            Task.succeed
+                { content = "FINAL cont=" ++ cont ++ " " ++ result
+                , toolCalls = []
+                , usage = noUsage
+                }
+
+
+provider : Provider.Provider
+provider =
+    Provider.customTools
+        (\_ -> Task.succeed { content = "", usage = noUsage })
+        chatTools
+
+
+lookup : Tool.Tool
+lookup =
+    Tool.tool
+        "lookup"
+        "echo the arguments the tool receives"
+        (\args -> Task.succeed ("args=" ++ args))
+
+
+agentDef : Durable.WorkflowDef Agent.Input Agent.ToolOutput
+agentDef =
+    Agent.nativeToolLoop "continuation" provider "Use tools." [ lookup ] 4
+
+
+answerCodec : Codec Agent.ToolOutput
+answerCodec =
+    Codec.auto { answer = "" }
+
+
+respCodec : Codec ToolResponse
+respCodec =
+    Codec.auto
+        { content = ""
+        , toolCalls =
+            [ { id = "", name = "", arguments = "", continuation = Nothing } ]
+        , usage = noUsage
+        }
+
+
+legacyJournal : String
+legacyJournal =
+    "{\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"lookup\",\"arguments\":\"{}\"}],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}"
+
+
+legacyLine : String
+legacyLine =
+    case Codec.fromJson respCodec legacyJournal of
+
+        Ok r ->
+            case List.head r.toolCalls of
+
+                Just call ->
+                    "legacy continuation="
+                        ++ Maybe.withDefault "none" call.continuation
+
+                Nothing ->
+                    "legacy continuation=no-call"
+
+        Err _ ->
+            "legacy continuation=decode-failed"
+
+
+dictGet : String -> Dict String String -> String
+dictGet key row =
+    Maybe.withDefault "" (Dict.get key row)
+
+
+decodeAnswer : String -> String
+decodeAnswer json =
+    case Codec.fromJson answerCodec json of
+
+        Ok o ->
+            o.answer
+
+        Err _ ->
+            json
+
+
+readOutput : Db -> String -> Task Error ( String, String )
+readOutput db id =
+    Db.query
+        db
+        "SELECT output, status FROM _sky_durable_runs WHERE id = ?"
+        [ SqlString id ]
+        |> Task.map
+               (\rows ->
+                   case List.head rows of
+
+                       Just row ->
+                           ( decodeAnswer (dictGet "output" row)
+                           , dictGet "status" row
+                           )
+
+                       Nothing ->
+                           ( "", "?" ))
+
+
+main : Task Error ()
+main =
+    Db.connect ()
+        |> Task.andThen (\db -> println legacyLine |> Task.map (\_ -> db))
+        |> Task.andThen
+               (\db ->
+                   Durable.setup db
+                       |> Task.andThen
+                              (\_ ->
+                                  Durable.start
+                                      db
+                                      agentDef
+                                      "cont-1"
+                                      { messages =
+                                          [ Provider.user "what is the code?" ]
+                                      })
+                       |> Task.andThen
+                              (\_ -> Durable.poll db [ Durable.erase agentDef ])
+                       |> Task.andThen (\_ -> readOutput db "cont-1")
+                       |> Task.andThen
+                              (\( answer, status ) ->
+                                  println
+                                      ("continuation answer=" ++ answer
+                                          ++ " status="
+                                          ++ status)))

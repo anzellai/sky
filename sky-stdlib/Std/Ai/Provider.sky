@@ -312,11 +312,26 @@ type alias ToolSpec =
     }
 
 {-| A tool call the model requested: the provider-assigned `id` (echoed back with
-the result), the tool `name`, and its `arguments` as a JSON string. -}
+the result), the tool `name`, its `arguments` as a JSON string, and an optional
+`continuation`.
+
+`continuation` is provider-owned and opaque. A provider sets it when its native
+tool loop needs state from this response to continue: the OpenAI Responses API
+sets the response id for `previous_response_id`, and a Gemini provider sets the
+call's `thoughtSignature`. The value comes back to the same provider on the next
+`chatTools` call, inside the `Called` and `Returned` turns. The tool executor
+never sees it. A provider with nothing to carry sets `Nothing`, as the built-in
+chat-completions backend does.
+
+A `Routed` provider can switch backend between turns, so a provider can receive
+a call whose `continuation` another provider set. A provider must check that it
+recognises the value, and replay the history when it does not.
+-}
 type alias ToolCall =
     { id : String
     , name : String
     , arguments : String
+    , continuation : Maybe String
     }
 
 {-| A response from `chatTools`: the assistant text (empty when it only called
@@ -495,7 +510,12 @@ toolResponseDecoder =
 
 toolCallDecoder =
     JsonD.map2
-        (\id fn -> { id = id, name = fn.name, arguments = fn.arguments })
+        (\id fn ->
+            { id = id
+            , name = fn.name
+            , arguments = fn.arguments
+            , continuation = Nothing
+            })
         (JsonD.oneOf [ JsonD.field "id" JsonD.string, JsonD.succeed "" ])
         (JsonD.field
             "function"

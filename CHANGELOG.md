@@ -11,6 +11,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.22 — a native tool call can carry provider state to the next turn
+
+### ⚠ Breaking changes
+
+- **`Std.Ai.Provider.ToolCall` has a new field, `continuation : Maybe String`.**
+  Some native tool wires need state from one response to send the next
+  request: the OpenAI Responses API continues with `previous_response_id`, and
+  Gemini needs each function call's `thoughtSignature` sent back. A provider
+  sets `continuation` in its `chatTools` result, and `nativeToolLoop` hands it
+  back in the `Called` and `Returned` turns of the next call. It is opaque to
+  Sky, it goes through the durable journal with the call, and the tool
+  executor never sees it. The built-in chat-completions backend sets `Nothing`
+  and sends nothing new on the wire.
+
+  **Migration.** A `customTools` provider that builds a `ToolCall` record adds
+  the field: `{ id = …, name = …, arguments = …, continuation = Nothing }`. Code
+  that only reads `ToolCall` fields needs no change. A durable agent run
+  journalled by an older Sky resumes: the missing field decodes to `Nothing`
+  (`rust/crates/sky/tests/ai_toolcall_continuation_flow.rs`).
+
 ## v0.25.21 — the build identity is automatic on every build path (2026-09-26)
 
 ### Fixed

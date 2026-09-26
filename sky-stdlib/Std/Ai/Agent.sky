@@ -227,7 +227,8 @@ toolRespCodec : Codec Provider.ToolResponse
 toolRespCodec =
     Codec.auto
         { content = ""
-        , toolCalls = [ { id = "", name = "", arguments = "" } ]
+        , toolCalls =
+            [ { id = "", name = "", arguments = "", continuation = Nothing } ]
         , usage = { promptTokens = 0, completionTokens = 0, totalTokens = 0 }
         }
 
