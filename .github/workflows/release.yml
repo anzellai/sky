@@ -110,7 +110,23 @@ jobs:
           # Still shipped for SkyDeploy compatibility even though the Rust `sky`
           # self-provisions the inspector (it `go build`s the embedded source on
           # first use). Keep the asset name so downstream pulls don't break.
-          ( cd tools/sky-ffi-inspect && go build -ldflags="-s -w" -o "../../dist/sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}" . )
+          #
+          # The module fetch is the only network step between a green gate
+          # suite and a published release, and a single slow answer from
+          # proxy.golang.org used to fail the whole tag run (v0.25.21 linux-x64:
+          # "TLS handshake timeout" on golang.org/x/tools). Fetch with bounded
+          # retries, then build with GOPROXY=off so the build itself cannot
+          # reach the network: a module the fetch missed fails loudly here
+          # instead of being fetched again without a retry.
+          cd tools/sky-ffi-inspect
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if go mod download; then ok=1; break; fi
+            echo "go mod download failed (attempt $attempt of 5), retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done
+          [ "$ok" = 1 ] || { echo "go mod download failed 5 times"; exit 1; }
+          GOPROXY=off GOFLAGS=-mod=readonly go build -ldflags="-s -w" -o "../../dist/sky-ffi-inspect-${{ matrix.artifact }}${{ matrix.ext }}" .
 
       - name: Smoke-test binary
         shell: bash

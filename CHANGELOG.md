@@ -39,6 +39,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   commit, the CI commit variables and source times, so a cache hit could
   restore a binary stamped with another commit. The key now includes the
   resolved stamp (`scripts/lib/gate-build-cache.sh`).
+- **A slow Go module proxy no longer fails a release.** The release build
+  fetched the `sky-ffi-inspect` modules inside `go build`, with no retry, and
+  one TLS handshake timeout on proxy.golang.org failed the first v0.25.21 tag
+  run after every gate was green. The fetch now retries up to five times with
+  back-off, and the build then runs with `GOPROXY=off`, so it cannot reach the
+  network again (`.github/workflows/release.yml`).
 
 ## v0.25.20 — Sky.Spa boots behind any proxy; streams outlive 30 s; the Console shows live data (2026-09-26)
 
