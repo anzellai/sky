@@ -109,20 +109,25 @@ func slidingStringOf(v any) string {
 }
 
 // slidingUnwrapMaybe turns a Sky `Maybe f` into the wrapped `f` (Just) or nil
-// (Nothing / absent). Reuses the generic ADT accessors used by the console-auth
-// Maybe handling.
+// (Nothing / absent).
+//
+// It reads the typed tag through anyMaybeView. It used to compare the tag
+// against the strings "Nothing" and "Just", which a typed Maybe (int tag)
+// never matches, so both Nothing and Just fell through to "return v" and the
+// Maybe STRUCT became the revokedCheck. Calling a struct panics, the panic
+// reads as "revoked", and the token never slid.
 func slidingUnwrapMaybe(v any) any {
 	if v == nil {
 		return nil
 	}
-	if consoleIsMaybeNothing(v) {
+	switch tag, just := anyMaybeView(v); tag {
+	case 0:
+		return just
+	case 1:
 		return nil
 	}
-	if j := consoleUnwrapMaybeJust(v); j != nil {
-		return j
-	}
-	// Not a recognised Maybe wrapper (e.g. a bare closure) — treat as the value
-	// itself so a caller that passed the function directly still works.
+	// Not a Maybe (e.g. a bare closure) — treat as the value itself so a
+	// caller that passed the function directly still works.
 	return v
 }
 

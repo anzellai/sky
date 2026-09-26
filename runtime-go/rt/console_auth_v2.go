@@ -539,14 +539,23 @@ type ConsoleIdentity struct {
 // invokeConsoleAuthCallback drives the Sky callback. The callback's
 // type is `Request -> Task Error (Maybe Identity)`. We pass a
 // reflective Request record (matches Sky.Http.Server's existing
-// shape) and force the Task. Returns (identity, true) on Just,
-// (_, false) on Nothing OR any panic / Err.
-func invokeConsoleAuthCallback(cb any, r *http.Request) (ConsoleIdentity, bool) {
+// shape) and force the Task.
+//
+// FAIL CLOSED. It allows only when every step is positively recognised:
+// the task yields a Result whose tag is Ok, the Ok value is a Maybe whose
+// tag is Just, and the identity has a non-empty subject. Anything else
+// (Err, Nothing, a panic, a shape it cannot read) denies.
+//
+// This used to compare ADT tags against the strings "Err", "Nothing" and
+// "Just". Typed Result and Maybe values carry an INT tag (0 = Ok/Just,
+// 1 = Err/Nothing), so none of those comparisons ever matched: Nothing and
+// Err both fell through to "allow" with an empty identity, and every
+// request to an app-mode console was let in.
+func invokeConsoleAuthCallback(cb any, r *http.Request) (id ConsoleIdentity, allowed bool) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			// runWithRecover would normally translate, but we keep
-			// the contract explicit so the deny path doesn't double-
-			// log. Caller logs via recordConsoleAuthEvent.
+			// Caller logs the deny via recordConsoleAuthEvent.
+			id, allowed = ConsoleIdentity{}, false
 		}
 	}()
 	req := buildConsoleAuthRequest(r)
@@ -556,53 +565,56 @@ func invokeConsoleAuthCallback(cb any, r *http.Request) (ConsoleIdentity, bool) 
 	}
 	// Force the Task — same shape as Sky.Core.Task.run on the Sky
 	// side: Task is `func() any` returning `Result Error a`.
-	resultAny := AnyTaskRun(taskAny)
-	if resultAny == nil {
+	resultTag, okValue, _ := anyResultView(AnyTaskRun(taskAny))
+	if resultTag != 0 {
+		return ConsoleIdentity{}, false // Err, or not a Result at all
+	}
+	maybeTag, just := anyMaybeView(okValue)
+	if maybeTag != 0 {
+		return ConsoleIdentity{}, false // Nothing, or not a Maybe at all
+	}
+	identity := extractConsoleIdentity(just)
+	if strings.TrimSpace(identity.Subject) == "" {
 		return ConsoleIdentity{}, false
 	}
-	// `Result Error (Maybe Identity)` — Err short-circuits to deny.
-	if consoleIsResultErr(resultAny) {
-		return ConsoleIdentity{}, false
-	}
-	maybeAny := unwrapResultOk(resultAny)
-	if maybeAny == nil {
-		return ConsoleIdentity{}, false
-	}
-	// Maybe Identity — Nothing → deny, Just → allow.
-	if consoleIsMaybeNothing(maybeAny) {
-		return ConsoleIdentity{}, false
-	}
-	idAny := consoleUnwrapMaybeJust(maybeAny)
-	return extractConsoleIdentity(idAny), true
+	return identity, true
 }
 
-// buildConsoleAuthRequest mirrors the rt.go Sky.Http.Server "req"
-// dict shape so the callback can introspect path/query/headers/
-// cookies the same way a regular handler does.
-func buildConsoleAuthRequest(r *http.Request) map[string]any {
-	headers := make(map[string]any, len(r.Header))
+// buildConsoleAuthRequest gives the callback the same SkyRequest a
+// Sky.Http.Server handler receives (rt_server.go), so its typed
+// `Request` parameter reads cookies, headers, path and query exactly as
+// a route handler does. The body is not read: the console gate runs
+// before the console's own handlers.
+//
+// It used to build a map[string]any. The typed emitter converts the
+// callback's argument with rt.Coerce[<Request record>], which cannot turn
+// that map into the record, so every real callback panicked before it
+// ran. Together with the tag bug that made the gate allow everything.
+func buildConsoleAuthRequest(r *http.Request) SkyRequest {
+	req := SkyRequest{
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		Headers:    make(map[string]any, len(r.Header)),
+		Params:     make(map[string]any),
+		Query:      make(map[string]any),
+		Cookies:    make(map[string]string),
+		Form:       make(map[string]string),
+		RemoteAddr: r.RemoteAddr,
+	}
 	for k, v := range r.Header {
 		if len(v) > 0 {
-			headers[strings.ToLower(k)] = v[0]
+			req.Headers[k] = v[0]
 		}
 	}
-	cookies := make(map[string]any)
 	for _, c := range r.Cookies() {
-		cookies[c.Name] = c.Value
+		req.Cookies[c.Name] = c.Value
 	}
-	query := make(map[string]any)
 	for k, v := range r.URL.Query() {
 		if len(v) > 0 {
-			query[k] = v[0]
+			req.Query[k] = v[0]
 		}
 	}
-	return map[string]any{
-		"method":  r.Method,
-		"path":    r.URL.Path,
-		"query":   query,
-		"headers": headers,
-		"cookies": cookies,
-	}
+	return req
 }
 
 // extractConsoleIdentity walks a Sky-side `Identity` record (a Go
@@ -910,72 +922,6 @@ func mountConsoleAuthRoutes(mux *http.ServeMux) {
 		clearConsoleV2Cookie(w)
 		http.Redirect(w, r, "/_sky/console/", http.StatusSeeOther)
 	})
-}
-
-// ──── Result/Maybe helpers (Sky → Go) ────────────────────────────
-
-// readAdtTag introspects an ADT-shape value's constructor name.
-// Accepts both the generic-typed struct shapes (with Tag field /
-// method) and the older map-shaped representation.
-func readAdtTag(v any) string {
-	if v == nil {
-		return ""
-	}
-	// Try Field-based extraction (works for struct-shaped ADTs that
-	// expose a Tag field; rt.Field walks reflect + map types).
-	if t := Field(v, "Tag"); t != nil {
-		return fmt.Sprintf("%v", t)
-	}
-	// Map-shaped fallback.
-	if m, ok := v.(map[string]any); ok {
-		if t, ok := m["Tag"]; ok {
-			return fmt.Sprintf("%v", t)
-		}
-		if t, ok := m["tag"]; ok {
-			return fmt.Sprintf("%v", t)
-		}
-	}
-	return ""
-}
-
-func readAdtField(v any, idx int) any {
-	if v == nil {
-		return nil
-	}
-	// Indexed-field convention from the codegen: _0, _1, _2.
-	key := fmt.Sprintf("_%d", idx)
-	if f := Field(v, key); f != nil {
-		return f
-	}
-	if m, ok := v.(map[string]any); ok {
-		if f, ok := m[key]; ok {
-			return f
-		}
-	}
-	return nil
-}
-
-// consoleIsResultErr / consoleIsMaybeNothing / consoleUnwrapMaybeJust
-// are scoped to the console-auth path to avoid colliding with the
-// generic-typed `isResultOk` / `isResultErr` helpers in the pubsub
-// test file (those work on SkyResult[any,any], we work on the raw
-// any-typed payload the lowerer sets at the row-poly callback's
-// return type).
-
-func consoleIsResultErr(v any) bool {
-	return readAdtTag(v) == "Err"
-}
-
-func consoleUnwrapMaybeJust(v any) any {
-	tag := readAdtTag(v)
-	if tag != "Just" {
-		return nil
-	}
-	return readAdtField(v, 0)
-}
-
-func consoleIsMaybeNothing(v any) bool {
-	return readAdtTag(v) == "Nothing"
 }
 
 // ──── Test/inspection helpers ────────────────────────────────────
