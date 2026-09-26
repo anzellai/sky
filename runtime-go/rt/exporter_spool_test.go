@@ -523,10 +523,17 @@ func (s *slowSpool) Close() error    { return s.inner.Close() }
 
 func TestSpool_FileMode_DoesNotBlockOnSlowDisk(t *testing.T) {
 	// Build an exporter with a fast hub but a SLOW spool. The
-	// spool injects 100ms latency per Persist call — orders of
+	// spool injects 1s latency per Persist call — orders of
 	// magnitude over what Submit can tolerate. Submit MUST stay
 	// sub-ms because spool runs on the drainer goroutine, not the
 	// caller's.
+	//
+	// The delay and the bound on the slowest Submit are far apart on
+	// purpose. A Submit that waits on the spool takes at least
+	// spoolDelay. Runner noise (GC, descheduling) reached 64ms on a macOS
+	// runner, which a 100ms delay with a 50ms bound could not separate.
+	const spoolDelay = time.Second
+	const maxSubmit = 500 * time.Millisecond
 	dir := t.TempDir()
 	cfg := spoolConfig{
 		mode:       SpoolFile,
@@ -539,7 +546,7 @@ func TestSpool_FileMode_DoesNotBlockOnSlowDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newFileSpool: %v", err)
 	}
-	slow := &slowSpool{inner: innerSp, delay: 100 * time.Millisecond}
+	slow := &slowSpool{inner: innerSp, delay: spoolDelay}
 
 	exp := NewHubExporterForTesting(func(ctx context.Context, body []byte) (int, error) {
 		return 200, nil
@@ -563,22 +570,21 @@ func TestSpool_FileMode_DoesNotBlockOnSlowDisk(t *testing.T) {
 	p99_99 := latencies[int(float64(N)*0.9999)]
 	p99 := latencies[int(float64(N)*0.99)]
 	p50 := latencies[N/2]
-	t.Logf("with 100ms slow-disk spool: p50=%v p99=%v p99.99=%v", p50, p99, p99_99)
+	t.Logf("with %v slow-disk spool: p50=%v p99=%v p99.99=%v max=%v", spoolDelay, p50, p99, p99_99, latencies[N-1])
 
-	// Hot-path gate: Submit must stay fast even with a 100 ms spool
+	// Hot-path gate: Submit must stay fast even with a slow spool
 	// Persist — confirming spool I/O is genuinely async (it runs on the
 	// drainer goroutine, not the caller). p99 pins the common-case hot
-	// path (a sub-ms bound the drainer easily holds). p99.99 only needs
-	// to stay well under the 100 ms spool delay: a synchronously-blocked
-	// Submit would sit at ~100 ms, so any bound far below that proves the
-	// async property while tolerating the rare scheduler/GC jitter that a
-	// tight p99.99 bound would otherwise flake on (shared CI runners).
+	// path (a sub-ms bound the drainer easily holds). A synchronous spool
+	// write would stall only the few Submits that trigger a batch, so the
+	// slowest single call is the right signal here, bounded at maxSubmit,
+	// half the spool delay.
 	if p99 > time.Millisecond {
 		t.Errorf("p99 latency %v > 1ms with slow spool — hot path not fast", p99)
 	}
-	if p99_99 > 50*time.Millisecond {
-		t.Errorf("p99.99 latency %v > 50ms with slow spool — spool I/O blocking the hot path",
-			p99_99)
+	if max := latencies[N-1]; max > maxSubmit {
+		t.Errorf("slowest submit %v > %v with a %v spool — spool I/O blocking the hot path",
+			max, maxSubmit, spoolDelay)
 	}
 }
 

@@ -50,7 +50,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   failed it (p99 2.2 µs, one 64.7 ms sample). It now fails when more than 10
   calls take over 1 ms. That also catches a sparse stall the old bound let
   through: 25 calls slowed to 2 ms passed before and fail now
-  (`runtime-go/rt/exporter_test.go`).
+  (`runtime-go/rt/exporter_test.go`). The slow-spool test had the same 50 ms
+  bound on its slowest call against a 100 ms spool delay, too close to
+  separate noise from a synchronous write. The delay is now 1 s and the bound
+  500 ms (`runtime-go/rt/exporter_spool_test.go`).
 
 ## v0.25.20 — Sky.Spa boots behind any proxy; streams outlive 30 s; the Console shows live data (2026-09-26)
 
