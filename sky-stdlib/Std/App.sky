@@ -63,6 +63,7 @@ module Std.App exposing
     , withOnKey
     , withOnNavigate
     , withRequest
+    , withConsoleAuth
     , withRpcError
     , withAppUrl
     , withDurable
@@ -100,6 +101,7 @@ import Std.Db as Db exposing (Db)
 import Std.Durable as Durable
 import Std.Html as Html exposing (Html)
 import Std.Live as Live
+import Std.Live.Console as Console
 import Std.Log as Log
 import Std.Spa as Spa
 import Std.Tui as Tui
@@ -360,6 +362,7 @@ type App fallback seed page model msg key
 , onKey : Maybe (key -> msg)
 , onNavigate : Maybe (page -> msg)
 , onRequest : Maybe (Request -> model -> ( model, Cmd msg ))
+, consoleAuth : Maybe (Request -> Task Error (Maybe Console.Identity))
 , rpcError : Maybe (Error -> msg)
 , durable : DurableWiring model
 }
@@ -415,6 +418,7 @@ app cfg =
         , onKey = Nothing
         , onNavigate = Nothing
         , onRequest = Nothing
+        , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
         }
@@ -447,6 +451,7 @@ web cfg =
         , onKey = Nothing
         , onNavigate = Nothing
         , onRequest = Nothing
+        , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
         }
@@ -478,6 +483,7 @@ cli cfg =
         , onKey = Nothing
         , onNavigate = Nothing
         , onRequest = Nothing
+        , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
         }
@@ -511,6 +517,7 @@ tui cfg =
         , onKey = Nothing
         , onNavigate = Nothing
         , onRequest = Nothing
+        , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
         }
@@ -818,6 +825,44 @@ withOnNavigate onNav (App a) =
 withRequest : (Request -> model -> ( model, Cmd msg )) -> App fallback () page model msg key -> App fallback () page model msg key
 withRequest onReq (App a) =
     App { a | onRequest = Just onReq }
+
+
+-- | Let the app's own signed-in users open the Sky Console (`/_sky/console`)
+-- instead of a console token. Run the app with `SKY_CONSOLE_AUTH=app`; each
+-- console request without a console session calls `check req`, which reads
+-- the app's own session (a cookie, a header) and returns `Just identity` for
+-- a user who may see the console, or `Nothing` to refuse with 403. An allowed
+-- request gets a signed console session cookie, so later console requests do
+-- not call `check` again. `Err`, `Nothing`, and an identity with an empty
+-- `subject` all refuse: the gate fails closed.
+--
+--     import Std.Live.Console as Console
+--
+--     adminsOnly : Request -> Task Error (Maybe Console.Identity)
+--     adminsOnly req =
+--         case Dict.get "session" req.cookies of
+--             Just token ->
+--                 sessionUser db token
+--                     |> Task.map
+--                         (\user ->
+--                             if user.role == "admin" then
+--                                 Just (Console.defaultIdentity user.id |> Console.withEmail user.email)
+--
+--                             else
+--                                 Nothing
+--                         )
+--
+--             Nothing ->
+--                 Task.succeed Nothing
+--
+--     app { … } |> App.withConsoleAuth adminsOnly
+--
+-- It runs on the server on every web target: Sky.Live (`web`, `desktop`) and
+-- the backend of a `web:app` split. Terminal targets have no console and
+-- ignore it.
+withConsoleAuth : (Request -> Task Error (Maybe Console.Identity)) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withConsoleAuth check (App a) =
+    App { a | consoleAuth = Just check }
 
 
 -- | Route a FAILED RPC into your own `update`. On the `web:app` (Sky.Spa)
@@ -1147,8 +1192,16 @@ runLiveBoot_ (App a) =
 
                     else
                         withNav_
+                withConsole_ =
+                    case a.consoleAuth of
+
+                        Just check ->
+                            Live.withConsoleAuth check withDur_
+
+                        Nothing ->
+                            withDur_
             in
-                Live.app withDur_
+                Live.app withConsole_
 
         Nothing ->
             Task.fail

@@ -670,6 +670,12 @@
           "examples/19-skyforum"
         ]
       },
+      "Std.Live.Console": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Markdown": {
         "path": "apps/dispatch",
         "units": [
@@ -698,12 +704,12 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1968,
+    "stdlib_entries": 1970,
     "stdlib_modules": 101,
-    "surfaces_covered": 149,
-    "surfaces_covered_pct": 89.2,
-    "surfaces_equal": 23,
-    "surfaces_stronger": 144,
+    "surfaces_covered": 150,
+    "surfaces_covered_pct": 89.8,
+    "surfaces_equal": 22,
+    "surfaces_stronger": 145,
     "surfaces_total": 167,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -9773,9 +9779,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -9784,7 +9796,7 @@
       },
       "description": "the Std.Live.Console public API",
       "id": "stdlib.Std.Live.Console",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -12498,7 +12510,7 @@
   "surfaces_weaker": [],
   "uncovered": {
     "modules_imported_by_nothing": {
-      "count": 10,
+      "count": 9,
       "modules": [
         "Sky.Core.Basics",
         "Sky.Core.Io",
@@ -12507,11 +12519,10 @@
         "Std.Db.Migrate",
         "Std.Db.Table",
         "Std.Image",
-        "Std.Live.Console",
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 9.9
+      "pct_of_denominator": 8.9
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12522,7 +12533,7 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 14,
+      "count": 13,
       "surfaces": [
         "cli.config",
         "cli.console",
@@ -12535,7 +12546,6 @@
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
-        "stdlib.Std.Live.Console",
         "stdlib.Std.Tui",
         "stdlib.Std.Webview"
       ]
@@ -12783,13 +12793,14 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 7,
+          "count": 8,
           "symbols": [
             "Cookie",
             "Route",
             "Server",
             "delete",
             "put",
+            "setConsoleAuth",
             "static",
             "staticNotFound"
           ]
@@ -13272,13 +13283,10 @@
           ]
         },
         "Std.Live.Console": {
-          "count": 5,
+          "count": 2,
           "symbols": [
-            "Identity",
-            "defaultIdentity",
             "withClaim",
-            "withClaims",
-            "withEmail"
+            "withClaims"
           ]
         },
         "Std.Live.Head": {
@@ -13571,8 +13579,8 @@
           ]
         }
       },
-      "count": 648,
-      "pct_of_denominator": 32.9
+      "count": 646,
+      "pct_of_denominator": 32.8
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13835,7 +13843,7 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "Cookie",
             "Handler",
@@ -13843,6 +13851,7 @@
             "Server",
             "delete",
             "put",
+            "setConsoleAuth",
             "static",
             "staticNotFound"
           ]
@@ -14393,13 +14402,10 @@
           ]
         },
         "Std.Live.Console": {
-          "count": 5,
+          "count": 2,
           "symbols": [
-            "Identity",
-            "defaultIdentity",
             "withClaim",
-            "withClaims",
-            "withEmail"
+            "withClaims"
           ]
         },
         "Std.Live.Head": {
@@ -14694,8 +14700,8 @@
           ]
         }
       },
-      "count": 727,
-      "pct_of_denominator": 36.9
+      "count": 725,
+      "pct_of_denominator": 36.8
     }
   },
   "units": [
@@ -14715,12 +14721,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 42,
+      "modules_imported": 43,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 262,
-      "refs_qualified": 250,
+      "refs_generous": 266,
+      "refs_qualified": 254,
       "role": "Layer2",
-      "sky_files": 151,
+      "sky_files": 152,
       "sky_toml_sections": []
     },
     {

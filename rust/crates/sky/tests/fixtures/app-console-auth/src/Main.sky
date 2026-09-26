@@ -1,0 +1,79 @@
+module Main exposing (main)
+
+-- Fixture: `App.withConsoleAuth` gates the Sky Console by the app's own session
+-- when the app runs with `SKY_CONSOLE_AUTH=app`. The same source is built for
+-- `--target web` (Sky.Live registers the check through `Live.withConsoleAuth`)
+-- and `--target web:app` (the split backend registers it with
+-- `Server.setConsoleAuth` before `Server.listen`). `app_console_auth_flow.rs`
+-- asserts, on both: no cookie 403, a user session 403, an admin session 200
+-- with a console session cookie.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Http.Server as Server
+import Std.App as App
+import Std.Live.Console as Console
+import Std.Ui as Ui exposing (Element)
+
+type Page
+    = Home
+
+type alias Model =
+    { page : Page }
+
+type Msg
+    = Noop
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ model =
+    ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view _ =
+    Ui.text "Home"
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+-- Stands in for a real session lookup (a signed cookie, a database row).
+adminsOnly : Server.Request -> Task Error (Maybe Console.Identity)
+adminsOnly req =
+    case Dict.get "session" req.cookies of
+
+        Just "admin-session" ->
+            Task.succeed
+                (Just
+                    (Console.defaultIdentity "user-1"
+                        |> Console.withEmail "admin@example.test"))
+
+        _ ->
+            Task.succeed Nothing
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" Home ]
+        |> App.withNotFound Home
+        |> App.withConsoleAuth adminsOnly
+
+
+main : Task Error ()
+main =
+    App.run app

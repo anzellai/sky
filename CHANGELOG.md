@@ -11,6 +11,59 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.26.1 — the app's own admins open the Sky Console, and `SKY_CONSOLE_AUTH=app` is closed (2026-09-27)
+
+### ⚠ Security
+
+- **`SKY_CONSOLE_AUTH=app` let every request into the Sky Console.** Two
+  defects together:
+  - The gate compared the check's typed result tags against the strings
+    `"Err"`, `"Nothing"` and `"Just"`. Typed `Result` and `Maybe` values carry
+    an int tag, so no comparison ever matched. `Nothing` and `Err` were read
+    as "allow", with an empty identity.
+  - The check was handed a `map[string]any` where the typed code expects a
+    `Request` record. The conversion panicked before the check ran.
+
+  A request with no session answered 200 and got a console session cookie.
+  The gate now fails closed: it allows only `Ok (Just identity)` with a
+  non-empty `subject`, and refuses `Nothing`, `Err`, a panic, an empty
+  subject and any value it cannot read. The check receives the same `Request`
+  a `Sky.Http.Server` handler gets
+  (`runtime-go/rt/console_auth_callback_decision_test.go`).
+
+  **Migration.** If you ran `SKY_CONSOLE_AUTH=app` on an earlier version, your
+  console was open: upgrade. `app` with no check now refuses every console
+  request (it used to admit everyone). Add `App.withConsoleAuth` (below), or
+  use `SKY_CONSOLE_AUTH=token`. The README's production example paired `app`
+  with a token and no check; it now shows `token`.
+
+### Added
+
+- **`App.withConsoleAuth`: the app's own admins open the Sky Console.** With
+  `SKY_CONSOLE_AUTH=app`, `App.withConsoleAuth check` gives the console gate
+  to the app: `check : Request -> Task Error (Maybe Console.Identity)` reads
+  the app's own session and returns `Just` an identity for a user who may see
+  the console. No console token to share. It works on every web target:
+  Sky.Live (`web`, `desktop`) and the backend of a `web:app` split, which
+  registers it with the new `Server.setConsoleAuth` before it listens. The
+  wasm client never contains it. Before this, `Std.App` had no way to set the
+  check, and `withConsoleAuth` failed a `web:app` build as an unknown builder.
+  `scripts/console-live-e2e.sh` runs it behind Caddy for Sky.Live and Sky.Spa:
+  no session and a user session get 403 and no console session, an admin
+  opens the console, its live channel holds past 40 s, and the admin is back
+  in by itself after a backend restart. See `docs/skyapp/overview.md`.
+
+### Fixed
+
+- **`Live.withAuthSliding` never re-issued the sliding token.** The same
+  string-tag comparison read a typed `Maybe` revocation check as the `Maybe`
+  value itself. Calling it panicked, the panic counted as "revoked", and the
+  token never slid, so users were signed out at the end of the window. It now
+  reads the typed tag.
+- **The `Std.Live.Console` example did not compile.** It called
+  `Auth.sessionFromCookie`, which does not exist, and set a `Live.app` record
+  field that was removed. It now shows a working check.
+
 ## v0.26.0 — a native tool call can carry provider state to the next turn (2026-09-26)
 
 ### ⚠ Breaking changes

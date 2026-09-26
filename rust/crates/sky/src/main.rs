@@ -1398,6 +1398,12 @@ struct AppFields {
     /// only chance to route a failed RPC into the app's own error handling; the
     /// default, when absent, keeps the model and logs loudly). May span lines.
     rpc_error: Option<String>,
+    /// `App.withConsoleAuth <fn>` — the app-mode Sky Console gate
+    /// (`Request -> Task Error (Maybe Identity)`). Carried into a NAMED top-level
+    /// binding `spaConsoleAuth_` that the generated backend registers with
+    /// `Server.setConsoleAuth` before `Server.listen`. It is server-only: the
+    /// console is mounted by the backend, and the wasm client never calls it.
+    console_auth: Option<String>,
     /// `App.with…` builder steps present in the source that the synthesis does
     /// NOT carry into the derived `Spa.app` entry (everything except the carried
     /// `withRoutes` / `withNotFound` / `withHead` / `withOnNavigate` /
@@ -1428,6 +1434,7 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
     "withRequest",
     "withGuard",
     "withRpcError",
+    "withConsoleAuth",
 ];
 
 /// `Std.App` builders that do not apply to a Sky.Spa client build: terminal /
@@ -1503,6 +1510,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let (mut routes, mut not_found, mut head) = (None, None, None);
     let (mut on_navigate, mut on_request, mut guard) = (None, None, None);
     let mut rpc_error = None;
+    let mut console_auth = None;
     let mut dropped_builders: Vec<String> = Vec::new();
     for step in &value.steps {
         let name = step.name.as_str();
@@ -1539,6 +1547,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
             "withRequest" => on_request = Some(place("onRequest", arg)),
             "withGuard" => guard = Some(place("guard", arg)),
             "withRpcError" => rpc_error = Some(place("rpcError", arg)),
+            "withConsoleAuth" => console_auth = Some(place("consoleAuth", arg)),
             _ => unreachable!("carried builder list and match disagree: {name}"),
         }
     }
@@ -1554,6 +1563,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         on_request,
         guard,
         rpc_error,
+        console_auth,
         dropped_builders,
         hoisted,
         is_web: value.builder == "web",
@@ -2195,6 +2205,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 fields.on_request.as_deref().unwrap_or(""),
                 fields.guard.as_deref().unwrap_or(""),
                 fields.rpc_error.as_deref().unwrap_or(""),
+                fields.console_auth.as_deref().unwrap_or(""),
             ]
             .join(" ");
             let unsafe_names: Vec<&String> = names
@@ -2342,6 +2353,15 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
         Some(f) => format!("spaRpcError_ =\n    ({f})\n\n\n"),
         None => String::new(),
     };
+    // Carry `App.withConsoleAuth`. A NAMED top-level `spaConsoleAuth_` binding
+    // the generated backend registers with `Server.setConsoleAuth` before
+    // `Server.listen`, so `SKY_CONSOLE_AUTH=app` gates the backend's console by
+    // the app's own session. Eta-expanded (one argument) so the binding is a
+    // plain function rather than an alias of a function value.
+    let console_auth_binding = match &fields.console_auth {
+        Some(f) => format!("spaConsoleAuth_ req_ =\n    {f} req_\n\n\n"),
+        None => String::new(),
+    };
     // `App.web`'s `view` already returns laid-out `Html` (Std.Html), while
     // `App.app`'s returns a Std.Ui `Element`. The synthesised `Spa.config.view`
     // needs `model -> Html`, so lay out the Element view but PASS THROUGH the
@@ -2372,6 +2392,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          {on_request_binding}\
          {guard_binding}\
          {rpc_error_binding}\
+         {console_auth_binding}\
          spaView_ model_ =\n    \
          {spa_view_body}\n\n\n\
          main : Task Error ()\n\
@@ -11280,6 +11301,28 @@ mod tests {
         assert!(
             out.contains("spaGuard_ msg_ model_ =\n    guard msg_ model_"),
             "the helper's guard must be carried into spaGuard_:\n{out}"
+        );
+    }
+
+    // `App.withConsoleAuth` is carried into a named, eta-expanded
+    // `spaConsoleAuth_` binding the backend registers with
+    // `Server.setConsoleAuth`. Before it was carried, the builder failed the
+    // web:app build as unknown, so an app could not gate its console by its
+    // own session on the Sky.Spa target at all.
+    #[test]
+    fn std_app_console_auth_is_carried_into_spa_console_auth() {
+        let src = sa_src(
+            "appDef =\n    App.app\n        { init = init\n        , update = update\n        , view = view\n        , subscriptions = \\_ -> Sub.none\n        }\n        |> App.withNotFound ()\n        |> App.withConsoleAuth adminsOnly\n\n\n\
+             main =\n    App.run appDef\n",
+        );
+        let out = synth_ok(&src);
+        assert!(
+            out.contains("spaConsoleAuth_ req_ =\n    adminsOnly req_"),
+            "withConsoleAuth must be carried into spaConsoleAuth_:\n{out}"
+        );
+        assert!(
+            !out.contains("|> Spa.withConsoleAuth") && !out.contains("App.withConsoleAuth"),
+            "the console gate is server-only and must not be wired onto the client config:\n{out}"
         );
     }
 

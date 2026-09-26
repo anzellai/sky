@@ -22,6 +22,7 @@ module Sky.Http.Server exposing
     , any
     , api
     , listen
+    , setConsoleAuth
     , text
     , json
     , html
@@ -148,6 +149,17 @@ api =
 listen : Int -> List Route -> Task Error ()
 listen =
     Ffi.kernel "Server_listen"
+
+
+-- | `setConsoleAuth check` — let the app's own users open the Sky Console
+-- when the server runs with `SKY_CONSOLE_AUTH=app`. `check req` returns
+-- `Just identity` (a record with a non-empty `subject`) to allow, or
+-- `Nothing` to refuse with 403; `Err` also refuses. Run it before
+-- `listen`. `Std.App.withConsoleAuth` calls it for you, with the
+-- identity typed as `Std.Live.Console.Identity`.
+setConsoleAuth : (Request -> Task Error (Maybe a)) -> Task Error ()
+setConsoleAuth =
+    Ffi.kernel "Server_setConsoleAuth"
 
 
 -- ─── Response builders ────────────────────────────────────────────

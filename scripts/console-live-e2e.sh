@@ -111,9 +111,20 @@ fi
 if want analytics-direct || want analytics-caddy; then
   build_target console-analytics web .skyapp/web override
 fi
+# SKY_CONSOLE_AUTH=app: the app's own admins open the console through
+# `App.withConsoleAuth`, on the Sky.Live target and on a Sky.Spa split backend.
+if want appauth-live-caddy; then
+  build_target app-console-auth web .skyapp/web override
+  mv "$TMP/app-console-auth" "$TMP/app-console-auth-web"
+fi
+if want appauth-spa-caddy; then
+  build_target app-console-auth web:app .skyapp/web-app auto
+fi
 LIVE_BIN="$TMP/09-live-counter/.skyapp/web/sky-out/app"
 SPA_BIN="$TMP/62-app-notes/.skyapp/web-app/.split/backend/sky-out/app"
 ANALYTICS_BIN="$TMP/console-analytics/.skyapp/web/sky-out/app"
+APPAUTH_LIVE_BIN="$TMP/app-console-auth-web/.skyapp/web/sky-out/app"
+APPAUTH_SPA_BIN="$TMP/app-console-auth/.skyapp/web-app/.split/backend/sky-out/app"
 
 rc=0
 drive() { # drive <scenario> <binary> <cwd> <port> <direct|caddy> [driver args...]
@@ -123,7 +134,7 @@ drive() { # drive <scenario> <binary> <cwd> <port> <direct|caddy> [driver args..
   [ -x "$bin" ] || { echo "console-live-e2e: app not built at $bin" >&2; rc=1; return 0; }
   echo "==> $scenario"
   local commit="$OVERRIDE_COMMIT"
-  case "$scenario" in spa-*) commit="${AUTO_SHA:0:12}" ;; esac
+  case "$scenario" in spa-* | *-spa-*) commit="${AUTO_SHA:0:12}" ;; esac
   local args=(--app "$bin" --name "$scenario" --port "$port" --cwd "$cwd" --commit "$commit" --built-at "$BUILT_AT")
   [ "$via" = caddy ] && args+=(--caddy "$CADDY" --caddy-port $((port + 5)))
   with_timeout 300 node "$ROOT/scripts/console-live-e2e.mjs" "${args[@]}" "$@" || rc=1
@@ -134,10 +145,12 @@ drive spa-direct "$SPA_BIN" "$(dirname "$SPA_BIN")" "$BASE_PORT" direct
 drive spa-caddy "$SPA_BIN" "$(dirname "$SPA_BIN")" $((BASE_PORT + 10)) caddy
 drive analytics-direct "$ANALYTICS_BIN" "$(dirname "$ANALYTICS_BIN")" "$BASE_PORT" direct --analytics
 drive analytics-caddy "$ANALYTICS_BIN" "$(dirname "$ANALYTICS_BIN")" $((BASE_PORT + 10)) caddy --analytics
+drive appauth-live-caddy "$APPAUTH_LIVE_BIN" "$(dirname "$APPAUTH_LIVE_BIN")" $((BASE_PORT + 10)) caddy --app-auth
+drive appauth-spa-caddy "$APPAUTH_SPA_BIN" "$(dirname "$APPAUTH_SPA_BIN")" $((BASE_PORT + 10)) caddy --app-auth
 
 if [ "$rc" -ne 0 ]; then
   echo "console-live-e2e: FAIL — the Sky Console did not show live data, lost its live channel, or did not recover from a restart (see above)." >&2
   exit 1
 fi
-echo "console-live-e2e: PASS — the Sky Console shows live data (incl. Analytics), holds its live channel past 40 s and recovers from a backend restart by itself, for Sky.Live, Sky.Spa and an analytics fixture, directly and behind Caddy (HTTP/2, encode, strict CSP)."
+echo "console-live-e2e: PASS — the Sky Console shows live data (incl. Analytics), holds its live channel past 40 s and recovers from a backend restart by itself, for Sky.Live, Sky.Spa and an analytics fixture, directly and behind Caddy, and admits only the app's own admins under SKY_CONSOLE_AUTH=app (HTTP/2, encode, strict CSP)."
 rm -rf "$TMP"

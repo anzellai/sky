@@ -21,21 +21,21 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 167 |
-| covered by the new corpus (>= Asserted) | 149 |
-| verdict `stronger` | 144 |
-| verdict `equal` | 23 |
+| covered by the new corpus (>= Asserted) | 150 |
+| verdict `stronger` | 145 |
+| verdict `equal` | 22 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
 | stdlib modules (denominator) | 101 |
-| stdlib entries (denominator) | 1968 |
+| stdlib entries (denominator) | 1970 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 10 | 9.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 727 | 36.9% |
-| symbols unreferenced under the generous rule | 648 | 32.9% |
+| stdlib modules imported by nothing | 9 | 8.9% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 725 | 36.8% |
+| symbols unreferenced under the generous rule | 646 | 32.8% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -51,7 +51,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `stdlib.Sky.Core.Io`
 - `stdlib.Std.Cli`
 - `stdlib.Std.Db.Table`
-- `stdlib.Std.Live.Console`
 - `stdlib.Std.Tui`
 - `stdlib.Std.Webview`
 
@@ -62,7 +61,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 23 |
-| stdlib modules owned by exactly one unit of any role | 18 |
+| stdlib modules owned by exactly one unit of any role | 19 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **3** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -229,7 +228,7 @@ None.
 | `stdlib.Std.Image` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Live` | stdlib | Runs | Runs | equal |
-| `stdlib.Std.Live.Console` | stdlib | None | None | equal |
+| `stdlib.Std.Live.Console` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Live.Head` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |

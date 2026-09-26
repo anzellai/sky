@@ -33,6 +33,13 @@
 //      console recovers BY ITSELF within 15 s: a new process uptime in the
 //      header, no banner, no reload loop;
 //   6. zero console errors outside the restart window, zero CSP violations.
+//   With --app-auth the app runs with SKY_CONSOLE_AUTH=app and no console
+//   token (an app built with `App.withConsoleAuth`, e.g. the app-console-auth
+//   fixture, which admits the cookie session=admin-session). Step 1 is then:
+//   a request with no session and one with session=user-session both get 403
+//   and no console session cookie, and the browser, holding the admin session
+//   cookie, opens the console with no login form. Steps 2 to 6 run unchanged,
+//   so the restart in step 5 also proves the admin gets back in by itself.
 //   With --analytics (an app that tracks on "Sign up", e.g. the
 //   console-analytics fixture): a visitor in a SECOND browser context presses
 //   "Sign up", and the Analytics tab must list the tracked event and count an
@@ -61,6 +68,7 @@ const COMMIT = arg("--commit", "");
 const BUILT_AT = arg("--built-at", "");
 const CWD = arg("--cwd", process.cwd());
 const ANALYTICS = argv.includes("--analytics");
+const APP_AUTH = argv.includes("--app-auth");
 if (!APP) {
   console.error("console-live-e2e: --app <binary> is required");
   process.exit(2);
@@ -101,7 +109,7 @@ function startApp() {
   const env = {
     ...process.env,
     ENV: "production",
-    SKY_CONSOLE_AUTH: "token",
+    SKY_CONSOLE_AUTH: APP_AUTH ? "app" : "token",
     SKY_CONSOLE_TOKEN: TOKEN,
     SKY_ADMIN_TOKEN: "console-live-e2e-admin-token-0123456789",
     SKY_LIVE_PORT: String(PORT),
@@ -109,6 +117,7 @@ function startApp() {
     SKY_DB_PATH: join(work, "app.db"),
   };
   delete env.SKY_LIVE_STORE; // memory store, as the field deploy
+  if (APP_AUTH) delete env.SKY_CONSOLE_TOKEN;
   if (CADDY) delete env.SKY_CSP;
   else env.SKY_CSP = "strict";
   appProc = spawn(APP, [], { cwd: CWD, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -237,12 +246,33 @@ try {
 
   // 1. sign in
   phase = "login";
-  await page.goto(ORIGIN + "/_sky/console/", { waitUntil: "domcontentloaded" });
-  const form = page.locator("input[name=token]");
-  if ((await form.count()) === 0) fail("no login form at /_sky/console/ under SKY_CONSOLE_AUTH=token");
-  await form.fill(TOKEN);
-  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), page.locator("button[type=submit]").click()]);
-  if (!/Sky Console/.test(await bodyText(page))) fail("signed-in page is not the console");
+  if (APP_AUTH) {
+    // The app decides. Anyone it does not recognise as an admin is refused and
+    // gets no console session: the gate fails closed.
+    for (const [who, cookie] of [["no session", ""], ["a user session", "session=user-session"]]) {
+      const r = await ctx.request.get(ORIGIN + "/_sky/console/", {
+        headers: cookie ? { cookie } : {},
+        maxRedirects: 0,
+      });
+      const issued = (r.headers()["set-cookie"] || "").split("\n").some((c) => /^__Host-sky_console=[^;]+/.test(c));
+      if (r.status() !== 403) fail(`${who}: /_sky/console/ answered ${r.status()} under SKY_CONSOLE_AUTH=app, want 403`);
+      else if (issued) fail(`${who}: refused, but was issued a console session cookie`);
+      else info(`${who}: 403, no console session`);
+    }
+    const url = new URL(ORIGIN);
+    await ctx.addCookies([{ name: "session", value: "admin-session", domain: url.hostname, path: "/" }]);
+    await page.goto(ORIGIN + "/_sky/console/", { waitUntil: "domcontentloaded" });
+    if ((await page.locator("input[name=token]").count()) > 0) fail("an admin session was shown the token login form");
+    if (!/Sky Console/.test(await bodyText(page))) fail("an admin session did not open the console");
+    else info("admin session: the console opens with no token");
+  } else {
+    await page.goto(ORIGIN + "/_sky/console/", { waitUntil: "domcontentloaded" });
+    const form = page.locator("input[name=token]");
+    if ((await form.count()) === 0) fail("no login form at /_sky/console/ under SKY_CONSOLE_AUTH=token");
+    await form.fill(TOKEN);
+    await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), page.locator("button[type=submit]").click()]);
+    if (!/Sky Console/.test(await bodyText(page))) fail("signed-in page is not the console");
+  }
   phase = "steady";
   const steadyFrom = Date.now();
 

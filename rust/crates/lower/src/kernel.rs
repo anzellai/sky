@@ -401,6 +401,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Math", "nan", "rt.Math_nanT"),
     ("Math", "isNaN", "rt.Math_isNaN"),
     ("Server", "listen", "rt.Server_listen"),
+    ("Server", "setConsoleAuth", "rt.Server_setConsoleAuth"),
     ("Server", "get", "rt.Server_get"),
     ("Server", "post", "rt.Server_post"),
     ("Server", "put", "rt.Server_put"),

@@ -61,6 +61,26 @@ Without a proxy, set `SKY_CSP=strict` to make the app send an equivalent
 policy itself. It never replaces a policy that the app already set. See
 `docs/skylive/architecture.md`, "Content-Security-Policy".
 
+### Who can open the Console in production
+
+Under a production `ENV` the Console needs a login, chosen by
+`SKY_CONSOLE_AUTH`:
+
+- `token`: a login form that takes `SKY_CONSOLE_TOKEN`.
+- `app`: the app decides. `App.withConsoleAuth check` (or
+  `Server.setConsoleAuth check` in a hand-written `Sky.Http.Server` app) reads
+  the app's own session from the request and returns `Just` an identity for a
+  user who may see the Console. Everything else, including `Err`, a panic and
+  an empty `subject`, gets 403. See `docs/skyapp/overview.md`, "The Sky
+  Console for your own admins".
+- `off`: the Console is not mounted.
+
+Before v0.26.1, `app` let every request in: the gate misread the check's
+typed `Nothing` and `Err` as "allow", and a real check never ran because the
+request it was given could not be converted to `Request`. An app that set
+`SKY_CONSOLE_AUTH=app` on an earlier version had an open Console. Upgrade, or
+switch to `token` until you do.
+
 ### Where the Console's numbers come from
 
 The embedded console reads the host app's telemetry from

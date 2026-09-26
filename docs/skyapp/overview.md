@@ -207,6 +207,65 @@ App.app { init = init, update = update, view = view, subscriptions = subscriptio
 loud-log floor stands. Web (Sky.Live) and terminal targets have no RPC boundary
 and ignore the hook — there a failed task surfaces through its own `ToMsg`.
 
+## The Sky Console for your own admins — `App.withConsoleAuth`
+
+In production the Sky Console (`/_sky/console`) needs a login. With
+`SKY_CONSOLE_AUTH=token` that login is a shared console token. With
+`SKY_CONSOLE_AUTH=app`, your app decides instead: a user already signed in to
+the app, whom your code recognises as an admin, opens the console with no
+second password.
+
+```elm
+import Std.Live.Console as Console
+
+adminsOnly : Request -> Task Error (Maybe Console.Identity)
+adminsOnly req =
+    case Dict.get "session" req.cookies of
+        Just token ->
+            sessionUser db token
+                |> Task.map
+                    (\user ->
+                        if user.role == "admin" then
+                            Just (Console.defaultIdentity user.id |> Console.withEmail user.email)
+
+                        else
+                            Nothing
+                    )
+
+        Nothing ->
+            Task.succeed Nothing
+
+App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+    |> App.withNotFound NotFound
+    |> App.withConsoleAuth adminsOnly
+```
+
+`withConsoleAuth : (Request -> Task Error (Maybe Console.Identity)) -> App … ->
+App …`. The `Request` is the one a `Sky.Http.Server` handler receives, so the
+check reads the app's own cookie or header. `sessionUser` stands for your own
+session lookup. The gate fails closed:
+
+- `Just identity` with a non-empty `subject` lets the request in and sets a
+  signed console session cookie (`__Host-sky_console`, `Secure`, `HttpOnly`,
+  `SameSite=Strict`), so later console requests do not call the check again.
+  The login is logged as `console.auth.allowed` with the subject.
+- `Nothing`, `Err`, a panic, or an empty `subject` refuses with 403 and logs
+  `console.auth.denied`. No console session is set.
+
+It runs on the server on every web target: Sky.Live (`web`, `desktop`) and the
+backend of a `web:app` split, which registers it with `Server.setConsoleAuth`
+before it listens. The wasm client never sees it. A hand-written
+`Sky.Http.Server` app calls `Server.setConsoleAuth check` itself, before
+`Server.listen`.
+
+`SKY_CONSOLE_TOKEN` is optional in this mode. Without it the console session
+cookie is signed with a per-host key, so after a restart on a new host, or on
+another replica, the check simply runs again for the next console request.
+Set it to keep console sessions valid across replicas.
+
+With `SKY_CONSOLE_AUTH=app` and no `withConsoleAuth`, every console request
+gets 403. Use `SKY_CONSOLE_AUTH=token` in that case.
+
 ## Surviving a restart — `App.withDurable`
 
 Add durability to any `App.app` app with **one line** and NO change to `model` /

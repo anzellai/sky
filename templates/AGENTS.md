@@ -645,7 +645,8 @@ is dev-only (per-process, lost on restart).
 
 **Going to production — set these via env (not the file):** `ENV=production`
 (locks the dev console + banner off, gates `/_sky/metrics` behind auth),
-`SKY_CONSOLE_AUTH` with `SKY_CONSOLE_TOKEN`; a SHARED `SKY_LIVE_STORE`
+`SKY_CONSOLE_AUTH=token` with `SKY_CONSOLE_TOKEN` (or `SKY_CONSOLE_AUTH=app` with
+`App.withConsoleAuth`, so the app's own admins open the console); a SHARED `SKY_LIVE_STORE`
 (`redis`/`postgres`) **and** load-balancer sticky sessions keyed on the `sky_sid`
 cookie if you run more than one replica.
 
@@ -658,7 +659,7 @@ cookie if you run more than one replica.
 - **Secrets are typed** — secret-bearing args are the opaque `Sky.Core.Secret.Secret` (redacts itself in every log/JSON path): `Auth.signToken`/`verifyToken`, `Jwt.hs256`/`rs256`, the `Crypto` AEAD keys, `Http.withBearer`/`withApiKey`; `Cli.readPassword` returns one. Wrap with `Secret.fromEnv "VAR"`, unwrap only via `Secret.reveal`. Never `fmt.Sprintf("%v", secret)`.
 - **Money is `Std.Money`**, never `Float`.
 - **`sky fmt` after editing**, **`sky verify` before shipping.**
-- **Production gate**: set `ENV=production`, and `SKY_CONSOLE_AUTH` (`token` or `app`) with `SKY_CONSOLE_TOKEN`; use a shared session store (redis/postgres) + sticky sessions when you run more than one replica. Content-Security-Policy: every Sky page works under `script-src 'self' 'wasm-unsafe-eval'` with no hashes and no `'unsafe-inline'` (the scripts are same-origin files); send it from the proxy, or set `SKY_CSP=strict` so the runtime sends it (it never overwrites a policy the app set). `SKY_AUTH_TOKEN_SECRET` is **not** a runtime setting — nothing in the runtime reads it (`sky_sid` is unsigned random hex, and `Auth.signToken` takes its secret as a Sky-level *argument*). It is a convention in your own code that only `sky doctor` knows about: if you use `Std.Auth`, whatever variable you feed into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes nothing.
+- **Production gate**: set `ENV=production`, and `SKY_CONSOLE_AUTH=token` with `SKY_CONSOLE_TOKEN`, or `SKY_CONSOLE_AUTH=app` with `App.withConsoleAuth check` (the app's own admins open the console; everyone else gets 403); use a shared session store (redis/postgres) + sticky sessions when you run more than one replica. Content-Security-Policy: every Sky page works under `script-src 'self' 'wasm-unsafe-eval'` with no hashes and no `'unsafe-inline'` (the scripts are same-origin files); send it from the proxy, or set `SKY_CSP=strict` so the runtime sends it (it never overwrites a policy the app set). `SKY_AUTH_TOKEN_SECRET` is **not** a runtime setting — nothing in the runtime reads it (`sky_sid` is unsigned random hex, and `Auth.signToken` takes its secret as a Sky-level *argument*). It is a convention in your own code that only `sky doctor` knows about: if you use `Std.Auth`, whatever variable you feed into `Auth.signToken` must be ≥ 32 bytes; if you don't, setting it changes nothing.
 - **Sky.Live resilience (automatic)**: an explicitly-configured `store` (postgres/sqlite/redis) that can't connect at boot **fails loud in production** (the app refuses to start) instead of silently using memory — so make sure `DATABASE_URL` is reachable, or set `SKY_LIVE_STORE=memory` to opt in to in-memory sessions. `/_sky/readyz` returns 503 when the store/DB is down. Keep `view` a **pure** function of the model (no `Time.now`/`Random` in `view`); enable `SKY_LIVE_VIEW_DETERMINISM_CHECK=1` in dev to catch violations.
 
 When a signature or module is unclear, run `sky doc <Module>` — it is complete

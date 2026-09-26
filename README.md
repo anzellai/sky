@@ -383,13 +383,18 @@ level  = "info"
 ```bash
 ENV=production \
 SKY_AUTH_TOKEN_SECRET="$(openssl rand -base64 48)" \
-SKY_CONSOLE_AUTH=app SKY_CONSOLE_TOKEN="$(openssl rand -base64 48)" \
+SKY_CONSOLE_AUTH=token SKY_CONSOLE_TOKEN="$(openssl rand -base64 48)" \
 sky build src/Main.sky && ./sky-out/app
 ```
 
 The production gate is `ENV` (then `SKY_ENV` fallback). Unset
 or `dev` / `development` / `local` → dev mode. Anything else
 locks down the dev console, banner, and metrics endpoint.
+
+To let the app's own signed-in admins open the console instead of
+sharing a token, set `SKY_CONSOLE_AUTH=app` and add
+`App.withConsoleAuth` (see
+[`docs/skyapp/overview.md`](docs/skyapp/overview.md#the-sky-console-for-your-own-admins--appwithconsoleauth)).
 
 Deploy with `scp` + your favourite supervisor, drop the binary
 into a Docker `FROM scratch` image, or run it directly on any

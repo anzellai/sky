@@ -5632,6 +5632,14 @@ fn gen_backend(
     let has_synth_guard = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaGuard_"));
+    // `App.withConsoleAuth` is carried into a NAMED top-level `spaConsoleAuth_`
+    // binding (main.rs synthesize_spa_source). The backend mounts the Sky
+    // Console, so it registers the gate with `Server.setConsoleAuth` before
+    // `Server.listen`; `SKY_CONSOLE_AUTH=app` then admits only the app's own
+    // users. A hand-authored Sky.Spa backend has no such binding.
+    let has_synth_console_auth = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaConsoleAuth_"));
     // Fix 2: `spaOnRequest_` seeds `init`'s SSR model from the real request
     // (path / query / cookies / headers), and `spaOnNavigate_` is fired per
     // resolved route so per-route data (not just init's path-independent read)
@@ -5792,7 +5800,11 @@ fn gen_backend(
     // An app with `App.api` server endpoints (`spaApiRoutes_`) is NOT static-only:
     // the backend must carry the api route binding + its handlers to mount them,
     // so its (synthesised, TEA-safe) decls are copied like any server-bearing app.
-    let static_only_backend = server.is_empty() && !push_mode && !emit_ssr && !has_synth_api_routes;
+    let static_only_backend = server.is_empty()
+        && !push_mode
+        && !emit_ssr
+        && !has_synth_api_routes
+        && !has_synth_console_auth;
     let mut body = String::new();
     if !static_only_backend {
         for d in file.decls() {
@@ -6546,13 +6558,29 @@ fn gen_backend(
     // the setup). `_ = spaBootSetup_` auto-forces the `Task Error ()`, running
     // the boot effects once at startup, exactly as the original `main`'s
     // `_ = <task>` prefix did.
-    let main_decl = if has_synth_boot_setup && !static_only_backend {
-        format!(
-            "main : Task Error ()\nmain =\n    let\n        _ =\n            spaBootSetup_\n    in\n    Server.listen\n        serverPort\n{listen_arg}\n"
-        )
-    } else {
+    //
+    // The console gate is registered the same way: `_ = Server.setConsoleAuth
+    // spaConsoleAuth_` stores the app's check before the listener mounts
+    // `/_sky/console`. A console-auth backend is never static-only (see
+    // `static_only_backend`), so its binding is always in the body.
+    let mut startup: Vec<&str> = Vec::new();
+    if has_synth_boot_setup && !static_only_backend {
+        startup.push("spaBootSetup_");
+    }
+    if has_synth_console_auth {
+        startup.push("Server.setConsoleAuth spaConsoleAuth_");
+    }
+    let main_decl = if startup.is_empty() {
         format!(
             "main : Task Error ()\nmain =\n    Server.listen\n        serverPort\n{listen_arg}\n"
+        )
+    } else {
+        let lets: String = startup
+            .iter()
+            .map(|task| format!("        _ =\n            {task}\n"))
+            .collect();
+        format!(
+            "main : Task Error ()\nmain =\n    let\n{lets}    in\n    Server.listen\n        serverPort\n{listen_arg}\n"
         )
     };
     handlers.push_str(&main_decl);
@@ -6698,6 +6726,12 @@ fn gen_frontend(
         // Skip server-tainted bindings (both annotation + value) — the security spine.
         if let Some(n) = name {
             if tainted.iter().any(|t| t == n) {
+                continue;
+            }
+            // The console gate is server-only whatever its body does: the
+            // backend mounts the console and registers it. A pure check (one
+            // that only reads a cookie) is not tainted, so drop it by name.
+            if n == "spaConsoleAuth_" {
                 continue;
             }
             // Skip types/codecs copied into Shared — they arrive via `import

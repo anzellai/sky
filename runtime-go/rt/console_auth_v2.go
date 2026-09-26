@@ -107,6 +107,17 @@ func SetConsoleAuthCallback(cb any) {
 	consoleAuthCallback.Store(&cb)
 }
 
+// Server_setConsoleAuth — `Server.setConsoleAuth check : Task Error ()`.
+// Registers the app-mode console callback for a Sky.Http.Server app (and
+// the backend of a Sky.Spa split), which has no Live.app config to carry
+// it. Sky.Live registers the same callback from its config at boot.
+func Server_setConsoleAuth(check any) any {
+	return func() any {
+		SetConsoleAuthCallback(check)
+		return Ok[any, any](struct{}{})
+	}
+}
+
 func getConsoleAuthCallback() any {
 	v := consoleAuthCallback.Load()
 	if v == nil {
