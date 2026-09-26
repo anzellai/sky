@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.25.21 — (unreleased)
+## v0.25.21 — the build identity is automatic on every build path (2026-09-26)
 
 ### Fixed
 
@@ -35,6 +35,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `/_sky/buildinfo` also reports `source` (`git`, `ci:<VAR>`, `content`,
   `override` or `ldflags`). Your own `-ldflags "-X sky-app/rt.buildCommit=..."`
   still wins. You configure nothing.
+- **The gate build cache keys on the build identity.** Its key ignored the
+  commit, the CI commit variables and source times, so a cache hit could
+  restore a binary stamped with another commit. The key now includes the
+  resolved stamp (`scripts/lib/gate-build-cache.sh`).
 
 ## v0.25.20 — Sky.Spa boots behind any proxy; streams outlive 30 s; the Console shows live data (2026-09-26)
 
