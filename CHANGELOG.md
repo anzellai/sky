@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.25.19 — (unreleased)
+## v0.25.19 — unknown exports are compile errors; strict CSP with no inline script; App.withAppUrl for native shells (2026-09-26)
 
 A patch over v0.25.18. Every fix has a regression test that failed before it.
 No public function signature changes.
