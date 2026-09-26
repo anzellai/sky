@@ -2433,13 +2433,26 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         "spaSsrPage",
         "spaSsrRenderBody (spaView_ resolved)",
         "spaSsrRenderHead spaHead_ resolved",
-        "spaSsrWasmName \"../frontend/dist\"",
+        "spaSsrWasmNameBuilt spaBuiltWasmName_ \"../frontend/dist\"",
     ] {
         assert!(
             backend.contains(needle),
             "SSR-P1: the generated backend must carry the SSR route piece `{needle}`:\n{backend}"
         );
     }
+    // v0.25.20: the build wrote the frontend's wasm name into the backend, so the
+    // SSR page names it without reading ../frontend/dist at run time.
+    let dist = proj.join(".skyapp/web-app/.split/frontend/dist");
+    let wasm = std::fs::read_dir(&dist)
+        .expect("frontend dist")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
+        .expect("a main.<hash>.wasm in the dist");
+    assert!(
+        backend.contains(&format!("spaBuiltWasmName_ =\n    \"{wasm}\"")),
+        "the build must bake the dist's {wasm} into the backend:\n{backend}"
+    );
     // The SSR route must be registered BEFORE the static fallthrough so asset
     // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server.
     let ssr_at = backend.find("Server.api \"GET /{$}\" ssrHandler");

@@ -2185,7 +2185,7 @@ func liveAppRun(cfg any) any {
 	// STILL produce an access-log line + counter bump (you want to
 	// see CSRF rejection rates as a metric — sudden spike = attack
 	// or misconfiguration).
-	csrfed := CSRFMiddleware(mux)
+	csrfed := CSRFMiddleware(skyAssetGuard(mux, nil))
 	// Sliding-auth re-issue — mounted ONLY when Live.withAuthSliding registered a
 	// config (getAuthSlidingConfig != nil). Sits inside observability (like CSRF)
 	// so a re-issue still meters as a request, and inside the auth-cookie flow it
@@ -2669,9 +2669,11 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// Per-app CSRF token: a sub-app (basePath != "") must embed its OWN
 	// token, which lives under a per-app cookie name (__sky_csrf_<basePath>),
 	// not the host's __sky_csrf — otherwise the sub-app page would echo the
-	// host's token and every sub-app POST would 403. Host apps (basePath == "")
-	// resolve to the identical bare-name read.
-	csrfToken := CurrentCsrfTokenForBasePath(r, app.basePath)
+	// host's token and every sub-app POST would 403. The name is resolved from
+	// the request path, the same rule CSRFMiddleware uses, so a standalone app
+	// behind a prefix-stripping proxy (SKY_LIVE_BASE_PATH) reads the name the
+	// middleware set.
+	csrfToken := CurrentCsrfTokenForRequest(r)
 	// devBanner is "" in production; injected as a sibling of sky-root
 	// so it survives every diff/patch cycle (root replacement won't
 	// blow it away) and stays pinned bottom-right via position:fixed.

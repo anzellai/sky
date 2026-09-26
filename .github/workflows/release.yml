@@ -953,6 +953,18 @@ jobs:
         run: scripts/live-client-e2e.sh
       - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
         run: scripts/ui-forms-e2e.sh
+      - name: Install Caddy (the csp-e2e proxy topology matrix runs a real Caddy)
+        run: |
+          set -euo pipefail
+          v=2.11.4
+          base="https://github.com/caddyserver/caddy/releases/download/v$v"
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "$base/caddy_${v}_linux_amd64.tar.gz"
+          curl -fsSLO "$base/caddy_${v}_checksums.txt"
+          grep " caddy_${v}_linux_amd64.tar.gz\$" "caddy_${v}_checksums.txt" | sha512sum -c -
+          tar -xzf "caddy_${v}_linux_amd64.tar.gz" caddy
+          sudo install -m 0755 caddy /usr/local/bin/caddy
+          caddy version
       - name: Strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
         run: scripts/csp-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)

@@ -643,3 +643,23 @@ func CurrentCsrfTokenForBasePath(r *http.Request, basePath string) string {
 	}
 	return ""
 }
+
+// CurrentCsrfTokenForRequest reads the CSRF token the page for r must embed,
+// under the cookie name CSRFMiddleware uses for this same request path
+// (csrfCookieNameForPath). The render and the middleware then agree by
+// construction: an in-process sub-app's page path carries its prefix, so both
+// resolve the sub-app's per-app name; a standalone app that runs with
+// SKY_LIVE_BASE_PATH behind a proxy that strips the prefix sees an unprefixed
+// path, so both resolve the host name. Deriving the name from the app's
+// basePath instead (CurrentCsrfTokenForBasePath) read `__sky_csrf_<base>` in
+// that second layout, while the middleware set `__sky_csrf`: the page embedded
+// no token and every event POST was a 403.
+func CurrentCsrfTokenForRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if c, err := r.Cookie(csrfCookieNameForPath(r.URL.Path)); err == nil {
+		return c.Value
+	}
+	return ""
+}
