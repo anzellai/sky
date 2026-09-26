@@ -33,6 +33,10 @@
 //      console recovers BY ITSELF within 15 s: a new process uptime in the
 //      header, no banner, no reload loop;
 //   6. zero console errors outside the restart window, zero CSP violations.
+//   With --analytics (an app that tracks on "Sign up", e.g. the
+//   console-analytics fixture): a visitor in a SECOND browser context presses
+//   "Sign up", and the Analytics tab must list the tracked event and count an
+//   identified user (> 0).
 //
 // Exit 0 on PASS, 1 on FAIL (every failed check is printed).
 
@@ -55,6 +59,7 @@ const CADDY = arg("--caddy", "");
 const CADDY_PORT = Number(arg("--caddy-port", String(PORT + 5)));
 const COMMIT = arg("--commit", "");
 const CWD = arg("--cwd", process.cwd());
+const ANALYTICS = argv.includes("--analytics");
 if (!APP) {
   console.error("console-live-e2e: --app <binary> is required");
   process.exit(2);
@@ -300,6 +305,36 @@ try {
     }
     if (!ok) fail("the Traces tab listed no span");
     else info("traces tab lists spans");
+  }
+  // 3b. analytics: a visitor signs up; the console shows the event + user
+  if (ANALYTICS) {
+    const visitor = await browser.newContext({ ignoreHTTPSErrors: true });
+    try {
+      const vp = await visitor.newPage();
+      await vp.goto(ORIGIN + "/", { waitUntil: "domcontentloaded" });
+      await vp.getByText("Sign up", { exact: true }).first().click();
+      // The app confirms the tracked sign-up in its own view.
+      await vp.waitForFunction(() => /(^|\n)signed up(\n|$)/.test(document.body.innerText), null, { timeout: 10000 });
+    } catch (e) {
+      let vt = "";
+      try { vt = (await visitor.pages()[0].evaluate(() => document.body.innerText)).replace(/\n/g, " | ").slice(0, 200); } catch {}
+      fail("the fixture visitor could not sign up: " + String(e).split("\n")[0] + " — page: " + vt);
+    } finally {
+      await visitor.close();
+    }
+    await clickTab(page, "Analytics");
+    const end = Date.now() + 15000;
+    let t = "", users = 0, seen = false;
+    while (Date.now() < end) {
+      t = await bodyText(page);
+      seen = t.includes("console_e2e_signup");
+      users = Number((t.match(/IDENTIFIED USERS[^\n]*\n\s*(\d+)/i) || [])[1] || 0);
+      if (seen && users > 0) break;
+      await sleep(500);
+    }
+    if (!seen) fail("the Analytics tab did not list the tracked console_e2e_signup event");
+    if (users <= 0) fail(`the Analytics tab counts ${users} identified users after an identified sign-up`);
+    if (seen && users > 0) info(`analytics tab lists console_e2e_signup, identified users ${users}`);
   }
   await clickTab(page, "Overview");
 

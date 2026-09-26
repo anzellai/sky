@@ -700,10 +700,10 @@
   "summary": {
     "stdlib_entries": 1968,
     "stdlib_modules": 101,
-    "surfaces_covered": 148,
-    "surfaces_covered_pct": 88.6,
-    "surfaces_equal": 24,
-    "surfaces_stronger": 143,
+    "surfaces_covered": 149,
+    "surfaces_covered_pct": 89.2,
+    "surfaces_equal": 23,
+    "surfaces_stronger": 144,
     "surfaces_total": 167,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -7265,8 +7265,13 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Runs",
+        "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/52-blog-analytics (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
@@ -7278,7 +7283,7 @@
             "strength": 2
           }
         ],
-        "strength": 2
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -7298,7 +7303,7 @@
       },
       "description": "the Std.Analytics public API",
       "id": "stdlib.Std.Analytics",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -12858,7 +12863,7 @@
           ]
         },
         "Std.Analytics": {
-          "count": 19,
+          "count": 18,
           "symbols": [
             "Consent",
             "Event",
@@ -12871,7 +12876,6 @@
             "erase",
             "eventsStore",
             "float",
-            "identify",
             "int",
             "openStore",
             "pii",
@@ -13572,7 +13576,7 @@
           ]
         }
       },
-      "count": 654,
+      "count": 653,
       "pct_of_denominator": 33.2
     },
     "symbols_unreferenced_strict": {
@@ -13919,7 +13923,7 @@
           ]
         },
         "Std.Analytics": {
-          "count": 19,
+          "count": 18,
           "symbols": [
             "Consent",
             "Event",
@@ -13932,7 +13936,6 @@
             "erase",
             "eventsStore",
             "float",
-            "identify",
             "int",
             "openStore",
             "pii",
@@ -14699,7 +14702,7 @@
           ]
         }
       },
-      "count": 731,
+      "count": 730,
       "pct_of_denominator": 37.1
     }
   },
@@ -14720,12 +14723,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 41,
+      "modules_imported": 42,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 252,
-      "refs_qualified": 242,
+      "refs_generous": 257,
+      "refs_qualified": 247,
       "role": "Layer2",
-      "sky_files": 149,
+      "sky_files": 150,
       "sky_toml_sections": []
     },
     {

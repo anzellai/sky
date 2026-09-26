@@ -473,8 +473,8 @@ done
 
 say "${_green}wrote $OUT (${_dim}$(wc -l <"$OUT") lines${_reset}${_green})${_reset}"
 
-# The package is generated code PLUS hand-written glue (register_v3.go,
-# mount.go) that names generated symbols such as `Main_viewWrapped`. The
+# The package is generated code PLUS hand-written glue (register_v3.go)
+# that names generated symbols such as `Main_viewWrapped`. The
 # compiler drops every binding that `main` does not reach, and a Go reference
 # is invisible to it, so a Sky-side change can leave the glue naming a symbol
 # that is no longer emitted. That happened: the Std.App migration removed

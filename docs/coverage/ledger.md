@@ -21,9 +21,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 167 |
-| covered by the new corpus (>= Asserted) | 148 |
-| verdict `stronger` | 143 |
-| verdict `equal` | 24 |
+| covered by the new corpus (>= Asserted) | 149 |
+| verdict `stronger` | 144 |
+| verdict `equal` | 23 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
 | stdlib modules (denominator) | 101 |
@@ -34,8 +34,8 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 10 | 9.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 731 | 37.1% |
-| symbols unreferenced under the generous rule | 654 | 33.2% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 730 | 37.1% |
+| symbols unreferenced under the generous rule | 653 | 33.2% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -202,7 +202,7 @@ None.
 | `stdlib.Std.Ai.Provider` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ai.Tool` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Trace` | stdlib | Runs | Falsified | stronger |
-| `stdlib.Std.Analytics` | stdlib | Runs | Runs | equal |
+| `stdlib.Std.Analytics` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.App` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Bundle` | stdlib | Runs | Runs | equal |

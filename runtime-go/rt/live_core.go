@@ -291,7 +291,7 @@ func HtmlRender(node any) string {
 // AND returns the per-hid typed-Msg lookup table populated by the
 // internal renderer. Caller-owned alternative to HtmlRender for paths
 // that need to dispatch hid-keyed events (e.g. the inline Sky Console
-// mount in console_app/mount.go).
+// mount that console_app used to have).
 //
 // idPrefix is the stable namespace anchor for assignSkyIDs. Use "r"
 // to match the host Sky.Live convention; the console plane MAY pick

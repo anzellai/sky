@@ -142,9 +142,9 @@ jobs:
     # The tier measures ~10 min locally (10 checks incl. two ~80s resilience
     # holds and the console e2e). 1.5x = 15; 25 leaves room for a cold Go cache
     # and browser download, still far inside the 90-min T3 ceiling.
-    # console-live-e2e adds ~8 min (a Sky.Spa wasm build, four 60 s browser
-    # runs): 35.
-    timeout-minutes: 35
+    # console-live-e2e adds ~11 min (a Sky.Spa wasm build, six 60 s browser
+    # runs): 40.
+    timeout-minutes: 40
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
