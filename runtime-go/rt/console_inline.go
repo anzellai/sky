@@ -51,7 +51,7 @@ func RegisterInlineConsoleHook(fn func(mux *http.ServeMux, basePath string) erro
 // rt's MountEmbeddedConsole no longer calls this — it routes through
 // the canonical Sky.Live sub-app primitive instead. Callers that
 // reach for this directly get the legacy one-shot HTML render path
-// from console_app/mount.go (also deprecated).
+// that console_app used to provide (removed; also deprecated).
 //
 // Deprecated: use rt.InlineConsoleCfg + rt.MountLiveSubAppInProcess
 // when you need a console mount outside of the auto-mount path.

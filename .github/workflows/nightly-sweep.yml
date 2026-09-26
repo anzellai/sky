@@ -142,7 +142,9 @@ jobs:
     # The tier measures ~10 min locally (10 checks incl. two ~80s resilience
     # holds and the console e2e). 1.5x = 15; 25 leaves room for a cold Go cache
     # and browser download, still far inside the 90-min T3 ceiling.
-    timeout-minutes: 25
+    # console-live-e2e adds ~11 min (a Sky.Spa wasm build, six 60 s browser
+    # runs): 40.
+    timeout-minutes: 40
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -244,6 +246,14 @@ jobs:
           caddy version
       - name: Gate — strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
         run: scripts/csp-e2e.sh
+      # console-live-e2e — the Sky Console shows LIVE data (uptime counts,
+      # requests, a log line, a span), holds its SSE past 40 s and recovers from
+      # a backend restart by itself; Sky.Live and a Sky.Spa backend, directly
+      # and behind a real Caddy (HTTP/2, encode zstd gzip, flush_interval -1,
+      # two slots, strict CSP) — the production topology of the field report.
+      - uses: ./.github/actions/install-caddy
+      - name: Gate — Sky Console live data + reconnect e2e (direct + behind Caddy)
+        run: scripts/console-live-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported
       # "binary missing" for two examples and "N% pixels exceed" for nine

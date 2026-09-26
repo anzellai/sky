@@ -221,6 +221,17 @@ func ResetConsoleAuthStateForTesting() {
 // cookie (no second secret to provision).
 func deriveConsoleSigningKey() []byte {
 	secret := strings.TrimSpace(os.Getenv("SKY_CONSOLE_TOKEN"))
+	// An operator-set SKY_CONSOLE_TOKEN is the shared secret of the whole
+	// deployment. Every process that holds it must accept the cookie any of
+	// them issued: two upstream slots behind one proxy, the old and the new
+	// process of a rolling redeploy, replicas behind a load balancer. The salt
+	// used to be the build commit, or the executable path when the commit was
+	// "dev" (which it always was — nothing stamped it). Slots in different
+	// directories, or a new commit, then derived different keys, so a console
+	// tab that moved to another process was refused (401) on its SSE and event
+	// requests — a login loop the page could not explain. A fixed salt binds
+	// the key to the secret alone.
+	salt := []byte("sky-console-cookie-v1")
 	if secret == "" {
 		// Dev-mode fallback / app-mode without an explicit token —
 		// reach for the auto-generated dev token. Production callers
@@ -229,13 +240,8 @@ func deriveConsoleSigningKey() []byte {
 		// to unset-prod first), but the safe default is to mint a
 		// random key in memory rather than panic.
 		secret = ensureDevConsoleToken()
-	}
-	bi := currentBuildInfo()
-	salt := []byte(bi.Commit)
-	if len(salt) == 0 || string(salt) == "dev" {
-		// Stable salt even on local dev: use the executable path.
-		// Two simultaneous local binaries with different paths get
-		// distinct keys.
+		// The dev token is per project; the executable path keeps two
+		// local binaries of the same project from sharing a key.
 		if exe, err := os.Executable(); err == nil {
 			salt = []byte(exe)
 		}

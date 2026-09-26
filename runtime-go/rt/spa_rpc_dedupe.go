@@ -143,6 +143,10 @@ func (w *spaRpcRecorder) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
+// Unwrap exposes the wrapped writer to http.ResponseController (see
+// stream_deadline.go).
+func (w *spaRpcRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 var spaRpcDedupe = newSpaRpcDedupeCache(spaRpcDedupeCap, spaRpcDedupeTTL)
 
 // spaRpcDedupeMiddleware wraps the server mux (rt_server.go).

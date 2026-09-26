@@ -1,0 +1,88 @@
+module Main exposing (main)
+
+{-| Sky Console Analytics-tab regression fixture, driven by
+scripts/console-live-e2e.mjs (--analytics). A visitor presses "Sign up": the
+app grants consent, identifies the visitor as a user, and tracks a
+`console_e2e_signup` event. The e2e then asserts that the console's
+Analytics tab lists that event and counts an identified user.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Sub as Sub exposing (Sub)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Analytics as Analytics
+
+type Page
+    = Home
+
+type alias Model =
+    { signedUp : Bool }
+
+type Msg
+    = SignUp
+    | Tracked (Result Error ())
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { signedUp = False }, Cmd.none )
+
+
+signUp : Task Error ()
+signUp =
+    Analytics.setConsent Analytics.Granted
+        |> Task.andThen (\_ -> Analytics.identify "console-e2e-user" [])
+        |> Task.andThen
+               (\_ -> Analytics.track (Analytics.event "console_e2e_signup" []))
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        SignUp ->
+            ( model, Cmd.perform signUp Tracked )
+
+        Tracked (Ok _) ->
+            ( { model | signedUp = True }, Cmd.none )
+
+        Tracked (Err _) ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.padding 20, Ui.spacing 12 ]
+        [ Ui.text "console analytics fixture"
+        , Ui.button [] { onPress = Just SignUp, label = Ui.text "Sign up" }
+        , if model.signedUp then
+              Ui.text "signed up"
+
+          else
+              Ui.none
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withRoutes [ App.route "/" Home ]
+            |> App.withNotFound Home
+            |> App.withConfig
+                   (App.WebConfig
+                       { App.webDefaults | analytics = Just { pageViews = True }
+                       }))

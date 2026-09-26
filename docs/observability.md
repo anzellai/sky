@@ -61,6 +61,30 @@ Without a proxy, set `SKY_CSP=strict` to make the app send an equivalent
 policy itself. It never replaces a policy that the app already set. See
 `docs/skylive/architecture.md`, "Content-Security-Policy".
 
+### Where the Console's numbers come from
+
+The embedded console reads the host app's telemetry from
+`/_sky/console/api/*` over loopback (`SKY_PARENT_URL`, seeded from the listen
+port). Those endpoints admit the in-process console only by a per-boot
+internal token the host mints (`SKY_CONSOLE_INTERNAL_TOKEN`), sent as a
+Bearer; an operator tool uses `SKY_ADMIN_TOKEN`; a browser uses the console
+login cookie. A read that fails is shown under the header as "Telemetry read
+failed: …", and the header says "waiting for telemetry" until the first read
+arrives. Before v0.25.20 the console never sent the internal token: with
+console auth on (`SKY_CONSOLE_AUTH=token` or `app`, and always under
+`ENV=production`) every read was refused, the failure was not shown, and the
+header stayed on "Sky — · dev · uptime 0s".
+
+The header's version, commit and build time are stamped into the app binary by
+`sky build`: the compiler's version, `git rev-parse --short=12 HEAD` of the
+project (or `SKY_BUILD_COMMIT`, for a build with no `.git`, such as a Docker
+context) and the build time (or `SKY_BUILD_EPOCH`, Unix seconds, for a
+reproducible build). The same values are served at `/_sky/buildinfo`.
+
+The console login cookie is signed with a key derived from
+`SKY_CONSOLE_TOKEN` alone, so every process that shares the token accepts it:
+two upstream slots, the old and new process of a redeploy, replicas.
+
 ### Watching the hub itself
 
 The console hub is a collector, so the usual question — "is anything being

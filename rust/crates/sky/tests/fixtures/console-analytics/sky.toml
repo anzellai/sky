@@ -1,0 +1,9 @@
+name = "console-analytics"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[analytics]
+dbPath = "analytics.db"
+
+[source]
+root = "src"

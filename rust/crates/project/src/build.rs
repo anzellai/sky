@@ -894,6 +894,110 @@ fn sky_build_goflags_from(existing: &str) -> String {
     flags.join(" ")
 }
 
+/// The build identity the runtime reports at `/_sky/buildinfo` and in the Sky
+/// Console header (`sky-app/rt.{skyVersion,buildCommit,buildAt}`,
+/// runtime-go/rt/observability.go). Nothing stamped these before, so every app
+/// reported `dev` / `dev` / `unknown` whatever built it — and the console
+/// cookie key, salted by the commit, fell back to the executable path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppBuildStamp {
+    pub sky_version: String,
+    pub commit: String,
+    pub built_at: String,
+}
+
+/// Resolve the stamp for a build in `dir`:
+///   * version — the compiler's own (`SKY_BUILD_VERSION`, baked at release), else `dev`;
+///   * commit — `SKY_BUILD_COMMIT` (for builds without a `.git`, e.g. a Docker
+///     context), else `git rev-parse --short=12 HEAD` in `dir`, else `unknown`;
+///   * built-at — `SKY_BUILD_EPOCH` (Unix seconds, for a reproducible build) or
+///     now, RFC 3339 UTC. Not `SOURCE_DATE_EPOCH`: a nix shell exports it as
+///     1980-01-01 for every build, and the console would show that date.
+pub fn app_build_stamp(dir: &Path) -> AppBuildStamp {
+    let sky_version = option_env!("SKY_BUILD_VERSION")
+        .map(|v| v.trim().trim_start_matches('v').to_string())
+        .filter(|v| !v.is_empty() && v != "dev")
+        .map(|v| format!("v{v}"))
+        .unwrap_or_else(|| "dev".to_string());
+    let commit = std::env::var("SKY_BUILD_COMMIT")
+        .ok()
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .or_else(|| {
+            Command::new("git")
+                .args(["rev-parse", "--short=12", "HEAD"])
+                .current_dir(dir)
+                .stderr(Stdio::null())
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|c| !c.is_empty())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let secs = std::env::var("SKY_BUILD_EPOCH")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        });
+    AppBuildStamp {
+        sky_version,
+        commit,
+        built_at: rfc3339_utc(secs),
+    }
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ` for a Unix time (no chrono dependency; the civil-date
+/// step is Howard Hinnant's civil_from_days, as in diagram.rs::today_utc).
+fn rfc3339_utc(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// The `-ldflags` value that writes the stamp into the runtime. Each value is
+/// reduced to characters that need no quoting in Go's flag splitter. `None`
+/// when the user's own `GOFLAGS` carries `-ldflags`: a command-line `-ldflags`
+/// would replace theirs, and theirs wins.
+fn sky_build_ldflags(stamp: &AppBuildStamp, user_goflags: &str) -> Option<String> {
+    if user_goflags
+        .split_whitespace()
+        .any(|f| f.starts_with("-ldflags"))
+    {
+        return None;
+    }
+    let clean = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '+'))
+            .collect()
+    };
+    Some(format!(
+        "-X sky-app/rt.skyVersion={} -X sky-app/rt.buildCommit={} -X sky-app/rt.buildAt={}",
+        clean(&stamp.sky_version),
+        clean(&stamp.commit),
+        clean(&stamp.built_at)
+    ))
+}
+
 fn run_go_build_once(
     out_dir: &Path,
     cgo: &str,
@@ -901,9 +1005,14 @@ fn run_go_build_once(
     jobs: Option<&str>,
 ) -> Result<GoBuildAttempt, String> {
     let mut cmd = Command::new("go");
-    cmd.arg("build")
-        .args(jobs)
-        .arg("-o")
+    cmd.arg("build").args(jobs);
+    if let Some(ld) = sky_build_ldflags(
+        &app_build_stamp(out_dir),
+        &std::env::var("GOFLAGS").unwrap_or_default(),
+    ) {
+        cmd.arg(format!("-ldflags={ld}"));
+    }
+    cmd.arg("-o")
         .arg(bin_name)
         .arg(".")
         .current_dir(out_dir)
@@ -2599,6 +2708,49 @@ mod sky_toml_tests {
             sky_build_goflags_from("-mod=vendor -buildvcs=true"),
             "-mod=mod -buildvcs=false"
         );
+    }
+
+    // The app binary carries its build identity. Before this, nothing stamped
+    // sky-app/rt.{skyVersion,buildCommit,buildAt}, so every app reported
+    // dev / dev / unknown in the console and at /_sky/buildinfo.
+    #[test]
+    fn go_build_stamps_version_commit_and_build_time() {
+        use super::{rfc3339_utc, sky_build_ldflags, AppBuildStamp};
+        let stamp = AppBuildStamp {
+            sky_version: "v0.25.20".into(),
+            commit: "abc123def456".into(),
+            built_at: rfc3339_utc(1_790_000_000),
+        };
+        assert_eq!(stamp.built_at, "2026-09-21T14:13:20Z");
+        assert_eq!(
+            sky_build_ldflags(&stamp, "").as_deref(),
+            Some(
+                "-X sky-app/rt.skyVersion=v0.25.20 -X sky-app/rt.buildCommit=abc123def456 \
+                 -X sky-app/rt.buildAt=2026-09-21T14:13:20Z"
+            )
+        );
+        // A value cannot smuggle a second flag through the splitter.
+        let hostile = AppBuildStamp {
+            commit: "x -X sky-app/rt.skyVersion=evil".into(),
+            ..stamp.clone()
+        };
+        let ld = sky_build_ldflags(&hostile, "").unwrap();
+        assert_eq!(ld.matches(" -X ").count(), 2, "{ld}");
+        // The user's own -ldflags in GOFLAGS wins; Sky does not replace it.
+        assert_eq!(sky_build_ldflags(&stamp, "-ldflags=-s"), None);
+    }
+
+    #[test]
+    fn build_stamp_reads_commit_and_epoch_overrides() {
+        // Both variables are read by app_build_stamp; set them for this call only.
+        std::env::set_var("SKY_BUILD_COMMIT", "feedface0001");
+        std::env::set_var("SKY_BUILD_EPOCH", "0");
+        let s = super::app_build_stamp(&std::env::temp_dir());
+        std::env::remove_var("SKY_BUILD_COMMIT");
+        std::env::remove_var("SKY_BUILD_EPOCH");
+        assert_eq!(s.commit, "feedface0001");
+        assert_eq!(s.built_at, "1970-01-01T00:00:00Z");
+        assert!(!s.sky_version.is_empty());
     }
 
     #[test]

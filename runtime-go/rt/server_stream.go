@@ -364,6 +364,10 @@ func serveStreamingResponse(w http.ResponseWriter, req *http.Request, resp SkyRe
 	if status == 0 {
 		status = http.StatusOK
 	}
+	// A streamed body outlives Server.listen's 30 s read/write deadlines;
+	// lift them for this connection or the stream is cut mid-body (the
+	// Sky.Spa push topic among them). See stream_deadline.go.
+	releaseStreamDeadlines(w, "server-stream")
 	w.WriteHeader(status)
 	// Commit the head BEFORE the handler runs — the client should
 	// see the response code + Content-Type immediately, even if
