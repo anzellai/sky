@@ -282,12 +282,70 @@ precompresses it (`.gz`, and `.br` when `brotli` is installed) with them. Both
 The loader reads the wasm URL from its own `data-wasm` attribute, so the file
 is the same for every build and its name changes only when the loader
 changes. The `#sky-model` seed stays a `<script type="application/json">`
-block, which a browser never executes. Static hosting (nginx, Caddy, a CDN)
-needs nothing extra: `spa-boot.<hash>.js` is a normal file in `dist/`.
+block, which a browser never executes. The backend serves
+`/spa-boot.<hash>.js` itself, from memory, so the SSR page boots whether or not
+the backend can reach `dist/`. A static host (nginx, Caddy, a CDN) that serves
+the `dist/index.html` shell can serve the dist copy: the bytes are the same.
 `'wasm-unsafe-eval'` is required because it allows
 `WebAssembly.instantiateStreaming`. It does not allow JS `eval`. Set
 `SKY_CSP=strict` to make the backend send the policy itself. See
 [the Sky.Live architecture notes](../skylive/architecture.md#content-security-policy).
+
+### Deploying behind a proxy
+
+A common layout runs the backend binary from its own directory and puts a
+proxy (Caddy, nginx) in front of it. The proxy serves the wasm from the
+frontend `dist/` and forwards every other path to the backend. This is the
+contract for each asset the SSR page and `dist/index.html` name:
+
+| Path | Who serves it |
+|---|---|
+| `/`, every app route, `/_rpc/*`, `/_sky/sub` | The backend. These must reach it. |
+| `/spa-boot.<hash>.js` (the wasm loader) | The backend, from memory. A static host may also serve the dist copy. |
+| `/_sky/console/…`, `/_sky/console-shell.<hash>.js` | The backend, from memory (the Sky Console). |
+| `/main.<hash>.wasm`, `/wasm_exec.js` | A `dist/` file. The backend serves it from `../frontend/dist` when that directory is reachable from its working directory. Otherwise the static host must serve both. The SSR page names the wasm from a value `sky build` writes into the backend, so the backend does not need the dist to name it. |
+| `/index.html` (the static shell) | A `dist/` file, as above. The SSR page at `/` does not need it. |
+| `/<static prefix>/…` (the app's declared static dir, e.g. `/static/logo.png`) | The backend. It serves its own copy of the dir (runtime uploads land there) and falls back to `dist/<static prefix>/` for a committed file it does not have. |
+
+A Sky.Spa app must be served at the root of its origin. The SSR page and
+`dist/index.html` use root-absolute URLs, so a sub-path mount is not supported.
+(A Sky.Live app can run under a sub-path with `SKY_LIVE_BASE_PATH` behind a
+proxy that strips the prefix.)
+
+The SSR page inlines its base CSS. The backend emits no other script, style
+sheet or font. The wasm pair stays a dist file because an app can host the
+wasm on a CDN, and `wasm_exec.js` must match the Go toolchain that built that
+wasm.
+
+A Caddy example for a backend on port 8951 whose dist is at
+`/srv/app/frontend/dist`:
+
+```caddy
+example.com {
+    @wasm path *.wasm /wasm_exec.js
+    handle @wasm {
+        root * /srv/app/frontend/dist
+        file_server {
+            precompressed br gzip
+        }
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8951
+    }
+}
+```
+
+A request for a Sky-owned asset name that the backend cannot serve (a stale
+`/spa-boot.<hash>.js`, a `/_sky/*.js` from an older build, or the wasm pair
+when `dist/` is not reachable) is a `404`. It is never the HTML of an app page,
+so a stale page fails loudly in the browser console instead of running HTML as
+script. A root route parameter (`App.route "/:slug"`) no longer captures the
+wasm pair either: those names go to the dist file server first.
+
+v0.25.19 did not serve the loader from the backend. Behind the layout above
+the backend answered `/spa-boot.<hash>.js` with HTML, the browser refused to
+run it, and the page never became interactive. On v0.25.19, add
+`/spa-boot.*.js` to the paths the proxy serves from `dist/`, or upgrade.
 
 ## Honest limits
 

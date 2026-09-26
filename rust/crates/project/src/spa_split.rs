@@ -3712,6 +3712,54 @@ fn propagate_static_dir(src: &str, project_dir: &Path, frontend_dir: &Path) -> R
     copy_static_dir(src, project_dir, &frontend_dir.join("dist"))
 }
 
+/// The generated backend's baked wasm-name binding, as the generator writes it
+/// (empty). [`bake_built_wasm_name`] replaces the empty string with the
+/// frontend's `main.<hash>.wasm` after the frontend leg has built.
+const SPA_BUILT_WASM_NAME_EMPTY: &str = "spaBuiltWasmName_ : String\nspaBuiltWasmName_ =\n    \"\"";
+
+/// Write the frontend's wasm file name into a generated backend source (the
+/// `spaBuiltWasmName_` binding), so the backend's SSR page names that wasm
+/// without reading `../frontend/dist` at run time. Returns the new source, or
+/// `None` when the source has no empty binding (no SSR, or already baked) or
+/// the name is not a plain `main.<hex>.wasm` / `main.wasm` file name.
+pub fn bake_built_wasm_name(backend_src: &str, wasm_name: &str) -> Option<String> {
+    let plain = wasm_name == "main.wasm"
+        || (wasm_name.starts_with("main.")
+            && wasm_name.ends_with(".wasm")
+            && wasm_name.len() > "main..wasm".len()
+            && wasm_name["main.".len()..wasm_name.len() - ".wasm".len()]
+                .chars()
+                .all(|c| c.is_ascii_hexdigit()));
+    if !plain || !backend_src.contains(SPA_BUILT_WASM_NAME_EMPTY) {
+        return None;
+    }
+    Some(backend_src.replacen(
+        SPA_BUILT_WASM_NAME_EMPTY,
+        &format!("spaBuiltWasmName_ : String\nspaBuiltWasmName_ =\n    \"{wasm_name}\""),
+        1,
+    ))
+}
+
+/// Whether a generated backend source carries the empty baked wasm-name
+/// binding, so its build must wait for the frontend's wasm name.
+pub fn needs_built_wasm_name(backend_src: &str) -> bool {
+    backend_src.contains(SPA_BUILT_WASM_NAME_EMPTY)
+}
+
+/// The single `main.<hash>.wasm` (else `main.wasm`) in a built frontend dist.
+pub fn built_wasm_name(dist: &Path) -> Option<String> {
+    let mut plain = None;
+    for e in std::fs::read_dir(dist).ok()?.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n == "main.wasm" {
+            plain = Some(n);
+        } else if n.starts_with("main.") && n.ends_with(".wasm") {
+            return Some(n);
+        }
+    }
+    plain
+}
+
 /// Copy the app's declared static dir into `out_dir/frontend/dist` from the
 /// ORIGINAL project (`entry_src` + `source_root`) — the authority for a
 /// `--target web:app` build, whose synthesised Spa entry has DROPPED the
@@ -6174,14 +6222,21 @@ fn gen_backend(
              spaSsrCmdIsNone : any -> Bool\n\
              spaSsrCmdIsNone =\n\
              \x20   Ffi.kernel \"Spa_ssrCmdIsNone\"\n\n\n\
-             spaSsrWasmName : String -> String\n\
-             spaSsrWasmName =\n\
-             \x20   Ffi.kernel \"Spa_ssrWasmName\"\n\n\n\
-             -- The content-hashed wasm filename, resolved ONCE (a memoised CAF) from\n\
-             -- the same frontend dist `Server.static` serves.\n\
+             spaSsrWasmNameBuilt : String -> String -> String\n\
+             spaSsrWasmNameBuilt =\n\
+             \x20   Ffi.kernel \"Spa_ssrWasmNameBuilt\"\n\n\n\
+             -- The frontend's content-hashed wasm filename. `sky build` writes it\n\
+             -- into spaBuiltWasmName_ after the frontend leg, before the backend\n\
+             -- leg, so the page does not depend on reaching the dist at run time.\n\
+             -- Empty (a split generated without --build) → scan the dist once (a\n\
+             -- memoised CAF).\n",
+        );
+        handlers.push_str(SPA_BUILT_WASM_NAME_EMPTY);
+        handlers.push_str(
+            "\n\n\n\
              spaWasmName : String\n\
              spaWasmName =\n\
-             \x20   spaSsrWasmName \"../frontend/dist\"\n\n\n",
+             \x20   spaSsrWasmNameBuilt spaBuiltWasmName_ \"../frontend/dist\"\n\n\n",
         );
         handlers.push_str(&render_settle_tables(settle));
         // Per-route resolver alias — resolves the request path to the route's
@@ -7618,6 +7673,25 @@ fn nth_arrow_segment(anno: &str, n: usize) -> Option<String> {
 #[cfg(test)]
 mod fix7_tests {
     use super::*;
+
+    #[test]
+    fn the_built_wasm_name_is_baked_into_the_backend_once() {
+        // v0.25.20: the SSR page must name the frontend's wasm without the
+        // backend reaching ../frontend/dist at run time.
+        let src = format!("module Main\n\n{SPA_BUILT_WASM_NAME_EMPTY}\n\n\nx = 1\n");
+        assert!(needs_built_wasm_name(&src));
+        let baked = bake_built_wasm_name(&src, "main.0123456789ab.wasm").expect("bakes");
+        assert!(baked.contains("spaBuiltWasmName_ =\n    \"main.0123456789ab.wasm\""));
+        assert!(!needs_built_wasm_name(&baked));
+        assert!(bake_built_wasm_name(&baked, "main.feedfacecafe.wasm").is_none());
+        // Only a plain wasm file name is written into source.
+        assert!(bake_built_wasm_name(&src, "main.\"x\".wasm").is_none());
+        assert!(bake_built_wasm_name(&src, "../main.ab.wasm").is_none());
+        assert_eq!(
+            bake_built_wasm_name(&src, "main.wasm").map(|s| s.contains("\"main.wasm\"")),
+            Some(true)
+        );
+    }
 
     #[test]
     fn prune_own_exposing_drops_values_the_module_no_longer_defines() {

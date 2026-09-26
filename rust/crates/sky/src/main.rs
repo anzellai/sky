@@ -2761,6 +2761,26 @@ fn build_std_app(
     }
 }
 
+/// Write the built frontend's wasm file name into the generated backend source
+/// (see `project::spa_split::bake_built_wasm_name`). A dist with no wasm, or a
+/// source already baked, leaves the backend on its run-time dist scan.
+fn bake_backend_wasm_name(backend_main: &Path, dist: &Path) {
+    let Some(name) = project::spa_split::built_wasm_name(dist) else {
+        return;
+    };
+    let Ok(src) = std::fs::read_to_string(backend_main) else {
+        return;
+    };
+    if let Some(baked) = project::spa_split::bake_built_wasm_name(&src, &name) {
+        if let Err(e) = std::fs::write(backend_main, baked) {
+            eprintln!(
+                "sky spa-split --build: could not write the wasm name into {}: {e}",
+                backend_main.display()
+            );
+        }
+    }
+}
+
 /// Generate the Sky.Spa split (wasm frontend + native backend + shared codec
 /// contract) under `out_dir`, print the branch report, and — when `do_build` —
 /// build both trees with THIS compiler (backend native, frontend for `target`).
@@ -2879,14 +2899,30 @@ fn spa_split_and_build(
     );
     // In parallel, each leg's `go build -p` is set here, from the memory both
     // legs share; a user's own SKY_GO_BUILD_JOBS reaches the legs unchanged.
+    //
+    // An SSR backend names the frontend's `main.<hash>.wasm` in its page. The
+    // name is baked into the backend source (spaBuiltWasmName_) so the backend
+    // does not have to reach `../frontend/dist` at run time (a slot directory
+    // behind a proxy that serves the wasm itself). That needs the frontend
+    // built first, so an SSR split builds its legs in order: frontend, then
+    // backend.
+    let backend_main = backend_dir.join("src").join("Main.sky");
+    let bake_wasm_name = std::fs::read_to_string(&backend_main)
+        .map(|s| project::spa_split::needs_built_wasm_name(&s))
+        .unwrap_or(false);
     let leg_go_jobs = plan
         .go_jobs
-        .filter(|_| std::env::var_os(project::go_jobs::ENV_JOBS).is_none());
-    project::timings::note(format!("legs: {}", plan.reason));
+        .filter(|_| !bake_wasm_name && std::env::var_os(project::go_jobs::ENV_JOBS).is_none());
+    let leg_reason = if bake_wasm_name {
+        "in order: frontend, then backend (the SSR page names the frontend's wasm)".to_string()
+    } else {
+        plan.reason.to_string()
+    };
+    project::timings::note(format!("legs: {leg_reason}"));
     println!(
         "\n== building backend (native{}) + frontend (--target {target}): {} ==",
         if embed { ", --embed" } else { "" },
-        plan.reason
+        leg_reason
     );
     // The two Go builds are independent and write disjoint dirs (backend/ vs
     // frontend/), so when memory allows they run CONCURRENTLY: the SPA wall-clock
@@ -2926,7 +2962,13 @@ fn spa_split_and_build(
         out
     };
     let t_legs = project::timings::phase("both legs (wall)");
-    let (backend_res, frontend_res) = if !plan.parallel {
+    let (backend_res, frontend_res) = if bake_wasm_name {
+        let frontend = build_frontend();
+        if matches!(&frontend, Ok(out) if out.status.success()) {
+            bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
+        }
+        (Ok(build_backend()), Ok(frontend))
+    } else if !plan.parallel {
         (Ok(build_backend()), Ok(build_frontend()))
     } else {
         std::thread::scope(|s| {

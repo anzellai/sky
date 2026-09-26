@@ -11,6 +11,49 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.20 — (unreleased)
+
+### Fixed
+
+- **The Sky.Spa backend serves its own boot loader.** v0.25.19 moved the wasm
+  loader into the file `/spa-boot.<hash>.js`, but only the frontend `dist/`
+  held it. Behind a proxy that serves only the wasm pair (`*.wasm`,
+  `/wasm_exec.js`) from `dist/` and forwards every other path, the backend did
+  not answer the loader with script, the browser refused to run it, and the
+  SSR page never became interactive. The backend now serves the loader from
+  memory, as the Sky.Live runtime serves its client, with gzip, an immutable
+  cache header and the runtime's security headers.
+  Workaround for v0.25.19: serve `/spa-boot.*.js` from `dist/` at the proxy.
+- **A missing Sky-owned asset is a 404, never a page.** A request for a stale
+  `/spa-boot.<hash>.js`, a `/_sky/*.js` or `/_sky/*.css` that does not exist,
+  or the wasm pair when `dist/` is not reachable, got the HTML of the SPA
+  NotFound page (or of a Sky.Live page) with status 200. It is now a plain
+  `404`, so a stale page fails loudly.
+- **A root route parameter no longer captures the wasm pair.** With a route
+  such as `App.route "/:slug"`, the backend sent `/wasm_exec.js` and
+  `/main.<hash>.wasm` to the SSR handler, which answered with HTML. Those
+  names now go to the `dist/` file server first.
+- **The SSR page names the right wasm without the dist.** The backend found
+  the frontend's `main.<hash>.wasm` by reading `../frontend/dist` at run time.
+  A backend that could not reach the dist named `/main.wasm`, which does not
+  exist, and the client never booted. `sky build` now writes the name into
+  the backend before it builds it. An SSR split therefore builds its legs in
+  order (frontend, then backend) instead of in parallel.
+- **Sky.Live under a sub-path accepts events again.** With
+  `SKY_LIVE_BASE_PATH` set behind a proxy that strips the prefix, the page
+  embedded the CSRF token of a cookie the runtime never set, and every click
+  was a `403`. The page now reads the token under the name the CSRF check uses
+  for the same request path.
+- **A committed static file serves without a hand copy.** The Sky.Spa backend
+  mounts the app's declared static dir live (for runtime uploads) in front of
+  the `dist/` copy of the same files. A deploy that shipped the binary and
+  `dist/` got a `404` for every committed asset under that prefix until it
+  copied them next to the binary. A file missing from a sub-path static mount
+  now falls back to the `/` static mount at the same path.
+
+`docs/skyspa/overview.md` ("Deploying behind a proxy") states which paths must
+reach the backend and which a static host may serve.
+
 ## v0.25.19 — unknown exports are compile errors; strict CSP with no inline script; App.withAppUrl for native shells (2026-09-26)
 
 A patch over v0.25.18. Every fix has a regression test that failed before it.

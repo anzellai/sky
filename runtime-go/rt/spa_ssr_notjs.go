@@ -83,6 +83,20 @@ func Spa_ssrWasmName(dir any) string {
 	return "main.wasm"
 }
 
+// Spa_ssrWasmNameBuilt is Spa_ssrWasmName with the name the build baked into
+// the backend. The auto-split build writes the frontend's `main.<hash>.wasm`
+// into the generated backend source before it builds the backend, so the SSR
+// page names the right wasm when the backend runs where `../frontend/dist` is
+// not reachable (a slot directory behind a proxy that serves the wasm from
+// the dist). An empty `built` (a split generated without --build) falls back
+// to scanning `dir`.
+func Spa_ssrWasmNameBuilt(built, dir any) string {
+	if b := strings.TrimSpace(AsString(built)); b != "" {
+		return b
+	}
+	return Spa_ssrWasmName(dir)
+}
+
 // Spa_ssrResolveModel resolves the requested URL path to the route's page and
 // folds it into the model EXACTLY as the wasm client does at boot
 // (spaResolveRoutes + RecordUpdate {"Page": page}, live_wasm.go:163-175), so the

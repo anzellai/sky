@@ -282,10 +282,16 @@ func spaStaticFallbackHandler(fileHandler http.Handler, notFound any) http.Handl
 	})
 }
 
-func Server_listen(port any, routes any) any {
-	p := AsInt(port)
-	routeList := AsList(routes)
-	mux := http.NewServeMux()
+// serverRouteMux registers a Server.listen route list on a new mux: the user's
+// Sky handlers, the static mounts, and the runtime-owned assets. Server_listen
+// adds the console and the observability endpoints to it. rootFiles is the
+// file server of the `/` static mount (nil without one), for skyAssetGuard.
+func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler) {
+	mux = http.NewServeMux()
+	// The Sky.Spa boot loader, from memory (runtime_assets.go). A Sky-owned,
+	// content-hashed name: the backend serves it itself, so the page boots
+	// whether or not the frontend dist is reachable from its directory.
+	registerSpaBootLoader(mux, routeList)
 
 	// v0.16.3 #466 follow-up: count paths so we know when to apply
 	// method-aware registration. Method-aware patterns ("GET /api/x")
@@ -329,11 +335,28 @@ func Server_listen(port any, routes any) any {
 			if len(stripPattern) > 1 && stripPattern[len(stripPattern)-1] == '/' {
 				stripPattern = stripPattern[:len(stripPattern)-1]
 			}
-			fileHandler := gzipStatic(http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir))))
+			var files http.Handler = http.StripPrefix(stripPattern, http.FileServer(http.Dir(route.StaticDir)))
+			// A file missing from a sub-path mount falls back to the `/` static
+			// mount at the same URL path. The Sky.Spa backend mounts the app's
+			// declared static dir live (`Server.static "/static" "public"`, for
+			// runtime uploads) AND serves the build's dist, which holds the same
+			// committed files under dist/static. A deploy that ships the binary
+			// and the dist, but not the backend's own copy of the static dir, got
+			// a 404 for every committed asset (/static/app.js as text/plain) until
+			// it copied them by hand.
+			if pattern != "/" {
+				if root := rootStaticDir(routeList); root != "" {
+					files = staticFallThrough(files, http.StripPrefix("/", http.FileServer(http.Dir(root))))
+				}
+			}
+			fileHandler := gzipStatic(files)
 			// SPA NotFound fallback (Server.staticNotFound): a request that maps to
 			// a REAL file is still served by the file server (200); only a genuine
 			// 404 falls through to the Sky handler, which SSRs the app's NotFound
 			// page. Without a fallback the route is a plain static mount.
+			if pattern == "/" {
+				rootFiles = fileHandler
+			}
 			if route.NotFound != nil {
 				mux.Handle(pattern, spaStaticFallbackHandler(fileHandler, route.NotFound))
 			} else {
@@ -361,6 +384,12 @@ func Server_listen(port any, routes any) any {
 			dispatchSkyHandler(w, req, handler, paramNames)
 		})
 	}
+	return mux, rootFiles
+}
+
+func Server_listen(port any, routes any) any {
+	p := AsInt(port)
+	mux, rootFiles := serverRouteMux(AsList(routes))
 
 	// Observability endpoints (Phase 1.1a Step 4). Mount BEFORE
 	// any of the user's routes so the catch-all "/" pattern in
@@ -411,7 +440,7 @@ func Server_listen(port any, routes any) any {
 	// metered as 403 — surfaces attacks / misconfigs in dashboards.
 	// The RPC dedupe layer sits INSIDE CSRF so a rejected request is never
 	// cached; it answers a retried auto-split RPC id from its first run.
-	csrfed := CSRFMiddleware(spaRpcDedupeMiddleware(mux))
+	csrfed := CSRFMiddleware(spaRpcDedupeMiddleware(skyAssetGuard(mux, rootFiles)))
 	observed := ObservabilityMiddleware(csrfed)
 
 	srv := &http.Server{

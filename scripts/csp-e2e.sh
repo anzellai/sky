@@ -22,6 +22,11 @@
 #   todos    Sky.Spa wasm boot + RPC           (examples/60-spa-todos)
 #   notes    Sky.Spa SSR hydrate + RPC         (examples/62-app-notes)
 #
+# Then notes once more in the deployment layout (--via slot): the backend runs
+# from a slot directory with no ../frontend/dist, and the proxy serves only
+# *.wasm + /wasm_exec.js from the dist. The client must boot with zero console
+# errors (v0.25.19 answered /spa-boot.<hash>.js with HTML there).
+#
 # Proven to FAIL on the pre-fix runtime (every scenario reports a script-src
 # violation and a dead page) and PASS on the fixed one.
 #
@@ -103,10 +108,70 @@ for via in proxy strict; do
   drive todos "$TODOS" $((BASE_PORT + off + 6)) "$via"
   drive notes "$NOTES" $((BASE_PORT + off + 8)) "$via"
 done
+# The deployment layout: the backend runs from a slot directory with no
+# ../frontend/dist, and the proxy serves only *.wasm + /wasm_exec.js from the
+# dist and forwards everything else. The Sky.Spa client must still boot: the
+# backend serves its own boot loader (runtime-go/rt/runtime_assets.go).
+# v0.25.19 FAILED this pass: /spa-boot.<hash>.js was not served as script (a
+# 404 here; the HTML NotFound page in an app with a route table).
+echo "==> notes via slot"
+with_timeout 300 node "$ROOT/scripts/csp-e2e-verify.mjs" notes "$NOTES" --port $((BASE_PORT + 20)) \
+  --via slot --dist "$TMP/62-app-notes/.skyapp/web-app/.split/frontend/dist" || rc=1
+
+# ── The real-proxy topology matrix (a real Caddy in front of the app) ──
+#
+#   direct        the backend alone, no proxy;
+#   caddy-all     Caddy proxies every path;
+#   caddy-wasm    Caddy serves only *.wasm + /wasm_exec.js from the dist and
+#                 proxies the rest (Sky.Spa notes runs from a slot directory
+#                 that cannot reach the dist);
+#   caddy-static  Caddy serves the whole dist, proxies /_rpc, /_sky, /api
+#                 (Sky.Spa only: a Sky.Live app has no dist);
+#   caddy-base    Sky.Live under the sub-path /app (SKY_LIVE_BASE_PATH);
+#   stale         a page from an old build on a non-default port: every stale
+#                 asset is a 404, never HTML, and the page fails loudly.
+#
+# Every run asserts a booted, interactive client, zero console errors, zero
+# policy violations, and the Content-Type of every script / wasm / style sheet.
+# The console behind Caddy signs in with SKY_CONSOLE_AUTH=token.
+source "$ROOT/scripts/lib/require-tool.sh"
+if require_tool caddy "Caddy 2 (https://caddyserver.com/docs/install) — the proxy topology matrix runs a real Caddy"; then
+  export CADDY="$(command -v caddy)"
+  NOTES_DIST="$TMP/62-app-notes/.skyapp/web-app/.split/frontend/dist"
+  TODOS_DIST="$TMP/60-spa-todos/public"
+  EMPTY_DIST="$TMP/empty-dist"
+  mkdir -p "$EMPTY_DIST"
+  slotn=0
+  mx() { # mx <scenario> <binary> <via> [verifier args...]
+    local scen="$1" bin="$2" via="$3"
+    shift 3
+    local port=$((BASE_PORT + 22 + 2 * (slotn % 4)))
+    slotn=$((slotn + 1))
+    echo "==> $scen via $via $*"
+    with_timeout 300 node "$ROOT/scripts/csp-e2e-verify.mjs" "$scen" "$bin" --port "$port" --via "$via" "$@" || rc=1
+  }
+  for via in direct caddy-all caddy-wasm caddy-static; do
+    if [ "$via" != caddy-static ]; then
+      mx counter "$COUNTER" "$via" --dist "$EMPTY_DIST"
+      mx console "$COUNTER" "$via" --dist "$EMPTY_DIST"
+    fi
+    mx todos "$TODOS" "$via" --dist "$TODOS_DIST"
+    if [ "$via" = caddy-wasm ]; then
+      mx notes "$NOTES" "$via" --dist "$NOTES_DIST" --slot
+    else
+      mx notes "$NOTES" "$via" --dist "$NOTES_DIST"
+    fi
+  done
+  mx counter "$COUNTER" caddy-base
+  mx stale "$NOTES" caddy-wasm --dist "$NOTES_DIST" --slot --kind spa
+  mx stale "$COUNTER" caddy-wasm --dist "$EMPTY_DIST" --kind live
+else
+  echo "csp-e2e: the proxy topology matrix is SKIPPED (SKY_LIVE_TESTS=skip)." >&2
+fi
 
 if [ "$rc" -ne 0 ]; then
   echo "csp-e2e: FAIL — a page broke or reported a Content-Security-Policy violation (see above)." >&2
   exit 1
 fi
-echo "csp-e2e: PASS — the Console, Sky.Live, a Std.Ui form and Sky.Spa (boot + SSR) run under script-src 'self' 'wasm-unsafe-eval' with zero violations, behind a proxy and with SKY_CSP=strict."
+echo "csp-e2e: PASS — the Console, Sky.Live, a Std.Ui form and Sky.Spa (boot + SSR) run under script-src 'self' 'wasm-unsafe-eval' with zero violations, behind a proxy, with SKY_CSP=strict, and across the real-Caddy topology matrix."
 rm -rf "$TMP"

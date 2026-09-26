@@ -14,6 +14,13 @@
 //                 nginx deployment does. Streaming responses (SSE) are piped.
 //   --via strict  No proxy. The app runs with SKY_CSP=strict and must send a
 //                 strict policy itself; the page is loaded directly.
+//   --via slot    The deployment layout: the backend binary runs from a slot
+//                 directory where no `../frontend/dist` exists, and the proxy
+//                 serves ONLY `*.wasm` and `/wasm_exec.js` from --dist DIR and
+//                 forwards every other path (a Caddy in front of the slot). It
+//                 also sets the strict policy. v0.25.19 failed here: the backend
+//                 answered `/spa-boot.<hash>.js` with its HTML fallback, the
+//                 browser refused it, and the client never booted.
 //
 // Every scenario asserts ZERO `securitypolicyviolation` events (reported from the
 // page through an exposed binding, so a reload cannot lose one) and ZERO console
@@ -29,20 +36,44 @@
 //   notes    examples/62-app-notes (auto-split, SSR): the client hydrates and the
 //            Create + Save RPCs persist a note.
 //
+//   stale    a page from an OLD build (its script hashes rewritten to a hash no
+//            build wrote): each stale asset is a 404, never HTML, and the page
+//            fails loudly. --kind spa|live picks the asset names.
+//
+// Topologies (--via) beyond proxy / strict / slot, each a real deployment shape.
+// The caddy-* ones run a real Caddy (CADDY, default `caddy` on PATH) that sets
+// CADDY_CSP (the strict policy plus frame-ancestors 'none' and base-uri 'self'):
+//
+//   direct        the page straight from the backend, no proxy, no policy;
+//   caddy-all     Caddy reverse_proxy of every path to the backend;
+//   caddy-wasm    Caddy serves ONLY *.wasm and /wasm_exec.js from --dist and
+//                 proxies the rest. With --slot the backend runs from a slot
+//                 directory that cannot reach the dist;
+//   caddy-static  Caddy serves the WHOLE --dist (file_server, index.html
+//                 fallback) and proxies only /_rpc/*, /_sky/* and /api/*;
+//   caddy-base    a Sky.Live app under the sub-path /app (SKY_LIVE_BASE_PATH),
+//                 Caddy strips the prefix.
+//
+// The new topologies also assert zero console errors and the Content-Type of
+// every script, wasm and style sheet the page loads. The console scenario
+// behind Caddy runs with SKY_CONSOLE_AUTH=token and signs in with the token.
+//
 // Usage: node scripts/csp-e2e-verify.mjs <scenario> <app-binary> --port N
-//          [--via proxy|strict] [--cwd DIR] [--env K=V ...]
+//          [--via MODE] [--dist DIR] [--slot] [--kind spa|live] [--cwd DIR]
+//          [--env K=V ...]
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
 import pw from "playwright";
 const { chromium } = pw;
 import { spawn } from "node:child_process";
 import http from "node:http";
-import { dirname, join } from "node:path";
-import { mkdtempSync } from "node:fs";
+import { dirname, join, basename } from "node:path";
+import { mkdtempSync, mkdirSync, copyFileSync, chmodSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 export const STRICT_CSP =
   "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: blob:; connect-src 'self'";
+const CADDY_CSP = STRICT_CSP + "; frame-ancestors 'none'; base-uri 'self'";
 
 function arg(name, def) {
   const i = process.argv.indexOf(name);
@@ -56,27 +87,57 @@ function args(name) {
   return out;
 }
 
-const SCENARIOS = ["console", "counter", "forum", "todos", "notes"];
+const SCENARIOS = ["console", "counter", "forum", "todos", "notes", "stale"];
+const MODES = ["proxy", "strict", "slot", "direct", "caddy-all", "caddy-wasm", "caddy-static", "caddy-base"];
 const MODE = process.argv[2];
 const APP = process.argv[3];
 if (!SCENARIOS.includes(MODE) || !APP) {
-  console.error(`usage: csp-e2e-verify.mjs <${SCENARIOS.join("|")}> <app-binary> --port N [--via proxy|strict] [--cwd DIR]`);
+  console.error(`usage: csp-e2e-verify.mjs <${SCENARIOS.join("|")}> <app-binary> --port N [--via ${MODES.join("|")}]`);
   process.exit(1);
 }
 const VIA = arg("--via", "proxy");
-if (!["proxy", "strict"].includes(VIA)) {
-  console.error(`csp-e2e: --via must be proxy or strict, got ${VIA}`);
+if (!MODES.includes(VIA)) {
+  console.error(`csp-e2e: --via must be one of ${MODES.join(", ")}, got ${VIA}`);
   process.exit(1);
 }
+const KIND = arg("--kind", "spa");
+const CADDY_MODE = VIA.startsWith("caddy-");
+// The topologies added with the real-proxy matrix assert every console error.
+const STRICT_CHECKS = VIA === "slot" || VIA === "direct" || CADDY_MODE;
 const APP_PORT = Number(arg("--port", "9520"));
 const PROXY_PORT = APP_PORT + 1;
-const PAGE_PORT = VIA === "proxy" ? PROXY_PORT : APP_PORT;
+const PROXIED = VIA === "proxy" || VIA === "slot" || CADDY_MODE;
+const PAGE_PORT = PROXIED ? PROXY_PORT : APP_PORT;
 const ORIGIN = `http://127.0.0.1:${PAGE_PORT}`;
-const CWD = arg("--cwd", dirname(dirname(APP)));
+const BASE = VIA === "caddy-base" ? "/app" : "";
+const APP_ORIGIN = ORIGIN + BASE;
+const DIST = arg("--dist", "");
+const NEEDS_DIST = VIA === "slot" || VIA === "caddy-wasm" || VIA === "caddy-static";
+if (NEEDS_DIST && !(DIST && existsSync(DIST))) {
+  console.error(`csp-e2e: --via ${VIA} needs --dist DIR (got "${DIST}")`);
+  process.exit(1);
+}
+// --via slot (and caddy-wasm --slot): the backend runs a COPY of the binary
+// from a slot directory with no `../frontend/dist` beside it.
+const IN_SLOT = VIA === "slot" || process.argv.includes("--slot");
+let RUN_APP = APP;
+let CWD = arg("--cwd", dirname(dirname(APP)));
+if (IN_SLOT) {
+  const slot = join(mkdtempSync(join(tmpdir(), "sky-csp-slot-")), "slot", "backend");
+  mkdirSync(slot, { recursive: true });
+  RUN_APP = join(slot, basename(APP));
+  copyFileSync(APP, RUN_APP);
+  chmodSync(RUN_APP, 0o755);
+  CWD = slot;
+  if (existsSync(join(slot, "..", "frontend", "dist"))) {
+    console.error("csp-e2e: harness error: the slot must not reach a frontend dist");
+    process.exit(1);
+  }
+}
 const DB = join(mkdtempSync(join(tmpdir(), "sky-csp-e2e-")), "app.db");
-const TAG = `${MODE}/${VIA}`;
+const TAG = `${MODE}/${VIA}${IN_SLOT && VIA !== "slot" ? "+slot" : ""}`;
 
-for (const p of VIA === "proxy" ? [APP_PORT, PROXY_PORT] : [APP_PORT]) {
+for (const p of PROXIED ? [APP_PORT, PROXY_PORT] : [APP_PORT]) {
   try {
     await fetch(`http://127.0.0.1:${p}/`, { signal: AbortSignal.timeout(1000) });
     console.error(`${TAG}: harness error: port ${p} is already serving; stop that process first`);
@@ -89,6 +150,8 @@ for (const kv of args("--env")) {
   const i = kv.indexOf("=");
   if (i > 0) extraEnv[kv.slice(0, i)] = kv.slice(i + 1);
 }
+// Behind Caddy the console is not dev-open: it asks for the token.
+const CONSOLE_TOKEN = MODE === "console" && CADDY_MODE ? "e2e-console-token-" + process.pid : "";
 const env = {
   ...process.env,
   SKY_LIVE_PORT: String(APP_PORT),
@@ -96,24 +159,42 @@ const env = {
   TODOS_PORT: String(APP_PORT),
   SKY_DB_PATH: DB,
   ENV: "development",
+  ...(CONSOLE_TOKEN ? { SKY_CONSOLE_AUTH: "token", SKY_CONSOLE_TOKEN: CONSOLE_TOKEN } : {}),
+  ...(BASE ? { SKY_LIVE_BASE_PATH: BASE } : {}),
   ...extraEnv,
 };
-// The strict pass opts the runtime in; the proxy pass must work WITHOUT it (the
-// proxy is the only source of the policy there).
+// The strict pass opts the runtime in; the proxy passes must work WITHOUT it
+// (the proxy is the only source of the policy there).
 if (VIA === "strict") env.SKY_CSP = "strict";
 else delete env.SKY_CSP;
 
-const proc = spawn(APP, [], { cwd: CWD, env });
+const proc = spawn(RUN_APP, [], { cwd: CWD, env });
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));
 let exited = null;
 proc.on("exit", (code, sig) => (exited = { code, sig }));
 
-// ── the proxy: pipes every request, sets exactly STRICT_CSP on every response ──
+// ── the node proxy (proxy, slot): pipes every request, sets STRICT_CSP ──
 let proxy = null;
-if (VIA === "proxy") {
+if (VIA === "proxy" || VIA === "slot") {
   proxy = http.createServer((req, res) => {
+    // --via slot: the static host serves ONLY the wasm pair from the dist.
+    const upath = (req.url || "/").split("?")[0];
+    if (VIA === "slot" && (upath.endsWith(".wasm") || upath === "/wasm_exec.js")) {
+      const file = join(DIST, basename(upath));
+      if (!existsSync(file)) {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end("not found");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": upath.endsWith(".wasm") ? "application/wasm" : "text/javascript; charset=utf-8",
+        "content-security-policy": STRICT_CSP,
+      });
+      res.end(readFileSync(file));
+      return;
+    }
     const up = http.request(
       { host: "127.0.0.1", port: APP_PORT, method: req.method, path: req.url, headers: req.headers },
       (ur) => {
@@ -131,6 +212,47 @@ if (VIA === "proxy") {
   await new Promise((r) => proxy.listen(PROXY_PORT, "127.0.0.1", r));
 }
 
+// ── a real Caddy (caddy-*) ──
+function caddyfile() {
+  const up = `reverse_proxy 127.0.0.1:${APP_PORT}`;
+  const files = `root * ${DIST}\n\t\tfile_server {\n\t\t\tprecompressed br gzip\n\t\t}`;
+  let body;
+  switch (VIA) {
+    case "caddy-all":
+      body = `\t${up}`;
+      break;
+    case "caddy-wasm":
+      body = `\t@wasm path *.wasm /wasm_exec.js\n\thandle @wasm {\n\t\t${files}\n\t}\n\thandle {\n\t\t${up}\n\t}`;
+      break;
+    case "caddy-static":
+      body =
+        `\t@backend path /_rpc/* /_sky/* /api/*\n\thandle @backend {\n\t\t${up}\n\t}\n` +
+        `\thandle {\n\t\troot * ${DIST}\n\t\ttry_files {path} /index.html\n\t\tfile_server {\n\t\t\tprecompressed br gzip\n\t\t}\n\t}`;
+      break;
+    case "caddy-base":
+      body = `\thandle_path /app/* {\n\t\t${up}\n\t}\n\thandle {\n\t\trespond "not the app" 404\n\t}`;
+      break;
+  }
+  return (
+    `{\n\tadmin off\n\tauto_https off\n\tpersist_config off\n}\n\n` +
+    `http://127.0.0.1:${PROXY_PORT} {\n\theader >Content-Security-Policy "${CADDY_CSP}"\n${body}\n}\n`
+  );
+}
+let caddy = null;
+let caddyLog = "";
+if (CADDY_MODE) {
+  const dir = mkdtempSync(join(tmpdir(), "sky-csp-caddy-"));
+  const file = join(dir, "Caddyfile");
+  writeFileSync(file, caddyfile());
+  caddy = spawn(process.env.CADDY || "caddy", ["run", "--config", file, "--adapter", "caddyfile"], {
+    env: { ...process.env, XDG_DATA_HOME: dir, XDG_CONFIG_HOME: dir, HOME: process.env.HOME || dir },
+  });
+  caddy.stdout.on("data", (d) => (caddyLog += d));
+  caddy.stderr.on("data", (d) => (caddyLog += d));
+  caddy.on("error", (e) => (caddyLog += `spawn error: ${e.message}\n`));
+  caddy.on("exit", (code) => (caddyLog += `caddy exited ${code}\n`));
+}
+
 const failures = [];
 function check(step, ok, detail) {
   console.log(`${ok ? "ok  " : "FAIL"} [${TAG}] ${step}${detail ? ": " + detail : ""}`);
@@ -141,16 +263,19 @@ async function waitListening(path) {
   for (let i = 0; i < 160; i++) {
     if (exited) throw new Error(`app exited early (${JSON.stringify(exited)})\n${serverLog}`);
     try {
-      const r = await fetch(ORIGIN + path);
+      const r = await fetch(APP_ORIGIN + path);
       if (r.status < 500) return r;
     } catch (_) {}
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error("app never listened\n" + serverLog);
+  throw new Error("app never listened\n" + serverLog + (caddyLog ? "\n--- caddy ---\n" + caddyLog : ""));
 }
 
 const violations = [];
 const cspConsole = [];
+const consoleErrors = [];
+const badAssets = [];
+const checkedAssets = new Set();
 async function newPage(browser) {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   await context.exposeBinding("__skyCspReport", (_src, v) => {
@@ -177,6 +302,24 @@ async function newPage(browser) {
       cspConsole.push(t);
       console.log(`FAIL [${TAG}] console: ${t}`);
     }
+    if (m.type() === "error") consoleErrors.push(t);
+  });
+  // Every script, wasm and style sheet must come back as itself: a script
+  // answered with HTML is the v0.25.19 failure.
+  page.on("response", (r) => {
+    let p;
+    try {
+      p = new URL(r.url()).pathname;
+    } catch (_) {
+      return;
+    }
+    const want = p.endsWith(".js") ? /javascript/ : p.endsWith(".wasm") ? /^application\/wasm/ : p.endsWith(".css") ? /^text\/css/ : null;
+    if (!want) return;
+    const ct = r.headers()["content-type"] || "";
+    const st = r.status();
+    if (st === 304) return void checkedAssets.add(p);
+    if (st !== 200 || !want.test(ct)) badAssets.push(`${p} -> ${st} ${ct}`);
+    else checkedAssets.add(p);
   });
   page.on("pageerror", (e) => {
     failures.push(`[pageerror] ${e.message}`);
@@ -186,7 +329,8 @@ async function newPage(browser) {
 }
 
 async function expectPolicyHeader(path) {
-  const r = await fetch(ORIGIN + path);
+  if (VIA === "direct") return; // no proxy and no SKY_CSP: no policy to check
+  const r = await fetch(APP_ORIGIN + path);
   const csp = r.headers.get("content-security-policy") || "";
   const scriptSrc = csp.split(";").map((s) => s.trim()).find((s) => s.startsWith("script-src ")) || "";
   const loose = /'unsafe-inline'|'unsafe-eval'|'sha(256|384|512)-|'nonce-/.test(scriptSrc);
@@ -218,7 +362,7 @@ async function scenarioCounter(browser) {
   await waitListening("/");
   await expectPolicyHeader("/");
   const page = await newPage(browser);
-  await page.goto(ORIGIN + "/", { waitUntil: "load" });
+  await page.goto(APP_ORIGIN + "/", { waitUntil: "load" });
   const v0 = Number(await textOf(page, ".count-value"));
   // Time.every 1000 Tick reaches the page ONLY over the SSE stream.
   const v1 = await waitFor(async () => {
@@ -248,11 +392,25 @@ async function scenarioCounter(browser) {
 async function scenarioConsole(browser) {
   await waitListening("/");
   // Warm the app so the console has telemetry to show.
-  for (let i = 0; i < 3; i++) await fetch(ORIGIN + "/").catch(() => {});
-  await waitFor(async () => (await fetch(ORIGIN + "/_sky/console/")).ok, 30000, "the console mount");
+  for (let i = 0; i < 3; i++) await fetch(APP_ORIGIN + "/").catch(() => {});
+  await waitFor(async () => {
+    const st = (await fetch(APP_ORIGIN + "/_sky/console/")).status;
+    return CONSOLE_TOKEN ? st === 401 : st === 200;
+  }, 30000, "the console mount");
   await expectPolicyHeader("/_sky/console/");
   const page = await newPage(browser);
-  await page.goto(ORIGIN + "/_sky/console/", { waitUntil: "load" });
+  await page.goto(APP_ORIGIN + "/_sky/console/", { waitUntil: "load" });
+  if (CONSOLE_TOKEN) {
+    // SKY_CONSOLE_AUTH=token: the console asks for the token first. The login
+    // page answers 401 by design, so its resource error is not counted.
+    await page.locator('input[name="token"]').waitFor({ timeout: 10000 });
+    await page.locator('input[name="token"]').fill(CONSOLE_TOKEN);
+    await Promise.all([page.waitForNavigation({ timeout: 10000 }).catch(() => null), page.locator('button[type="submit"]').click()]);
+    const ignore = consoleErrors.findIndex((t) => /status of 401/.test(t));
+    if (ignore >= 0) consoleErrors.splice(ignore, 1);
+    const signedIn = await waitFor(async () => (await page.locator("text=Overview").count()) > 0, 10000, "the console after sign-in").catch(() => false);
+    check("the console token signs in", !!signedIn);
+  }
   await page.waitForTimeout(1500);
   const tabs = ["Overview", "Metrics", "Logs", "Traces", "Errors", "Analytics"];
   let prev = await page.locator("body").innerText();
@@ -275,7 +433,7 @@ async function scenarioForum(browser) {
   await waitListening("/");
   await expectPolicyHeader("/");
   const page = await newPage(browser);
-  await page.goto(ORIGIN + "/", { waitUntil: "load" });
+  await page.goto(APP_ORIGIN + "/", { waitUntil: "load" });
   await page.locator("text=sign in").first().click({ timeout: 10000 });
   await page.locator('input[name="username"]').waitFor({ timeout: 8000 });
   await page.locator('input[name="username"]').fill("csp-user");
@@ -295,7 +453,7 @@ async function scenarioTodos(browser) {
   await expectPolicyHeader("/");
   const page = await newPage(browser);
   const loaded = page.waitForResponse((r) => r.url().includes("/api/todos") && r.request().method() === "GET", { timeout: 20000 });
-  await page.goto(ORIGIN + "/", { waitUntil: "load" });
+  await page.goto(APP_ORIGIN + "/", { waitUntil: "load" });
   const ok = await loaded.then(() => true).catch(() => false);
   check("the wasm client boots and loads the list over RPC", ok);
   if (!ok) return;
@@ -317,8 +475,20 @@ async function scenarioNotes(browser) {
   await waitListening("/");
   await expectPolicyHeader("/");
   const page = await newPage(browser);
+  {
+    // The page names its boot loader; it must come back as script.
+    const html = await (await fetch(APP_ORIGIN + "/")).text();
+    const boot = (html.match(/\/spa-boot\.[0-9a-f]+\.js/) || [])[0];
+    check("the SSR page names a /spa-boot.<hash>.js loader", !!boot, boot || "none");
+    if (boot) {
+      const r = await fetch(APP_ORIGIN + boot);
+      const ct = r.headers.get("content-type") || "";
+      check(`${boot} is served as JavaScript`,
+        r.status === 200 && ct.startsWith("text/javascript"), `${r.status} ${ct}`);
+    }
+  }
   const loaded = page.waitForResponse((r) => r.url().includes("/_rpc/Load"), { timeout: 20000 });
-  await page.goto(ORIGIN + "/", { waitUntil: "load" });
+  await page.goto(APP_ORIGIN + "/", { waitUntil: "load" });
   const ok = await loaded.then(() => true).catch(() => false);
   check("the SSR page hydrates and the client runs its Load RPC", ok);
   if (!ok) return;
@@ -334,24 +504,61 @@ async function scenarioNotes(browser) {
   check("Save runs the Save RPC", !!(await saved.catch(() => null)));
   const listed = await waitFor(async () => (await page.locator("#note-list").innerText()).includes("CSP note"), 6000, "the saved note").catch(() => false);
   check("the saved note is listed", !!listed);
+  // In the slot layout the static host serves only the wasm pair, so there is
+  // no static shell to load. The SSR page above is the whole contract.
+  if (IN_SLOT) return;
   // The STATIC shell (dist/index.html, what a CDN / nginx serves) boots too.
   const shell = await newPage(browser);
   const shellLoaded = shell.waitForResponse((r) => r.url().includes("/_rpc/Load"), { timeout: 20000 });
-  await shell.goto(ORIGIN + "/index.html", { waitUntil: "load" });
+  await shell.goto(APP_ORIGIN + "/index.html", { waitUntil: "load" });
   check("the static dist/index.html shell boots the client", await shellLoaded.then(() => true).catch(() => false));
   const shellList = await waitFor(async () => (await shell.locator("#note-list").innerText()).includes("CSP note"), 8000, "the list in the static shell").catch(() => false);
   check("the static shell renders the saved note", !!shellList);
+}
+
+async function scenarioStale(browser) {
+  await waitListening("/");
+  const html = await (await fetch(APP_ORIGIN + "/")).text();
+  const re = KIND === "spa" ? /\/spa-boot\.([0-9a-f]+)\.js/ : /\/_sky\/live\.([0-9a-f]+)\.js/;
+  const m = html.match(re);
+  check(`the page names its hashed ${KIND === "spa" ? "boot loader" : "client"}`, !!m, m ? m[0] : "none");
+  if (!m) return;
+  const stale = "000000000000";
+  const paths = KIND === "spa"
+    ? [`/spa-boot.${stale}.js`, `/main.${stale}.wasm`, `/_sky/live.${stale}.js`]
+    : [`/_sky/live.${stale}.js`, `/_sky/console-shell.${stale}.js`];
+  for (const p of paths) {
+    const r = await fetch(APP_ORIGIN + p);
+    const ct = r.headers.get("content-type") || "";
+    check(`a stale ${p} is a 404, never HTML`, r.status === 404 && !/text\/html/.test(ct), `${r.status} ${ct}`);
+  }
+  // The page from an old build, after a redeploy: it must fail loudly.
+  const page = await newPage(browser);
+  const all = [];
+  page.on("console", (msg) => all.push(msg.text()));
+  await page.route(APP_ORIGIN + "/", (route) =>
+    route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html.split(m[1]).join(stale) })
+  );
+  await page.goto(APP_ORIGIN + "/", { waitUntil: "load" });
+  await page.waitForTimeout(1500);
+  check("the stale page reports the missing script (404) in the console", all.some((t) => /404/.test(t)), all.slice(0, 3).join(" | "));
+  check("no script of the stale page is answered with HTML", !all.some((t) => /MIME type \('text\/html'\)/.test(t)));
 }
 
 let browser;
 let code = 1;
 try {
   browser = await chromium.launch({ headless: true });
-  const run = { console: scenarioConsole, counter: scenarioCounter, forum: scenarioForum, todos: scenarioTodos, notes: scenarioNotes }[MODE];
+  const run = { console: scenarioConsole, counter: scenarioCounter, forum: scenarioForum, todos: scenarioTodos, notes: scenarioNotes, stale: scenarioStale }[MODE];
   await run(browser);
   await new Promise((r) => setTimeout(r, 500));
   check("zero securitypolicyviolation events", violations.length === 0, violations.slice(0, 5).join(" | "));
   check("zero Content-Security-Policy console messages", cspConsole.length === 0, cspConsole.slice(0, 3).join(" | "));
+  if (STRICT_CHECKS && MODE !== "stale") {
+    check("zero console errors", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
+    check("every script, wasm and style sheet has its own Content-Type", badAssets.length === 0 && checkedAssets.size > 0,
+      badAssets.length ? badAssets.slice(0, 5).join(" | ") : `${checkedAssets.size} checked: ${[...checkedAssets].join(" ")}`);
+  }
   if (/panic:|runtime error:/.test(serverLog)) check("the server log has no panic", false, serverLog.split("\n").slice(-15).join("\n"));
   code = failures.length === 0 ? 0 : 2;
   console.log(code === 0 ? `PASS [${TAG}]` : `FAIL [${TAG}] ${failures.length} check(s): ${failures.join("; ")}`);
@@ -364,6 +571,9 @@ try {
   } catch (_) {}
   try {
     if (proxy) proxy.close();
+  } catch (_) {}
+  try {
+    if (caddy) caddy.kill("SIGTERM");
   } catch (_) {}
   try {
     proc.kill("SIGTERM");

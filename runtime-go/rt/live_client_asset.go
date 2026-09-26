@@ -18,7 +18,6 @@ package rt
 
 import (
 	"encoding/json"
-	"net/http"
 )
 
 // liveBootCfg is the per-page data the client reads from #sky-live-cfg.
@@ -69,25 +68,6 @@ func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view
 
 // liveClientPath is the client's URL path relative to the app's base path.
 var liveClientPath = "/_sky/live." + assetHash(liveClientJS) + ".js"
-
-// serveStaticJS serves a constant script under a content-hashed name.
-func serveStaticJS(js string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		h := w.Header()
-		h.Set("Content-Type", "text/javascript; charset=utf-8")
-		h.Set("Cache-Control", "public, max-age=31536000, immutable")
-		h.Set("X-Content-Type-Options", "nosniff")
-		if r.Method == http.MethodHead {
-			return
-		}
-		_, _ = w.Write([]byte(js))
-	}
-}
 
 // liveClientJS is the whole Sky.Live browser client.
 const liveClientJS = `// Sky.Live client (runtime-go/rt/live_client_asset.go). Served as the
