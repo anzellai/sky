@@ -30,6 +30,11 @@
 #     GOARCH, CGO_ENABLED, GOFLAGS, GOEXPERIMENT, GOAMD64, GOARM64, CC);
 #   * the environment: every `SKY_*` and `CGO_*` variable (bar this cache's own,
 #     and `SKY_RUNTIME_DIR`, which no current compiler reads).
+#   * the build identity the compiler would embed (`sky __build-stamp <dir>`:
+#     version, commit, built-at, source). It depends on inputs outside the
+#     project files — git HEAD, the CI commit variables such as GITHUB_SHA,
+#     source mtimes — so a hit must not restore a binary stamped with another
+#     commit. A compiler without the verb keys as `unavailable`.
 #
 # What is never cached
 # --------------------
@@ -204,13 +209,14 @@ _gc_env() {
 gate_cache_key_text() { # <sky-binary> <project-dir> <artefacts> <sky args...>
     local bin="$1" dir="$2" artefacts="$3"
     shift 3
-    local abs compiler toolchain envs files a
+    local abs compiler toolchain envs files a stamp
     abs="$(cd "$dir" && pwd -P)" || return 1
     compiler="$(_gc_compiler_hash "$bin")" || return 1
     toolchain="$(_gc_toolchain)" || return 1
     envs="$(_gc_env)" || return 1
     files="$(_gc_project_manifest "$abs")" || return 1
     [ -n "$files" ] || return 1
+    stamp="$("$bin" __build-stamp "$abs" 2>/dev/null)" || stamp="unavailable"
     printf 'gate-build-cache v2\n'
     printf 'compiler %s\n' "$compiler"
     printf 'project %s\n' "$abs"
@@ -220,6 +226,7 @@ gate_cache_key_text() { # <sky-binary> <project-dir> <artefacts> <sky args...>
     printf '\n'
     printf 'toolchain\n%s\n' "$toolchain"
     printf 'env\n%s\n' "$envs"
+    printf 'stamp %s\n' "$stamp"
     printf 'files\n%s\n' "$files"
 }
 

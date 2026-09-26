@@ -51,6 +51,7 @@ fn write_sky(path: &Path, version: &str) {
         format!(
             "#!/bin/bash\n\
              # stand-in compiler {version}\n\
+             if [ \"$1\" = __build-stamp ]; then echo \"{version} ${{GITHUB_SHA:-none}} content\"; exit 0; fi\n\
              n=$(cat '{c}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '{c}'\n\
              mkdir -p sky-out && {{ echo '{version}'; cat src/Main.sky; echo build-$n; }} > sky-out/app\n\
              if [ -f big.bin ]; then cp big.bin sky-out/; fi\n",
@@ -172,6 +173,23 @@ fn a_rebuilt_compiler_misses() {
         w.app().starts_with("v2"),
         "the artefact is from the new compiler"
     );
+}
+
+/// The build identity the compiler embeds depends on inputs outside the project
+/// files (git HEAD, the CI commit variable, source mtimes), so the key carries
+/// `sky __build-stamp <dir>`: a hit must never restore a binary stamped with
+/// another commit. GITHUB_SHA is not a `SKY_*` variable, so only the stamp
+/// section can tell these two builds apart.
+#[test]
+fn a_changed_build_identity_misses() {
+    let w = world("stamp");
+    let (ok, log) = w.build(&[("GITHUB_SHA", "aaaaaaaaaaaa")], &[]);
+    assert!(ok && log.contains("MISS"), "{log}");
+    let (_, log) = w.build(&[("GITHUB_SHA", "aaaaaaaaaaaa")], &[]);
+    assert!(log.contains("HIT"), "the same identity must hit: {log}");
+    let (_, log) = w.build(&[("GITHUB_SHA", "bbbbbbbbbbbb")], &[]);
+    assert!(log.contains("MISS"), "another commit must miss: {log}");
+    assert_eq!(w.builds(), 2, "the stamp probe itself is not a build");
 }
 
 #[test]

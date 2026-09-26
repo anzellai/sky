@@ -12,6 +12,7 @@
 pub mod abi_guard;
 pub mod app_entry;
 mod build;
+pub mod build_stamp;
 /// `sky config migrate` — the automatic legacy-`sky.toml` → typed-`config`
 /// rewriter. Reuses the ONE `config_migration::MIGRATIONS` table, never a copy.
 pub mod config_migrate;
@@ -39,6 +40,7 @@ pub mod memory;
 /// `sky doc --api openapi` — a valid OpenAPI 3.1 spec generated statically from
 /// the app's typed source, reusing the `diagram::wire` analysis.
 pub mod openapi;
+pub mod sha256;
 /// `spa_diff_gen` — the type-directed value-generator EMITTER for the Sky.Spa
 /// differential split fuzzer (phase 1 of `docs/design/auto-testing.md`). Emits
 /// Sky generators from `ty::Ty`; runs nothing. See the module docstring.

@@ -690,3 +690,181 @@ fn web_app_no_change_rebuild_reuses_outputs() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&web);
 }
+
+/// The real-app deploy flow through `--target web:app`, end to end: the source
+/// is extracted with `git archive HEAD | tar -x` (no `.git`), GITHUB_SHA is set
+/// (GitHub Actions always sets it), `sky build --target web:app` runs, and the
+/// backend's `sky-out/` is then compiled by a PLAIN `CGO_ENABLED=0 go build`
+/// (host GOOS/GOARCH so it runs here; once more for linux/amd64 to prove the
+/// cross-compile builds). `/_sky/buildinfo` reports the CI commit, the commit
+/// date and `source = ci:GITHUB_SHA`, and the wasm client carries the same
+/// stamp — resolved once at the project root, not per split leg.
+///
+/// RED on v0.25.20: the stamp was a `-X` linker flag on sky's own `go build`
+/// only, so this binary reported `{"commit":"dev","builtAt":"unknown",
+/// "skyVersion":"dev"}`.
+///
+/// Heavy (a full web:app build + two extra backend compiles) — #[ignore]d for
+/// the T1 budget; nightly via --ignored.
+#[cfg(unix)]
+#[ignore = "heavy web:app build; nightly via --ignored; per-commit leg: sky build_stamp_flow archive_build_with_ci_sha_then_plain_go_build_reports_the_commit"]
+#[test]
+fn web_app_archive_build_reports_the_ci_commit() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let base = scratch("stamp");
+    let repo = base.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    for e in ["sky.toml", "src"] {
+        std::fs::rename(base.join(e), repo.join(e)).unwrap();
+    }
+    std::fs::write(repo.join("src").join("Main.sky"), RPC_ERROR_APP).unwrap();
+    let git = |args: &[&str]| {
+        let o = Command::new("git")
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.test")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.test")
+            .env("GIT_AUTHOR_DATE", "@1790000000 +0000")
+            .env("GIT_COMMITTER_DATE", "@1790000000 +0000")
+            .output()
+            .expect("git is required for this test (install git)");
+        assert!(
+            o.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "app"]);
+    let sha = git(&["rev-parse", "HEAD"]);
+    let tar = base.join("src.tar");
+    git(&[
+        "archive",
+        "--format=tar",
+        "-o",
+        tar.to_str().unwrap(),
+        "HEAD",
+    ]);
+    let build = base.join("build");
+    std::fs::create_dir_all(&build).unwrap();
+    assert!(Command::new("tar")
+        .arg("-xf")
+        .arg(&tar)
+        .arg("-C")
+        .arg(&build)
+        .status()
+        .unwrap()
+        .success());
+
+    // Clear every variable the resolver reads, then set only GITHUB_SHA; stop
+    // git discovery at `base` so a host checkout above the temp dir is ignored.
+    let clean = |program: &str| {
+        let mut c = Command::new(program);
+        for v in [
+            "SKY_BUILD_COMMIT",
+            "SKY_BUILD_EPOCH",
+            "SKY_BUILD_STAMP_PINNED",
+            "CI_COMMIT_SHA",
+            "COMMIT_SHA",
+            "GIT_COMMIT",
+            "SOURCE_VERSION",
+        ] {
+            c.env_remove(v);
+        }
+        c.env("GIT_CEILING_DIRECTORIES", &base);
+        c
+    };
+    let out = clean(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&build)
+        .env("GITHUB_SHA", &sha)
+        .env("XDG_CACHE_HOME", build.join("xdg"))
+        .env("GOCACHE", test_gocache())
+        .output()
+        .expect("run sky build --target web:app");
+    assert!(
+        out.status.success(),
+        "web:app build failed:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let split = build.join(".skyapp").join("web-app").join(".split");
+    let backend_dir = split.join("backend");
+    let sky_out = backend_dir.join("sky-out");
+    // Both legs carry the identity resolved at the project root.
+    let want = format!(
+        "\"{}\", \"2026-09-21T14:13:20Z\", \"ci:GITHUB_SHA\"",
+        &sha[..12]
+    );
+    for leg in ["backend", "frontend"] {
+        let f = split
+            .join(leg)
+            .join("sky-out")
+            .join("skybuildinfo")
+            .join("skybuildinfo.go");
+        let src = std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+        assert!(src.contains(&want), "{leg} leg stamp:\n{src}");
+    }
+
+    let go_build = |out: &str, target: Option<(&str, &str)>| {
+        let mut c = clean("go");
+        c.args(["build", "-o", out, "."])
+            .current_dir(&sky_out)
+            .env("CGO_ENABLED", "0")
+            .env("GOCACHE", test_gocache());
+        if let Some((os, arch)) = target {
+            c.env("GOOS", os).env("GOARCH", arch);
+        }
+        let o = c.output().expect("run go build");
+        assert!(
+            o.status.success(),
+            "plain go build: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    };
+    go_build("app-plain", None);
+    go_build("app-linux", Some(("linux", "amd64")));
+    assert!(sky_out.join("app-linux").is_file());
+
+    let port = 9665u16;
+    let mut child = Command::new(sky_out.join("app-plain"))
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn the plain-built backend");
+    let mut body = None;
+    for _ in 0..200 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let o = Command::new("curl")
+            .args(["-s", "--max-time", "5"])
+            .arg(format!("http://127.0.0.1:{port}/_sky/buildinfo"))
+            .output();
+        if let Ok(o) = o {
+            let b = String::from_utf8_lossy(&o.stdout).to_string();
+            if b.trim_start().starts_with('{') {
+                body = Some(b);
+                break;
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let body = body.expect("the backend never served /_sky/buildinfo");
+    let bi: serde_json::Value = serde_json::from_str(body.trim()).unwrap();
+    assert_eq!(bi["commit"], sha[..12], "{bi}");
+    assert_eq!(bi["builtAt"], "2026-09-21T14:13:20Z", "{bi}");
+    assert_eq!(bi["source"], "ci:GITHUB_SHA", "{bi}");
+    let _ = std::fs::remove_dir_all(&base);
+}

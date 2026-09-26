@@ -260,10 +260,10 @@ func requestOriginMatchesEmbed(r *http.Request) bool {
 }
 
 // expectedConsoleAud returns the build's commit hash from
-// `currentBuildInfo`. Falls back to "" on a dev build so the aud
-// check passes when the operator hasn't wired -X buildCommit (the
-// strict gate only activates on real release builds where the
-// commit is injected).
+// `currentBuildInfo`. Falls back to "" on an unstamped build (commit
+// "dev": a runtime compiled without the generated skybuildinfo package)
+// so the aud check passes there; every `sky build` stamps a commit,
+// so the strict gate is active on every built app.
 func expectedConsoleAud() string {
 	bi := currentBuildInfo()
 	if bi.Commit == "" || bi.Commit == "dev" {

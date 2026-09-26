@@ -75,13 +75,43 @@ console auth on (`SKY_CONSOLE_AUTH=token` or `app`, and always under
 `ENV=production`) every read was refused, the failure was not shown, and the
 header stayed on "Sky — · dev · uptime 0s".
 
-The header's version, commit and build time are stamped into the app binary by
-`sky build`: the compiler's version, `git rev-parse --short=12 HEAD` of the
-project (or `SKY_BUILD_COMMIT`, for a build with no `.git`, such as a Docker
-context) and the build time: the commit time of `HEAD` (or `SKY_BUILD_EPOCH`,
-Unix seconds), never the wall clock, so a rebuild of unchanged sources does not
-re-link. With no `.git` and no override it shows `unknown`. The same values are
-served at `/_sky/buildinfo`.
+The header's version, commit and build time (the build identity) are automatic.
+You set nothing, and your CI sets nothing. `sky build` writes them into
+generated Go source (the `sky-out/skybuildinfo/` package), not into linker
+flags, so any `go build` of `sky-out/` carries them: the one `sky build` runs, a manual
+cross-compile (`CGO_ENABLED=0 GOOS=linux go build .`), a Dockerfile or a custom
+CI step. The same values are served at `/_sky/buildinfo`:
+
+```json
+{"commit":"4832428108f7","builtAt":"2026-09-21T14:13:20Z","skyVersion":"v0.25.21","goVersion":"go1.26.1","source":"ci:GITHUB_SHA"}
+```
+
+The identity is resolved once, at the project root (the directory with your
+`sky.toml`), and every leg of the build (both halves of a `web:app` split, a
+Std.App target) embeds the same values.
+
+- **Commit**, first match wins: `SKY_BUILD_COMMIT` (optional override, source
+  `override`); `git rev-parse HEAD` in the project directory or any parent
+  (source `git`); the commit variable your CI sets by default (`GITHUB_SHA`,
+  `CI_COMMIT_SHA`, `BITBUCKET_COMMIT`, `CIRCLE_SHA1`, `BUILDKITE_COMMIT`,
+  `GIT_COMMIT`, `SOURCE_VERSION`, `COMMIT_SHA`, `VERCEL_GIT_COMMIT_SHA`,
+  `RENDER_GIT_COMMIT`, `CF_PAGES_COMMIT_SHA`, `DRONE_COMMIT_SHA`,
+  `TRAVIS_COMMIT`, `SEMAPHORE_GIT_SHA`, `BUILD_SOURCEVERSION`; a value that is
+  not a hex commit id is skipped; source `ci:<VAR>`); else a content identity
+  `src-<12 hex>` over the project's source tree, `sky.toml` and `sky.lock`
+  (source `content`). A commit id is shortened to 12 characters.
+- **Built at** (RFC 3339 UTC): `SKY_BUILD_EPOCH` (optional override, Unix
+  seconds); the commit time of `HEAD` when git resolves; else the newest
+  modification time of the source inputs. `git archive HEAD | tar -x` gives
+  every file the commit time, so an archive build reports its commit time.
+  It is never the wall clock, so a rebuild of unchanged sources writes the same
+  file and Go links nothing again.
+- **Sky version**: the compiler's release version (`v0.25.21`), or `dev` for a
+  compiler built from source.
+- **Source**: where the commit came from, as above. `ldflags` means a user's own
+  `-ldflags "-X sky-app/rt.buildCommit=..."` set it. Such an `-X` value
+  (`buildCommit`, `buildAt`, `skyVersion`) still wins over the generated stamp,
+  field by field.
 
 The console login cookie is signed with a key derived from
 `SKY_CONSOLE_TOKEN` alone, so every process that shares the token accepts it:

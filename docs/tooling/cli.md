@@ -164,15 +164,28 @@ both legs share. `SKY_GO_BUILD_JOBS=<n>` sets `-p <n>` yourself (`auto` decides
 as above), and a `-p` already in `GOFLAGS` is kept. The decision is printed
 under the `--timings` table as `go build: -p …`.
 
-Build identity. The native binary is stamped (`go build -ldflags -X`) with the
-compiler's version, the project's commit (`git rev-parse --short=12 HEAD`, or
-`SKY_BUILD_COMMIT` when the build has no `.git`, e.g. in a Docker context,
-else `unknown`) and the build time in RFC 3339 UTC: the commit time of `HEAD`,
-or `SKY_BUILD_EPOCH=<unix seconds>`, else `unknown`. It is never the wall
+Build identity. The app's version, commit and build time are automatic: no
+flag, no environment variable, no CI step. `sky build` writes them into
+generated Go source (the `sky-out/skybuildinfo/` package), so any `go build`
+of `sky-out/` carries them, including your own cross-compile
+(`CGO_ENABLED=0 GOOS=linux go build .`). They are resolved once, at the project
+root, and every leg of the build embeds the same values. The commit is, first
+match wins: `SKY_BUILD_COMMIT` (optional override); `git rev-parse HEAD` in the
+project directory or any parent; the commit variable your CI sets by default
+(`GITHUB_SHA`, `CI_COMMIT_SHA`, `BITBUCKET_COMMIT`, `CIRCLE_SHA1`,
+`BUILDKITE_COMMIT`, `GIT_COMMIT`, `SOURCE_VERSION`, `COMMIT_SHA`,
+`VERCEL_GIT_COMMIT_SHA`, `RENDER_GIT_COMMIT`, `CF_PAGES_COMMIT_SHA`,
+`DRONE_COMMIT_SHA`, `TRAVIS_COMMIT`, `SEMAPHORE_GIT_SHA`,
+`BUILD_SOURCEVERSION`; a non-hex value is skipped); else `src-<12 hex>`, a hash
+of the source tree, `sky.toml` and `sky.lock`. The build time (RFC 3339 UTC) is
+`SKY_BUILD_EPOCH=<unix seconds>` (optional override), else the commit time of
+`HEAD` when git resolves, else the newest modification time of those source
+files (`git archive | tar -x` sets it to the commit time). It is never the wall
 clock, because a per-build value would re-link the binary on every no-change
-rebuild. The app reports them at
-`/_sky/buildinfo` and in the Sky Console header. An `-ldflags` already in
-`GOFLAGS` is kept, and then the stamp is not written.
+rebuild. The app reports them at `/_sky/buildinfo` (with `source`: `git`,
+`ci:<VAR>`, `content`, `override` or `ldflags`) and in the Sky Console header.
+Your own `go build -ldflags "-X sky-app/rt.buildCommit=..."` (also `buildAt`,
+`skyVersion`) still wins, field by field. See `docs/observability.md`.
 
 ### `sky spa-split <path> --out <dir> [--build | --target <t>]`
 
