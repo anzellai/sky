@@ -910,9 +910,12 @@ pub struct AppBuildStamp {
 ///   * version — the compiler's own (`SKY_BUILD_VERSION`, baked at release), else `dev`;
 ///   * commit — `SKY_BUILD_COMMIT` (for builds without a `.git`, e.g. a Docker
 ///     context), else `git rev-parse --short=12 HEAD` in `dir`, else `unknown`;
-///   * built-at — `SKY_BUILD_EPOCH` (Unix seconds, for a reproducible build) or
-///     now, RFC 3339 UTC. Not `SOURCE_DATE_EPOCH`: a nix shell exports it as
-///     1980-01-01 for every build, and the console would show that date.
+///   * built-at — `SKY_BUILD_EPOCH` (Unix seconds), else the commit time of
+///     `HEAD` in `dir`, else `unknown`; RFC 3339 UTC. Never the wall clock: the
+///     stamp is a `-X` linker flag, and a value that changes on every build
+///     makes Go re-link the binary on a no-change rebuild. Not
+///     `SOURCE_DATE_EPOCH`: a nix shell exports it as 1980-01-01 for every
+///     build, and the console would show that date.
 pub fn app_build_stamp(dir: &Path) -> AppBuildStamp {
     let sky_version = option_env!("SKY_BUILD_VERSION")
         .map(|v| v.trim().trim_start_matches('v').to_string())
@@ -938,16 +941,27 @@ pub fn app_build_stamp(dir: &Path) -> AppBuildStamp {
     let secs = std::env::var("SKY_BUILD_EPOCH")
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
+        .or_else(|| {
+            Command::new("git")
+                .args(["log", "-1", "--format=%ct", "HEAD"])
+                .current_dir(dir)
+                .stderr(Stdio::null())
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .parse::<u64>()
+                        .ok()
+                })
         });
     AppBuildStamp {
         sky_version,
         commit,
-        built_at: rfc3339_utc(secs),
+        built_at: secs
+            .map(rfc3339_utc)
+            .unwrap_or_else(|| "unknown".to_string()),
     }
 }
 
@@ -2751,6 +2765,54 @@ mod sky_toml_tests {
         assert_eq!(s.commit, "feedface0001");
         assert_eq!(s.built_at, "1970-01-01T00:00:00Z");
         assert!(!s.sky_version.is_empty());
+
+        // Without an override the stamp must not depend on the wall clock: it
+        // is a `-X` linker flag, and a per-build value re-links the binary on
+        // every no-change rebuild (the release gate's
+        // web_app_no_change_rebuild_reuses_outputs caught exactly that).
+        // Here the env vars are cleared, so this runs after them in one test.
+        let plain = std::env::temp_dir().join(format!("sky-stamp-nogit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&plain);
+        std::fs::create_dir_all(&plain).unwrap();
+        let a = super::app_build_stamp(&plain);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let b = super::app_build_stamp(&plain);
+        let _ = std::fs::remove_dir_all(&plain);
+        assert_eq!(
+            a, b,
+            "two builds of an unchanged project must stamp the same"
+        );
+        // `plain` may sit inside a git checkout (a CI temp dir usually does
+        // not); either way the value is stable, and with no git it is `unknown`.
+
+        let repo = std::env::temp_dir().join(format!("sky-stamp-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&repo);
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .env("GIT_AUTHOR_DATE", "2026-09-21T14:13:20Z")
+                .env("GIT_COMMITTER_DATE", "2026-09-21T14:13:20Z")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.test")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.test")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+        assert!(
+            git(&["init", "-q"]) && git(&["commit", "-q", "--allow-empty", "-m", "x"]),
+            "git is required for this test (install git)"
+        );
+        let s = super::app_build_stamp(&repo);
+        let _ = std::fs::remove_dir_all(&repo);
+        assert_eq!(
+            s.built_at, "2026-09-21T14:13:20Z",
+            "built-at is the HEAD commit time"
+        );
+        assert_eq!(s.commit.len(), 12);
     }
 
     #[test]

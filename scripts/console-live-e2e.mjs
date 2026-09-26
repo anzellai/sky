@@ -58,6 +58,7 @@ const PORT = Number(arg("--port", "9620"));
 const CADDY = arg("--caddy", "");
 const CADDY_PORT = Number(arg("--caddy-port", String(PORT + 5)));
 const COMMIT = arg("--commit", "");
+const BUILT_AT = arg("--built-at", "");
 const CWD = arg("--cwd", process.cwd());
 const ANALYTICS = argv.includes("--analytics");
 if (!APP) {
@@ -278,6 +279,7 @@ try {
     info(`commit ${commit}  built ${built}`);
     if (COMMIT && commit !== COMMIT) fail(`commit shows "${commit}", want the stamped "${COMMIT}"`);
     if (!/^\d{4}-\d{2}-\d{2}T/.test(built)) fail(`built-at shows "${built}", want the build time`);
+    if (BUILT_AT && built !== BUILT_AT) fail(`built-at shows "${built}", want the stamped "${BUILT_AT}"`);
   }
 
   // 3. a log line and a span

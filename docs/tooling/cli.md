@@ -167,8 +167,10 @@ under the `--timings` table as `go build: -p …`.
 Build identity. The native binary is stamped (`go build -ldflags -X`) with the
 compiler's version, the project's commit (`git rev-parse --short=12 HEAD`, or
 `SKY_BUILD_COMMIT` when the build has no `.git`, e.g. in a Docker context,
-else `unknown`) and the build time in RFC 3339 UTC (`SKY_BUILD_EPOCH=<unix
-seconds>` fixes it for a reproducible build). The app reports them at
+else `unknown`) and the build time in RFC 3339 UTC: the commit time of `HEAD`,
+or `SKY_BUILD_EPOCH=<unix seconds>`, else `unknown`. It is never the wall
+clock, because a per-build value would re-link the binary on every no-change
+rebuild. The app reports them at
 `/_sky/buildinfo` and in the Sky Console header. An `-ldflags` already in
 `GOFLAGS` is kept, and then the stamp is not written.
 

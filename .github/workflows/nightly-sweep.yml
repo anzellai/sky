@@ -232,18 +232,7 @@ jobs:
       # Content-Security-Policy (script-src 'self' 'wasm-unsafe-eval', no inline
       # script): the Console, Sky.Live, a Std.Ui form and both Sky.Spa boot paths,
       # behind a proxy that sets the policy and with SKY_CSP=strict.
-      - name: Install Caddy (the csp-e2e proxy topology matrix runs a real Caddy)
-        run: |
-          set -euo pipefail
-          v=2.11.4
-          base="https://github.com/caddyserver/caddy/releases/download/v$v"
-          cd "$RUNNER_TEMP"
-          curl -fsSLO "$base/caddy_${v}_linux_amd64.tar.gz"
-          curl -fsSLO "$base/caddy_${v}_checksums.txt"
-          grep " caddy_${v}_linux_amd64.tar.gz\$" "caddy_${v}_checksums.txt" | sha512sum -c -
-          tar -xzf "caddy_${v}_linux_amd64.tar.gz" caddy
-          sudo install -m 0755 caddy /usr/local/bin/caddy
-          caddy version
+      - uses: ./.github/actions/install-caddy
       - name: Gate — strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
         run: scripts/csp-e2e.sh
       # console-live-e2e — the Sky Console shows LIVE data (uptime counts,
@@ -251,7 +240,6 @@ jobs:
       # a backend restart by itself; Sky.Live and a Sky.Spa backend, directly
       # and behind a real Caddy (HTTP/2, encode zstd gzip, flush_interval -1,
       # two slots, strict CSP) — the production topology of the field report.
-      - uses: ./.github/actions/install-caddy
       - name: Gate — Sky Console live data + reconnect e2e (direct + behind Caddy)
         run: scripts/console-live-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none

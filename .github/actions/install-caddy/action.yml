@@ -1,9 +1,11 @@
 name: Install Caddy
 description: >-
-  Install a pinned Caddy release (checksum-verified) and export CADDY=<path>.
-  scripts/console-live-e2e.sh drives the Sky Console behind a real Caddy
-  (HTTPS + HTTP/2, encode, reverse_proxy) because that is the production
-  topology the console's reconnect loop was reported from.
+  Install a pinned Caddy release (checksum-verified), put it on PATH and export
+  CADDY=<path>. The browser gates run Sky behind a real Caddy because that is
+  the production topology (HTTPS + HTTP/2, encode, reverse_proxy, a static
+  host for the wasm): scripts/csp-e2e.sh finds it on PATH,
+  scripts/console-live-e2e.sh reads CADDY. Use this action ONCE per job; it is
+  idempotent, so a second use is a no-op rather than a failure.
 inputs:
   version:
     description: Caddy release version (no leading v).
@@ -17,14 +19,22 @@ runs:
         CADDY_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        dir="$RUNNER_TEMP/caddy"
-        mkdir -p "$dir"
-        cd "$dir"
-        base="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}"
-        tarball="caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
-        curl -fsSLO "$base/$tarball"
-        curl -fsSLO "$base/caddy_${CADDY_VERSION}_checksums.txt"
-        grep " ${tarball}\$" "caddy_${CADDY_VERSION}_checksums.txt" | sha512sum -c -
-        tar -xzf "$tarball" caddy
-        ./caddy version
+        # A directory of its own: `$RUNNER_TEMP/caddy` collided with a caddy
+        # binary another step had extracted into $RUNNER_TEMP.
+        dir="$RUNNER_TEMP/caddy-bin-${CADDY_VERSION}"
+        if [ -x "$dir/caddy" ] && "$dir/caddy" version | grep -q "v${CADDY_VERSION}"; then
+          echo "caddy ${CADDY_VERSION} already installed at $dir"
+        else
+          mkdir -p "$dir"
+          cd "$dir"
+          base="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}"
+          tarball="caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "$base/$tarball"
+          curl -fsSLO "$base/caddy_${CADDY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "caddy_${CADDY_VERSION}_checksums.txt" | sha512sum -c -
+          tar -xzf "$tarball" caddy
+          rm -f "$tarball" "caddy_${CADDY_VERSION}_checksums.txt"
+        fi
+        "$dir/caddy" version
+        echo "$dir" >> "$GITHUB_PATH"
         echo "CADDY=$dir/caddy" >> "$GITHUB_ENV"

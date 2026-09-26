@@ -78,8 +78,10 @@ header stayed on "Sky — · dev · uptime 0s".
 The header's version, commit and build time are stamped into the app binary by
 `sky build`: the compiler's version, `git rev-parse --short=12 HEAD` of the
 project (or `SKY_BUILD_COMMIT`, for a build with no `.git`, such as a Docker
-context) and the build time (or `SKY_BUILD_EPOCH`, Unix seconds, for a
-reproducible build). The same values are served at `/_sky/buildinfo`.
+context) and the build time: the commit time of `HEAD` (or `SKY_BUILD_EPOCH`,
+Unix seconds), never the wall clock, so a rebuild of unchanged sources does not
+re-link. With no `.git` and no override it shows `unknown`. The same values are
+served at `/_sky/buildinfo`.
 
 The console login cookie is signed with a key derived from
 `SKY_CONSOLE_TOKEN` alone, so every process that shares the token accepts it:

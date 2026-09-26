@@ -33,11 +33,13 @@ long-lived streams (the console, `Server.Stream`, WebSockets) every 30 s.
   is shown under the header ("Telemetry read failed: …"), and the header says
   "waiting for telemetry" until the first read arrives.
 - **Build identity is real.** `sky build` now stamps the app binary with the
-  compiler version, the project commit and the build time. The console header
-  and `/_sky/buildinfo` showed `dev` / `dev` / `unknown` before. Set
-  `SKY_BUILD_COMMIT` for a build with no `.git` (for example a Docker context)
-  and `SKY_BUILD_EPOCH` (Unix seconds) for a reproducible build time. An
-  `-ldflags` already in `GOFLAGS` is kept, and then no stamp is written.
+  compiler version, the project commit and a build time. The console header
+  and `/_sky/buildinfo` showed `dev` / `dev` / `unknown` before. The build time
+  is the commit time of `HEAD`, never the wall clock, so a rebuild of unchanged
+  sources links nothing again. For a build with no `.git` (for example a
+  Docker context) set `SKY_BUILD_COMMIT` and `SKY_BUILD_EPOCH` (Unix seconds);
+  without them both show `unknown`. An `-ldflags` already in `GOFLAGS` is kept,
+  and then no stamp is written.
 - **Streams are no longer cut every 30 s on a `Server.listen` host** (every
   `Sky.Http.Server` app and every `Sky.Spa` backend). The server's 30 s read and
   write deadlines cut the console's live channel, `Sky.Http.Server.Stream`

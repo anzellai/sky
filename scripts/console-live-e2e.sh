@@ -71,6 +71,10 @@ BASE_PORT="${CONSOLE_LIVE_E2E_PORT:-9620}"
 ONLY="${CONSOLE_LIVE_E2E_ONLY:-}"
 # The stamp the build writes into the binary; the console must show it.
 export SKY_BUILD_COMMIT="e2e0c0ffee01"
+# The fixtures are not git checkouts, so the build time comes from
+# SKY_BUILD_EPOCH (never the wall clock: a per-build value would re-link the
+# backend on every no-change rebuild). 1790000000 = 2026-09-21T14:13:20Z.
+export SKY_BUILD_EPOCH=1790000000
 
 build_target() { # build_target <example-or-fixture> <target> <artefact>
   local name="$1" target="$2" artefact="$3"
@@ -108,7 +112,7 @@ drive() { # drive <scenario> <binary> <cwd> <port> <direct|caddy> [driver args..
   want "$scenario" || return 0
   [ -x "$bin" ] || { echo "console-live-e2e: app not built at $bin" >&2; rc=1; return 0; }
   echo "==> $scenario"
-  local args=(--app "$bin" --name "$scenario" --port "$port" --cwd "$cwd" --commit "$SKY_BUILD_COMMIT")
+  local args=(--app "$bin" --name "$scenario" --port "$port" --cwd "$cwd" --commit "$SKY_BUILD_COMMIT" --built-at "2026-09-21T14:13:20Z")
   [ "$via" = caddy ] && args+=(--caddy "$CADDY" --caddy-port $((port + 5)))
   with_timeout 300 node "$ROOT/scripts/console-live-e2e.mjs" "${args[@]}" "$@" || rc=1
 }
