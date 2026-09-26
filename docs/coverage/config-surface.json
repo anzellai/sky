@@ -55,7 +55,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:9637 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:9679 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -89,14 +89,14 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:6975 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:7095 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:7017 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:7137 (sky_toml_project_key)"
     ],
     "root": [
       "rust/crates/project/src/build.rs:1765 (sky_toml_project_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:6982 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:7024 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
