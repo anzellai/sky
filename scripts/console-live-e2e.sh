@@ -69,37 +69,47 @@ _gc_compiler_hash "$SKY" >/dev/null
 TMP="$(gate_e2e_dir "$ROOT" console-live-e2e)"
 BASE_PORT="${CONSOLE_LIVE_E2E_PORT:-9620}"
 ONLY="${CONSOLE_LIVE_E2E_ONLY:-}"
-# The stamp the build writes into the binary; the console must show it.
-export SKY_BUILD_COMMIT="e2e0c0ffee01"
-# The fixtures are not git checkouts, so the build time comes from
-# SKY_BUILD_EPOCH (never the wall clock: a per-build value would re-link the
-# backend on every no-change rebuild). 1790000000 = 2026-09-21T14:13:20Z.
-export SKY_BUILD_EPOCH=1790000000
+# The build identity the console must show. Sky.Live and the analytics fixture
+# pin it with the optional overrides (SKY_BUILD_COMMIT, and SKY_BUILD_EPOCH,
+# 1790000000 = 2026-09-21T14:13:20Z). The Sky.Spa app takes the AUTOMATIC path
+# with no override, the way a real deploy does: its sources carry the commit
+# time as mtime (as `git archive | tar -x` leaves them), there is no `.git`,
+# and the CI commit variable GitHub Actions always sets names the commit.
+OVERRIDE_COMMIT="e2e0c0ffee01"
+AUTO_SHA="a11ce0ffee0123456789abcdef0123456789abcd"
+BUILT_AT="2026-09-21T14:13:20Z"
 
-build_target() { # build_target <example-or-fixture> <target> <artefact>
-  local name="$1" target="$2" artefact="$3"
+build_target() { # build_target <example-or-fixture> <target> <artefact> <override|auto>
+  local name="$1" target="$2" artefact="$3" stamp="$4"
   local src="$ROOT/examples/$name"
   [ -d "$src" ] || src="$ROOT/rust/crates/sky/tests/fixtures/$name"
   rm -rf "$TMP/$name"
   mkdir -p "$TMP/$name"
   cp -Rf "$src/." "$TMP/$name/"
   rm -rf "$TMP/$name/.skyapp" "$TMP/$name/sky-out" "$TMP/$name/.skycache"
-  echo "==> building ${src#"$ROOT"/} (--target $target)"
-  with_timeout 1500 bash "$ROOT/scripts/lib/gate-build-cache.sh" build "$SKY" "$TMP/$name" \
+  local stamp_env=(-u SKY_BUILD_COMMIT -u SKY_BUILD_EPOCH -u SKY_BUILD_STAMP_PINNED)
+  if [ "$stamp" = override ]; then
+    stamp_env+=(SKY_BUILD_COMMIT="$OVERRIDE_COMMIT" SKY_BUILD_EPOCH=1790000000)
+  else
+    find "$TMP/$name" -type f -exec env TZ=UTC touch -t 202609211413.20 {} +
+    stamp_env+=(GITHUB_SHA="$AUTO_SHA" GIT_CEILING_DIRECTORIES="$(dirname "$TMP")")
+  fi
+  echo "==> building ${src#"$ROOT"/} (--target $target, build identity: $stamp)"
+  with_timeout 1500 env "${stamp_env[@]}" bash "$ROOT/scripts/lib/gate-build-cache.sh" build "$SKY" "$TMP/$name" \
     --clean --artefact "$artefact" -- build --target "$target" src/Main.sky
 }
 
 want() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
 if want live-direct || want live-caddy; then
-  build_target 09-live-counter web .skyapp/web
+  build_target 09-live-counter web .skyapp/web override
 fi
 if want spa-direct || want spa-caddy; then
-  build_target 62-app-notes web:app .skyapp/web-app
+  build_target 62-app-notes web:app .skyapp/web-app auto
 fi
 # The Analytics tab needs an app that tracks identified events; no example
 # does that on a scripted gesture, so a fixture does (console-analytics).
 if want analytics-direct || want analytics-caddy; then
-  build_target console-analytics web .skyapp/web
+  build_target console-analytics web .skyapp/web override
 fi
 LIVE_BIN="$TMP/09-live-counter/.skyapp/web/sky-out/app"
 SPA_BIN="$TMP/62-app-notes/.skyapp/web-app/.split/backend/sky-out/app"
@@ -112,7 +122,9 @@ drive() { # drive <scenario> <binary> <cwd> <port> <direct|caddy> [driver args..
   want "$scenario" || return 0
   [ -x "$bin" ] || { echo "console-live-e2e: app not built at $bin" >&2; rc=1; return 0; }
   echo "==> $scenario"
-  local args=(--app "$bin" --name "$scenario" --port "$port" --cwd "$cwd" --commit "$SKY_BUILD_COMMIT" --built-at "2026-09-21T14:13:20Z")
+  local commit="$OVERRIDE_COMMIT"
+  case "$scenario" in spa-*) commit="${AUTO_SHA:0:12}" ;; esac
+  local args=(--app "$bin" --name "$scenario" --port "$port" --cwd "$cwd" --commit "$commit" --built-at "$BUILT_AT")
   [ "$via" = caddy ] && args+=(--caddy "$CADDY" --caddy-port $((port + 5)))
   with_timeout 300 node "$ROOT/scripts/console-live-e2e.mjs" "${args[@]}" "$@" || rc=1
 }

@@ -11,6 +11,31 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.25.21 — (unreleased)
+
+### Fixed
+
+- **The build identity is automatic for every build path.** In v0.25.20 the
+  version, commit and build time reached the app only as `-X` linker flags on
+  the `go build` that `sky build` ran itself. An app whose deploy extracted
+  `git archive HEAD` (no `.git`), ran `sky build --target web:app`, then
+  cross-compiled the backend's `sky-out/` with its own
+  `CGO_ENABLED=0 GOOS=linux go build` reported
+  `{"commit":"dev","builtAt":"unknown","skyVersion":"dev"}` in production, and
+  a build with no `.git` reported `unknown` even from `sky build`. The stamp is
+  now generated Go source (the `sky-out/skybuildinfo/` package), so any
+  `go build` of `sky-out/` carries it. It is resolved once at the project root, and every
+  build leg embeds the same values. The commit comes from `SKY_BUILD_COMMIT`
+  (optional), else git in the project directory or any parent, else the commit
+  variable your CI sets by default (`GITHUB_SHA`, `CI_COMMIT_SHA`,
+  `CIRCLE_SHA1`, `BUILD_SOURCEVERSION` and eleven more), else `src-<hash>` of
+  the project's source files. The build time comes from `SKY_BUILD_EPOCH`
+  (optional), else the commit time, else the newest source file time. It is
+  never the wall clock, so a no-change rebuild still links nothing.
+  `/_sky/buildinfo` also reports `source` (`git`, `ci:<VAR>`, `content`,
+  `override` or `ldflags`). Your own `-ldflags "-X sky-app/rt.buildCommit=..."`
+  still wins. You configure nothing.
+
 ## v0.25.20 — Sky.Spa boots behind any proxy; streams outlive 30 s; the Console shows live data (2026-09-26)
 
 A patch over v0.25.19. Two v0.25.19 changes broke a Sky.Spa app behind a proxy

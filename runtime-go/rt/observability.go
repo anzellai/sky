@@ -140,26 +140,30 @@ func SetReady(ready bool) {
 	readinessReady.Store(ready)
 }
 
-// BuildInfo is the data shape /_sky/buildinfo returns. Populated
-// from compile-time ld-flags (`-X sky-app/rt.buildCommit=...`) or
-// the embedded `app/VERSION` file at compile time.
+// BuildInfo is the data shape /_sky/buildinfo returns.
 //
-// Default values are "dev" / "unknown" so a freshly-built local
-// binary returns sensible JSON without ld-flag wiring. CI release
-// builds set the real values.
+// The values come from the generated `skybuildinfo` package that `sky build`
+// writes into the emitted tree (see buildinfo_stamp.go), so every `go build` of the
+// emitted tree carries them. `Source` names where the commit came from:
+// `git`, `ci:<VAR>` (e.g. `ci:GITHUB_SHA`), `content` (a `src-<hash>` of the
+// project's source inputs), `override` (SKY_BUILD_COMMIT), `ldflags` (a
+// user's own `-X sky-app/rt.buildCommit=...`), or `unstamped` (a runtime
+// compiled without the generated file, e.g. the runtime's own tests).
 type BuildInfo struct {
 	Commit     string `json:"commit"`
 	BuiltAt    string `json:"builtAt"`
 	SkyVersion string `json:"skyVersion"`
 	GoVersion  string `json:"goVersion"`
+	Source     string `json:"source"`
 }
 
-// Build-time ld-flag injection variables. Override via:
+// Linker-flag override hooks. `sky build` no longer sets them; a user who
+// wants a different value can still pass, for example,
 //
 //	go build -ldflags "-X sky-app/rt.buildCommit=abc123 -X sky-app/rt.buildAt=2026-05-17T11:00:00Z -X sky-app/rt.skyVersion=v0.13.4"
 //
-// Defaults are dev-friendly: the local `sky run` workflow doesn't
-// need to remember these flags to get sensible output.
+// and each field set this way wins over the generated stamp. A field left at
+// its default here means "not overridden".
 var (
 	buildCommit = "dev"
 	buildAt     = "unknown"
@@ -169,12 +173,32 @@ var (
 // currentBuildInfo returns the build-info struct snapshot. Cheap;
 // safe to call per-request.
 func currentBuildInfo() BuildInfo {
-	return BuildInfo{
-		Commit:     buildCommit,
-		BuiltAt:    buildAt,
-		SkyVersion: skyVersion,
+	bi := BuildInfo{
+		Commit:     "dev",
+		BuiltAt:    "unknown",
+		SkyVersion: "dev",
 		GoVersion:  runtime.Version(),
+		Source:     "unstamped",
 	}
+	if st := embeddedStamp; st.commit != "" {
+		bi.Commit, bi.Source = st.commit, st.source
+		if st.builtAt != "" {
+			bi.BuiltAt = st.builtAt
+		}
+		if st.version != "" {
+			bi.SkyVersion = st.version
+		}
+	}
+	if buildCommit != "dev" {
+		bi.Commit, bi.Source = buildCommit, "ldflags"
+	}
+	if buildAt != "unknown" {
+		bi.BuiltAt = buildAt
+	}
+	if skyVersion != "dev" {
+		bi.SkyVersion = skyVersion
+	}
+	return bi
 }
 
 // HandleHealthz serves /_sky/healthz. Always 200 while the process

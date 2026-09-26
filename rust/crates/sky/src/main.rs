@@ -124,6 +124,21 @@ fn dispatch(args: &[String]) -> ExitCode {
         // real build is not a cold compile. Invoked by `sky upgrade` (with the NEW
         // binary) and by `sky doctor --warm-cache`.
         Some("__warm-go-cache") => cmd_warm_go_cache(),
+        // Hidden: print the build identity a build of <dir> (default: the current
+        // directory) would embed — `<version> <commit> <built-at> <source>`. The
+        // gate build cache keys on it (scripts/lib/gate-build-cache.sh), because
+        // the identity depends on inputs outside the project files (git HEAD,
+        // CI commit variables, source mtimes).
+        Some("__build-stamp") => {
+            let dir = args
+                .get(1)
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| PathBuf::from("."));
+            let s = project::build_stamp::resolve_build_stamp(&dir);
+            println!("{} {} {} {}", s.sky_version, s.commit, s.built_at, s.source);
+            ExitCode::SUCCESS
+        }
         Some(other) => {
             eprintln!("sky: unknown command `{other}`. Try `sky --help`.");
             ExitCode::from(2)
@@ -3332,6 +3347,11 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    // Resolve the build identity ONCE, here at the user's project root, and pin
+    // it for every child build this command spawns (Std.App derived entry,
+    // both Sky.Spa split legs, a desktop shell), so all of them embed the same
+    // commit / built-at (project::build_stamp).
+    project::build_stamp::pin_build_stamp(&project_dir);
     let target = split_target.as_deref().unwrap_or("web");
     let embed = args.iter().any(|a| a == "--embed");
     let od = match spa_split_and_build(
@@ -3411,6 +3431,11 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    // Resolve the build identity ONCE, here at the user's project root, and pin
+    // it for every child build this command spawns (Std.App derived entry,
+    // both Sky.Spa split legs, a desktop shell), so all of them embed the same
+    // commit / built-at (project::build_stamp).
+    project::build_stamp::pin_build_stamp(&project_dir);
     // No CLI `--target` → fall back to the project's persisted `[app] target`
     // in sky.toml (so a terminal-only App.cli / App.tui project builds for its
     // backend on a bare `sky build`/`run`/`check`). An explicit flag wins. Only
@@ -5872,6 +5897,11 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    // Resolve the build identity ONCE, here at the user's project root, and pin
+    // it for every child build this command spawns (Std.App derived entry,
+    // both Sky.Spa split legs, a desktop shell), so all of them embed the same
+    // commit / built-at (project::build_stamp).
+    project::build_stamp::pin_build_stamp(&project_dir);
     // Auto-install BEFORE dispatch, so `sky run` works without a manual `sky
     // install` first on EVERY path — Std.App (which builds a derived entry and
     // never reaches the normal-build retry below), Sky.Spa, and the normal
