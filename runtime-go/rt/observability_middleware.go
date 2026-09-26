@@ -366,6 +366,12 @@ func (s *statusCapture) Flush() {
 	}
 }
 
+// Unwrap exposes the wrapped writer to http.ResponseController, so a
+// long-lived handler behind this middleware can lift the connection's
+// deadlines (see stream_deadline.go). Without it the controller stops here
+// with http.ErrNotSupported.
+func (s *statusCapture) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
 // Hijack propagates to the underlying ResponseWriter when it
 // supports http.Hijacker (used for WebSocket upgrades, raw TCP
 // streams). Without this method, hijackable handlers panic when

@@ -4763,24 +4763,21 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// channel now depends on for its security boundary.
 	sid, _ := app.boundSessionID(r, "")
 	if sid == "" {
-		w.Header().Set("X-Sky-Live", "1")
-		http.Error(w, "no session", 400)
+		app.writeSSESessionLost(w, r, sseLostNoCookie)
 		return
 	}
 	sess, ok := app.store.Get(sid)
 	if !ok {
-		// X-Sky-Live: 1 marks this as a real Sky.Live response (not a
-		// proxy-rewritten 404). The client uses this signal in
-		// __skyForceReopenSSE's probe to decide "session gone → hard
-		// page reload" vs "transient network error → keep retrying".
-		// Critical for the memory-store-after-restart case (e.g. user
-		// flipped sky.toml [live] store from sqlite to memory, watch
-		// rebuilt, every browser session is now invalid).
-		w.Header().Set("X-Sky-Live", "1")
-		w.Header().Set("X-Sky-Status", "session-lost")
-		http.Error(w, "session not found", 404)
+		// The memory-store-after-restart case (a redeploy, or a request
+		// that lands on a replica that never saw this session), and TTL
+		// expiry. See live_sse_session_lost.go for the classified answer.
+		app.writeSSESessionLost(w, r, sseLostUnknownSession)
 		return
 	}
+	// A stream outlives the per-request deadlines a Server.listen host
+	// arms (30 s): lift them for this connection, or the stream is cut
+	// mid-body every 30 s. See stream_deadline.go.
+	releaseStreamDeadlines(w, "live-sse")
 
 	// Phase 1 fan-out: this connection joins the session's live set.
 	// Start the relay (once) + register a private outbound channel
@@ -4971,7 +4968,10 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			// this connection down instead of heart-beating into a dead session
 			// (which kept the client's "connected" banner green while its next
 			// click 404'd). A nil `done` channel never selects, so this is safe
-			// for sessions that predate the field.
+			// for sessions that predate the field. Say why before closing, so
+			// the client recovers now instead of reconnecting into a 404.
+			writeSSESessionLostFrame(w, sseLostEvicted)
+			logSSESessionLost(r, sseLostEvicted)
 			return
 		case <-resyncCh:
 			// #9: a frame for THIS connection was dropped by a full buffer (its

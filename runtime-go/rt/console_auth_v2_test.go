@@ -133,6 +133,25 @@ func TestDeriveConsoleSigningKey_DeterministicForFixedInputs(t *testing.T) {
 	}
 }
 
+// Every process that holds the operator's SKY_CONSOLE_TOKEN must accept a
+// console cookie any of them issued: two upstream slots, the old and new
+// process of a redeploy. The key used to be salted by the build commit (or the
+// executable path), so a tab that moved to the other slot got 401 on its SSE.
+func TestDeriveConsoleSigningKey_SharedAcrossBuildsForOperatorToken(t *testing.T) {
+	t.Setenv("SKY_CONSOLE_TOKEN", "fixed-secret-32-bytes-of-test-data-x")
+	prev := buildCommit
+	defer func() { buildCommit = prev }()
+	buildCommit = "aaaaaaaaaaaa"
+	k1 := deriveConsoleSigningKey()
+	buildCommit = "bbbbbbbbbbbb"
+	k2 := deriveConsoleSigningKey()
+	buildCommit = "dev"
+	k3 := deriveConsoleSigningKey()
+	if string(k1) != string(k2) || string(k2) != string(k3) {
+		t.Fatalf("the console cookie key must depend on SKY_CONSOLE_TOKEN only, not on the build commit or executable")
+	}
+}
+
 func TestDeriveConsoleSigningKey_DifferentSecretsYieldDifferentKeys(t *testing.T) {
 	t.Setenv("SKY_CONSOLE_TOKEN", "secret-A-32-bytes-aaaaaaaaaaaaaaaaa")
 	kA := deriveConsoleSigningKey()

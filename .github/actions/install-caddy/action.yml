@@ -1,0 +1,30 @@
+name: Install Caddy
+description: >-
+  Install a pinned Caddy release (checksum-verified) and export CADDY=<path>.
+  scripts/console-live-e2e.sh drives the Sky Console behind a real Caddy
+  (HTTPS + HTTP/2, encode, reverse_proxy) because that is the production
+  topology the console's reconnect loop was reported from.
+inputs:
+  version:
+    description: Caddy release version (no leading v).
+    default: '2.11.4'
+runs:
+  using: composite
+  steps:
+    - name: Download, verify and install Caddy
+      shell: bash
+      env:
+        CADDY_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/caddy"
+        mkdir -p "$dir"
+        cd "$dir"
+        base="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}"
+        tarball="caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+        curl -fsSLO "$base/$tarball"
+        curl -fsSLO "$base/caddy_${CADDY_VERSION}_checksums.txt"
+        grep " ${tarball}\$" "caddy_${CADDY_VERSION}_checksums.txt" | sha512sum -c -
+        tar -xzf "$tarball" caddy
+        ./caddy version
+        echo "CADDY=$dir/caddy" >> "$GITHUB_ENV"

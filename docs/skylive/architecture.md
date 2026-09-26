@@ -245,6 +245,48 @@ one TCP connection, so SSE no longer consumes a scarce per-host slot and the
 6-connection limit stops applying — the robust answer for high-navigation or
 many-tab usage. A TLS front (Cloud Run, nginx, Caddy) gives you this for free.
 
+**A stream is not cut by the server's request deadlines.** `Server.listen`
+(a `Sky.Http.Server` app, and every `Sky.Spa` backend) builds its HTTP server
+with 30 s read and write deadlines (`SKY_HTTP_READ_TIMEOUT` /
+`SKY_HTTP_WRITE_TIMEOUT`). Every long-lived response lifts them for its own
+connection before it writes (`runtime-go/rt/stream_deadline.go`): the Sky.Live
+SSE (the embedded console mounted in such a host included), a
+`Sky.Http.Server.Stream` response (the `Sky.Spa` push topic rides on it), and a
+WebSocket. Before v0.25.20 nothing lifted them, so on a `Server.listen` host
+every stream was cut mid-body at 30 s: a proxy logged the upstream body as
+truncated (Caddy: `aborting with incomplete response … unexpected EOF`), the
+browser saw `net::ERR_HTTP2_PROTOCOL_ERROR` on a 200, and the page showed
+"Reconnecting" about every 33 s. A middleware that wraps the `ResponseWriter`
+must implement `Unwrap() http.ResponseWriter`, or the deadline cannot be
+reached through it (the runtime logs `stream.deadline_not_released` once).
+
+**A lost session gets one classified answer, and the page recovers.** The
+server can lose a page's session while the page stays open: a restart with the
+`memory` store (every redeploy), a request that lands on a replica that never
+saw the session, TTL expiry or eviction. An `EventSource` cannot read the
+status or body of a non-200 answer, so the client sends `sl=1` on the SSE URL
+and the server answers such a request `200 text/event-stream` with ONE event
+and a clean end of stream:
+
+```
+event: session-lost
+data: {"reason":"unknown-session"}
+```
+
+`reason` is `unknown-session`, `no-session-cookie`, `session-evicted` (sent on
+an open stream when the session is evicted), or `auth-required` (an in-process
+sub-app's gate — the console login — refused the stream). The client stops
+its live channel, shows "Session ended. Reloading…" (or "Signed out.
+Reloading…") and reloads once, which mints a fresh session or shows the login
+form. A third loss within 60 s means a reload does not restore a session (for
+example requests spread over replicas with no shared store and no sticky
+routing); the page then stops and says so instead of reloading in a loop. The
+server logs each case at info as `live.sse.session_lost` with the reason. A
+page loaded before this change (no `sl=1`) keeps the old `404` /
+`X-Sky-Status: session-lost` answer, which its client handles through its
+probe. Gates: `runtime-go/rt/live_sse_session_lost_test.go` and
+`scripts/console-live-e2e.sh`.
+
 ## Horizontal scale — many instances (Phase 2)
 
 Sky.Live scales to N app instances behind a load balancer with two rules,

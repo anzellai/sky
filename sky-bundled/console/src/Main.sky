@@ -27,6 +27,8 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
 import Sky.Core.Time as Time
 import Sky.Core.Encoding as Encoding
+import Sky.Core.Error as Error
+import Sky.Core.Secret as Secret
 import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.App as App
@@ -181,7 +183,7 @@ analyticsEventDecoder =
 -- ─── Store factory (v0.16.4 B3) ─────────────────────────────────
 -- Build the HTTP-backed Store the embedded console uses.  Each
 -- field closes over the parent URL + the locally-defined decoder
--- and delegates to the same Http.get + Decode.decodeString pipeline
+-- and delegates to the same apiGet + Decode.decodeString pipeline
 -- as before.  v0.16.4 hub mounts will plug in `hubStore` instead
 -- (B4) — same shape, SQLite-backed.
 httpStore : String -> Store
@@ -643,19 +645,52 @@ tabFetches model tab filter =
                 [ Cmd.perform (model.store.readAnalytics ()) GotAnalytics ]
 
 
+-- Every embedded-console read is a loopback GET to the host app's
+-- /_sky/console/api/* endpoints. Those endpoints admit the in-process
+-- console ONLY by the per-boot internal token the host mints and publishes
+-- as SKY_CONSOLE_INTERNAL_TOKEN (runtime-go/rt/console_internal_token.go),
+-- sent as a Bearer. It is read at each call, so a token minted after this
+-- session started is still used.
+--
+-- The reads used to be a bare Http.get. With console auth on
+-- (SKY_CONSOLE_AUTH=token or app, and always under ENV=production) every
+-- read answered 401 with the login page, the JSON decode of that page
+-- failed, the error landed in lastError (which nothing rendered), and the
+-- console showed its empty start model for ever. A non-200 answer is now a
+-- named error, and View renders lastError.
+apiGet : String -> String -> Decode.Decoder a -> Task Error a
+apiGet parent path decoder =
+    Http.defaultRequest (parent ++ path)
+        |> Http.withBearer (Secret.fromEnv "SKY_CONSOLE_INTERNAL_TOKEN")
+        |> Http.withFollowRedirects False
+        |> Http.withTimeout 5000
+        |> Http.request
+        |> Task.andThenResult (\resp -> decodeApiResponse path decoder resp)
+
+
+decodeApiResponse : String -> Decode.Decoder a -> Http.HttpResponse -> Result Error a
+decodeApiResponse path decoder resp =
+    if resp.status == 200 then
+        Decode.decodeString decoder resp.body
+
+    else
+        Err
+            (Error.unavailable
+                ("console API " ++ path ++ " answered HTTP "
+                    ++ String.fromInt resp.status))
+
+
 fetchOverview : String -> Task Error Overview
 fetchOverview parent =
-    Http.get (parent ++ "/_sky/console/api/overview")
-        |> Task.andThenResult
-               (\resp -> Decode.decodeString overviewDecoder resp.body)
+    apiGet parent "/_sky/console/api/overview" overviewDecoder
 
 
 fetchLogs : String -> LogFilter -> Task Error (List LogEntry)
 fetchLogs parent filter =
-    Http.get
-        (parent ++ "/_sky/console/api/logs?limit=200" ++ buildLogQuery filter)
-        |> Task.andThenResult
-               (\resp -> Decode.decodeString logsDecoder resp.body)
+    apiGet
+        parent
+        ("/_sky/console/api/logs?limit=200" ++ buildLogQuery filter)
+        logsDecoder
 
 
 -- Build the level= query string from the filter. Server-side filter
@@ -697,30 +732,22 @@ buildLogQuery f =
 
 fetchMetrics : String -> Task Error (List MetricRow)
 fetchMetrics parent =
-    Http.get (parent ++ "/_sky/console/api/metrics-summary")
-        |> Task.andThenResult
-               (\resp -> Decode.decodeString metricsDecoder resp.body)
+    apiGet parent "/_sky/console/api/metrics-summary" metricsDecoder
 
 
 fetchTraces : String -> Task Error (List TraceRow)
 fetchTraces parent =
-    Http.get (parent ++ "/_sky/console/api/traces?limit=100")
-        |> Task.andThenResult
-               (\resp -> Decode.decodeString tracesDecoder resp.body)
+    apiGet parent "/_sky/console/api/traces?limit=100" tracesDecoder
 
 
 fetchErrors : String -> Task Error (List ErrorRow)
 fetchErrors parent =
-    Http.get (parent ++ "/_sky/console/api/errors")
-        |> Task.andThenResult
-               (\resp -> Decode.decodeString errorsDecoder resp.body)
+    apiGet parent "/_sky/console/api/errors" errorsDecoder
 
 
 fetchAnalytics : String -> Task Error Analytics
 fetchAnalytics parent =
-    Http.get (parent ++ "/_sky/console/api/analytics")
-        |> Task.andThenResult
-               (\resp -> Decode.decodeString analyticsDecoder resp.body)
+    apiGet parent "/_sky/console/api/analytics" analyticsDecoder
 
 
 subscriptions : Model -> Sub Msg

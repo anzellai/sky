@@ -353,6 +353,10 @@ func serveWebSocketUpgrade(w http.ResponseWriter, r *http.Request, cfg webSocket
 		acceptOpts.InsecureSkipVerify = true
 	}
 
+	// The hijacked connection keeps the deadlines net/http armed for the
+	// upgrade request (Server.listen: 30 s). Lift them first, or an idle
+	// socket is cut at 30 s. See stream_deadline.go.
+	releaseStreamDeadlines(w, "websocket")
 	conn, err := websocket.Accept(w, r, acceptOpts)
 	if err != nil {
 		// Accept already wrote a 4xx/5xx — nothing more to do.

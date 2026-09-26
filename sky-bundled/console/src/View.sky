@@ -105,6 +105,7 @@ view model =
         -- siblings collapse to content and the meta crashes into
         -- the title with no breathing room.
         [ header model
+        , errorBar model.lastError
         , tabStrip model.tab
         , globalFilterStrip model
         , content model
@@ -165,8 +166,32 @@ headerMeta o =
         -- session via LogFilterPickSession Msg.
                 "dev"
     in
-        "Sky " ++ o.skyVersion ++ " · " ++ mode ++ " · uptime "
-            ++ formatUptime o.uptimeSeconds
+        -- "—" is the decoder default: no overview has arrived yet. Do not
+        -- claim "dev" / "uptime 0s" for a process we have not heard from.
+        if o.skyVersion == "—" then
+            "waiting for telemetry"
+
+        else
+            "Sky " ++ o.skyVersion ++ " · " ++ mode ++ " · uptime "
+                ++ formatUptime o.uptimeSeconds
+
+
+-- A failed telemetry read is shown, never swallowed. Empty = no bar.
+errorBar : String -> Element Msg
+errorBar e =
+    if e == "" then
+        Ui.none
+
+    else
+        Ui.el
+            [ Ui.width Ui.fill
+            , Ui.paddingXY 20 8
+            , Background.color bgSurface
+            , Font.color err
+            , Font.size 12
+            , Font.family "ui-monospace, Menlo, monospace"
+            ]
+            (Ui.text ("Telemetry read failed: " ++ e))
 
 
 formatUptime : Int -> String

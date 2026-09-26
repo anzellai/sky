@@ -164,6 +164,14 @@ both legs share. `SKY_GO_BUILD_JOBS=<n>` sets `-p <n>` yourself (`auto` decides
 as above), and a `-p` already in `GOFLAGS` is kept. The decision is printed
 under the `--timings` table as `go build: -p …`.
 
+Build identity. The native binary is stamped (`go build -ldflags -X`) with the
+compiler's version, the project's commit (`git rev-parse --short=12 HEAD`, or
+`SKY_BUILD_COMMIT` when the build has no `.git`, e.g. in a Docker context,
+else `unknown`) and the build time in RFC 3339 UTC (`SKY_BUILD_EPOCH=<unix
+seconds>` fixes it for a reproducible build). The app reports them at
+`/_sky/buildinfo` and in the Sky Console header. An `-ldflags` already in
+`GOFLAGS` is kept, and then the stamp is not written.
+
 ### `sky spa-split <path> --out <dir> [--build | --target <t>]`
 
 The **explicit Sky.Spa auto-split** generator — the form of the split that

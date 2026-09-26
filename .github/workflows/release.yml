@@ -920,7 +920,8 @@ jobs:
     runs-on: ubuntu-latest
     # The nightly job budgets 25 min for the tier; the e2e scripts build their
     # fixtures on top. 45 keeps ~1.5x.
-    timeout-minutes: 45
+    # console-live-e2e adds ~8 min: 55.
+    timeout-minutes: 55
     env:
       GO_CACHE_BUDGET_MB: '6144'
     steps:
@@ -955,6 +956,9 @@ jobs:
         run: scripts/ui-forms-e2e.sh
       - name: Strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
         run: scripts/csp-e2e.sh
+      - uses: ./.github/actions/install-caddy
+      - name: Sky Console live data + reconnect e2e (direct + behind Caddy)
+        run: scripts/console-live-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
         uses: actions/upload-artifact@v4

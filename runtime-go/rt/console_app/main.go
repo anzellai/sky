@@ -206,6 +206,22 @@ func Sky_Core_Error_TypeInfo(p0 string, p1 string) Sky_Core_Error_TypeInfo_R {
 	return Sky_Core_Error_TypeInfo_R{Expected: p0, Actual: p1}
 }
 
+type Sky_Core_Http_HttpRequest_R struct {
+	Method          string                  `sky:"method,string"`
+	Url             string                  `sky:"url,string"`
+	Body            string                  `sky:"body,string"`
+	Headers         []rt.T2[string, string] `sky:"headers,[]rt.T2[string, string]"`
+	Timeout         int                     `sky:"timeout,int"`
+	FollowRedirects bool                    `sky:"followRedirects,bool"`
+	MaxRedirects    int                     `sky:"maxRedirects,int"`
+}
+
+func init() { rt.RegisterGobType(Sky_Core_Http_HttpRequest_R{}) }
+
+func Sky_Core_Http_HttpRequest(p0 string, p1 string, p2 string, p3 []rt.T2[string, string], p4 int, p5 bool, p6 int) Sky_Core_Http_HttpRequest_R {
+	return Sky_Core_Http_HttpRequest_R{Method: p0, Url: p1, Body: p2, Headers: p3, Timeout: p4, FollowRedirects: p5, MaxRedirects: p6}
+}
+
 type Sky_Core_Http_HttpResponse_R = rt.HttpResponse
 
 func init() { rt.RegisterGobType(Sky_Core_Http_HttpResponse_R{}) }
@@ -1544,7 +1560,7 @@ func Main_viewWrapped(v_0 State_Model_R) Std_Html_Html {
 }
 
 func View_view(v_0 State_Model_R) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_height(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_family("system-ui, -apple-system, sans-serif")}, []Std_Ui_Element{View_header(v_0), View_tabStrip(v_0.Tab), View_globalFilterStrip(v_0), View_content(v_0), View_urlSync(v_0)})
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_height(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_family("system-ui, -apple-system, sans-serif")}, []Std_Ui_Element{View_header(v_0), View_errorBar(v_0.LastError), View_tabStrip(v_0.Tab), View_globalFilterStrip(v_0), View_content(v_0), View_urlSync(v_0)})
 }
 
 func View_urlSync(v_0 State_Model_R) Std_Ui_Element {
@@ -4977,6 +4993,14 @@ func State_tabLabel(v_0 State_Tab) string {
 	}
 }
 
+func View_errorBar(v_0 string) Std_Ui_Element {
+	if v_0 == "" {
+		return Std_Ui_none()
+	} else {
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 8), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Font_color(View_err()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}, Std_Ui_text(("Telemetry read failed: " + v_0)))
+	}
+}
+
 func View_header(v_0 State_Model_R) Std_Ui_Element {
 	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 12), Std_Ui_spacing(20), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(struct {
 		Bottom int
@@ -5016,7 +5040,11 @@ func View_headerMeta(v_0 State_Overview_R) string {
 			}
 		}()
 		_ = mode_1
-		return ("Sky " + (v_0.SkyVersion + (" · " + (mode_1 + (" · uptime " + View_formatUptime(v_0.UptimeSeconds))))))
+		if v_0.SkyVersion == "—" {
+			return "waiting for telemetry"
+		} else {
+			return ("Sky " + (v_0.SkyVersion + (" · " + (mode_1 + (" · uptime " + View_formatUptime(v_0.UptimeSeconds))))))
+		}
 	}
 }
 
@@ -7489,11 +7517,7 @@ func Main_httpStore(v_0 string) State_Store_R {
 }
 
 func Main_fetchAnalytics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Analytics_R](rt.Task_andThenResult(any(func(_w0 any) any {
-		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, State_Analytics_R] {
-			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, State_Analytics_R](rt.JsonDec_decodeString(Main_analyticsDecoder(), any(v_1.Body)), func(_v any) State_Analytics_R { return rt.Coerce[State_Analytics_R](_v) })
-		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
-	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/analytics")))))))
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Analytics_R](Main_apiGet(v_0, "/_sky/console/api/analytics", Main_analyticsDecoder()))
 }
 
 var Main_analyticsDecoder__caf rt.LazyCaf[any]
@@ -7538,12 +7562,64 @@ func Main_currencyTotalDecoder() any {
 	})
 }
 
-func Main_fetchErrors(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Task_andThenResult(any(func(_w0 any) any {
-		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_ErrorRow_R] {
-			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_ErrorRow_R](rt.JsonDec_decodeString(Main_errorsDecoder(), any(v_1.Body)), func(_v any) []State_ErrorRow_R { return rt.AsListT[State_ErrorRow_R](_v) })
+func Main_apiGet(v_0 string, v_1 string, v_2 any) rt.SkyTask[Sky_Core_Error_Error, any] {
+	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, any](rt.Task_andThenResult(any(func(_w0 any) any {
+		return any(func(v_3 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, any] {
+			return Main_decodeApiResponse(v_1, v_2, v_3)
 		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
-	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/errors")))))))
+	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_request(any(Sky_Core_Http_withTimeout(5000, Sky_Core_Http_withFollowRedirects(false, Sky_Core_Http_withBearer(rt.Secret_fromEnv(any("SKY_CONSOLE_INTERNAL_TOKEN")), Sky_Core_Http_defaultRequest((v_0+v_1)))))))))))
+}
+
+func Sky_Core_Http_defaultRequest(v_0 string) Sky_Core_Http_HttpRequest_R {
+	return Sky_Core_Http_HttpRequest_R{Method: "GET", Url: v_0, Body: "", Headers: /* primitive join */ rt.AsListT[rt.T2[string, string]]([]any{}), Timeout: 30000, FollowRedirects: true, MaxRedirects: 10}
+}
+
+func Sky_Core_Http_withBearer(v_0 any, v_1 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {
+	return Sky_Core_Http_withHeader("Authorization", ("Bearer " + /* FFI return */ rt.AsString(rt.Secret_reveal(v_0))), v_1)
+}
+
+func Sky_Core_Http_withHeader(v_0 string, v_1 string, v_2 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {
+	{
+		_u := v_2
+		_u.Headers = /* FFI return */ rt.AsListT[rt.T2[string, string]](rt.List_cons(any(rt.T2[string, string]{V0: v_0, V1: v_1}), any(v_2.Headers)))
+		return _u
+	}
+}
+
+func Sky_Core_Http_withFollowRedirects(v_0 bool, v_1 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {
+	{
+		_u := v_1
+		_u.FollowRedirects = v_0
+		return _u
+	}
+}
+
+func Sky_Core_Http_withTimeout(v_0 int, v_1 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {
+	{
+		_u := v_1
+		_u.Timeout = v_0
+		return _u
+	}
+}
+
+func Main_decodeApiResponse(v_0 string, v_1 any, v_2 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, any] {
+	if v_2.Status == 200 {
+		return /* FFI return */ rt.ResultCoerce[Sky_Core_Error_Error, any](rt.JsonDec_decodeString(v_1, any(v_2.Body)))
+	} else {
+		return rt.Err[Sky_Core_Error_Error, any](Sky_Core_Error_unavailable(("console API " + (v_0 + (" answered HTTP " + /* FFI return */ rt.AsString(rt.String_fromInt(any(v_2.Status))))))))
+	}
+}
+
+func Sky_Core_Error_unavailable(v_0 string) Sky_Core_Error_Error {
+	return Sky_Core_Error_Error_Error(Sky_Core_Error_ErrorKind_Unavailable, Sky_Core_Error_mkInfo(v_0))
+}
+
+func Sky_Core_Error_mkInfo(v_0 string) Sky_Core_Error_ErrorInfo_R {
+	return Sky_Core_Error_ErrorInfo_R{Message: v_0, Details: /* primitive join */ rt.MaybeCoerce[Sky_Core_Error_ErrorDetails](rt.Nothing[any]())}
+}
+
+func Main_fetchErrors(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](Main_apiGet(v_0, "/_sky/console/api/errors", Main_errorsDecoder()))
 }
 
 var Main_errorsDecoder__caf rt.LazyCaf[any]
@@ -7565,11 +7641,7 @@ func Main_errorRowDecoder() any {
 }
 
 func Main_fetchTraces(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Task_andThenResult(any(func(_w0 any) any {
-		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_TraceRow_R] {
-			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_TraceRow_R](rt.JsonDec_decodeString(Main_tracesDecoder(), any(v_1.Body)), func(_v any) []State_TraceRow_R { return rt.AsListT[State_TraceRow_R](_v) })
-		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
-	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/traces?limit=100")))))))
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](Main_apiGet(v_0, "/_sky/console/api/traces?limit=100", Main_tracesDecoder()))
 }
 
 var Main_tracesDecoder__caf rt.LazyCaf[any]
@@ -7589,11 +7661,7 @@ func Main_traceRowDecoder() any {
 }
 
 func Main_fetchMetrics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Task_andThenResult(any(func(_w0 any) any {
-		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_MetricRow_R] {
-			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_MetricRow_R](rt.JsonDec_decodeString(Main_metricsDecoder(), any(v_1.Body)), func(_v any) []State_MetricRow_R { return rt.AsListT[State_MetricRow_R](_v) })
-		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
-	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/metrics-summary")))))))
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](Main_apiGet(v_0, "/_sky/console/api/metrics-summary", Main_metricsDecoder()))
 }
 
 var Main_metricsDecoder__caf rt.LazyCaf[any]
@@ -7613,11 +7681,27 @@ func Main_metricRowDecoder() any {
 }
 
 func Main_fetchLogs(v_0 string, v_1 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Task_andThenResult(any(func(_w0 any) any {
-		return any(func(v_2 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, []State_LogEntry_R] {
-			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_LogEntry_R](rt.JsonDec_decodeString(Main_logsDecoder(), any(v_2.Body)), func(_v any) []State_LogEntry_R { return rt.AsListT[State_LogEntry_R](_v) })
-		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
-	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + ("/_sky/console/api/logs?limit=200" + Main_buildLogQuery(v_1)))))))))
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](Main_apiGet(v_0, ("/_sky/console/api/logs?limit=200" + Main_buildLogQuery(v_1)), Main_logsDecoder()))
+}
+
+var Main_logsDecoder__caf rt.LazyCaf[any]
+
+func Main_logsDecoder() any {
+	return Main_logsDecoder__caf.Get(func() any { return rt.JsonDec_list(Main_logEntryDecoder()) })
+}
+
+var Main_logEntryDecoder__caf rt.LazyCaf[any]
+
+func Main_logEntryDecoder() any {
+	return Main_logEntryDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("LatencyMS"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Status"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Route"), rt.JsonDec_string(), any(""), rt.JsonDecP_custom(Main_fieldFromFields("user_label"), rt.JsonDecP_custom(Main_fieldFromFields("session_id"), rt.JsonDecP_optional(any("ReqID"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Subapp"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Level"), rt.JsonDec_string(), any("info"), rt.JsonDecP_optional(any("TS"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(rt.CurryN(10, func(_ps0 []any) any {
+			return any(State_LogEntry( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsString(_ps0[3]) /* FFI return */, rt.AsString(_ps0[4]) /* FFI return */, rt.AsString(_ps0[5]) /* FFI return */, rt.AsString(_ps0[6]) /* FFI return */, rt.AsString(_ps0[7]) /* FFI return */, rt.AsFloat(_ps0[8]) /* FFI return */, rt.AsFloat(_ps0[9])))
+		})))))))))))))
+	})
+}
+
+func Main_fieldFromFields(v_0 string) any {
+	return rt.JsonDec_oneOf(any([]any{rt.JsonDec_at(any([]string{"Fields", v_0}), rt.JsonDec_string()), rt.JsonDec_succeed(any(""))}))
 }
 
 func Main_buildLogQuery(v_0 State_LogFilter_R) string {
@@ -7656,32 +7740,8 @@ func Main_buildLogQuery(v_0 State_LogFilter_R) string {
 	}
 }
 
-var Main_logsDecoder__caf rt.LazyCaf[any]
-
-func Main_logsDecoder() any {
-	return Main_logsDecoder__caf.Get(func() any { return rt.JsonDec_list(Main_logEntryDecoder()) })
-}
-
-var Main_logEntryDecoder__caf rt.LazyCaf[any]
-
-func Main_logEntryDecoder() any {
-	return Main_logEntryDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("LatencyMS"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Status"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("Route"), rt.JsonDec_string(), any(""), rt.JsonDecP_custom(Main_fieldFromFields("user_label"), rt.JsonDecP_custom(Main_fieldFromFields("session_id"), rt.JsonDecP_optional(any("ReqID"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Subapp"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("Level"), rt.JsonDec_string(), any("info"), rt.JsonDecP_optional(any("TS"), rt.JsonDec_string(), any("—"), rt.JsonDec_succeed(any(rt.CurryN(10, func(_ps0 []any) any {
-			return any(State_LogEntry( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsString(_ps0[3]) /* FFI return */, rt.AsString(_ps0[4]) /* FFI return */, rt.AsString(_ps0[5]) /* FFI return */, rt.AsString(_ps0[6]) /* FFI return */, rt.AsString(_ps0[7]) /* FFI return */, rt.AsFloat(_ps0[8]) /* FFI return */, rt.AsFloat(_ps0[9])))
-		})))))))))))))
-	})
-}
-
-func Main_fieldFromFields(v_0 string) any {
-	return rt.JsonDec_oneOf(any([]any{rt.JsonDec_at(any([]string{"Fields", v_0}), rt.JsonDec_string()), rt.JsonDec_succeed(any(""))}))
-}
-
 func Main_fetchOverview(v_0 string) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
-	return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.Task_andThenResult(any(func(_w0 any) any {
-		return any(func(v_1 Sky_Core_Http_HttpResponse_R) rt.SkyResult[Sky_Core_Error_Error, State_Overview_R] {
-			return /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, State_Overview_R](rt.JsonDec_decodeString(Main_overviewDecoder(), any(v_1.Body)), func(_v any) State_Overview_R { return rt.Coerce[State_Overview_R](_v) })
-		}( /* FFI return */ rt.Coerce[Sky_Core_Http_HttpResponse_R](_w0)))
-	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, Sky_Core_Http_HttpResponse_R](rt.Http_get(any((v_0 + "/_sky/console/api/overview")))))))
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](Main_apiGet(v_0, "/_sky/console/api/overview", Main_overviewDecoder()))
 }
 
 var Main_overviewDecoder__caf rt.LazyCaf[any]
@@ -8739,10 +8799,6 @@ func Sky_Core_Error_invalidInput(v_0 string) Sky_Core_Error_Error {
 	return Sky_Core_Error_Error_Error(Sky_Core_Error_ErrorKind_InvalidInput, Sky_Core_Error_mkInfo(v_0))
 }
 
-func Sky_Core_Error_mkInfo(v_0 string) Sky_Core_Error_ErrorInfo_R {
-	return Sky_Core_Error_ErrorInfo_R{Message: v_0, Details: /* primitive join */ rt.MaybeCoerce[Sky_Core_Error_ErrorDetails](rt.Nothing[any]())}
-}
-
 func Std_App_requestFromSeed_(v_0 struct {
 	Cookies map[string]string
 	Headers map[string]string
@@ -9117,5 +9173,5 @@ func Sky_Config_logFormatName(v_0 Sky_Config_LogFormat) string {
 }
 
 func init() {
-	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Overview_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Provider_Message_R{}, Std_Ai_Provider_Request_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
+	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Core_Http_HttpRequest_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Overview_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Provider_Message_R{}, Std_Ai_Provider_Request_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
 }

@@ -261,6 +261,10 @@ func (w *spaNotFoundInterceptWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Unwrap exposes the wrapped writer to http.ResponseController (see
+// stream_deadline.go).
+func (w *spaNotFoundInterceptWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // spaStaticFallbackHandler serves static files from `fileHandler`, falling back
 // to the Sky `notFound` handler (which SSRs the app's NotFound page) ONLY on a
 // genuine file-server 404. A request that maps to a real file is served as the

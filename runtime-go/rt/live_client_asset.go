@@ -1170,11 +1170,7 @@ function __skyPostEventNow(body) {
     var skyStatus = r.headers.get("X-Sky-Status");
     if (skyStatus === "session-lost") {
       __skyOnPostSuccess();            // server reachable → clear backoff/banner
-      if (!__skyProbedReload) {
-        __skyProbedReload = true;
-        if (window.console && console.warn) console.warn("[sky.live] session lost — reloading to recover");
-        window.location.reload();
-      }
+      __skyRecoverLostSession("unknown-session");
       return;
     }
     if (skyStatus === "desync") {
@@ -2080,7 +2076,8 @@ function __skyInjectStatusBanner() {
   style.textContent = "" +
     "#__sky-status.sky-status--connected{display:none}" +
     "#__sky-status.sky-status--reconnecting{background:#b45309}" +
-    "#__sky-status.sky-status--offline{background:#b91c1c}";
+    "#__sky-status.sky-status--offline{background:#b91c1c}" +
+    "#__sky-status.sky-status--lost{background:#b91c1c}";
   document.head.appendChild(style);
   var msgEl = document.createElement("span");
   msgEl.className = "sky-status__msg";
@@ -2139,8 +2136,19 @@ function __skyOpenSSE() {
   // (re)open so a bfcache restore sends the restored page's path.
   var withPath = __skySsePathNext;
   __skySsePathNext = false;
-  __skySSE = new EventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId +
+  // sl=1: this client handles the server's "session-lost" event, so the
+  // server may answer a lost session with that event instead of a 404 an
+  // EventSource cannot read (live_sse_session_lost.go).
+  __skySSE = new EventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId + "&sl=1" +
       (withPath ? "&path=" + encodeURIComponent(location.pathname) : ""));
+  // The server has no session for this page (restart with a memory store,
+  // another replica, expiry) or its gate refused the stream. Reconnecting
+  // cannot help: recover by reloading, once, with an honest banner.
+  __skySSE.addEventListener("session-lost", function(e) {
+    var d = null;
+    try { d = JSON.parse(e.data); } catch (_) {}
+    __skyRecoverLostSession(d && d.reason ? d.reason : "session-lost");
+  });
   __skySSE.addEventListener("hello", function(e) {
     // Handshake received — we know we hit a real Sky.Live v2 server,
     // not a proxy that intercepted with a generic 200. Anything
@@ -2172,6 +2180,8 @@ function __skyOpenSSE() {
       clearTimeout(__skyRetryTimer);
       __skyRetryTimer = null;
     }
+    // The session works: a later loss gets a fresh reload budget.
+    try { sessionStorage.removeItem(__skyLostKey); } catch (_) {}
     if (__skyEventQueue.length > 0) __skyDrainQueue();
   });
   __skySSE.addEventListener("heartbeat", function(e) {
@@ -2407,15 +2417,54 @@ function __skyProbeSessionLost() {
       // our probe Msg name doesn't exist; that's expected and
       // doesn't warrant a reload).
       if (body.indexOf("session not found") < 0) return;
-      __skyProbedReload = true;
-      if (window.console && console.warn) {
-        console.warn("[sky.live] server lost our session — reloading page to recover");
-      }
-      window.location.reload();
+      __skyRecoverLostSession("unknown-session");
     });
   }).catch(function() {
     // Network error / server down. Keep retrying via normal path.
   });
+}
+
+// __skyRecoverLostSession — the ONE recovery path for a page whose server
+// session is gone (the SSE "session-lost" event, a POST answered
+// X-Sky-Status: session-lost, the probe above). Reconnecting cannot bring a
+// lost session back, so the page stops its live channel and reloads, which
+// mints a fresh session (or, for "auth-required", shows the login form).
+//
+// Reload-loop guard: the reload times of this page's base path are kept in
+// sessionStorage. A third loss inside 60 s means the reload does not restore a
+// session (for example requests spread over replicas that share no session
+// store). The page then stops and says so, instead of reloading for ever. A
+// working session (the SSE hello) clears the record.
+var __skyLostKey = "__sky_lost_reloads:" + (__skyBase || "/");
+function __skyRecoverLostSession(reason) {
+  if (__skyProbedReload) return;
+  __skyProbedReload = true;
+  __skyForcedClose = true;
+  try { if (__skySSE) __skySSE.close(); } catch (_) {}
+  __skySSE = null;
+  if (__skySseReopenTimer !== null) { clearTimeout(__skySseReopenTimer); __skySseReopenTimer = null; }
+  if (__skyWatchdogTimer !== null) { clearInterval(__skyWatchdogTimer); __skyWatchdogTimer = null; }
+  var now = Date.now();
+  var recent = [];
+  try {
+    recent = JSON.parse(sessionStorage.getItem(__skyLostKey) || "[]").filter(function(t) {
+      return typeof t === "number" && now - t < 60000;
+    });
+  } catch (_) { recent = []; }
+  if (recent.length >= 2) {
+    if (window.console && console.warn) {
+      console.warn("[sky.live] session lost (" + reason + ") again after reloading; not reloading again");
+    }
+    __skySetStatus("lost", "The server no longer knows this page's session, and reloading did not restore it. Reload the page to try again.");
+    return;
+  }
+  recent.push(now);
+  try { sessionStorage.setItem(__skyLostKey, JSON.stringify(recent)); } catch (_) {}
+  if (window.console && console.warn) {
+    console.warn("[sky.live] session lost (" + reason + "); reloading the page to start a new session");
+  }
+  __skySetStatus("lost", reason === "auth-required" ? "Signed out. Reloading…" : "Session ended. Reloading…");
+  window.location.reload();
 }
 
 // __skyWatchdog — runs every 5s. Two wedge detectors layered:
