@@ -5049,6 +5049,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
@@ -14703,10 +14708,10 @@
       "db_drivers": [],
       "gate": "apps-bundled",
       "id": "apps:bundled",
-      "modules_imported": 24,
+      "modules_imported": 25,
       "path": "sky-bundled",
-      "refs_generous": 129,
-      "refs_qualified": 123,
+      "refs_generous": 136,
+      "refs_qualified": 130,
       "role": "Layer2",
       "sky_files": 13,
       "sky_toml_sections": []

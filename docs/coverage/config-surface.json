@@ -48,7 +48,7 @@
   ],
   "pre_binary": {
     "bin": [
-      "rust/crates/project/src/build.rs:1650 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1759 (sky_toml_project_key)"
     ],
     "database.driver": [
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
@@ -93,7 +93,7 @@
       "rust/crates/sky/src/main.rs:7095 (sky_toml_project_key)"
     ],
     "root": [
-      "rust/crates/project/src/build.rs:1656 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:1765 (sky_toml_project_key)"
     ],
     "version": [
       "rust/crates/sky/src/main.rs:6982 (sky_toml_project_key)"
@@ -108,7 +108,6 @@
     "SKY_CONSOLE_HUB_QUIET",
     "SKY_CONSOLE_HUB_RETENTION_HOURS",
     "SKY_CONSOLE_HUB_TOKEN",
-    "SKY_CONSOLE_INTERNAL_TOKEN",
     "SKY_DB_CONN_MAX_IDLE_TIME",
     "SKY_DB_CONN_MAX_LIFETIME",
     "SKY_DB_ISOLATION",
@@ -247,10 +246,10 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 120,
+    "documented_names": 125,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 16,
-    "read_without_doc": 26,
+    "read_without_doc": 25,
     "runtime_read_literal_sky_names": 45,
     "runtime_read_suffixes": 46,
     "seeded_suffixes": 20,
