@@ -622,6 +622,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "put",
             "delete",
             "api",
+            "rpc",
             "static",
             "staticNotFound",
             "text",

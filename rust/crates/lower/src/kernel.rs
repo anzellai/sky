@@ -424,6 +424,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Server", "csrfIssue", "rt.Server_csrfIssue"),
     ("Server", "csrfVerify", "rt.Server_csrfVerify"),
     ("Server", "api", "rt.Server_api"),
+    ("Server", "rpc", "rt.Server_rpc"),
     ("List", "isEmpty", "rt.List_isEmpty"),
     ("Io", "writeString", "rt.Io_writeString"),
     ("Http", "get", "rt.Http_get"),

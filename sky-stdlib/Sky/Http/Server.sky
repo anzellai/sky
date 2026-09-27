@@ -21,6 +21,7 @@ module Sky.Http.Server exposing
     , delete
     , any
     , api
+    , rpc
     , listen
     , setConsoleAuth
     , text
@@ -139,9 +140,27 @@ any =
 -- | `api spec handler` — register an API route that bypasses
 -- browser-form CSRF protection.  `spec` is `"METHOD /path"`
 -- (e.g. `"POST /v1/foo"`); an omitted method matches any verb.
+-- The exemption covers that method only: `api "GET /x"` does not
+-- exempt `POST /x`.  Use it for clients that authenticate with a
+-- Bearer token or an HMAC signature, never with the browser's
+-- session cookie (use `rpc` for that).
 api : String -> (Request -> Task Error Response) -> Route
 api =
     Ffi.kernel "Server_api"
+
+
+-- | `rpc spec handler` — register a browser RPC route that
+-- authenticates with the session COOKIE.  `spec` is
+-- `"METHOD /path"`; an omitted method means POST.  The route needs no
+-- CSRF token.  Instead, before the handler runs, the request must use
+-- the route's method, send `Content-Type: application/json`, and come
+-- from the app's own origin (`Sec-Fetch-Site: same-origin`, or an
+-- `Origin` equal to `SKY_PUBLIC_URL`, else to the request's scheme and
+-- Host).  Anything else gets 403 (405 for a wrong method).  The Sky.Spa
+-- auto-split mounts every `/_rpc/<Msg>` endpoint with it.
+rpc : String -> (Request -> Task Error Response) -> Route
+rpc =
+    Ffi.kernel "Server_rpc"
 
 
 -- | `listen port routes` — bind the server.  The returned Task

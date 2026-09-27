@@ -81,7 +81,8 @@ fn build(report: &WireReport, app_name: &str, version: &str, include_rpc: bool) 
         // A declared HTTP route is outside the framework CSRF contract; its auth
         // (if any) lives in the handler and is not statically recoverable, so we
         // assert no security scheme rather than guess one. `[]` = we make no auth
-        // claim (distinct from the /_rpc operations, which we KNOW use CSRF).
+        // claim (distinct from the /_rpc operations, which we KNOW use the
+        // `sky_sid` session cookie behind the Server.rpc same-origin guard).
         let _ = csrf_exempt;
         op.insert("security".into(), json!([]));
         path_entry(&mut paths, &e.path).insert(method, Value::Object(op));
@@ -118,10 +119,10 @@ fn build(report: &WireReport, app_name: &str, version: &str, include_rpc: bool) 
                         "description": "The Model fields the branch writes.",
                         "content": { "application/json": { "schema": response_schema(e, &report.model_fields) } },
                     },
-                    "4XX": { "description": "Rejected — CSRF failure, a guard/auth denial, or a bad request." },
+                    "4XX": { "description": "Rejected — a cross-origin or non-JSON request (403, the Server.rpc origin guard), a wrong method (405), a guard/auth denial, or a bad request." },
                 }),
             );
-            op.insert("security".into(), json!([{ "csrfToken": [] }]));
+            op.insert("security".into(), json!([{ "sessionCookie": [] }]));
             path_entry(&mut paths, &path).insert("post".into(), Value::Object(op));
         }
     }
@@ -149,11 +150,11 @@ fn build(report: &WireReport, app_name: &str, version: &str, include_rpc: bool) 
         "paths": Value::Object(paths),
         "components": {
             "securitySchemes": {
-                "csrfToken": {
+                "sessionCookie": {
                     "type": "apiKey",
-                    "in": "header",
-                    "name": "X-Sky-Csrf",
-                    "description": "Double-submit CSRF token required on session-scoped endpoints.",
+                    "in": "cookie",
+                    "name": "sky_sid",
+                    "description": "The signed Sky.Spa session cookie (HttpOnly, SameSite=Lax, Secure over HTTPS). A /_rpc request needs no CSRF token: the Server.rpc guard admits only a same-origin request (Sec-Fetch-Site same-origin, or an Origin equal to SKY_PUBLIC_URL, else to the request's scheme and Host) with Content-Type application/json.",
                 }
             }
         },

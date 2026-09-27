@@ -1,0 +1,111 @@
+module Main exposing (main)
+
+-- `GET /_sky/sub` AUTHORISATION + `Server.rpc` origin guard, under
+-- `--target web:app`.
+--
+--   * `session : Maybe Session` is the signed identity projection. `LogIn uid`
+--     (a SERVER branch: it forces a File effect) establishes it, so its RPC
+--     answer carries the signed `sky_sid` cookie.
+--   * `subscriptions` names "public" for everyone and "user:<id>" only for the
+--     signed-in user. The backend streams a topic only when `subscriptions`,
+--     run on the model rebuilt from the VERIFIED cookie, names it: no cookie
+--     streams "public" only, and u1's cookie streams "user:u1" but never
+--     "user:u2".
+--   * `Post text` publishes to the poster's own topic.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+type alias Session =
+    { userId : String
+    }
+
+
+type alias Model =
+    { session : Maybe Session
+    , feed : List String
+    }
+
+
+type Msg
+    = LogIn String
+    | Post String
+    | GotPush String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { session = Nothing, feed = [] }, Cmd.none )
+
+
+persist : String -> Task Error String
+persist s =
+    File.writeFile "last.txt" s
+        |> Task.map (\_ -> "ok")
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        LogIn uid ->
+            let
+                _ =
+                    Task.run (persist ("login " ++ uid))
+            in
+            ( { model | session = Just { userId = uid } }, Cmd.none )
+
+        Post text ->
+            case model.session of
+                Just s ->
+                    let
+                        _ =
+                            Task.run (persist text)
+                    in
+                    ( model, Cmd.publish ("user:" ++ s.userId) text )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GotPush text ->
+            ( { model | feed = text :: model.feed }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column [] (List.map Ui.text model.feed)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    case model.session of
+        Just s ->
+            Sub.batch
+                [ Sub.subscribeTopic "public" GotPush
+                , Sub.subscribeTopic ("user:" ++ s.userId) GotPush
+                ]
+
+        Nothing ->
+            Sub.subscribeTopic "public" GotPush
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main : Task Error ()
+main =
+    App.run appDef

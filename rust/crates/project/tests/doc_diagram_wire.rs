@@ -53,7 +53,7 @@ fn spa_app_has_rpc_endpoint_rows_with_request_and_response() {
 
     let md = render_wire(&r, Format::Md);
     // The header row names the five columns: `wire` is now the API + call-paths
-    // artefact, so `Access` (CSRF/auth) and `Call-path` (ordered effect → store)
+    // artefact, so `Access` (same-origin/auth) and `Call-path` (ordered effect → store)
     // sit alongside the request/response shapes.
     assert!(
         md.contains(
@@ -63,12 +63,12 @@ fn spa_app_has_rpc_endpoint_rows_with_request_and_response() {
     );
     // At least one `/_rpc/` endpoint row is rendered.
     assert!(md.contains("| POST /_rpc/"), "{md}");
-    // The SaveNarrow row carries an Access cell (CSRF-scoped) and a Call-path cell
+    // The SaveNarrow row carries an Access cell (same-origin RPC) and a Call-path cell
     // naming the effect → store trace — the call-path content folded in from the
     // retired `callpath` kind.
     assert!(
-        md.contains("| POST /_rpc/SaveNarrow | CSRF |"),
-        "expected an Access=CSRF cell on the SaveNarrow row: {md}"
+        md.contains("| POST /_rpc/SaveNarrow | same-origin |"),
+        "expected an Access=same-origin cell on the SaveNarrow row: {md}"
     );
     assert!(
         md.contains("File → filesystem"),

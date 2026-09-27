@@ -1575,6 +1575,14 @@ fn recover_endpoints(db: &dyn SkyDb, check_ids: &[ModuleId]) -> (Vec<HttpEndpoin
                             let (m, p) = split_api_spec(&spec);
                             (m, p, EndpointKind::RawApi)
                         }
+                        // `Server.rpc` is a cookie-session route (same-origin
+                        // guard, not CSRF-exempt to third parties): an ordinary
+                        // session-scoped route. A method-less spec means POST.
+                        "rpc" => {
+                            let (m, p) = split_api_spec(&spec);
+                            let m = if m == "ANY" { "POST".to_string() } else { m };
+                            (m, p, EndpointKind::HttpRoute)
+                        }
                         _ => continue,
                     }
                 } else if module == "Std.App" {
@@ -1714,14 +1722,15 @@ fn wire_callpath(fams: &[String], store: Option<&str>) -> String {
     parts.join(" · ")
 }
 
-/// The access requirement for an RPC endpoint: the double-submit CSRF token is
-/// always required (it is inside the session contract), and a `🔒 auth` marker
+/// The access requirement for an RPC endpoint: every `/_rpc/<Msg>` is a
+/// `Server.rpc` route, so only a same-origin JSON request reaches it (no CSRF
+/// token: the origin guard replaces it), and a `🔒 auth` marker
 /// when the call-path verifies a `Std.Auth` session.
 fn wire_rpc_access(e: &WireEndpoint) -> String {
     if e.touches_auth() {
-        "CSRF + 🔒 auth".to_string()
+        "same-origin + 🔒 auth".to_string()
     } else {
-        "CSRF".to_string()
+        "same-origin".to_string()
     }
 }
 
@@ -6205,12 +6214,12 @@ mod tests {
         );
         assert!(
             out.contains(
-                "| POST /_rpc/SetRegion | CSRF | {basket, region} + {region} | {basket, region} | Db → PostgreSQL |"
+                "| POST /_rpc/SetRegion | same-origin | {basket, region} + {region} | {basket, region} | Db → PostgreSQL |"
             ),
             "{out}"
         );
         assert!(
-            out.contains("| POST /_rpc/SaveAll | CSRF | whole model | whole model | — |"),
+            out.contains("| POST /_rpc/SaveAll | same-origin | whole model | whole model | — |"),
             "{out}"
         );
     }

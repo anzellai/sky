@@ -1662,6 +1662,23 @@ fn wires_server_to_client_push_when_the_app_uses_publish_and_subscribe_topic() {
             && back.contains("Ffi.kernel \"Spa_streamTopic\""),
         "backend must mount the SSE push endpoint:\n{back}"
     );
+    // --- The RPC is a cookie-session route with the origin guard, not an
+    // API route (Server.api is CSRF-exempt with no other check). ---
+    assert!(
+        back.contains("Server.rpc \"POST /_rpc/Increment\" incrementHandler")
+            && !back.contains("Server.api \"POST /_rpc/"),
+        "every /_rpc/<Msg> must be a Server.rpc route:\n{back}"
+    );
+    // --- `/_sky/sub` authorises the topic against the app's own
+    // `subscriptions` (a hand-authored entry: the top-level name). ---
+    assert!(
+        back.contains("Ffi.kernel \"Spa_subAllowsTopic\"")
+            && back
+                .contains("if spaSubAllowsTopic_ (subscriptions (spaSubModel_ req)) topic_ then")
+            && back.contains("spaSubModel_ req_ =")
+            && back.contains("Server.withStatus 403"),
+        "the SSE endpoint must stream only topics the app's subscriptions name:\n{back}"
+    );
 
     // --- Frontend keeps the subscription verbatim; no server effect leaks. ---
     assert!(
@@ -4513,7 +4530,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     );
     // the framework sign-out endpoint exists.
     assert!(
-        backend.contains(r#"Server.api "POST /_rpc/__spaSignOut" spaSignOutHandler"#),
+        backend.contains(r#"Server.rpc "POST /_rpc/__spaSignOut" spaSignOutHandler"#),
         "the sign-out endpoint must be registered:\n{backend}"
     );
     // the session codec is DERIVED (reused from the wire resolver), not hand-rolled.
@@ -6269,4 +6286,249 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
     );
 
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+fn sub_auth_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-sub-auth")
+}
+
+/// One curl request with explicit headers. Returns (status, raw response
+/// headers, body). `max_time` bounds a streaming response (SSE): curl then
+/// exits on its timer with the status it already received.
+fn curl_req(
+    port: u16,
+    method: &str,
+    path: &str,
+    headers: &[&str],
+    body: Option<&str>,
+    max_time: &str,
+) -> (u32, String, String) {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "-D".into(),
+        "-".into(),
+        "--max-time".into(),
+        max_time.into(),
+        "-X".into(),
+        method.into(),
+    ];
+    for h in headers {
+        args.push("-H".into());
+        args.push((*h).to_string());
+    }
+    if let Some(b) = body {
+        args.push("--data-binary".into());
+        args.push(b.into());
+    }
+    args.push(url);
+    let out = Command::new("curl").args(&args).output().expect("run curl");
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    let (head, rest) = match s.find("\r\n\r\n") {
+        Some(i) => (s[..i].to_string(), s[i + 4..].to_string()),
+        None => (s.clone(), String::new()),
+    };
+    let status = head
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse::<u32>().ok())
+        .unwrap_or(0);
+    (status, head, rest)
+}
+
+/// SECURITY (v0.27 Phase 1B). Under `--target web:app`:
+///
+///   * every `/_rpc/<Msg>` and `/_rpc/__spaSignOut` is a `Server.rpc` route: a
+///     CORS-simple `text/plain` POST from a foreign Origin (sent by a browser
+///     without a preflight, with the victim's `sky_sid` attached) is refused
+///     with 403 BEFORE the handler runs, while a same-origin JSON POST works;
+///   * `GET /_sky/sub?topic=…` streams a topic only when the app's own
+///     `subscriptions`, run on the model rebuilt from the VERIFIED cookie,
+///     names it. No cookie: "public" only. u1's cookie: "user:u1", never
+///     "user:u2".
+///
+/// Emission is asserted without Go; the live probes are Go-gated.
+#[test]
+fn spa_rpc_origin_guard_and_sub_topic_authorisation() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&sub_auth_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-sub-auth fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let backend = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/src/Main.sky"))
+        .unwrap_or_else(|e| panic!("generated backend entry must exist ({e}):\n{log}"));
+    let frontend =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+            .expect("generated frontend entry must exist");
+
+    for route in [
+        "Server.rpc \"POST /_rpc/LogIn\" logInHandler",
+        "Server.rpc \"POST /_rpc/Post\" postHandler",
+        "Server.rpc \"POST /_rpc/__spaSignOut\" spaSignOutHandler",
+    ] {
+        assert!(backend.contains(route), "missing `{route}`:\n{backend}");
+    }
+    assert!(
+        !backend.contains("Server.api \"POST /_rpc/"),
+        "no /_rpc route may stay a CSRF-exempt Server.api route:\n{backend}"
+    );
+    // The synthesis carries `subscriptions` as `spaSubscriptions_`; the sub
+    // handler runs it on the verified session model.
+    assert!(
+        backend
+            .contains("if spaSubAllowsTopic_ (spaSubscriptions_ (spaSubModel_ req)) topic_ then"),
+        "the sub handler must authorise against spaSubscriptions_:\n{backend}"
+    );
+    assert!(
+        backend.contains("{ base | session = verifiedSession_ req_ base.session }"),
+        "the sub model must take the session from the verified cookie:\n{backend}"
+    );
+    assert!(
+        !frontend.contains("spaSubscriptions_"),
+        "spaSubscriptions_ is backend-only and must not reach the wasm client:\n{frontend}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "spa-sub-auth: --target web:app must build end-to-end:\n{log}"
+    );
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+
+    let port = 8983u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(&app_bin)
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .env(
+            "SKY_SPA_SESSION_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789",
+        )
+        .env_remove("SKY_PUBLIC_URL")
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-sub-auth backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-sub-auth backend never reported listening on :{port}");
+    }
+    let host = format!("Origin: http://127.0.0.1:{port}");
+
+    // (1) the live probe that found the defect: text/plain + foreign Origin.
+    let forged = curl_req(
+        port,
+        "POST",
+        "/_rpc/LogIn",
+        &["Content-Type: text/plain", "Origin: https://evil.example"],
+        Some(r#"{"uid":"u1"}"#),
+        "5",
+    );
+    let last_after_forge =
+        std::fs::read_to_string(backend_dir.join("last.txt")).unwrap_or_default();
+    // (2) foreign Origin with JSON: still refused.
+    let foreign_json = curl_req(
+        port,
+        "POST",
+        "/_rpc/LogIn",
+        &[
+            "Content-Type: application/json",
+            "Origin: https://evil.example",
+            "Sec-Fetch-Site: cross-site",
+        ],
+        Some(r#"{"uid":"u1"}"#),
+        "5",
+    );
+    // (3) same-origin JSON: works and signs the cookie.
+    let login = curl_req(
+        port,
+        "POST",
+        "/_rpc/LogIn",
+        &[
+            "Content-Type: application/json",
+            &host,
+            "Sec-Fetch-Site: same-origin",
+        ],
+        Some(r#"{"uid":"u1"}"#),
+        "5",
+    );
+    let cookie = login
+        .1
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("set-cookie: sky_sid="))
+        .map(|l| {
+            let v = l[l.find(':').unwrap() + 1..].trim();
+            v.split(';').next().unwrap().to_string()
+        });
+    let ck = format!("Cookie: {}", cookie.clone().unwrap_or_default());
+    // (4) the sub endpoint.
+    let pub_anon = curl_req(port, "GET", "/_sky/sub?topic=public", &[], None, "2");
+    let u1_anon = curl_req(port, "GET", "/_sky/sub?topic=user:u1", &[], None, "2");
+    let u1_cookie = curl_req(port, "GET", "/_sky/sub?topic=user:u1", &[&ck], None, "2");
+    let u2_cookie = curl_req(port, "GET", "/_sky/sub?topic=user:u2", &[&ck], None, "2");
+    let empty_topic = curl_req(port, "GET", "/_sky/sub", &[&ck], None, "2");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    assert_eq!(
+        forged.0, 403,
+        "text/plain + foreign Origin must be refused before the handler: {forged:?}"
+    );
+    assert_eq!(
+        last_after_forge, "",
+        "the refused RPC must not run the effect, last.txt was {last_after_forge:?}"
+    );
+    assert_eq!(foreign_json.0, 403, "foreign Origin JSON: {foreign_json:?}");
+    assert_eq!(login.0, 200, "same-origin JSON LogIn must work: {login:?}");
+    assert!(
+        cookie.is_some(),
+        "LogIn must sign a sky_sid cookie: {login:?}"
+    );
+    assert_eq!(
+        pub_anon.0, 200,
+        "\"public\" streams without a session: {pub_anon:?}"
+    );
+    assert!(
+        pub_anon
+            .1
+            .to_ascii_lowercase()
+            .contains("text/event-stream"),
+        "an authorised topic streams SSE: {pub_anon:?}"
+    );
+    assert_eq!(
+        u1_anon.0, 403,
+        "user:u1 without a session must be refused: {u1_anon:?}"
+    );
+    assert_eq!(
+        u1_cookie.0, 200,
+        "u1's cookie streams user:u1: {u1_cookie:?}"
+    );
+    assert_eq!(
+        u2_cookie.0, 403,
+        "u1's cookie must not stream user:u2: {u2_cookie:?}"
+    );
+    assert_eq!(
+        empty_topic.0, 403,
+        "an empty topic is refused: {empty_topic:?}"
+    );
 }

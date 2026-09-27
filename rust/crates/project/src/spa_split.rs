@@ -132,6 +132,53 @@ fn session_verify_name(field: &str) -> String {
     format!("verified{}_", cap_first(field))
 }
 
+/// A backend binding `<name> req_ = <model>` that rebuilds the visitor's
+/// SIGNED-IN model from the request alone, exactly as an RPC handler composes
+/// it: `init ()`, seeded by `withRequest` (`spaOnRequest_`) when the app has it,
+/// with every session field replaced by its value from the verified `sky_sid`
+/// cookie (never from a request body or query string). No valid cookie leaves
+/// `init`'s value there: signed out. Used by the console gate and the
+/// `GET /_sky/sub` topic authorisation, so the two cannot drift apart.
+fn verified_model_decl(
+    name: &str,
+    comment: &str,
+    has_on_request: bool,
+    session_proj: &[SessionProjField],
+) -> String {
+    let seeded = if has_on_request {
+        "\n        ( seeded, _ ) =\n            spaOnRequest_ req_ base\n"
+    } else {
+        ""
+    };
+    let from = if has_on_request { "seeded" } else { "base" };
+    let model_expr = if session_proj.is_empty() {
+        from.to_string()
+    } else {
+        let sets = session_proj
+            .iter()
+            .map(|p| {
+                format!(
+                    "{0} = {1} req_ base.{0}",
+                    p.name,
+                    session_verify_name(&p.name)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{{ {from} | {sets} }}")
+    };
+    format!(
+        "-- {comment}\n\
+         {name} req_ =\n\
+         \x20   let\n\
+         \x20       ( base, _ ) =\n\
+         \x20           init ()\n\
+         {seeded}\
+         \x20   in\n\
+         \x20   {model_expr}\n\n\n"
+    )
+}
+
 /// True when a model field's resolved type is nominally `Session` or
 /// `Maybe Session` — the identity projection the signed session carries. Mirrors
 /// [`field_ty_codec`]'s nominal-tail match; a structural record row (the solver
@@ -5649,6 +5696,25 @@ fn gen_backend(
     let has_synth_on_request = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaOnRequest_"));
+    // The app's `subscriptions` function, for the `GET /_sky/sub` authorisation.
+    // The App→Spa synthesis names it `spaSubscriptions_` (main.rs
+    // synthesize_spa_source) whatever the app wrote in the `App.app` record (a
+    // name, a sibling-module reference, an inline lambda). A hand-authored
+    // `Spa.app` entry is read by its conventional top-level name. Neither →
+    // `None`, and the sub endpoint fails closed.
+    let subs_fn: Option<&'static str> = if file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaSubscriptions_"))
+    {
+        Some("spaSubscriptions_")
+    } else if file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("subscriptions"))
+    {
+        Some("subscriptions")
+    } else {
+        None
+    };
     let has_synth_on_navigate = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaOnNavigate_"));
@@ -5895,12 +5961,56 @@ fn gen_backend(
              \x20   Ffi.kernel \"Spa_interpretPublish\"\n\n\n\
              spaStreamTopic : any -> String -> (StreamWriter -> Task Error ())\n\
              spaStreamTopic =\n\
-             \x20   Ffi.kernel \"Spa_streamTopic\"\n\n\n\
-             subHandler : Request -> Task Error Response\n\
-             subHandler req =\n\
-             \x20   Stream.stream \"text/event-stream\"\n\
-             \x20       (spaStreamTopic spaBroker (Maybe.withDefault \"\" (Server.queryParam \"topic\" req)))\n\n\n"
+             \x20   Ffi.kernel \"Spa_streamTopic\"\n\n\n"
         ));
+        // `GET /_sky/sub` AUTHORISATION (security). The topic comes from the
+        // query string, so without a check anyone could stream any topic —
+        // including a per-user one ("user:42"). FAIL CLOSED: the backend
+        // rebuilds the model THIS visitor's app would hold (`init ()`, the
+        // `withRequest` seed, and every session field from the VERIFIED
+        // `sky_sid` cookie — the same composition the RPC handlers and the
+        // console gate use), runs the app's OWN `subscriptions` on it, and
+        // streams the topic only when that Sub names it (Spa_subAllowsTopic,
+        // spa_push.go). Everything else answers 403. A subscription that
+        // depends on a NON-identity model field (a room the user navigated to)
+        // is computed from `init`'s value here, so such a topic is refused —
+        // the documented fail-closed trade-off (docs/skyspa/auto-split.md §16).
+        let refuse = "Task.succeed (Server.withStatus 403 (Server.text \"this topic is not in the app's subscriptions for this session\"))";
+        match subs_fn {
+            Some(subs) => {
+                handlers.push_str(&verified_model_decl(
+                    "spaSubModel_",
+                    "The signed-in model the /_sky/sub authorisation runs `subscriptions` on.",
+                    has_synth_on_request,
+                    session_proj,
+                ));
+                handlers.push_str(&format!(
+                    "spaSubAllowsTopic_ : any -> String -> Bool\n\
+                     spaSubAllowsTopic_ =\n\
+                     \x20   Ffi.kernel \"Spa_subAllowsTopic\"\n\n\n\
+                     subHandler : Request -> Task Error Response\n\
+                     subHandler req =\n\
+                     \x20   let\n\
+                     \x20       topic_ =\n\
+                     \x20           Maybe.withDefault \"\" (Server.queryParam \"topic\" req)\n\
+                     \x20   in\n\
+                     \x20   if spaSubAllowsTopic_ ({subs} (spaSubModel_ req)) topic_ then\n\
+                     \x20       Stream.stream \"text/event-stream\" (spaStreamTopic spaBroker topic_)\n\n\
+                     \x20   else\n\
+                     \x20       {refuse}\n\n\n"
+                ));
+            }
+            None => {
+                warnings.push(
+                    "the backend cannot find the app's `subscriptions` function (a top-level `subscriptions` in the entry module), so `GET /_sky/sub` refuses every topic (fail closed). Name the function `subscriptions` in the entry module, or use `Std.App`, to stream topics.".to_string(),
+                );
+                handlers.push_str(&format!(
+                    "subHandler : Request -> Task Error Response\n\
+                     subHandler _ =\n\
+                     \x20   {refuse}\n\n\n"
+                ));
+            }
+        }
     }
     // STATELESS SIGNED SESSION machinery — emitted once, only when the projection
     // is non-empty (an app with no server-trusted session is unchanged).
@@ -6189,7 +6299,7 @@ fn gen_backend(
              \x20           Task.succeed (badRequest (Error.toString e))\n\n\n"
         ));
         routes.push(format!(
-            "        , Server.api \"POST /_rpc/{name}\" {handler}"
+            "        , Server.rpc \"POST /_rpc/{name}\" {handler}"
         ));
     }
     // STATELESS SIGNED SESSION: the framework sign-out endpoint clears `sky_sid`.
@@ -6198,10 +6308,11 @@ fn gen_backend(
     // no extra route.
     if !session_proj.is_empty() {
         routes
-            .push("        , Server.api \"POST /_rpc/__spaSignOut\" spaSignOutHandler".to_string());
+            .push("        , Server.rpc \"POST /_rpc/__spaSignOut\" spaSignOutHandler".to_string());
     }
     if push_mode {
-        // The SSE push endpoint (topic from the query string).
+        // The SSE push endpoint (topic from the query string, authorised against
+        // the app's own `subscriptions` for the verified session — subHandler).
         routes.push("        , Server.api \"GET /_sky/sub\" subHandler".to_string());
     }
 
@@ -6570,44 +6681,16 @@ fn gen_backend(
     // by its value from the verified `sky_sid` cookie (never from the request
     // body). No valid cookie leaves `init`'s value there: signed out.
     if has_synth_console_auth {
-        let seeded = if has_synth_on_request {
-            "\n        ( seeded, _ ) =\n            spaOnRequest_ req_ base\n"
-        } else {
-            ""
-        };
-        let from = if has_synth_on_request {
-            "seeded"
-        } else {
-            "base"
-        };
-        let model_expr = if session_proj.is_empty() {
-            from.to_string()
-        } else {
-            let sets = session_proj
-                .iter()
-                .map(|p| {
-                    format!(
-                        "{0} = {1} req_ base.{0}",
-                        p.name,
-                        session_verify_name(&p.name)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{{ {from} | {sets} }}")
-        };
-        handlers.push_str(&format!(
-            "-- The signed-in model the app's console check sees (SKY_CONSOLE_AUTH=app).\n\
-             spaConsoleModel_ req_ =\n\
-             \x20   let\n\
-             \x20       ( base, _ ) =\n\
-             \x20           init ()\n\
-             {seeded}\
-             \x20   in\n\
-             \x20   {model_expr}\n\n\n\
-             spaConsoleGate_ req_ =\n\
-             \x20   spaConsoleAuth_ req_ (spaConsoleModel_ req_)\n\n\n"
+        handlers.push_str(&verified_model_decl(
+            "spaConsoleModel_",
+            "The signed-in model the app's console check sees (SKY_CONSOLE_AUTH=app).",
+            has_synth_on_request,
+            session_proj,
         ));
+        handlers.push_str(
+            "spaConsoleGate_ req_ =\n\
+             \x20   spaConsoleAuth_ req_ (spaConsoleModel_ req_)\n\n\n",
+        );
     }
     let mut startup: Vec<&str> = Vec::new();
     if has_synth_boot_setup && !static_only_backend {
@@ -6778,6 +6861,11 @@ fn gen_frontend(
             // backend mounts the console and registers it. A pure check (one
             // that only reads a cookie) is not tainted, so drop it by name.
             if n == "spaConsoleAuth_" {
+                continue;
+            }
+            // `spaSubscriptions_` exists only for the backend's `/_sky/sub`
+            // authorisation; the client keeps the config's own `subscriptions`.
+            if n == "spaSubscriptions_" {
                 continue;
             }
             // Skip types/codecs copied into Shared — they arrive via `import
@@ -8077,6 +8165,35 @@ mod fix7_tests {
         assert!(
             !without.contains("spaRpcError_"),
             "item 4: no handler means no spaRpcError_ reference:\n{without}"
+        );
+    }
+
+    // The console gate and the `/_sky/sub` authorisation both rebuild the
+    // visitor's model from the request alone. Every session field must come
+    // from the VERIFIED cookie helper, seeded from `init`'s value, never from
+    // anything the request body or query string carries.
+    #[test]
+    fn verified_model_takes_session_fields_from_the_cookie() {
+        let proj = vec![SessionProjField {
+            name: "session".into(),
+            codec: "c".into(),
+            surface: "Maybe Session".into(),
+        }];
+        let plain = verified_model_decl("spaSubModel_", "Doc.", false, &proj);
+        assert_eq!(
+            plain,
+            "-- Doc.\nspaSubModel_ req_ =\n    let\n        ( base, _ ) =\n            init ()\n    in\n    { base | session = verifiedSession_ req_ base.session }\n\n\n"
+        );
+        let seeded = verified_model_decl("spaSubModel_", "Doc.", true, &proj);
+        assert!(
+            seeded.contains("( seeded, _ ) =\n            spaOnRequest_ req_ base\n")
+                && seeded.contains("{ seeded | session = verifiedSession_ req_ base.session }"),
+            "withRequest seeds the model, the cookie still wins:\n{seeded}"
+        );
+        let anon = verified_model_decl("spaSubModel_", "Doc.", false, &[]);
+        assert!(
+            anon.ends_with("    in\n    base\n\n\n"),
+            "no session projection: init's model:\n{anon}"
         );
     }
 }
