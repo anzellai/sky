@@ -209,13 +209,17 @@ fn revocation_app_builds_and_evicts() {
     assert_eq!(setup.as_deref(), Some("200"), "GET /setup should succeed");
 
     // 1. GET / establishes a session (cookie jar); its init Cmd binds the
-    //    session to user "1".
-    let first = curl_status_jar(port, "/", &jar, true);
+    //    session to user "1". Binding moves the session to a NEW id (session-id
+    //    rotation, v0.27): only the page that bound may exchange the old cookie,
+    //    and it names itself by the tab id the server minted into the page's
+    //    boot config. Keep that id, as the browser client does.
+    let (first, page) = curl_body_jar(port, "/", &jar);
     assert_eq!(
         first.as_deref(),
         Some("200"),
         "first GET / should serve 200"
     );
+    let tab = page_tab(&page).expect("the page's boot config must carry its tab id");
     // Let the async bind persist onto the session.
     std::thread::sleep(std::time::Duration::from_millis(800));
 
@@ -227,9 +231,11 @@ fn revocation_app_builds_and_evicts() {
 
     // 3. The SAME session hits the app again. ONE request, capturing BOTH the
     //    status line and headers, so we observe the eviction directly (a second
-    //    request would legitimately re-mint a fresh session). The handleInitial
-    //    gate reads the shared table FRESH, sees Disabled, and evicts.
-    let (status, sky_status) = curl_status_and_header(port, "/", &jar, "x-sky-status");
+    //    request would legitimately re-mint a fresh session). It is the page's
+    //    own navigation (X-Sky-Tab: the tab that bound), so the old cookie is
+    //    exchanged for the rotated session. The handleInitial gate reads the
+    //    shared table FRESH, sees Disabled, and evicts.
+    let (status, sky_status) = curl_status_and_header(port, "/", &jar, "x-sky-status", Some(&tab));
 
     let _ = child.kill();
     let _ = child.wait();
@@ -275,27 +281,6 @@ fn curl_status(port: u16, path: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-// GET with a cookie jar; `save` writes new cookies (-c), always sends them (-b).
-fn curl_status_jar(port: u16, path: &str, jar: &std::path::Path, save: bool) -> Option<String> {
-    let url = format!("http://127.0.0.1:{port}{path}");
-    let mut args: Vec<String> = vec![
-        "-s".into(),
-        "-o".into(),
-        "/dev/null".into(),
-        "-w".into(),
-        "%{http_code}".into(),
-        "-b".into(),
-        jar.display().to_string(),
-    ];
-    if save {
-        args.push("-c".into());
-        args.push(jar.display().to_string());
-    }
-    args.push(url);
-    let out = Command::new("curl").args(&args).output().ok()?;
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
 // ONE request, sending the cookie jar (-b), returning both the HTTP status code
 // and a named response header — so the eviction is observed atomically (a
 // separate follow-up request would legitimately re-mint a fresh session).
@@ -304,23 +289,26 @@ fn curl_status_and_header(
     path: &str,
     jar: &std::path::Path,
     header: &str,
+    tab: Option<&str>,
 ) -> (Option<String>, Option<String>) {
     let url = format!("http://127.0.0.1:{port}{path}");
-    let out = match Command::new("curl")
-        .args([
-            "-s",
-            "-D",
-            "-",
-            "-o",
-            "/dev/null",
-            "-w",
-            "\nSTATUS:%{http_code}",
-            "-b",
-            &jar.display().to_string(),
-            &url,
-        ])
-        .output()
-    {
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "-D".into(),
+        "-".into(),
+        "-o".into(),
+        "/dev/null".into(),
+        "-w".into(),
+        "\nSTATUS:%{http_code}".into(),
+        "-b".into(),
+        jar.display().to_string(),
+    ];
+    if let Some(t) = tab {
+        args.push("-H".into());
+        args.push(format!("X-Sky-Tab: {t}"));
+    }
+    args.push(url);
+    let out = match Command::new("curl").args(&args).output() {
         Ok(o) => o,
         Err(_) => return (None, None),
     };
@@ -338,4 +326,42 @@ fn curl_status_and_header(
         }
     }
     (status, hdr)
+}
+
+// GET that saves and sends the cookie jar, returning the status and the body.
+fn curl_body_jar(port: u16, path: &str, jar: &std::path::Path) -> (Option<String>, String) {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let jar_s = jar.display().to_string();
+    let out = match Command::new("curl")
+        .args([
+            "-s",
+            "-w",
+            "\nSTATUS:%{http_code}",
+            "-b",
+            &jar_s,
+            "-c",
+            &jar_s,
+            &url,
+        ])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return (None, String::new()),
+    };
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    match text.rfind("\nSTATUS:") {
+        Some(i) => (
+            Some(text[i + "\nSTATUS:".len()..].trim().to_string()),
+            text[..i].to_string(),
+        ),
+        None => (None, text),
+    }
+}
+
+// The tab id the server minted into the page's boot config (`"tab":"<hex>"`).
+fn page_tab(page: &str) -> Option<String> {
+    let key = "\"tab\":\"";
+    let start = page.find(key)? + key.len();
+    let end = page[start..].find('"')?;
+    Some(page[start..start + end].to_string())
 }
