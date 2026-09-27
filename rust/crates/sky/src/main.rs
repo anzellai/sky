@@ -2132,8 +2132,8 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
             "sky build --target <spa>: warning: {n} `App.with…` builder step(s) were NOT carried \
              into the synthesised client entry: {list}.\n  \
              `withRoutes` + `withNotFound` + `withHead` + `withOnNavigate` + `withRequest` + \
-             `withGuard` + `withRpcError` cross the App→Spa synthesis (guard/request enforced \
-             server-side). The steps listed here (terminal / desktop input and window \
+             `withGuard` + `withRpcError` + `withConsoleAuth` cross the App→Spa synthesis \
+             (guard/request/console auth enforced server-side). The steps listed here (terminal / desktop input and window \
              knobs, per-target config, base config, durable-model hooks) do not apply to a \
              Sky.Spa client build; any other `App.with…` step fails the build.",
             n = fields.dropped_builders.len(),
