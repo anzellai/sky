@@ -395,7 +395,9 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
   `SKY_CONSOLE_TOKEN_SECRET` are back-compat aliases for it, not separate
   settings.)
 - Multi-replica → a **shared** session store (`redis`/`postgres`), sticky
-  sessions keyed on `sky_sid`, and cross-instance pub/sub (`store=redis` or
+  sessions (a proxy-issued affinity cookie; the session cookie is `sky_sid`,
+  `__Host-sky_sid` over HTTPS, and its value changes at sign-in), and
+  cross-instance pub/sub (`store=redis` or
   `SKY_LIVE_BROKER_URL`). `memory` and `sqlite` are single-instance only.
 - Content-Security-Policy: every page Sky serves (Sky.Live, the Sky Console,
   Sky.Spa) works under `script-src 'self' 'wasm-unsafe-eval'` with **no hashes

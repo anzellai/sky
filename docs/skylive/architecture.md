@@ -36,9 +36,11 @@ Technical reference for how Sky.Live dispatches events, renders, and diffs. For 
 
 ## Session lifecycle
 
-1. **Page load** — server renders `init ()`. The resulting model + view are cached under a session id taken **from the session cookie** (`sky_sid` for the host app; sub-apps mounted in-process use `sky_<name>_sid`). The cookie is set `HttpOnly; SameSite=Lax` (the CSRF cookie is separately `SameSite=Strict`). There is no query-param session path.
+1. **Page load** — server renders `init ()`. The resulting model + view are cached under a session id taken **from the session cookie** (`sky_sid` for the host app; sub-apps mounted in-process use `sky_<name>_sid`; when the cookie is Secure the name carries the `__Host-` prefix, so `__Host-sky_sid`, and both spellings are read). A presented id that is not 32 lowercase hex, or that was retired by a session-id rotation, is never adopted: the page gets a fresh id. The cookie is set `HttpOnly; SameSite=Lax` (the CSRF cookie is separately `SameSite=Strict`). There is no query-param session path.
 2. **SSE open** — client connects to `/_sky/sse`. The session comes from the cookie; no cookie is a `400`. Server locks the session and emits a `hello` event.
 3. **Event post** — client sends `POST /_sky/event`. The session is resolved from the **cookie only** — the body's `sessionId` is advisory and must match it, so a leaked session id cannot be used to drive someone else's session (see `docs/skylive/input-authority-protocol.md` §Request). Server decodes `msg`, locks the session, runs `update`, diffs, emits patch over SSE.
+
+**Session-id rotation.** When the session's bound user changes (`Live.bindSessionUser`, sliding-auth auto-bind, an account switch) the session is re-keyed to a fresh id (`runtime-go/rt/live_session_rotation.go`). The same session object stays attached to the signing-in tab's SSE connection; that tab gets the new cookie through a one-time ticket on its SSE stream (`POST /_sky/rotate`) or on its next event POST / SSE connect / sky-nav. Every other SSE connection of the session is closed. The old id is kept in the session store as an alias: for 60 s a request carrying only the old cookie is answered `X-Sky-Status: session-rotating` (the client retries), then `session-lost`. A body `sessionId` that is an alias of the cookie's session is accepted and answered with `X-Sky-Sid: <new id>`. The durable snapshot moves to the new id. See `docs/skylive/overview.md#session-ids-change-at-sign-in`.
 4. **Cmd dispatch** — if `update` returned a non-none `cmd`, server spawns a goroutine per command. Each goroutine holds the session lock only to apply the resulting `Msg`, not while the task runs — so long-running HTTP requests don't block other events.
 5. **TTL expiry** — sessions expire after `[live] ttl` seconds of inactivity. The store sweeps expired rows periodically.
 
@@ -128,7 +130,7 @@ a prev tree.
 
 ## Per-session fan-out — every tab of one session mirrors one shared view
 
-A session (`sky_sid` cookie) holds ONE server-side Model; multiple tabs of the
+A session (the `sky_sid` / `__Host-sky_sid` cookie) holds ONE server-side Model; multiple tabs of the
 same browser share the cookie, so they share that Model. As of v0.18 the tabs
 of a session **mirror one shared view**: they always show the same page AND the
 same state. Every committed frame — an action's patch, a server push, AND a
@@ -297,8 +299,12 @@ one about session ownership and one about broadcast fan-out.
 A session (`sky_sid`) holds ONE authoritative Model, mutated under ONE
 per-session mutex that serializes dispatches (serialized last-writer-wins,
 no lost update). That guarantee only holds while the session lives on ONE
-instance at a time. **The load balancer MUST route by session affinity —
-the `sky_sid` cookie is the affinity key.** This is the same model as
+instance at a time. **The load balancer MUST route by session affinity.** Prefer an affinity
+cookie the proxy issues itself (Caddy `lb_policy cookie`, nginx `sticky`):
+the session cookie's VALUE changes at sign-in (session-id rotation) and its
+NAME is `__Host-sky_sid` over HTTPS, so a proxy hashing `sky_sid` moves the
+session once at sign-in (safe with a shared store, which carries the alias
+of the old id to every replica), and must hash the `__Host-` name on HTTPS. This is the same model as
 Phoenix LiveView (a LiveView process lives on one node) or Rails
 ActionCable; it is the correct architecture for server-held session state,
 not a limitation to engineer around.
@@ -528,8 +534,9 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
   `<PREFIX>_ENV`, set to anything other than `dev` / `development` /
   `local`); the cookie's name carries the `__Host-` / `__Secure-` prefix; or
   it is sent `SameSite=None`. The last two are spec requirements, not policy.
-- **The runtime's own cookies.** The session cookie (`sky_sid`) is
-  `Path=/; HttpOnly; SameSite=Lax` (`writeSessionCookie` in
+- **The runtime's own cookies.** The session cookie is
+  `Path=/; HttpOnly; SameSite=Lax`, named `__Host-sky_sid` when it is
+  Secure and `sky_sid` otherwise (`writeSessionCookie` in
   `runtime-go/rt/live.go`); `SKY_LIVE_FRAME_ANCESTORS` /
   `<PREFIX>_LIVE_FRAME_ANCESTORS` switches it to `SameSite=None`, which
   forces `Secure`. The built-in CSRF cookie (`__sky_csrf`) is

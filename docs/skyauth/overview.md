@@ -443,7 +443,7 @@ The token slides on **interaction** — an event `POST` or a page `GET`, where t
 server writes response headers — **not on the SSE heartbeat.** An SSE stream's
 headers are written once, at connect, so the heartbeat that keeps the *server*
 session alive cannot re-issue the *cookie* mid-stream (the same limitation the
-`sky_sid` session cookie has). A tab that sits idle under a live SSE longer than
+Sky.Live session cookie has). A tab that sits idle under a live SSE longer than
 `windowSeconds` between interactions will let its auth token lapse. **Set
 `windowSeconds` comfortably above your expected SSE-idle gaps** (a few minutes of
 inactivity between clicks is typical; `900` = 15 min is a reasonable floor).
@@ -481,6 +481,12 @@ Three steps:
    this call; a session-based app must make it. A session that reaches the gate
    **unbound** under an enabled gate raises a **loud runtime warning** and
    `sky doctor` lint — it is never silently treated as allowed.
+   Binding a user (the first bind, and every change to a different user) also
+   moves the session to a **new session id**, so an id planted in the browser
+   before sign-in is dead afterwards (session fixation); see
+   [Session ids change at sign-in](../skylive/overview.md#session-ids-change-at-sign-in).
+   Sign out with `Live.endSession ()`: it ends the session, its durable snapshot
+   and its binding.
 3. **Revoke / disable** from an admin action. **Sky provides the mechanism; your
    app owns the "is the caller an admin?" authorization** — call `revokeUser` /
    `disableUser` only after your own admin check.

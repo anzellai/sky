@@ -13,6 +13,76 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.26.2 — unreleased
 
+### ⚠ Security
+
+- **Sky.Live session fixation: the session id did not change at sign-in.**
+  The page GET adopted any presented `sky_sid`, and `Live.bindSessionUser`
+  stamped the signed-in user onto that same id. Someone who planted an id in
+  a victim's browser (an id from their own visit, set through a sibling
+  subdomain, plain HTTP or XSS) then shared the victim's signed-in session.
+  Now every change of bound user (the first bind, a sliding-auth auto-bind,
+  an account switch) moves the session to a new random id. The same session
+  object is re-keyed, so the Model and the signing-in tab's live connection
+  stay. The old id never acts on the session again: for 60 s a request with
+  only the old cookie is answered `X-Sky-Status: session-rotating` (the
+  client retries, no reload), then `session-lost`, and a page load with it
+  gets a fresh id. The new id reaches only the tab that signed in: a
+  one-time ticket on its SSE stream, exchanged at the new CSRF-checked
+  `POST /_sky/rotate`, or the new cookie on that tab's next event POST, SSE
+  connect or sky-nav fetch. Every other SSE connection of the session is
+  closed, so a connection opened with the planted id before sign-in stops
+  receiving the signed-in view. The record of a retired id lives in the
+  session store (a `sky_session_aliases` table on sqlite / postgres, a
+  `sky:alias:` key on redis), so every replica refuses it. A presented id
+  that is not 32 lowercase hex (an id this runtime never minted) is never
+  adopted. (`runtime-go/rt/live_session_rotation.go`,
+  `live_store_rotation.go`, `live_session_rotation_test.go`.)
+- **Revocation did not delete the durable snapshot.** `Auth.revokeUser` /
+  `Auth.disableUser` evicted the session from the session store, but an
+  `App.withDurable` snapshot keyed by the same id survived. The next page
+  load with the old cookie restored the signed-in Model as an UNBOUND
+  session, which the revocation gate lets through with a warning. Eviction
+  now deletes the snapshot and retires the id before it returns, and a
+  queued snapshot write can no longer recreate it. A durable app with
+  `Live.withRevocation` also keeps each session's binding in the
+  revocation Db (`sky_session_bindings`), so a Model restored after a
+  restart is re-bound and gated: a user revoked while the process was down
+  does not get the signed-in Model back.
+
+### ⚠ Breaking changes
+
+- **The Sky.Live session cookie is `__Host-sky_sid` when it is Secure.**
+  Over HTTPS, behind a TLS proxy (`X-Forwarded-Proto: https`), in
+  cross-origin iframe mode, or with `ENV` set to a non-dev value, the cookie
+  is named `__Host-sky_sid` (sub-apps: `__Host-sky_<name>_sid`), which no
+  sibling subdomain and no plain-HTTP response can set. Over plain HTTP it
+  stays `sky_sid`. Both names are read, and a browser holding the old name
+  keeps its session and is moved to the new name on its next response.
+- **The session id changes at sign-in.** See Security above.
+
+### Migration
+
+- **Stop keying your own data by the session cookie.** Code such as
+  `Dict.get "sky_sid" req.cookies` now reads a value that changes every time
+  the signed-in user changes, and reads nothing over HTTPS (the name is
+  `__Host-sky_sid`). Use the stable per-session key instead: the new
+  `sessionKey` field of a raw Sky.Live `init` request seed, or
+  `Cmd.perform (Live.sessionKey ()) GotKey` from anywhere in the session
+  (`Live.sessionKey : () -> Task Error String`). It stays the same for the
+  whole life of the server-side session, across every rotation.
+- **A load balancer that hashes the `sky_sid` cookie for affinity** must also
+  hash `__Host-sky_sid` on HTTPS, and moves a session once at sign-in (safe
+  with the shared store that multi-replica already requires). A proxy-issued
+  affinity cookie (Caddy `lb_policy cookie`) avoids both.
+- **Sign-out / "start over":** use the new `Live.endSession : () -> Task
+  Error ()`. It deletes the session's server state, durable snapshot and
+  binding; its tabs reload into a fresh session. The documented
+  `Cookie.expire "sky_sid"` pattern never worked (the cookie is HttpOnly)
+  and is removed from the docs.
+- **`App.DurableWiring` has a new `discard` field** (`String -> Task Error
+  ()`, built by `App.withDurable` from the new `Durable.deleteSnapshot`). Code
+  that builds a `DurableWiring` record by hand must add it.
+
 ### Fixed
 
 - **The docs and the generated FFI catalogue said Go bindings return a Task.

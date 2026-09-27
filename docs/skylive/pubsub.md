@@ -406,8 +406,9 @@ Backend tiers:
 | 3 | Google Cloud Pub/Sub / NATS | deferred — GCP-native / high-throughput |
 
 **Multi-instance also requires sticky sessions** (load-balancer
-affinity on the `sky_sid` cookie): a Sky.Live session's Model is
-single-owner. See architecture.md §"Horizontal scale".
+affinity, best on a proxy-issued cookie: the session cookie is
+`__Host-sky_sid` over HTTPS and changes value at sign-in): a Sky.Live
+session's Model is single-owner. See architecture.md §"Horizontal scale".
 
 Apps that already use `Cmd.publish` / `Sub.subscribeTopic` need ZERO
 source changes when switching tiers.

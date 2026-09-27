@@ -155,9 +155,9 @@ state, a header to pick a locale. `App.withRequest` delivers it **portably**:
 App.app { init = init, update = update, view = view, subscriptions = subs }
     |> App.withRequest
         (\req model ->
-            case Dict.get "sky_sid" req.cookies of
-                Just sid -> ( { model | session = Just sid }, Cmd.none )
-                Nothing  -> ( model, Cmd.none )
+            case Dict.get "auth" req.cookies of
+                Just token -> ( { model | authToken = Just token }, Cmd.none )
+                Nothing    -> ( model, Cmd.none )
         )
     |> App.withNotFound NotFound
 ```
@@ -167,6 +167,12 @@ App.app { init = init, update = update, view = view, subscriptions = subs }
 correct on first paint — no logged-out flash, no `Cmd.perform` round-trip. It
 returns the same `( model, Cmd msg )` shape, so it can also fire a startup
 command.
+
+Do not key data by the Sky.Live session cookie here. Its value changes every
+time the signed-in user changes (session-id rotation, see
+[Sky.Live sessions](../skylive/overview.md#session-ids-change-at-sign-in)), and
+over HTTPS its name is `__Host-sky_sid`. For a per-session key that stays the
+same for the session's whole life, use `Cmd.perform (Live.sessionKey ()) GotKey`.
 
 The point is portability. `init` stays `seed -> …` and **ignores its seed**, so
 the same source still builds for Tui / Cli / Webview (which have no HTTP request
@@ -291,8 +297,10 @@ to the last completed `update` survives a process restart:
 
 - **Web (Sky.Live):** the snapshot is keyed by the session id. With the default
   in-process memory session store, a restart normally loses the session; the
-  durable snapshot restores it on the next mount as long as the `sky_sid` cookie
-  survives. (A shared session store — postgres / redis — already carries the Model
+  durable snapshot restores it on the next mount as long as the session cookie
+  survives. When the session id changes at sign-in the snapshot moves with it,
+  and a revoked or ended session (`Live.endSession`) deletes its snapshot, so a
+  retired id restores nothing. (A shared session store — postgres / redis — already carries the Model
   across replicas; `withDurable` is the layer that also covers a memory store.)
 - **Terminal (`App.cli` / `App.tui`):** the snapshot is keyed by a fixed run id
   (`"default"`), so a re-launched program picks up where it stopped. Use

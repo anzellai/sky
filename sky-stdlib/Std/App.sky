@@ -819,14 +819,16 @@ withOnNavigate onNav (App a) =
 -- Only the Live/web runner consumes it. At session init the request carries
 -- `method` / `path` / `headers` / `params` / `query` / `cookies`; `body` and
 -- `remoteAddr` are empty (init is a GET-time hook — read a POST body in a route
--- handler or an `update` command instead).
+-- handler or an `update` command instead). Do not key data by the Sky.Live
+-- session cookie: it changes at every sign-in (session-id rotation) and is named
+-- `__Host-sky_sid` over HTTPS. Use `Live.sessionKey ()` for a stable per-session key.
 --
 --     app { init = init, update = update, view = view, subscriptions = subs }
 --         |> withRequest
 --             (\req model ->
---                 case Dict.get "sky_sid" req.cookies of
---                     Just sid -> ( { model | session = Just sid }, Cmd.none )
---                     Nothing  -> ( model, Cmd.none )
+--                 case Dict.get "auth" req.cookies of
+--                     Just token -> ( { model | authToken = Just token }, Cmd.none )
+--                     Nothing    -> ( model, Cmd.none )
 --             )
 --         |> withNotFound NotFound
 withRequest : (Request -> model -> ( model, Cmd msg )) -> App fallback () page model msg key -> App fallback () page model msg key

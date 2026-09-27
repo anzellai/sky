@@ -655,8 +655,10 @@ is dev-only (per-process, lost on restart).
 (locks the dev console + banner off, gates `/_sky/metrics` behind auth),
 `SKY_CONSOLE_AUTH=token` with `SKY_CONSOLE_TOKEN` (or `SKY_CONSOLE_AUTH=app` with
 `App.withConsoleAuth`, so the app's own admins open the console); a SHARED `SKY_LIVE_STORE`
-(`redis`/`postgres`) **and** load-balancer sticky sessions keyed on the `sky_sid`
-cookie if you run more than one replica.
+(`redis`/`postgres`) **and** load-balancer sticky sessions (a proxy-issued affinity
+cookie: the session cookie is `__Host-sky_sid` over HTTPS and changes value at
+sign-in) if you run more than one replica. Key per-session data by
+`Live.sessionKey ()`, never by the session cookie.
 
 ## Non-negotiables
 

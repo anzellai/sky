@@ -903,7 +903,10 @@ moves to a new session id at sign-in, is revoked, or is ended with
 -}
 deleteSnapshot : Db -> String -> Task Error ()
 deleteSnapshot db runId =
-    Db.exec db "DELETE FROM _sky_durable_snapshot WHERE run_id = ?" [ SqlString runId ]
+    Db.exec
+        db
+        "DELETE FROM _sky_durable_snapshot WHERE run_id = ?"
+        [ SqlString runId ]
         |> Task.map (\_ -> ())
 
 -- ---------------------------------------------------------------------------

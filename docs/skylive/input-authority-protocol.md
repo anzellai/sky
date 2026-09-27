@@ -132,9 +132,14 @@ identity: the wrapper is kept and renamed, and the input survives.
 
 **The session cookie is the authority.** The server resolves the session
 *only* from the session cookie — `sky_sid` for the host app (sub-apps
-mounted in-process use `sky_<name>_sid`). The `sessionId` in the body is **advisory**: it may
-agree with the cookie or be omitted, but it can never select a different
-session. A request whose body names a session other than the cookie's,
+mounted in-process use `sky_<name>_sid`; a Secure cookie carries the `__Host-`
+prefix, and both spellings are read). The `sessionId` in the body is **advisory**: it may
+agree with the cookie, be omitted, or name an id the cookie's session was
+rotated away from (the reply then carries `X-Sky-Sid: <current id>`), but it can
+never select a different session. A cookie naming a rotated-away id is
+answered `X-Sky-Status: session-rotating` (retry) for 60 s, then
+`session-lost`; only the tab that signed in may exchange it for the new id
+(see `docs/skylive/overview.md#session-ids-change-at-sign-in`). A request whose body names a session other than the cookie's,
 or that carries no session cookie at all, is rejected with the same
 `404` + `X-Sky-Status: session-lost` as an unknown session — the
 endpoint deliberately gives no signal about which session ids exist.

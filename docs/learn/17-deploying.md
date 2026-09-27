@@ -44,7 +44,9 @@ The moment you run more than one instance, two things must be true:
   host — neither is shareable. Switch `SKY_LIVE_STORE` to `redis` or `postgres`.
   The app code doesn't change.
 - **Sticky sessions + cross-instance pub/sub.** The load balancer routes a
-  session's requests to the same instance (keyed on the `sky_sid` cookie), and
+  session's requests to the same instance (best with an affinity cookie the
+  proxy issues; the session cookie is `__Host-sky_sid` over HTTPS and changes
+  value at sign-in), and
   broadcasts reach users across replicas (`store=redis` wires this automatically).
 
 That's the whole ladder: a single binary for the small case, and a couple of

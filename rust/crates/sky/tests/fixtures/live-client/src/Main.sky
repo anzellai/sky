@@ -4,6 +4,8 @@ module Main exposing (main)
 scripts/live-client-verify.mjs (see scripts/live-client-e2e.sh). Each
 control reproduces one client defect; the `log` records every Msg update
 saw, so the driver can assert which Msg a gesture dispatched.
+The sign-in buttons bind the session to a user (`Live.bindSessionUser`), which
+rotates the session id; `ask-key` shows `Live.sessionKey`, which must not change.
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -12,6 +14,8 @@ import Sky.Core.String as String
 import Std.Cmd as Cmd exposing (Cmd)
 import Std.Sub as Sub exposing (Sub)
 import Std.App as App
+import Std.Live as Live
+import Sky.Core.Error exposing (Error)
 import Std.Ui as Ui exposing (Element)
 import Std.Ui.Input as Input
 import Std.Html as Html
@@ -36,6 +40,7 @@ type alias Model =
     , ratio : Float
     , log : List String
     , navs : List String
+    , key : String
     }
 
 type Msg
@@ -60,6 +65,10 @@ type Msg
     | Shout
     | Heard String
     | Navigated Page
+    | SignIn String
+    | Bound (Result Error ())
+    | AskKey
+    | GotKey (Result Error String)
 
 
 init : a -> ( Model, Cmd Msg )
@@ -77,6 +86,7 @@ init _ =
       , ratio = 1.0
       , log = []
       , navs = []
+      , key = ""
       }
     , Cmd.none
     )
@@ -165,6 +175,32 @@ update msg model =
 
         Navigated p ->
             ( { model | navs = model.navs ++ [ pageName p ] }, Cmd.none )
+
+        SignIn uid ->
+            ( push ("signin:" ++ uid) model
+            , Cmd.perform (Live.bindSessionUser uid) Bound
+            )
+
+        Bound res ->
+            case res of
+
+                Ok _ ->
+                    ( push "bound" model, Cmd.none )
+
+                Err _ ->
+                    ( push "bind-failed" model, Cmd.none )
+
+        AskKey ->
+            ( model, Cmd.perform (Live.sessionKey ()) GotKey )
+
+        GotKey res ->
+            case res of
+
+                Ok k ->
+                    ( { model | key = k }, Cmd.none )
+
+                Err _ ->
+                    ( push "key-failed" model, Cmd.none )
 
 
 idA : String -> Ui.Attribute msg
@@ -299,6 +335,16 @@ mainView model =
         , Ui.button
               [ idA "boom" ]
               { onPress = Just Boom, label = Ui.text "boom" }
+        , Ui.button
+              [ idA "signin-1" ]
+              { onPress = Just (SignIn "user-1"), label = Ui.text "sign in 1" }
+        , Ui.button
+              [ idA "signin-2" ]
+              { onPress = Just (SignIn "user-2"), label = Ui.text "sign in 2" }
+        , Ui.button
+              [ idA "ask-key" ]
+              { onPress = Just AskKey, label = Ui.text "ask key" }
+        , Ui.el [ idA "key" ] (Ui.text model.key)
         , Ui.el
               [ idA "state" ]
               (Ui.text

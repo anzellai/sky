@@ -32,6 +32,9 @@
 //   L7  after a server restart (sqlite session store) the client resets
 //       its broadcast guard on the new process epoch and applies fresh
 //       frames (a broadcast and a local update)
+//   rotation  signing in (Live.bindSessionUser) moves the session to a new
+//       id; both tabs keep working without a reload, Live.sessionKey stays,
+//       and the old id is refused (session-rotating, then session-lost)
 //
 // Usage: node scripts/live-client-verify.mjs <app-binary> [--port N]
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
@@ -372,6 +375,94 @@ async function run(browser) {
   }
 }
 
+// ── Session-id rotation at sign-in (live_session_rotation.go) ─────────
+// Two tabs of one browser share a session. Tab A signs in
+// (Live.bindSessionUser), which moves the session to a new id. Both tabs
+// must keep working WITHOUT a reload, the cookie jar must hold the new id,
+// Live.sessionKey must not change, and the old id must never act on the
+// session again: `session-rotating` inside the 60 s grace window,
+// `session-lost` after it. Pre-fix the id never changed (fixation).
+async function runRotation(browser) {
+  const ctx = await browser.newContext();
+  const a = await ctx.newPage();
+  a.on("pageerror", (e) => console.log(`[pageerror A] ${e.message}`));
+  await a.goto(BASE + "/", { waitUntil: "load" });
+  await a.waitForTimeout(400);
+  const b = await ctx.newPage();
+  b.on("pageerror", (e) => console.log(`[pageerror B] ${e.message}`));
+  await b.goto(BASE + "/", { waitUntil: "load" });
+  await b.waitForTimeout(600);
+  const sidCookie = async () => ((await ctx.cookies()).find((c) => c.name === "sky_sid" || c.name === "__Host-sky_sid") || {}).value;
+  const sid0 = await sidCookie();
+  // A marker a reload would wipe.
+  await a.evaluate(() => { window.__noReload = 1; });
+  await b.evaluate(() => { window.__noReload = 1; });
+  await a.locator("#ask-key").click();
+  await a.waitForFunction(() => document.getElementById("key").textContent.length > 0, null, { timeout: 5000 });
+  const key0 = await a.locator("#key").innerText();
+
+  await a.locator("#signin-1").click();
+  let sid1 = sid0;
+  for (let i = 0; i < 50 && sid1 === sid0; i++) {
+    await a.waitForTimeout(100);
+    sid1 = await sidCookie();
+  }
+  check(!!sid0 && !!sid1 && sid1 !== sid0, "rotation: signing in moves the browser to a new session id",
+    `before=${sid0} after=${sid1}`);
+  const la = await log(a);
+  check(la.includes("signin:user-1") && la.includes("bound"), "rotation: the sign-in dispatched and bound", JSON.stringify(la));
+
+  // Both tabs keep working, with no reload.
+  await a.locator("#multi").click();
+  await b.locator("#clear").click();
+  await a.waitForTimeout(800);
+  const la2 = await log(a);
+  const lb2 = await log(b);
+  check(la2.includes("clicked") && la2.includes("clear"), "rotation: the signing-in tab keeps working and sees the other tab's event",
+    JSON.stringify(la2));
+  check(lb2.includes("clear") && lb2.includes("clicked"), "rotation: the other tab keeps working", JSON.stringify(lb2));
+  const noReload = (await a.evaluate(() => window.__noReload)) === 1 && (await b.evaluate(() => window.__noReload)) === 1;
+  check(noReload, "rotation: neither tab reloaded");
+  const sidsInPages = [await a.evaluate(() => __skySid), await b.evaluate(() => __skySid)];
+  check(sidsInPages.every((s) => s === sid1), "rotation: both tabs echo the new session id", JSON.stringify(sidsInPages));
+
+  await a.locator("#ask-key").click();
+  await a.waitForTimeout(600);
+  const key1 = await a.locator("#key").innerText();
+  check(key0 !== "" && key1 === key0, "rotation: Live.sessionKey is stable across the rotation", `before=${key0} after=${key1}`);
+
+  // The old id, presented alone (the fixation attacker's cookie).
+  // The attacker has their own (valid) CSRF pair; the double-submit check is
+  // not bound to the session, so it is no defence here.
+  const csrf = ((await ctx.cookies()).find((c) => c.name === "__sky_csrf") || {}).value || "";
+  const oldPost = async () => {
+    const r = await fetch(BASE + "/_sky/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Sky-Csrf": csrf, Cookie: "sky_sid=" + sid0 + "; __sky_csrf=" + csrf },
+      body: JSON.stringify({ sessionId: sid0, msg: "__skySessionPing", args: [], tab: "attacker" }),
+    });
+    return { status: r.status, sky: r.headers.get("x-sky-status"), setCookie: r.headers.get("set-cookie") || "" };
+  };
+  const inGrace = await oldPost();
+  check(inGrace.sky === "session-rotating" && !inGrace.setCookie.includes(sid1),
+    "rotation: the old id is refused inside the grace window (retry, no new id)", JSON.stringify(inGrace));
+  const page = await fetch(BASE + "/", { headers: { Cookie: "sky_sid=" + sid0 } });
+  const body = await page.text();
+  check(page.status === 503 && !body.includes(sid1), "rotation: a page load with the old id gets the retry page, not the session",
+    `status=${page.status}`);
+
+  console.log("     (waiting out the 60 s rotation grace window)");
+  await new Promise((r) => setTimeout(r, 61_000));
+  const afterGrace = await oldPost();
+  check(afterGrace.sky === "session-lost", "rotation: the old id is dead after the grace window", JSON.stringify(afterGrace));
+  // The tabs still work after the window closed.
+  await b.locator("#multi").click();
+  await b.waitForTimeout(700);
+  const lb3 = await log(b);
+  check(lb3.filter((s) => s === "clicked").length === 2, "rotation: the tabs keep working after the grace window", JSON.stringify(lb3));
+  await ctx.close();
+}
+
 // ── L7: a server restart mid-session (sqlite session store) ───────────
 // A second process of the same app on PORT+1 with a sqlite session store,
 // so both sessions survive the restart. Tab B hears A's broadcasts. After
@@ -521,6 +612,7 @@ try {
   await run(browser);
   await runWebview(browser);
   await runRestart(browser);
+  await runRotation(browser);
   await browser.close();
   console.log(failures.length ? `VERDICT=FAIL ${failures.join("; ")}` : "VERDICT=PASS");
   process.exitCode = failures.length ? 2 : 0;

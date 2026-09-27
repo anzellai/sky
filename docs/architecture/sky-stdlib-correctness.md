@@ -916,7 +916,7 @@ pre-extension shape. User code never imports `Std.Live` directly;
 
 ```mermaid
 flowchart LR
-    Req[HTTP request hits /] --> Cookie{sky_sid cookie present?}
+    Req[HTTP request hits /] --> Cookie{live session cookie present?}
     Cookie -->|No| Init["init req called → Model + Cmd Msg"]
     Cookie -->|Yes| Resume["Restore Model from session store; init does NOT run"]
     Init --> Render[Render view → full HTML]
@@ -926,7 +926,8 @@ flowchart LR
 
 **Critical contract**: `init` is per-SESSION, not per-page-reload.
 Browser reload while session alive → resume from store. Force fresh
-init via `Cmd.perform (Cookie.expire "sky_sid")` then reload.
+init with `Cmd.perform (Live.endSession ()) (\_ -> Ignore)`: the session ends,
+its tabs reload, and the old session cookie is never adopted again.
 
 **`req` shape** (v0.16.7 #417 + v0.16.8 #423):
 

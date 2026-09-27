@@ -163,8 +163,10 @@ behaviors are automatic — no app-code changes.
   current server view instead of stranding with a "reconnecting" banner. A
   crashing handler surfaces a structured error + user notification, not a silent
   dead button.
-- **Sliding `sky_sid` cookie.** Re-issued on each page load so an actively-used
-  session isn't logged out at the original fixed cookie window.
+- **Sliding session cookie.** Re-issued on each page load so an actively-used
+  session isn't logged out at the original fixed cookie window. It is
+  `__Host-sky_sid` when the cookie is Secure (HTTPS, a TLS proxy, or `ENV` set
+  to a non-dev value) and `sky_sid` over plain HTTP; both names are read.
 - **Durable `any`-field sessions.** A concrete value stored in an `any`-typed
   Model field round-trips across a restart (whole-binary gob registration), so
   the session isn't silently dropped to memory + lost.
@@ -184,8 +186,8 @@ the question most often asked by users coming from Elm or React.
 
 | Event | Does `init` run? | What the user sees |
 |-------|------------------|--------------------|
-| First request from a browser with no `sky_sid` cookie | ✅ yes | Fresh Model, first render |
-| Browser reload while session is alive (`sky_sid` cookie present, TTL not expired, store entry intact) | ❌ no | Existing Model restored from session store, view re-renders |
+| First request from a browser with no session cookie | ✅ yes | Fresh Model, first render |
+| Browser reload while session is alive (session cookie present, TTL not expired, store entry intact) | ❌ no | Existing Model restored from session store, view re-renders |
 | Reload after TTL expiry (`SKY_LIVE_TTL`, default `30m`) | ✅ yes | Fresh Model |
 | Reload after the session store evicted the row (e.g. server restart with `memory` store, manual DB wipe) | ✅ yes | Fresh Model |
 | User opens the same URL in a second browser / incognito window | ✅ yes (for the new session) | Each browser gets its own Model |
@@ -202,19 +204,50 @@ If you genuinely want fresh state on reload (e.g. demo reset, e2e test
 bootstrap):
 
 ```elm
--- 1. Expire the session cookie via Cmd.perform, then reload.
+-- End the session. Its tabs reload into a fresh session.
 update msg model =
     case msg of
         StartOver ->
-            ( model
-            , Cmd.perform (Cookie.expire "sky_sid") ReloadNow )
-
-        ReloadNow _ ->
-            ( model, Cmd.perform (Window.reload ()) Noop )
+            ( model, Cmd.perform (Live.endSession ()) (\_ -> Ignore) )
 ```
 
-The next request lands without a `sky_sid`, the runtime mints a fresh session,
-and `init` runs.
+`Live.endSession` deletes the session's server state, its durable snapshot and
+its user binding, and its open tabs reload. The old session cookie is never used
+again: the reload mints a fresh session, and `init` runs. Use the same call for
+sign-out.
+
+## Session ids change at sign-in
+
+The session id changes every time the signed-in user of a session changes: the
+first `Live.bindSessionUser` (or a sliding-auth auto-bind) and every account
+switch move the session to a new, random id. The Model, the open tabs and the
+durable snapshot move with it. This stops **session fixation**: an attacker who
+planted a session id in a victim's browser (an id from their own visit, set
+through a sibling subdomain, plain HTTP or XSS) is left holding a dead id when
+the victim signs in.
+
+What the browser sees:
+
+- The tab that signed in gets the new session cookie at once: on its SSE
+  connection (a one-time ticket that the client exchanges at `/_sky/rotate`), or
+  on its next event POST, SSE reconnect or `sky-nav` fetch.
+- The other tabs of the same browser keep working. Their SSE connection closes
+  and reconnects; for a moment (until the signing-in tab has stored the new
+  cookie) their requests are answered `session-rotating` and retried, never
+  reloaded.
+- The old id never acts on the session again. For 60 seconds it is answered
+  `session-rotating` (retry); after that it is a lost session, and a page load
+  with it gets a fresh session.
+- A presented session id that is not 32 lowercase hex characters (an id this
+  runtime never minted) is replaced with a fresh one.
+
+**Do not key your own data by the session cookie.** Its value changes at every
+sign-in. Use the stable per-session key instead: `sessionKey` in `init`'s request
+seed, or `Cmd.perform (Live.sessionKey ()) GotKey` anywhere in the session. It is
+the same for the whole life of the server-side session, across every rotation.
+
+With several replicas, the record of a retired id lives in the shared session
+store (sqlite / postgres / redis), so every replica refuses the old id.
 
 ### Why Sky.Live keeps Model across reload
 

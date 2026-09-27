@@ -54,8 +54,9 @@ docker exec sky-blog-pg psql -U blog -d blog -c "\dt"
 - **Single instance** (one container/VM) + this Postgres handles a lot — see the
   capacity notes in the repo. Postgres removes SQLite's single-writer ceiling.
 - **Multiple replicas**: sessions must be shared (they are — Postgres here) AND
-  the load balancer needs **sticky sessions** keyed on the `sky_sid` cookie (a
-  Sky.Live session is single-owner). Add a Redis broker
+  the load balancer needs **sticky sessions** (a proxy-issued affinity cookie;
+  the session cookie is `__Host-sky_sid` over HTTPS and changes value at
+  sign-in; a Sky.Live session is single-owner). Add a Redis broker
   (`SKY_LIVE_BROKER_URL`) if broadcasts must cross replicas.
 - **Analytics growth**: `SKY_ANALYTICS_RETENTION=180d` prunes old events so the
   table stays bounded. For very high analytics volume, add TimescaleDB
