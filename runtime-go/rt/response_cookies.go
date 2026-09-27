@@ -32,7 +32,7 @@ import "net/http"
 func setCookieLines(resp SkyResponse) []string {
 	lines := make([]string, 0, len(resp.Cookies)+1)
 	lines = append(lines, resp.Cookies...)
-	if raw, ok := resp.Headers["Set-Cookie"]; ok && raw != "" {
+	if raw, ok := canonicalHeaders(resp.Headers)["Set-Cookie"]; ok && raw != "" {
 		dup := false
 		for _, l := range lines {
 			if l == raw {
@@ -56,13 +56,35 @@ func setCookieLines(resp SkyResponse) []string {
 // mirror never doubles a header on the wire.
 func addSetCookie(resp SkyResponse, line string) SkyResponse {
 	resp.Cookies = append(append([]string(nil), resp.Cookies...), line)
-	if resp.Headers == nil {
-		resp.Headers = map[string]string{}
-	}
-	if existing, ok := resp.Headers["Set-Cookie"]; !ok || existing == "" {
-		resp.Headers["Set-Cookie"] = line
+	// Copy-on-write, like Server.withHeader: the headers map may be shared
+	// with another response derived from the same base value.
+	if existing, ok := canonicalHeaders(resp.Headers)["Set-Cookie"]; !ok || existing == "" {
+		resp = withResponseHeader(resp, "Set-Cookie", line)
 	}
 	return resp
+}
+
+// canonicalHeaders folds a headers map onto canonical names
+// (http.CanonicalHeaderKey). A map built in Sky code can hold two spellings of
+// one name; the canonical spelling wins, and among non-canonical spellings the
+// lexically smallest does, so the result never depends on map order.
+func canonicalHeaders(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	chosen := make(map[string]string, len(in)) // canonical name → key it came from
+	for k, v := range in {
+		canon := http.CanonicalHeaderKey(k)
+		prev, seen := chosen[canon]
+		switch {
+		case !seen:
+		case prev == canon:
+			continue // the canonical spelling already won
+		case k != canon && k > prev:
+			continue
+		}
+		chosen[canon] = k
+		out[canon] = v
+	}
+	return out
 }
 
 // applySkyResponseHeaders writes a SkyResponse's headers onto an
@@ -79,9 +101,12 @@ func addSetCookie(resp SkyResponse, line string) SkyResponse {
 // user's. Emission time is where the request exists, so the same
 // predicate every other mint site uses is applied here, to every cookie
 // on the response.
+//
+// Names are folded through canonicalHeaders first, so two spellings of one
+// name emit one deterministic value instead of whichever map order ran last.
 func applySkyResponseHeaders(h http.Header, r *http.Request, resp SkyResponse) {
-	for k, v := range resp.Headers {
-		if http.CanonicalHeaderKey(k) == "Set-Cookie" {
+	for k, v := range canonicalHeaders(resp.Headers) {
+		if k == "Set-Cookie" {
 			continue // handled below, as a repeated field
 		}
 		h.Set(k, v)

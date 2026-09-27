@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -400,7 +401,79 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 			dispatchSkyHandler(w, req, handler, paramNames)
 		})
 	}
+	registerSharedPathPreflights(mux, routeList, pathRouteCount)
 	return mux, rootFiles
+}
+
+// registerSharedPathPreflights answers OPTIONS on a path that 2+ routes share.
+//
+// A path with ONE route is registered method-less, so an OPTIONS preflight
+// reaches that route's handler, and a handler wrapped in Middleware.withCors
+// answers it. A path with two routes ("GET /p", "POST /p") is registered
+// method-keyed, and Go's mux answered OPTIONS with its own 405 — the withCors
+// wrapper never saw the preflight, and the browser then refused the real
+// request. This gives the shared path the same behaviour as a single route:
+// a preflight goes to the handler of the route its
+// Access-Control-Request-Method names (GET also serves HEAD). An OPTIONS that
+// names no served method gets a 405 with an Allow header, as before.
+//
+// Skipped when a route on the path already takes OPTIONS (a method-less or
+// "*" route, or an explicit OPTIONS route), and for Server.rpc routes, which
+// are same-origin by design (rpc_guard.go).
+func registerSharedPathPreflights(mux *http.ServeMux, routeList []any, pathRouteCount map[string]int) {
+	byPath := map[string][]SkyRoute{}
+	var order []string
+	for _, r := range routeList {
+		rt, ok := r.(SkyRoute)
+		if !ok || rt.StaticDir != "" || pathRouteCount[rt.Path] < 2 {
+			continue
+		}
+		if _, seen := byPath[rt.Path]; !seen {
+			order = append(order, rt.Path)
+		}
+		byPath[rt.Path] = append(byPath[rt.Path], rt)
+	}
+	for _, path := range order {
+		routes := byPath[path]
+		takesOptions := false
+		for _, rt := range routes {
+			m := strings.ToUpper(rt.Method)
+			if m == "" || m == "*" || m == http.MethodOptions {
+				takesOptions = true
+			}
+		}
+		if takesOptions {
+			continue
+		}
+		translated, paramNames := colonToMuxPattern(path)
+		allowSet := map[string]bool{http.MethodOptions: true}
+		for _, rt := range routes {
+			m := strings.ToUpper(rt.Method)
+			allowSet[m] = true
+			if m == http.MethodGet {
+				allowSet[http.MethodHead] = true
+			}
+		}
+		allow := make([]string, 0, len(allowSet))
+		for m := range allowSet {
+			allow = append(allow, m)
+		}
+		sort.Strings(allow)
+		mux.HandleFunc(http.MethodOptions+" "+translated, func(w http.ResponseWriter, req *http.Request) {
+			want := strings.ToUpper(strings.TrimSpace(req.Header.Get("Access-Control-Request-Method")))
+			if want == http.MethodHead {
+				want = http.MethodGet
+			}
+			for _, rt := range routes {
+				if want != "" && strings.ToUpper(rt.Method) == want && !rt.Rpc {
+					dispatchSkyHandler(w, req, rt.Handler, paramNames)
+					return
+				}
+			}
+			w.Header().Set("Allow", strings.Join(allow, ", "))
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		})
+	}
 }
 
 func Server_listen(port any, routes any) any {
@@ -451,20 +524,18 @@ func Server_listen(port any, routes any) any {
 		fmt.Fprintf(os.Stderr, "[sky.http] OTel init failed (continuing without trace export): %v\n", err)
 	}
 
-	// Wrap with CSRF (Phase 1.2) + observability (Phase 1.1a Step 3).
-	// Order: observability is OUTER so CSRF rejections still get
-	// metered as 403 — surfaces attacks / misconfigs in dashboards.
-	// The RPC dedupe layer sits INSIDE CSRF so a rejected request is never
-	// cached; it answers a retried auto-split RPC id from its first run.
-	csrfed := CSRFMiddleware(spaRpcDedupeMiddleware(skyAssetGuard(mux, rootFiles)))
-	observed := ObservabilityMiddleware(csrfed)
+	// The handler chain (Host guard, observability, CSRF, RPC dedupe, the
+	// asset guard, the mux) is built by serverListenerHandler so a test can
+	// drive the same handler the listener serves.
+	bindHost, _ := resolveBindHost()
+	listenerHandler := serverListenerHandler(mux, rootFiles, bindHost)
 
 	srv := &http.Server{
 		// bindAddr → 127.0.0.1:port in dev, :port (all interfaces) in
 		// prod, SKY_HOST:port when set. Shared with Sky.Live so the two
 		// listeners cannot drift. See resolveBindHost (live.go).
-		Addr:              bindAddr(p),
-		Handler:           observed,
+		Addr:              joinBindAddr(bindHost, p),
+		Handler:           listenerHandler,
 		ReadHeaderTimeout: httpEnvTimeout("SKY_HTTP_READ_HEADER_TIMEOUT", serverReadHeaderTimeout),
 		ReadTimeout:       httpEnvTimeout("SKY_HTTP_READ_TIMEOUT", serverReadTimeout),
 		WriteTimeout:      httpEnvTimeout("SKY_HTTP_WRITE_TIMEOUT", serverWriteTimeout),
@@ -712,4 +783,20 @@ func Server_csrfIssue(resp any) any {
 		"%s=%s; %s", csrfCookieName, token,
 		securifyCookieAttrs("Path=/; HttpOnly; SameSite=Strict")))
 	return SkyTuple2{V0: token, V1: r}
+}
+
+// serverListenerHandler builds the handler the Sky.Http.Server listener
+// serves, from the outside in: the loopback Host guard (host_guard.go — anti
+// DNS rebinding, applied only when bindHost is loopback), observability, CSRF,
+// the RPC dedupe layer, the asset guard and the mux.
+//
+// Observability is OUTSIDE CSRF so CSRF rejections still get metered as 403 —
+// that surfaces attacks and misconfigurations in dashboards. The RPC dedupe
+// layer sits INSIDE CSRF so a rejected request is never cached; it answers a
+// retried auto-split RPC id from its first run. The Host guard is outermost,
+// so a request with a foreign Host reaches no route at all — the dev console
+// included.
+func serverListenerHandler(mux *http.ServeMux, rootFiles http.Handler, bindHost string) http.Handler {
+	csrfed := CSRFMiddleware(spaRpcDedupeMiddleware(skyAssetGuard(mux, rootFiles)))
+	return hostGuardMiddleware(bindHost, ObservabilityMiddleware(csrfed))
 }

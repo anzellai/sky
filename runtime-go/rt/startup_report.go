@@ -38,6 +38,7 @@ package rt
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
 )
@@ -48,14 +49,24 @@ import (
 // `consoleURL` is empty when no console is mounted, which is the honest input:
 // the block must not advertise a surface this binary does not serve.
 //
-// `bindHost` is the actual interface the listener bound (resolveBindHost's
-// result: "127.0.0.1" in dev, "" for all-interfaces, or a SKY_HOST value). It
-// drives the exposure note, which must reflect the real bind — NOT the display
+// `bind` is the interface the listener actually bound and the rule that chose
+// it (resolveBindHost). It drives the bind line, printed in every mode: the
+// listening line itself cannot change shape (see above), and it reads `:8000`
+// or `http://localhost:8000` whatever the real bind is. The bind line also
+// carries the exposure note, which must reflect the real bind — NOT the display
 // URL, because a wide bind (SKY_HOST=0.0.0.0) still renders a localhost URL for
-// clickability, yet IS reachable off-box and must warn.
-func startupReportLines(consoleURL string, bindHost string, production bool, gc gcTuning, gcQuiet bool) []string {
+// clickability, yet IS reachable off-box.
+func startupReportLines(consoleURL string, bind listenerBind, production bool, gc gcTuning, gcQuiet bool) []string {
 	dev := consoleURL != "" && !production
-	var out []string
+	// The dev listener binds loopback (resolveBindHost), so the localhost
+	// console URL is TRUE and the open console is reachable only from this
+	// host. The one case where it is NOT is an operator who bound wider than
+	// loopback while leaving ENV unset — SKY_HOST=0.0.0.0 or a concrete LAN
+	// address: the console is still open AND now reachable off-box. The note is
+	// folded into the bind line (not a line of its own) to keep the dev block
+	// inside its line budget.
+	exposed := dev && !isLoopbackBindHost(bind.host)
+	out := []string{bindReportLine(bind, exposed)}
 	if dev {
 		// "open — no login" is the accurate description of what a bare run
 		// serves: with `SKY_CONSOLE_AUTH` unset and `ENV` unset the mode is
@@ -63,17 +74,6 @@ func startupReportLines(consoleURL string, bindHost string, production bool, gc 
 		// outright (console_auth_v2.go). Saying only "console mounted" would
 		// leave the user to discover the "unauthenticated" half themselves.
 		out = append(out, fmt.Sprintf("  %-11s  %s  (open — no login in dev)", "dev console", consoleURL))
-		// The dev listener binds loopback (resolveBindHost), so the localhost
-		// URL above is TRUE and the open console is reachable only from this
-		// host. The one case where it is NOT is an operator who bound wider than
-		// loopback while leaving ENV unset — SKY_HOST=0.0.0.0 or a concrete LAN
-		// address: the console is still open AND now reachable off-box. This
-		// line makes that exposure explicit so it is not a surprise. Keyed on
-		// the real bind host, not the URL, because 0.0.0.0 renders as a
-		// localhost URL yet is wide open.
-		if !isLoopbackBindHost(bindHost) {
-			out = append(out, fmt.Sprintf("  %-11s  console is open AND reachable off this host — set SKY_CONSOLE_AUTH or unset SKY_HOST", "exposed"))
-		}
 	}
 	if !gcQuiet {
 		out = append(out, fmt.Sprintf("  %-11s  %s", "GC", gc.reason))
@@ -98,15 +98,48 @@ func startupReportLines(consoleURL string, bindHost string, production bool, gc 
 	return out
 }
 
+// listenerBind is what the bind line reports: the host the listener bound
+// ("" = all interfaces), the rule that chose it, and the port.
+type listenerBind struct {
+	host   string
+	source bindSource
+	port   int
+}
+
+// bindReportLine renders the one bind line. It never contains "listening"
+// (TestNoAddedStartupLineLooksLikeAListeningLine).
+func bindReportLine(bind listenerBind, exposed bool) string {
+	addr := joinBindAddr(bind.host, bind.port)
+	if bind.host == "" {
+		addr = fmt.Sprintf("0.0.0.0:%d", bind.port)
+	}
+	hostVar := skyEnvName("HOST")
+	var why string
+	switch bind.source {
+	case bindProductionDefault:
+		why = "all interfaces (production default; " + hostVar + " narrows)"
+	case bindFromSkyHost:
+		why = "from " + hostVar
+	default:
+		why = "loopback (dev default; other Host names need " + skyEnvName("ALLOWED_HOSTS") + ")"
+	}
+	if exposed {
+		why += " — console exposed off-host: set SKY_CONSOLE_AUTH"
+	}
+	return fmt.Sprintf("  %-11s  %s  %s", "bind", addr, why)
+}
+
 // isLoopbackBindHost reports whether a bind host reaches ONLY this machine.
-// An empty host means all-interfaces (":port"), which is NOT loopback; it only
-// arises in production, where the exposure note is not printed anyway.
+// An empty host means all-interfaces (":port"), which is NOT loopback; nor is
+// 0.0.0.0 / ::. It decides both the exposure note and whether the listener
+// gets the Host guard (host_guard.go).
 func isLoopbackBindHost(bindHost string) bool {
-	switch bindHost {
-	case "127.0.0.1", "::1", "[::1]", "localhost":
+	h := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(bindHost), "["), "]")
+	if strings.EqualFold(h, "localhost") {
 		return true
 	}
-	return false
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 // consoleDisplayHost maps a bind host to the host shown in the console URL. A
@@ -117,8 +150,11 @@ func isLoopbackBindHost(bindHost string) bool {
 // makes the "exposed" note in startupReportLines fire.
 func consoleDisplayHost(bindHost string) string {
 	switch bindHost {
-	case "", "0.0.0.0", "::", "[::]", "127.0.0.1", "localhost":
+	case "", "0.0.0.0", "::", "[::]", "127.0.0.1", "::1", "[::1]", "localhost":
 		return "localhost"
+	}
+	if strings.Contains(bindHost, ":") && !strings.HasPrefix(bindHost, "[") {
+		return "[" + bindHost + "]" // an IPv6 literal in a URL needs brackets
 	}
 	return bindHost
 }
@@ -128,12 +164,12 @@ func consoleDisplayHost(bindHost string) string {
 // It goes to the same stream as that line (stdout) so the block stays together
 // when a user redirects one or the other.
 func printStartupReport(port int) {
-	bindHost := resolveBindHost()
+	bindHost, bindSrc := resolveBindHost()
 	consoleURL := ""
 	if InlineConsoleHealthy() || LegacyConsoleHealthy() {
 		consoleURL = fmt.Sprintf("http://%s:%d/_sky/console", consoleDisplayHost(bindHost), port)
 	}
-	lines := startupReportLines(consoleURL, bindHost, productionFromEnv(), gcStartupDecision, os.Getenv("SKY_GC_QUIET") != "")
+	lines := startupReportLines(consoleURL, listenerBind{host: bindHost, source: bindSrc, port: port}, productionFromEnv(), gcStartupDecision, os.Getenv("SKY_GC_QUIET") != "")
 	// The legacy-sky.toml → withX migration LIST (design §8.2), appended AFTER
 	// the checklist rather than woven into `startupReportLines`: it depends on
 	// the process's seeded-default provenance, not on the pure inputs that

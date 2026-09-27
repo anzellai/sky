@@ -56,6 +56,7 @@ const PREFIXED_EXACT: &[&str] = &["ENV"];
 /// them. `docs/sky-toml.md` enumerates the prefix-affected namespaces and
 /// deliberately does not include these.
 const FIXED_NAME_READS: &[(&str, &str)] = &[
+    ("SKY_APP_URL", "the native-shell backend address; `sky build` and the desktop shell read it unprefixed, so the Host guard reads the same name"),
     ("SKY_ADMIN_TOKEN", "operator-set bearer for /_sky/metrics; set by the deploy, not the app"),
     ("SKY_METRICS_TOKEN", "back-compat alias for SKY_ADMIN_TOKEN"),
     ("SKY_CONSOLE_AUTH", "console gate mode; set by the deploy"),

@@ -29,10 +29,21 @@ func packageGoSources(t *testing.T) string {
 	return b.String()
 }
 
+// The three bind shapes a listener reports: the dev default (loopback), the
+// production default (all interfaces) and an operator's SKY_HOST.
+var (
+	devBind  = listenerBind{host: "127.0.0.1", source: bindDevDefault, port: 8000}
+	prodBind = listenerBind{host: "", source: bindProductionDefault, port: 8000}
+)
+
+func envBind(host string) listenerBind {
+	return listenerBind{host: host, source: bindFromSkyHost, port: 8000}
+}
+
 // devReport is the block a developer sees on a bare `sky run`: dev bind is
 // loopback ("127.0.0.1"), so the exposure note never fires here.
 func devReport(gc gcTuning) []string {
-	return startupReportLines("http://localhost:8000/_sky/console", "127.0.0.1", false, gc, false)
+	return startupReportLines("http://localhost:8000/_sky/console", devBind, false, gc, false)
 }
 
 func joinReport(lines []string) string { return strings.Join(lines, "\n") }
@@ -52,8 +63,8 @@ func joinReport(lines []string) string { return strings.Join(lines, "\n") }
 func TestNoAddedStartupLineLooksLikeAListeningLine(t *testing.T) {
 	cases := [][]string{
 		devReport(gcTuning{reason: "GOMEMLIMIT 996MB, GOGC 400 — derived from 1.9GB detected"}),
-		startupReportLines("http://localhost:8000/_sky/console", "", true, gcTuning{reason: "x"}, false),
-		startupReportLines("", "127.0.0.1", false, gcTuning{reason: "Go defaults — 512MB detected is too little"}, false),
+		startupReportLines("http://localhost:8000/_sky/console", prodBind, true, gcTuning{reason: "x"}, false),
+		startupReportLines("", devBind, false, gcTuning{reason: "Go defaults — 512MB detected is too little"}, false),
 	}
 	for _, lines := range cases {
 		for _, l := range lines {
@@ -69,7 +80,7 @@ func TestNoAddedStartupLineLooksLikeAListeningLine(t *testing.T) {
 // the thing the checklist asked for, and being told off for it is how a banner
 // becomes something people silence.
 func TestProductionPrintsNoConsoleLineAndNoScolding(t *testing.T) {
-	got := joinReport(startupReportLines("http://localhost:8000/_sky/console", "", true,
+	got := joinReport(startupReportLines("http://localhost:8000/_sky/console", prodBind, true,
 		gcTuning{reason: "GOMEMLIMIT 996MB, GOGC 400 — derived from 1.9GB detected"}, false))
 
 	if strings.Contains(got, "console") {
@@ -194,7 +205,7 @@ func TestAnOperatorsOwnGCSettingIsVisiblyHonoured(t *testing.T) {
 // surface this binary does not serve — `printStartupReport` passes an empty URL
 // when neither console mounted.
 func TestNoConsoleMountedMeansNoConsoleLine(t *testing.T) {
-	got := joinReport(startupReportLines("", "127.0.0.1", false, gcTuning{reason: "GOMEMLIMIT 1GB"}, false))
+	got := joinReport(startupReportLines("", devBind, false, gcTuning{reason: "GOMEMLIMIT 1GB"}, false))
 	if strings.Contains(got, "console") {
 		t.Fatalf("advertised a console that is not mounted:\n%s", got)
 	}
@@ -206,12 +217,74 @@ func TestNoConsoleMountedMeansNoConsoleLine(t *testing.T) {
 // TestSkyGcQuietDropsOnlyTheGcLine. It suppresses output, it does not change
 // what was derived — and it must not take the console checklist with it.
 func TestSkyGcQuietDropsOnlyTheGcLine(t *testing.T) {
-	got := joinReport(startupReportLines("http://localhost:8000/_sky/console", "127.0.0.1", false,
+	got := joinReport(startupReportLines("http://localhost:8000/_sky/console", devBind, false,
 		gcTuning{reason: "GOMEMLIMIT 996MB, GOGC 400"}, true))
 	if strings.Contains(got, "GOMEMLIMIT") {
 		t.Fatalf("SKY_GC_QUIET did not drop the GC line:\n%s", got)
 	}
 	if !strings.Contains(got, "/_sky/console") {
 		t.Fatalf("SKY_GC_QUIET also dropped the console line:\n%s", got)
+	}
+}
+
+// TestTheBindLineSaysWhereTheListenerIsReachable. The listening line cannot
+// change shape (three consumers parse it), and it reads `:8000` or
+// `http://localhost:8000` whatever the real bind is. So one added line states
+// the bind address and why it was chosen, in production too.
+func TestTheBindLineSaysWhereTheListenerIsReachable(t *testing.T) {
+	gc := gcTuning{reason: "x"}
+	cases := []struct {
+		name       string
+		bind       listenerBind
+		production bool
+		want       []string
+	}{
+		{"dev default", devBind, false, []string{"127.0.0.1:8000", "loopback", "dev default", "SKY_ALLOWED_HOSTS"}},
+		{"production default", prodBind, true, []string{"0.0.0.0:8000", "all interfaces", "production default", "SKY_HOST narrows"}},
+		{"operator SKY_HOST", envBind("10.0.0.5"), true, []string{"10.0.0.5:8000", "from SKY_HOST"}},
+		{"operator SKY_HOST ipv6", envBind("::1"), false, []string{"[::1]:8000", "from SKY_HOST"}},
+	}
+	for _, c := range cases {
+		var bindLines []string
+		for _, l := range startupReportLines("", c.bind, c.production, gc, true) {
+			if strings.HasPrefix(strings.TrimSpace(l), "bind ") {
+				bindLines = append(bindLines, l)
+			}
+		}
+		if len(bindLines) != 1 {
+			t.Fatalf("%s: want exactly one bind line, got %q", c.name, bindLines)
+		}
+		for _, w := range c.want {
+			if !strings.Contains(bindLines[0], w) {
+				t.Fatalf("%s: bind line %q does not contain %q", c.name, bindLines[0], w)
+			}
+		}
+		if strings.Contains(strings.ToLower(bindLines[0]), "listening") {
+			t.Fatalf("%s: bind line would be parsed as a port announcement: %q", c.name, bindLines[0])
+		}
+	}
+}
+
+// TestTheExposedNoteIsFoldedIntoTheBindLine keeps the dev block inside its
+// six-line budget: the off-host console note rides on the bind line instead of
+// taking a line of its own.
+func TestTheExposedNoteIsFoldedIntoTheBindLine(t *testing.T) {
+	lines := startupReportLines("http://localhost:8000/_sky/console", envBind("0.0.0.0"), false,
+		gcTuning{reason: "GOMEMLIMIT 996MB, GOGC 400 — derived from 1.9GB detected"}, false)
+	if len(lines) > 6 {
+		t.Fatalf("dev block with an off-host bind is %d lines:\n%s", len(lines), joinReport(lines))
+	}
+	found := false
+	for _, l := range lines {
+		if len([]rune(l)) > 110 {
+			t.Fatalf("line is %d chars: %q", len([]rune(l)), l)
+		}
+		if strings.HasPrefix(strings.TrimSpace(l), "bind ") && strings.Contains(l, "exposed") &&
+			strings.Contains(l, "SKY_CONSOLE_AUTH") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the exposed note is not on the bind line:\n%s", joinReport(lines))
 	}
 }

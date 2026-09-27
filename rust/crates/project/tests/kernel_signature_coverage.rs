@@ -126,10 +126,11 @@ fn repo_root() -> PathBuf {
 ///     runtime and would false-reject `Log.with "msg" someDict`, which
 ///     `test-files/log-test.sky` does today. The `*With` family shares the
 ///     defect and should be re-derived from `logAttrsToMap` together.
-///   * **`Server.group`, `Server.use` (2)** — `rt.Server_use` is
-///     `func(_ any, routes any) any { return routes }`: it DISCARDS its
-///     middleware argument. Typing a no-op would stamp "checked" on a broken
-///     API. `group` mutates `SkyRoute.Path` inside a `[]any` and moves with it.
+///   * **`Server.group`, `Server.use` (2)** — `rt.Server_use` DISCARDED its
+///     middleware argument until v0.27 (it now wraps each route's handler).
+///     Both return a `[]any` of runtime `SkyRoute` values that have no Sky
+///     type of their own, and `group` rewrites `SkyRoute.Path` inside that
+///     list. Their signatures move together, once `Route` is typed.
 ///   * **`Db.getFieldOr` (1)** — the runtime accepts only `map[string]any`
 ///     (`db_auth.go`), while typed codegen hands row accessors
 ///     `map[string]string` once `query`/`findWhere` are declared

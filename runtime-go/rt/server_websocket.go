@@ -338,20 +338,39 @@ func ServerWebSocket_closeClient(sidArg any) any {
 //
 //   - Read error (network) → onError(sock, ErrNetwork msg) then close.
 func serveWebSocketUpgrade(w http.ResponseWriter, r *http.Request, cfg webSocketUpgradeCfg) {
-	acceptOpts := &websocket.AcceptOptions{
-		OriginPatterns: cfg.originPatterns,
-	}
-	// If no origin patterns specified AND we're in dev, allow all.
-	// Production gate: when ENV=production AND originPatterns is
-	// empty, reject — user must explicitly allow origins.
-	if len(cfg.originPatterns) == 0 {
+	// Origin policy. coder/websocket accepts a client that sends no Origin
+	// (a native client cannot be driven by a web page) and a page whose
+	// Origin host equals the request Host; OriginPatterns adds more.
+	//
+	// There is NO mode that skips the check. Until v0.27 a dev run with no
+	// patterns set InsecureSkipVerify, so any website open in the developer's
+	// browser could open a socket to the local server — and "dev" was simply
+	// "ENV unset", so a deploy that forgot ENV and bound 0.0.0.0 via SKY_HOST
+	// accepted every origin in production (cross-site WebSocket hijacking).
+	patterns := cfg.originPatterns
+	if len(patterns) == 0 {
 		if productionFromEnv() {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, "WebSocket upgrade denied: originPatterns required in production")
+			fmt.Fprint(w, "WebSocket upgrade denied: production needs an explicit origin allowlist. "+
+				"Add Ws.withOriginPatterns [ \"app.example.com\" ] to the upgrade cfg.")
 			return
 		}
-		acceptOpts.InsecureSkipVerify = true
+		// Outside production: loopback dev servers on any port plus the
+		// hosts listed in SKY_ALLOWED_HOSTS (host_guard.go).
+		patterns = devWebSocketOriginPatterns()
 	}
+	// Anti DNS rebinding. A rebinding page sends Host AND Origin as its own
+	// name, which satisfies the same-host rule above. On a loopback bind the
+	// listener's Host guard already refuses it; the check is repeated here so
+	// the upgrade path holds on its own (host_guard.go).
+	if bindHost, _ := resolveBindHost(); hostGuardApplies(bindHost) {
+		if !newHostAllowList(bindHost).allows(r.Host) {
+			rejectForeignHost(w, r)
+			return
+		}
+	}
+	acceptOpts := &websocket.AcceptOptions{OriginPatterns: patterns}
 
 	// The hijacked connection keeps the deadlines net/http armed for the
 	// upgrade request (Server.listen: 30 s). Lift them first, or an idle

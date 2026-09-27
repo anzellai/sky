@@ -38,6 +38,7 @@ import (
 	"io"
 	"math"
 	mrand "math/rand"
+	"net/textproto"
 	"net/url"
 	"os"
 	"reflect"
@@ -9658,6 +9659,15 @@ func rateLimitReset() {
 // Middleware.withCors : List String -> Handler -> Handler
 // Takes a list of allowed origins ("*" for all) and wraps a handler to
 // add Access-Control-Allow-Origin etc. and short-circuit preflights.
+//
+// The preflight allows `Content-Type, Authorization` and NOT X-Sky-Csrf, on
+// purpose. A cross-origin page cannot read this server's HttpOnly
+// `__sky_csrf` cookie, and withCors sends no Allow-Credentials, so the
+// double-submit token is never available cross-origin: allowing its header
+// would change nothing. A cross-origin state-changing call authenticates with
+// an Authorization header, which the CSRF middleware exempts
+// (csrf_middleware.go); one without it gets the CSRF 403, which carries no
+// CORS headers because the handler never ran.
 func Middleware_withCors(origins any, handler any) any {
 	allowed := map[string]bool{}
 	allowAll := false
@@ -9700,11 +9710,11 @@ func Middleware_withCors(origins any, handler any) any {
 			res := any(anyTaskInvoke(task))
 			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
 				if resp, ok := asSkyResponse(sr.OkValue); ok {
-					if resp.Headers == nil {
-						resp.Headers = map[string]string{}
-					}
+					// Copy-on-write: the handler may return a shared
+					// response value; writing into its map would leak
+					// the CORS header into every later use of it.
 					if allow != "" {
-						resp.Headers["Access-Control-Allow-Origin"] = allow
+						resp = withResponseHeader(resp, "Access-Control-Allow-Origin", allow)
 					}
 					return Ok[any, any](resp)
 				}
@@ -10011,19 +10021,60 @@ func Server_group(prefix any, routes any) any {
 	return out
 }
 
-// Server.use : middleware -> routes -> routes (identity for now; wiring TBD).
-func Server_use(_ any, routes any) any { return routes }
+// Server.use : (Handler -> Handler) -> List Route -> List Route
+//
+// Wraps every handler route in the middleware. It used to be the identity
+// and DISCARD the middleware, so `Server.use (Middleware.withCors …) routes`
+// (the pattern docs/stdlib.md shows) served no CORS headers at all. A static
+// route has no Sky handler and is passed through unchanged; its NotFound
+// fallback handler is wrapped like any other handler.
+func Server_use(middleware any, routes any) any {
+	var out []any
+	for _, r := range asList(routes) {
+		sr, ok := r.(SkyRoute)
+		if !ok {
+			out = append(out, r)
+			continue
+		}
+		if sr.StaticDir == "" && sr.Handler != nil {
+			sr.Handler = SkyCall(middleware, sr.Handler)
+		}
+		if sr.NotFound != nil {
+			sr.NotFound = SkyCall(middleware, sr.NotFound)
+		}
+		out = append(out, sr)
+	}
+	return out
+}
 
 // Server.withHeader : String -> String -> Response -> Response
+//
+// Copy-on-write: the result gets a NEW headers map, so two responses derived
+// from one shared base value never see each other's headers (it used to write
+// into the base's map). The name is canonicalised (textproto.CanonicalMIMEHeaderKey, which is http.CanonicalHeaderKey)
+// and replaces any spelling of the same name, so `x-a` after `X-A` leaves one
+// header, the last value, instead of two map keys applied in random order.
 func Server_withHeader(name any, value any, resp any) any {
 	r, ok := asSkyResponse(resp)
 	if !ok {
 		return resp
 	}
-	if r.Headers == nil {
-		r.Headers = map[string]string{}
+	return withResponseHeader(r, fmt.Sprintf("%v", name), fmt.Sprintf("%v", value))
+}
+
+// withResponseHeader returns r with one header set, on a copy of its headers
+// map (see Server_withHeader). Every runtime path that adds a header to a
+// handler's response goes through it.
+func withResponseHeader(r SkyResponse, name, value string) SkyResponse {
+	canon := textproto.CanonicalMIMEHeaderKey(name)
+	h := make(map[string]string, len(r.Headers)+1)
+	for k, v := range r.Headers {
+		if textproto.CanonicalMIMEHeaderKey(k) != canon {
+			h[k] = v
+		}
 	}
-	r.Headers[fmt.Sprintf("%v", name)] = fmt.Sprintf("%v", value)
+	h[canon] = value
+	r.Headers = h
 	return r
 }
 

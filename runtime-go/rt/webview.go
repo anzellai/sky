@@ -532,7 +532,9 @@ func startWebviewLoopback(staticDir string, state *webviewState) (*http.Server, 
 		_, _ = w.Write([]byte(page))
 	})
 
-	srv := &http.Server{Handler: mux}
+	// The Host guard (host_guard.go) refuses a DNS-rebinding page: the
+	// loopback bind keeps other machines out, not other websites.
+	srv := &http.Server{Handler: hostGuardMiddleware("127.0.0.1", mux)}
 	safeGo("Webview.app loopback server", func() {
 		// http.Serve returns ErrServerClosed on graceful Close —
 		// suppress that one. Any other error gets logged.

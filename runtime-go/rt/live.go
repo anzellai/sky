@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1863,22 +1864,92 @@ func resolveLivePort(cfg any) int {
 //     own "localhost" trust assumption already claimed — this makes it true.
 //
 // The returned string is the host portion of the "host:port" Addr; empty means
-// all interfaces, exactly as ":port" did before this function existed.
-func resolveBindHost() string {
+// all interfaces, exactly as ":port" did before this function existed. The
+// bindSource says which rule chose it, for the start-up bind line
+// (startup_report.go).
+func resolveBindHost() (string, bindSource) {
 	if h := strings.TrimSpace(skyGetenv("HOST")); h != "" {
-		return h
+		return h, bindFromSkyHost
 	}
 	if productionFromEnv() {
-		return ""
+		return "", bindProductionDefault
 	}
-	return "127.0.0.1"
+	return "127.0.0.1", bindDevDefault
 }
+
+// bindSource names the rule resolveBindHost applied.
+type bindSource int
+
+const (
+	// bindDevDefault — ENV unset or a dev marker: loopback only.
+	bindDevDefault bindSource = iota
+	// bindProductionDefault — the production gate: all interfaces.
+	bindProductionDefault
+	// bindFromSkyHost — the operator named the interface in <PREFIX>_HOST.
+	bindFromSkyHost
+)
 
 // bindAddr formats the listener Addr ("host:port") from resolveBindHost. An
 // empty host yields ":port" — all interfaces — identical to the old
-// fmt.Sprintf(":%d", port).
+// fmt.Sprintf(":%d", port). An IPv6 SKY_HOST ("::1" or "[::1]") is bracketed,
+// because "::1:8000" is not an address net.Listen can parse.
 func bindAddr(port int) string {
-	return fmt.Sprintf("%s:%d", resolveBindHost(), port)
+	host, _ := resolveBindHost()
+	return joinBindAddr(host, port)
+}
+
+// joinBindAddr is bindAddr's formatting, shared with the start-up bind line.
+func joinBindAddr(host string, port int) string {
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if host == "" {
+		return fmt.Sprintf(":%d", port)
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+// liveListenerHandler builds the handler the Sky.Live listener serves, from
+// the outside in: the loopback Host guard (host_guard.go — anti DNS
+// rebinding, applied only when bindHost is loopback), panic recovery,
+// observability, sliding auth, CSRF, and the mux. The Host guard is
+// outermost, so a request with a foreign Host reaches no route at all — the
+// dev console included.
+func liveListenerHandler(mux *http.ServeMux, bindHost string) http.Handler {
+	csrfed := CSRFMiddleware(skyAssetGuard(mux, nil))
+	// Sliding-auth re-issue — mounted ONLY when Live.withAuthSliding registered a
+	// config (getAuthSlidingConfig != nil). Sits inside observability (like CSRF)
+	// so a re-issue still meters as a request, and inside the auth-cookie flow it
+	// re-signs on activity. See auth_sliding.go.
+	authSlid := csrfed
+	if getAuthSlidingConfig() != nil {
+		authSlid = AuthSlidingMiddleware(csrfed)
+	}
+	observed := ObservabilityMiddleware(authSlid)
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			// http.ErrAbortHandler is Go's sentinel panic value
+			// that handlers use to abort cleanly without logging
+			// (httputil.ReverseProxy panics with it when the
+			// client disconnects mid-stream — typical for SSE).
+			// Re-panic so net/http's own handler-recover (which
+			// special-cases this value) finishes the abort
+			// cleanly, instead of us logging it as a 500.
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			// Real panic — log to stderr so `go run` / tailing the
+			// server surfaces the cause. Client still gets a
+			// generic 500.
+			LogRecoveredPanic("sky.live", r.Method+" "+r.URL.Path, rec)
+			w.WriteHeader(500)
+			fmt.Fprint(w, "Internal Server Error")
+		}()
+		observed.ServeHTTP(w, r)
+	})
+	return hostGuardMiddleware(bindHost, wrapped)
 }
 
 // Live.app — reads a record-shaped config and starts the HTTP server.
@@ -2248,47 +2319,17 @@ func liveAppRun(cfg any) any {
 	// STILL produce an access-log line + counter bump (you want to
 	// see CSRF rejection rates as a metric — sudden spike = attack
 	// or misconfiguration).
-	csrfed := CSRFMiddleware(skyAssetGuard(mux, nil))
-	// Sliding-auth re-issue — mounted ONLY when Live.withAuthSliding registered a
-	// config (getAuthSlidingConfig != nil). Sits inside observability (like CSRF)
-	// so a re-issue still meters as a request, and inside the auth-cookie flow it
-	// re-signs on activity. See auth_sliding.go.
-	authSlid := csrfed
-	if getAuthSlidingConfig() != nil {
-		authSlid = AuthSlidingMiddleware(csrfed)
-	}
-	observed := ObservabilityMiddleware(authSlid)
-	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			rec := recover()
-			if rec == nil {
-				return
-			}
-			// http.ErrAbortHandler is Go's sentinel panic value
-			// that handlers use to abort cleanly without logging
-			// (httputil.ReverseProxy panics with it when the
-			// client disconnects mid-stream — typical for SSE).
-			// Re-panic so net/http's own handler-recover (which
-			// special-cases this value) finishes the abort
-			// cleanly, instead of us logging it as a 500.
-			if rec == http.ErrAbortHandler {
-				panic(rec)
-			}
-			// Real panic — log to stderr so `go run` / tailing the
-			// server surfaces the cause. Client still gets a
-			// generic 500.
-			LogRecoveredPanic("sky.live", r.Method+" "+r.URL.Path, rec)
-			w.WriteHeader(500)
-			fmt.Fprint(w, "Internal Server Error")
-		}()
-		observed.ServeHTTP(w, r)
-	})
+	// The whole chain (Host guard, panic recovery, observability, CSRF,
+	// sliding auth, the mux) is built by liveListenerHandler so a test can
+	// drive the same handler the listener serves.
+	bindHost, _ := resolveBindHost()
+	listenerHandler := liveListenerHandler(mux, bindHost)
 
 	srv := &http.Server{
 		// bindAddr → 127.0.0.1:port in dev, :port (all interfaces) in
 		// prod, SKY_HOST:port when set. See resolveBindHost.
-		Addr:              bindAddr(port),
-		Handler:           wrapped,
+		Addr:              joinBindAddr(bindHost, port),
+		Handler:           listenerHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 		// IMPORTANT: do not set ReadTimeout or WriteTimeout here — the SSE
 		// endpoint needs to stream indefinitely. Per-handler deadlines can be
