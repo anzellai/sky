@@ -17,9 +17,7 @@ package rt
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -144,7 +142,18 @@ type liveSession struct {
 	// the dispatch path can include it in observability logs
 	// without having to thread sid through every helper signature.
 	// Populated when the session is loaded/created via getOrInit.
-	sid string
+	// Read it through currentSID(): a rotation (live_session_rotation.go)
+	// records the new id in rotSid, because the session is already shared
+	// between goroutines by then.
+	sid    string
+	rotSid atomic.Pointer[string]
+	// storeMu serialises every store write of this session against a
+	// rotation's re-key, so no write lands under the retired id. Lock order:
+	// sess.mu (when held) before storeMu before the store's own locks.
+	storeMu sync.Mutex
+	// key — the stable per-session key (Live.sessionKey, init's
+	// `sessionKey`). Survives rotation; persisted in storableSession.
+	key atomic.Pointer[string]
 	// identity / identityValid — v0.16.5 #493 session-identity bridge.
 	// At mint time dispatchRoot reads IdentityFromContext(r.Context())
 	// and, if a gate populated it, stashes the result here.  Kernels
@@ -545,14 +554,14 @@ func (s *liveSession) markDone() {
 		if n := closeAllStreams(s); n > 0 {
 			fmt.Fprintf(os.Stderr,
 				"[sky.stream] cleaned %d orphaned streams on session close (sid=%q)\n",
-				n, s.sid)
+				n, s.currentSID())
 		}
 		// v0.15.46: same sweep for Sky.Core.WebSocket open sockets.
 		// closeAllSockets is idempotent.
 		if n := closeAllSockets(s); n > 0 {
 			fmt.Fprintf(os.Stderr,
 				"[sky.websocket] cleaned %d orphaned sockets on session close (sid=%q)\n",
-				n, s.sid)
+				n, s.currentSID())
 		}
 		// Release ws subscription registrations (drain goroutines)
 		// so they don't linger pushing to dead sessions.
@@ -903,6 +912,11 @@ type sseConn struct {
 	// resync (#9): cap-1 wake signal; a non-blocking send coalesces a burst of
 	// drops into one resync. handleSSE selects on it.
 	resync chan struct{}
+	// kick is closed when a session-id rotation drops this connection
+	// (live_session_rotation.go rotateSSEConns); handleSSE then ends the
+	// stream. kickOnce guards the close.
+	kick     chan struct{}
+	kickOnce sync.Once
 }
 
 // patchesEventEnvelope mirrors writeEventJSON's body so the wire
@@ -1187,7 +1201,7 @@ func (a *liveApp) cookieNameOrDefault() string {
 func (a *liveApp) consoleModelFor(r *http.Request) any {
 	name := a.cookieNameOrDefault()
 	for _, c := range r.Cookies() {
-		if c.Name != name || c.Value == "" {
+		if !isSessionCookieName(c.Name, name) || c.Value == "" {
 			continue
 		}
 		a.locker.Lock(c.Value)
@@ -2060,6 +2074,9 @@ func liveAppRun(cfg any) any {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_sky/event", app.handleEvent)
 	mux.HandleFunc("/_sky/sse", app.handleSSE)
+	// Session-id rotation: the signing-in tab exchanges its ticket for the new
+	// session cookie (live_session_rotation.go). CSRF-checked like /_sky/event.
+	mux.HandleFunc("/_sky/rotate", app.handleRotate)
 	mux.HandleFunc("/_sky/config", app.handleConfig)
 	// The client script (live_client_asset.go): a same-origin, content-hashed
 	// file so a strict Content-Security-Policy (script-src 'self') runs it.
@@ -2481,7 +2498,25 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// would otherwise wipe sess.handlers and break the very next event
 	// POST with "handler not found". Per-session lock prevents
 	// concurrent re-renders racing each other's handlers.
-	sid := sessionIDNamed(r, w, app.sessionTTL, app.cookieName)
+	//
+	// pageSessionID (live_session_rotation.go) never adopts a malformed or
+	// rotated-away id, and answers an old cookie inside a rotation's grace
+	// window with a retry page (ok == false).
+	sid, ok := app.pageSessionID(w, r)
+	if !ok {
+		return
+	}
+	// The page's tab id. A sky-nav / popstate fetch names its tab in
+	// X-Sky-Tab; a full page load gets a fresh id, handed to the client in
+	// the boot config. It is stamped as the ORIGIN TAB of this request, so a
+	// session-id rotation started by init's or onNavigate's Cmds reaches
+	// this tab only.
+	pageTab := r.Header.Get("X-Sky-Tab")
+	if pageTab == "" {
+		pageTab = newLiveSessionID()
+	}
+	restoreTab := stampLiveOriginTab(pageTab)
+	defer restoreTab()
 	app.locker.Lock(sid)
 	defer app.locker.Unlock(sid)
 
@@ -2522,17 +2557,22 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// typed `req.path` access working.
 		//
 		// v0.16.8 #423 — init's `req` carries `Method` + `Headers` +
-		// `Cookies` alongside #417's `Params`.  Apps bootstrap their
-		// model from a session cookie at first render via
-		// `Dict.get "sky_sid" req.cookies` — no Cmd.perform
-		// round-trip needed.
+		// `Cookies` alongside #417's `Params`.
+		//
+		// v0.27 — and `sessionKey`: a key for this session that stays
+		// the same for its whole life, including across the session-id
+		// rotation at sign-in (live_session_rotation.go). Key per-session
+		// data by it (or by `Live.sessionKey` from a Cmd.perform), NOT by
+		// the session cookie: the cookie changes at every sign-in.
+		sessKey := newLiveSessionID()
 		req := map[string]any{
-			"path":    r.URL.Path,
-			"query":   r.URL.RawQuery,
-			"params":  initParams,
-			"method":  r.Method,
-			"headers": headersToDict(r.Header),
-			"cookies": cookiesToDict(r.Cookies()),
+			"sessionKey": sessKey,
+			"path":       r.URL.Path,
+			"query":      r.URL.RawQuery,
+			"params":     initParams,
+			"method":     r.Method,
+			"headers":    headersToDict(r.Header),
+			"cookies":    cookiesToDict(r.Cookies()),
 		}
 		res := sky_call(app.init, req)
 		model = tupleFirst(res)
@@ -2554,6 +2594,18 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			cancelSub: make(chan struct{}),
 			done:      make(chan struct{}),
 		}
+		sess.sid = sid
+		sess.setStableKey(sessKey)
+		// A restored snapshot carries no user binding. When the revocation
+		// gate is on, re-bind from the gate's own table, so the gate below
+		// checks the user (and evicts a revoked one) instead of letting the
+		// restored signed-in model through as an unbound session.
+		if app.durable != nil {
+			if uid, boundAt, ok := lookupSessionBinding(sid); ok {
+				sess.userID = uid
+				sess.boundAt = boundAt
+			}
+		}
 		// v0.16.5 #493 — session-identity bridge. If the gate that
 		// preceded this handler (MountLiveSubAppInProcessWithGate's
 		// `gate` callback, e.g. hub.consoleGateApp) wrote an Identity
@@ -2566,16 +2618,25 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			sess.identityValid = true
 		}
 	}
-	// Always set sid — both on fresh sessions AND on resumes from
-	// persistent stores (which load `sess` without the sid field
-	// populated). Cheap; idempotent on equal sids.
-	sess.sid = sid
+	// Set sid on resumes from persistent stores (which load `sess` without
+	// the sid field populated). The session may already be shared, so a
+	// changed id goes through setSID (an atomic), never a plain write.
+	if sess.currentSID() != sid {
+		sess.setSID(sid)
+	}
 	// PULL-model revocation: stamp the owning app (so Live.bindSessionUser can
 	// persist) and auto-bind from a verified sliding-auth token `sub` on the
 	// request context. sess.mu is not yet held here; bindSessionUserTo takes it.
 	sess.app.Store(app)
 	if sub := autoBindSubFromContext(r.Context()); sub != "" {
 		app.bindSessionUserTo(sess, canonicalSub(sub), time.Now().Unix())
+		// A first bind (or an account switch) moved the session to a new
+		// id; this response carries the new cookie and the page the new id.
+		if cur := sess.currentSID(); cur != sid {
+			writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			w.Header().Set("X-Sky-Sid", cur)
+			sid = cur
+		}
 	}
 
 	// Cycle 4 HS: stamp the session on the handler goroutine for the
@@ -2685,7 +2746,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		mirror = true
 	}
 	initialView := sess.viewID
-	app.store.Set(sid, sess)
+	app.persistSession(sess)
 	sess.mu.Unlock()
 	if mirror {
 		sess.fanOutFrame(mirrorFrame, navTab)
@@ -2754,7 +2815,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// override in the app's head. Empty string when app didn't
 	// supply `head` — byte-identical to pre-v0.15.58 output.
 	headExtra := renderAppHead(app.head, model)
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScripts(sid, app.bannerCfg, csrfToken, app.basePath, initialView), devBanner)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScripts(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab), devBanner)
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html
@@ -2923,11 +2984,22 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// user's sid drive that session: dispatch Msgs, mutate its Model, fire
 	// its handlers, and read back the rendered view. handleSSE has always
 	// required the cookie, so every functioning client already sends it.
-	sid, bound := app.boundSessionID(r, req.SessionID)
-	if !bound {
+	//
+	// Session-id rotation (live_session_rotation.go): a cookie that names a
+	// rotated-away id never dispatches. From the tab that rotated it is
+	// exchanged for the new id on this response; from any other request it
+	// gets "session-rotating" (retry) inside the grace window, then
+	// session-lost.
+	bs := app.resolveBoundSession(r, req.SessionID, req.Tab)
+	switch bs.verdict {
+	case sessionRotating:
+		writeSessionRotating(w)
+		return
+	case sessionLost:
 		writeSessionLost(w)
 		return
 	}
+	sid := bs.sid
 	sess, ok := app.store.Get(sid)
 	if !ok {
 		// Mark this 404 as a real Sky.Live response so the client's
@@ -2945,6 +3017,14 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// activity via touchLastSeen — that would 404 every subsequent click on
 	// a session that is demonstrably alive.
 	writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+	if bs.tellSid {
+		w.Header().Set("X-Sky-Sid", sid)
+	}
+	// This tab is the ORIGIN TAB of everything this event starts: a
+	// Cmd.perform that binds a user rotates the session id towards this tab
+	// only.
+	restoreTab := stampLiveOriginTab(req.Tab)
+	defer restoreTab()
 	// PULL-model revocation: auto-bind from a verified sliding-auth token `sub`
 	// (stamped on the request context by AuthSlidingMiddleware) so token apps
 	// never forget to bind. No-op for session apps (they call
@@ -2954,6 +3034,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// re-set here, to avoid an unsynchronised write racing a concurrent event.)
 	if sub := autoBindSubFromContext(r.Context()); sub != "" {
 		app.bindSessionUserTo(sess, canonicalSub(sub), time.Now().Unix())
+		if cur := sess.currentSID(); cur != sid {
+			writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			w.Header().Set("X-Sky-Sid", cur)
+			sid = cur
+		}
 	}
 	// Per-session serial mutex: prevents two concurrent event handlers
 	// for the SAME session from racing each other's model updates.
@@ -3152,7 +3237,17 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	// Persist the mutated session so DB-backed stores see the new
 	// state. Memory store is a no-op on Set for an already-tracked sid.
-	app.store.Set(sid, sess)
+	app.persistSession(sess)
+	// A Cmd.perform this event started may already have bound a user and
+	// rotated the session id. When this tab is the one that rotated, give it
+	// the new cookie on this response rather than waiting for the SSE ticket.
+	if cur := sess.currentSID(); cur != sid && req.Tab != "" {
+		if a, has := app.store.getAlias(sid); has && a.inGrace(time.Now()) &&
+			subtle.ConstantTimeCompare([]byte(a.Tab), []byte(req.Tab)) == 1 {
+			writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			w.Header().Set("X-Sky-Sid", cur)
+		}
+	}
 
 	// Phase 1 fan-out: mirror this dispatch to the OTHER live tabs of
 	// the session (same shared model) so they reflect the change without
@@ -3381,7 +3476,7 @@ func (app *liveApp) dispatchBatched(sess *liveSession, ev batchedEvent) {
 		default:
 			// Cycle 3 P42 / Gap C14: buffer full; drop + count.
 			// Buffer capacity is SKY_LIVE_SSE_BUFFER (default 16).
-			recordSseDrop(sess.sid)
+			recordSseDrop(sess.currentSID())
 			sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 		}
 	}
@@ -3442,7 +3537,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// model + start time so ObserveMsgLog (called near the end of
 	// dispatch) can decide whether to emit a log line. Lifecycle
 	// marker (Step 6) detected here too.
-	msgLogCtx := BeginMsgLogForSession(msg, sess.model, sess.sid)
+	msgLogCtx := BeginMsgLogForSession(msg, sess.model, sess.currentSID())
 	// Step 6 — unwrap Std.Live.lifecycle so the user's update
 	// receives the inner Msg, not the wrapper.
 	msg = UnwrapLifecycle(msg)
@@ -3569,7 +3664,7 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// Zero-annotation durability: snapshot the new model for this session id
 	// after each update (fire-and-forget; write-if-newer, so a lost race cannot
 	// regress the stored state). A no-op when the app is not durable.
-	app.durable.persist(sess.sid, sess.model)
+	app.durable.persist(sess.currentSID(), sess.model)
 	cmd := tupleSecond(result)
 	finalCmd = cmd
 	sess.handlers = map[string]any{}
@@ -3908,7 +4003,7 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 		}
 		app.Publish(c.topic, SessionEvent{
 			Payload: c.payload,
-			Origin:  sess.sid,
+			Origin:  sess.currentSID(),
 		})
 	case "publishNoEcho":
 		// Cycle 4 NE / issue #359 — same dispatch as "publish" but
@@ -3921,7 +4016,7 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 		}
 		app.Publish(c.topic, SessionEvent{
 			Payload:    c.payload,
-			Origin:     sess.sid,
+			Origin:     sess.currentSID(),
 			SkipOrigin: true,
 		})
 	}
@@ -4075,7 +4170,7 @@ func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
 	default:
 		// Cycle 3 P42 / Gap C14: channel full; drop + count.
 		// Buffer capacity is SKY_LIVE_SSE_BUFFER (default 16).
-		recordSseDrop(sess.sid)
+		recordSseDrop(sess.currentSID())
 		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 	}
 }
@@ -4283,7 +4378,7 @@ func (app *liveApp) timeEveryTick(sess *liveSession, toMsg any, t time.Time) {
 		// Cycle 3 P42 / Gap C14: Time.every tick fired but the SSE consumer
 		// is wedged or slow; drop + count. Next tick's view-equality check
 		// (or the next user dispatch) supersedes anyway.
-		recordSseDrop(sess.sid)
+		recordSseDrop(sess.currentSID())
 		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 	}
 }
@@ -4406,7 +4501,7 @@ func (app *liveApp) applyTopicSubsDiff(sess *liveSession, desired map[string]sub
 			// who route through the bare Subscribe path are
 			// unaffected — empty ownerSid never matches a non-empty
 			// Origin.
-			ch, brokerCancel := app.topics.SubscribeWithOwner(topic, sess.sid)
+			ch, brokerCancel := app.topics.SubscribeWithOwner(topic, sess.currentSID())
 			// Wire the per-goroutine done channel HERE — before
 			// releasing the lock + spawning — so the cancel func
 			// stored in subRegistration is final + race-free
@@ -4563,7 +4658,7 @@ func (app *liveApp) runSubscriberDispatch(sess *liveSession, toMsg any, ev Sessi
 		// Channel full — broadcast frame drops are surfaced through
 		// the same sky_live_sse_drops_total counter; the next user
 		// dispatch supersedes anyway (design doc §6.1).
-		recordSseDrop(sess.sid)
+		recordSseDrop(sess.currentSID())
 		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 	}
 }
@@ -4776,7 +4871,7 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 	select {
 	case sess.sseCh <- frame:
 	default:
-		recordSseDrop(sess.sid)
+		recordSseDrop(sess.currentSID())
 		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
 	}
 }
@@ -4807,12 +4902,29 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// inline `app.cookieName else "sky_sid"` copy this replaces was a
 	// second copy of the same rule that could drift from the one the event
 	// channel now depends on for its security boundary.
-	sid, _ := app.boundSessionID(r, "")
-	if sid == "" {
-		app.writeSSESessionLost(w, r, sseLostNoCookie)
+	//
+	// Session-id rotation: the tab that rotated, reconnecting with the old
+	// cookie, gets the new cookie on this response's headers (an SSE
+	// response can set a cookie before its first byte). Any other old-cookie
+	// connection inside the grace window is told to reconnect shortly.
+	bs := app.resolveBoundSession(r, "", r.URL.Query().Get("tab"))
+	if bs.verdict == sessionRotating {
+		writeSSERotating(w)
+		return
+	}
+	sid := bs.sid
+	if bs.verdict == sessionLost || sid == "" {
+		reason := sseLostNoCookie
+		if v, _ := readSessionCookie(r, app.cookieNameOrDefault()); v != "" {
+			reason = sseLostUnknownSession
+		}
+		app.writeSSESessionLost(w, r, reason)
 		return
 	}
 	sess, ok := app.store.Get(sid)
+	if ok && bs.setCookie {
+		writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+	}
 	if !ok {
 		// The memory-store-after-restart case (a redeploy, or a request
 		// that lands on a replica that never saw this session), and TTL
@@ -4837,6 +4949,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	sess.ensureSSERelay()
 	connID, sseOut, resyncCh := sess.registerSSEConn(tab)
 	defer sess.unregisterSSEConn(connID)
+	kickCh := sess.sseConnKicked(connID)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
@@ -4980,7 +5093,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// Persist the rebuilt prevTree + lastComputedBody +
 		// lastShippedBody so future events diff against the
 		// new-binary view and don't fall back to full-body.
-		app.store.Set(sid, sess)
+		app.persistSession(sess)
 	} else {
 		sess.mu.Unlock()
 	}
@@ -5008,6 +5121,15 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-kickCh:
+			// A session-id rotation closed this connection (it is not the
+			// tab that signed in). Tell the client to reconnect; it then
+			// presents whatever cookie its jar holds by then.
+			_, _ = io.WriteString(w, "event: rotating\ndata: {}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
 			return
 		case <-sess.done:
 			// L3: the session was evicted (TTL cleanup called markDone) — tear
@@ -5107,19 +5229,17 @@ func sessionID(r *http.Request, w http.ResponseWriter, ttl time.Duration) string
 // can already read the cookie has nothing to learn, but the comparison is
 // cheap and keeps a timing side-channel off the table for stores whose sids
 // are not fixed-width.
+//
+// v0.27: the cookie is read under both names (`__Host-<name>` first, see
+// readSessionCookie), and a rotated-away id resolves through
+// resolveBoundSession (live_session_rotation.go), which the event and SSE
+// handlers call directly. This wrapper answers only "bound or not".
 func (a *liveApp) boundSessionID(r *http.Request, claimed string) (string, bool) {
-	if a == nil || r == nil {
+	bs := a.resolveBoundSession(r, claimed, "")
+	if bs.verdict != sessionBound || bs.sid == "" {
 		return "", false
 	}
-	c, err := r.Cookie(a.cookieNameOrDefault())
-	if err != nil || c == nil || c.Value == "" {
-		return "", false
-	}
-	if claimed != "" &&
-		subtle.ConstantTimeCompare([]byte(claimed), []byte(c.Value)) != 1 {
-		return "", false
-	}
-	return c.Value, true
+	return bs.sid, true
 }
 
 // writeSessionLost emits the canonical "this request has no session I will
@@ -5146,7 +5266,11 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 	if cookieName == "" {
 		cookieName = "sky_sid"
 	}
-	if c, err := r.Cookie(cookieName); err == nil {
+	// v0.27: read both cookie names, and never adopt a value this runtime
+	// did not mint (32 lowercase hex). The page GET itself goes through
+	// liveApp.pageSessionID, which also knows about rotated-away ids; this
+	// store-less helper is the plain resolver.
+	if v, _ := readSessionCookie(r, cookieName); v != "" && validSessionID(v) {
 		// L2: re-issue the cookie with a fresh MaxAge on every page load, so an
 		// actively-browsed session keeps a young cookie. Note this re-issue can
 		// only ever cover ACTIVITY — a GET here, a POST in handleEvent. It does
@@ -5154,12 +5278,10 @@ func sessionIDNamed(r *http.Request, w http.ResponseWriter, ttl time.Duration, c
 		// TTL also slides on the SSE heartbeat, which cannot write a cookie into
 		// an already-open stream. Idle-under-SSE is covered by the Max-Age floor
 		// in slidingCookieMaxAgeSeconds, not by this re-issue.
-		writeSessionCookie(r, w, cookieName, c.Value, ttl)
-		return c.Value
+		writeSessionCookie(r, w, cookieName, v, ttl)
+		return v
 	}
-	b := make([]byte, 16)
-	rand.Read(b)
-	sid := hex.EncodeToString(b)
+	sid := newLiveSessionID()
 	writeSessionCookie(r, w, cookieName, sid, ttl)
 	return sid
 }
@@ -5219,15 +5341,38 @@ func writeSessionCookie(r *http.Request, w http.ResponseWriter, cookieName, sid 
 	if crossOriginIframeMode() {
 		sameSite = http.SameSiteNoneMode
 	}
+	// v0.27 — the NAME follows the Secure decision (sessionCookieNameFor):
+	// `__Host-<name>` on a Secure cookie, so no sibling subdomain and no
+	// plain-HTTP response can set it; `<name>` over plain HTTP, where a
+	// `__Host-` cookie would be rejected by the browser.
+	base := sessionCookieBase(cookieName)
+	name := sessionCookieNameFor(r, base)
 	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
+		Name:     name,
 		Value:    sid,
 		Path:     "/",
 		HttpOnly: true,
 		MaxAge:   maxAge,
 		SameSite: sameSite,
-		Secure:   cookieSecureFor(r, cookieName, sameSite),
+		Secure:   cookieSecureFor(r, name, sameSite),
 	})
+	// Moving a browser from the legacy name to `__Host-`: expire the old
+	// cookie so one session never rides under two names. Only a value this
+	// runtime minted (32 hex) is expired: Sky.Spa signs its own session into
+	// a `sky_sid` cookie of a different shape, and that one is not ours.
+	if name != base && r != nil {
+		if c, err := r.Cookie(base); err == nil && c != nil && validSessionID(c.Value) {
+			http.SetCookie(w, &http.Cookie{
+				Name:     base,
+				Value:    "",
+				Path:     "/",
+				HttpOnly: true,
+				MaxAge:   -1,
+				SameSite: sameSite,
+				Secure:   true,
+			})
+		}
+	}
 }
 
 // crossOriginIframeMode reports whether SKY_LIVE_FRAME_ANCESTORS is
@@ -5497,7 +5642,7 @@ func (s *liveSession) registerSSEConn(tab string) (uint64, chan sseFrame, chan s
 	id := s.sseConnSeq
 	ch := make(chan sseFrame, sseChanBuffer)
 	resync := make(chan struct{}, 1)
-	s.sseConns[id] = &sseConn{ch: ch, tab: tab, resync: resync}
+	s.sseConns[id] = &sseConn{ch: ch, tab: tab, resync: resync, kick: make(chan struct{})}
 	return id, ch, resync
 }
 
@@ -5578,7 +5723,7 @@ func (s *liveSession) fanOutFrame(fr sseFrame, exceptTab string) {
 			// DOM silently diverges. Flag it + signal an inline resync so its
 			// handleSSE loop ships the current full body (correcting the drop)
 			// instead of leaving it permanently diverged.
-			recordSseDrop(s.sid)
+			recordSseDrop(s.currentSID())
 			c.outOfSync.Store(true)
 			signalResync(c)
 		}

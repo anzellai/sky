@@ -22,10 +22,15 @@ import (
 
 // liveBootCfg is the per-page data the client reads from #sky-live-cfg.
 type liveBootCfg struct {
-	Sid              string `json:"sid"`
-	Base             string `json:"base"`
-	View             string `json:"view"`
-	Csrf             string `json:"csrf"`
+	Sid  string `json:"sid"`
+	Base string `json:"base"`
+	View string `json:"view"`
+	Csrf string `json:"csrf"`
+	// Tab is this page's tab id, minted by the server for a full page load
+	// (see handleInitial). The server stamps it as the origin tab of the
+	// page's own Cmds, so a session-id rotation started there reaches this
+	// tab. Empty on older servers; the client then mints its own.
+	Tab              string `json:"tab,omitempty"`
 	BannerEnabled    bool   `json:"bannerEnabled"`
 	RetryBaseMs      int    `json:"retryBaseMs"`
 	RetryMaxMs       int    `json:"retryMaxMs"`
@@ -61,8 +66,10 @@ func liveCfgBlock(c liveBootCfg) string {
 // the external client. The config block MUST directly follow </div> of
 // #sky-root: the client's __skyPatch strips a full-page sky-nav response with
 // /<div id="sky-root">(…)<\/div><script type="application\/json" id="sky-live-cfg">/.
-func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view string) string {
-	return liveCfgBlock(newLiveBootCfg(sid, cfg, csrfToken, basePath, view)) +
+func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view, tab string) string {
+	c := newLiveBootCfg(sid, cfg, csrfToken, basePath, view)
+	c.Tab = tab
+	return liveCfgBlock(c) +
 		`<script src="` + basePath + liveClientPath + `"></script>`
 }
 
@@ -92,7 +99,24 @@ var __skyView = __skyCfg.view || "";
 // from the dispatch broadcast (it already applied the patch on its HTTP
 // response). Two tabs of one session get distinct ids; a reload mints a
 // fresh one. Random base36 — URL-safe, no escaping needed.
-var __skyTabId = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+//
+// The id also names the tab that signed in: after a session-id rotation
+// only that tab may exchange the old session cookie for the new one
+// (live_session_rotation.go). So it must not be guessable: the server mints
+// it for a full page load (__skyCfg.tab); otherwise it comes from
+// crypto.getRandomValues. Math.random is only the last resort for a browser
+// without Web Crypto.
+var __skyTabId = __skyCfg.tab || (function () {
+  try {
+    var b = new Uint8Array(16);
+    (window.crypto || window.msCrypto).getRandomValues(b);
+    var s = "";
+    for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") + b[i].toString(16);
+    return s;
+  } catch (_) {
+    return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  }
+})();
 // Tracks the last settled URL path so a patch can tell a real page navigation
 // (scroll the new page to the top, like a normal browser navigation) from an
 // in-place SSE/event update on the same page (leave the user's scroll alone).
@@ -1147,11 +1171,22 @@ function __skyPostEventNow(body) {
     //                  data-sky-hid so the NEXT click matches. This action is
     //                  dropped (its captured payload is unrecoverable), which
     //                  beats stranding the whole client.
+    // Session-id rotation (live_session_rotation.go): the server names the
+    // session's new id; echo it from now on.
+    var rotatedSid = r.headers.get("X-Sky-Sid");
+    if (rotatedSid) __skySid = rotatedSid;
     var skyStatus = r.headers.get("X-Sky-Status");
     if (skyStatus === "session-lost") {
       __skyOnPostSuccess();            // server reachable → clear backoff/banner
       __skyRecoverLostSession("unknown-session");
       return;
+    }
+    if (skyStatus === "session-rotating") {
+      // The session moved to a new id (another tab signed in) and this
+      // browser's cookie jar does not hold the new cookie yet. Retry: the
+      // signing-in tab stores it within a moment. Not a lost session, so
+      // never a reload.
+      throw new Error("session rotating");
     }
     if (skyStatus === "desync") {
       __skyOnPostSuccess();            // clears the reconnecting/offline banner
@@ -1953,6 +1988,8 @@ document.addEventListener("click", function(ev) {
   ev.preventDefault();
   fetch(href, { headers: { "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }, credentials: "same-origin" })
     .then(function(r) {
+      var navSid = r.headers.get("X-Sky-Sid");
+      if (navSid) __skySid = navSid;
       // r.ok check is load-bearing. Without it, a 404 body like
       // "session not found" (server lost our session_id store
       // entry — TTL expiry, store-restart, store-config change,
@@ -1983,6 +2020,8 @@ document.addEventListener("click", function(ev) {
 window.addEventListener("popstate", function() {
   fetch(window.location.href, { headers: { "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }, credentials: "same-origin" })
     .then(function(r) {
+      var navSid = r.headers.get("X-Sky-Sid");
+      if (navSid) __skySid = navSid;
       // Same r.ok gate as the sky-nav click path. Without it,
       // Back/Forward to a URL after the server lost our session
       // renders the 404 body as the whole page.
@@ -2129,6 +2168,26 @@ function __skyOpenSSE() {
     try { d = JSON.parse(e.data); } catch (_) {}
     __skyRecoverLostSession(d && d.reason ? d.reason : "session-lost");
   });
+  // Session-id rotation (live_session_rotation.go). "rotate" reaches only
+  // the tab that signed in: exchange the one-time ticket for the new session
+  // cookie. "rotating" means this connection was closed by a rotation, or
+  // presented the old cookie before the jar held the new one: reconnect
+  // shortly.
+  __skySSE.addEventListener("rotate", function(e) {
+    var d = null;
+    try { d = JSON.parse(e.data); } catch (_) {}
+    if (d && d.ticket) __skyRedeemRotation(d.ticket, 0);
+  });
+  __skySSE.addEventListener("rotating", function() {
+    __skyForcedClose = true;
+    try { if (__skySSE) __skySSE.close(); } catch (_) {}
+    __skySSE = null;
+    if (__skySseReopenTimer !== null) clearTimeout(__skySseReopenTimer);
+    __skySseReopenTimer = setTimeout(function() {
+      __skySseReopenTimer = null;
+      __skyOpenSSE();
+    }, 750);
+  });
   __skySSE.addEventListener("hello", function(e) {
     // Handshake received — we know we hit a real Sky.Live v2 server,
     // not a proxy that intercepted with a generic 200. Anything
@@ -2144,6 +2203,9 @@ function __skyOpenSSE() {
     // of the new process would be dropped as already seen.
     var hp = null;
     try { hp = JSON.parse(e.data); } catch (_) {}
+    // hello names the session this connection's cookie resolved to (after
+    // a session-id rotation, the new id).
+    if (hp && hp.sid) __skySid = hp.sid;
     if (hp && hp.pe) {
       if (__skyProcEpoch !== null && hp.pe !== __skyProcEpoch) __skyLastGlobalSeq = 0;
       __skyProcEpoch = hp.pe;
@@ -2315,6 +2377,31 @@ function __skyOpenSSE() {
   });
 }
 
+// __skyRedeemRotation — POST the rotation ticket to /_sky/rotate. The
+// server answers with Set-Cookie (the new session cookie, HttpOnly) and the
+// new id, which this page echoes from now on. A network failure retries a
+// few times; a refusal needs nothing more: this tab's next event POST also
+// gets the new cookie.
+function __skyRedeemRotation(ticket, attempt) {
+  var headers = {"Content-Type": "application/json"};
+  if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
+  fetch(__skyBase + "/_sky/rotate", {
+    method: "POST",
+    headers: headers,
+    body: JSON.stringify({tab: __skyTabId, ticket: ticket}),
+    credentials: "same-origin"
+  }).then(function(r) {
+    if (!r.ok) return null;
+    return r.json();
+  }).then(function(d) {
+    if (d && d.sid) __skySid = d.sid;
+  }).catch(function() {
+    if (attempt < 3) {
+      setTimeout(function() { __skyRedeemRotation(ticket, attempt + 1); }, 500 * (attempt + 1));
+    }
+  });
+}
+
 // __skyForceReopenSSE — close the current EventSource and queue a
 // fresh open with backoff. Each call bumps the retry counter; once
 // it exceeds __skyRetryMaxAttempts the banner flips to "offline" but
@@ -2386,7 +2473,7 @@ function __skyProbeSessionLost() {
   fetch(__skyBase + "/_sky/event", {
     method: "POST",
     headers: headers,
-    body: JSON.stringify({sessionId: __skySid, msg: "__skySessionPing", args: []}),
+    body: JSON.stringify({sessionId: __skySid, msg: "__skySessionPing", args: [], tab: __skyTabId}),
     credentials: "same-origin"
   }).then(function(r) {
     if (r.status !== 404) return;

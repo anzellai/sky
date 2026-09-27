@@ -971,7 +971,7 @@ func (app *liveApp) dispatchOneWsSub(sess *liveSession, reg *wsSubReg, ev wsEven
 	select {
 	case sess.sseCh <- frame:
 	default:
-		recordSseDrop(sess.sid)
+		recordSseDrop(sess.currentSID())
 	}
 }
 

@@ -4,7 +4,9 @@ package rt
 
 import (
 	"fmt"
+	"hash/fnv"
 	"sync"
+	"time"
 )
 
 // Zero-annotation durable TEA. `Std.App.withDurable` threads a durable wiring
@@ -29,7 +31,37 @@ type durableCtx struct {
 	// silent reset-and-overwrite would destroy the only copy of the
 	// user's state.
 	suspended sync.Map
+	// retired holds the Sky.Live run ids (session ids) whose snapshot was
+	// discarded: the session rotated to a new id, was evicted by the
+	// revocation gate, or was ended. A persist for a retired id is dropped,
+	// so a fire-and-forget write that was already queued when the id retired
+	// can not bring the snapshot back. Value: the retire time, for pruning.
+	retired   sync.Map
+	retiredMu sync.Mutex
+	retiredN  int
+	// setupOnce runs the wiring's setup (create the snapshot table) before
+	// a discard in a process that has not booted a run yet.
+	setupOnce sync.Once
 }
+
+// durableStripes serialise the snapshot writes of one run id against its
+// retirement. A persist takes the stripe of its run id, checks `retired`,
+// and runs the write under the stripe; retire takes the same stripe, marks
+// the id retired and deletes the snapshot. So no persist that passed the
+// check can land after the delete. Striped (not one lock per id) so the
+// table has a fixed size; two ids that share a stripe only serialise their
+// writes.
+var durableStripes [64]sync.Mutex
+
+func durableStripe(runId string) *sync.Mutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(runId))
+	return &durableStripes[h.Sum32()%uint32(len(durableStripes))]
+}
+
+// durableRetiredKeep is how long a retired id is remembered. A queued
+// persist runs within milliseconds; ten minutes is a wide margin.
+const durableRetiredKeep = 10 * time.Minute
 
 // durableCtxOf builds a ctx from a config's "Durable" field, or nil when the app
 // is not durable.
@@ -55,7 +87,7 @@ func (d *durableCtx) boot(runId string, initModel any) any {
 // bootWith is boot with the request that created a Sky.Live session (nil
 // for Cli / Tui).
 func (d *durableCtx) bootWith(runId string, req any, initModel any) any {
-	if d == nil {
+	if d == nil || d.isRetired(runId) {
 		return initModel
 	}
 	if setupTask := Field(d.wiring, "Setup"); setupTask != nil {
@@ -132,7 +164,125 @@ func (d *durableCtx) persist(runId string, model any) {
 		return
 	}
 	task := SkyCall(persistFn, runId, model)
-	safeGo("Durable.persist", func() { sky_call(task, nil) })
+	safeGo("Durable.persist", func() {
+		mu := durableStripe(runId)
+		mu.Lock()
+		defer mu.Unlock()
+		if d.isRetired(runId) {
+			return
+		}
+		sky_call(task, nil)
+	})
+}
+
+// persistSync snapshots model for runId and waits for the write. Used by the
+// session-id rotation, which must have the snapshot under the new id before
+// it deletes the old one.
+func (d *durableCtx) persistSync(runId string, model any) {
+	if d == nil || runId == "" || d.isSuspended(runId) {
+		return
+	}
+	persistFn := Field(d.wiring, "Persist")
+	if persistFn == nil {
+		return
+	}
+	mu := durableStripe(runId)
+	mu.Lock()
+	defer mu.Unlock()
+	if d.isRetired(runId) {
+		return
+	}
+	sky_call(SkyCall(persistFn, runId, model), nil)
+}
+
+// retire drops the snapshot of runId and refuses every later persist for
+// it. Synchronous: when it returns, the snapshot is gone and no queued write
+// can recreate it. A suspended run (its snapshot failed to restore) keeps
+// its snapshot: it is the only copy of the user's state (see `suspended`).
+func (d *durableCtx) retire(runId string) {
+	if d == nil || runId == "" {
+		return
+	}
+	mu := durableStripe(runId)
+	mu.Lock()
+	defer mu.Unlock()
+	d.markRetired(runId)
+	if d.isSuspended(runId) {
+		return
+	}
+	d.setupOnce.Do(func() {
+		if setupTask := Field(d.wiring, "Setup"); setupTask != nil {
+			sky_call(setupTask, nil)
+		}
+	})
+	discardFn := Field(d.wiring, "Discard")
+	if discardFn == nil {
+		logEmit(logLevelError, "error",
+			"Durable: the wiring has no discard function, so the snapshot of a retired session could not be deleted",
+			map[string]any{"class": "DurableDiscardMissing", "runId": runId})
+		return
+	}
+	res := sky_call(SkyCall(discardFn, runId), nil)
+	if isErrResult(res) {
+		logEmit(logLevelError, "error",
+			fmt.Sprintf("Durable: deleting the snapshot of retired run %q failed (%v)", runId, extractErrResultValue(res)),
+			map[string]any{"class": "DurableDiscardFailed", "runId": runId})
+	}
+}
+
+// rotate moves the durable state of a Sky.Live session from oldId to newId:
+// the current model is written under newId, then oldId is retired (its
+// snapshot deleted, later writes refused). A suspended old run keeps its
+// snapshot where it is, and the new id is suspended too, so nothing
+// overwrites the kept copy.
+func (d *durableCtx) rotate(oldId, newId string, model any) {
+	if d == nil || oldId == "" || newId == "" || oldId == newId {
+		return
+	}
+	if d.isSuspended(oldId) {
+		d.suspended.Store(newId, true)
+		d.markRetired(oldId)
+		return
+	}
+	if model != nil {
+		d.persistSync(newId, model)
+	}
+	d.retire(oldId)
+}
+
+func (d *durableCtx) isRetired(runId string) bool {
+	_, ok := d.retired.Load(runId)
+	return ok
+}
+
+func (d *durableCtx) markRetired(runId string) {
+	now := time.Now()
+	if _, loaded := d.retired.LoadOrStore(runId, now); loaded {
+		return
+	}
+	d.retiredMu.Lock()
+	d.retiredN++
+	prune := d.retiredN > 4096
+	if prune {
+		d.retiredN = 0
+	}
+	d.retiredMu.Unlock()
+	if !prune {
+		return
+	}
+	cut := now.Add(-durableRetiredKeep)
+	kept := 0
+	d.retired.Range(func(k, v any) bool {
+		if t, ok := v.(time.Time); ok && t.Before(cut) {
+			d.retired.Delete(k)
+		} else {
+			kept++
+		}
+		return true
+	})
+	d.retiredMu.Lock()
+	d.retiredN += kept
+	d.retiredMu.Unlock()
 }
 
 func (d *durableCtx) isSuspended(runId string) bool {

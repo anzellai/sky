@@ -22,6 +22,7 @@ module Std.Durable exposing
     , saveSnapshot
     , saveSnapshotAuto
     , loadSnapshot
+    , deleteSnapshot
     , SnapshotEvent(..)
     , restoreCmd
     , snapshotCmd
@@ -893,6 +894,17 @@ saveSnapshotAuto db runId codec model =
                        , SqlInt now
                        ]
                        |> Task.map (\_ -> ()))
+
+
+{-| Delete the snapshot of `runId`, if there is one. A run with no snapshot is
+not an error. Sky.Live calls this (through `App.withDurable`) when a session
+moves to a new session id at sign-in, is revoked, or is ended with
+`Live.endSession`, so a retired session id restores nothing.
+-}
+deleteSnapshot : Db -> String -> Task Error ()
+deleteSnapshot db runId =
+    Db.exec db "DELETE FROM _sky_durable_snapshot WHERE run_id = ?" [ SqlString runId ]
+        |> Task.map (\_ -> ())
 
 -- ---------------------------------------------------------------------------
 -- Durable TEA (v2) — restore-on-first-tick wiring for a Std.App / Sky.Live app

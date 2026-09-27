@@ -29,18 +29,18 @@ import (
 // now pins the correct property — a fresh Max-Age that OUTLIVES the TTL.
 func TestSessionCookieSlidesOnExisting(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
-	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "existing-sid"})
+	req.AddCookie(&http.Cookie{Name: "sky_sid", Value: "0123456789abcdef0123456789abcdef"})
 	rr := httptest.NewRecorder()
 
 	sid := sessionIDNamed(req, rr, 30*time.Minute, "sky_sid")
-	if sid != "existing-sid" {
+	if sid != "0123456789abcdef0123456789abcdef" {
 		t.Fatalf("sid = %q, want the existing sid preserved", sid)
 	}
 	setCookie := rr.Header().Get("Set-Cookie")
 	if setCookie == "" {
 		t.Fatal("L2: existing-cookie path must re-issue Set-Cookie (sliding window), got none")
 	}
-	if !strings.Contains(setCookie, "sky_sid=existing-sid") {
+	if !strings.Contains(setCookie, "sky_sid=0123456789abcdef0123456789abcdef") {
 		t.Fatalf("re-issued cookie should carry the same sid: %q", setCookie)
 	}
 	// A fresh, PERSISTENT Max-Age that outlives the 30m TTL it guards.

@@ -167,13 +167,21 @@ func restoredLocalSeq(persisted int64) int64 {
 // USER event, and a restart lost every change made since. Must be
 // called WITHOUT sess.mu held (store.Set encodes the session).
 func (app *liveApp) persistSession(sess *liveSession) {
-	if app == nil || app.store == nil || sess == nil || sess.sid == "" {
+	if app == nil || app.store == nil || sess == nil {
 		return
 	}
 	if sess.evicted.Load() {
 		return
 	}
-	app.store.Set(sess.sid, sess)
+	// storeMu: a rotation re-keys the session under this lock, so the id
+	// read here is the one the write lands under (never a retired id).
+	sess.storeMu.Lock()
+	defer sess.storeMu.Unlock()
+	sid := sess.currentSID()
+	if sid == "" {
+		return
+	}
+	app.store.Set(sid, sess)
 }
 
 // ── Classified dispatch panic feedback (L12) ──────────────────────

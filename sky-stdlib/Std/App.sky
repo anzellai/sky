@@ -369,7 +369,9 @@ type App fallback seed page model msg key
 
 -- | The durability wiring carried to the backend loop by `withDurable`. The
 -- runtime calls `restore` at session/app start (swapping in the loaded model via
--- `applyRestore`) and `persist` after each update. Built from the shipped
+-- `applyRestore`) and `persist` after each update; on Sky.Live it calls
+-- `discard` when a session id is retired (the session moved to a new id at
+-- sign-in, was revoked, or ended), so a retired id restores nothing. Built from the shipped
 -- `Std.Durable` snapshot primitives, so the model just needs a `Codec`. `enabled`
 -- gates it — a non-durable app carries a no-op wiring (avoids a `Maybe` of a
 -- parameterised record, which the codegen does not lower cleanly).
@@ -378,6 +380,7 @@ type alias DurableWiring model =
     , setup : Task Error ()
     , restore : String -> Task Error (Maybe model)
     , persist : String -> model -> Task Error ()
+    , discard : String -> Task Error ()
     , applyRestore : Result Error (Maybe model) -> model -> model
     , runId : String
     }
@@ -389,6 +392,7 @@ noDurableWiring =
     , setup = Task.succeed ()
     , restore = \_ -> Task.succeed Nothing
     , persist = \_ _ -> Task.succeed ()
+    , discard = \_ -> Task.succeed ()
     , applyRestore = \_ m -> m
     , runId = ""
     }
@@ -566,6 +570,7 @@ withDurableId rid dbHandle codec (App a) =
             , setup = Durable.setup dbHandle
             , restore = \r -> Durable.loadSnapshot dbHandle r codec
             , persist = \r m -> Durable.saveSnapshotAuto dbHandle r codec m
+            , discard = \r -> Durable.deleteSnapshot dbHandle r
             , applyRestore = applyRestoreDefault
             , runId = rid
             }
@@ -587,6 +592,7 @@ liveDurable_ : (seed -> Request) -> Maybe (Request -> model -> ( model, Cmd msg 
 , setup : Task Error ()
 , restore : String -> Task Error (Maybe model)
 , persist : String -> model -> Task Error ()
+, discard : String -> Task Error ()
 , applyRestore : Result Error (Maybe model) -> model -> model
 , runId : String
 , applyRestoreRequest : seed -> Result Error (Maybe model) -> model -> model
@@ -596,6 +602,7 @@ liveDurable_ toRequest onRequest d =
     , setup = d.setup
     , restore = d.restore
     , persist = d.persist
+    , discard = d.discard
     , applyRestore = d.applyRestore
     , runId = d.runId
     , applyRestoreRequest =

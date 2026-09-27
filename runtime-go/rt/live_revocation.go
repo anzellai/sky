@@ -68,24 +68,39 @@ func autoBindSubFromContext(ctx context.Context) string {
 // re-stamping boundAt on every request would let a slid token walk boundAt past
 // a later revoked_at and dodge the revoke); re-binding to a DIFFERENT user
 // (account switch) resets both.
+//
+// v0.27 — every CHANGE of bound user (the first bind and an account switch)
+// also moves the session to a new session id (rotateSessionLocked,
+// live_session_rotation.go). Without that, whoever planted the pre-login id
+// in the victim's browser shared the signed-in session (session fixation).
+// The origin tab is the browser tab whose request started this bind (see
+// stampLiveOriginTab); only it receives the new id.
 func (app *liveApp) bindSessionUserTo(sess *liveSession, uid string, now int64) {
 	if sess == nil || uid == "" {
 		return
 	}
+	originTab := currentLiveOriginTab()
 	sess.mu.Lock()
 	changed := false
+	rotate := false
 	if sess.userID != uid {
 		sess.userID = uid
 		sess.boundAt = now
 		changed = true
+		rotate = true
 	} else if sess.boundAt == 0 {
 		sess.boundAt = now
 		changed = true
 	}
-	sid := sess.sid
+	if rotate && app != nil && app.store != nil && !sess.evicted.Load() {
+		app.rotateSessionLocked(sess, originTab)
+	}
+	sid := sess.currentSID()
+	userID, boundAt := sess.userID, sess.boundAt
 	sess.mu.Unlock()
 	if changed && app != nil && app.store != nil && sid != "" {
-		app.store.Set(sid, sess)
+		app.persistSession(sess)
+		recordSessionBinding(app, sid, userID, boundAt)
 	}
 }
 
@@ -202,7 +217,14 @@ func (app *liveApp) evictForAccess(sess *liveSession) {
 	if !sess.evicted.CompareAndSwap(false, true) {
 		return // already evicting
 	}
-	sid := sess.sid
+	sid := sess.currentSID()
+	// Delete the durable snapshot + binding row and tombstone the id NOW,
+	// before this returns: the revoked user's next GET with the same cookie
+	// must find nothing to restore. (Pre-fix only the store entry went, and
+	// the snapshot restored the signed-in Model as an UNBOUND session that
+	// the gate lets through.) None of this touches the session's goroutines,
+	// so it is safe under the sess.mu the caller holds.
+	app.endSessionNow(sess)
 	go func() {
 		// markDone first so sess.done closes promptly even if the store no
 		// longer holds the sid; store.Delete then removes the blob (and calls
@@ -213,4 +235,108 @@ func (app *liveApp) evictForAccess(sess *liveSession) {
 			app.store.Delete(sid)
 		}
 	}()
+}
+
+// ─── durable binding rows (restore-time re-bind) ────────────────────
+//
+// A durable app (App.withDurable) restores a session's Model from its
+// snapshot when the session store no longer has it (a memory store after a
+// restart, another replica). The snapshot holds the Model only, so the
+// restored session used to come back UNBOUND, and the revocation gate lets an
+// unbound session through with a warning: a user revoked while the process
+// was down got their signed-in Model back. The binding is therefore also kept
+// in the gate's own Db (the same Db as sky_revocations), keyed by session id,
+// and handleInitial re-binds a restored session from it before the gate
+// runs. Only written when the gate is on AND the app is durable; rows are
+// moved on rotation and deleted on eviction / Live.endSession, and rows not
+// refreshed for sessionBindingKeep are pruned.
+
+const sessionBindingKeep = 90 * 24 * time.Hour
+
+var sessionBindingPruneAt atomic.Int64
+
+func ensureSessionBindingsTable(d *SkyDb) error {
+	_, err := d.conn.Exec(`CREATE TABLE IF NOT EXISTS sky_session_bindings (
+		sid TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		bound_at BIGINT NOT NULL,
+		updated_at BIGINT NOT NULL
+	)`)
+	return err
+}
+
+// sessionBindingDb returns the gate's Db when bindings are kept for app.
+func sessionBindingDb(app *liveApp) *SkyDb {
+	if app == nil || app.durable == nil {
+		return nil
+	}
+	g := getRevocationGate()
+	if g == nil || g.db == nil || g.db.conn == nil {
+		return nil
+	}
+	return g.db
+}
+
+func reportBindingErr(op, sid string, err error) {
+	if err == nil {
+		return
+	}
+	logEmit(logLevelError, "error",
+		fmt.Sprintf("Sky.Live session binding %s failed: %v", op, err),
+		map[string]any{"class": "SessionBindingWriteFailed", "sid": sid})
+}
+
+// recordSessionBinding upserts the binding row for sid.
+func recordSessionBinding(app *liveApp, sid, uid string, boundAt int64) {
+	d := sessionBindingDb(app)
+	if d == nil || sid == "" || uid == "" {
+		return
+	}
+	if err := ensureSessionBindingsTable(d); err != nil {
+		reportBindingErr("setup", sid, err)
+		return
+	}
+	now := time.Now().Unix()
+	q := d.rebind(`INSERT INTO sky_session_bindings (sid, user_id, bound_at, updated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT (sid) DO UPDATE SET user_id = excluded.user_id, bound_at = excluded.bound_at, updated_at = excluded.updated_at`)
+	_, err := d.conn.Exec(q, sid, uid, boundAt, now)
+	reportBindingErr("write", sid, err)
+	// Prune at most once an hour per process.
+	if last := sessionBindingPruneAt.Load(); now-last > 3600 && sessionBindingPruneAt.CompareAndSwap(last, now) {
+		cut := now - int64(sessionBindingKeep/time.Second)
+		_, perr := d.conn.Exec(d.rebind(`DELETE FROM sky_session_bindings WHERE updated_at < ?`), cut)
+		reportBindingErr("prune", sid, perr)
+	}
+}
+
+// dropSessionBinding deletes the binding row for sid.
+func dropSessionBinding(app *liveApp, sid string) {
+	d := sessionBindingDb(app)
+	if d == nil || sid == "" {
+		return
+	}
+	if err := ensureSessionBindingsTable(d); err != nil {
+		reportBindingErr("setup", sid, err)
+		return
+	}
+	_, err := d.conn.Exec(d.rebind(`DELETE FROM sky_session_bindings WHERE sid = ?`), sid)
+	reportBindingErr("delete", sid, err)
+}
+
+// lookupSessionBinding reads the binding row for sid (a durable restore).
+// Reads nothing unless the revocation gate is on.
+func lookupSessionBinding(sid string) (uid string, boundAt int64, ok bool) {
+	g := getRevocationGate()
+	if g == nil || g.db == nil || g.db.conn == nil || sid == "" {
+		return "", 0, false
+	}
+	d := g.db
+	if err := ensureSessionBindingsTable(d); err != nil {
+		return "", 0, false
+	}
+	err := d.conn.QueryRow(d.rebind(`SELECT user_id, bound_at FROM sky_session_bindings WHERE sid = ?`), sid).Scan(&uid, &boundAt)
+	if err != nil {
+		return "", 0, false
+	}
+	return uid, boundAt, uid != ""
 }

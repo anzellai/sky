@@ -53,6 +53,8 @@ module Std.Live exposing
     , withAuthSliding
     , withRevocation
     , bindSessionUser
+    , sessionKey
+    , endSession
     )
 
 import Sky.Ffi as Ffi
@@ -371,3 +373,29 @@ withRevocation =
 bindSessionUser : String -> Task Error ()
 bindSessionUser =
     Ffi.kernel "Live_bindSessionUser"
+
+
+-- | `sessionKey ()` — a key for the CURRENT live session that stays the same
+-- for the session's whole life. Key per-session data (a cart, a draft) by it.
+-- Do NOT key data by the session cookie: the session id changes every time the
+-- bound user changes (`bindSessionUser` rotates it, to stop session fixation),
+-- and the cookie name is `__Host-sky_sid` over HTTPS. `init`'s request seed
+-- carries the same value as `sessionKey`. Fails outside a live-session dispatch.
+--
+--     Cmd.perform (Live.sessionKey ()) GotSessionKey
+sessionKey : () -> Task Error String
+sessionKey =
+    Ffi.kernel "Live_sessionKey"
+
+
+-- | `endSession ()` — end the CURRENT live session: sign-out, or "start over".
+-- The session's server state, its durable snapshot (`App.withDurable`) and its
+-- user binding are deleted, its open tabs reload, and the old session cookie is
+-- never used again, so the reload starts a fresh session and runs `init`.
+-- Outside a live-session dispatch it is a harmless no-op.
+--
+--     SignOut ->
+--         ( model, Cmd.perform (Live.endSession ()) (\_ -> Ignore) )
+endSession : () -> Task Error ()
+endSession =
+    Ffi.kernel "Live_endSession"

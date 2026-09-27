@@ -451,6 +451,19 @@ type SessionStore interface {
 	// RegisterReadinessProbe — the fix for the "readyz lies while the
 	// store is down / silently fell back to memory" class.
 	Ping() error
+
+	// Session-id rotation (live_session_rotation.go, live_store_rotation.go).
+	//
+	// rekeySession moves the live session object from oldSid to newSid
+	// WITHOUT tearing it down (Delete would markDone it and end its SSE
+	// connections). The caller holds sess.mu and sess.storeMu.
+	rekeySession(oldSid, newSid string, sess *liveSession)
+	// putAlias records what became of a retired id (moved, or ended). It
+	// lives as long as a session would, in the store itself, so every
+	// replica sharing the store resolves it.
+	putAlias(oldSid string, a sessionAlias)
+	// getAlias reads a retired id's record.
+	getAlias(oldSid string) (sessionAlias, bool)
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -460,8 +473,10 @@ type SessionStore interface {
 type memoryStore struct {
 	mu       sync.RWMutex
 	sessions map[string]*liveSession
-	ttl      time.Duration
-	stop     chan struct{}
+	// aliases — retired session ids (live_store_rotation.go). Under mu.
+	aliases map[string]memAlias
+	ttl     time.Duration
+	stop    chan struct{}
 	// closeOnce guards `stop` so a second Close cannot panic. Same
 	// mechanism as jobs.Worker.Stop. See SessionStore.Close.
 	closeOnce sync.Once
@@ -569,6 +584,7 @@ func (s *memoryStore) cleanupLoop() {
 					delete(s.sessions, id)
 				}
 			}
+			s.reapAliasesLocked(now)
 			s.mu.Unlock()
 			for _, sess := range expired {
 				sess.markDone()
@@ -664,6 +680,10 @@ func newSQLiteStore(path string, ttl, idleEvict time.Duration) (*sqliteStore, er
 			blob       BLOB NOT NULL,
 			last_seen  INTEGER NOT NULL
 		)`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(qSqliteCreateAliases); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -878,7 +898,16 @@ func idleEvictPass(
 			continue // encode-fail → keep in memCache to TTL (no evict)
 		}
 		// persist (disk write OUTSIDE memMu and sess.mu)
+		// Session-id rotation: a session re-keyed since the snapshot above
+		// must not be written back under its retired id. storeMu makes the
+		// check and the write one step against the rotation's re-key.
+		c.sess.storeMu.Lock()
+		if cur := c.sess.currentSID(); cur != "" && cur != c.sid {
+			c.sess.storeMu.Unlock()
+			continue
+		}
 		persist(c.sid, blob, ls)
+		c.sess.storeMu.Unlock()
 		// fix #1: atomic re-check + delete under memMu.Lock (takes sseConnMu
 		// via hasSSEConnOtherThan here — memMu→sseConnMu, acyclic; NO sess.mu,
 		// NO markDone under memMu).
@@ -1028,6 +1057,7 @@ func (s *sqliteStore) runCleanupLoop(db liveStoreExecer, interval time.Duration)
 func (s *sqliteStore) cleanupOnce(db liveStoreExecer, now time.Time) error {
 	cutoff := now.Add(-s.ttl)
 	reapErr := reapExpiredSessions(db, qSqliteReapSessions, cutoff.Unix())
+	reapErr = errors.Join(reapErr, execIgnoringRows(db, qSqliteReapAliases, now.Unix()))
 	// Cycle 3 P36 / Gap C4: also evict the matching memCache entries and
 	// signal terminal teardown. The memCache holds the LIVE pointer (the one
 	// that owns Time.every goroutines); without this, a session whose blob
@@ -1152,6 +1182,10 @@ func newPostgresStore(connStr string, ttl, idleEvict time.Duration) (*postgresSt
 		)`); err != nil {
 		// Release THIS consumer's reference, not the pool: another consumer
 		// may already be serving requests through it.
+		handle.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(qPostgresCreateAliases); err != nil {
 		handle.Close()
 		return nil, err
 	}
@@ -1298,6 +1332,7 @@ func (s *postgresStore) runCleanupLoop(db liveStoreExecer, interval time.Duratio
 func (s *postgresStore) cleanupOnce(db liveStoreExecer, now time.Time) error {
 	cutoff := now.Add(-s.ttl)
 	reapErr := reapExpiredSessions(db, qPostgresReapSessions, cutoff.Unix())
+	reapErr = errors.Join(reapErr, execIgnoringRows(db, qPostgresReapAliases, now.Unix()))
 	// Cycle 3 P36 / Gap C4: also evict the matching memCache entries and
 	// signal terminal teardown. See sqliteStore.cleanupOnce for the full
 	// rationale.
@@ -1631,6 +1666,11 @@ type storableSession struct {
 	// serve a revoked user; the gate always reads the shared table fresh.
 	UserID  string
 	BoundAt int64
+	// v0.27 — the stable per-session key (Live.sessionKey). Survives the
+	// session-id rotation at sign-in. A pre-v0.27 blob decodes "" and the
+	// session adopts its current id as the key (liveSession.stableKey), so an
+	// app that keyed data by the session cookie keeps finding it.
+	SessionKey string
 }
 
 func encodeSession(s *liveSession) ([]byte, error) {
@@ -1659,6 +1699,7 @@ func encodeSession(s *liveSession) ([]byte, error) {
 		IdentityValid: s.identityValid,
 		UserID:        s.userID,
 		BoundAt:       s.boundAt,
+		SessionKey:    s.stableKey(),
 	}
 	if s.analytics != nil {
 		c, anon, user := s.analytics.snapshot()
@@ -1785,6 +1826,7 @@ func decodeSession(blob []byte) (*liveSession, error) {
 	if st.HasAnalytics {
 		sess.analytics = restoreAnalyticsState(st.AnalyticsConsent, st.AnalyticsConsentExplicit, st.AnalyticsAnonID, st.AnalyticsUserID)
 	}
+	sess.setStableKey(st.SessionKey)
 	return sess, nil
 }
 

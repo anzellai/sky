@@ -68,7 +68,7 @@ func TestSessionCookie_SecureInProd(t *testing.T) {
 			w := httptest.NewRecorder()
 			sessionID(r, w, 30*time.Minute)
 
-			c := findSetCookie(w.Result().Header, "sky_sid")
+			c := findSetCookie(w.Result().Header, "__Host-sky_sid") // v0.27: a Secure session cookie carries the __Host- prefix
 			if c == nil {
 				t.Fatalf("expected sky_sid cookie")
 			}
@@ -121,7 +121,7 @@ func TestSessionCookie_SecureOnHTTPSRequest(t *testing.T) {
 		w := httptest.NewRecorder()
 		sessionID(r, w, 30*time.Minute)
 
-		c := findSetCookie(w.Result().Header, "sky_sid")
+		c := findSetCookie(w.Result().Header, "__Host-sky_sid") // v0.27: a Secure session cookie carries the __Host- prefix
 		if c == nil {
 			t.Fatalf("expected sky_sid cookie")
 		}
@@ -137,7 +137,7 @@ func TestSessionCookie_SecureOnHTTPSRequest(t *testing.T) {
 		w := httptest.NewRecorder()
 		sessionID(r, w, 30*time.Minute)
 
-		c := findSetCookie(w.Result().Header, "sky_sid")
+		c := findSetCookie(w.Result().Header, "__Host-sky_sid") // v0.27: a Secure session cookie carries the __Host- prefix
 		if c == nil {
 			t.Fatalf("expected sky_sid cookie")
 		}
@@ -212,7 +212,7 @@ func TestProductionPredicate_HonoursEnvPrefix(t *testing.T) {
 	w := httptest.NewRecorder()
 	sessionID(r, w, 30*time.Minute)
 
-	c := findSetCookie(w.Result().Header, "sky_sid")
+	c := findSetCookie(w.Result().Header, "__Host-sky_sid") // v0.27: a Secure session cookie carries the __Host- prefix
 	if c == nil {
 		t.Fatalf("expected sky_sid cookie")
 	}

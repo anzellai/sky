@@ -249,7 +249,7 @@ func TestGenerateSkyCsrfToken_FreshAndHex(t *testing.T) {
 func TestCSRF_DoubleSubmitTokenInjectedIntoJS(t *testing.T) {
 	// The page's sky-live-cfg block carries the token; the client reads it
 	// into __skyCsrfToken so __skySend can auto-attach the X-Sky-Csrf header.
-	blk := livePageScripts("test-sid", liveBannerConfig{Enabled: true}, "my-csrf-token", "", "")
+	blk := livePageScripts("test-sid", liveBannerConfig{Enabled: true}, "my-csrf-token", "", "", "")
 	if !strings.Contains(blk, `"csrf":"my-csrf-token"`) {
 		t.Errorf("expected the csrf token in the sky-live-cfg block, got: %s", blk)
 	}
