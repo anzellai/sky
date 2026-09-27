@@ -784,6 +784,33 @@ The strict policy blocks third-party scripts, images, fonts and API hosts.
 If the app loads any, send your own policy (it wins) instead of
 `SKY_CSP=strict`.
 
+### Public origin for RPC requests — `SKY_PUBLIC_URL` *(v0.27+)*
+
+A `Server.rpc` route (every Sky.Spa `/_rpc/<Msg>` endpoint) accepts a
+browser request only when it comes from the app's own origin: the request
+carries `Sec-Fetch-Site: same-origin`, or an `Origin` header equal to the
+app's public origin. `SKY_PUBLIC_URL` names that origin.
+
+| Env var               | Default | Meaning |
+|-----------------------|---------|---------|
+| `<PREFIX>_PUBLIC_URL` | (unset) | The URL the browser uses to reach the app, for example `https://app.example.com`. A comma-separated list accepts several origins. |
+
+- **Unset (the default).** The public origin is the request's own scheme
+  and `Host` header. The scheme is `https` when the request arrived over
+  TLS or carries `X-Forwarded-Proto: https`. A proxy that keeps the `Host`
+  header (Caddy's default, nginx with `proxy_set_header Host $host`) needs
+  no setting.
+- **Set.** Only the listed origins pass. Set it when a proxy rewrites the
+  `Host` header, or behind a tunnel, where the browser's origin and the
+  `Host` the app sees differ. Only the scheme, host and port are used; a
+  path or trailing `/` is ignored, and a default port (`:443`, `:80`) is
+  the same as none.
+- `X-Forwarded-Host` is not read. The runtime has no trusted-proxy
+  setting, and `SKY_PUBLIC_URL` is the explicit way to name the host.
+- A refused request gets a 403 whose JSON body names this variable. It is
+  an environment variable, not a `sky.toml` key, and it is prefix-affected
+  (`FENCE_PUBLIC_URL` under `[env] prefix = "FENCE"`).
+
 ---
 
 ## Packaging identity — `Std.Bundle` *(v0.21+)*

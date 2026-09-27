@@ -220,7 +220,10 @@ sky spa-split src/Main.sky --out dist/split --build --embed  # + PostgreSQL bund
 
 The generated backend serves the frontend, the `/_rpc/<Msg>` endpoints, and
 `GET /_sky/sub` (SSE). Client→server is HTTP RPC, server→client is SSE — same
-origin, so no CORS and a trivial `connect-src 'self'` CSP. Inspect the derived
+origin, so no CORS and a trivial `connect-src 'self'` CSP. Each `/_rpc/<Msg>` is a
+`Server.rpc` route (same-origin `application/json` POSTs only), and `/_sky/sub`
+streams a topic only when the app's `subscriptions` for the verified session name
+it (auto-split.md §21). Inspect the derived
 split first with [`sky spa-partition`](#sky-spa-partition-path) — it prints each
 branch CLIENT/SERVER with the reason. (In-process broker = single replica;
 `SKY_LIVE_BROKER_URL` gives cross-replica push, same as Sky.Live.) Design +

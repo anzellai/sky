@@ -505,7 +505,7 @@ target shape):
   Codec.buildObject` codecs, copied into BOTH projects' `src/`.
 - **backend/** — the input app copied **verbatim** (Model, Msg, init, `update`,
   all helpers incl. the server ones), `main` replaced by a `Server.listen` with
-  one `Server.api "POST /_rpc/M" MHandler` per SERVER branch + `Server.static
+  one `Server.rpc "POST /_rpc/M" MHandler` per SERVER branch (§21) + `Server.static
   "/" "../frontend/dist"`. Each handler decodes the read-set, **reuses the app's
   own `init` + `update`** to run the REAL effect server-side (dodging inline
   interleaving), and answers with the write-set. The effect body is never
@@ -608,7 +608,8 @@ reachable defs for the kernel-alias symbols). Then `sky spa-split` adds to the
   kind is ignored (a stateless backend delivers broadcasts, not client effects).
   It lives in **package `rt`** because `cmdT`'s fields are unexported.
 - **The SSE endpoint** — `Server.api "GET /_sky/sub" subHandler`, where
-  `subHandler` reads `?topic=` and returns
+  `subHandler` reads `?topic=`, checks that the app's own `subscriptions` for the
+  visitor's verified session names it (403 otherwise, §21), and returns
   `Stream.stream "text/event-stream" (spaStreamTopic spaBroker topic)`.
   `rt.Spa_streamTopic` subscribes to the topic, primes a ≥2 KB proxy pad, then
   loops emitting each published payload as `data: <json>\n\n` until the client
@@ -631,7 +632,8 @@ the value's Sky shape rather than a `.(T)` assertion.
 DB handle ever reaches it; the SSE endpoint only *delivers* what a server branch
 chose to publish. A publish payload is server-authored — never echoed from a
 client-sent field for anything authoritative (§7). The client only ever talks to
-its own backend (same-origin → no CORS).
+its own backend (same-origin → no CORS). Since v0.27 the endpoint also streams a
+topic only to a visitor whose own `subscriptions` name it (§21).
 
 **Multi-replica — wired, and configurable in code.** `Spa_newBroker urlArg`
 routes through `maybeOverrideBroker(newTopicRegistry(0), effectiveBrokerUrl(url))`:
@@ -983,3 +985,69 @@ command the server did not finish (a chained read, a suppressed write, an
 **`update` without `case msg of`.** A wholly pure `update` with no `case` runs in
 the client as written. One that reaches a server effect fails with a message
 naming the change (write `update msg model = case msg of …`).
+
+## 21. RPC and push security
+
+The split backend authenticates the browser with the signed `sky_sid` cookie
+(`HttpOnly; SameSite=Lax`, plus `Secure` on any request that arrived over
+TLS or through a proxy that sent `X-Forwarded-Proto: https`). The browser
+attaches that cookie by itself, so two endpoints need more than the cookie.
+
+**`/_rpc/<Msg>` and `/_rpc/__spaSignOut` are `Server.rpc` routes.** Before
+v0.27 they were `Server.api` routes: exempt from CSRF and with no other
+check. A cross-origin page could send a CORS-simple `text/plain` POST, which
+a browser sends without a preflight and with the cookie, and the handler ran
+with the victim's session. SameSite=Lax limited this to same-site attackers
+(a sibling subdomain, another port on localhost) and to browsers without
+SameSite, but did not close it. The double-submit CSRF token cannot help: the
+CSRF cookie is HttpOnly and the wasm client cannot read it.
+
+A `Server.rpc` route keeps the CSRF exemption and runs a guard before the
+handler (`runtime-go/rt/rpc_guard.go`):
+
+| Request | Result |
+|---|---|
+| Wrong method (for example `GET /_rpc/Save`) | 405 |
+| Body not `Content-Type: application/json` | 403 |
+| `Sec-Fetch-Site: same-origin` or `none` | passes |
+| `Origin` equal to the app's public origin | passes |
+| `Origin: null`, or any other `Origin` | 403 |
+| `Sec-Fetch-Site` other than same-origin with no `Origin` | 403 |
+| No `Origin` and no `Sec-Fetch-Site` (curl, a server) | passes |
+
+The public origin is `SKY_PUBLIC_URL` when it is set (one URL or a
+comma-separated list), else the request's own scheme and `Host`. A proxy that
+keeps the `Host` header (Caddy's default) needs no setting. A proxy that
+rewrites `Host`, or a tunnel, needs `SKY_PUBLIC_URL`, and the 403 body says
+so. `X-Forwarded-Host` is not read. The native shells (`mobile:*`,
+`desktop:*`) load the backend's own http(s) URL, so their requests are
+same-origin. The wasm client already sends every RPC as a same-origin JSON
+POST, so an app needs no change.
+
+**`GET /_sky/sub?topic=<t>` is authorised against the app's own
+`subscriptions`.** Before v0.27 it streamed any topic named in the query
+string, so a per-user topic reached anyone who asked for it. The handler now
+rebuilds the model the visitor's app would hold: `init ()`, the `withRequest`
+seed when the app has one, and every session field from the verified
+`sky_sid` cookie (never from the query string). This is the same model the
+RPC handlers and the console gate build (`verified_model_decl`). It runs the
+app's `subscriptions` on that model and streams `<t>` only when the resulting
+`Sub` names it (`Spa_subAllowsTopic`, `runtime-go/rt/spa_push.go`). Anything
+else, and an empty topic, gets 403. No app change is needed.
+
+The check is fail-closed:
+
+- A subscription that depends on a model field the backend cannot know (a
+  room the user navigated to, a filter in the client state) is computed from
+  `init`'s value, so that topic is refused. Key such topics on an identity
+  field (`"user:" ++ session.userId`), or subscribe to a topic `init` already
+  names.
+- A `Std.App` app carries its `subscriptions` into a backend-only
+  `spaSubscriptions_` binding, whatever the App record held. A hand-written
+  `Spa.app` entry is read by its top-level `subscriptions` name. With neither,
+  the backend refuses every topic and `sky spa-split` prints a warning.
+
+Tests: `runtime-go/rt/spa_rpc_guard_test.go` (the guard, method-keyed CSRF
+exemptions, Secure over TLS, the topic check) and `spa_split_flow.rs`
+(`spa_rpc_origin_guard_and_sub_topic_authorisation`, a live backend built from
+`tests/fixtures/spa-sub-auth`).

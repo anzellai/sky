@@ -49,6 +49,41 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   restart is re-bound and gated: a user revoked while the process was down
   does not get the signed-in Model back.
 
+- **Sky.Spa RPCs could be forged from another origin.** The auto-split
+  backend mounted every `POST /_rpc/<Msg>` and `/_rpc/__spaSignOut` with
+  `Server.api`, which is exempt from CSRF and checks nothing else, while the
+  handlers authenticate with the `sky_sid` cookie that the browser attaches
+  by itself. A `Content-Type: text/plain` POST from a foreign `Origin` (sent
+  without a CORS preflight) reached the handler and ran its effect.
+  `SameSite=Lax` limited this to same-site attackers (a sibling subdomain,
+  another localhost port) and browsers without SameSite. The routes now use
+  the new `Server.rpc` route kind: before the handler runs, the request must
+  use the route's method (else 405), send `Content-Type: application/json`,
+  and carry `Sec-Fetch-Site: same-origin` (or `none`) or an `Origin` equal to
+  the app's public origin (else 403). `Origin: null` is refused. A request
+  with neither header (curl, a server) passes with the JSON body. The public
+  origin is the new `SKY_PUBLIC_URL`, else the request's scheme and `Host`.
+  The wasm client already sends same-origin JSON, so apps need no change.
+  (`runtime-go/rt/rpc_guard.go`, `spa_rpc_guard_test.go`,
+  `spa_split_flow.rs::spa_rpc_origin_guard_and_sub_topic_authorisation`.)
+- **Sky.Spa `GET /_sky/sub` streamed any topic to anyone.** The topic came
+  from the query string with no check, so a per-user topic (`"user:42"`)
+  reached every caller. The backend now rebuilds the visitor's model
+  (`init`, the `withRequest` seed, and each session field from the verified
+  `sky_sid` cookie), runs the app's own `subscriptions` on it, and streams
+  the topic only when that `Sub` names it. Anything else is 403. No app
+  change is needed (see Breaking changes for the one trade-off).
+- **CSRF exemptions ignored the method.** `Server.api "GET /report"` also
+  exempted `POST /report` from CSRF, including an app's own
+  cookie-authenticated form post on that path. `Live.api` had the same
+  flaw. Exemptions are now keyed by method and path; a spec with no method
+  still exempts every method.
+- **The Sky.Spa session cookie over HTTPS.** A regression test now pins
+  that `sky_sid` gets `Secure` on a TLS request (or `X-Forwarded-Proto:
+  https`) without `ENV` set. The emission-time check that adds it
+  (`applySkyResponseHeaders`) already did so; nothing tested it for this
+  cookie.
+
 ### ⚠ Breaking changes
 
 - **The Sky.Live session cookie is `__Host-sky_sid` when it is Secure.**
@@ -59,6 +94,20 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   stays `sky_sid`. Both names are read, and a browser holding the old name
   keeps its session and is moved to the new name on its next response.
 - **The session id changes at sign-in.** See Security above.
+
+- **Sky.Spa `/_rpc/*` accepts only same-origin `application/json` POSTs.**
+  A form, `text/plain` or cross-origin request gets 403, a wrong method 405.
+  Behind a proxy that rewrites the `Host` header, or a tunnel, set
+  `SKY_PUBLIC_URL` to the URL the browser uses.
+- **Sky.Spa `/_sky/sub` streams only topics the app's `subscriptions` names
+  for the verified session.** A subscription computed from a model field
+  that is not a session field (a room id from navigation, a client-side
+  filter) is evaluated with `init`'s value on the server, so that topic is
+  refused (fail closed). A hand-written `Spa.app` entry whose
+  `subscriptions` is not a top-level function of that name refuses every
+  topic, and `sky spa-split` warns.
+- **CSRF exemptions are keyed by method.** `Server.api "GET /x"` /
+  `Live.api "GET /x"` no longer exempt `POST /x`.
 
 ### Migration
 
@@ -83,7 +132,33 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   ()`, built by `App.withDurable` from the new `Durable.deleteSnapshot`). Code
   that builds a `DurableWiring` record by hand must add it.
 
+- **Sky.Spa behind a Host-rewriting proxy or a tunnel:** set
+  `SKY_PUBLIC_URL=https://app.example.com` (a comma-separated list for
+  several). Caddy and nginx with `proxy_set_header Host $host` keep the
+  Host and need nothing.
+- **A per-room or per-page push topic:** key it on a session field
+  (`"user:" ++ session.userId`), or name it in `subscriptions` from `init`'s
+  model, so the server-side check can see it.
+- **A route that relied on `Server.api "GET /x"` to exempt `POST /x`:** add
+  its own `Server.api "POST /x"` (Bearer / HMAC clients), or make it a
+  `Server.rpc "POST /x"` route when it authenticates with the browser's
+  session cookie.
+
+### Added
+
+- **`Server.rpc : String -> (Request -> Task Error Response) -> Route`** —
+  a route for JSON endpoints that authenticate with the browser's session
+  cookie. It needs no CSRF token and refuses any request that is not a
+  same-origin `application/json` call for its method. `SKY_PUBLIC_URL`
+  names the public origin behind a Host-rewriting proxy
+  (`docs/sky-toml.md`, `docs/stdlib.md`).
+
 ### Fixed
+
+- **`sky doc --diagram wire` and `sky doc --api openapi` said Sky.Spa RPCs
+  required the CSRF token.** They never did. The wire table's Access column
+  now reads `same-origin`, and the OpenAPI operations name the `sky_sid`
+  session cookie and the same-origin guard.
 
 - **The docs and the generated FFI catalogue said Go bindings return a Task.
   They return `Result Error a`.** Every generated `sky-ffi/<pkg>.skyi` opened

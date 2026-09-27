@@ -1510,11 +1510,34 @@ endpoint from a non-browser client:
   JSON APIs — no config needed.
 - **`SKY_CSRF=off`** — disables CSRF for the whole server (pure-API
   services with their own auth).
-- **`WithoutCsrf("/webhooks/stripe")`** — exempt a specific path (for
-  third-party webhooks that can't carry a token).
+- **`Server.api "POST /webhooks/stripe" handler`** — register the route
+  as an API route. It is exempt for the method its spec names only:
+  `Server.api "GET /report"` does not exempt `POST /report`. A spec with
+  no method (`Server.api "/hook"`) exempts every method. `Live.api`
+  follows the same rule.
 
 Cookie-session POSTs (no `Authorization` header) stay fully protected
 in every case.
+
+A JSON endpoint that authenticates with the browser's session COOKIE is
+not an API route. Register it with **`Server.rpc "POST /path" handler`**.
+It needs no CSRF token (a wasm or JS client that cannot read the HttpOnly
+CSRF cookie can still call it). In place of the token, the runtime refuses
+the request before the handler runs unless:
+
+- the method is the route's method (405 otherwise);
+- the body is `Content-Type: application/json` (a cross-origin JSON POST
+  always needs a CORS preflight, which the server does not grant);
+- `Sec-Fetch-Site` is `same-origin` (or `none`), or the `Origin` header
+  equals the app's public origin. `Origin: null` is refused. The public
+  origin is `SKY_PUBLIC_URL` when set (one URL or a comma-separated
+  list), else the request's scheme (TLS or `X-Forwarded-Proto`) and
+  `Host`. A request with neither `Origin` nor `Sec-Fetch-Site` is not
+  from a browser and passes with the JSON body.
+
+The 403 body names `SKY_PUBLIC_URL`. Set it when a proxy rewrites the
+`Host` header, or behind a tunnel. The Sky.Spa auto-split registers every
+`/_rpc/<Msg>` with `Server.rpc`.
 
 ---
 

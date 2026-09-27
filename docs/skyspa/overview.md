@@ -260,9 +260,19 @@ on the user's machine → **untrusted**. Therefore, unavoidably:
   authority. Auth is an explicit header/cookie the author adds and the backend
   verifies with `Std.Auth` on every call; there is no session a client can spoof,
   because the backend is stateless.
-- Because a Sky.Spa client uses a stateless JSON API with no cookie session,
-  browser-form CSRF guards nothing — use `Server.api` routes (CSRF bypassed by
-  design); security rests on re-validation, not CSRF.
+- A hand-written Sky.Spa client that calls a stateless JSON API with a
+  Bearer token and no cookie session needs no CSRF token: use `Server.api`
+  routes (CSRF-exempt for the method they name). Security rests on
+  re-validation.
+- An endpoint that authenticates with a session COOKIE (the auto-split's
+  signed `sky_sid`) is a `Server.rpc` route. The browser attaches the cookie
+  by itself, so the route refuses any request that is not a same-origin
+  `application/json` POST before the handler runs (403). The auto-split
+  registers every `/_rpc/<Msg>` and `/_rpc/__spaSignOut` this way. See
+  [the auto-split security notes](auto-split.md#21-rpc-and-push-security).
+- `GET /_sky/sub?topic=…` streams a topic only when the app's own
+  `subscriptions`, run on the visitor's verified session model, names it.
+  Every other topic gets 403.
 - Sky's typed secrets (`Auth.signToken` takes `String`, never `any`) and the
   production gate carry over unchanged.
 

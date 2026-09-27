@@ -697,7 +697,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1974,
+    "stdlib_entries": 1975,
     "stdlib_modules": 101,
     "surfaces_covered": 151,
     "surfaces_covered_pct": 90.4,
@@ -12791,13 +12791,14 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 8,
+          "count": 9,
           "symbols": [
             "Cookie",
             "Route",
             "Server",
             "delete",
             "put",
+            "rpc",
             "setConsoleAuth",
             "static",
             "staticNotFound"
@@ -13579,8 +13580,8 @@
           ]
         }
       },
-      "count": 648,
-      "pct_of_denominator": 32.8
+      "count": 649,
+      "pct_of_denominator": 32.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13843,7 +13844,7 @@
           ]
         },
         "Sky.Http.Server": {
-          "count": 9,
+          "count": 10,
           "symbols": [
             "Cookie",
             "Handler",
@@ -13851,6 +13852,7 @@
             "Server",
             "delete",
             "put",
+            "rpc",
             "setConsoleAuth",
             "static",
             "staticNotFound"
@@ -14702,8 +14704,8 @@
           ]
         }
       },
-      "count": 727,
-      "pct_of_denominator": 36.8
+      "count": 728,
+      "pct_of_denominator": 36.9
     }
   },
   "units": [
@@ -14728,7 +14730,7 @@
       "refs_generous": 268,
       "refs_qualified": 256,
       "role": "Layer2",
-      "sky_files": 152,
+      "sky_files": 153,
       "sky_toml_sections": []
     },
     {

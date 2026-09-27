@@ -27,15 +27,15 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 83 |
 | stdlib modules (denominator) | 101 |
-| stdlib entries (denominator) | 1974 |
+| stdlib entries (denominator) | 1975 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 8.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 727 | 36.8% |
-| symbols unreferenced under the generous rule | 648 | 32.8% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 728 | 36.9% |
+| symbols unreferenced under the generous rule | 649 | 32.9% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover

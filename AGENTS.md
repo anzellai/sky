@@ -450,6 +450,11 @@ do not disable it. `sky check` type-checks the shared source directly; `sky
 spa-split <entry> --out <dir>` is the explicit form when you want the artefacts
 kept at a chosen path. (Recursion is impossible: the generated projects carry a
 `[spa] generated = true` marker that `sky build`/`sky run` never re-split.)
+Each `/_rpc/<Msg>` is a `Server.rpc` route: it takes only same-origin
+`application/json` POSTs (403 otherwise; behind a proxy that rewrites `Host`,
+set `SKY_PUBLIC_URL`), and `GET /_sky/sub` streams a topic only when the app's
+own `subscriptions`, run on the verified session model, names it. A topic keyed
+on a non-session model field is refused: key per-user topics on the session.
 
 **Serving the wasm — precompressed.** A Go→wasm client is multi-MB raw (~2.5 MB
 brotli), so `sky build` precompresses the hashed `main.<hash>.wasm` + `wasm_exec.js`

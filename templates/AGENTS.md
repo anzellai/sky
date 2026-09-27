@@ -512,6 +512,11 @@ a top-level `String` constant), or `SKY_APP_URL` at build time, which wins; with
 neither it loads the dev default on `PORT` (8951). `sky
 check` type-checks the shared source without splitting; `sky spa-split <entry>
 --out <dir>` is the explicit form when you want the split trees kept at a path.
+Each `/_rpc/<Msg>` is a `Server.rpc` route: it takes only same-origin
+`application/json` POSTs (403 otherwise; behind a proxy that rewrites `Host`,
+set `SKY_PUBLIC_URL`), and `GET /_sky/sub` streams a topic only when the app's
+own `subscriptions`, run on the verified session model, names it. A topic keyed
+on a non-session model field is refused: key per-user topics on the session.
 
 **Serving a Sky.Spa build — precompress the wasm.** A Go→wasm client is multi-MB
 raw (~2.5 MB brotli), so it MUST be served compressed or the first paint drags on
