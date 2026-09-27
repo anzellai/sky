@@ -83,6 +83,33 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   https`) without `ENV` set. The emission-time check that adds it
   (`applySkyResponseHeaders`) already did so; nothing tested it for this
   cookie.
+- **Dev WebSocket upgrades accepted every origin.** With no
+  `Ws.withOriginPatterns`, a `Sky.Http.Server.WebSocket` upgrade outside
+  production skipped the Origin check, so any website open in the
+  developer's browser could open a socket to the local server. "Outside
+  production" means only that `ENV` is unset, so a deploy that forgot `ENV`
+  and bound `SKY_HOST=0.0.0.0` accepted every origin (cross-site WebSocket
+  hijacking). The check is now never skipped. A client with no `Origin` and
+  a same-host page pass. Outside production an empty pattern list adds
+  loopback pages on any port (`localhost:5173`, `127.0.0.1:*`, `[::1]:*`,
+  `*.localhost`) and the hosts in `SKY_ALLOWED_HOSTS`; every other origin
+  gets 403. Production without patterns still refuses, and the 403 now names
+  `Ws.withOriginPatterns`. (`runtime-go/rt/server_websocket.go`,
+  `server_websocket_origin_test.go`.)
+- **DNS rebinding reached the whole loopback dev listener.** Binding
+  `127.0.0.1` keeps other machines out, not other websites: a page that
+  points its own name at `127.0.0.1` could read every response of the local
+  server, including the open dev console (logs, traces, analytics). When the
+  listener is bound to loopback, every request whose `Host` is not an
+  allowed name now gets 403 before any route runs (Sky.Live, SSE,
+  `Sky.Http.Server`, the console, the Sky.Spa backend, the Sky.Webview
+  loopback server). Allowed: `localhost`, `*.localhost`, loopback IPs, the
+  bind address, `10.0.2.2` (Android emulator), the `SKY_APP_URL` host, and
+  the names in the new `SKY_ALLOWED_HOSTS` (comma list, `*.example.test`
+  wildcards, `*` turns the check off). A non-loopback bind (production,
+  containers, `SKY_HOST=0.0.0.0`) is not checked, because a proxy may
+  rewrite `Host` there. (`runtime-go/rt/host_guard.go`,
+  `host_guard_test.go`.)
 
 ### ⚠ Breaking changes
 
@@ -143,6 +170,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   its own `Server.api "POST /x"` (Bearer / HMAC clients), or make it a
   `Server.rpc "POST /x"` route when it authenticates with the browser's
   session cookie.
+- **Dev behind a proxy name, on Codespaces, or through a LAN name:** a dev
+  server on loopback answers only `localhost`-style names. Set
+  `SKY_ALLOWED_HOSTS=app.test` (or `'*.app.github.dev'`) for the name the
+  browser uses. The 403 body names the variable.
+- **A dev WebSocket client on a non-loopback origin** (a front end served
+  from another host name) needs `Ws.withOriginPatterns [ "front.test" ]` or
+  that host in `SKY_ALLOWED_HOSTS`.
+- **A deploy without `ENV` no longer accepts WebSocket upgrades from any
+  origin.** Set `ENV=production` and `Ws.withOriginPatterns`, which
+  production has always required.
 
 ### Added
 
@@ -152,8 +189,38 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   same-origin `application/json` call for its method. `SKY_PUBLIC_URL`
   names the public origin behind a Host-rewriting proxy
   (`docs/sky-toml.md`, `docs/stdlib.md`).
+- **A start-up `bind` line.** The listening line keeps its shape (tools
+  parse it) and reads `:8000` or `http://localhost:8000` whatever the real
+  bind is. The line under it now states the address and the reason, in
+  production too: `bind  0.0.0.0:8000  all interfaces (production default;
+  SKY_HOST narrows)`, `bind  127.0.0.1:8000  loopback (dev default; ...)`,
+  `bind  10.0.0.5:8000  from SKY_HOST`. The "exposed" console note is folded
+  into it. Production still binds all interfaces by design.
+- **`SKY_ALLOWED_HOSTS`** — extra Host names for the loopback dev listener
+  and the default dev WebSocket origins (`docs/sky-toml.md`).
 
 ### Fixed
+
+- **`Server.withHeader` changed the response it was given.** It wrote into
+  the response's headers map, so two responses derived from one shared base
+  value leaked headers into each other. It now returns a copy. Names that
+  differ only in case (`x-a`, `X-A`) were stored twice and applied in random
+  order; they are now one header, and the last write wins. A headers `Dict`
+  built by hand with two spellings emits the canonical one, on every run.
+  `Middleware.withCors` and `Server.withCookie` no longer write into the
+  handler's map either. (`runtime-go/rt/rt.go`, `response_cookies.go`,
+  `server_with_header_test.go`.)
+- **A CORS preflight on a path with two routes got a 405.** `Server.get
+  "/p"` plus `Server.post "/p"` are registered per method, so Go's router
+  answered `OPTIONS` itself and `Middleware.withCors` never saw the
+  preflight. The preflight now goes to the route whose method it names
+  (`Access-Control-Request-Method`); one that names no served method still
+  gets a 405 with `Allow`.
+- **`Server.use` discarded its middleware.** It returned the routes
+  unchanged, so `Server.use (Middleware.withCors ...) routes`, the pattern
+  the docs show, served no CORS headers. It now wraps every route's handler.
+- **An IPv6 `SKY_HOST` could not bind.** `SKY_HOST=::1` produced the address
+  `::1:8000`; it is now `[::1]:8000`.
 
 - **`sky doc --diagram wire` and `sky doc --api openapi` said Sky.Spa RPCs
   required the CSRF token.** They never did. The wire table's Access column

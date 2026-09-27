@@ -399,6 +399,20 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
   `__Host-sky_sid` over HTTPS, and its value changes at sign-in), and
   cross-instance pub/sub (`store=redis` or
   `SKY_LIVE_BROKER_URL`). `memory` and `sqlite` are single-instance only.
+- Bind address: production binds **all interfaces** by design (containers,
+  VMs and proxies need it); dev binds `127.0.0.1`. `SKY_HOST` overrides either
+  (`SKY_HOST=127.0.0.1` to keep a production process on loopback behind a local
+  proxy). The line under `listening` states the real bind, e.g. `bind
+  0.0.0.0:8000  all interfaces (production default; SKY_HOST narrows)`.
+- WebSocket upgrades (`Sky.Http.Server.WebSocket`) need
+  `Ws.withOriginPatterns [...]` in production, or they get 403. A deploy that
+  leaves `ENV` unset no longer accepts every origin: outside production only
+  same-host, loopback and `SKY_ALLOWED_HOSTS` origins pass.
+- Dev only: the loopback listener refuses a request whose `Host` is not
+  `localhost` / `*.localhost` / a loopback IP / `10.0.2.2` / the `SKY_APP_URL`
+  host (anti DNS rebinding). A dev proxy name, a Codespaces URL or a LAN name
+  needs `SKY_ALLOWED_HOSTS` (comma list, `*.app.github.dev` wildcards, `*`
+  turns the check off).
 - Content-Security-Policy: every page Sky serves (Sky.Live, the Sky Console,
   Sky.Spa) works under `script-src 'self' 'wasm-unsafe-eval'` with **no hashes
   and no `'unsafe-inline'`** — the scripts are same-origin files

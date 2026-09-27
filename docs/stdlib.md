@@ -647,7 +647,7 @@ main =
 | Handshake timeout | 30 s |
 | Heartbeat ping | 30 s (set `pingInterval = 0` to disable) |
 | Max message size | 1 MiB (`withMaxMessageBytes`) |
-| Origin gate | empty `originPatterns` rejects in production; dev-mode allows all |
+| Origin gate | no `Origin` (a native client) and a same-host page always pass. With no `withOriginPatterns`: production refuses every upgrade (403); outside production, loopback pages on any port (`localhost:5173`) and hosts in `SKY_ALLOWED_HOSTS` pass, every other origin gets 403 |
 | Read buffer | 64 frames per socket (bounded) |
 | `send` backpressure | blocks up to 30 s on a slow consumer |
 
@@ -1490,6 +1490,37 @@ Server.use Middleware.withLogging
         ]
     )
 ```
+
+`Server.use middleware routes` wraps the handler of every route in the list
+(a static route passes through unchanged). Before v0.27 it returned the
+routes unchanged and the middleware did nothing.
+
+#### Response headers, CORS and the CSRF 403
+
+`Server.withHeader name value response` decorates the response a handler
+returns, and nothing else. It returns a new response: a base value shared by
+two routes is never changed. Header names are case-insensitive, so
+`withHeader "x-a"` after `withHeader "X-A"` leaves one header with the last
+value. A response the runtime writes itself never passes through the handler,
+so it carries none of the handler's headers: the CSRF 403, a 404 or 405 from
+the router, and the dev Host-guard 403.
+
+`Middleware.withCors origins handler` does two things. It answers a preflight
+`OPTIONS` with `204` and `Access-Control-Allow-Origin` / `-Methods` /
+`-Headers: Content-Type, Authorization`, without calling the handler, and it
+adds `Access-Control-Allow-Origin` to the handler's response. A preflight
+reaches the wrapped handler because a path with one route answers every method
+there. On a path with two routes (`Server.get "/p"` and `Server.post "/p"`),
+the preflight goes to the route whose method the browser names in
+`Access-Control-Request-Method`, so wrap that route (normally both).
+
+A cross-origin `POST` / `PUT` / `DELETE` / `PATCH` with no `Authorization`
+header is refused by the CSRF guard before the handler runs. That 403 has no
+CORS headers, so the browser reports a CORS error rather than a 403. The
+cross-origin page cannot read this server's `__sky_csrf` cookie, so it can
+never send the token (this is why `withCors` does not allow the `X-Sky-Csrf`
+header). Authenticate a cross-origin call with an `Authorization` header,
+which the CSRF guard exempts, or register the route with `Server.api`.
 
 #### CSRF protection + JSON/API clients
 

@@ -128,6 +128,7 @@
   ],
   "runtime_read_literal_sky_names": [
     "SKY_ADMIN_TOKEN",
+    "SKY_APP_URL",
     "SKY_CONSOLE_AUTH",
     "SKY_CONSOLE_DB_PATH",
     "SKY_CONSOLE_EMBED",
@@ -175,6 +176,7 @@
   ],
   "runtime_read_suffixes": [
     "ADMIN_TOKEN",
+    "ALLOWED_HOSTS",
     "ANALYTICS_DB_PATH",
     "ANALYTICS_RETENTION",
     "ANALYTICS_SYNCHRONOUS_COMMIT",
@@ -247,12 +249,12 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 126,
+    "documented_names": 127,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 16,
     "read_without_doc": 25,
-    "runtime_read_literal_sky_names": 45,
-    "runtime_read_suffixes": 47,
+    "runtime_read_literal_sky_names": 46,
+    "runtime_read_suffixes": 48,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,
     "unclassified_keys": 0,

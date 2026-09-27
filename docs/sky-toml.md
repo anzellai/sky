@@ -709,6 +709,65 @@ SKY_HOST=0.0.0.0 sky run src/Main.sky
 `SKY_HOST` is prefix-affected: under `[env] prefix = "FENCE"` the runtime
 reads `FENCE_HOST`.
 
+The listening line keeps its old shape (`Sky.Live listening on :8000`,
+`Sky server listening on http://localhost:8000`) because tools parse it, so
+it does not say where the listener is reachable. The line under it does,
+in every mode *(v0.27+)*:
+
+```
+  bind         127.0.0.1:8000  loopback (dev default; other Host names need SKY_ALLOWED_HOSTS)
+  bind         0.0.0.0:8000  all interfaces (production default; SKY_HOST narrows)
+  bind         10.0.0.5:8000  from SKY_HOST
+```
+
+When an open dev console is bound off loopback, the bind line adds
+`console exposed off-host: set SKY_CONSOLE_AUTH`.
+
+### Dev Host guard — `SKY_ALLOWED_HOSTS` *(v0.27+)*
+
+Binding loopback keeps other machines out. It does not keep other
+websites out: a page on `evil.example` can point its own DNS name at
+`127.0.0.1` (DNS rebinding) and then read every response the local server
+sends, the open dev console included. The browser cannot hide the name it
+used, so the loopback listener checks the `Host` header.
+
+When the listener is bound to a loopback address (the dev default, or
+`SKY_HOST=127.0.0.1` / `localhost` / `::1`), every request whose `Host` is
+not an allowed name gets **403**, on every route: Sky.Live pages, SSE,
+`Sky.Http.Server` routes, the console, the Sky.Spa backend. Allowed
+without configuration:
+
+- `localhost`, `*.localhost`, and loopback IP literals (`127.0.0.1`,
+  `[::1]`);
+- the bind address;
+- `10.0.2.2` (the Android emulator's name for the host);
+- the host of `SKY_APP_URL`.
+
+| Env var                   | Default | Meaning |
+|---------------------------|---------|---------|
+| `<PREFIX>_ALLOWED_HOSTS`  | unset   | Comma list of extra Host names the loopback listener answers. `*.example.test` matches every subdomain. `*` turns the check off. A port in an entry is ignored. |
+
+```bash
+# a dev proxy that forwards app.test to the local server:
+SKY_ALLOWED_HOSTS=app.test sky run src/Main.sky
+# GitHub Codespaces port forwarding:
+SKY_ALLOWED_HOSTS='*.app.github.dev' sky run src/Main.sky
+```
+
+A phone on the LAN needs `SKY_HOST=0.0.0.0` (to reach the listener at all),
+and then the guard does not apply. The guard does not apply to any
+non-loopback bind (production, containers, `SKY_HOST=0.0.0.0`), because a
+reverse proxy may rewrite `Host` there.
+
+`SKY_ALLOWED_HOSTS` also feeds the default WebSocket origin list: outside
+production, a `Sky.Http.Server.WebSocket` upgrade with no
+`Ws.withOriginPatterns` accepts a client with no `Origin`, a page on the
+same host, a loopback page on any port (`localhost:5173`), and a page on a
+host listed here (`*` is not turned into "any origin"). Every other origin
+gets 403. In production an upgrade with no `withOriginPatterns` is refused.
+
+`SKY_ALLOWED_HOSTS` is prefix-affected (`FENCE_ALLOWED_HOSTS`).
+
 ### Native shell backend address — `SKY_APP_URL` *(v0.25.19+)*
 
 The native shells that `sky build --target mobile:ios`, `mobile:android` and

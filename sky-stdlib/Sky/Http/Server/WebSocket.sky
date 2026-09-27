@@ -30,10 +30,14 @@
 -- Server handler — the dispatcher detects the upgrade sentinel on
 -- the returned response and routes through the Hijack path.
 --
--- Origin validation: in production (`ENV=production`) the cfg's
--- `originPatterns` MUST be non-empty — an upgrade with no
--- explicit Origin allowlist returns 403.  In dev mode an empty
--- list allows any origin (matches `*.localhost` etc.).
+-- Origin validation: a client that sends no Origin (a native
+-- client) and a page on the same host always pass.  In production
+-- (`ENV=production`) an upgrade with no `withOriginPatterns`
+-- returns 403.  Outside production an empty list adds loopback
+-- pages on any port (`localhost:5173`, `127.0.0.1:*`, `[::1]:*`,
+-- `*.localhost`) and the hosts in SKY_ALLOWED_HOSTS; every other
+-- origin gets 403.  On a loopback dev bind a request whose Host is
+-- not an allowed name is refused (anti DNS rebinding).
 --
 -- Backpressure: `sendToClient` blocks up to 30 s when the
 -- underlying write buffer is full.  `broadcast` fans out to every
