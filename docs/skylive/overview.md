@@ -245,6 +245,9 @@ What the browser sees:
 sign-in. Use the stable per-session key instead: `sessionKey` in `init`'s request
 seed, or `Cmd.perform (Live.sessionKey ()) GotKey` anywhere in the session. It is
 the same for the whole life of the server-side session, across every rotation.
+It is stored with the session, so a shared store (sqlite / postgres / redis) keeps
+it across restarts; a memory-store restart that restores the Model from a durable
+snapshot starts a new session with a new key.
 
 With several replicas, the record of a retired id lives in the shared session
 store (sqlite / postgres / redis), so every replica refuses the old id.
