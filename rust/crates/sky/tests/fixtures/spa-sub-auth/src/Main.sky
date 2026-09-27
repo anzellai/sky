@@ -23,17 +23,13 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
 
-
 type alias Session =
-    { userId : String
-    }
-
+    { userId : String }
 
 type alias Model =
     { session : Maybe Session
     , feed : List String
     }
-
 
 type Msg
     = LogIn String
@@ -48,28 +44,27 @@ init _ =
 
 persist : String -> Task Error String
 persist s =
-    File.writeFile "last.txt" s
-        |> Task.map (\_ -> "ok")
+    File.writeFile "last.txt" s |> Task.map (\_ -> "ok")
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         LogIn uid ->
             let
-                _ =
-                    Task.run (persist ("login " ++ uid))
+                _ = Task.run (persist ("login " ++ uid))
             in
-            ( { model | session = Just { userId = uid } }, Cmd.none )
+                ( { model | session = Just { userId = uid } }, Cmd.none )
 
         Post text ->
             case model.session of
+
                 Just s ->
                     let
-                        _ =
-                            Task.run (persist text)
+                        _ = Task.run (persist text)
                     in
-                    ( model, Cmd.publish ("user:" ++ s.userId) text )
+                        ( model, Cmd.publish ("user:" ++ s.userId) text )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -86,6 +81,7 @@ view model =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     case model.session of
+
         Just s ->
             Sub.batch
                 [ Sub.subscribeTopic "public" GotPush
