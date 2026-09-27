@@ -35,10 +35,11 @@
 //   6. zero console errors outside the restart window, zero CSP violations.
 //   With --app-auth the app runs with SKY_CONSOLE_AUTH=app and no console
 //   token (an app built with `App.withConsoleAuth`, e.g. the app-console-auth
-//   fixture, which admits the cookie session=admin-session). Step 1 is then:
-//   a request with no session and one with session=user-session both get 403
-//   and no console session cookie, and the browser, holding the admin session
-//   cookie, opens the console with no login form. Steps 2 to 6 run unchanged,
+//   fixture). Step 1 is then: no session and a non-admin app cookie get 403
+//   and no console session; an admin app cookie gets in (the check reads the
+//   request); signed in as a user THROUGH THE APP (the sign-in lives in the
+//   model) gets 403; signed in as an admin through the app, the browser opens
+//   the console with no login form (the check reads the model). Steps 2 to 6 run unchanged,
 //   so the restart in step 5 also proves the admin gets back in by itself.
 //   With --analytics (an app that tracks on "Sign up", e.g. the
 //   console-analytics fixture): a visitor in a SECOND browser context presses
@@ -249,22 +250,55 @@ try {
   if (APP_AUTH) {
     // The app decides. Anyone it does not recognise as an admin is refused and
     // gets no console session: the gate fails closed.
-    for (const [who, cookie] of [["no session", ""], ["a user session", "session=user-session"]]) {
-      const r = await ctx.request.get(ORIGIN + "/_sky/console/", {
-        headers: cookie ? { cookie } : {},
-        maxRedirects: 0,
-      });
+    // Header-only probes run in their OWN request context, so a console
+    // session one of them earns never reaches the browser below.
+    const api = await pw.request.newContext({ ignoreHTTPSErrors: true });
+    const probe = async (who, cookie, want) => {
+      const r = await api.get(ORIGIN + "/_sky/console/", { headers: cookie ? { cookie } : {}, maxRedirects: 0 });
       const issued = (r.headers()["set-cookie"] || "").split("\n").some((c) => /^__Host-sky_console=[^;]+/.test(c));
-      if (r.status() !== 403) fail(`${who}: /_sky/console/ answered ${r.status()} under SKY_CONSOLE_AUTH=app, want 403`);
-      else if (issued) fail(`${who}: refused, but was issued a console session cookie`);
-      else info(`${who}: 403, no console session`);
-    }
-    const url = new URL(ORIGIN);
-    await ctx.addCookies([{ name: "session", value: "admin-session", domain: url.hostname, path: "/" }]);
+      if (r.status() !== want) fail(`${who}: /_sky/console/ answered ${r.status()} under SKY_CONSOLE_AUTH=app, want ${want}`);
+      else if (want === 403 && issued) fail(`${who}: refused, but was issued a console session cookie`);
+      else if (want === 200 && !issued) fail(`${who}: admitted, but got no console session cookie`);
+      else info(`${who}: ${want}${want === 403 ? ", no console session" : ", console session issued"}`);
+    };
+    await probe("no session", "", 403);
+    await probe("a non-admin app cookie", "session=user-session", 403);
+    await probe("an admin app cookie (the check reads the request)", "session=admin-session", 200);
+    await api.dispose();
+
+    // The sign-in that lives in the MODEL: sign in through the app itself,
+    // then open the console with the browser's own cookies.
+    // A click that lands before the client (Live JS / Spa wasm) has attached
+    // its handlers does nothing, so click until the app answers (SignIn is
+    // idempotent), and name the page text when it never does.
+    const signIn = async (role) => {
+      await page.goto(ORIGIN + "/", { waitUntil: "domcontentloaded" });
+      const done = () => page.evaluate((r) => document.body.innerText.includes(`Signed in as ${r}`), role);
+      for (let attempt = 0; attempt < 3 && !(await done()); attempt++) {
+        await page
+          .getByRole("button", { name: `Sign in as ${role}`, exact: true })
+          .first()
+          .click({ timeout: 20000 })
+          .catch(async (e) => {
+            const text = (await page.evaluate(() => document.body.innerText)).replace(/\n/g, " | ").slice(0, 160);
+            throw new Error(`no "Sign in as ${role}" button on ${page.url()}; page: ${text}; playwright: ${String(e.message).replace(/\s+/g, " ").slice(-400)}`);
+          });
+        await page.waitForFunction((r) => document.body.innerText.includes(`Signed in as ${r}`), role, { timeout: 5000 }).catch(() => {});
+      }
+      if (!(await done())) {
+        const text = (await page.evaluate(() => document.body.innerText)).replace(/\n/g, " | ").slice(0, 160);
+        throw new Error(`signing in as ${role} through the app did not take effect; page: ${text}`);
+      }
+    };
+    await signIn("user");
+    const asUser = await ctx.request.get(ORIGIN + "/_sky/console/", { maxRedirects: 0 });
+    if (asUser.status() !== 403) fail(`signed in as a user (model): the console answered ${asUser.status()}, want 403`);
+    else info("signed in as a user (model): 403");
+    await signIn("admin");
     await page.goto(ORIGIN + "/_sky/console/", { waitUntil: "domcontentloaded" });
-    if ((await page.locator("input[name=token]").count()) > 0) fail("an admin session was shown the token login form");
-    if (!/Sky Console/.test(await bodyText(page))) fail("an admin session did not open the console");
-    else info("admin session: the console opens with no token");
+    if ((await page.locator("input[name=token]").count()) > 0) fail("an admin was shown the token login form");
+    if (!/Sky Console/.test(await bodyText(page))) fail("signed in as an admin (model): the console did not open");
+    else info("signed in as an admin (model): the console opens with no token");
   } else {
     await page.goto(ORIGIN + "/_sky/console/", { waitUntil: "domcontentloaded" });
     const form = page.locator("input[name=token]");

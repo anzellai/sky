@@ -1,16 +1,25 @@
 module Main exposing (main)
 
--- Fixture: `App.withConsoleAuth` gates the Sky Console by the app's own session
--- when the app runs with `SKY_CONSOLE_AUTH=app`. The same source is built for
--- `--target web` (Sky.Live registers the check through `Live.withConsoleAuth`)
--- and `--target web:app` (the split backend registers it with
--- `Server.setConsoleAuth` before `Server.listen`). `app_console_auth_flow.rs`
--- asserts, on both: no cookie 403, a user session 403, an admin session 200
--- with a console session cookie.
+-- Fixture: `App.withConsoleAuth` gates the Sky Console by the app's own
+-- sign-in when the app runs with `SKY_CONSOLE_AUTH=app`. The same source is
+-- built for `--target web` (Sky.Live: the check gets the live session's model)
+-- and `--target web:app` (the split backend: the check gets `init`'s model with
+-- the session field read from the verified `sky_sid` cookie).
+--
+-- Two ways in, both server-side:
+--   * the sign-in lives in the model: "Sign in as admin" sets
+--     `model.session` through a server branch (it reads a server-only value);
+--   * an app cookie: `session=admin-session` (an app with its own session
+--     cookie reads the request and ignores the model).
+--
+-- `scripts/console-live-e2e.sh` (appauth-*) asserts: no session and a user
+-- session get 403 and no console session; an admin, by either way, opens the
+-- console.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.Error exposing (Error)
+import Sky.Core.System as System
 import Sky.Core.Task as Task
 import Sky.Http.Server as Server
 import Std.App as App
@@ -20,26 +29,66 @@ import Std.Ui as Ui exposing (Element)
 type Page
     = Home
 
+type alias Session =
+    { userId : String
+    , role : String
+    }
+
 type alias Model =
-    { page : Page }
+    { page : Page
+    , session : Maybe Session
+    }
 
 type Msg
-    = Noop
+    = SignIn String
+
+
+-- A server-only value, so `SignIn` is a server branch: on `web:app` it runs in
+-- the backend, which signs the new session into the `sky_sid` cookie.
+realm : String
+realm =
+    System.getenvOr "APP_CONSOLE_AUTH_REALM" "fixture"
 
 
 init : () -> ( Model, Cmd Msg )
 init () =
-    ( { page = Home }, Cmd.none )
+    ( { page = Home, session = Nothing }, Cmd.none )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
-update _ model =
-    ( model, Cmd.none )
+update msg model =
+    case msg of
+
+        SignIn role ->
+            ( { model | session = Just { userId = role ++ "@" ++ realm, role = role }
+              }
+            , Cmd.none
+            )
 
 
 view : Model -> Element Msg
-view _ =
-    Ui.text "Home"
+view model =
+    Ui.column
+        []
+        [ Ui.text
+              (case model.session of
+
+                  Just s ->
+                      "Signed in as " ++ s.role
+
+                  Nothing ->
+                      "Signed out")
+        , Ui.button
+              []
+              { onPress = Just (SignIn "admin")
+              , label = Ui.text "Sign in as admin"
+              }
+        , Ui.button
+              []
+              { onPress = Just (SignIn "user")
+              , label = Ui.text "Sign in as user"
+              }
+        ]
 
 
 subscriptions : Model -> Sub Msg
@@ -47,19 +96,32 @@ subscriptions _ =
     Sub.none
 
 
--- Stands in for a real session lookup (a signed cookie, a database row).
-adminsOnly : Server.Request -> Task Error (Maybe Console.Identity)
-adminsOnly req =
-    case Dict.get "session" req.cookies of
+adminIdentity : String -> Maybe Console.Identity
+adminIdentity subject =
+    Just
+        (Console.defaultIdentity subject
+            |> Console.withEmail "admin@example.test")
 
-        Just "admin-session" ->
-            Task.succeed
-                (Just
-                    (Console.defaultIdentity "user-1"
-                        |> Console.withEmail "admin@example.test"))
 
-        _ ->
-            Task.succeed Nothing
+adminsOnly : Server.Request -> Model -> Task Error (Maybe Console.Identity)
+adminsOnly req model =
+    case model.session of
+
+        Just s ->
+            if s.role == "admin" then
+                Task.succeed (adminIdentity s.userId)
+
+            else
+                Task.succeed Nothing
+
+        Nothing ->
+            case Dict.get "session" req.cookies of
+
+                Just "admin-session" ->
+                    Task.succeed (adminIdentity "cookie-admin")
+
+                _ ->
+                    Task.succeed Nothing
 
 
 app =

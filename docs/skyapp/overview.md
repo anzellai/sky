@@ -218,19 +218,16 @@ second password.
 ```elm
 import Std.Live.Console as Console
 
-adminsOnly : Request -> Task Error (Maybe Console.Identity)
-adminsOnly req =
-    case Dict.get "session" req.cookies of
-        Just token ->
-            sessionUser db token
-                |> Task.map
-                    (\user ->
-                        if user.role == "admin" then
-                            Just (Console.defaultIdentity user.id |> Console.withEmail user.email)
+-- The sign-in lives in the model (the usual TEA app):
+adminsOnly : Request -> Model -> Task Error (Maybe Console.Identity)
+adminsOnly _ model =
+    case model.session of
+        Just s ->
+            if s.role == "admin" then
+                Task.succeed (Just (Console.defaultIdentity s.userId |> Console.withEmail s.email))
 
-                        else
-                            Nothing
-                    )
+            else
+                Task.succeed Nothing
 
         Nothing ->
             Task.succeed Nothing
@@ -240,10 +237,19 @@ App.app { init = init, update = update, view = view, subscriptions = subscriptio
     |> App.withConsoleAuth adminsOnly
 ```
 
-`withConsoleAuth : (Request -> Task Error (Maybe Console.Identity)) -> App … ->
-App …`. The `Request` is the one a `Sky.Http.Server` handler receives, so the
-check reads the app's own cookie or header. `sessionUser` stands for your own
-session lookup. The gate fails closed:
+`withConsoleAuth : (Request -> model -> Task Error (Maybe Console.Identity)) ->
+App … -> App …`. The check gets two things:
+
+- `model`, the visitor's signed-in model. On Sky.Live it is the model of the
+  live session their session cookie names. On a `web:app` backend it is
+  `init`'s model (seeded by `withRequest`, when present) with each session
+  field taken from the verified `sky_sid` cookie, exactly as an RPC handler
+  sees it. A visitor with no session gets `init`'s model: signed out.
+- `req`, the console request as a `Sky.Http.Server` handler receives it. An
+  app with its own session cookie reads it there and ignores `model`:
+  `adminsOnly req _ = case Dict.get "session" req.cookies of …`.
+
+The gate fails closed:
 
 - `Just identity` with a non-empty `subject` lets the request in and sets a
   signed console session cookie (`__Host-sky_console`, `Secure`, `HttpOnly`,
@@ -256,7 +262,8 @@ It runs on the server on every web target: Sky.Live (`web`, `desktop`) and the
 backend of a `web:app` split, which registers it with `Server.setConsoleAuth`
 before it listens. The wasm client never sees it. A hand-written
 `Sky.Http.Server` app calls `Server.setConsoleAuth check` itself, before
-`Server.listen`.
+`Server.listen`; there the check takes the request only (`Request -> Task Error
+(Maybe identity)`), as such an app has no model.
 
 `SKY_CONSOLE_TOKEN` is optional in this mode. Without it the console session
 cookie is signed with a per-host key, so after a restart on a new host, or on

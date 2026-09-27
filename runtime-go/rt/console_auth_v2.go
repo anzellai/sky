@@ -107,6 +107,34 @@ func SetConsoleAuthCallback(cb any) {
 	consoleAuthCallback.Store(&cb)
 }
 
+// consoleAuthModelOf, when set, finds the signed-in app model for a console
+// request. The app-mode check then receives it as a second argument
+// (`check req model`), so an app whose sign-in lives in its model, not in a
+// cookie of its own, can decide from `model.session`. nil keeps the
+// one-argument `check req` shape of Live.withConsoleAuth and
+// Server.setConsoleAuth.
+var consoleAuthModelOf atomic.Value // *func(*http.Request) any
+
+// SetConsoleAuthModel registers how to find a console request's signed-in
+// model. Sky.Live registers its session lookup; a Sky.Spa split backend does
+// not call this (it composes the model in Sky before registering a
+// one-argument check). nil clears it.
+func SetConsoleAuthModel(of func(*http.Request) any) {
+	if of == nil {
+		consoleAuthModelOf.Store((*func(*http.Request) any)(nil))
+		return
+	}
+	consoleAuthModelOf.Store(&of)
+}
+
+func getConsoleAuthModelOf() func(*http.Request) any {
+	p, _ := consoleAuthModelOf.Load().(*func(*http.Request) any)
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
 // Server_setConsoleAuth — `Server.setConsoleAuth check : Task Error ()`.
 // Registers the app-mode console callback for a Sky.Http.Server app (and
 // the backend of a Sky.Spa split), which has no Live.app config to carry
@@ -570,7 +598,12 @@ func invokeConsoleAuthCallback(cb any, r *http.Request) (id ConsoleIdentity, all
 		}
 	}()
 	req := buildConsoleAuthRequest(r)
-	taskAny := sky_call(cb, req)
+	var taskAny any
+	if modelOf := getConsoleAuthModelOf(); modelOf != nil {
+		taskAny = sky_call2(cb, req, modelOf(r))
+	} else {
+		taskAny = sky_call(cb, req)
+	}
 	if taskAny == nil {
 		return ConsoleIdentity{}, false
 	}

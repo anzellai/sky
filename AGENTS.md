@@ -375,9 +375,9 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
   **`SKY_CONSOLE_TOKEN`** — without it the console falls back to an
   auto-generated `.sky/console-token`, which a container regenerates every boot
   and no operator can read. With `app`, the app's own signed-in admins open the
-  console: add **`App.withConsoleAuth check`**, where `check : Request -> Task
-  Error (Maybe Console.Identity)` reads the app's session and returns `Just` an
-  identity for an admin; everything else gets 403 (fail closed). `app` without
+  console: add **`App.withConsoleAuth check`**, where `check : Request -> model
+  -> Task Error (Maybe Console.Identity)` reads the signed-in model (or the
+  app's own cookie) and returns `Just` an identity for an admin; everything else gets 403 (fail closed). `app` without
   `withConsoleAuth` refuses every console request. With `token`/`app` set and no
   console mounted the app **exits 1**; `off` is the way to declare the surface
   intentionally absent.

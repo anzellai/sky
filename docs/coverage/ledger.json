@@ -704,7 +704,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1970,
+    "stdlib_entries": 1971,
     "stdlib_modules": 101,
     "surfaces_covered": 150,
     "surfaces_covered_pct": 89.8,
@@ -13254,7 +13254,7 @@
           ]
         },
         "Std.Live": {
-          "count": 24,
+          "count": 25,
           "symbols": [
             "AppConfig",
             "Route",
@@ -13265,6 +13265,7 @@
             "withAnalyticsIdentify",
             "withAuthSliding",
             "withConsoleAuth",
+            "withConsoleAuthModel",
             "withDurable",
             "withGuard",
             "withHead",
@@ -13579,7 +13580,7 @@
           ]
         }
       },
-      "count": 646,
+      "count": 647,
       "pct_of_denominator": 32.8
     },
     "symbols_unreferenced_strict": {
@@ -14370,7 +14371,7 @@
           ]
         },
         "Std.Live": {
-          "count": 27,
+          "count": 28,
           "symbols": [
             "AppConfig",
             "Route",
@@ -14384,6 +14385,7 @@
             "withAnalyticsIdentify",
             "withAuthSliding",
             "withConsoleAuth",
+            "withConsoleAuthModel",
             "withDurable",
             "withGuard",
             "withHead",
@@ -14700,7 +14702,7 @@
           ]
         }
       },
-      "count": 725,
+      "count": 726,
       "pct_of_denominator": 36.8
     }
   },

@@ -3,40 +3,39 @@
 module Std.Live.Console exposing (Identity, defaultIdentity, withEmail, withClaim, withClaims)
 
 -- With `SKY_CONSOLE_AUTH=app`, the app's own check decides who opens the
--- Sky Console at `/_sky/console`. It has the shape
+-- Sky Console at `/_sky/console`. It is attached with
+-- `App.withConsoleAuth check`, where
 --
---     check : Request -> Task Error (Maybe Identity)
+--     check : Request -> model -> Task Error (Maybe Identity)
 --
--- and is attached with `App.withConsoleAuth check` (or, in a hand-written
--- Sky.Http.Server app, `Server.setConsoleAuth check` before `listen`).
+-- gets the console request and the visitor's signed-in model (see
+-- `Std.App.withConsoleAuth`). A hand-written Sky.Http.Server app, which has
+-- no model, uses `Server.setConsoleAuth check` before `listen`, with
+-- `check : Request -> Task Error (Maybe Identity)`.
 -- The runtime calls it for a console request that has no console session.
 -- `Just identity` with a non-empty `subject` lets the request in, sets the
 -- signed `__Host-sky_console` session cookie, and logs
 -- `console.auth.allowed` with the subject. `Nothing`, `Err`, a panic or an
 -- empty `subject` refuses with 403 and logs `console.auth.denied`.
 --
--- Example, reading the app's own session:
+-- Example, where the sign-in lives in the model:
 --
 --     import Std.Live.Console as Console
 --
---     adminsOnly : Request -> Task Error (Maybe Console.Identity)
---     adminsOnly req =
---         case Dict.get "session" req.cookies of
---             Just token ->
---                 sessionUser db token
---                     |> Task.map
---                         (\user ->
---                             if user.role == "admin" then
---                                 Just (Console.defaultIdentity user.id |> Console.withEmail user.email)
+--     adminsOnly : Request -> Model -> Task Error (Maybe Console.Identity)
+--     adminsOnly _ model =
+--         case model.session of
+--             Just s ->
+--                 if s.role == "admin" then
+--                     Task.succeed (Just (Console.defaultIdentity s.userId |> Console.withEmail s.email))
 --
---                             else
---                                 Nothing
---                         )
+--                 else
+--                     Task.succeed Nothing
 --
 --             Nothing ->
 --                 Task.succeed Nothing
 --
--- `sessionUser` stands for the app's own session lookup. `claims` carries
+-- `claims` carries
 -- extra attributes for the audit trail; the gate does not read them, so
 -- pass `Dict.empty` (as `defaultIdentity` does) when there are none.
 

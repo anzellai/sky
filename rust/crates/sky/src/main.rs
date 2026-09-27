@@ -2353,13 +2353,14 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
         Some(f) => format!("spaRpcError_ =\n    ({f})\n\n\n"),
         None => String::new(),
     };
-    // Carry `App.withConsoleAuth`. A NAMED top-level `spaConsoleAuth_` binding
-    // the generated backend registers with `Server.setConsoleAuth` before
+    // Carry `App.withConsoleAuth`. A NAMED top-level `spaConsoleAuth_ req model`
+    // binding. The generated backend composes the signed-in model (`init` with
+    // the verified session fields, spa_split.rs `spaConsoleModel_`) and
+    // registers `spaConsoleGate_` with `Server.setConsoleAuth` before
     // `Server.listen`, so `SKY_CONSOLE_AUTH=app` gates the backend's console by
-    // the app's own session. Eta-expanded (one argument) so the binding is a
-    // plain function rather than an alias of a function value.
+    // the app's own session. Eta-expanded (two arguments), like `spaOnRequest_`.
     let console_auth_binding = match &fields.console_auth {
-        Some(f) => format!("spaConsoleAuth_ req_ =\n    {f} req_\n\n\n"),
+        Some(f) => format!("spaConsoleAuth_ req_ model_ =\n    {f} req_ model_\n\n\n"),
         None => String::new(),
     };
     // `App.web`'s `view` already returns laid-out `Html` (Std.Html), while
@@ -11317,7 +11318,7 @@ mod tests {
         );
         let out = synth_ok(&src);
         assert!(
-            out.contains("spaConsoleAuth_ req_ =\n    adminsOnly req_"),
+            out.contains("spaConsoleAuth_ req_ model_ =\n    adminsOnly req_ model_"),
             "withConsoleAuth must be carried into spaConsoleAuth_:\n{out}"
         );
         assert!(

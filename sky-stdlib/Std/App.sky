@@ -362,7 +362,7 @@ type App fallback seed page model msg key
 , onKey : Maybe (key -> msg)
 , onNavigate : Maybe (page -> msg)
 , onRequest : Maybe (Request -> model -> ( model, Cmd msg ))
-, consoleAuth : Maybe (Request -> Task Error (Maybe Console.Identity))
+, consoleAuth : Maybe (Request -> model -> Task Error (Maybe Console.Identity))
 , rpcError : Maybe (Error -> msg)
 , durable : DurableWiring model
 }
@@ -829,38 +829,43 @@ withRequest onReq (App a) =
 
 -- | Let the app's own signed-in users open the Sky Console (`/_sky/console`)
 -- instead of a console token. Run the app with `SKY_CONSOLE_AUTH=app`; each
--- console request without a console session calls `check req`, which reads
--- the app's own session (a cookie, a header) and returns `Just identity` for
--- a user who may see the console, or `Nothing` to refuse with 403. An allowed
--- request gets a signed console session cookie, so later console requests do
--- not call `check` again. `Err`, `Nothing`, and an identity with an empty
--- `subject` all refuse: the gate fails closed.
+-- console request without a console session calls `check req model`:
+--
+--   * `req` is the console request, as a `Sky.Http.Server` handler sees it
+--     (read an app cookie or header from it);
+--   * `model` is that visitor's signed-in model: on Sky.Live the model of the
+--     live session their session cookie names, on a `web:app` backend `init`'s
+--     model with the verified session fields, else `init`'s model (signed out).
+--
+-- Return `Just identity` for a user who may see the console, or `Nothing` to
+-- refuse with 403. An allowed request gets a signed console session cookie,
+-- so later console requests do not call `check` again. `Err`, `Nothing`, a
+-- panic and an identity with an empty `subject` all refuse: the gate fails
+-- closed.
 --
 --     import Std.Live.Console as Console
 --
---     adminsOnly : Request -> Task Error (Maybe Console.Identity)
---     adminsOnly req =
---         case Dict.get "session" req.cookies of
---             Just token ->
---                 sessionUser db token
---                     |> Task.map
---                         (\user ->
---                             if user.role == "admin" then
---                                 Just (Console.defaultIdentity user.id |> Console.withEmail user.email)
+--     -- The sign-in lives in the model:
+--     adminsOnly : Request -> Model -> Task Error (Maybe Console.Identity)
+--     adminsOnly _ model =
+--         case model.session of
+--             Just s ->
+--                 if s.role == "admin" then
+--                     Task.succeed (Just (Console.defaultIdentity s.userId |> Console.withEmail s.email))
 --
---                             else
---                                 Nothing
---                         )
+--                 else
+--                     Task.succeed Nothing
 --
 --             Nothing ->
 --                 Task.succeed Nothing
 --
 --     app { … } |> App.withConsoleAuth adminsOnly
 --
+-- An app with its own session cookie reads `req` and ignores `model`.
 -- It runs on the server on every web target: Sky.Live (`web`, `desktop`) and
 -- the backend of a `web:app` split. Terminal targets have no console and
 -- ignore it.
-withConsoleAuth : (Request -> Task Error (Maybe Console.Identity)) -> App fallback seed page model msg key -> App fallback seed page model msg key
+withConsoleAuth : (Request -> model -> Task Error (Maybe Console.Identity)) -> App fallback seed page model msg key -> App fallback seed page model msg key
 withConsoleAuth check (App a) =
     App { a | consoleAuth = Just check }
 
@@ -1196,7 +1201,7 @@ runLiveBoot_ (App a) =
                     case a.consoleAuth of
 
                         Just check ->
-                            Live.withConsoleAuth check withDur_
+                            Live.withConsoleAuthModel check withDur_
 
                         Nothing ->
                             withDur_

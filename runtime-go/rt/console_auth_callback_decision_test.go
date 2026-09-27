@@ -126,3 +126,28 @@ func TestSlidingUnwrapMaybe_ReadsTypedMaybe(t *testing.T) {
 		t.Fatal("a bare function must pass through")
 	}
 }
+
+// With a model provider registered (Std.App.withConsoleAuth), the check is
+// called as `check req model` and decides from the model it is given: the
+// signed-in model of the visitor, not anything the request body claims.
+func TestConsoleAppMode_CheckReceivesTheSignedInModel(t *testing.T) {
+	admin := consoleTestIdentity{Subject: "u1"}
+	check := func(_ any, model any) any {
+		if model == "admin-model" {
+			return anyConsoleCallback(Ok[any, any](Just[any](admin))).(func(any) any)(nil)
+		}
+		return anyConsoleCallback(Ok[any, any](Nothing[any]())).(func(any) any)(nil)
+	}
+	for _, tc := range []struct {
+		model string
+		allow bool
+	}{{"admin-model", true}, {"user-model", false}} {
+		t.Run(tc.model, func(t *testing.T) {
+			SetConsoleAuthModel(func(*http.Request) any { return tc.model })
+			t.Cleanup(func() { SetConsoleAuthModel(nil) })
+			if _, ok := appModeRequest(t, check); ok != tc.allow {
+				t.Fatalf("model %q: allowed=%v, want %v", tc.model, ok, tc.allow)
+			}
+		})
+	}
+}

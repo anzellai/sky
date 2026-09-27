@@ -41,17 +41,29 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 - **`App.withConsoleAuth`: the app's own admins open the Sky Console.** With
   `SKY_CONSOLE_AUTH=app`, `App.withConsoleAuth check` gives the console gate
-  to the app: `check : Request -> Task Error (Maybe Console.Identity)` reads
-  the app's own session and returns `Just` an identity for a user who may see
-  the console. No console token to share. It works on every web target:
-  Sky.Live (`web`, `desktop`) and the backend of a `web:app` split, which
+  to the app: `check : Request -> model -> Task Error (Maybe Console.Identity)`
+  returns `Just` an identity for a user who may see the console. No console
+  token to share. `model` is the visitor's signed-in model, so a TEA app whose
+  sign-in lives in `model.session` decides from it: on Sky.Live it is the
+  model of the live session the visitor's cookie names, on a `web:app`
+  backend it is `init`'s model with the session fields read from the verified
+  `sky_sid` cookie. An app with its own session cookie reads `req` instead.
+  It works on every web target: Sky.Live (`web`, `desktop`, through the new
+  `Live.withConsoleAuthModel`) and the backend of a `web:app` split, which
   registers it with the new `Server.setConsoleAuth` before it listens. The
   wasm client never contains it. Before this, `Std.App` had no way to set the
   check, and `withConsoleAuth` failed a `web:app` build as an unknown builder.
   `scripts/console-live-e2e.sh` runs it behind Caddy for Sky.Live and Sky.Spa:
-  no session and a user session get 403 and no console session, an admin
-  opens the console, its live channel holds past 40 s, and the admin is back
-  in by itself after a backend restart. See `docs/skyapp/overview.md`.
+  no session and a non-admin get 403 and no console session; an admin app
+  cookie gets in; a visitor who signs in through the app as a user gets 403
+  and as an admin opens the console; the live channel holds past 40 s; the
+  admin is back in by itself after a backend restart. See
+  `docs/skyapp/overview.md`.
+- **The Sky.Spa console scenarios run the backend where it runs in
+  production.** `console-live-e2e` started a split backend from `sky-out/`,
+  where `../frontend/dist` does not exist, so the wasm client 404ed and the
+  page never hydrated. The console-only checks did not notice. They now run it
+  from `.split/backend`, as `sky run` and the deploy layouts do.
 
 ### Fixed
 

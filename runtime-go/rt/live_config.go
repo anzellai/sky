@@ -81,6 +81,12 @@ func Live_withHead(fn, cfg any) any { return liveCfgSet(cfg, "Head", fn) }
 // Live_withConsoleAuth — `consoleAuth : Request -> Task Error (Maybe Identity)`.
 func Live_withConsoleAuth(fn, cfg any) any { return liveCfgSet(cfg, "ConsoleAuth", fn) }
 
+// Live_withConsoleAuthModel — `check : Request -> model -> Task Error (Maybe
+// Identity)`. Like Live_withConsoleAuth, but the check also receives the
+// console request's signed-in model (the session's model, else init's).
+// Std.App.withConsoleAuth uses it.
+func Live_withConsoleAuthModel(fn, cfg any) any { return liveCfgSet(cfg, "ConsoleAuthModel", fn) }
+
 // Live_withOnNavigate — `onNavigate : String -> msg` navigation hook.
 func Live_withOnNavigate(fn, cfg any) any { return liveCfgSet(cfg, "OnNavigate", fn) }
 

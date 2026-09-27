@@ -6560,15 +6560,61 @@ fn gen_backend(
     // `_ = <task>` prefix did.
     //
     // The console gate is registered the same way: `_ = Server.setConsoleAuth
-    // spaConsoleAuth_` stores the app's check before the listener mounts
+    // spaConsoleGate_` stores the app's check before the listener mounts
     // `/_sky/console`. A console-auth backend is never static-only (see
     // `static_only_backend`), so its binding is always in the body.
+    //
+    // The app's check takes `req model`. The model is the visitor's SIGNED-IN
+    // model, composed exactly as an RPC handler composes it: `init ()`, seeded
+    // by `withRequest` when the app has it, with every session field replaced
+    // by its value from the verified `sky_sid` cookie (never from the request
+    // body). No valid cookie leaves `init`'s value there: signed out.
+    if has_synth_console_auth {
+        let seeded = if has_synth_on_request {
+            "\n        ( seeded, _ ) =\n            spaOnRequest_ req_ base\n"
+        } else {
+            ""
+        };
+        let from = if has_synth_on_request {
+            "seeded"
+        } else {
+            "base"
+        };
+        let model_expr = if session_proj.is_empty() {
+            from.to_string()
+        } else {
+            let sets = session_proj
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{0} = {1} req_ base.{0}",
+                        p.name,
+                        session_verify_name(&p.name)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{ {from} | {sets} }}")
+        };
+        handlers.push_str(&format!(
+            "-- The signed-in model the app's console check sees (SKY_CONSOLE_AUTH=app).\n\
+             spaConsoleModel_ req_ =\n\
+             \x20   let\n\
+             \x20       ( base, _ ) =\n\
+             \x20           init ()\n\
+             {seeded}\
+             \x20   in\n\
+             \x20   {model_expr}\n\n\n\
+             spaConsoleGate_ req_ =\n\
+             \x20   spaConsoleAuth_ req_ (spaConsoleModel_ req_)\n\n\n"
+        ));
+    }
     let mut startup: Vec<&str> = Vec::new();
     if has_synth_boot_setup && !static_only_backend {
         startup.push("spaBootSetup_");
     }
     if has_synth_console_auth {
-        startup.push("Server.setConsoleAuth spaConsoleAuth_");
+        startup.push("Server.setConsoleAuth spaConsoleGate_");
     }
     let main_decl = if startup.is_empty() {
         format!(

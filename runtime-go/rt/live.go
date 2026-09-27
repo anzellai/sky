@@ -1176,6 +1176,42 @@ func (a *liveApp) cookieNameOrDefault() string {
 	return a.cookieName
 }
 
+// consoleModelFor is the signed-in model the app-mode console check sees
+// for a console request (Std.App.withConsoleAuth): the model of the live
+// session the request's session cookie names, else init's model (signed
+// out). It never creates or stores a session.
+//
+// Every cookie with the session name is tried: the console is itself a
+// Sky.Live sub-app under /_sky/console and may set its own session cookie
+// there, which the browser sends alongside the app's.
+func (a *liveApp) consoleModelFor(r *http.Request) any {
+	name := a.cookieNameOrDefault()
+	for _, c := range r.Cookies() {
+		if c.Name != name || c.Value == "" {
+			continue
+		}
+		a.locker.Lock(c.Value)
+		sess, ok := a.store.Get(c.Value)
+		var model any
+		if ok && sess != nil {
+			model = sess.model
+		}
+		a.locker.Unlock(c.Value)
+		if model != nil {
+			return model
+		}
+	}
+	req := map[string]any{
+		"path":    r.URL.Path,
+		"query":   r.URL.RawQuery,
+		"params":  Dict_empty(),
+		"method":  r.Method,
+		"headers": headersToDict(r.Header),
+		"cookies": cookiesToDict(r.Cookies()),
+	}
+	return tupleFirst(sky_call(a.init, req))
+}
+
 // Publish is the app-level fan-out entry point that all broadcast
 // call sites use. It performs the two locked-in invariants of the
 // pub/sub seq split (Cycle 3 P47 / docs/skylive/pubsub-design.md §3.2):
@@ -2042,6 +2078,14 @@ func liveAppRun(cfg any) any {
 	// inside the `app`-mode gate. nil → token-mode / production-mode
 	// fallback per evaluateConsoleAuth.
 	SetConsoleAuthCallback(app.consoleAuth)
+	SetConsoleAuthModel(nil)
+	// Std.App.withConsoleAuth: the check also receives the console request's
+	// signed-in model, so an app whose sign-in lives in its model can decide
+	// from it. It replaces a one-argument consoleAuth if both are set.
+	if check := Field(cfg, "ConsoleAuthModel"); check != nil {
+		SetConsoleAuthCallback(check)
+		SetConsoleAuthModel(app.consoleModelFor)
+	}
 	// Sliding auth token (opt-in via Live.withAuthSliding). Register the config
 	// so AuthSlidingMiddleware (mounted below, alongside CSRF) and the
 	// builder-owned login setter (Auth.setSlidingCookie) both read ONE source of

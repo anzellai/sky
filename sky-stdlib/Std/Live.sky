@@ -34,6 +34,7 @@ module Std.Live exposing
     , lifecycle
     , withHead
     , withConsoleAuth
+    , withConsoleAuthModel
     , withOnNavigate
     , withGuard
     , withStatic
@@ -137,6 +138,14 @@ withHead =
 withConsoleAuth : (Request -> Task Error (Maybe a)) -> AppConfig model msg -> AppConfig model msg
 withConsoleAuth =
     Ffi.kernel "Live_withConsoleAuth"
+
+
+-- | Like `withConsoleAuth`, but `check req model` also receives the console
+-- request's signed-in model: the model of the live session its session
+-- cookie names, else `init`'s model. `Std.App.withConsoleAuth` uses it.
+withConsoleAuthModel : (Request -> model -> Task Error (Maybe a)) -> AppConfig model msg -> AppConfig model msg
+withConsoleAuthModel =
+    Ffi.kernel "Live_withConsoleAuthModel"
 
 
 -- | Hook fired on in-app navigation (initial mount, `sky-nav` fetch,
