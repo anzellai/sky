@@ -36,9 +36,11 @@
 #   CONSOLE_LIVE_E2E_PORT  first of 20 ports used (default 9620)
 #   CONSOLE_LIVE_E2E_SKY   measure another compiler (e.g. a released one, to
 #                          prove the gate fails there); default sky-out/sky
-#   CONSOLE_LIVE_E2E_ONLY  run one scenario: live-direct | live-caddy |
+#   CONSOLE_LIVE_E2E_ONLY  run one scenario, or a comma-separated list:
+#                          live-direct | live-caddy |
 #                          spa-direct | spa-caddy | analytics-direct |
-#                          analytics-caddy
+#                          analytics-caddy | appauth-live-caddy |
+#                          appauth-spa-caddy
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib/with-timeout.sh"
@@ -99,7 +101,23 @@ build_target() { # build_target <example-or-fixture> <target> <artefact> <overri
     --clean --artefact "$artefact" -- build --target "$target" src/Main.sky
 }
 
-want() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
+# CONSOLE_LIVE_E2E_ONLY takes one scenario or a comma-separated list. An
+# unknown name is an error, and a run that drives no scenario FAILS: before
+# this, `CONSOLE_LIVE_E2E_ONLY=a,b` matched nothing, drove nothing, and
+# printed PASS.
+SCENARIOS="live-direct live-caddy spa-direct spa-caddy analytics-direct analytics-caddy appauth-live-caddy appauth-spa-caddy"
+if [ -n "$ONLY" ]; then
+  for s in ${ONLY//,/ }; do
+    case " $SCENARIOS " in
+    *" $s "*) ;;
+    *)
+      echo "console-live-e2e: unknown scenario '$s' in CONSOLE_LIVE_E2E_ONLY (known: $SCENARIOS)" >&2
+      exit 1
+      ;;
+    esac
+  done
+fi
+want() { [ -z "$ONLY" ] || case ",$ONLY," in *",$1,"*) true ;; *) false ;; esac; }
 if want live-direct || want live-caddy; then
   build_target 09-live-counter web .skyapp/web override
 fi
@@ -133,12 +151,14 @@ SPA_DIR="$(dirname "$(dirname "$SPA_BIN")")"
 APPAUTH_SPA_DIR="$(dirname "$(dirname "$APPAUTH_SPA_BIN")")"
 
 rc=0
+driven=0
 drive() { # drive <scenario> <binary> <cwd> <port> <direct|caddy> [driver args...]
   local scenario="$1" bin="$2" cwd="$3" port="$4" via="$5"
   shift 5
   want "$scenario" || return 0
   [ -x "$bin" ] || { echo "console-live-e2e: app not built at $bin" >&2; rc=1; return 0; }
   echo "==> $scenario"
+  driven=$((driven + 1))
   local commit="$OVERRIDE_COMMIT"
   case "$scenario" in spa-* | *-spa-*) commit="${AUTO_SHA:0:12}" ;; esac
   local args=(--app "$bin" --name "$scenario" --port "$port" --cwd "$cwd" --commit "$commit" --built-at "$BUILT_AT")
@@ -154,6 +174,10 @@ drive analytics-caddy "$ANALYTICS_BIN" "$(dirname "$ANALYTICS_BIN")" $((BASE_POR
 drive appauth-live-caddy "$APPAUTH_LIVE_BIN" "$(dirname "$APPAUTH_LIVE_BIN")" $((BASE_PORT + 10)) caddy --app-auth
 drive appauth-spa-caddy "$APPAUTH_SPA_BIN" "$APPAUTH_SPA_DIR" $((BASE_PORT + 10)) caddy --app-auth
 
+if [ "$driven" -eq 0 ]; then
+  echo "console-live-e2e: FAIL — no scenario ran (CONSOLE_LIVE_E2E_ONLY=${ONLY:-<unset>})." >&2
+  exit 1
+fi
 if [ "$rc" -ne 0 ]; then
   echo "console-live-e2e: FAIL — the Sky Console did not show live data, lost its live channel, or did not recover from a restart (see above)." >&2
   exit 1

@@ -159,6 +159,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   required the CSRF token.** They never did. The wire table's Access column
   now reads `same-origin`, and the OpenAPI operations name the `sky_sid`
   session cookie and the same-origin guard.
+- **`scripts/console-live-e2e.sh` passed having run nothing.** `CONSOLE_LIVE_E2E_ONLY`
+  matched one exact name, so a comma-separated list drove no scenario and
+  the gate printed PASS. It now takes a list, refuses an unknown name, and
+  fails when no scenario ran.
 
 - **The docs and the generated FFI catalogue said Go bindings return a Task.
   They return `Result Error a`.** Every generated `sky-ffi/<pkg>.skyi` opened
