@@ -21,21 +21,21 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 167 |
-| covered by the new corpus (>= Asserted) | 150 |
-| verdict `stronger` | 145 |
-| verdict `equal` | 22 |
+| covered by the new corpus (>= Asserted) | 151 |
+| verdict `stronger` | 146 |
+| verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
 | stdlib modules (denominator) | 101 |
-| stdlib entries (denominator) | 1971 |
+| stdlib entries (denominator) | 1974 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 8.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 726 | 36.8% |
-| symbols unreferenced under the generous rule | 647 | 32.8% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 727 | 36.8% |
+| symbols unreferenced under the generous rule | 648 | 32.8% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -61,9 +61,9 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 23 |
-| stdlib modules owned by exactly one unit of any role | 19 |
+| stdlib modules owned by exactly one unit of any role | 18 |
 | sky.toml sections owned by exactly one unit | 2 |
-| **lost if `examples/` retired** — modules | **3** |
+| **lost if `examples/` retired** — modules | **2** |
 | **lost if `examples/` retired** — config sections | **1** |
 
 ### Modules lost if `examples/` is retired
@@ -72,7 +72,6 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 |---|---|
 | `Sky.Core.Process` | `examples/17-skymon` |
 | `Std.Bundle` | `examples/64-app-native` |
-| `Std.Live` | `examples/19-skyforum` |
 
 ### Config sections lost if `examples/` is retired
 
@@ -227,7 +226,7 @@ None.
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Image` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Live` | stdlib | Runs | Runs | equal |
+| `stdlib.Std.Live` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Live.Console` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Live.Head` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |

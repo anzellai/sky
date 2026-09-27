@@ -550,8 +550,7 @@
       },
       "stdlib_modules": {
         "Sky.Core.Process": "examples/17-skymon",
-        "Std.Bundle": "examples/64-app-native",
-        "Std.Live": "examples/19-skyforum"
+        "Std.Bundle": "examples/64-app-native"
       }
     },
     "stdlib_modules_examples_only": {
@@ -664,12 +663,6 @@
           "apps:dispatch"
         ]
       },
-      "Std.Live": {
-        "path": "examples/19-skyforum",
-        "units": [
-          "examples/19-skyforum"
-        ]
-      },
       "Std.Live.Console": {
         "path": "rust/crates/sky/tests",
         "units": [
@@ -704,12 +697,12 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1971,
+    "stdlib_entries": 1974,
     "stdlib_modules": 101,
-    "surfaces_covered": 150,
-    "surfaces_covered_pct": 89.8,
-    "surfaces_equal": 22,
-    "surfaces_stronger": 145,
+    "surfaces_covered": 151,
+    "surfaces_covered_pct": 90.4,
+    "surfaces_equal": 21,
+    "surfaces_stronger": 146,
     "surfaces_total": 167,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -9751,15 +9744,20 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Runs",
+        "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/19-skyforum (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
           }
         ],
-        "strength": 2
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -9774,7 +9772,7 @@
       },
       "description": "the Std.Live public API",
       "id": "stdlib.Std.Live",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -13126,10 +13124,11 @@
           ]
         },
         "Std.Durable": {
-          "count": 5,
+          "count": 6,
           "symbols": [
             "RegisteredWorkflow",
             "VersionPolicy",
+            "deleteSnapshot",
             "isSuspend",
             "saveSnapshotAuto",
             "stepValue"
@@ -13259,7 +13258,7 @@
             "AppConfig",
             "Route",
             "api",
-            "bindSessionUser",
+            "endSession",
             "lifecycle",
             "withAnalytics",
             "withAnalyticsIdentify",
@@ -13580,7 +13579,7 @@
           ]
         }
       },
-      "count": 647,
+      "count": 648,
       "pct_of_denominator": 32.8
     },
     "symbols_unreferenced_strict": {
@@ -14194,11 +14193,12 @@
           ]
         },
         "Std.Durable": {
-          "count": 6,
+          "count": 7,
           "symbols": [
             "Ctx",
             "RegisteredWorkflow",
             "VersionPolicy",
+            "deleteSnapshot",
             "isSuspend",
             "saveSnapshotAuto",
             "stepValue"
@@ -14377,8 +14377,8 @@
             "Route",
             "api",
             "app",
-            "bindSessionUser",
             "config",
+            "endSession",
             "lifecycle",
             "route",
             "withAnalytics",
@@ -14702,7 +14702,7 @@
           ]
         }
       },
-      "count": 726,
+      "count": 727,
       "pct_of_denominator": 36.8
     }
   },
@@ -14723,10 +14723,10 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 43,
+      "modules_imported": 44,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 266,
-      "refs_qualified": 254,
+      "refs_generous": 268,
+      "refs_qualified": 256,
       "role": "Layer2",
       "sky_files": 152,
       "sky_toml_sections": []
