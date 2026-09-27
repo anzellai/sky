@@ -316,6 +316,14 @@ auto-forced. Bridge with `Task.fromResult` / `Result.andThenTask` /
 `Task.onError`. Top-level `apiKey = System.getenv "K" |> Task.run |> Result.withDefault ""`
 still needs the explicit `Task.run`.
 
+**Go FFI (`sky add`) is the one exception, on purpose: it returns `Result
+Error a`, not a Task.** The Go call runs where the expression is evaluated, and
+the Result is its outcome (a Go error, a nil or a recovered panic is `Err`).
+Handling it at each call site marks where the code leaves Sky's guarantees, so
+prefer the stdlib and keep FFI for what it does not cover. To run a call later,
+off `update` (for example with `Cmd.perform`), wrap it yourself:
+`Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`.
+
 **Top-level bindings are memoised — evaluated once, then cached.** A
 zero-parameter top-level binding is a single VALUE: `apiKey` reads the env
 once, `db = Task.run (Db.connect ())` opens ONE shared connection pool. If

@@ -1005,6 +1005,14 @@ sky add github.com/stripe/stripe-go/v84
 - The spec is passed straight to `go get pkg@<spec>` — `latest`, an exact
   `vX.Y.Z`, a branch, or a commit SHA. Non-Go semver *constraints* (`>=`, `~`,
   `^`) are rejected (Go uses MVS, not constraint solving).
+- **Go bindings return `Result Error a`, not a Task.** The Go call runs where
+  the expression is evaluated, and a Go error, a nil or a recovered panic is
+  `Err`. This is deliberate: handling the Result at each call site marks where
+  the code leaves Sky's guarantees, so prefer the stdlib where it covers the
+  job. To run a call later, off `update`, wrap it yourself:
+  `Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`. The
+  generated `sky-ffi/<pkg>.skyi` lists each binding with its `Result` type. See
+  [boundary-philosophy.md](../ffi/boundary-philosophy.md).
 
 **Forcing the kind — `sky add --go` / `sky add --sky`:**
 

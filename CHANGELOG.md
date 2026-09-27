@@ -11,6 +11,27 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.26.2 — unreleased
+
+### Fixed
+
+- **The docs and the generated FFI catalogue said Go bindings return a Task.
+  They return `Result Error a`.** Every generated `sky-ffi/<pkg>.skyi` opened
+  with "Every call returns Task Error a" through `Sky.Ffi.callTask`, and ended
+  each binding with "runtime wrap: Task Error". Neither was true: a binding
+  runs the Go call where the expression is evaluated and returns its outcome
+  as a `Result`, and generated bindings are not called through `callTask`.
+  The catalogue now says so, lists each binding with its real `Result` type
+  (the one `kernel.json` records), and shows how to defer a call:
+  `Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`. The
+  `Result` is deliberate: handling it at each call site marks where code
+  leaves Sky's guarantees, so the stdlib stays the first choice. AGENTS.md,
+  the project template and the `sky add` docs now say this in one short
+  paragraph. The deferral example in `docs/ffi/boundary-philosophy.md`
+  returned a Task from `Task.lazy`'s lambda and did not type-check; it now
+  uses the form above (`rust/crates/ffi/src/gen.rs`,
+  `skyi_describes_result_not_task`).
+
 ## v0.26.1 — the app's own admins open the Sky Console, and `SKY_CONSOLE_AUTH=app` is closed (2026-09-27)
 
 ### ⚠ Security

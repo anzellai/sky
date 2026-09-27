@@ -34,18 +34,20 @@ FFI calls execute immediately — wrapping them in `Task` would imply
 value, the Go function has already returned. `Result` accurately
 describes that state: the call happened, here's what came back.
 
-If a user wants to defer an FFI call (compose it with `Task.parallel`
-or hold it lazily), they can wrap it explicitly:
+If a user wants to defer an FFI call (run it off `update` with
+`Cmd.perform`, compose it with `Task.parallel`, or hold it lazily), they
+wrap it explicitly. `Task.lazy` delays the call and `Task.fromResult`
+turns its `Result` into the Task's outcome:
 
 ```elm
 deferred : Task Error String
 deferred =
-    Task.lazy (\_ ->
-        case Uuid.newString () of
-            Ok id -> Task.succeed id
-            Err e -> Task.fail e
-    )
+    Task.lazy (\_ -> Uuid.newString ()) |> Task.andThen Task.fromResult
 ```
+
+(`Task.lazy : (() -> a) -> Task e a` takes a plain value. An earlier
+version of this example returned a Task from the lambda, which does not
+type-check: it yields `Task e (Task Error String)`.)
 
 ## Why Result on every FFI call (even pure-looking ones)
 

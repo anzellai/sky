@@ -533,14 +533,20 @@ fn emit_skyi(info: &PackageInfo) -> String {
     let mut lines: Vec<String> = vec![
         format!("-- Auto-generated FFI binding catalogue for {}", info.pkg),
         "--".to_string(),
-        "-- All auto-generated bindings are registered effect-unknown and are".to_string(),
-        "-- callable via Sky.Ffi.callTask. Every call returns Task Error a".to_string(),
-        "-- with panic recovery — any Go panic is caught and surfaced as Err.".to_string(),
+        "-- Every binding returns `Result Error a`, not a Task. The Go call runs".to_string(),
+        "-- where the expression is evaluated (it is synchronous), and the Result".to_string(),
+        "-- carries its outcome: a Go error, a nil, or a recovered panic is Err.".to_string(),
+        "-- Handling it at every call site is deliberate: it marks the point where".to_string(),
+        "-- a program leaves Sky's guarantees. Prefer the Sky stdlib where it".to_string(),
+        "-- covers the job, and keep Go FFI for what it does not.".to_string(),
+        "--".to_string(),
+        "-- To run a call later, off `update` (for example with Cmd.perform),".to_string(),
+        "-- wrap it in a Task yourself:".to_string(),
+        "--     Task.lazy (\\_ -> call args) |> Task.andThen Task.fromResult".to_string(),
+        "-- See docs/ffi/boundary-philosophy.md.".to_string(),
         "--".to_string(),
         "-- Opaque Go struct values flow through Sky as Any; use the bindings".to_string(),
-        "-- to construct, read and update them. Sky records-with-methods can".to_string(),
-        "-- bridge this gap idiomatically — define a record type whose methods".to_string(),
-        "-- are the relevant callTask invocations.".to_string(),
+        "-- to construct, read and update them.".to_string(),
         "--".to_string(),
         "-- Imports used in this package's wrapper:".to_string(),
     ];
@@ -558,36 +564,17 @@ fn emit_skyi(info: &PackageInfo) -> String {
     s
 }
 
+// One line per binding with the type Sky code actually sees: the same
+// `Result Error a` signature kernel.json records (`wrapper_sky_type`). This
+// used to print the raw Go results followed by "runtime wrap: Task Error",
+// which described neither the type nor the runtime behaviour.
 fn emit_skyi_fn(fn_: &Function) -> String {
-    let sig = if fn_.params.is_empty() {
-        format!("() -> {}", go_results_to_sky(&fn_.results))
-    } else {
-        let params = fn_
-            .params
-            .iter()
-            .map(|p| go_type_to_sky(&p.ty))
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        format!("{params} -> {}", go_results_to_sky(&fn_.results))
-    };
     format!(
-        "-- [{}] {} : {}   -- runtime wrap: Task Error",
-        fn_.effect, fn_.name, sig
+        "-- [{}] {} : {}",
+        fn_.effect,
+        fn_.name,
+        wrapper_sky_type(fn_)
     )
-}
-
-fn go_results_to_sky(rs: &[Param]) -> String {
-    match rs {
-        [] => "()".to_string(),
-        [one] => go_type_to_sky(&one.ty),
-        many => format!(
-            "({})",
-            many.iter()
-                .map(|p| go_type_to_sky(&p.ty))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -783,6 +770,49 @@ mod tests {
             let needle = format!("\"name\": \"{name}\"");
             assert!(committed.contains(&needle), "committed missing {name}");
             assert!(got.contains(&needle), "generated missing {name}");
+        }
+    }
+
+    // The .skyi catalogue is the first thing a user reads about a Go package.
+    // It used to say every call "returns Task Error a" and is callable via
+    // `Sky.Ffi.callTask` (the dynamic escape hatch, not how generated bindings
+    // are called), and marked each function    // "runtime wrap: Task Error". Bindings return `Result Error a`, run
+    // synchronously, and are deferred only by the caller wrapping them.
+    #[test]
+    fn skyi_describes_result_not_task() {
+        let mut info = crate::inspect::parse_one(&fixture("uuid.inspector.json")).unwrap();
+        crate::inspect::normalize(&mut info);
+        let skyi = emit_skyi(&info);
+        assert!(
+            !skyi.contains("Task Error a"),
+            "the header must not promise a Task:\n{skyi}"
+        );
+        assert!(
+            !skyi.contains("runtime wrap: Task"),
+            "no line may claim a Task wrap:\n{skyi}"
+        );
+        assert!(
+            !skyi.contains("callTask"),
+            "generated bindings are not called through Sky.Ffi.callTask:\n{skyi}"
+        );
+        assert!(
+            skyi.contains("returns `Result Error a`"),
+            "the header must name the Result:\n{skyi}"
+        );
+        assert!(
+            skyi.contains("Task.lazy"),
+            "the header must show how to defer a call:\n{skyi}"
+        );
+        let fn_lines: Vec<&str> = skyi.lines().filter(|l| l.starts_with("-- [")).collect();
+        assert!(
+            !fn_lines.is_empty(),
+            "the uuid fixture has bindings:\n{skyi}"
+        );
+        for line in fn_lines {
+            assert!(
+                line.contains("Result Error"),
+                "every binding line shows its Result type: {line}"
+            );
         }
     }
 }

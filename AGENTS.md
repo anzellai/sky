@@ -91,7 +91,17 @@ error type — always `Result Error a` / `Task Error a`.
 -- fallible-pure : String.toInt : String -> Maybe Int
 --                 Encoding.base64Decode : String -> Result Error String
 -- effect        : File.read, Http.get, Db.query, Time.now  → Task Error a
+-- Go FFI        : any `sky add` binding                   → Result Error a
 ```
+
+**Go FFI is the one exception, on purpose.** A `sky add` binding returns
+`Result Error a`, not a Task: the Go call runs where the expression is
+evaluated, and the Result is its outcome (a Go error, a nil or a recovered
+panic is `Err`). Handling it at each call site marks where the code leaves
+Sky's guarantees, so prefer the stdlib and keep FFI for what it does not cover.
+To run a call later, off `update`, wrap it yourself:
+`Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`. See
+`docs/ffi/boundary-philosophy.md`.
 
 `let _ = someTask` auto-forces the task (fires the effect). A top-level
 zero-arg binding is **memoised** (a CAF — evaluated once, cached): `db =
