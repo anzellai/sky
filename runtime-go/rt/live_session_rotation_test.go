@@ -760,3 +760,42 @@ func TestSessionRotation_SSEConnectWithOldCookie(t *testing.T) {
 		t.Fatalf("hello must name the new sid: %q", rr.Body.String())
 	}
 }
+
+// Rotation races every store write of the session (persistSession from
+// dispatch paths, the SSE connect, a perform completion). None may land under
+// the retired id: storeMu makes the id read and the write one step against
+// the re-key. Run under -race in CI.
+func TestSessionRotation_ConcurrentWritesNeverResurrectOldSid(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		app := newRotationTestApp(t)
+		oldSid, _ := mintSession(t, app, "sky_sid")
+		sess := mustGet(t, app, oldSid)
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+						app.persistSession(sess)
+						_ = sess.currentSID()
+					}
+				}
+			}()
+		}
+		app.bindSessionUserTo(sess, "user-1", time.Now().Unix())
+		time.Sleep(2 * time.Millisecond)
+		close(stop)
+		wg.Wait()
+		if _, ok := app.store.Get(oldSid); ok {
+			t.Fatalf("round %d: a concurrent write resurrected the retired sid %q", round, oldSid)
+		}
+		if _, ok := app.store.Get(sess.currentSID()); !ok {
+			t.Fatalf("round %d: the rotated session is missing from the store", round)
+		}
+	}
+}
