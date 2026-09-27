@@ -616,6 +616,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
         "Server",
         &[
             "listen",
+            "setConsoleAuth",
             "get",
             "post",
             "put",

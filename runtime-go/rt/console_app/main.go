@@ -7801,6 +7801,7 @@ func Std_App_web(v_0 struct {
 	return Std_App_App_App(struct {
 		Base          any
 		Configs       any
+		ConsoleAuth   any
 		Durable       any
 		Guard         any
 		Head          any
@@ -7815,7 +7816,7 @@ func Std_App_web(v_0 struct {
 		Subscriptions any
 		Update        any
 		ViewImpl      any
-	}{Init: v_0.Init, Update: v_0.Update, ViewImpl: Std_App_ViewImpl_ViewHtml(v_0.View), Subscriptions: v_0.Subscriptions, Routes: []Std_App_Route{}, NotFound: rt.Nothing[any](), OnInput: rt.Nothing[func(string) any](), Base: Std_App_baseDefaults(), Configs: []Std_App_Config{}, Head: rt.Nothing[func(any) []Std_Html_Html](), Guard: rt.Nothing[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](), OnKey: rt.Nothing[func(any) any](), OnNavigate: rt.Nothing[func(any) any](), OnRequest: rt.Nothing[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](), RpcError: rt.Nothing[func(Sky_Core_Error_Error) any](), Durable: Std_App_noDurableWiring()})
+	}{Init: v_0.Init, Update: v_0.Update, ViewImpl: Std_App_ViewImpl_ViewHtml(v_0.View), Subscriptions: v_0.Subscriptions, Routes: []Std_App_Route{}, NotFound: rt.Nothing[any](), OnInput: rt.Nothing[func(string) any](), Base: Std_App_baseDefaults(), Configs: []Std_App_Config{}, Head: rt.Nothing[func(any) []Std_Html_Html](), Guard: rt.Nothing[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](), OnKey: rt.Nothing[func(any) any](), OnNavigate: rt.Nothing[func(any) any](), OnRequest: rt.Nothing[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](), ConsoleAuth: rt.Nothing[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]](), RpcError: rt.Nothing[func(Sky_Core_Error_Error) any](), Durable: Std_App_noDurableWiring()})
 }
 
 var Std_App_noDurableWiring__caf rt.LazyCaf[Std_App_DurableWiring_R[any]]
@@ -7853,6 +7854,7 @@ func Std_App_withRoutes(v_0 []Std_App_Route, _t0 Std_App_App) Std_App_App {
 	v_1 := /* generic erase */ func(_s any) struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
+		ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 		Durable       Std_App_DurableWiring_R[any]
 		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -7871,6 +7873,7 @@ func Std_App_withRoutes(v_0 []Std_App_Route, _t0 Std_App_App) Std_App_App {
 		if _m, _ok := _s.(struct {
 			Base          any
 			Configs       any
+			ConsoleAuth   any
 			Durable       any
 			Guard         any
 			Head          any
@@ -7889,6 +7892,7 @@ func Std_App_withRoutes(v_0 []Std_App_Route, _t0 Std_App_App) Std_App_App {
 			return struct {
 				Base          Std_App_BaseConfig_R
 				Configs       []Std_App_Config
+				ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 				Durable       Std_App_DurableWiring_R[any]
 				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -7903,7 +7907,7 @@ func Std_App_withRoutes(v_0 []Std_App_Route, _t0 Std_App_App) Std_App_App {
 				Subscriptions func(any) any
 				Update        func(any, any) rt.T2[any, any]
 				ViewImpl      Std_App_ViewImpl
-			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), ConsoleAuth: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]](_m.ConsoleAuth), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
 				_s := any(_m.Init)
 				if _f, _ok := _s.(func(any) rt.T2[any, any]); _ok {
 					return _f
@@ -7937,6 +7941,7 @@ func Std_App_withRoutes(v_0 []Std_App_Route, _t0 Std_App_App) Std_App_App {
 		return rt.Coerce[struct {
 			Base          Std_App_BaseConfig_R
 			Configs       []Std_App_Config
+			ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 			Durable       Std_App_DurableWiring_R[any]
 			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -7956,6 +7961,7 @@ func Std_App_withRoutes(v_0 []Std_App_Route, _t0 Std_App_App) Std_App_App {
 	return Std_App_App_App(func() struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
+		ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 		Durable       Std_App_DurableWiring_R[any]
 		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -7981,6 +7987,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 	v_1 := /* generic erase */ func(_s any) struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
+		ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 		Durable       Std_App_DurableWiring_R[any]
 		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -7999,6 +8006,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 		if _m, _ok := _s.(struct {
 			Base          any
 			Configs       any
+			ConsoleAuth   any
 			Durable       any
 			Guard         any
 			Head          any
@@ -8017,6 +8025,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 			return struct {
 				Base          Std_App_BaseConfig_R
 				Configs       []Std_App_Config
+				ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 				Durable       Std_App_DurableWiring_R[any]
 				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8031,7 +8040,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 				Subscriptions func(any) any
 				Update        func(any, any) rt.T2[any, any]
 				ViewImpl      Std_App_ViewImpl
-			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), ConsoleAuth: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]](_m.ConsoleAuth), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
 				_s := any(_m.Init)
 				if _f, _ok := _s.(func(any) rt.T2[any, any]); _ok {
 					return _f
@@ -8065,6 +8074,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 		return rt.Coerce[struct {
 			Base          Std_App_BaseConfig_R
 			Configs       []Std_App_Config
+			ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 			Durable       Std_App_DurableWiring_R[any]
 			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8084,6 +8094,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 	return Std_App_App_App(func() struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
+		ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 		Durable       Std_App_DurableWiring_R[any]
 		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8117,6 +8128,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 	v_1 := /* generic erase */ func(_s any) struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
+		ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 		Durable       Std_App_DurableWiring_R[any]
 		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8135,6 +8147,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 		if _m, _ok := _s.(struct {
 			Base          any
 			Configs       any
+			ConsoleAuth   any
 			Durable       any
 			Guard         any
 			Head          any
@@ -8153,6 +8166,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 			return struct {
 				Base          Std_App_BaseConfig_R
 				Configs       []Std_App_Config
+				ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 				Durable       Std_App_DurableWiring_R[any]
 				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8167,7 +8181,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 				Subscriptions func(any) any
 				Update        func(any, any) rt.T2[any, any]
 				ViewImpl      Std_App_ViewImpl
-			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), ConsoleAuth: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]](_m.ConsoleAuth), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(any) rt.T2[any, any] {
 				_s := any(_m.Init)
 				if _f, _ok := _s.(func(any) rt.T2[any, any]); _ok {
 					return _f
@@ -8201,6 +8215,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 		return rt.Coerce[struct {
 			Base          Std_App_BaseConfig_R
 			Configs       []Std_App_Config
+			ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 			Durable       Std_App_DurableWiring_R[any]
 			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8220,6 +8235,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 	return Std_App_App_App(func() struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
+		ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 		Durable       Std_App_DurableWiring_R[any]
 		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8245,6 +8261,7 @@ func Std_App_runLive(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 	v_0 := /* generic erase */ func(_s any) struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
+		ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 		Durable       Std_App_DurableWiring_R[any]
 		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8263,6 +8280,7 @@ func Std_App_runLive(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 		if _m, _ok := _s.(struct {
 			Base          any
 			Configs       any
+			ConsoleAuth   any
 			Durable       any
 			Guard         any
 			Head          any
@@ -8281,6 +8299,7 @@ func Std_App_runLive(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 			return struct {
 				Base          Std_App_BaseConfig_R
 				Configs       []Std_App_Config
+				ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 				Durable       Std_App_DurableWiring_R[any]
 				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8295,7 +8314,7 @@ func Std_App_runLive(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 				Subscriptions func(any) any
 				Update        func(any, any) rt.T2[any, any]
 				ViewImpl      Std_App_ViewImpl
-			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(struct{}) rt.T2[any, any] {
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), ConsoleAuth: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]](_m.ConsoleAuth), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(struct{}) rt.T2[any, any] {
 				_s := any(_m.Init)
 				if _f, _ok := _s.(func(struct{}) rt.T2[any, any]); _ok {
 					return _f
@@ -8329,6 +8348,7 @@ func Std_App_runLive(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 		return rt.Coerce[struct {
 			Base          Std_App_BaseConfig_R
 			Configs       []Std_App_Config
+			ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 			Durable       Std_App_DurableWiring_R[any]
 			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8352,6 +8372,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 	v_0 := /* generic erase */ func(_s any) struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
+		ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 		Durable       Std_App_DurableWiring_R[any]
 		Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 		Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8370,6 +8391,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 		if _m, _ok := _s.(struct {
 			Base          any
 			Configs       any
+			ConsoleAuth   any
 			Durable       any
 			Guard         any
 			Head          any
@@ -8388,6 +8410,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 			return struct {
 				Base          Std_App_BaseConfig_R
 				Configs       []Std_App_Config
+				ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 				Durable       Std_App_DurableWiring_R[any]
 				Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 				Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8402,7 +8425,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				Subscriptions func(any) any
 				Update        func(any, any) rt.T2[any, any]
 				ViewImpl      Std_App_ViewImpl
-			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(struct{}) rt.T2[any, any] {
+			}{Base: rt.Coerce[Std_App_BaseConfig_R](_m.Base), Configs: rt.AsListT[Std_App_Config](_m.Configs), ConsoleAuth: rt.MaybeCoerce[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]](_m.ConsoleAuth), Durable: rt.Coerce[Std_App_DurableWiring_R[any]](_m.Durable), Guard: rt.MaybeCoerce[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_m.Guard), Head: rt.MaybeCoerce[func(any) []Std_Html_Html](_m.Head), Init: func() func(struct{}) rt.T2[any, any] {
 				_s := any(_m.Init)
 				if _f, _ok := _s.(func(struct{}) rt.T2[any, any]); _ok {
 					return _f
@@ -8436,6 +8459,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 		return rt.Coerce[struct {
 			Base          Std_App_BaseConfig_R
 			Configs       []Std_App_Config
+			ConsoleAuth   rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]]
 			Durable       Std_App_DurableWiring_R[any]
 			Guard         rt.SkyMaybe[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]]
 			Head          rt.SkyMaybe[func(any) []Std_Html_Html]
@@ -8467,7 +8491,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 					Subscriptions any
 					Update        any
 					View          any
-				}{Init: func(v_17 struct {
+				}{Init: func(v_18 struct {
 					Cookies map[string]string
 					Headers map[string]string
 					Method  string
@@ -8478,14 +8502,14 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 					{
 						_t1 := v_0.Init(struct{}{})
 						_ = _t1
-						v_18 := _t1.V0
-						v_19 := _t1.V1
-						_ = v_18
+						v_19 := _t1.V0
+						v_20 := _t1.V1
 						_ = v_19
+						_ = v_20
 						{
 							_subj := v_0.OnRequest
 							if _subj.Tag == 0 {
-								v_20 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.T2[any, any] {
+								v_21 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.T2[any, any] {
 									_s := any(_subj.JustValue)
 									if _f, _ok := _s.(func(Sky_Http_Server_Request_R, any) rt.T2[any, any]); _ok {
 										return _f
@@ -8497,28 +8521,28 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 									}
 									return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_s)
 								}()
-								_ = v_20
+								_ = v_21
 								{
-									_t2 := v_20(Std_App_requestFromSeed_(v_17), v_18)
+									_t2 := v_21(Std_App_requestFromSeed_(v_18), v_19)
 									_ = _t2
-									v_21 := _t2.V0
-									v_22 := _t2.V1
-									_ = v_21
+									v_22 := _t2.V0
+									v_23 := _t2.V1
 									_ = v_22
-									return rt.T2[any, any]{V0: v_21, V1: rt.Cmd_batch(any([]any{v_19, v_22}))}
+									_ = v_23
+									return rt.T2[any, any]{V0: v_22, V1: rt.Cmd_batch(any([]any{v_20, v_23}))}
 								}
 							}
 							if _subj.Tag == 1 {
-								return rt.T2[any, any]{V0: v_18, V1: v_19}
+								return rt.T2[any, any]{V0: v_19, V1: v_20}
 							}
 							panic(rt.Unreachable("case"))
 						}
 					}
-				}, Update: v_0.Update, View: func(v_23 any) Std_Html_Html {
+				}, Update: v_0.Update, View: func(v_24 any) Std_Html_Html {
 					{
 						_subj := v_0.ViewImpl
 						if _subj.Tag == 0 {
-							v_24 := /* generic erase */ func() func(any) Std_Ui_Element {
+							v_25 := /* generic erase */ func() func(any) Std_Ui_Element {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) Std_Ui_Element); _ok {
 									return _f
@@ -8528,11 +8552,11 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 								}
 								return rt.CoerceFuncSlot[func(any) Std_Ui_Element](_s)
 							}()
-							_ = v_24
-							return Std_App_renderUiRoot_(v_24(v_23))
+							_ = v_25
+							return Std_App_renderUiRoot_(v_25(v_24))
 						}
 						if _subj.Tag == 1 {
-							v_25 := /* generic erase */ func() func(any) Std_Html_Html {
+							v_26 := /* generic erase */ func() func(any) Std_Html_Html {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) Std_Html_Html); _ok {
 									return _f
@@ -8542,11 +8566,11 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 								}
 								return rt.CoerceFuncSlot[func(any) Std_Html_Html](_s)
 							}()
-							_ = v_25
-							return Std_App_renderHtmlRoot_(v_25(v_23))
+							_ = v_26
+							return Std_App_renderHtmlRoot_(v_26(v_24))
 						}
 						if _subj.Tag == 2 {
-							v_26 := /* generic erase */ func() func(any) string {
+							v_27 := /* generic erase */ func() func(any) string {
 								_s := any(_subj.Fields[0])
 								if _f, _ok := _s.(func(any) string); _ok {
 									return _f
@@ -8556,8 +8580,8 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 								}
 								return rt.CoerceFuncSlot[func(any) string](_s)
 							}()
-							_ = v_26
-							return Std_Html_text(v_26(v_23))
+							_ = v_27
+							return Std_Html_text(v_27(v_24))
 						}
 						panic(rt.Unreachable("case"))
 					}
@@ -8566,9 +8590,9 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withStore__4 := func() any {
 					_subj := w_2.Store
 					if _subj.Tag == 0 {
-						v_27 := /* generic erase */ rt.AsString(_subj.JustValue)
-						_ = v_27
-						return rt.Live_withStore(any(v_27), base_3)
+						v_28 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_28
+						return rt.Live_withStore(any(v_28), base_3)
 					}
 					if _subj.Tag == 1 {
 						return base_3
@@ -8579,9 +8603,9 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withStatic__5 := func() any {
 					_subj := w_2.Static
 					if _subj.Tag == 0 {
-						v_28 := /* generic erase */ rt.AsString(_subj.JustValue)
-						_ = v_28
-						return rt.Live_withStatic(any(v_28), withStore__4)
+						v_29 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_29
+						return rt.Live_withStatic(any(v_29), withStore__4)
 					}
 					if _subj.Tag == 1 {
 						return withStore__4
@@ -8592,9 +8616,9 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withStaticUrl__6 := func() any {
 					_subj := w_2.StaticUrl
 					if _subj.Tag == 0 {
-						v_29 := /* generic erase */ rt.AsString(_subj.JustValue)
-						_ = v_29
-						return rt.Live_withStaticUrl(any(v_29), withStatic__5)
+						v_30 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_30
+						return rt.Live_withStaticUrl(any(v_30), withStatic__5)
 					}
 					if _subj.Tag == 1 {
 						return withStatic__5
@@ -8605,9 +8629,9 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withTtl__7 := func() any {
 					_subj := w_2.Ttl
 					if _subj.Tag == 0 {
-						v_30 := /* generic erase */ rt.AsString(_subj.JustValue)
-						_ = v_30
-						return rt.Live_withTtl(any(v_30), withStaticUrl__6)
+						v_31 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_31
+						return rt.Live_withTtl(any(v_31), withStaticUrl__6)
 					}
 					if _subj.Tag == 1 {
 						return withStaticUrl__6
@@ -8618,9 +8642,9 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withIdle__8 := func() any {
 					_subj := w_2.IdleEvict
 					if _subj.Tag == 0 {
-						v_31 := /* generic erase */ rt.AsString(_subj.JustValue)
-						_ = v_31
-						return rt.Live_withIdleEvict(any(v_31), withTtl__7)
+						v_32 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_32
+						return rt.Live_withIdleEvict(any(v_32), withTtl__7)
 					}
 					if _subj.Tag == 1 {
 						return withTtl__7
@@ -8631,9 +8655,9 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withMaxBody__9 := func() any {
 					_subj := w_2.MaxBodyBytes
 					if _subj.Tag == 0 {
-						v_32 := /* generic erase */ rt.AsInt(_subj.JustValue)
-						_ = v_32
-						return rt.Live_withMaxBodyBytes(any(v_32), withIdle__8)
+						v_33 := /* generic erase */ rt.AsInt(_subj.JustValue)
+						_ = v_33
+						return rt.Live_withMaxBodyBytes(any(v_33), withIdle__8)
 					}
 					if _subj.Tag == 1 {
 						return withIdle__8
@@ -8644,9 +8668,9 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withInputMode__10 := func() any {
 					_subj := w_2.InputMode
 					if _subj.Tag == 0 {
-						v_33 := /* generic erase */ rt.AsString(_subj.JustValue)
-						_ = v_33
-						return rt.Live_withInput(any(v_33), withMaxBody__9)
+						v_34 := /* generic erase */ rt.AsString(_subj.JustValue)
+						_ = v_34
+						return rt.Live_withInput(any(v_34), withMaxBody__9)
 					}
 					if _subj.Tag == 1 {
 						return withMaxBody__9
@@ -8659,14 +8683,14 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withAnalytics__12 := func() any {
 					_subj := w_2.Analytics
 					if _subj.Tag == 0 {
-						v_34 := /* generic erase */ func(_s any) struct{ PageViews bool } {
+						v_35 := /* generic erase */ func(_s any) struct{ PageViews bool } {
 							if _m, _ok := _s.(struct{ PageViews any }); _ok {
 								return struct{ PageViews bool }{PageViews: rt.AsBool(_m.PageViews)}
 							}
 							return rt.Coerce[struct{ PageViews bool }](_s)
 						}(_subj.JustValue)
-						_ = v_34
-						return rt.Live_withAnalytics(any(v_34), withPort__11)
+						_ = v_35
+						return rt.Live_withAnalytics(any(v_35), withPort__11)
 					}
 					if _subj.Tag == 1 {
 						return withPort__11
@@ -8677,7 +8701,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withHead__13 := func() any {
 					_subj := v_0.Head
 					if _subj.Tag == 0 {
-						v_35 := /* generic erase */ func() func(any) []Std_Html_Html {
+						v_36 := /* generic erase */ func() func(any) []Std_Html_Html {
 							_s := any(_subj.JustValue)
 							if _f, _ok := _s.(func(any) []Std_Html_Html); _ok {
 								return _f
@@ -8687,8 +8711,8 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 							}
 							return rt.CoerceFuncSlot[func(any) []Std_Html_Html](_s)
 						}()
-						_ = v_35
-						return rt.Live_withHead(any(func(_w4 any) any { return any(v_35(_w4)) }), withAnalytics__12)
+						_ = v_36
+						return rt.Live_withHead(any(func(_w4 any) any { return any(v_36(_w4)) }), withAnalytics__12)
 					}
 					if _subj.Tag == 1 {
 						return withAnalytics__12
@@ -8699,7 +8723,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withGuard__14 := func() any {
 					_subj := v_0.Guard
 					if _subj.Tag == 0 {
-						v_36 := /* generic erase */ func() func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}] {
+						v_37 := /* generic erase */ func() func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}] {
 							_s := any(_subj.JustValue)
 							if _f, _ok := _s.(func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]); _ok {
 								return _f
@@ -8711,8 +8735,8 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 							}
 							return rt.CoerceFuncSlot[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_s)
 						}()
-						_ = v_36
-						return rt.Live_withGuard(any(func(_w5 any) any { return any(func(_w6 any) any { return any(v_36(_w5, _w6)) }) }), withHead__13)
+						_ = v_37
+						return rt.Live_withGuard(any(func(_w5 any) any { return any(func(_w6 any) any { return any(v_37(_w5, _w6)) }) }), withHead__13)
 					}
 					if _subj.Tag == 1 {
 						return withHead__13
@@ -8723,7 +8747,7 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 				withNav__15 := func() any {
 					_subj := v_0.OnNavigate
 					if _subj.Tag == 0 {
-						v_37 := /* generic erase */ func() func(any) any {
+						v_38 := /* generic erase */ func() func(any) any {
 							_s := any(_subj.JustValue)
 							if _f, _ok := _s.(func(any) any); _ok {
 								return _f
@@ -8733,8 +8757,8 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 							}
 							return rt.CoerceFuncSlot[func(any) any](_s)
 						}()
-						_ = v_37
-						return rt.Live_withOnNavigate(any(v_37), withGuard__14)
+						_ = v_38
+						return rt.Live_withOnNavigate(any(v_38), withGuard__14)
 					}
 					if _subj.Tag == 1 {
 						return withGuard__14
@@ -8785,7 +8809,33 @@ func Std_App_runLiveBoot_(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, stru
 					}
 				}()
 				_ = withDur__16
-				return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.Live_app(withDur__16))
+				withConsole__17 := func() any {
+					_subj := v_0.ConsoleAuth
+					if _subj.Tag == 0 {
+						v_39 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]] {
+							_s := any(_subj.JustValue)
+							if _f, _ok := _s.(func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]); _ok {
+								return _f
+							}
+							if _c, _ok := _s.(func(any) any); _ok {
+								return func(_a0 Sky_Http_Server_Request_R, _a1 any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]] {
+									return rt.TaskCoerceT[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]((_c(any(_a0))).(func(any) any)(any(_a1)))
+								}
+							}
+							return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]](_s)
+						}()
+						_ = v_39
+						return rt.Live_withConsoleAuthModel(any(func(_w8 any) any {
+							return any(func(_w9 any) any { return any(v_39( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](_w8), _w9)) })
+						}), withDur__16)
+					}
+					if _subj.Tag == 1 {
+						return withDur__16
+					}
+					panic(rt.Unreachable("case"))
+				}()
+				_ = withConsole__17
+				return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.Live_app(withConsole__17))
 			}
 		}
 		if _subj.Tag == 1 {
