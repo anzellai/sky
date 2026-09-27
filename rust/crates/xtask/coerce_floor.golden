@@ -154,6 +154,16 @@
 #     exactly what a CALL of that wrapper pays: one `rt.Coerce` of the argument
 #     into the wrapper's `FfiT_…_P0` slot (the Go-FFI argument floor, doc 14
 #     §4). Measured on the emitted Go: 11 closures, one tracked token each.
+#
+# ── Recorded transition, 2026-09-27 — v0.27 session-id rotation ──
+#     narrow  67-durable-counter 89 -> 90 (+1); adapter and dispatch unchanged
+#     (0); no other row moved. Cause (2), a STDLIB source change: the
+#     `App.DurableWiring` record gained a `discard : String -> Task Error ()`
+#     field (`Durable.deleteSnapshot`), which Sky.Live calls when a session id
+#     is retired (rotation at sign-in, revocation, Live.endSession) so a
+#     retired id restores nothing. The one new token is the field's copy into
+#     the Live wiring record, the same narrowing the sibling `persist` field
+#     already pays there. Only the one durable example builds that record.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -214,7 +224,7 @@
 64-app-native	adapter=0	dispatch=0	narrow=350
 65-metadata-service	adapter=0	dispatch=0	narrow=41
 66-slack-agent	adapter=0	dispatch=0	narrow=160
-67-durable-counter	adapter=0	dispatch=0	narrow=89
+67-durable-counter	adapter=0	dispatch=0	narrow=90
 apps/dispatch	adapter=0	dispatch=0	narrow=469
 apps/fieldbook	adapter=0	dispatch=0	narrow=708
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
