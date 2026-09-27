@@ -229,3 +229,45 @@ func spaSSEWrite(sh *serverStreamHandle, frame string) bool {
 	sh.flusher.Flush()
 	return true
 }
+
+// Spa_subAllowsTopic reports whether a Sub value subscribes to `topic`. Sky
+// surface (generated backend):
+//
+//	spaSubAllowsTopic_ : any -> String -> Bool
+//	spaSubAllowsTopic_ = Ffi.kernel "Spa_subAllowsTopic"
+//
+// It is the authorisation check of `GET /_sky/sub?topic=<t>`. The generated
+// handler rebuilds the model the app would hold for this visitor (its `init`,
+// the `withRequest` seed, and every session field from the VERIFIED `sky_sid`
+// cookie — never from the query string or a body), runs the app's own
+// `subscriptions` on it, and streams `topic` only when this returns True.
+// Anything else answers 403. So a per-user topic ("user:42") streams only to
+// the visitor whose verified session makes `subscriptions` name it.
+//
+// Fail closed: an empty topic, a non-Sub value and Sub.none authorise
+// nothing. Topics are compared exactly, as the broker matches them.
+func Spa_subAllowsTopic(subArg, topicArg any) bool {
+	topic, ok := topicArg.(string)
+	if !ok || topic == "" {
+		return false
+	}
+	sub, ok := subArg.(subT)
+	if !ok {
+		return false
+	}
+	return subNamesTopic(sub, topic)
+}
+
+func subNamesTopic(s subT, topic string) bool {
+	switch s.kind {
+	case "subscribeTopic":
+		return s.topic == topic
+	case "batch":
+		for _, c := range s.batch {
+			if cs, ok := c.(subT); ok && subNamesTopic(cs, topic) {
+				return true
+			}
+		}
+	}
+	return false
+}

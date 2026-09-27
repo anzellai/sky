@@ -384,6 +384,18 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 		if pathRouteCount[pattern] > 1 && route.Method != "" && route.Method != "*" {
 			muxPattern = route.Method + " " + translated
 		}
+		if route.Rpc {
+			// Server.rpc: the origin / content-type guard runs BEFORE the
+			// handler, so a refused request never reaches app code.
+			rpcMethod := route.Method
+			mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
+				if !rpcRequestGuard(w, req, rpcMethod) {
+					return
+				}
+				dispatchSkyHandler(w, req, handler, paramNames)
+			})
+			continue
+		}
 		mux.HandleFunc(muxPattern, func(w http.ResponseWriter, req *http.Request) {
 			dispatchSkyHandler(w, req, handler, paramNames)
 		})
@@ -511,7 +523,13 @@ func Server_listen(port any, routes any) any {
 // server kinds.
 //
 // `spec` is "METHOD /path" (e.g. "POST /v1/generate"); an omitted
-// method matches any verb.
+// method matches any verb. The CSRF exemption is keyed by the same
+// METHOD + path: `Server.api "GET /report"` does not exempt a
+// `POST /report` form route. A method-less spec exempts every method.
+//
+// A route that authenticates with the browser's session COOKIE is not
+// an API route: use `Server.rpc` (rpc_guard.go), which keeps the CSRF
+// exemption but checks the request's origin and content type instead.
 func Server_api(spec any, handler any) any {
 	s := fmt.Sprintf("%v", spec)
 	method, pattern := "", s
@@ -519,7 +537,7 @@ func Server_api(spec any, handler any) any {
 		method = strings.ToUpper(strings.TrimSpace(s[:idx]))
 		pattern = strings.TrimSpace(s[idx+1:])
 	}
-	WithoutCsrf(pattern)
+	WithoutCsrfMethod(method, pattern)
 	return SkyRoute{Method: method, Path: pattern, Handler: handler}
 }
 

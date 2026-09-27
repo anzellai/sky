@@ -214,8 +214,11 @@ func IsCsrfEnabled() bool {
 //
 //   - Request method is read-only (GET / HEAD / OPTIONS) → issue
 //     cookie if missing (so first-paint sets it up), pass through.
-//   - Path matches a `withoutCsrf` opt-out (registered via
-//     `WithoutCsrf(path)` from user code) → pass through unchanged.
+//   - Method + path match a `withoutCsrf` opt-out (registered via
+//     `WithoutCsrf(path)` / `WithoutCsrfMethod(method, path)`, which
+//     `Server.api` / `Live.api` / `Server.rpc` call) → pass through
+//     unchanged. `Server.rpc` routes carry their own origin guard
+//     (rpc_guard.go) in place of the double-submit token.
 //   - Observability endpoints (/_sky/healthz, /_sky/readyz,
 //     /_sky/metrics, /_sky/buildinfo, /_sky/sse) → pass through
 //     (no state mutation; SSE is GET).
@@ -233,8 +236,8 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// User opt-out path.
-		if isWithoutCsrfPath(r.URL.Path) {
+		// User opt-out (method + path).
+		if isWithoutCsrfRequest(r.Method, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -508,18 +511,31 @@ func isObservabilityPath(path string) bool {
 
 // ─── User opt-out registry ────────────────────────────────────
 
-// withoutCsrfPaths — registered via WithoutCsrf(path). Webhooks
-// from external services (Stripe, GitHub, Slack) verify via HMAC
-// signature, not session cookie — they need to bypass CSRF.
-var withoutCsrfPaths atomic.Pointer[[]string]
+// withoutCsrfPaths — registered via WithoutCsrf(path) and
+// WithoutCsrfMethod(method, path). Webhooks from external services
+// (Stripe, GitHub, Slack) verify via HMAC signature, not session
+// cookie — they need to bypass CSRF.
+//
+// Each entry is keyed by METHOD + path. An empty method exempts every
+// method on the path (the documented behaviour of a method-less
+// `Server.api "/path"` / `Live.api "/path"` spec). Before v0.27 the
+// registry held the path alone, so `Server.api "GET /report"` also
+// exempted `POST /report` — including an app's own cookie-authenticated
+// form post on that path.
+type csrfExemption struct {
+	method string // upper-case; "" = every method
+	path   string
+}
+
+var withoutCsrfPaths atomic.Pointer[[]csrfExemption]
 
 func init() {
-	empty := []string{}
+	empty := []csrfExemption{}
 	withoutCsrfPaths.Store(&empty)
 }
 
-// WithoutCsrf registers a path that bypasses CSRF protection.
-// Idempotent (re-registering a path is a no-op).
+// WithoutCsrf registers a path that bypasses CSRF protection for EVERY
+// method. Idempotent (re-registering a path is a no-op).
 //
 // Use for webhook receivers that authenticate via vendor-provided
 // HMAC signature in the request body:
@@ -530,18 +546,33 @@ func init() {
 // User code calls this from app startup (typically the
 // equivalent of a `main` body before `Live.app` / `Server.listen`).
 //
-// Path matching is exact (no prefix wildcards). For a path family
-// like `/webhooks/*`, register each leaf you actually mount.
+// Path matching is exact (no prefix wildcards), with a `:name` segment
+// matching one path segment. For a path family like `/webhooks/*`,
+// register each leaf you actually mount.
 func WithoutCsrf(path string) {
+	WithoutCsrfMethod("", path)
+}
+
+// WithoutCsrfMethod registers a METHOD + path pair that bypasses CSRF
+// protection. An empty (or "*") method exempts every method, exactly as
+// WithoutCsrf does. `Server.api` / `Live.api` / `Server.rpc` call it
+// with the method of their "METHOD /path" spec, so a route exempts only
+// the verb it serves. Idempotent.
+func WithoutCsrfMethod(method, path string) {
+	m := strings.ToUpper(strings.TrimSpace(method))
+	if m == "*" {
+		m = ""
+	}
+	e := csrfExemption{method: m, path: path}
 	for {
 		old := withoutCsrfPaths.Load()
 		for _, p := range *old {
-			if p == path {
+			if p == e {
 				return // already registered
 			}
 		}
-		new_ := append([]string{}, *old...)
-		new_ = append(new_, path)
+		new_ := append([]csrfExemption{}, *old...)
+		new_ = append(new_, e)
 		if withoutCsrfPaths.CompareAndSwap(old, &new_) {
 			return
 		}
@@ -551,13 +582,19 @@ func WithoutCsrf(path string) {
 // ResetWithoutCsrf is a test-only helper to clear the registry
 // between cases. Production never calls this.
 func ResetWithoutCsrf() {
-	empty := []string{}
+	empty := []csrfExemption{}
 	withoutCsrfPaths.Store(&empty)
 }
 
-func isWithoutCsrfPath(path string) bool {
+// isWithoutCsrfRequest reports whether the request's method + path is
+// exempt.
+func isWithoutCsrfRequest(method, path string) bool {
+	m := strings.ToUpper(method)
 	for _, p := range *withoutCsrfPaths.Load() {
-		if csrfPatternMatch(p, path) {
+		if p.method != "" && p.method != m {
+			continue
+		}
+		if csrfPatternMatch(p.path, path) {
 			return true
 		}
 	}

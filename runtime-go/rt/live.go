@@ -1298,8 +1298,10 @@ func Live_api(spec any, handler any) any {
 	// browser-form-forgery defence for the cookie-authed TEA event
 	// path) does not apply. Without this, a server-to-server POST
 	// to an api route — e.g. a build-job status callback — is
-	// 403'd for lacking a CSRF token it could never have.
-	WithoutCsrf(pattern)
+	// 403'd for lacking a CSRF token it could never have. The
+	// exemption is keyed by METHOD + path: "GET /feed" does not exempt
+	// POST /feed. A method-less spec exempts every method.
+	WithoutCsrfMethod(method, pattern)
 	return apiRoute{method: method, pattern: pattern, handler: handler}
 }
 

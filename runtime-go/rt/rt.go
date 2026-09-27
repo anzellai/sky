@@ -8982,6 +8982,14 @@ type SkyRoute struct {
 	// app's NotFound page on a cold unmatched deep-link, while real assets
 	// still serve from the file server. Nil for a plain Server_static route.
 	NotFound any
+
+	// Rpc — true for a route made by Server_rpc: a cookie-authenticated
+	// browser RPC endpoint. serverRouteMux runs rpcRequestGuard
+	// (rpc_guard.go) before the handler: the method must match, the body
+	// must be JSON, and the request must come from the app's own origin.
+	// The route is exempt from the double-submit CSRF token, which the
+	// guard replaces.
+	Rpc bool
 }
 
 // SkyRequest wraps an HTTP request
