@@ -737,14 +737,15 @@ type Std_App_DurableWiring_R[T1 any] struct {
 	Setup        rt.SkyTask[Sky_Core_Error_Error, struct{}]
 	Restore      func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[T1]]
 	Persist      func(string, T1) rt.SkyTask[Sky_Core_Error_Error, struct{}]
+	Discard      func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 	ApplyRestore func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[T1]], T1) T1
 	RunId        string
 }
 
 func init() { rt.RegisterGobType(Std_App_DurableWiring_R[any]{}) }
 
-func Std_App_DurableWiring[T1 any](p0 bool, p1 rt.SkyTask[Sky_Core_Error_Error, struct{}], p2 func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[T1]], p3 func(string, T1) rt.SkyTask[Sky_Core_Error_Error, struct{}], p4 func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[T1]], T1) T1, p5 string) Std_App_DurableWiring_R[T1] {
-	return Std_App_DurableWiring_R[T1]{Enabled: p0, Setup: p1, Restore: p2, Persist: p3, ApplyRestore: p4, RunId: p5}
+func Std_App_DurableWiring[T1 any](p0 bool, p1 rt.SkyTask[Sky_Core_Error_Error, struct{}], p2 func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[T1]], p3 func(string, T1) rt.SkyTask[Sky_Core_Error_Error, struct{}], p4 func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}], p5 func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[T1]], T1) T1, p6 string) Std_App_DurableWiring_R[T1] {
+	return Std_App_DurableWiring_R[T1]{Enabled: p0, Setup: p1, Restore: p2, Persist: p3, Discard: p4, ApplyRestore: p5, RunId: p6}
 }
 
 type Std_App_MobileOpts_R struct {
@@ -7825,6 +7826,7 @@ func Std_App_noDurableWiring() Std_App_DurableWiring_R[any] {
 	return Std_App_noDurableWiring__caf.Get(func() Std_App_DurableWiring_R[any] {
 		return /* primitive join */ rt.Coerce[Std_App_DurableWiring_R[any]](struct {
 			ApplyRestore any
+			Discard      any
 			Enabled      any
 			Persist      any
 			Restore      any
@@ -7833,6 +7835,8 @@ func Std_App_noDurableWiring() Std_App_DurableWiring_R[any] {
 		}{Enabled: false, Setup: /* FFI return */ rt.TaskCoerceT[any, struct{}](rt.AnyTaskSucceed(any(struct{}{}))), Restore: func(_ any) rt.SkyTask[any, rt.SkyMaybe[any]] {
 			return /* FFI return */ rt.TaskCoerceT[any, rt.SkyMaybe[any]](rt.AnyTaskSucceed(any(rt.Nothing[any]())))
 		}, Persist: func(_ any, _ any) rt.SkyTask[any, struct{}] {
+			return /* FFI return */ rt.TaskCoerceT[any, struct{}](rt.AnyTaskSucceed(any(struct{}{})))
+		}, Discard: func(_ any) rt.SkyTask[any, struct{}] {
 			return /* FFI return */ rt.TaskCoerceT[any, struct{}](rt.AnyTaskSucceed(any(struct{}{})))
 		}, ApplyRestore: func(_ any, v_0 any) any { return v_0 }, RunId: ""})
 	})
@@ -8863,6 +8867,7 @@ func Std_App_requestFromSeed_(v_0 struct {
 func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMaybe[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]], v_2 Std_App_DurableWiring_R[any]) struct {
 	ApplyRestore        func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
 	ApplyRestoreRequest func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+	Discard             func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 	Enabled             bool
 	Persist             func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 	Restore             func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]
@@ -8872,6 +8877,7 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 	return /* primitive join */ func(_s any) struct {
 		ApplyRestore        func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
 		ApplyRestoreRequest func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+		Discard             func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 		Enabled             bool
 		Persist             func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 		Restore             func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]
@@ -8881,6 +8887,7 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 		if _m, _ok := _s.(struct {
 			ApplyRestore        any
 			ApplyRestoreRequest any
+			Discard             any
 			Enabled             any
 			Persist             any
 			Restore             any
@@ -8890,6 +8897,7 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 			return struct {
 				ApplyRestore        func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
 				ApplyRestoreRequest func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+				Discard             func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 				Enabled             bool
 				Persist             func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 				Restore             func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]
@@ -8917,6 +8925,17 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 					}
 				}
 				return rt.CoerceFuncSlot[func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any](_s)
+			}(), Discard: func() func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+				_s := any(_m.Discard)
+				if _f, _ok := _s.(func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}]); _ok {
+					return _f
+				}
+				if _g, _ok := _s.(func(any) any); _ok {
+					return func(_a0 string) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+						return rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](_g(any(_a0)))
+					}
+				}
+				return rt.CoerceFuncSlot[func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}]](_s)
 			}(), Enabled: rt.AsBool(_m.Enabled), Persist: func() func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
 				_s := any(_m.Persist)
 				if _f, _ok := _s.(func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]); _ok {
@@ -8944,6 +8963,7 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 		return rt.Coerce[struct {
 			ApplyRestore        func(rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
 			ApplyRestoreRequest func(any, rt.SkyResult[Sky_Core_Error_Error, rt.SkyMaybe[any]], any) any
+			Discard             func(string) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 			Enabled             bool
 			Persist             func(string, any) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 			Restore             func(string) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[any]]
@@ -8953,12 +8973,13 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 	}(struct {
 		ApplyRestore        any
 		ApplyRestoreRequest any
+		Discard             any
 		Enabled             any
 		Persist             any
 		Restore             any
 		RunId               any
 		Setup               any
-	}{Enabled: v_2.Enabled, Setup: v_2.Setup, Restore: v_2.Restore, Persist: v_2.Persist, ApplyRestore: v_2.ApplyRestore, RunId: v_2.RunId, ApplyRestoreRequest: func(v_3 any, v_4 rt.SkyResult[any, rt.SkyMaybe[any]], v_5 any) any {
+	}{Enabled: v_2.Enabled, Setup: v_2.Setup, Restore: v_2.Restore, Persist: v_2.Persist, Discard: v_2.Discard, ApplyRestore: v_2.ApplyRestore, RunId: v_2.RunId, ApplyRestoreRequest: func(v_3 any, v_4 rt.SkyResult[any, rt.SkyMaybe[any]], v_5 any) any {
 		{
 			_subj := v_1
 			if _subj.Tag == 0 {
