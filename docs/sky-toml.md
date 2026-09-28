@@ -127,6 +127,19 @@ they're reproducible from `sky.toml` + the imported source.
 Use `sky remove <pkg>` to drop a dependency cleanly. See
 [ffi/go-interop.md](ffi/go-interop.md) for the FFI model.
 
+A **local** Go module is an inline table with a `path` instead of a version.
+`sky add ../greet` writes it:
+
+```toml
+["go.dependencies"]
+"example.com/greet" = { path = "../greet" }
+```
+
+The key is the module path its `go.mod` declares. A relative `path` is relative
+to the project root (the directory holding this `sky.toml`), never the working
+directory. Every build adds `require` + `replace` for it to the generated
+`go.mod`. See [`sky add ./dir`](tooling/cli.md#sky-add---go--sky-pkgversion).
+
 ---
 
 ## `[dependencies]`
@@ -138,6 +151,15 @@ Path or git URL → version. Resolved into `.skydeps/` on
 ```toml
 [dependencies]
 "github.com/anzellai/sky-stripe" = "v0.2.1"
+```
+
+A **local** Sky package takes a `path` instead of a version (`sky add
+./libs/widgets` writes it). It is loaded from its source root on every build;
+nothing is copied into `.skydeps/`:
+
+```toml
+[dependencies]
+"widgets" = { path = "./libs/widgets" }
 ```
 
 Less commonly used than Go deps; most reusable code in the

@@ -229,7 +229,7 @@ impl Analysis {
     /// loading the project's own `src/` module last lets it OVERRIDE a
     /// same-named dependency module — never the reverse.
     pub fn load_project(&mut self, root: &Path) {
-        self.load_skydeps(&root.join(".skydeps"));
+        self.load_skydeps(root);
         for sub in ["src", "tests"] {
             self.load_dir(&root.join(sub));
         }
@@ -242,8 +242,12 @@ impl Analysis {
     /// `enumerate_skydep_files` (no fork). A dependency ships its own demo
     /// `module Main`; those are DROPPED here (build.rs parity) so they can never
     /// shadow the consuming project's own entry point.
-    fn load_skydeps(&mut self, skydeps: &Path) {
-        for path in project::enumerate_skydep_files(skydeps) {
+    ///
+    /// The project's LOCAL Sky path dependencies (`sky add ./dir`) load here
+    /// too, from their source roots, through the same enumerator the build
+    /// uses (`project::enumerate_dependency_files`).
+    fn load_skydeps(&mut self, root: &Path) {
+        for path in project::enumerate_dependency_files(root) {
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
@@ -2713,10 +2717,19 @@ fn position_at(text: &str, offset: u32) -> Position {
     Position { line, character }
 }
 
+/// Span → LSP `Range`, through the shared `diagnostics::span_range` (the same
+/// mapping `sky check --format json` uses, so an editor and a CI tool agree).
 fn span_to_range(text: &str, span: Span) -> Range {
+    let r = diagnostics::span_range(text, span);
     Range {
-        start: position_at(text, span.range.0),
-        end: position_at(text, span.range.1),
+        start: Position {
+            line: r.start.line,
+            character: r.start.character,
+        },
+        end: Position {
+            line: r.end.line,
+            character: r.end.character,
+        },
     }
 }
 

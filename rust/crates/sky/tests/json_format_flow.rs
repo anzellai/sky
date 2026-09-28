@@ -1,0 +1,534 @@
+//! `sky check` / `sky build` / `sky test` / `sky fmt --check` with
+//! `--format json`, through the real binary.
+//!
+//! The contract (`docs/tooling/cli.md`, "Machine-readable output"): stdout is
+//! NDJSON and nothing else, every line carries `"schema": 1`, the LAST line is
+//! the one `summary`, human text goes to stderr, and the exit code is the text
+//! mode's. Each test below parses EVERY stdout line as JSON, so a stray
+//! progress line on stdout fails it.
+//!
+//! The text and json modes render the same structured diagnostics
+//! (`BuildReport::diagnostics`), so one test counts the text mode's error
+//! blocks against the json mode's error lines on the same program.
+
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
+const SKY: &str = env!("CARGO_BIN_EXE_sky");
+
+fn have_go() -> bool {
+    Command::new("go")
+        .arg("version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn scratch(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "sky-json-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    dir
+}
+
+/// A project with `src/Main.sky` = `main_src` and an optional extra sky.toml tail.
+fn project(tag: &str, main_src: &str, toml_tail: &str) -> PathBuf {
+    let dir = scratch(tag);
+    std::fs::write(
+        dir.join("sky.toml"),
+        format!(
+            "name = \"json-{tag}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n{toml_tail}"
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/Main.sky"), main_src).unwrap();
+    dir
+}
+
+struct Out {
+    code: i32,
+    lines: Vec<Value>,
+    stderr: String,
+}
+
+fn sky(dir: &Path, args: &[&str]) -> Out {
+    let out = Command::new(SKY)
+        .args(args)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let lines: Vec<Value> = stdout
+        .lines()
+        .map(|l| {
+            serde_json::from_str(l).unwrap_or_else(|e| {
+                panic!("stdout line is not JSON ({e}): {l:?}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}")
+            })
+        })
+        .collect();
+    Out {
+        code: out.status.code().unwrap_or(-1),
+        lines,
+        stderr,
+    }
+}
+
+/// The stream invariants every json run must hold. Returns the summary.
+fn check_stream(o: &Out) -> &Value {
+    assert!(
+        !o.lines.is_empty(),
+        "no NDJSON at all; stderr:\n{}",
+        o.stderr
+    );
+    for l in &o.lines {
+        assert_eq!(l["schema"], 1, "every line carries schema 1: {l}");
+    }
+    let summaries: Vec<&Value> = o.lines.iter().filter(|l| l["kind"] == "summary").collect();
+    assert_eq!(summaries.len(), 1, "exactly one summary: {:?}", o.lines);
+    let last = o.lines.last().unwrap();
+    assert_eq!(last["kind"], "summary", "the summary is the last line");
+    assert_eq!(
+        last["ok"].as_bool().unwrap(),
+        o.code == 0,
+        "ok mirrors the exit code ({}): {last}",
+        o.code
+    );
+    let errors = o
+        .lines
+        .iter()
+        .filter(|l| l["kind"] == "diagnostic" && l["severity"] == "error")
+        .count();
+    let warnings = o
+        .lines
+        .iter()
+        .filter(|l| l["kind"] == "diagnostic" && l["severity"] == "warning")
+        .count();
+    assert_eq!(last["errors"].as_u64().unwrap() as usize, errors);
+    assert_eq!(last["warnings"].as_u64().unwrap() as usize, warnings);
+    assert!(last["durationMs"].is_u64());
+    last
+}
+
+fn diags(o: &Out) -> Vec<&Value> {
+    o.lines
+        .iter()
+        .filter(|l| l["kind"] == "diagnostic")
+        .collect()
+}
+
+const CLEAN: &str = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.Log exposing (println)\n\n\n\
+main =\n    println \"hi\"\n";
+
+/// A type error on a known line (0-based line 8).
+const TYPE_ERR: &str = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.Log exposing (println)\n\n\n\
+x : Int\n\
+x =\n    \"nope\"\n\n\n\
+main =\n    println \"hi\"\n";
+
+#[test]
+fn clean_project_is_one_ok_summary() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("clean", CLEAN, "");
+    for verb in ["check", "build"] {
+        let o = sky(&dir, &[verb, "--format", "json", "src/Main.sky"]);
+        assert_eq!(o.code, 0, "{verb}: {}", o.stderr);
+        let s = check_stream(&o);
+        assert_eq!(o.lines.len(), 1, "{verb}: only the summary: {:?}", o.lines);
+        assert_eq!(s["command"], verb);
+        assert_eq!(s["errors"], 0);
+        let root = PathBuf::from(s["root"].as_str().unwrap());
+        assert_eq!(
+            root.canonicalize().unwrap(),
+            dir.canonicalize().unwrap(),
+            "root names the project directory"
+        );
+    }
+    // The human progress text went to stderr, not stdout.
+    let o = sky(&dir, &["check", "--format=json", "src/Main.sky"]);
+    assert!(o.stderr.contains("No errors found."), "{}", o.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn type_error_lines_are_lsp_shaped_and_golden() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("type", TYPE_ERR, "");
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    let s = check_stream(&o);
+    assert!(s["errors"].as_u64().unwrap() >= 1);
+    let ds = diags(&o);
+    for d in &ds {
+        assert_eq!(d["source"], "sky");
+        assert_eq!(d["file"], "src/Main.sky", "project-relative path: {d}");
+        assert!(d["code"].as_str().unwrap().starts_with("E2"), "{d}");
+        assert!(d["range"]["start"]["line"].is_u64());
+        assert!(d["range"]["end"]["character"].is_u64());
+    }
+    // Golden: the `x = "nope"` error, byte for byte.
+    let raw = String::from_utf8_lossy(
+        &Command::new(SKY)
+            .args(["check", "--format", "json", "src/Main.sky"])
+            .current_dir(&dir)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .into_owned();
+    let first = raw.lines().next().unwrap();
+    assert_eq!(
+        first,
+        r#"{"kind":"diagnostic","schema":1,"file":"src/Main.sky","range":{"start":{"line":8,"character":4},"end":{"line":8,"character":10}},"severity":"error","code":"E2001","message":"[x] type mismatch: `String` vs `Int`","source":"sky"}"#
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn text_and_json_report_the_same_number_of_errors() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let src = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.Log exposing (println)\n\n\n\
+x : Int\n\
+x =\n    \"nope\"\n\n\n\
+main =\n    println (1 + \"a\")\n";
+    let dir = project("count", src, "");
+    let text = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let text_err = String::from_utf8_lossy(&text.stderr);
+    let blocks = text_err.matches("-- TYPE ERROR ").count();
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    let s = check_stream(&o);
+    assert!(blocks >= 2, "fixture has several errors: {text_err}");
+    assert_eq!(
+        s["errors"].as_u64().unwrap() as usize,
+        blocks,
+        "text printed {blocks} error blocks; json must report as many:\n{text_err}\n{:?}",
+        o.lines
+    );
+    assert_eq!(text.status.code(), Some(o.code), "same exit code");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn parse_error_is_e0001_with_a_range() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let src = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.Log exposing (println)\n\n\n\
+main =\n    println (\"unclosed\"\n";
+    let dir = project("parse", src, "");
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let ds = diags(&o);
+    assert!(
+        ds.iter()
+            .any(|d| d["code"] == "E0001" && d["file"] == "src/Main.sky" && d["range"].is_object()),
+        "a parse error diagnostic with a location: {ds:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_warning_does_not_fail_the_build() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    // A key no runtime section honours is reported as a warning, not dropped.
+    let dir = project("warn", CLEAN, "\n[live]\nnot_a_real_key = 1\n");
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let s = check_stream(&o);
+    assert!(s["warnings"].as_u64().unwrap() >= 1, "{:?}", o.lines);
+    let w = diags(&o)
+        .into_iter()
+        .find(|d| d["severity"] == "warning")
+        .unwrap();
+    assert!(
+        w["message"].as_str().unwrap().contains("not_a_real_key"),
+        "{w}"
+    );
+    assert!(w["file"].is_null() && w["range"].is_null(), "no span: {w}");
+    // The text mode prints the same warning.
+    let text = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&text.stderr).contains("warning: "));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_go_build_failure_is_reported_against_the_go_file() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    // A local Go module (a path dependency) that compiles when added, then is
+    // broken: the Sky side still type-checks, and `go build` fails in the
+    // dependency's own file.
+    let base = scratch("gofail");
+    let greet = base.join("greet");
+    std::fs::create_dir_all(&greet).unwrap();
+    std::fs::write(
+        greet.join("go.mod"),
+        "module example.com/greet\n\ngo 1.22\n",
+    )
+    .unwrap();
+    std::fs::write(
+        greet.join("greet.go"),
+        "package greet\n\nfunc Hello(name string) string { return \"hi \" + name }\n",
+    )
+    .unwrap();
+    let app = base.join("app");
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    std::fs::write(
+        app.join("sky.toml"),
+        "name = \"gofail\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("src/Main.sky"),
+        "module Main exposing (main)\n\n\
+import Example.Com.Greet as Greet\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Sky.Core.Result as Result\n\
+import Std.Log exposing (println)\n\n\n\
+main =\n    println (Greet.hello \"x\" |> Result.withDefault \"err\")\n",
+    )
+    .unwrap();
+    let add = Command::new(SKY)
+        .args(["add", "../greet"])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stdout)
+    );
+    std::fs::write(
+        greet.join("greet.go"),
+        "package greet\n\nfunc Hello(name string) string { return 42 }\n",
+    )
+    .unwrap();
+    let o = sky(&app, &["build", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let go: Vec<&Value> = diags(&o)
+        .into_iter()
+        .filter(|d| d["source"] == "go")
+        .collect();
+    assert!(!go.is_empty(), "a go-sourced diagnostic: {:?}", o.lines);
+    let d = go[0];
+    assert_eq!(d["severity"], "error");
+    assert!(
+        d["file"].as_str().unwrap().ends_with("greet/greet.go"),
+        "points at the Go file that failed: {d}"
+    );
+    assert_eq!(
+        d["range"]["start"]["line"], 2,
+        "0-based line of `return 42`: {d}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+const SUITE: &str = "module AppTest exposing (tests)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Sky.Test as Test exposing (Test)\n\n\n\
+tests : List Test\n\
+tests =\n    \
+[ Test.test \"top\" (\\_ -> Test.equal 2 (1 + 1))\n    \
+, Test.suite \"s\"\n        \
+[ Test.test \"a\" (\\_ -> Test.equal 2 (1 + 1))\n        \
+, Test.test \"b\" (\\_ -> Test.equal BAD (1 + 1))\n        \
+]\n    \
+]\n";
+
+#[test]
+fn sky_test_json_has_one_line_per_case() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("test", CLEAN, "");
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    let suite = dir.join("tests/AppTest.sky");
+
+    // All pass → exit 0, three pass lines.
+    std::fs::write(&suite, SUITE.replace("BAD", "2")).unwrap();
+    let o = sky(&dir, &["test", "--format", "json", "tests/AppTest.sky"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let s = check_stream(&o).clone();
+    let tests: Vec<&Value> = o.lines.iter().filter(|l| l["kind"] == "test").collect();
+    assert_eq!(tests.len(), 3, "{:?}", o.lines);
+    assert!(tests.iter().all(|t| t["status"] == "pass"));
+    assert_eq!(s["total"], 3);
+    assert_eq!(s["passed"], 3);
+    assert_eq!(s["failed"], 0);
+    assert_eq!(s["exitCode"], 0);
+    let b = tests.iter().find(|t| t["fullName"] == "s > b").unwrap();
+    assert_eq!(b["suite"], "s");
+    assert_eq!(b["name"], "b");
+    let top = tests.iter().find(|t| t["fullName"] == "top").unwrap();
+    assert_eq!(
+        top["suite"], "AppTest",
+        "a top-level case belongs to the module"
+    );
+    // The suite's human `ok` lines went to stderr.
+    assert!(o.stderr.contains("ok    top"), "{}", o.stderr);
+
+    // One fails → exit 1, the failing line carries the message.
+    std::fs::write(&suite, SUITE.replace("BAD", "3")).unwrap();
+    let o = sky(&dir, &["test", "--format", "json", "tests/AppTest.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    let s = check_stream(&o);
+    assert_eq!(s["failed"], 1);
+    assert_eq!(s["passed"], 2);
+    let failed: Vec<&Value> = o
+        .lines
+        .iter()
+        .filter(|l| l["kind"] == "test" && l["status"] == "fail")
+        .collect();
+    assert_eq!(failed.len(), 1);
+    assert!(failed[0]["message"].as_str().unwrap().contains('3'));
+
+    // It does not build → exit 2 (nothing ran), the type error as a diagnostic.
+    std::fs::write(&suite, SUITE.replace("BAD", "\"two\"")).unwrap();
+    let o = sky(&dir, &["test", "--format", "json", "tests/AppTest.sky"]);
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    let s = check_stream(&o);
+    assert_eq!(s["total"], 0);
+    assert!(
+        diags(&o)
+            .iter()
+            .any(|d| d["code"] == "E2001" && d["file"] == "tests/AppTest.sky"),
+        "{:?}",
+        o.lines
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_check_json_names_the_unformatted_file() {
+    let dir = project("fmt", CLEAN, "");
+    std::fs::write(
+        dir.join("src/Ugly.sky"),
+        "module Ugly exposing (x)\nimport Sky.Core.Prelude exposing (..)\nx = 1\n",
+    )
+    .unwrap();
+    let o = sky(
+        &dir,
+        &[
+            "fmt",
+            "--check",
+            "--format",
+            "json",
+            "src/Main.sky",
+            "src/Ugly.sky",
+        ],
+    );
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let ds = diags(&o);
+    assert_eq!(ds.len(), 1, "{ds:?}");
+    assert_eq!(ds[0]["file"], "src/Ugly.sky");
+    // Without --check, json is refused (it would rewrite files silently).
+    let o = Command::new(SKY)
+        .args(["fmt", "--format", "json", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_unknown_format_is_a_usage_error() {
+    let dir = project("badfmt", CLEAN, "");
+    let o = Command::new(SKY)
+        .args(["check", "--format", "xml", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("expected `text` or `json`"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Copy a checked-in fixture project to a fresh temp dir.
+fn copy_fixture(name: &str, tag: &str) -> PathBuf {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    let dst = scratch(tag);
+    let _ = std::fs::remove_dir_all(&dst);
+    let ok = Command::new("cp")
+        .arg("-R")
+        .arg(&src)
+        .arg(&dst)
+        .status()
+        .expect("cp -R")
+        .success();
+    assert!(ok, "copy {}", src.display());
+    dst
+}
+
+/// A dispatched `Std.App` entry is checked through a derived child `sky check`.
+/// In json mode the child runs with `--format json` and its lines are relayed;
+/// the `HasFallback vs NoFallback` phantom from generated code becomes the one
+/// actionable diagnostic, exactly as the text mode remaps it.
+#[test]
+fn std_app_check_relays_the_child_diagnostics() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let good = copy_fixture("std-app-dispatch", "stdapp-ok");
+    let o = sky(&good, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let s = check_stream(&o);
+    assert_eq!(s["errors"], 0, "{:?}", o.lines);
+
+    // No `withNotFound`, checked for the default `web` target.
+    let bad = copy_fixture("std-app-terminal", "stdapp-fallback");
+    let o = sky(&bad, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let ds = diags(&o);
+    assert_eq!(ds.len(), 1, "one remapped diagnostic, no phantom: {ds:?}");
+    let m = ds[0]["message"].as_str().unwrap();
+    assert!(
+        m.contains("requires a fallback page") && !m.contains("HasFallback"),
+        "{m}"
+    );
+    let _ = std::fs::remove_dir_all(&good);
+    let _ = std::fs::remove_dir_all(&bad);
+}

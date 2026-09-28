@@ -119,6 +119,157 @@ pub fn position_at(text: &str, offset: u32) -> (u32, u32) {
     (line as u32, col as u32)
 }
 
+/// A 0-based `(line, UTF-16 character)` position: the LSP `Position` contract,
+/// kept here as plain data so the LSP and the CLI's `--format json` output map
+/// a span through ONE function ([`span_range`]).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct LineCol {
+    pub line: u32,
+    pub character: u32,
+}
+
+/// A half-open `[start, end)` range of [`LineCol`]s (the LSP `Range` shape).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TextRange {
+    pub start: LineCol,
+    pub end: LineCol,
+}
+
+/// Byte span → 0-based LSP-shaped range. The LSP's `span_to_range` and the
+/// CLI's JSON diagnostics both call this, so an editor and a CI tool that read
+/// the same diagnostic see the same range.
+pub fn span_range(text: &str, span: Span) -> TextRange {
+    let (sl, sc) = position_at(text, span.range.0);
+    let (el, ec) = position_at(text, span.range.1);
+    TextRange {
+        start: LineCol {
+            line: sl,
+            character: sc,
+        },
+        end: LineCol {
+            line: el,
+            character: ec,
+        },
+    }
+}
+
+impl Severity {
+    /// The lower-case name used on the wire (`--format json`): `error`,
+    /// `warning`, `info`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+        }
+    }
+}
+
+/// Which tool produced a [`Reported`] diagnostic: the Sky compiler, or `go
+/// build` over the emitted Go.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Origin {
+    Sky,
+    Go,
+}
+
+impl Origin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Origin::Sky => "sky",
+            Origin::Go => "go",
+        }
+    }
+}
+
+/// A secondary location of a [`Reported`] diagnostic (LSP `relatedInformation`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RelatedLocation {
+    pub file: Option<String>,
+    pub range: Option<TextRange>,
+    pub message: String,
+}
+
+/// A diagnostic RESOLVED against its sources: the file is a display path and
+/// the span is a line/character range, so it can leave the process. This is the
+/// one value both CLI output modes read. The human mode prints `rendered`; the
+/// `--format json` mode prints the other fields. Both come from the same
+/// [`Diagnostic`] in [`Reported::from_diagnostic`], so the two modes cannot
+/// disagree on how many diagnostics there are or where they point.
+///
+/// `file` and `range` are `None` for a diagnostic with no source span: a
+/// lowering warning, a config warning, a driver failure such as "no entry
+/// module".
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Reported {
+    pub severity: Severity,
+    pub code: Option<String>,
+    pub message: String,
+    pub file: Option<String>,
+    pub range: Option<TextRange>,
+    pub origin: Origin,
+    pub related: Vec<RelatedLocation>,
+    /// The human rendering (the Elm-style block for a spanned Sky diagnostic,
+    /// the bare message otherwise).
+    pub rendered: String,
+}
+
+impl Reported {
+    /// Resolve a structured Sky diagnostic. The primary label gives `file` and
+    /// `range`; the other labels become `related`.
+    pub fn from_diagnostic(d: &Diagnostic, sources: &dyn SourceProvider) -> Self {
+        let locate = |span: Span| {
+            let file = sources.path(span.file).map(str::to_string);
+            let range = sources.text(span.file).map(|t| span_range(t, span));
+            (file, range)
+        };
+        let (file, range) = d
+            .labels
+            .first()
+            .map(|l| locate(l.span))
+            .unwrap_or((None, None));
+        let related = d
+            .labels
+            .iter()
+            .skip(1)
+            .map(|l| {
+                let (file, range) = locate(l.span);
+                RelatedLocation {
+                    file,
+                    range,
+                    message: l.message.clone(),
+                }
+            })
+            .collect();
+        Reported {
+            severity: d.severity,
+            code: Some(d.code.0.clone()),
+            message: d.message.clone(),
+            file,
+            range,
+            origin: Origin::Sky,
+            related,
+            rendered: d.render_cli(sources),
+        }
+    }
+
+    /// A diagnostic with no source span (a note the driver or the lowering
+    /// produced as text). `rendered` is the message itself.
+    pub fn plain(severity: Severity, origin: Origin, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Reported {
+            severity,
+            code: None,
+            rendered: message.clone(),
+            message,
+            file: None,
+            range: None,
+            origin,
+            related: Vec::new(),
+        }
+    }
+}
+
 // ---- Elm-style CLI renderer -------------------------------------------
 
 /// The width the header rules pad to (the `-- TITLE ----- path:line:col` line).
@@ -326,6 +477,35 @@ mod tests {
         assert_eq!(d.severity, Severity::Error);
         assert_eq!(d.code.0, "E1001");
         assert_eq!(d.labels.len(), 1);
+    }
+
+    /// `Reported::from_diagnostic` is the one resolution both CLI output modes
+    /// read: its `rendered` IS `render_cli`, and its range is `span_range`.
+    #[test]
+    fn reported_carries_the_rendering_and_the_lsp_range() {
+        let src = "module Main exposing (main)\nmain = 1 + \"x\"\n";
+        let start = src.find("\"x\"").unwrap() as u32;
+        let d = Diagnostic::error("E2001", "mismatch")
+            .with_label(Span::new(FileId(0), start, start + 3), "here")
+            .with_label(Span::new(FileId(0), 0, 6), "declared here");
+        let sources = NamedSource {
+            path: "src/Main.sky".to_string(),
+            text: src.to_string(),
+        };
+        let r = Reported::from_diagnostic(&d, &sources);
+        assert_eq!(r.rendered, d.render_cli(&sources));
+        assert_eq!(r.file.as_deref(), Some("src/Main.sky"));
+        assert_eq!(r.code.as_deref(), Some("E2001"));
+        assert_eq!(r.origin, Origin::Sky);
+        let range = r.range.unwrap();
+        assert_eq!((range.start.line, range.start.character), (1, 11));
+        assert_eq!((range.end.line, range.end.character), (1, 14));
+        assert_eq!(r.related.len(), 1);
+        assert_eq!(r.related[0].message, "declared here");
+        assert_eq!(
+            span_range(src, Span::new(FileId(0), start, start + 3)),
+            range
+        );
     }
 
     #[test]

@@ -84,6 +84,138 @@ pub struct BuildReport {
     /// self-extinguishing property (design §8.2). The CLI prints it on the same
     /// stderr channel as `warning:`, on both `sky build` and `sky run`.
     pub migration_hint: Option<String>,
+    /// The front-half failure as structured diagnostics (parse, name, type,
+    /// exhaustiveness, ABI, lowering, driver). `note` is their rendering, so
+    /// the two never disagree. Empty on success and for a failure after the Go
+    /// was emitted (that one is in `note` / `go_build_stderr`).
+    pub errors: Vec<diagnostics::Reported>,
+    /// The directory `go build` ran in, as a display path: relative to the
+    /// project when it sits under it (`sky-out`), else absolute (the `sky test`
+    /// scratch dir). The `file` of each `go`-sourced diagnostic is under it.
+    pub go_dir: Option<String>,
+}
+
+impl BuildReport {
+    /// Every diagnostic this build produced, in the order the CLI's text mode
+    /// prints them: warnings, the legacy-config migration hint (as `info`), then
+    /// the failure (the Sky front half, or `go build`). The CLI's
+    /// `--format json` mode prints exactly this list.
+    pub fn diagnostics(&self) -> Vec<diagnostics::Reported> {
+        use diagnostics::{Origin, Reported, Severity};
+        let mut out: Vec<Reported> = self
+            .warnings
+            .iter()
+            .map(|w| Reported::plain(Severity::Warning, Origin::Sky, w.clone()))
+            .collect();
+        if let Some(h) = &self.migration_hint {
+            out.push(Reported::plain(Severity::Info, Origin::Sky, h.clone()));
+        }
+        if !self.errors.is_empty() {
+            out.extend(self.errors.iter().cloned());
+        } else if !self.emitted && !self.note.is_empty() {
+            out.push(Reported::plain(
+                Severity::Error,
+                Origin::Sky,
+                self.note.clone(),
+            ));
+        }
+        if self.emitted && !self.go_build_ok {
+            out.extend(go_diagnostics(
+                &self.go_build_stderr,
+                self.go_dir.as_deref(),
+            ));
+        }
+        out
+    }
+}
+
+/// Parse `go build` stderr into structured diagnostics. Each
+/// `path/file.go:LINE:COL: message` line becomes one error against the emitted
+/// Go file (`go_dir` joined with the path `go` printed), with a 0-based range
+/// of one character. The emitted Go carries no map back to the Sky source, so
+/// these point at the generated file and say so with `source: "go"`. A
+/// duplicate line (the static build and the cgo retry both failing the same
+/// way) is reported once. Output with no such line (a toolchain failure) is one
+/// unlocated error carrying the whole text.
+pub fn go_diagnostics(stderr: &str, go_dir: Option<&str>) -> Vec<diagnostics::Reported> {
+    use diagnostics::{LineCol, Origin, Reported, Severity, TextRange};
+    let mut out: Vec<Reported> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for line in stderr.lines() {
+        let Some((loc, message)) = split_go_location(line) else {
+            continue;
+        };
+        if !seen.insert(line.to_string()) {
+            continue;
+        }
+        let (file, ln, col) = loc;
+        let rel = file.trim_start_matches("./");
+        // `go` prints paths relative to the directory it ran in; a file in a
+        // local path dependency comes out as `../../dep/x.go`. Join and fold
+        // the `..` so the path reads from the project root.
+        let path = match go_dir {
+            Some(d) if !Path::new(rel).is_absolute() => {
+                crate::path_deps::normalise(&Path::new(d).join(rel))
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            }
+            _ => rel.to_string(),
+        };
+        let start = LineCol {
+            line: ln.saturating_sub(1),
+            character: col.saturating_sub(1),
+        };
+        let end = LineCol {
+            line: start.line,
+            character: start.character + 1,
+        };
+        let mut d = Reported::plain(Severity::Error, Origin::Go, message.to_string());
+        d.rendered = line.to_string();
+        d.file = Some(path);
+        d.range = Some(TextRange { start, end });
+        out.push(d);
+    }
+    if out.is_empty() {
+        let text = stderr.trim();
+        let message = if text.is_empty() {
+            "go build failed".to_string()
+        } else {
+            text.to_string()
+        };
+        out.push(Reported::plain(Severity::Error, Origin::Go, message));
+    }
+    out
+}
+
+/// `path.go:12:5: msg` → `(("path.go", 12, 5), "msg")`; `path.go:12: msg` →
+/// column 1. `None` for any other line.
+fn split_go_location(line: &str) -> Option<((&str, u32, u32), &str)> {
+    let idx = line.find(".go:")?;
+    let file = &line[..idx + 3];
+    if file.contains(' ') {
+        return None;
+    }
+    let rest = &line[idx + 4..];
+    let mut parts = rest.splitn(3, ':');
+    let ln: u32 = parts.next()?.trim().parse().ok()?;
+    let second = parts.next()?;
+    match second.trim().parse::<u32>() {
+        Ok(col) => {
+            let msg = parts.next()?.trim();
+            Some(((file, ln, col), msg))
+        }
+        Err(_) => {
+            // `path.go:12: msg` — no column; `second` is the message head.
+            let msg = match parts.next() {
+                Some(tail) => format!("{second}:{tail}"),
+                None => second.to_string(),
+            };
+            let msg = msg.trim();
+            // Return a borrowed slice of the original line for the message.
+            let at = line.find(msg)?;
+            Some(((file, ln, 1), &line[at..]))
+        }
+    }
 }
 
 /// The product of assembling the source db, lowering, and emitting Go — the
@@ -111,7 +243,7 @@ struct Emitted {
 /// Returns `Err(note)` for every non-emit outcome (no stdlib, no src, no entry,
 /// no `main`) so callers surface the same diagnostics. Deterministic: no wall
 /// clock, no environment reads reach the emitted bytes.
-fn assemble_and_emit(repo_root: &Path, example_dir: &Path) -> Result<Emitted, String> {
+fn assemble_and_emit(repo_root: &Path, example_dir: &Path) -> Result<Emitted, BuildFailure> {
     assemble_and_emit_with(repo_root, example_dir, &[], None, false)
 }
 
@@ -127,7 +259,7 @@ fn assemble_and_emit_with(
     extra_dirs: &[PathBuf],
     entry_module: Option<&str>,
     progress: bool,
-) -> Result<Emitted, String> {
+) -> Result<Emitted, BuildFailure> {
     // ---- assemble the source db (stdlib + example src) ----
     // Stage A/B (doc 01, doc 12): a salsa db holds the source set as `SourceFile`
     // inputs and the `parse` leaf query memoises each module's CST. Every parse
@@ -165,13 +297,27 @@ fn assemble_and_emit_with(
     for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
         let slug = path.replace('/', "_");
         if !example_dir.join(".skydeps").join(&slug).is_dir() {
-            return Err(format!(
-                "Sky dependency {path} not fetched — run 'sky install'"
-            ));
+            return Err(format!("Sky dependency {path} not fetched — run 'sky install'").into());
         }
     }
     for (n, file) in load_skydeps(&db, &mut next_id, &example_dir.join(".skydeps")) {
         db.add_module(&n, file);
+    }
+    // Local path dependencies (`sky add ./dir`, `crate::path_deps`). A declared
+    // directory that is gone stops the build here, like an unfetched package.
+    // A Sky package's modules load straight from its source root, beside
+    // `.skydeps/` and before the project's own `src/` (same shadowing rule:
+    // a dependency's demo `Main` is dropped).
+    if let Some(e) = crate::path_deps::missing_error(example_dir) {
+        return Err(e.into());
+    }
+    for dir in crate::path_deps::sky_source_dirs(example_dir) {
+        for (n, file, _p) in load_dir(&db, &mut next_id, &dir) {
+            if n == "Main" || n == "main" {
+                continue;
+            }
+            db.add_module(&n, file);
+        }
     }
 
     let source_root = configured_source_root(&example_dir);
@@ -180,7 +326,7 @@ fn assemble_and_emit_with(
         locals.extend(load_dir(&db, &mut next_id, dir));
     }
     if locals.is_empty() {
-        return Err(format!("no .sky under {source_root}/"));
+        return Err(format!("no .sky under {source_root}/").into());
     }
     // `FileId → display path` for every APP module — feeds the Elm-style renderer
     // so each diagnostic header carries `src/Main.sky:line:col` (matching the
@@ -304,8 +450,9 @@ fn assemble_and_emit_with(
     let Some(entry) = entry else {
         return Err(match entry_module {
             Some(want) => format!("no entry module named {want}"),
-            None => "no entry module named Main".into(),
-        });
+            None => "no entry module named Main".to_string(),
+        }
+        .into());
     };
 
     if progress {
@@ -497,7 +644,21 @@ fn assemble_and_emit_with(
     // sky-out and invoking `go build` — so the failure surfaces as a check-time
     // diagnostic, upholding the `sky check ≡ sky build` invariant.
     if !prog.errors.is_empty() {
-        return Err(prog.errors.join("\n"));
+        // One diagnostic per lowering error. The rendered text joins them with
+        // a newline, exactly as the single joined note did before.
+        return Err(BuildFailure {
+            diagnostics: prog
+                .errors
+                .iter()
+                .map(|e| {
+                    diagnostics::Reported::plain(
+                        diagnostics::Severity::Error,
+                        diagnostics::Origin::Sky,
+                        e.clone(),
+                    )
+                })
+                .collect(),
+        });
     }
     // `entry_ok && errors.is_empty()` guarantees `go_program` emitted the source.
     // `go_program` returns a reference into the salsa memo, so clone the fields out.
@@ -526,6 +687,9 @@ fn assemble_and_emit_with(
     // Same principle, applied to every runtime config section: a key that is
     // honoured by nothing is reported, not dropped.
     warnings.extend(unknown_config_keys(&unknown_keys));
+    // A path dependency that moved under us (module path changed, sources newer
+    // than the generated FFI surface) is reported, not silently built stale.
+    warnings.extend(crate::path_deps::drift_warnings(example_dir));
     Ok(Emitted {
         source,
         registry,
@@ -541,7 +705,9 @@ fn assemble_and_emit_with(
 /// in a fresh process per sample so any `HashMap`/`HashSet` iteration that
 /// reaches emitted output surfaces as a byte diff across runs (L4).
 pub fn emit_example_source(repo_root: &Path, example_dir: &Path) -> Result<String, String> {
-    assemble_and_emit(repo_root, example_dir).map(|e| e.source)
+    assemble_and_emit(repo_root, example_dir)
+        .map(|e| e.source)
+        .map_err(|f| f.render())
 }
 
 /// The lowering WARNINGS for an example, without writing anything or running
@@ -550,7 +716,9 @@ pub fn emit_example_source(repo_root: &Path, example_dir: &Path) -> Result<Strin
 /// fire on the shape it exists for, and that it does NOT on a shape it used to
 /// cry wolf on) in seconds, without a Go toolchain.
 pub fn emit_example_warnings(repo_root: &Path, example_dir: &Path) -> Result<Vec<String>, String> {
-    assemble_and_emit(repo_root, example_dir).map(|e| e.warnings)
+    assemble_and_emit(repo_root, example_dir)
+        .map(|e| e.warnings)
+        .map_err(|f| f.render())
 }
 
 /// Build one example directory, returning a structured report (never panics).
@@ -588,8 +756,9 @@ fn build_inner(
             report.migration_hint = e.migration_hint;
             (e.source, e.registry, e.ffi_used, e.console_needed)
         }
-        Err(note) => {
-            report.note = note;
+        Err(failure) => {
+            report.note = failure.render();
+            report.errors = failure.diagnostics;
             return report;
         }
     };
@@ -601,6 +770,14 @@ fn build_inner(
         .out_dir_abs
         .clone()
         .unwrap_or_else(|| opts.example_dir.join(&opts.out_dir_name));
+    report.go_dir = Some(
+        out_dir
+            .strip_prefix(&opts.example_dir)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|_| out_dir.clone())
+            .to_string_lossy()
+            .replace('\\', "/"),
+    );
     let t_write = crate::timings::phase("write sky-out (Go + runtime + ffi)");
     if let Err(e) = write_out(&opts.repo_root, &out_dir, &source, console_needed) {
         report.note = format!("write failed: {e}");
@@ -623,6 +800,14 @@ fn build_inner(
     // project-specific FFI packages (`sky add github.com/gorilla/mux`). A
     // materialised binding that imports such a package fails `go build` until the
     // module is a `require` + present in go.sum — inject those now.
+    // Local Go path dependencies: `require` + `replace` into the go.mod that
+    // `write_out` just rewrote from the runtime's copy. Re-applied on EVERY
+    // build from sky.toml, so the wiring can never be lost. A failure here is
+    // a failed build: `go build` would only fail later with a worse message.
+    if let Err(e) = crate::path_deps::apply_go_path_deps(&opts.example_dir, &out_dir) {
+        report.note = e;
+        return report;
+    }
     if let Err(e) = inject_ffi_deps(
         &registry,
         &ffi_used,
@@ -1788,11 +1973,26 @@ fn inject_ffi_deps(
     example_dir: &Path,
     warnings: &mut Vec<String>,
 ) -> std::io::Result<()> {
+    // A package under a Go PATH dependency is already wired by
+    // `path_deps::apply_go_path_deps` (require + replace to the local dir); a
+    // `go get` for it would try the network for a module that exists only here.
+    let local: Vec<String> = crate::path_deps::read_path_dependencies_of(
+        &example_dir.join("sky.toml"),
+        crate::path_deps::PathDepKind::Go,
+    )
+    .into_iter()
+    .map(|d| d.key)
+    .collect();
     let mut paths: Vec<String> = used
         .iter()
         .filter_map(|m| reg.resolve(m))
         .map(|p| p.go_package.trim().to_string())
         .filter(|p| is_external_module(p))
+        .filter(|p| {
+            !local
+                .iter()
+                .any(|m| p == m || p.starts_with(&format!("{m}/")))
+        })
         .collect();
     paths.sort();
     paths.dedup();
@@ -2286,7 +2486,20 @@ pub(crate) fn load_skydeps(
 /// [`load_skydeps`] and the LSP's external-dep loader so the two never drift.
 /// Absent `.skydeps/` → empty (the common no-deps case). `collect_sky` (via
 /// `load_dir`) deliberately prunes any path under `.skydeps/`, so this walks the
-/// dep `src/` trees directly with the unfiltered collector.
+/// dep `src/` trees directly with the unfiltered collector. The project's
+/// LOCAL Sky path dependencies (`sky add ./dir`) follow, from their source
+/// roots.
+pub fn enumerate_dependency_files(project_dir: &Path) -> Vec<PathBuf> {
+    let mut out = enumerate_skydep_files(&project_dir.join(".skydeps"));
+    for dir in crate::path_deps::sky_source_dirs(project_dir) {
+        collect_sky(&dir, &mut out);
+    }
+    out
+}
+
+/// Every `.sky` file under `<skydeps>/<pkg>/src/` (fetched packages only). See
+/// [`enumerate_dependency_files`] for the full set including local path
+/// dependencies.
 pub fn enumerate_skydep_files(skydeps: &Path) -> Vec<PathBuf> {
     let mut pkgs: Vec<PathBuf> = match std::fs::read_dir(skydeps) {
         Ok(rd) => rd
@@ -2336,12 +2549,51 @@ impl diagnostics::SourceProvider for CliSources<'_> {
 fn render_diags(
     diags: &[diagnostics::Diagnostic],
     sources: &dyn diagnostics::SourceProvider,
-) -> String {
-    diags
-        .iter()
-        .map(|d| d.render_cli(sources))
-        .collect::<Vec<_>>()
-        .join("\n")
+) -> BuildFailure {
+    BuildFailure {
+        diagnostics: diags
+            .iter()
+            .map(|d| diagnostics::Reported::from_diagnostic(d, sources))
+            .collect(),
+    }
+}
+
+/// Why the front half of a build (parse → type → lower → emit) stopped: the
+/// diagnostics, resolved against their sources. The CLI's text mode prints
+/// [`BuildFailure::render`] and its `--format json` mode prints the fields of
+/// the same values, so the two modes report the same diagnostics.
+pub(crate) struct BuildFailure {
+    pub(crate) diagnostics: Vec<diagnostics::Reported>,
+}
+
+impl BuildFailure {
+    /// The human text: every diagnostic's rendering, joined by a newline.
+    pub(crate) fn render(&self) -> String {
+        self.diagnostics
+            .iter()
+            .map(|d| d.rendered.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// A driver failure with no source span ("no entry module named Main").
+impl From<String> for BuildFailure {
+    fn from(message: String) -> Self {
+        BuildFailure {
+            diagnostics: vec![diagnostics::Reported::plain(
+                diagnostics::Severity::Error,
+                diagnostics::Origin::Sky,
+                message,
+            )],
+        }
+    }
+}
+
+impl From<&str> for BuildFailure {
+    fn from(message: &str) -> Self {
+        BuildFailure::from(message.to_string())
+    }
 }
 
 fn parse_via_salsa(
@@ -2417,7 +2669,7 @@ fn is_generated(path: &Path) -> bool {
     })
 }
 
-fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<PathBuf> = match std::fs::read_dir(dir) {
         Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).collect(),
         Err(_) => return,
@@ -3506,5 +3758,51 @@ mod offline_db_plan_tests {
                 db_path_env: "FENCE_DB_PATH".to_string()
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod go_diagnostics_tests {
+    //! `go build` stderr → structured diagnostics (`sky build --format json`).
+    use super::*;
+
+    #[test]
+    fn located_lines_become_ranges_under_the_go_dir() {
+        let stderr = "# sky-app\n\
+                      ./main.go:12:5: undefined: foo\n\
+                      ../../greet/greet.go:3:41: cannot use 42 (untyped int constant) as string value in return statement\n\
+                      ./main.go:12:5: undefined: foo\n";
+        let ds = go_diagnostics(stderr, Some("sky-out"));
+        assert_eq!(
+            ds.len(),
+            2,
+            "the duplicate (static + cgo retry) is reported once: {ds:?}"
+        );
+        assert_eq!(ds[0].file.as_deref(), Some("sky-out/main.go"));
+        let r = ds[0].range.unwrap();
+        assert_eq!((r.start.line, r.start.character), (11, 4), "0-based");
+        assert_eq!(ds[0].message, "undefined: foo");
+        assert_eq!(ds[0].origin, diagnostics::Origin::Go);
+        // A file in a local path dependency reads from the project root.
+        assert_eq!(ds[1].file.as_deref(), Some("../greet/greet.go"));
+    }
+
+    #[test]
+    fn unlocated_output_is_one_error_with_the_whole_text() {
+        let ds = go_diagnostics("go: cannot find main module\n", Some("sky-out"));
+        assert_eq!(ds.len(), 1);
+        assert!(ds[0].file.is_none() && ds[0].range.is_none());
+        assert_eq!(ds[0].message, "go: cannot find main module");
+        let ds = go_diagnostics("", None);
+        assert_eq!(ds[0].message, "go build failed");
+    }
+
+    #[test]
+    fn a_line_without_a_column_starts_at_column_one() {
+        let ds = go_diagnostics("./x.go:7: something odd\n", None);
+        assert_eq!(ds[0].file.as_deref(), Some("x.go"));
+        let r = ds[0].range.unwrap();
+        assert_eq!((r.start.line, r.start.character), (6, 0));
+        assert_eq!(ds[0].message, "something odd");
     }
 }

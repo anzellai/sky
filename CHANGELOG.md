@@ -313,6 +313,40 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **`--format json` for `sky check`, `sky build`, `sky test` and `sky fmt
+  --check`.** Stdout carries only NDJSON: one LSP-shaped `diagnostic` line per
+  diagnostic (`file` relative to the project root, a 0-based `range`,
+  `severity`, `code`, `message`, `source`: `sky` or `go`), a `test` line per
+  Sky.Test case under `sky test`, and one `summary` line, always last. Every
+  line carries `"schema": 1`. Human text goes to stderr, and the exit code is
+  the text mode's. To make that possible, a build's diagnostics are now
+  structured values end to end (`BuildReport::diagnostics`): the text mode
+  renders the same values, so the two modes cannot disagree, and the LSP maps
+  a span to a range through the same function (`diagnostics::span_range`).
+  `go build` errors are reported against the Go file `go` named. Decisions
+  taken: `schema` is on every line, not only the summary, so a streaming reader
+  can check it before the end; a test case's `durationMs` is `null`, because
+  Sky.Test runs every case in one pure pass with no clock between cases, and a
+  made-up 0 would be wrong. (`rust/crates/sky/src/json_out.rs`,
+  `rust/crates/sky/tests/json_format_flow.rs`, `docs/tooling/cli.md`.)
+- **`sky add ./dir`: local path dependencies.** A directory with a `go.mod` is
+  recorded as `"<module>" = { path = "../dir" }` under `["go.dependencies"]`,
+  inspected for its FFI surface, and wired into the generated `go.mod` with
+  `require` + `replace` on every build (the build rewrites `go.mod` each time,
+  so the wiring comes from `sky.toml` and is never lost). A directory with a
+  `sky.toml` or `.sky` sources is recorded under `[dependencies]` and its
+  modules load from its source root. A relative path is relative to the
+  project root, never the working directory; a Std.App or Sky.Spa build that
+  copies the manifest into a generated project writes the path absolute.
+  `sky remove` takes the name or the path, `sky install` re-inspects a Go path
+  dependency, `sky update` leaves it alone with a note. A missing directory
+  stops the build with an error naming it; a changed module path, or a Go
+  module whose exported API changed since its surface was generated, is a
+  build warning; `sky doctor` warns about a missing directory and about one
+  outside the repository. The LSP loads a Sky path dependency's modules too.
+  (`rust/crates/project/src/path_deps.rs`,
+  `rust/crates/sky/tests/path_deps_flow.rs`.)
+
 - **Streaming child processes: `Process.spawn` (Sky.Core.Process).** Build a
   command with `Process.command` and `withArgs` / `withEnv` / `withClearEnv` /
   `withCwd` / `withPty { cols, rows }` / `withBufferSize`, then talk to the

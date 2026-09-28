@@ -304,6 +304,52 @@ it runs parsing, canonicalisation, HM inference, Go codegen, *and* invokes
 `sky build` would fail, `sky check` fails with the same error. This is the
 soundness gate — editor integrations should use it directly.
 
+### Machine-readable output: `--format json`
+
+`sky check`, `sky build`, `sky test` and `sky fmt --check` take
+`--format json` (or `--format=json`; `--format text` is the default). Stdout
+then carries **only** NDJSON: one JSON object per line. The human text
+(progress, the Elm-style error blocks, a test suite's `ok` / `FAIL` lines) goes
+to stderr. The exit code is the same as in text mode (`sky test`: 0 all passed,
+1 a test failed, 2 nothing ran).
+
+```bash
+sky check --format json src/Main.sky
+```
+
+```json
+{"kind":"diagnostic","schema":1,"file":"src/Main.sky","range":{"start":{"line":8,"character":4},"end":{"line":8,"character":10}},"severity":"error","code":"E2001","message":"[x] type mismatch: `String` vs `Int`","source":"sky"}
+{"kind":"summary","schema":1,"command":"check","ok":false,"errors":1,"warnings":0,"durationMs":146,"root":"/home/me/app"}
+```
+
+Every line has `"schema": 1` and a `"kind"`. The schema number changes only
+when a field changes meaning or type; a new field does not change it.
+
+| `kind` | Fields |
+|---|---|
+| `diagnostic` | `file`: the path relative to the project root (`root` on the summary), `/`-separated, or `null`. `range`: `start` / `end`, each `{line, character}`, 0-based, `character` in UTF-16 code units (the LSP `Range`), or `null`. `severity`: `error`, `warning` or `info`. `code`: the Sky error code (`E2001`) or `null`. `message`. `source`: `sky` or `go`. `relatedInformation` (only when present): a list of `{file, range, message}`. |
+| `test` | `sky test` only, one per case: `suite` (the enclosing `Test.suite` labels joined with ` > `, or the test module's name for a top-level case), `name` (the case's own name), `fullName` (as the human output prints it), `status` (`pass` or `fail`), `message` (on a failure), `durationMs` (`null`: Sky.Test runs every case in one pure pass, with no clock between cases). |
+| `summary` | Always exactly one, always the **last** line: `command`, `ok` (the exit code was 0), `errors` and `warnings` (the counts of the diagnostic lines above), `durationMs`, `root` (the absolute project directory). `sky test` adds `total`, `passed`, `failed`, `skipped` (always 0; Sky.Test has no skip) and `exitCode`. |
+
+The diagnostics are the same values the text mode prints, so the two modes
+report the same errors. A Sky diagnostic has the location of its primary label.
+A diagnostic with no source span has `file` and `range` set to `null`: a lowering
+warning, a `sky.toml` warning, or a driver failure such as "no entry module". A
+`go build` failure is reported against the Go file `go` named (`sky-out/main.go`,
+or a file in a local Go path dependency) with `source: "go"`, because the
+generated Go carries no map back to the Sky source. A failing run that produced
+no error line of its own gets one that points at stderr, so `ok: false` always
+comes with a reason.
+
+Two limits:
+
+- A `sky build` of a Sky.Spa auto-split app builds two generated projects. Its
+  json output is the summary plus, on failure, one error that points at stderr.
+  `sky check --format json` on the same entry reports every diagnostic, because
+  `check` type-checks the shared source directly.
+- `sky fmt --format json` needs `--check`: it reports, it never rewrites. Each
+  unformatted file is one `error` diagnostic with `range: null`.
+
 ### `sky watch [path]`
 
 File-watch-driven hot rebuild + restart. Watched scope is a strict
@@ -587,7 +633,9 @@ Output lines: `  ok: <name>`, `  FAIL build: …`, `  FAIL go-build: …`,
 
 ### `sky test <file>`
 
-Run a Sky test module. See [`testing.md`](testing.md). A project with a
+Run a Sky test module. See [`testing.md`](testing.md). `--format json` prints
+one `test` line per case and a summary with the case counts (see
+[Machine-readable output](#machine-readable-output---format-json)). A project with a
 `.env.test` file runs in **test mode**: outbound HTTP is mocked from
 `tests/mocks/` fixtures (unmatched requests fail closed), a `[database]` project
 gets an ephemeral offline database, and `SKY_TEST_SEED` / `SKY_TEST_CLOCK_MS`
@@ -1052,6 +1100,41 @@ directly to the source tree and the content-hashed cache. See
 `docs/development.md` for what that means for the `bin/` copy
 `scripts/build.sh` still writes.
 
+**Local path dependencies — `sky add ./dir`:**
+
+An argument that starts with `./`, `../` or `/` names a directory on this
+machine instead of an import path. Nothing is fetched or copied:
+
+```bash
+sky add ../greet        # has go.mod    → ["go.dependencies"] "example.com/greet" = { path = "../greet" }
+sky add ./libs/widgets  # has sky.toml or .sky sources → [dependencies] "widgets" = { path = "./libs/widgets" }
+```
+
+- **The directory decides the kind.** A `go.mod` makes it a Go module, recorded
+  under its module path; the build adds `require <module> v0.0.0` and
+  `replace <module> => <absolute dir>` to the generated `go.mod` on **every**
+  build (the build rewrites `go.mod` each time, so the wiring is re-applied
+  from `sky.toml`, never lost), and `sky add` inspects it for its FFI surface
+  like any Go dependency. Its functions return `Result Error a`. A `sky.toml` or
+  `.sky` sources make it a Sky package, recorded under its `name` (else the
+  directory name); every build loads its modules from its source root. A
+  directory that is both is a Sky package; `--go` / `--sky` force the kind.
+- **Paths are relative to the project root**, not the working directory, and
+  are resolved against it at build time. An absolute argument is stored as
+  given.
+- **Edits are picked up.** A changed function body is compiled by the next
+  build. A new or changed exported Go function is not callable until
+  `sky install` re-inspects the module; until then the build warns that the
+  module's exported API changed.
+- **Drift is reported.** A declared directory that no longer exists stops the
+  build with an error naming the dependency. A Go module whose `go.mod` now
+  declares a different module path is a build warning. `sky doctor` warns about
+  a missing directory, and about one outside the repository, which a CI
+  checkout or a deploy that copies only the repository will not have.
+- `sky remove` takes the recorded name or the path. `sky install` re-inspects a
+  Go path dependency (it changes without a version bump). `sky update` leaves a
+  path dependency alone and says so.
+
 ### `sky remove [--go|--sky] <pkg>`
 
 Drops a dependency. With no flag it routes by which `sky.toml` section declares
@@ -1172,6 +1255,9 @@ only the entry-point module switches between `Live.app` and
 ## Formatting
 
 ### `sky fmt <file>`
+
+`sky fmt --check <file…>` rewrites nothing and exits 1 when a file is not
+formatted; add `--format json` for one diagnostic line per such file.
 
 Opinionated, deterministic, no configuration (output is Elm-compatible):
 

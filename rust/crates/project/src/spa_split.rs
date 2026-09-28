@@ -3888,18 +3888,43 @@ pub fn stage_declared_static_into_backend(
 fn emit_dep_sections(project_dir: &Path) -> String {
     let sky_toml = project_dir.join("sky.toml");
     let mut out = String::new();
+    // Local path dependencies are written with an ABSOLUTE path: the
+    // generated project's root is a different directory, so the relative path
+    // the user's manifest carries would resolve against the wrong place.
+    use crate::path_deps::{self, PathDepKind};
+    let path_entries = |kind: PathDepKind| -> Vec<String> {
+        path_deps::read_path_dependencies_of(&sky_toml, kind)
+            .into_iter()
+            .map(|d| {
+                let abs = d.resolve(project_dir);
+                format!(
+                    "\"{}\" = {}\n",
+                    d.key,
+                    path_deps::inline_value(&abs.to_string_lossy())
+                )
+            })
+            .collect()
+    };
     let sky_deps = crate::ffi_ops::read_sky_dependencies(&sky_toml);
-    if !sky_deps.is_empty() {
+    let sky_paths = path_entries(PathDepKind::Sky);
+    if !sky_deps.is_empty() || !sky_paths.is_empty() {
         out.push_str("\n[dependencies]\n");
         for (k, v) in sky_deps {
             out.push_str(&format!("\"{k}\" = \"{v}\"\n"));
         }
+        for e in sky_paths {
+            out.push_str(&e);
+        }
     }
     let go_deps = crate::ffi_ops::read_go_dependencies(&sky_toml);
-    if !go_deps.is_empty() {
+    let go_paths = path_entries(PathDepKind::Go);
+    if !go_deps.is_empty() || !go_paths.is_empty() {
         out.push_str("\n[\"go.dependencies\"]\n");
         for (k, v) in go_deps {
             out.push_str(&format!("\"{k}\" = \"{v}\"\n"));
+        }
+        for e in go_paths {
+            out.push_str(&e);
         }
     }
     out
