@@ -724,9 +724,22 @@ fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
     //   * "Set" — it has no goty arm, so a Set field erases to Go `any`; the
     //     encode side emits an array but `Codec.auto`'s decode has no `Set` arm
     //     and errors ("cannot decode kind interface").
+    // A Std.Crypto secret key or protocol state (v0.26.2): each redacts
+    // itself in every JSON path, like `Secret`. `SecretKey` is matched on its
+    // tail (Std.Crypto.Sign / Std.Crypto.Kx); the protocol states by their
+    // module-qualified tail, so a user's own `Transport` is not flagged.
+    fn is_crypto_secret(name: &str) -> bool {
+        tail(name) == "SecretKey"
+            || ["Noise.Handshake", "Noise.Transport", "Cpace.Pending"]
+                .iter()
+                .any(|q| name == *q || name.ends_with(&format!(".{q}")))
+    }
     fn scan(t: &ty::Ty) -> Option<&'static str> {
         match t {
             ty::Ty::App(name, args) => {
+                if is_crypto_secret(name.as_str()) {
+                    return Some("SecretKey");
+                }
                 match tail(name.as_str()) {
                     "Secret" => return Some("Secret"),
                     "Set" => return Some("Set"),
@@ -741,6 +754,9 @@ fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
         }
     }
     let why = |kind: &str| -> String {
+        if kind == "SecretKey" {
+            return "a Std.Crypto secret key or protocol state (`SecretKey`, `Noise.Handshake`, `Noise.Transport`, `Cpace.Pending`) holds secret key material and redacts itself in every JSON path, so the first paint would embed a redacted value the client decodes wrong — and a secret key must never be embedded in client-readable HTML. Keep it server-side (out of the client model).".to_string();
+        }
         if kind == "Secret" {
             "`Secret` redacts itself in every JSON path (rt.Secret.MarshalJSON), so the first paint would embed a redacted/empty value and the client would decode it back wrong — a silent SSR-embed vs client-decode divergence — and a secret must never be embedded in client-readable HTML. Keep the secret server-side (out of the client model), or model a non-secret handle the client can safely carry.".to_string()
         } else {
@@ -760,6 +776,9 @@ fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
             .ty_name
             .split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_')
         {
+            if is_crypto_secret(tok) {
+                return Some((f.ty_name.clone(), why("SecretKey")));
+            }
             match tail(tok) {
                 "Secret" => return Some((f.ty_name.clone(), why("Secret"))),
                 "Set" => return Some((f.ty_name.clone(), why("Set"))),
@@ -8056,6 +8075,41 @@ mod fix7_tests {
                 vec![(base::Name::new("key"), ty::Ty::app("Secret", vec![]))],
                 None
             )),
+        )));
+
+        // Std.Crypto secret keys and protocol states (v0.26.2) redact
+        // themselves like a Secret, so they are flagged the same way —
+        // resolved, surface-qualified, and nested.
+        for (label, name) in [
+            ("Sign.SecretKey", "Std.Crypto.Sign.SecretKey"),
+            ("Kx.SecretKey", "Std.Crypto.Kx.SecretKey"),
+            ("Noise.Handshake", "Std.Crypto.Noise.Handshake"),
+            ("Noise.Transport", "Std.Crypto.Noise.Transport"),
+            ("Cpace.Pending", "Std.Crypto.Cpace.Pending"),
+        ] {
+            let f = field("k", label, Some(ty::Ty::app(name, vec![])));
+            assert!(flagged(&f), "{name} must be flagged");
+            assert!(reason(&f).contains("secret"), "{}", reason(&f));
+            assert!(flagged(&field("k", label, None)), "{label} surface");
+            assert!(flagged(&field(
+                "k",
+                "Maybe x",
+                Some(ty::Ty::app("Maybe", vec![ty::Ty::app(name, vec![])]))
+            )));
+        }
+        // A user's own `Transport` / `Pending` / `Handshake` is not a crypto
+        // state: not flagged.
+        for name in ["Main.Transport", "Pending", "Handshake"] {
+            assert!(
+                !flagged(&field("k", name, Some(ty::Ty::app(name, vec![])))),
+                "{name} is not a Std.Crypto type"
+            );
+        }
+        // Public keys round-trip as base64 and are not secret: not flagged.
+        assert!(!flagged(&field(
+            "k",
+            "Sign.PublicKey",
+            Some(ty::Ty::app("Std.Crypto.Sign.PublicKey", vec![]))
         )));
 
         // Nested Set — inside Maybe.

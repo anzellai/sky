@@ -1,0 +1,138 @@
+module CpaceConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Std.Crypto.Cpace (CPACE-X25519-SHA512,
+-- draft-irtf-cfrg-cpace-21) through the compiled Sky surface: matching inputs
+-- give both sides the same 64-byte key; a wrong password, session id or
+-- channel id gives unrelated keys; malformed messages and a second `finish`
+-- are refused; the associated data is readable.
+--
+-- The draft's Appendix B.1 test vectors (fixed scalars) are in the Go runtime
+-- (runtime-go/rt/cpace_test.go).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Result as Result
+import Sky.Core.Bytes as Bytes
+import Sky.Core.Secret as Secret exposing (Secret)
+import Std.Crypto.Cpace as Cpace
+import Sky.Test as Test exposing (Test)
+
+
+code : Secret
+code =
+    Secret.unsafeFromString "482916"
+
+
+-- Run one exchange; return (initiator key, responder key) revealed as hex.
+exchange : Secret -> Secret -> String -> String -> Result Error ( String, String )
+exchange pwA pwB sidA sidB =
+    Task.run (Cpace.start pwA "pairing" sidA "phone")
+        |> Result.andThen
+               (\( pending, msgA ) ->
+                   Task.run (Cpace.respond pwB "pairing" sidB "laptop" msgA)
+                       |> Result.andThen
+                              (\( keyB, msgB ) ->
+                                  Cpace.finish pending msgB
+                                      |> Result.map
+                                             (\keyA ->
+                                                 ( Bytes.toHex
+                                                       (Secret.reveal keyA)
+                                                 , Bytes.toHex
+                                                       (Secret.reveal keyB)
+                                                 ))))
+
+
+same : Result Error ( String, String ) -> Result Error Bool
+same r =
+    Result.map (\( a, b ) -> a == b) r
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "matching password and session id give both sides the same key"
+          (\_ -> Test.equal (Ok True) (same (exchange code code "s-1" "s-1")))
+    , Test.test
+          "the key is 64 bytes"
+          (\_ ->
+              Test.equal
+                  (Ok 128)
+                  (exchange code code "s-1" "s-1"
+                      |> Result.map (\( a, _ ) -> String.length a)))
+    , Test.test
+          "two exchanges with the same password give different keys"
+          (\_ ->
+              Test.notEqual
+                  (exchange code code "s-1" "s-1")
+                  (exchange code code "s-1" "s-1"))
+    , Test.test
+          "a wrong password gives unrelated keys (not an error)"
+          (\_ ->
+              Test.equal
+                  (Ok False)
+                  (same
+                      (exchange
+                          code
+                          (Secret.unsafeFromString "482917")
+                          "s-1"
+                          "s-1")))
+    , Test.test
+          "a different session id gives unrelated keys"
+          (\_ -> Test.equal (Ok False) (same (exchange code code "s-1" "s-2")))
+    , Test.test
+          "messageData reads the associated data in clear"
+          (\_ ->
+              Test.equal
+                  (Ok "phone")
+                  (Task.run (Cpace.start code "" "" "phone")
+                      |> Result.andThen (\( _, msg ) -> Cpace.messageData msg)))
+    , Test.test
+          "respond refuses a malformed message"
+          (\_ ->
+              Test.err
+                  (Task.run (Cpace.respond code "" "" "" "not a cpace message")))
+    , Test.test
+          "finish refuses a malformed reply"
+          (\_ ->
+              Test.err
+                  (Task.run (Cpace.start code "" "" "")
+                      |> Result.andThen (\( p, _ ) -> Cpace.finish p "short")))
+    , Test.test
+          "a Pending value finishes once"
+          (\_ ->
+              case Task.run (Cpace.start code "c" "s" "a") of
+
+                  Ok ( pending, msgA ) ->
+                      case Task.run (Cpace.respond code "c" "s" "b" msgA) of
+
+                          Ok ( _, msgB ) ->
+                              Test.equal
+                                  ( True, True )
+                                  ( Result.toMaybe (Cpace.finish pending msgB)
+                                        /= Nothing
+                                  , Result.toMaybe (Cpace.finish pending msgB)
+                                        == Nothing
+                                  )
+
+                          Err e ->
+                              Test.fail (errorToString e)
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "a Pending value prints as [REDACTED]"
+          (\_ ->
+              case Task.run (Cpace.start code "" "" "") of
+
+                  Ok ( pending, _ ) ->
+                      Test.isTrue
+                          (String.contains "REDACTED" (toString pending))
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    ]
+
+
+main =
+    Test.runMain tests

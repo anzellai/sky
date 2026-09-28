@@ -115,3 +115,31 @@ your own code.
 `Secret.unsafeFromString` exists for the rare case where a literal really is
 the intended value (a fixed test fixture); the `unsafe` prefix marks it for
 review. Never use it for a real secret — read that from the environment.
+
+## Secret keys (v0.26.2)
+
+The key types of `Std.Crypto.Sign` (Ed25519) and `Std.Crypto.Kx` (X25519),
+`Sign.SecretKey` and `Kx.SecretKey`, follow the same contract as `Secret`: they
+redact themselves in every print, log and JSON path, a Sky.Live session store
+refuses to save them, and Sky.Spa warns when one sits in the client model. The
+protocol states `Noise.Handshake`, `Noise.Transport` and `Cpace.Pending` hold
+key material and behave the same way.
+
+A key goes in and out only through a `Secret`, so `Secret.reveal` stays the
+one step to a `String`:
+
+```elm
+-- load a long-lived key from the environment (standard base64 of 32 bytes)
+signingKey = Sign.secretKeyFromBase64 (Secret.fromEnv "SIGNING_KEY")
+
+-- export it once, to store it (still a Secret; reveal only at the sink)
+Sign.secretKeyToBase64 key |> Secret.reveal
+```
+
+Key agreement and key derivation return `Secret`s too: `Kx.sharedSecret`,
+`Kdf.derive`, `Cpace.finish` / `Cpace.respond`. Public keys are not secret and
+are plain values (`Sign.PublicKey`, `Kx.PublicKey`, printed as base64).
+
+The AEAD encrypt functions (`aesGcmEncrypt`, `chacha20Encrypt`) became
+`Task Error String` in v0.26.2 because they draw a random nonce; see the
+CHANGELOG migration note. `Crypto.xchachaSeal` is the recommended AEAD.

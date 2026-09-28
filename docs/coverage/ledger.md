@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 168 |
-| covered by the new corpus (>= Asserted) | 152 |
-| verdict `stronger` | 147 |
+| surfaces | 174 |
+| covered by the new corpus (>= Asserted) | 158 |
+| verdict `stronger` | 153 |
 | verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
-| stdlib modules (denominator) | 102 |
-| stdlib entries (denominator) | 2009 |
+| stdlib modules (denominator) | 108 |
+| stdlib entries (denominator) | 2072 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 8.8% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 728 | 36.2% |
-| symbols unreferenced under the generous rule | 646 | 32.2% |
+| stdlib modules imported by nothing | 9 | 8.3% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 740 | 35.7% |
+| symbols unreferenced under the generous rule | 658 | 31.8% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -61,7 +61,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 23 |
-| stdlib modules owned by exactly one unit of any role | 18 |
+| stdlib modules owned by exactly one unit of any role | 24 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **2** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -211,6 +211,11 @@ None.
 | `stdlib.Std.Codec` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Compression` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Config` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Crypto.Cpace` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Crypto.Kdf` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Crypto.Kx` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Crypto.Noise` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Crypto.Sign` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Css` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Csv` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db` | stdlib | Asserted | Falsified | stronger |
@@ -235,6 +240,7 @@ None.
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Native` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Qr` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |

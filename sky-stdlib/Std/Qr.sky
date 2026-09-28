@@ -1,0 +1,215 @@
+-- | Std.Qr — QR Code encoding (ISO/IEC 18004), pure.
+--
+--     case Qr.encode Qr.Medium "https://example.org/pair?code=123456" of
+--         Ok code ->
+--             Qr.view 4 code              -- an Std.Ui element (SVG)
+--
+--         Err e ->
+--             Ui.text (errorToString e)
+--
+-- The text is encoded as UTF-8 in byte mode, in the smallest symbol
+-- (version 1 to 40) that holds it at the chosen error-correction level; the
+-- mask is chosen by the standard's penalty rules. Higher levels survive more
+-- damage and hold less text: at `Low` a symbol holds up to 2953 bytes, at
+-- `High` up to 1273.
+--
+-- Renderers: `view` (an `Std.Ui` element, for Sky.Live, Sky.Spa and the
+-- desktop webview), `toSvg` (an SVG document string) and `toTerminal`
+-- (half-block characters for a terminal). All three draw dark modules on a
+-- light background with a quiet zone, which scanners need. The encoder is
+-- a pure Go kernel with no cgo, so it also runs in the Sky.Spa wasm client.
+module Std.Qr exposing
+    ( QrCode
+    , ErrorCorrection(..)
+    , encode
+    , size
+    , isDark
+    , rows
+    , toSvg
+    , toTerminal
+    , view
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Math as Math
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Ui as Ui exposing (Element)
+
+-- | An encoded symbol: a square matrix of dark and light modules. Opaque.
+type QrCode
+    = QrCode_OPAQUE
+
+-- | How much of the symbol may be damaged and still read: about 7% (`Low`),
+-- 15% (`Medium`), 25% (`Quartile`) or 30% (`High`).
+type ErrorCorrection
+    = Low
+    | Medium
+    | Quartile
+    | High
+
+
+levelIndex : ErrorCorrection -> Int
+levelIndex level =
+    case level of
+
+        Low ->
+            0
+
+        Medium ->
+            1
+
+        Quartile ->
+            2
+
+        High ->
+            3
+
+
+encodeWith : Int -> String -> Result Error QrCode
+encodeWith =
+    Ffi.kernel "Qr_encodeWith"
+
+
+-- | `encode level text` — the QR code for `text`. `Err` when the text is too
+-- long for a version-40 symbol at `level`.
+encode : ErrorCorrection -> String -> Result Error QrCode
+encode level text =
+    encodeWith (levelIndex level) text
+
+
+-- | Modules per side: 21 for version 1, up to 177 for version 40.
+size : QrCode -> Int
+size =
+    Ffi.kernel "Qr_size"
+
+
+-- | `isDark column row code` — is this module dark? `False` outside the
+-- symbol, so a renderer can draw the quiet zone without a bounds check.
+isDark : Int -> Int -> QrCode -> Bool
+isDark =
+    Ffi.kernel "Qr_isDark"
+
+
+-- | The matrix, top row first, `True` for a dark module.
+rows : QrCode -> List (List Bool)
+rows =
+    Ffi.kernel "Qr_rows"
+
+
+-- The quiet zone of the SVG and element renderers, in modules (the
+-- standard asks for 4).
+quiet : Int
+quiet =
+    4
+
+
+-- One `M x,y h1v1h-1z` square per dark module, in module units.
+svgPath : QrCode -> String
+svgPath code =
+    rows code
+        |> List.indexedMap
+               (\y row ->
+                   row
+                       |> List.indexedMap
+                              (\x dark ->
+                                  if dark then
+                                      "M" ++ String.fromInt (x + quiet) ++ ","
+                                          ++ String.fromInt (y + quiet)
+                                          ++ "h1v1h-1z"
+
+                                  else
+                                      "")
+                       |> String.concat)
+        |> String.concat
+
+
+-- | `toSvg modulePixels code` — a standalone SVG document: black modules on
+-- a white background, with a 4-module quiet zone, each module
+-- `modulePixels` pixels wide.
+toSvg : Int -> QrCode -> String
+toSvg modulePixels code =
+    let
+        units = size code + 2 * quiet
+        px = String.fromInt (units * Math.max 1 modulePixels)
+        vb = String.fromInt units
+    in
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" ++ px
+            ++ "\" height=\""
+            ++ px
+            ++ "\" viewBox=\"0 0 "
+            ++ vb
+            ++ " "
+            ++ vb
+            ++ "\" shape-rendering=\"crispEdges\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path fill=\"#000\" d=\""
+            ++ svgPath code
+            ++ "\"/></svg>"
+
+
+-- | `view modulePixels code` — the code as an `Std.Ui` element (inline SVG),
+-- for the web and desktop targets.
+view : Int -> QrCode -> Element msg
+view modulePixels code =
+    let
+        units = size code + 2 * quiet
+        px = String.fromInt (units * Math.max 1 modulePixels)
+        vb = String.fromInt units
+    in
+        Ui.html
+            (Html.node
+                "svg"
+                [ Attr.attribute "xmlns" "http://www.w3.org/2000/svg"
+                , Attr.attribute "width" px
+                , Attr.attribute "height" px
+                , Attr.attribute "viewBox" ("0 0 " ++ vb ++ " " ++ vb)
+                , Attr.attribute "shape-rendering" "crispEdges"
+                , Attr.attribute "role" "img"
+                , Attr.attribute "aria-label" "QR code"
+                ]
+                [ Html.node
+                      "rect"
+                      [ Attr.attribute "width" "100%"
+                      , Attr.attribute "height" "100%"
+                      , Attr.attribute "fill" "#fff"
+                      ]
+                      []
+                , Html.node
+                      "path"
+                      [ Attr.attribute "fill" "#000"
+                      , Attr.attribute "d" (svgPath code)
+                      ]
+                      []
+                ])
+
+
+-- | The code as terminal text: two module rows per line with the upper-half
+-- block `▀`, in explicit black on white (ANSI colours, so a dark terminal
+-- theme does not invert it), with a 2-module quiet zone.
+toTerminal : QrCode -> String
+toTerminal code =
+    let
+        margin = 2
+        units = size code + 2 * margin
+        dark x y = isDark (x - margin) (y - margin) code
+        cell x y =
+            (if dark x y then
+                "\u{001B}[30m"
+
+            else
+                "\u{001B}[97m")
+                ++ (if dark x (y + 1) then
+                       "\u{001B}[40m"
+
+                   else
+                       "\u{001B}[107m")
+                ++ "▀"
+        line y =
+            (List.range 0 (units - 1) |> List.map (\x -> cell x y)
+                |> String.concat)
+                ++ "\u{001B}[0m\n"
+    in
+        List.range 0 ((units - 1) // 2) |> List.map (\i -> line (i * 2))
+            |> String.concat

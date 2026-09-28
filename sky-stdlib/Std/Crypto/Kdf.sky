@@ -1,0 +1,43 @@
+-- | Std.Crypto.Kdf — HKDF-SHA256 key derivation (RFC 5869).
+--
+-- HKDF turns input key material (an X25519 shared secret, a master key)
+-- into one or more keys for specific purposes. The `info` string names the
+-- purpose, so two keys derived for different purposes are unrelated:
+--
+--     Kdf.derive salt "my-app v1 encryption" 32 shared   -- Result Error Secret
+--
+-- `salt` is optional and not secret (pass `""` when you have none; a random
+-- value you store next to the data is better). Input and output key material
+-- are `Secret`s. Everything here is pure.
+--
+-- HKDF is for key material, NOT for passwords: to turn a password into a
+-- key use `Crypto.aesKeyFromPassword` (PBKDF2), and to store a password use
+-- `Std.Auth.hashPassword`.
+module Std.Crypto.Kdf exposing (extract, expand, derive)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Secret exposing (Secret)
+
+
+-- | `extract salt inputKeyMaterial` — HKDF-Extract: a 32-byte pseudorandom
+-- key.
+extract : String -> Secret -> Secret
+extract =
+    Ffi.kernel "Kdf_extract"
+
+
+-- | `expand pseudorandomKey info length` — HKDF-Expand: `length` bytes of
+-- output key material. `Err` when `length` is not 1..8160 (255 × 32) or the
+-- pseudorandom key is shorter than 32 bytes.
+expand : Secret -> String -> Int -> Result Error Secret
+expand =
+    Ffi.kernel "Kdf_expand"
+
+
+-- | `derive salt info length inputKeyMaterial` — extract, then expand: the
+-- one call most code needs.
+derive : String -> String -> Int -> Secret -> Result Error Secret
+derive salt info length ikm =
+    expand (extract salt ikm) info length

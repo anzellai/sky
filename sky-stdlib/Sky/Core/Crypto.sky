@@ -5,12 +5,23 @@
 -- `hmacSha256` / `hmacSha512`) return the hex-encoded digest as a
 -- plain `String`. `rsaSha256Sign` / `rsaSha256Verify` cover
 -- RSASSA-PKCS1-v1_5 (the `RS256` of JWT and signed-request APIs).
--- v0.15.44 adds **AES-256-GCM** and **ChaCha20-Poly1305** symmetric
--- encryption — both are AEAD (authenticated + integrity-checked)
--- and use a per-call random nonce (output format:
--- `base64(nonce || ciphertext || tag)`).
--- Random helpers return `Task Error a` because they consume
--- entropy from the OS RNG (a real side effect).
+--
+-- Symmetric encryption (AEAD — authenticated, so a tampered ciphertext
+-- never decrypts): **`xchachaSeal` / `xchachaOpen` (XChaCha20-Poly1305) is
+-- the recommended default.** Its 24-byte nonce is drawn at random for every
+-- call, and a random nonce that long never repeats in practice, so one key
+-- can seal any number of messages. `aesGcmEncrypt` and `chacha20Encrypt` use
+-- a 12-byte random nonce: keep them for interoperability, and rotate the key
+-- well before 2^32 messages. Every sealed value is
+-- `base64(nonce || ciphertext || tag)`.
+--
+-- Effects: anything that draws randomness — every encrypt/seal, and
+-- `randomBytes` / `randomToken` — is a `Task Error a` (v0.26.2: the
+-- encrypt functions were `Result` before). Decrypt/open, hashes, MACs and
+-- key derivation are pure.
+--
+-- Signatures, key exchange and HKDF live in `Std.Crypto.Sign` (Ed25519),
+-- `Std.Crypto.Kx` (X25519) and `Std.Crypto.Kdf` (HKDF-SHA256).
 module Sky.Core.Crypto exposing
     ( sha256
     , sha512
@@ -25,6 +36,10 @@ module Sky.Core.Crypto exposing
     , aesGcmDecrypt
     , chacha20Encrypt
     , chacha20Decrypt
+    , xchachaSeal
+    , xchachaSealWith
+    , xchachaOpen
+    , xchachaOpenWith
     , aesKeyFromPassword
     , chachaKeyFromPassword
     , randomBytes
@@ -99,16 +114,55 @@ rsaSha256Verify =
 
 
 -- ─── Symmetric encryption (AEAD) ───────────────────────────────────
+-- | `xchachaSeal key plaintext` — encrypt under XChaCha20-Poly1305
+-- (draft-irtf-cfrg-xchacha). **The recommended default AEAD.** `key` must
+-- be exactly 32 bytes (`Crypto.aesKeyFromPassword` for a password, or
+-- `Kdf.derive` for key material). A fresh random 24-byte nonce is drawn for
+-- every call, which is why this is a `Task`; a 24-byte random nonce is safe
+-- to use for any number of messages under one key. Returns
+-- `base64(nonce || ciphertext || tag)`.
+--
+--     Crypto.xchachaSeal key "card ending 4242"
+--         |> Task.andThen (\sealed -> Db.exec db "UPDATE …" [ Db.string sealed ])
+xchachaSeal : Secret -> String -> Task Error String
+xchachaSeal =
+    Ffi.kernel "Crypto_xchachaSeal"
+
+
+-- | `xchachaSealWith key associatedData plaintext` — as `xchachaSeal`, and
+-- also authenticates `associatedData` (sent or stored in clear, for example
+-- a record id or a header). Opening needs the same associated data.
+xchachaSealWith : Secret -> String -> String -> Task Error String
+xchachaSealWith =
+    Ffi.kernel "Crypto_xchachaSealWith"
+
+
+-- | `xchachaOpen key sealed` — decrypt the output of `xchachaSeal`. `Err`
+-- on a wrong key, a tampered value or bad base64, never garbage. Pure.
+xchachaOpen : Secret -> String -> Result Error String
+xchachaOpen =
+    Ffi.kernel "Crypto_xchachaOpen"
+
+
+-- | `xchachaOpenWith key associatedData sealed` — decrypt the output of
+-- `xchachaSealWith`. `Err` when the associated data differs.
+xchachaOpenWith : Secret -> String -> String -> Result Error String
+xchachaOpenWith =
+    Ffi.kernel "Crypto_xchachaOpenWith"
+
+
 -- | `aesGcmEncrypt key plaintext` — encrypt under AES-256-GCM.
 -- `key` must be exactly 32 bytes (use `aesKeyFromPassword` for a
 -- password-derived key).  `plaintext` is the raw byte payload (a
 -- Sky `String` whose bytes are not constrained to UTF-8 — use the
 -- Sky.Core.Bytes helpers when in doubt).  Returns
 -- `base64(nonce || ciphertext || tag)` — a single opaque string
--- safe to store / transmit.  A new random nonce is drawn for
+-- safe to store / transmit.  A new random 12-byte nonce is drawn for
 -- every call (so encrypting the same message twice yields
--- different ciphertexts).
-aesGcmEncrypt : Secret -> String -> Result Error String
+-- different ciphertexts), which is why this is a `Task` (v0.26.2).
+-- Prefer `xchachaSeal` for new code: a 12-byte random nonce limits
+-- one key to well under 2^32 messages.
+aesGcmEncrypt : Secret -> String -> Task Error String
 aesGcmEncrypt =
     Ffi.kernel "Crypto_aesGcmEncrypt"
 
@@ -126,8 +180,9 @@ aesGcmDecrypt =
 -- ChaCha20-Poly1305 (RFC 8439).  Same key length (32 bytes) and
 -- output format as `aesGcmEncrypt`.  ChaCha20 is preferred on
 -- platforms without AES hardware acceleration — typically smaller
--- mobile / embedded CPUs.
-chacha20Encrypt : Secret -> String -> Result Error String
+-- mobile / embedded CPUs. A `Task` (v0.26.2): it draws a random
+-- nonce. Prefer `xchachaSeal` for new code.
+chacha20Encrypt : Secret -> String -> Task Error String
 chacha20Encrypt =
     Ffi.kernel "Crypto_chacha20Encrypt"
 
@@ -147,7 +202,7 @@ chacha20Decrypt =
 -- secret, so it comes back as a `Secret` you pass straight to
 -- `aesGcmEncrypt` (which reveals it internally for the cipher).
 -- `salt` MUST be unique per user / record
--- (16 random bytes from `randomBytes 16` is the standard
+-- (the 32 hex characters of `randomBytes 16` is the standard
 -- shape).  NOT for password storage — use `Std.Auth.hashPassword`
 -- (bcrypt) for that.
 aesKeyFromPassword : Secret -> String -> Secret
@@ -166,11 +221,15 @@ chachaKeyFromPassword =
 
 
 -- ─── Entropy (Task — touches the OS RNG) ───────────────────────────
+-- | `randomBytes n` — `n` bytes (1..1024) of OS entropy, returned
+-- HEX-encoded (so the string is `2 × n` characters).
 randomBytes : Int -> Task Error String
 randomBytes =
     Ffi.kernel "Crypto_randomBytes"
 
 
+-- | `randomToken n` — `n` bytes (1..1024) of OS entropy, returned as
+-- URL-safe base64 without padding (for cookies, reset links, ids).
 randomToken : Int -> Task Error String
 randomToken =
     Ffi.kernel "Crypto_randomToken"

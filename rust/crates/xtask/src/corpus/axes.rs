@@ -180,6 +180,12 @@ pub const SURFACE: Axis = Axis::new(
         "secret",
         "image",
         "tuple",
+        "sign",
+        "kx",
+        "kdf",
+        "noise",
+        "cpace",
+        "qr",
     ],
 );
 

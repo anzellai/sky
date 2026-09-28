@@ -1,0 +1,269 @@
+module NoiseConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Std.Crypto.Noise (Noise_IK_25519_ChaChaPoly_SHA256)
+-- through the compiled Sky surface: a full handshake between an initiator and
+-- a responder, the responder learning the initiator's static key, transport
+-- messages both ways with a rekey, and the refusals — a reused (stale) state
+-- value, a tampered message, a different prologue, an out-of-turn call.
+--
+-- The byte-exact cacophony test vectors are in the Go runtime
+-- (runtime-go/rt/noise_test.go), where the ephemeral keys can be fixed.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Error as Error
+import Sky.Core.Bytes as Bytes
+import Std.Crypto.Kx as Kx
+import Std.Crypto.Noise as Noise
+import Sky.Test as Test exposing (Test)
+
+type alias Pair =
+    { initiator : Noise.Handshake
+    , responder : Noise.Handshake
+    , initiatorKey : Kx.SecretKey
+    }
+
+
+-- Fresh keys and both handshake states, with the same prologue.
+newPair : String -> String -> Result Error Pair
+newPair prologueI prologueR =
+    Task.run
+        (Kx.generate
+            |> Task.andThen
+                   (\iKey ->
+                       Kx.generate
+                           |> Task.andThen
+                                  (\rKey ->
+                                      Task.map2
+                                          (\i r ->
+                                              { initiator = i
+                                              , responder = r
+                                              , initiatorKey = iKey
+                                              })
+                                          (Noise.initiator
+                                              iKey
+                                              (Kx.publicKey rKey)
+                                              prologueI)
+                                          (Noise.responder rKey prologueR))))
+
+type alias Session =
+    { initiator : Noise.Transport
+    , responder : Noise.Transport
+    , payload0 : String
+    , payload1 : String
+    , peerSeen : Bool
+    }
+
+
+-- Run both handshake messages and split both sides into transports.
+handshake : Pair -> Result Error Session
+handshake pair =
+    Noise.writeMessage "hello" pair.initiator
+        |> Result.andThen
+               (\( i1, m0 ) ->
+                   Noise.readMessage m0 pair.responder
+                       |> Result.andThen
+                              (\( r1, p0 ) ->
+                                  Noise.writeMessage "welcome" r1
+                                      |> Result.andThen
+                                             (\( r2, m1 ) ->
+                                                 Noise.readMessage m1 i1
+                                                     |> Result.andThen
+                                                            (\( i2, p1 ) ->
+                                                                Result.map2
+                                                                    (\it rt ->
+                                                                        { initiator =
+                                                                            it
+                                                                        , responder =
+                                                                            rt
+                                                                        , payload0 =
+                                                                            p0
+                                                                        , payload1 =
+                                                                            p1
+                                                                        , peerSeen =
+                                                                            seenKey
+                                                                                pair.initiatorKey
+                                                                                r1
+                                                                        })
+                                                                    (Noise.transport
+                                                                        i2)
+                                                                    (Noise.transport
+                                                                        r2)))))
+
+
+seenKey : Kx.SecretKey -> Noise.Handshake -> Bool
+seenKey key hs =
+    case Noise.peer hs of
+
+        Just pk ->
+            Kx.publicKeyToBytes pk == Kx.publicKeyToBytes (Kx.publicKey key)
+
+        Nothing ->
+            False
+
+
+-- A NEW session per call. Transport values are single-use, so a top-level
+-- (memoised) session shared by several tests would make them depend on
+-- their order: the second test to encrypt with it would be refused.
+session : () -> Result Error Session
+session _ =
+    newPair "app v1" "app v1" |> Result.andThen handshake
+
+
+-- Send a message from the initiator to the responder, return the plaintext.
+send : String -> Session -> Result Error ( Session, String )
+send text s =
+    Noise.encrypt text s.initiator
+        |> Result.andThen
+               (\( it, ct ) ->
+                   Noise.decrypt ct s.responder
+                       |> Result.map
+                              (\( rt, pt ) ->
+                                  ( { s | initiator = it, responder = rt }, pt )))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "the handshake completes and carries both payloads"
+          (\_ ->
+              Test.equal
+                  (Ok ( "hello", "welcome" ))
+                  (session () |> Result.map (\s -> ( s.payload0, s.payload1 ))))
+    , Test.test
+          "the responder learns the initiator's static key from message 1"
+          (\_ -> Test.equal (Ok True) (session () |> Result.map .peerSeen))
+    , Test.test
+          "both sides share the handshake hash"
+          (\_ ->
+              Test.equal
+                  (Ok True)
+                  (session ()
+                      |> Result.map
+                             (\s ->
+                                 Noise.handshakeHash s.initiator
+                                     == Noise.handshakeHash s.responder
+                                     && Bytes.length
+                                            (Noise.handshakeHash s.initiator)
+                                     == 32)))
+    , Test.test
+          "transport messages flow in order, across a rekey"
+          (\_ ->
+              Test.equal
+                  (Ok [ "one", "two", "three" ])
+                  (session () |> Result.andThen (send "one")
+                      |> Result.andThen
+                             (\( s1, a ) ->
+                                 send "two" s1
+                                     |> Result.andThen
+                                            (\( s2, b ) ->
+                                                Result.map2
+                                                    (\it rt ->
+                                                        { s2 | initiator = it
+                                                        , responder = rt
+                                                        })
+                                                    (Noise.rekeySend s2.initiator)
+                                                    (Noise.rekeyReceive
+                                                        s2.responder)
+                                                    |> Result.andThen
+                                                           (send "three")
+                                                    |> Result.map
+                                                           (\( _, c ) ->
+                                                               [ a, b, c ])))))
+    , Test.test
+          "the responder can reply over its transport"
+          (\_ ->
+              Test.equal
+                  (Ok "pong")
+                  (session ()
+                      |> Result.andThen
+                             (\s ->
+                                 Noise.encrypt "pong" s.responder
+                                     |> Result.andThen
+                                            (\( _, ct ) ->
+                                                Noise.decrypt ct s.initiator))
+                      |> Result.map (\( _, pt ) -> pt)))
+    , Test.test
+          "a transport value used twice is refused (nonce reuse)"
+          (\_ ->
+              case session () of
+
+                  Ok s ->
+                      case Noise.encrypt "first" s.initiator of
+
+                          Ok _ ->
+                              Test.err (Noise.encrypt "second" s.initiator)
+
+                          Err e ->
+                              Test.fail (errorToString e)
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "a handshake value used twice is refused"
+          (\_ ->
+              case newPair "" "" of
+
+                  Ok p ->
+                      case Noise.writeMessage "a" p.initiator of
+
+                          Ok _ ->
+                              Test.err (Noise.writeMessage "b" p.initiator)
+
+                          Err e ->
+                              Test.fail (errorToString e)
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "a different prologue fails the handshake"
+          (\_ -> Test.err (newPair "v1" "v2" |> Result.andThen handshake))
+    , Test.test
+          "a tampered transport message is refused"
+          (\_ ->
+              Test.err
+                  (session ()
+                      |> Result.andThen
+                             (\s ->
+                                 Noise.encrypt "secret" s.initiator
+                                     |> Result.andThen
+                                            (\( _, ct ) ->
+                                                Noise.decrypt
+                                                    ("x" ++ ct)
+                                                    s.responder))))
+    , Test.test
+          "the responder cannot write first, and an early transport is refused"
+          (\_ ->
+              case newPair "" "" of
+
+                  Ok p ->
+                      Test.equal
+                          ( True, True, False )
+                          ( Result.toMaybe (Noise.writeMessage "" p.responder)
+                                == Nothing
+                          , Result.toMaybe (Noise.transport p.initiator)
+                                == Nothing
+                          , Noise.isComplete p.initiator
+                          )
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "handshake state prints as [REDACTED]"
+          (\_ ->
+              case newPair "" "" of
+
+                  Ok p ->
+                      Test.isTrue
+                          (String.contains "REDACTED" (toString p.initiator))
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    ]
+
+
+main =
+    Test.runMain tests

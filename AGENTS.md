@@ -395,6 +395,7 @@ for UX/DX/security/scalability, not by accident.
 | **Auth** | The internal **`Std.Auth`** module by default (bcrypt + HS256 JWT cookies — you own the users). OAuth (Google/GitHub) or external (Auth0/Clerk) only when the user needs them. Never `fmt.Sprintf("%v", secret)` — secrets are typed. |
 | **Serialization** | `Std.Codec` (`Codec.auto blank`) for record↔JSON+DB from one definition. Raw `Json.Encode/Decode` only for a shape a codec can't express (legacy/third-party wire formats). |
 | **Money / decimals** | `Std.Money` on `Std.Decimal`. **Never** raw `Float` for currency. |
+| **Encryption / signatures** | Encrypt with **`Crypto.xchachaSeal`** / `xchachaOpen` (XChaCha20-Poly1305, 24-byte random nonce; seal is a `Task`, open is pure). Keys are 32-byte `Secret`s: `Crypto.aesKeyFromPassword` from a password, `Kdf.derive` (`Std.Crypto.Kdf`, HKDF) from key material. Sign with `Std.Crypto.Sign` (Ed25519), agree keys with `Std.Crypto.Kx` (X25519; refuses a low-order peer key). An encrypted session with a pinned server key: `Std.Crypto.Noise` (IK). A short pairing code: `Std.Crypto.Cpace` (a PAKE, **awaiting external review**). A QR code for a pairing URL: `Std.Qr`. Never a `String` secret key. |
 | **Errors** | `Result Error a` / `Task Error a`. **Never** `String` as an error type. |
 | **Concurrency** | `Cmd.batch` / `Task.parallel`; **`Task.parallelN limit tasks`** for bounded fan-out under load (`parallel` is unbounded — a goroutine/connection storm at scale); in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
 | **Durable workflows** | **`Std.Durable`** for a multi-step process that must survive a restart (checkout / payment sagas, order fulfilment, onboarding, approvals). Mark side-effect boundaries with `Durable.step`; each step's result is journalled, so a resumed run replays completed steps instead of re-running them. `Durable.sleep` / `awaitSignal` suspend passively (a waiting run holds no process); a worker `Durable.poll` claims + advances due runs. **Worker versioning:** `registerVersioned` stamps a run's version at `start`, and `pollWith` reconciles a resumed run against the registered defs (`FailSafe` / `PinToStart`) for rolling deploys. **History compaction:** `Durable.compact db retentionMs` collapses terminal runs' journals while keeping their summary. **Zero-annotation durable TEA:** `App.withDurable db modelCodec` (or `App.withDurableId "<id>" db modelCodec`) makes any `Std.App` app durable with NO change to `model` / `msg` / `update` — the backend loop restores the Model on start and snapshots it after each update (Cli / Tui key by run id; Live keys by session id, covering a memory session store across a restart). The Model must be a `Codec`-serialisable data value (no function fields). The Model snapshot is at-most-once for an in-flight effect; use `Durable.step` when an effect needs exactly-once. (Substrate: `Durable.saveSnapshot`/`loadSnapshot`.) Postgres or SQLite; the code between steps must be deterministic. See `docs/design/durable-execution.md` + `docs/skyapp/overview.md`. |
@@ -633,7 +634,10 @@ These apply to any Sky code you write or any compiler change you make:
   *returns* a `Secret`. A `Secret` redacts itself in every print/log/JSON path;
   wrap at the boundary (`Secret.fromEnv "VAR"` / `Secret.fromString runtimeStr`)
   and unwrap only via the greppable `Secret.reveal`. `Crypto.hmacSha256` stays a
-  general `String`-keyed primitive (its key is not always a secret). See
+  general `String`-keyed primitive (its key is not always a secret). The
+  `Std.Crypto` key types (`Sign.SecretKey`, `Kx.SecretKey`) and protocol states
+  (`Noise.Handshake`/`Transport`, `Cpace.Pending`) are opaque and redact
+  themselves the same way; their bytes leave only as a `Secret`. See
   `docs/security/secret-migration.md`.
 - **`sky check` ≡ `sky build`** — both invoke `go build` on the emitted Go.
 - **Root-cause fixes only.** Never suppress a type error or warning; a defensive

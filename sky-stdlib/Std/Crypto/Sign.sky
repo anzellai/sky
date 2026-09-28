@@ -1,0 +1,147 @@
+-- | Std.Crypto.Sign — Ed25519 digital signatures (RFC 8032).
+--
+-- A signature proves that the holder of a `SecretKey` signed exactly these
+-- bytes. Anyone with the matching `PublicKey` can check it.
+--
+--     Sign.generate
+--         |> Task.map (\key -> Sign.sign key "invoice #42")
+--
+--     Sign.verify publicKey "invoice #42" signature   -- Bool
+--
+-- **Key types.** `SecretKey` is opaque. It redacts itself in every print, log
+-- and JSON path, and a Sky.Live session store refuses to save it. The raw key
+-- leaves only through `secretKeyToBytes` / `secretKeyToBase64`, which return a
+-- `Secret`, so the one step to a `String` is still the greppable
+-- `Secret.reveal`. Store a long-lived key in an environment variable and load
+-- it with `Sign.secretKeyFromBase64 (Secret.fromEnv "SIGNING_KEY")`.
+-- `PublicKey` is not secret: it prints as base64.
+--
+-- **Effects.** `generate` draws randomness, so it is a `Task`. Signing is
+-- deterministic in Ed25519, so `sign` and `verify` are pure.
+--
+-- Bytes are `String`s whose bytes are not required to be UTF-8
+-- (`Sky.Core.Bytes`); a signature is 64 raw bytes — use `Bytes.toBase64` to
+-- send it as text.
+module Std.Crypto.Sign exposing
+    ( SecretKey
+    , PublicKey
+    , generate
+    , publicKey
+    , sign
+    , verify
+    , secretKeyFromBytes
+    , secretKeyFromBase64
+    , secretKeyToBytes
+    , secretKeyToBase64
+    , publicKeyFromBytes
+    , publicKeyToBytes
+    , publicKeyFromBase64
+    , publicKeyToBase64
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Secret exposing (Secret)
+import Sky.Core.Bytes as Bytes
+
+-- | An Ed25519 secret (signing) key. Opaque and self-redacting.
+type SecretKey
+    = SecretKey_OPAQUE
+
+-- | An Ed25519 public (verifying) key, 32 bytes.
+type PublicKey
+    = PublicKey_OPAQUE
+
+
+-- | A fresh random key pair, as its secret key (`publicKey` derives the other
+-- half). A `Task`: it reads the operating system's random source.
+generate : Task Error SecretKey
+generate =
+    generateWith ()
+
+
+generateWith : () -> Task Error SecretKey
+generateWith =
+    Ffi.kernel "Sign_generate"
+
+
+-- | The public key of a secret key.
+publicKey : SecretKey -> PublicKey
+publicKey =
+    Ffi.kernel "Sign_publicKey"
+
+
+-- | `sign key message` — the 64-byte Ed25519 signature of `message`.
+sign : SecretKey -> String -> String
+sign =
+    Ffi.kernel "Sign_sign"
+
+
+-- | `verify publicKey message signature` — `True` only when `signature` is
+-- a valid signature of exactly `message` under `publicKey`. `False` for any
+-- other input, including a signature of the wrong length.
+verify : PublicKey -> String -> String -> Bool
+verify =
+    Ffi.kernel "Sign_verify"
+
+
+-- | Load a secret key from its 32-byte seed (RFC 8032's "secret key").
+-- `Err` when the length is not 32.
+secretKeyFromBytes : Secret -> Result Error SecretKey
+secretKeyFromBytes =
+    Ffi.kernel "Sign_secretKeyFromBytes"
+
+
+-- | Load a secret key from the standard base64 of its 32-byte seed — the
+-- form `secretKeyToBase64` writes, and the form to keep in an environment
+-- variable. `Err` on bad base64 or a wrong length.
+secretKeyFromBase64 : Secret -> Result Error SecretKey
+secretKeyFromBase64 =
+    Ffi.kernel "Sign_secretKeyFromBase64"
+
+
+-- | The 32-byte seed of a secret key, still wrapped in a `Secret`.
+secretKeyToBytes : SecretKey -> Secret
+secretKeyToBytes =
+    Ffi.kernel "Sign_secretKeyToBytes"
+
+
+-- | The standard base64 of the 32-byte seed, still wrapped in a `Secret`.
+secretKeyToBase64 : SecretKey -> Secret
+secretKeyToBase64 =
+    Ffi.kernel "Sign_secretKeyToBase64"
+
+
+-- | Load a public key from its 32 bytes. `Err` on a wrong length or bytes
+-- that are not a point on the curve.
+publicKeyFromBytes : String -> Result Error PublicKey
+publicKeyFromBytes =
+    Ffi.kernel "Sign_publicKeyFromBytes"
+
+
+-- | The 32 bytes of a public key.
+publicKeyToBytes : PublicKey -> String
+publicKeyToBytes =
+    Ffi.kernel "Sign_publicKeyToBytes"
+
+
+-- | Load a public key from standard base64.
+publicKeyFromBase64 : String -> Result Error PublicKey
+publicKeyFromBase64 text =
+    case Bytes.fromBase64 text of
+
+        Just raw ->
+            publicKeyFromBytes raw
+
+        Nothing ->
+            Err
+                (Error.invalidInput
+                    "Sign.publicKeyFromBase64: the key is not valid standard base64")
+
+
+-- | The standard base64 of a public key.
+publicKeyToBase64 : PublicKey -> String
+publicKeyToBase64 key =
+    Bytes.toBase64 (publicKeyToBytes key)

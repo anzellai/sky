@@ -64,28 +64,31 @@ func readBytes(v any) []byte {
 	}
 }
 
-// Crypto.aesGcmEncrypt : String -> String -> Result Error String
-// (key, plaintext) → base64(nonce || ciphertext || tag).
+// Crypto.aesGcmEncrypt : Secret -> String -> Task Error String
+// (key, plaintext) → base64(nonce || ciphertext || tag). A Task since
+// v0.26.2: it draws a random nonce, which is an effect.
 func Crypto_aesGcmEncrypt(key any, plaintext any) any {
-	k, err := readKey("Crypto.aesGcmEncrypt", key)
-	if err != nil {
-		return Err[any, any](ErrInvalidInput(err.Error()))
+	return func() any {
+		k, err := readKey("Crypto.aesGcmEncrypt", key)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput(err.Error()))
+		}
+		block, err := aes.NewCipher(k)
+		if err != nil {
+			return Err[any, any](ErrFfi("Crypto.aesGcmEncrypt: " + err.Error()))
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return Err[any, any](ErrFfi("Crypto.aesGcmEncrypt: " + err.Error()))
+		}
+		nonce := make([]byte, gcm.NonceSize())
+		if _, err := cryptorand.Read(nonce); err != nil {
+			return Err[any, any](ErrFfi("Crypto.aesGcmEncrypt: nonce read: " + err.Error()))
+		}
+		ct := gcm.Seal(nil, nonce, readBytes(plaintext), nil)
+		out := append(nonce, ct...)
+		return Ok[any, any](base64.StdEncoding.EncodeToString(out))
 	}
-	block, err := aes.NewCipher(k)
-	if err != nil {
-		return Err[any, any](ErrFfi("Crypto.aesGcmEncrypt: " + err.Error()))
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return Err[any, any](ErrFfi("Crypto.aesGcmEncrypt: " + err.Error()))
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := cryptorand.Read(nonce); err != nil {
-		return Err[any, any](ErrFfi("Crypto.aesGcmEncrypt: nonce read: " + err.Error()))
-	}
-	ct := gcm.Seal(nil, nonce, readBytes(plaintext), nil)
-	out := append(nonce, ct...)
-	return Ok[any, any](base64.StdEncoding.EncodeToString(out))
 }
 
 // Crypto.aesGcmDecrypt : String -> String -> Result Error String
@@ -119,25 +122,27 @@ func Crypto_aesGcmDecrypt(key any, encoded any) any {
 	return Ok[any, any](string(pt))
 }
 
-// Crypto.chacha20Encrypt : String -> String -> Result Error String
+// Crypto.chacha20Encrypt : Secret -> String -> Task Error String (a Task since v0.26.2)
 // ChaCha20-Poly1305 AEAD.  Same key length + output shape as
 // aesGcmEncrypt — preferred when the host CPU lacks AES-NI.
 func Crypto_chacha20Encrypt(key any, plaintext any) any {
-	k, err := readKey("Crypto.chacha20Encrypt", key)
-	if err != nil {
-		return Err[any, any](ErrInvalidInput(err.Error()))
+	return func() any {
+		k, err := readKey("Crypto.chacha20Encrypt", key)
+		if err != nil {
+			return Err[any, any](ErrInvalidInput(err.Error()))
+		}
+		aead, err := chacha20poly1305.New(k)
+		if err != nil {
+			return Err[any, any](ErrFfi("Crypto.chacha20Encrypt: " + err.Error()))
+		}
+		nonce := make([]byte, aead.NonceSize())
+		if _, err := cryptorand.Read(nonce); err != nil {
+			return Err[any, any](ErrFfi("Crypto.chacha20Encrypt: nonce read: " + err.Error()))
+		}
+		ct := aead.Seal(nil, nonce, readBytes(plaintext), nil)
+		out := append(nonce, ct...)
+		return Ok[any, any](base64.StdEncoding.EncodeToString(out))
 	}
-	aead, err := chacha20poly1305.New(k)
-	if err != nil {
-		return Err[any, any](ErrFfi("Crypto.chacha20Encrypt: " + err.Error()))
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := cryptorand.Read(nonce); err != nil {
-		return Err[any, any](ErrFfi("Crypto.chacha20Encrypt: nonce read: " + err.Error()))
-	}
-	ct := aead.Seal(nil, nonce, readBytes(plaintext), nil)
-	out := append(nonce, ct...)
-	return Ok[any, any](base64.StdEncoding.EncodeToString(out))
 }
 
 // Crypto.chacha20Decrypt : String -> String -> Result Error String

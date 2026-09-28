@@ -424,9 +424,11 @@ delegates).
 | `hmacSha256`/`hmacSha512` | `String -> String -> String`               | pure  |
 | `rsaSha256Sign`/`Verify`  | `String -> String -> ...`                  | Result Error _ |
 | `constantTimeEqual`     | `String -> String -> Bool`                   | pure  |
-| `aesGcmEncrypt`/`Decrypt` | `String -> String -> ... -> Result Error String` | fallible-pure |
-| `chacha20Encrypt`/`Decrypt` | `...`                                   | fallible-pure |
-| `aesKeyFromPassword`/`chachaKeyFromPassword` | `String -> Int -> Result Error String` | fallible-pure (PBKDF2) |
+| `xchachaSeal`/`xchachaSealWith` | `Secret -> String (-> String) -> Task Error String` | effect (random nonce) |
+| `xchachaOpen`/`xchachaOpenWith` | `Secret -> String (-> String) -> Result Error String` | fallible-pure |
+| `aesGcmEncrypt`/`chacha20Encrypt` | `Secret -> String -> Task Error String` | effect (random nonce; a Task since v0.26.2) |
+| `aesGcmDecrypt`/`chacha20Decrypt` | `Secret -> String -> Result Error String` | fallible-pure |
+| `aesKeyFromPassword`/`chachaKeyFromPassword` | `Secret -> String -> Secret` | pure (PBKDF2) |
 | `randomBytes`           | `Int -> Task Error String`                   | effect |
 | `randomToken`           | `Int -> Task Error String`                   | effect |
 
@@ -436,21 +438,59 @@ delegates).
 * `randomBytes` / `randomToken` use `crypto/rand`, NOT
   `math/rand`. UNVERIFIED-by-test, but verified by inspection of
   the runtime binding.
-* `aesGcmEncrypt` uses AES-GCM AEAD; nonce is generated fresh per
-  call from `crypto/rand`. AEAD provides
+* Every AEAD encrypt draws its nonce from `crypto/rand` when the Task
+  RUNS (not when the value is built), so running one Task twice gives two
+  ciphertexts (`TestCryptoAeadEncryptIsATask`). AEAD provides
   confidentiality + authenticity.
-* `chacha20Encrypt` uses ChaCha20-Poly1305 AEAD.
+* `xchachaSeal` (XChaCha20-Poly1305, 24-byte random nonce) is the
+  recommended default: a random 24-byte nonce does not repeat in practice,
+  where the 12-byte nonce of `aesGcmEncrypt` / `chacha20Encrypt` limits one
+  key to well under 2^32 messages.
 * `hashPassword` (in `Std.Auth`) is bcrypt with cost 10 (default)
   — Go's `golang.org/x/crypto/bcrypt`.
 
-**Verification**: `runtime-go/rt/crypto_test.go` covers the AEAD
-round-trips, HMAC parity vs. test vectors, and the
-constant-time-equal contract for select cases.
+**Verification**: `runtime-go/rt/crypto_aead_test.go` covers the AEAD
+round-trips, tamper and wrong-key refusal, and the Task shape;
+`crypto_sign_kx_test.go` the XChaCha20-Poly1305 draft vector.
 
 **Known gaps**:
 * No Argon2id surfaced (bcrypt only). For new-platform compliance
   this is a documented gap.
-* No X25519 / Ed25519 (only RSA-SHA256). Documented gap.
+
+### 2.7a `Std.Crypto.Sign` / `Kx` / `Kdf` / `Noise` / `Cpace`, `Std.Qr` (v0.26.2)
+
+**Laws and invariants**, each with its test
+(`runtime-go/rt/crypto_sign_kx_test.go`, `noise_test.go`, `cpace_test.go`,
+`qr_test.go`; conformance suites `CryptoPrimitives`, `Noise`, `Cpace`, `Qr`;
+corpus Family S surfaces `sign`, `kx`, `kdf`, `noise`, `cpace`, `qr`):
+
+* **Ed25519** (RFC 8032): `verify (publicKey k) m (sign k m) == True`;
+  signing is deterministic (RFC 8032 §7.1 vectors); `verify` is `False` for a
+  changed message, another key, a flipped bit or a wrong-length signature,
+  never a panic. `publicKeyFromBytes` rejects a non-curve point.
+* **X25519** (RFC 7748): `sharedSecret a (publicKey b) == sharedSecret b
+  (publicKey a)`; a low-order peer key (all-zero result, §6.1) is an `Err`.
+* **HKDF-SHA256** (RFC 5869): A.1–A.3 vectors; `expand` is an `Err` outside
+  1..8160 bytes or for a pseudorandom key under 32 bytes.
+* **Secret keys never print.** `Sign.SecretKey`, `Kx.SecretKey`,
+  `Noise.Handshake`, `Noise.Transport`, `Cpace.Pending` redact themselves in
+  every fmt verb, `%#v`, `encoding/json` and `toString`, and refuse gob, so a
+  Sky.Live session store cannot persist them. Export is to a `Secret` only.
+* **Noise IK** (`Noise_IK_25519_ChaChaPoly_SHA256`): the four cacophony IK
+  vectors; a state value is single-use (an older value returns `Err`, so a
+  nonce is never reused); a different prologue, a tampered message or a
+  low-order ephemeral key fails the step; a failed transport decrypt does
+  not advance the nonce.
+* **CPace** (draft-irtf-cfrg-cpace-21, CPACE-X25519-SHA512): the Appendix
+  B.1 vectors (generator, shares, K, ISK, the B.1.10 low-order and
+  non-canonical points); equal inputs give equal ISKs, a different password,
+  sid or channel id gives unrelated ones; a `Pending` finishes once.
+  **Verdict: awaiting external review** (an Internet-Draft; no independent
+  security review of this implementation).
+* **QR** (ISO/IEC 18004): module-exact against an independent encoder for
+  versions 1–40, all four levels and all eight masks; the chosen mask has the
+  minimum penalty of the eight; capacity limits (2953 bytes at L, 1273 at H)
+  are `Err` past the edge.
 
 ---
 
@@ -1316,7 +1356,11 @@ Sky.Live).
 | `Sky.Core.Dict`/`Set` | Finite map/set laws | Stable iteration | Sweep | SOLID |
 | `Sky.Core.String`     | Rune-aware round-trips | n/a | Smoke test | SOLID-mostly (grapheme gap) |
 | `Sky.Core.Math`       | IEEE 754 via Go math | n/a | Inspection | SOLID |
-| `Sky.Core.Crypto`     | AEAD + constant-time-equal | n/a | rt/crypto_test.go | SOLID-mostly (no Argon2id/Ed25519) |
+| `Sky.Core.Crypto`     | AEAD + constant-time-equal | n/a | rt/crypto_aead_test.go + crypto_sign_kx_test.go | SOLID-mostly (no Argon2id) |
+| `Std.Crypto.Sign`/`Kx`/`Kdf` | RFC 8032 / 7748 / 5869 vectors + low-order refusal | Redacting key types | rt/crypto_sign_kx_test.go + conformance | SOLID |
+| `Std.Crypto.Noise`    | Cacophony IK vectors | Single-use state values | rt/noise_test.go + conformance | SOLID |
+| `Std.Crypto.Cpace`    | Draft B.1 vectors | Single-use `Pending` | rt/cpace_test.go + conformance | Awaiting external review |
+| `Std.Qr`              | Module-exact vs an independent encoder | Pure, TinyGo-clean | rt/qr_test.go + conformance | SOLID |
 | `Sky.Core.Jwt`        | Signature-then-claims + exp/nbf | `alg: none` rejected by ADT | rt/jwt_test.go | SOLID |
 | `Sky.Core.Task`       | Monad laws + effect tier discipline | Panic gate v0.15.43 | rt/task_test.go + retry_test.go | SOLID |
 | `Std.Ui`              | n/a (DSL) | `fill` asymmetry + `align-self` single-emission + pseudo-class hoist + media-query auto-wrap | `UiFillCssSpec` + `UiAlignSelfSpec` + 39-example sweep | SOLID (v0.15.55-57 close) |
@@ -1398,11 +1442,9 @@ implementation step OR a clear spec to write.
   backed by `golang.org/x/crypto/argon2`.
 * Effort: 0.5 session.
 
-**G6. Ed25519 / X25519 in Crypto module**.
-* Status: Only RSA-SHA256 sign/verify.
-* Action: Surface `Crypto.ed25519Sign` / `Verify` and an X25519
-  key-agreement primitive.
-* Effort: 0.5 session.
+**G6. Ed25519 / X25519 in Crypto module**. **CLOSED in v0.26.2**:
+`Std.Crypto.Sign` (Ed25519), `Std.Crypto.Kx` (X25519, low-order refusal) and
+`Std.Crypto.Kdf` (HKDF-SHA256), with RFC vectors (§2.7a).
 
 **G7. `Cmd.batch` ordering specification**.
 * Status: Documented as "preserves dispatch order" but no spec

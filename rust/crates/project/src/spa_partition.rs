@@ -17,8 +17,10 @@
 //! is fine; classifying a real server effect as client would leak the DB /
 //! secret to the browser, and is a bug the over-approximation forbids.
 //!
-//! Client effects (`Time.*`, `Random.*`, `Uuid.*`, `Crypto` hashing) are
-//! effectful but stay CLIENT — they run in the wasm client runtime.
+//! Pure crypto (hashing, a constant-time compare, verification with a public
+//! key, QR encoding) stays CLIENT. The clock, random draws (`Time.*`,
+//! `Random.*`, `Uuid.*`, `Crypto.randomBytes`) and every function that holds a
+//! secret key go to the SERVER (see [`EFFECT_KERNELS`] and [`MIXED_KERNELS`]).
 //!
 //! This file walks `hir::resolve(module).bodies` and reads the typed HIR
 //! (`ty::Typer::body_types`, whose `BodyTypes.exprs` is the same table the
@@ -137,6 +139,12 @@ const EFFECT_KERNELS: &[&str] = &[
     "Webview",
     "Context",
     "Image",
+    // v0.26.2 crypto protocols: every member holds or derives secret key
+    // material (HKDF input, Noise handshake state, the CPace password), and
+    // the Noise/CPace constructors draw randomness.
+    "Kdf",
+    "Noise",
+    "Cpace",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -146,8 +154,9 @@ const EFFECT_KERNELS: &[&str] = &[
 /// `Task` is here because `Task.succeed`/`map`/`andThen` merely *build* a task;
 /// the effect is the `Ffi.kernel "<Symbol>"` inside it (classified by symbol
 /// prefix) and the force site is `Task.run` (tracked separately as an inline
-/// effect). `Cmd`/`Sub` are pure descriptions in the TEA loop. `Crypto` covers
-/// pure hashing (`sha256`) — a client-side hash is pure UI, not an effect.
+/// effect). `Cmd`/`Sub` are pure descriptions in the TEA loop. `Crypto` is NOT
+/// here: it is classified per function ([`MIXED_KERNELS`]). `Qr` (Std.Qr) is a
+/// pure encoder with no secret.
 ///
 /// **`Ffi` is here, not in [`EFFECT_KERNELS`], and this is load-bearing.** A bare
 /// `Ffi.*` reference (`Ffi.kernel`, `Ffi.call`, …) is the compiler's universal
@@ -160,9 +169,50 @@ const EFFECT_KERNELS: &[&str] = &[
 /// separately as a `Res::Foreign` reference (`Refs::foreign` → server).
 const KNOWN_PURE_KERNELS: &[&str] = &[
     "Basics", "String", "List", "Dict", "Set", "Maybe", "Result", "Task", "Math", "Regex",
-    "Crypto", "Encoding", "Char", "Path", "Cmd", "Sub", "JsonEnc", "JsonDec", "JsonDecP", "Fmt",
-    "Ffi", "Codec",
+    "Encoding", "Char", "Path", "Cmd", "Sub", "JsonEnc", "JsonDec", "JsonDecP", "Fmt", "Ffi",
+    "Codec", "Qr",
 ];
+
+/// **MIXED** kernel families — classified per FUNCTION. Only the members listed
+/// here are client-safe ([`KernelClass::Neutral`]); every other member of the
+/// family, including one added later, is a SERVER effect (fail-closed within the
+/// family).
+///
+/// `Crypto` was in [`KNOWN_PURE_KERNELS`] as a whole until v0.26.2, on the
+/// grounds that "a client-side hash is pure UI". That also put key derivation,
+/// keyed MACs, the AEAD ciphers (secret key + random nonce), `randomBytes` and
+/// `rsaSha256Sign` on the client. A function belongs here only when it is pure,
+/// needs no secret, and works in wasm: hashing, a constant-time compare, and
+/// verification with a PUBLIC key. `Sign` / `Kx` (Std.Crypto.Sign/Kx) follow the
+/// same rule: public-key handling and `verify` are client-safe; key generation,
+/// signing and key agreement are not.
+const MIXED_KERNELS: &[(&str, &[&str])] = &[
+    (
+        "Crypto",
+        &[
+            "sha256",
+            "sha512",
+            "sha1",
+            "md5",
+            "constantTimeEqual",
+            "rsaSha256Verify",
+        ],
+    ),
+    (
+        "Sign",
+        &["verify", "publicKeyFromBytes", "publicKeyToBytes"],
+    ),
+    ("Kx", &["publicKeyFromBytes", "publicKeyToBytes"]),
+];
+
+/// The client-safe members of a [`MIXED_KERNELS`] family, or `None` when
+/// `module` is not a mixed family.
+fn mixed_client_safe(module: &str) -> Option<&'static [&'static str]> {
+    MIXED_KERNELS
+        .iter()
+        .find(|(m, _)| *m == module)
+        .map(|(_, fs)| *fs)
+}
 
 /// **CLIENT-EFFECT** kernel families — effects that must run in the wasm CLIENT,
 /// never behind an RPC (maps to [`KernelClass::ClientEffect`]). These reach a
@@ -187,7 +237,15 @@ const CLIENT_EFFECT_KERNELS: &[&str] = &["Native"];
 /// frontend. The `classification_is_exhaustive` test makes an unclassified
 /// *known* kernel a BUILD FAILURE; this branch is the runtime defense-in-depth
 /// for a family added ahead of the lists (or an unexpected FFI-symbol prefix).
-fn classify_kernel(module: &str, _func: &str) -> KernelClass {
+fn classify_kernel(module: &str, func: &str) -> KernelClass {
+    if let Some(client_safe) = mixed_client_safe(module) {
+        // Per-function: only a listed member stays on the client.
+        return if client_safe.contains(&func) {
+            KernelClass::Neutral
+        } else {
+            KernelClass::ServerOnly
+        };
+    }
     if EFFECT_KERNELS.contains(&module) {
         KernelClass::ServerOnly
     } else if CLIENT_EFFECT_KERNELS.contains(&module) {
@@ -211,7 +269,10 @@ fn classify_kernel(module: &str, _func: &str) -> KernelClass {
 pub fn unclassified_kernel_families() -> Vec<String> {
     let mut gaps: BTreeSet<String> = BTreeSet::new();
     for (_import_path, pseudo) in hir::KERNEL_MODULES {
-        if !EFFECT_KERNELS.contains(pseudo) && !KNOWN_PURE_KERNELS.contains(pseudo) {
+        if !EFFECT_KERNELS.contains(pseudo)
+            && !KNOWN_PURE_KERNELS.contains(pseudo)
+            && mixed_client_safe(pseudo).is_none()
+        {
             gaps.insert((*pseudo).to_string());
         }
     }
@@ -5221,7 +5282,10 @@ mod tests {
     fn gaps_in(modules: &[(&str, &str)]) -> Vec<String> {
         let mut gaps: BTreeSet<String> = BTreeSet::new();
         for (_import, pseudo) in modules {
-            if !EFFECT_KERNELS.contains(pseudo) && !KNOWN_PURE_KERNELS.contains(pseudo) {
+            if !EFFECT_KERNELS.contains(pseudo)
+                && !KNOWN_PURE_KERNELS.contains(pseudo)
+                && mixed_client_safe(pseudo).is_none()
+            {
                 gaps.insert((*pseudo).to_string());
             }
         }
@@ -5298,6 +5362,82 @@ mod tests {
         );
     }
 
+    /// Crypto is classified per FUNCTION, not per family. Until v0.26.2 the
+    /// whole `Crypto` family sat in KNOWN_PURE, so key generation, random
+    /// nonces, keyed MACs and anything holding a secret key were treated as
+    /// client-safe and could be split into the wasm frontend. Only functions
+    /// that are pure AND need no secret stay on the client.
+    #[test]
+    fn crypto_kernels_are_classified_per_function() {
+        for (m, f) in [
+            ("Crypto", "randomBytes"),
+            ("Crypto", "randomToken"),
+            ("Crypto", "aesGcmEncrypt"),
+            ("Crypto", "aesGcmDecrypt"),
+            ("Crypto", "chacha20Encrypt"),
+            ("Crypto", "chacha20Decrypt"),
+            ("Crypto", "xchachaSeal"),
+            ("Crypto", "xchachaSealWith"),
+            ("Crypto", "xchachaOpen"),
+            ("Crypto", "xchachaOpenWith"),
+            ("Crypto", "aesKeyFromPassword"),
+            ("Crypto", "chachaKeyFromPassword"),
+            ("Crypto", "hmacSha256"),
+            ("Crypto", "hmacSha512"),
+            ("Crypto", "rsaSha256Sign"),
+            ("Crypto", "aNewCryptoFunction"),
+            ("Sign", "generate"),
+            ("Sign", "sign"),
+            ("Sign", "publicKey"),
+            ("Sign", "secretKeyFromBytes"),
+            ("Sign", "secretKeyToBase64"),
+            ("Kx", "generate"),
+            ("Kx", "sharedSecret"),
+            ("Kx", "secretKeyFromBase64"),
+            ("Kdf", "extract"),
+            ("Kdf", "expand"),
+            ("Noise", "initiator"),
+            ("Noise", "encrypt"),
+            ("Noise", "decrypt"),
+            ("Cpace", "start"),
+            ("Cpace", "finish"),
+            ("Cpace", "messageData"),
+        ] {
+            assert_eq!(
+                classify_kernel(m, f),
+                KernelClass::ServerOnly,
+                "{m}.{f} needs randomness or a secret: it must run on the server"
+            );
+        }
+        for (m, f) in [
+            ("Crypto", "sha256"),
+            ("Crypto", "sha512"),
+            ("Crypto", "sha1"),
+            ("Crypto", "md5"),
+            ("Crypto", "constantTimeEqual"),
+            ("Crypto", "rsaSha256Verify"),
+            ("Sign", "verify"),
+            ("Sign", "publicKeyFromBytes"),
+            ("Sign", "publicKeyToBytes"),
+            ("Kx", "publicKeyFromBytes"),
+            ("Kx", "publicKeyToBytes"),
+            ("Qr", "encodeWith"),
+            ("Qr", "rows"),
+        ] {
+            assert_eq!(
+                classify_kernel(m, f),
+                KernelClass::Neutral,
+                "{m}.{f} is pure and holds no secret: it may run on the client"
+            );
+        }
+        // The FFI-symbol path (`Ffi.kernel "Crypto_randomBytes"`) agrees.
+        let mut acc = Refs::default();
+        record_ffi_symbol("Crypto_randomBytes", &mut acc);
+        record_ffi_symbol("Crypto_sha256", &mut acc);
+        assert_eq!(acc.server_kernels.len(), 1, "{:?}", acc.server_kernels);
+        assert_eq!(acc.server_kernels[0].1, "randomBytes");
+    }
+
     /// A `Std.Native.*` FFI symbol (`Native_<cap>`) records as a CLIENT effect,
     /// never a server kernel — so a branch using it has no `direct_server_reason`
     /// and stays in the frontend wasm.
@@ -5344,6 +5484,14 @@ mod tests {
             assert!(
                 !KNOWN_PURE_KERNELS.contains(m),
                 "kernel `{m}` is in both CLIENT_EFFECT and KNOWN_PURE"
+            );
+        }
+        for (m, _) in MIXED_KERNELS {
+            assert!(
+                !KNOWN_PURE_KERNELS.contains(m)
+                    && !EFFECT_KERNELS.contains(m)
+                    && !CLIENT_EFFECT_KERNELS.contains(m),
+                "mixed kernel `{m}` is also classified as a whole family"
             );
         }
     }
