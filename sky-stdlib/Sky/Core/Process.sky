@@ -63,6 +63,8 @@ module Sky.Core.Process exposing
     , write
     , closeStdin
     , resize
+    , Screen
+    , screen
     , kill
     , wait
     , pid
@@ -72,6 +74,7 @@ module Sky.Core.Process exposing
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Task as Task
+import Sky.Core.Json.Encode exposing (Value)
 
 
 -- | `run command args` — execute a subprocess, return its stdout.
@@ -341,6 +344,48 @@ resize proc size =
 
         Process raw ->
             resizeRaw raw size.cols size.rows
+
+-- | One read of a process's terminal screen (`screen`).
+--
+--   * `changed` — `frame` holds an update for the widget.
+--   * `frame` — the payload of the terminal widget's "frame" command: the
+--     ops that bring the widget's copy of the screen up to date (null when
+--     `changed` is `False`).
+--   * `eof` — the process has exited, its output is on the screen with the
+--     line that says how it ended, and no frame will follow.
+type alias Screen =
+    { changed : Bool
+    , frame : Value
+    , eof : Bool
+    }
+
+
+screenRaw : Int -> String -> Int -> Bool -> Int -> Task Error Screen
+screenRaw =
+    Ffi.kernel "Subprocess_screen"
+
+
+-- | `screen request process` — the next frame of the process's terminal
+-- screen, for the terminal widget with id `view` (Std.Ui.Terminal calls it;
+-- an app rarely does). The runtime emulates the terminal on the server: the
+-- first call makes the screen, and from then on every output byte is run
+-- through it as the process writes it, so a slow page never makes the
+-- screen wrong. The call waits up to `waitMs` for a change and returns the
+-- screen diff for that widget: scrolls, changed row spans, the cursor.
+-- `full = True` asks for a repaint (the size, the scrollback and every
+-- row), for a widget that was just mounted. `gen` is the widget's mount
+-- generation: a read with a higher `gen` ends a read in flight with a lower
+-- one, which returns `changed = False`.
+screen : { view : String
+, gen : Int
+, full : Bool
+, waitMs : Int
+} -> Process -> Task Error Screen
+screen request proc =
+    case proc of
+
+        Process raw ->
+            screenRaw raw request.view request.gen request.full request.waitMs
 
 
 killRaw : Int -> Int -> Task Error ()

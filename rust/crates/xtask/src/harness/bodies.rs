@@ -3307,11 +3307,12 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// 180 -> 182: v0.27.0 phase 6C adds two stdlib modules, one surface each
 /// (`surfaces_total` 176 -> 178): `stdlib.Std.Ui.Canvas` and
 /// `stdlib.Std.Ui.Terminal`. Each is covered by the conformance suite
-/// `UiCanvasConformanceTest.sky` (the exact SVG, the terminal payloads), the
+/// `UiCanvasConformanceTest.sky` (the exact SVG, the terminal element), the
 /// Family-S corpus surfaces `canvas` / `terminal`, Go tests in
 /// `runtime-go/rt` (`tui_scene_test.go`, `scene_client_test.go`,
-/// `island_terminal_test.go`, `process_terminal_test.go`) and the browser
-/// e2e `scripts/ui-canvas-terminal-e2e.sh`.
+/// `island_terminal_test.go`, `process_terminal_test.go`,
+/// `term_screen_test.go`) and the browser e2e
+/// `scripts/ui-canvas-terminal-e2e.sh`.
 pub const COVERAGE_LEDGER_EXPECTED: u64 = 182;
 
 /// `xtask coverage-ledger --check`, run in-process.

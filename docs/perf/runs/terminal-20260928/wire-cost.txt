@@ -1,0 +1,4 @@
+    term_bench_test.go:188: yes     input   4194303 B | bytes (base64) raw   5599958 gz    14006 | frames (JSON) raw   562984 gz    4131 | binary+base64 raw   544768 gz    3948 | frames 65
+    term_bench_test.go:188: seq     input   1488895 B | bytes (base64) raw   1987882 gz   519643 | frames (JSON) raw   311465 gz   53163 | binary+base64 raw   341248 gz   64179 | frames 24
+    term_bench_test.go:188: redraw  input    686100 B | bytes (base64) raw    916075 gz    66165 | frames (JSON) raw    17624 gz    2569 | binary+base64 raw    18248 gz    3737 | frames 12
+    term_bench_test.go:188: colour  input   5816273 B | bytes (base64) raw   7765554 gz  1558567 | frames (JSON) raw  5450137 gz 1821005 | binary+base64 raw  3546908 gz 1848616 | frames 90

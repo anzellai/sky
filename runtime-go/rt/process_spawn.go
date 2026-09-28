@@ -116,6 +116,12 @@ type procHandle struct {
 	closed      bool
 	sess        *liveSession
 	closeOnce   sync.Once
+
+	// The terminal screen (process_screen.go): made by the first
+	// Subprocess_screen, then fed every stdout byte as the pump stores it.
+	scr     atomic.Pointer[procScreen]
+	ptyCols int // the PTY size (guarded by mu)
+	ptyRows int
 }
 
 var (
@@ -211,6 +217,8 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 		cmd:     cmd,
 		exited:  make(chan struct{}),
 		drained: make(chan struct{}),
+		ptyCols: s.cols,
+		ptyRows: s.rows,
 	}
 	h.out[procStreamStdout] = newOutRing(s.ringSize)
 	h.out[procStreamStderr] = newOutRing(s.ringSize)
@@ -279,20 +287,26 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 			continue
 		}
 		pumps.Add(1)
-		go func(src *os.File, ring *outRing) {
+		go func(src *os.File, ring *outRing, stdout bool) {
 			defer pumps.Done()
 			buf := make([]byte, 32<<10)
 			for {
 				n, err := src.Read(buf)
 				if n > 0 {
 					ring.write(buf[:n])
+					if stdout {
+						h.feedScreen()
+					}
 				}
 				if err != nil {
 					ring.closeEOF()
+					if stdout {
+						h.feedScreen()
+					}
 					return
 				}
 			}
-		}(src, ring)
+		}(src, ring, i == procStreamStdout)
 	}
 	pumpsDone := make(chan struct{})
 	go func() {
@@ -340,6 +354,9 @@ func (h *procHandle) wakeRings() {
 		r.mu.Lock()
 		r.signalLocked()
 		r.mu.Unlock()
+	}
+	if sc := h.scr.Load(); sc != nil {
+		sc.wake()
 	}
 }
 
@@ -596,6 +613,14 @@ func Subprocess_resize(idArg, colsArg, rowsArg any) any {
 		if cols <= 0 || rows <= 0 || cols > 65535 || rows > 65535 {
 			return Err[any, any](ErrInvalidInput("Process.resize: cols and rows must be 1 to 65535"))
 		}
+		// The screen takes the new size first: the output the process
+		// writes after it learns the size is laid out at that size.
+		if sc := h.scr.Load(); sc != nil {
+			sc.resize(cols, rows)
+		}
+		h.mu.Lock()
+		h.ptyCols, h.ptyRows = cols, rows
+		h.mu.Unlock()
 		if err := procSetWinsize(h.pty, cols, rows); err != nil {
 			return Err[any, any](ErrIo("Process.resize: " + err.Error()))
 		}

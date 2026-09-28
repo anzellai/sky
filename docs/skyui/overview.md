@@ -1108,6 +1108,39 @@ to case (HTML attribute names are lower case).
   of the session. A Sky.Spa server branch cannot send it (the backend logs
   `SpaIslandCommandOnServer`): return it from a client arm, for example the
   arm that handles the branch's follow-up Msg.
+- **Delivery contract: at least once in order, or an explicit resync.** A
+  command reaches the widget once and in the order it was sent, or the island
+  is resynced: the runtime destroys the widget, empties its element, mounts it
+  again from the current `props`, and sends the island event `resync` with
+  `{ "reason": "lost" | "restart" | "overflow" }`. A command is never lost
+  silently. Handle `resync` in `update` to send the widget the state it
+  needs again:
+
+  ```elm
+  Ui.island { name = "chart", id = "sales", props = props }
+      [ Ui.onIslandEvent "resync" (Decode.field "reason" Decode.string) ChartResynced ]
+  ```
+
+  `resync` is reserved: a widget's own `send("resync", ...)` is refused. How
+  it works on Sky.Live: every command carries a per-island sequence number,
+  and each SSE connection writes an `islandsync` map (the highest number it
+  sent or lost per island) on connect, at once after a full buffer dropped a
+  frame, and with every heartbeat (15 s). Before it writes the map it writes
+  every frame still buffered, so the map never claims a frame the tab has not
+  been given. The client resyncs an island whose next frame skips a number,
+  or whose map entry is above the last number it received, then ignores
+  frames at or below that point. This covers every place a command can be
+  lost: the session's ingress channel, a connection's buffer, the queue kept
+  while no tab is connected, its handover to a new connection, the buffer of
+  a connection that died, and a server restart (`restart`: a new session
+  epoch). On Sky.Spa commands never cross a network; the one loss is the
+  wait queue of an island that is not mounted overflowing (`overflow`,
+  resynced when it mounts). This was chosen over a lossless per-island queue
+  with backpressure: back-pressuring the producer would stall `update`
+  behind the slowest tab, and a queue cannot hold what a dying connection or
+  a restart takes with it, so detection was needed anyway. View patches
+  dropped under the same flood are repaired by the connection's full-body
+  resync, which the same drop triggers.
 - **No server authority.** The widget's state lives in the browser. The server
   sees only what the widget sends. A remount (a new id, a page reload, a lost
   session, a navigation away and back) starts again from `props`. So report
@@ -1118,8 +1151,10 @@ to case (HTML attribute names are lower case).
   Sky client files, and the widget must be a same-origin file: no inline
   script, no `eval`, no `new Function`.
 
-The regression gate is `scripts/islands-e2e.sh` (Sky.Live and Sky.Spa, under
-`SKY_CSP=strict`).
+The regression gates are `scripts/islands-e2e.sh` (Sky.Live and Sky.Spa,
+under `SKY_CSP=strict`, including a flood of 400 commands in one update),
+`live_island_delivery_test.go` (every server-side loss place is detected) and
+`island_delivery_js_test.go` (the client's gap handling, in node).
 
 ## Canvas — typed 2D scenes (`Std.Ui.Canvas`)
 
@@ -1166,7 +1201,7 @@ The regression gates are the conformance suite `UiCanvasConformanceTest` (the ex
 
 ## Terminal — a PTY in the page (`Std.Ui.Terminal`)
 
-`Std.Ui.Terminal` is an interactive terminal element bound to a `Sky.Core.Process` spawned with `withPty`. It is a widget island with a built-in widget: a small VT100 / xterm renderer (cursor movement, colours including 256-colour and true colour, erase, scroll regions, the alternate screen, UTF-8) that ships inside the Sky client files, so there is no script to load and it runs under a strict Content-Security-Policy.
+`Std.Ui.Terminal` is an interactive terminal element bound to a `Sky.Core.Process` spawned with `withPty`. The terminal is emulated on the server: the runtime runs every output byte through a VT100 / xterm screen (cursor movement, erase, insert and delete, scroll regions, the alternate screen, 16 / 256 / true colours, UTF-8, wide characters and combining marks, the device reports) as the process writes it. The element is a widget island with a built-in widget that only draws: it applies screen-diff frames to its copy of the grid and paints it on a `<canvas>`. It ships inside the Sky client files, so there is no script to load and it runs under a strict Content-Security-Policy.
 
 ```elm
 import Sky.Core.Process as Process exposing (Process)
@@ -1207,17 +1242,21 @@ view model =
 | `Terminal.update` | `(Msg -> msg) -> Msg -> Terminal -> ( Terminal, Cmd msg )` |
 | `Terminal.view` | `(Msg -> msg) -> Terminal -> List (Attribute msg) -> Element msg` |
 | `Terminal.process`, `Terminal.exitStatus` | the attached process, and how it ended |
-| `Terminal.encodeOutput`, `Terminal.encodeExit` | the widget command payloads, for custom wiring |
+| `Process.screen` | `{ view, gen, full, waitMs } -> Process -> Task Error Screen`: the next screen frame for one widget (what `Terminal` calls; for custom wiring) |
 
-**How it works.** The output is read with `Process.readWithin` (a chain of `Cmd.perform` reads, no subscription) and each chunk goes to the widget with `Cmd.toIsland` as base64 with its ring offsets, so a character split across two chunks decodes correctly and a repeated chunk is written once. A key press or a paste in the widget arrives as typed input and goes to `Process.write`; the widget measures how many columns and rows fit its box and a change goes to `Process.resize`. When the process ends, the widget prints how (`[process exited with code 0]`).
+**How it works.** `Terminal` reads the screen with `Process.screen` (a chain of `Cmd.perform` reads, no subscription) and sends each frame to the widget with `Cmd.toIsland`. A frame is the difference between what the widget shows and the screen: scroll ops (a region moved up or down by N rows, and which lines went to the scrollback), changed row spans as runs of text with their colours, the cursor, the title (`OSC 0/2`) and the bell. Frames are at least 16 ms apart, so a flood of output (`yes`, `cat` of a big file) costs the page one frame per paint at most: the output between two frames coalesces into one diff. A key press or a paste arrives as typed input and goes to `Process.write` (in bracketed-paste mode a paste is wrapped; in cursor-keys mode the arrows send `ESC O`); the widget measures how many columns and rows fit its box and a change goes to `Process.resize`, which resizes the server's screen first. When the process ends, the screen prints how (`[process exited with code 0]`).
 
-**Reconnects.** The widget holds nothing the server does not have. When it mounts again (a reload, a navigation back, a lost session connection that re-rendered it), it asks for a repaint, and the terminal replays the process output from the oldest byte the output ring still holds (1 MiB by default, `Process.withBufferSize`). A dropped SSE connection that does not remount the widget loses nothing it needs: typing keeps working when the connection comes back. The output is read from offsets rather than with `Process.events`, because a process read by an `events` subscription cannot be read again from an offset.
+**Drawing.** One draw pass per animation frame repaints only the rows the frames since the last paint changed: per row, one clear, one `fillRect` per run of equal background, one `fillText` per run of equal colour and font, and the underline and strike rules. A wide or non-ASCII character is drawn in its own cell. Over the canvas lies a transparent text layer, one row per screen row in the same font and row height: a screen reader reads it, a mouse selects it and copy (Cmd+C, or Ctrl+Shift+C with a selection) copies it. A polite live region announces changed rows at most once a second. The mouse wheel scrolls through the scrollback (not on the alternate screen); a key press returns to the bottom. Without a 2D canvas the text layer is shown instead, without colours.
+
+**Reconnects.** The widget holds nothing the server does not have. When it mounts again (a reload, a navigation back, a lost session connection that re-rendered it), it asks for a repaint and gets one frame: the size, the scrollback (the last 1000 lines) and every row of the current screen. No output bytes are replayed. Every frame names the frame it applies on top of; a widget that sees a gap (a frame was lost on the way, which a full SSE buffer can do) asks for the same repaint. After the last frame of a burst the server sends a check frame that only restates the frame number, so a lost last frame is found within a second and not at the next output. Because the screen consumes every byte as the process writes it, a slow page or a dropped connection never makes the screen wrong: it only gets fewer, bigger frames. (Output written before the first `Process.screen` call comes from the process's output ring, 1 MiB by default; if the ring overwrote its start, the screen starts from the oldest byte it holds.)
+
+**Design decisions, measured.** The run is in `docs/perf/runs/terminal-20260928/` (method, scripts and figures). The previous widget (a DOM renderer of styled `<span>` rows fed the raw output as base64) spent 2.2 s of main thread on a 4 MiB `yes`, missed 83 of 91 animation frames on a 120 × 40 colour stress, and under a flood lost the SSE frames at the end of the output (the terminal stopped short of the last line until the next output). The canvas renderer with server-side frames: 34 ms from the first frame to the last paint for the same `yes`, 6 of 92 animation frames missed on the colour stress, and the flood ends on the right last line. The DOM span renderer is removed: the canvas was faster on every workload measured, and the text layer keeps what the spans gave (selection, copy, a screen reader) and is the fallback. **Binary frames were measured and not built:** a compact binary encoding of the same frames, base64-encoded for SSE, is 35% smaller than JSON on the colour stress before compression, but through a gzip stream flushed per message (what a compressing proxy does to SSE) it saves 4% on `yes` and is larger on `seq` (+21%), the redraws (+45%) and the colour stress (+2%). A binary WebSocket path for terminal islands would add a second transport that the strict CSP, proxies, reconnect and the header-session transport would each have to be proven against, for no measured saving; the frames stay JSON on the island SSE channel.
 
 **Targets.** Sky.Live (`--target web`) and the desktop window. A Sky.Spa build (`web:app` and the native client targets) refuses a program that uses `Std.Ui.Terminal`, naming the module and the target that works: the PTY lives on the server, and Sky.Spa cannot send a widget command from a server branch. A terminal target (Sky.Tui) renders the empty element. A child process spawned from a Sky.Live session is closed when the session ends.
 
 **Security.** The terminal gives whoever sees the page a shell with the server's rights. Put it behind `Std.Auth` (or an equivalent check in `update`), and spawn the least-privileged program that does the job.
 
-The regression gates are `island_terminal_test.go` (the VT renderer in node: cursor moves, colours, erase, wrap, scrolling, the alternate screen, UTF-8 across chunks, key mapping), `process_terminal_test.go` (the scrollback replay on a real PTY), `UiCanvasConformanceTest` (the payloads) and `scripts/ui-canvas-terminal-e2e.sh` (`echo hi`, resize with `stty size`, a dropped SSE connection and a reload, under `SKY_CSP=strict`).
+The regression gates are `term_screen_test.go` (the server screen against known sequences, and every frame applied to a model of the widget must give the screen exactly, over random sequences, random resizes and floods), `island_terminal_test.go` (the widget in node: the op model, gap detection, keys, the text-layer fallback, draw batching against a recording canvas context, and frames made by the Go screen applied by the JS model), `process_terminal_test.go` (a real shell on a PTY: remount repaint, a ring overflow, the check frame, resize), `UiCanvasConformanceTest` (the element) and `scripts/ui-canvas-terminal-e2e.sh` (canvas drawing, `echo hi`, selection and copy, a full-screen redraw loop within its frame budget, resize with `stty size`, a dropped SSE connection and a reload, under `SKY_CSP=strict`).
 
 ## Putting it all together — a non-trivial example
 

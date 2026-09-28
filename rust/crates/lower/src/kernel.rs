@@ -314,6 +314,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Subprocess", "write", "rt.Subprocess_write"),
     ("Subprocess", "closeStdin", "rt.Subprocess_closeStdin"),
     ("Subprocess", "resize", "rt.Subprocess_resize"),
+    ("Subprocess", "screen", "rt.Subprocess_screen"),
     ("Subprocess", "kill", "rt.Subprocess_kill"),
     ("Subprocess", "wait", "rt.Subprocess_wait"),
     ("Subprocess", "pid", "rt.Subprocess_pid"),

@@ -11,11 +11,17 @@ app (--target web) and as a Sky.Spa app (--target web:app).
     TextChanged; `reset` sends it Cmd.toIsland; `swap` changes its id, which
     remounts it from props.
   - `counter` (Std.Ui.island) sends a mixed-case "Inc" event decoded as Int.
+  - `sink` (Std.Ui.island) takes a flood: `flood` sends it 400 "item"
+    commands and a final "state" in ONE update, past every SSE buffer. The
+    delivery contract says each command arrives once and in order, or the
+    island is resynced (remounted, and the island event "resync" reaches
+    `update`), which answers with the current "state".
 
 -}
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
+import Sky.Core.List as List
 import Sky.Core.Json.Encode as Encode
 import Sky.Core.Json.Decode as Decode
 import Std.Cmd as Cmd exposing (Cmd)
@@ -32,6 +38,8 @@ type alias Model =
     , text : String
     , ctr : Int
     , edId : String
+    , flooded : Int
+    , resyncs : Int
     }
 
 type Msg
@@ -42,11 +50,20 @@ type Msg
     | CounterInc Int
     | ResetEditor
     | SwapId
+    | Flood
+    | SinkResynced String
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { ticks = 0, running = False, text = "", ctr = 0, edId = "ed-a" }
+    ( { ticks = 0
+      , running = False
+      , text = ""
+      , ctr = 0
+      , edId = "ed-a"
+      , flooded = 0
+      , resyncs = 0
+      }
     , Cmd.none
     )
 
@@ -80,6 +97,27 @@ update msg model =
 
         SwapId ->
             ( { model | edId = "ed-b" }, Cmd.none )
+
+        Flood ->
+            ( { model | flooded = 400 }
+            , Cmd.batch
+                  (List.map
+                      (\i ->
+                          Cmd.toIsland
+                              "sink"
+                              "item"
+                              (Encode.object [ ( "i", Encode.int i ) ]))
+                      (List.range 0 399)
+                      ++ [ sinkState 400 ])
+            )
+
+        SinkResynced _ ->
+            ( { model | resyncs = model.resyncs + 1 }, sinkState model.flooded )
+
+
+sinkState : Int -> Cmd Msg
+sinkState n =
+    Cmd.toIsland "sink" "state" (Encode.object [ ( "n", Encode.int n ) ])
 
 
 editor : Model -> Element Msg
@@ -127,6 +165,17 @@ counter model =
         ]
 
 
+sink : Element Msg
+sink =
+    Ui.island
+        { name = "sink", id = "sink", props = Encode.object [] }
+        [ Ui.onIslandEvent
+              "resync"
+              (Decode.field "reason" Decode.string)
+              SinkResynced
+        ]
+
+
 view : Model -> Element Msg
 view model =
     Ui.column
@@ -134,6 +183,12 @@ view model =
         [ Ui.row [] [ Ui.text ("ticks=" ++ String.fromInt model.ticks) ]
         , Ui.row [] [ Ui.text ("server-text=" ++ model.text) ]
         , Ui.row [] [ Ui.text ("ctr=" ++ String.fromInt model.ctr) ]
+        , Ui.row
+              []
+              [ Ui.text
+                    ("flood=" ++ String.fromInt model.flooded ++ " resyncs="
+                        ++ String.fromInt model.resyncs)
+              ]
         , Ui.row
               []
               [ Ui.button [] { onPress = Just Start, label = Ui.text "start" } ]
@@ -149,8 +204,12 @@ view model =
         , Ui.row
               []
               [ Ui.button [] { onPress = Just SwapId, label = Ui.text "swap" } ]
+        , Ui.row
+              []
+              [ Ui.button [] { onPress = Just Flood, label = Ui.text "flood" } ]
         , editor model
         , counter model
+        , sink
         ]
 
 

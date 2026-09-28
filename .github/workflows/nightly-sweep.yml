@@ -230,8 +230,9 @@ jobs:
         run: scripts/islands-e2e.sh
       # Std.Ui.Canvas pointer events in scene units (Sky.Live and Sky.Spa; the
       # Sky.Spa client must build SVG in the SVG namespace), Ui.text wrapping,
-      # and Std.Ui.Terminal on a PTY: echo, resize, a dropped SSE connection
-      # and a reload that repaints the scrollback. Strict CSP.
+      # and Std.Ui.Terminal on a PTY: canvas drawing, echo, copy, a redraw
+      # loop within its frame budget, resize, a dropped SSE connection and a
+      # reload repainted from the server's screen. Strict CSP.
       - name: Gate — Std.Ui canvas, text wrapping + terminal e2e (strict CSP)
         run: scripts/ui-canvas-terminal-e2e.sh
       # Sky.Live without cookies: the header session transport in a browser

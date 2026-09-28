@@ -995,15 +995,20 @@ readAll p offset acc =
 | `events` | `Process -> (Event -> msg) -> Sub msg` (`Output Stream Chunk`, then one `Exited ExitStatus`) |
 | `write` / `closeStdin` | `Process -> String -> Task Error ()` / `Process -> Task Error ()` |
 | `resize` | `Process -> { cols : Int, rows : Int } -> Task Error ()` (PTY only; `Err InvalidInput` otherwise) |
+| `screen` | `{ view : String, gen : Int, full : Bool, waitMs : Int } -> Process -> Task Error Screen` (the next frame of the terminal screen the runtime emulates, for the terminal widget `view`; what `Std.Ui.Terminal` calls) |
 | `kill` | `Process -> Signal -> Task Error ()` (`Interrupt`, `Terminate`, `Kill`, `Hangup`; to the whole process group) |
 | `wait` | `Process -> Task Error ExitStatus` (`ExitCode Int` or `Signalled Int`) |
 | `pid` / `close` | the OS process id / kill if running, release, forget |
 
 `Chunk` is `{ data, from, next, dropped, eof }`. With a PTY all output is one
 merged stream on `Stdout`. To show a PTY child in a Sky.Live page, use
-`Std.Ui.Terminal`: it reads the output from offsets with `readWithin`, so a
-remounted terminal can replay its scrollback (see
-[Terminal](skyui/overview.md#terminal--a-pty-in-the-page-stduiterminal)).
+`Std.Ui.Terminal`: it reads the process's screen with `screen`. The runtime
+emulates the terminal on the server (every output byte runs through a VT100 /
+xterm screen as it is written) and sends the widget screen-diff frames, so a
+remounted terminal is repainted from the screen and its last 1000 scrollback
+lines (see [Terminal](skyui/overview.md#terminal--a-pty-in-the-page-stduiterminal)).
+`Screen` is `{ changed, frame, eof }`: `frame` is the widget command payload,
+`eof` says the process ended and its exit line is on the screen.
 
 **One consumer mode per process.** Read the output from a Task (`readFrom`,
 `readWithin`) or from a Sub (`events`), not both. The first one used fixes the
@@ -1808,7 +1813,7 @@ Sub-modules:
 - **`Std.Ui.Keyed`** — `keyed` (emits `sky-key` for diff identity)
 - **`Std.Ui.Responsive`** — `classifyDevice / adapt {phone, tablet, desktop}`
 - **`Std.Ui.Canvas`** — typed 2D scenes (v0.27.0). `scene { width, height, label } shapes` / `sceneWith attrs cfg shapes` with `rect / circle / ellipse / line / polyline / polygon / path (List PathCommand) / text / group`, paint (`fill / noFill / stroke / strokeWidth / opacity / fontSize / anchorStart / anchorMiddle / anchorEnd`), transforms (`translate / rotate / scale`) and events (`onClick msg`, `onPointerDown / onPointerMove / onPointerUp : (Point -> msg)` in scene units). SVG on Sky.Live, Sky.Spa and the desktop window; Braille cells on Sky.Tui. See [Canvas](skyui/overview.md#canvas--typed-2d-scenes-stduicanvas).
-- **`Std.Ui.Terminal`** — an interactive terminal element bound to a `Process.withPty` child (v0.27.0): `init id`, `attach toMsg process`, `update toMsg msg`, `view toMsg terminal attrs`. A built-in widget island renders a VT100 / xterm subset; output streams with `Process.readWithin` + `Cmd.toIsland`, a remount replays the scrollback. Sky.Live and desktop; refused on Sky.Spa targets. See [Terminal](skyui/overview.md#terminal--a-pty-in-the-page-stduiterminal).
+- **`Std.Ui.Terminal`** — an interactive terminal element bound to a `Process.withPty` child (v0.27.0): `init id`, `attach toMsg process`, `update toMsg msg`, `view toMsg terminal attrs`. The runtime emulates the terminal on the server and a built-in widget island draws screen-diff frames on a canvas (`Process.screen` + `Cmd.toIsland`; a transparent text layer keeps selection, copy and screen readers); a remount is repainted from the screen and its scrollback. Sky.Live and desktop; refused on Sky.Spa targets. See [Terminal](skyui/overview.md#terminal--a-pty-in-the-page-stduiterminal).
 - **`Std.Ui.Chart`** — typed chart primitives (v0.16.0). `line / area / bar / sparkline / heatmap` accept typed `Series` records ({label, color, points : List Point}) and render to inline-styled SVG. Pair with `Ui.layoutWith` to embed in dashboards (used by the bundled Sky Console + `examples/26-ui-showcase`). XSS-hardened: all axis ticks + tooltip labels HTML-escape through the same renderer as text content; no innerHTML, no `data-sky-eval`.
 - **`Std.Ui.Animation`** — typed CSS keyframe animation DSL (v0.15.57). Build via `defaultSpec "fadeIn" |> withDuration 500 |> withEasing easeOut |> withKeyframes [(0, [Transform.opacity 0.0]), (100, [Transform.opacity 1.0])]` + `Animation.attribute spec`.  Auto-wrapped in `@media (prefers-reduced-motion: no-preference)` by default; opt out via `withRespectReducedMotion False` only when motion is semantically required (loading spinner, progress indicator).
 - **`Std.Ui.Transition`** — typed CSS transitions (v0.15.57). `Transition.attribute [property "background-color", duration 200, easing easeOut]` pairs with `Background.hoverColor` so the browser animates between base + `:hover` states.  Also auto-wrapped in the reduced-motion guard.  Use `attributeUnsafe` to opt out.

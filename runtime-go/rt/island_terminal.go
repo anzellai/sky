@@ -1,13 +1,37 @@
 package rt
 
-// terminalWidgetJS is the built-in "sky-terminal" widget island: a small
-// VT100 / xterm subset renderer that Std.Ui.Terminal binds to a PTY process.
+// terminalWidgetJS is the built-in "sky-terminal" widget island that
+// Std.Ui.Terminal binds to a PTY process. It is a renderer only: the
+// terminal is emulated on the server (term_screen.go), and the widget
+// applies the screen-diff frames the server sends (term_frame.go has the
+// op list) to its copy of the grid and draws it on a <canvas>.
+//
 // It rides in the same same-origin client files as the island runtime (it
 // must come right after islandClientJS, which defines window.Sky.island), so a
 // strict Content-Security-Policy (script-src 'self') runs it and no widget
 // file has to be loaded. The Rust build reads this literal as a raw string, so
 // it must hold no backquote. It sets styles through the CSSOM and text through
-// textContent only (no innerHTML, no style attribute, no eval).
+// textContent only (no innerHTML, no style attribute, no eval); the selection
+// colour is a constructed stylesheet (adoptedStyleSheets), which no
+// style-src policy blocks.
+//
+// Drawing. A frame marks the rows it changed; one draw pass per animation
+// frame repaints only those rows, each as one clear, one fillRect per run of
+// equal background, one fillText per run of equal colour and font (ASCII
+// cells; a wide or non-ASCII character is drawn in its own cell), and the
+// underline / strike rules. Frames that arrive between two paints cost no
+// drawing of their own. Without a 2D canvas (an old browser, a test DOM)
+// the text layer below is shown instead, without colours.
+//
+// Text layer. Over the canvas lies one transparent text row per screen
+// row, in the same font and row height: it is what a screen reader reads,
+// what a mouse selects and what copy (Cmd+C, or Ctrl+Shift+C with a
+// selection) copies. A polite live region announces the rows a frame
+// changed, at most once a second.
+//
+// Scrollback. The widget keeps the server's scrollback (1000 lines); the
+// mouse wheel scrolls through it (not on the alternate screen), and a key
+// press goes back to the bottom.
 //
 // The protocol (island name "sky-terminal"):
 //
@@ -17,38 +41,27 @@ package rt
 //	widget -> app  (Std.Ui.onIslandEvent)
 //	  "resize"     {"cols": Int, "rows": Int}: the measured size, sent on
 //	               mount and whenever it changes (debounced 50 ms)
-//	  "ready"      {}: sent once after the first "resize" on every mount; the
-//	               widget holds nothing, so the app replays the scrollback
-//	               ("reset", then "output" from offset 0)
+//	  "ready"      {}: sent once after the first "resize" on every mount, and
+//	               again when a frame does not apply on top of the last one
+//	               (a frame was lost on the way): the app answers with a
+//	               repaint (a frame with base -1)
 //	  "input"      {"data": String}: keystrokes and pastes, batched for up to
-//	               10 ms into one event
+//	               10 ms into one event (a paste in bracketed-paste mode is
+//	               wrapped in ESC [200~ ... ESC [201~)
 //
 //	app -> widget  (Cmd.toIsland id name payload)
-//	  "reset"      {}: clear the screen, the scrollback and the offset
-//	  "output"     {"data": base64 String, "from": Int, "next": Int,
-//	               "dropped": Bool}: the bytes of the process output that
-//	               start at offset "from"; "next" is the offset after them.
-//	               Bytes the widget already has (below its own offset) are
-//	               skipped, so a repeated or overlapping chunk writes each
-//	               byte once. Bytes are decoded as streaming UTF-8, so a
-//	               character split across two chunks decodes correctly. A
-//	               chunk that starts past the widget's offset without
-//	               "dropped" (the ring overwrote them) means commands were
-//	               lost on the way: the widget sends "ready" again, once until
-//	               the next "reset", to get a repaint.
-//	  "exit"       {"code": Int|null, "signal": Int|null}: prints
-//	               "[process exited with code N]" or
-//	               "[process terminated by signal N]"
+//	  "frame"      a screen-diff frame (term_frame.go)
 //
 //	attributes the widget sets on the island element: tabindex 0, role
 //	"application", aria-label, data-term-ready "1" (after mount),
-//	data-term-cols and data-term-rows (after every resize). They are not in
-//	the server's sky-* / data-sky-* namespace, so an HTML swap that adopts the
+//	data-term-cols and data-term-rows (the measured size, after every
+//	resize), data-term-renderer ("canvas" or "text"), data-term-title (the
+//	OSC title) and data-term-bell (the bell count). They are not in the
+//	server's sky-* / data-sky-* namespace, so an HTML swap that adopts the
 //	element keeps them.
 //
-// The cursor is drawn as an inverse cell whenever it is visible (focus does
-// not change it). A wide character (CJK, emoji) takes one cell. The VT core
-// is exposed for tests as window.Sky.__vt (VT, b64ToBytes, keyToSeq, utf8).
+// The model, the line decoder and the key mapping are exposed for tests as
+// window.Sky.__term.
 const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.go): the "sky-terminal" island.
 (function () {
   "use strict";
@@ -57,6 +70,7 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
   if (!Sky.island || Sky.__terminal) return;
   Sky.__terminal = true;
   var SCROLLBACK = 1000;
+  var FONT = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
   var DEF_FG = "#d4d4d4", DEF_BG = "#1e1e1e";
   var BASIC = ["#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
     "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#ffffff"];
@@ -66,7 +80,6 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
   }
   function rgb(r, g, b) { return "#" + hex2(r) + hex2(g) + hex2(b); }
   function palette(n) {
-    if (typeof n !== "number" || isNaN(n) || n < 0 || n > 255) return undefined;
     n = n | 0;
     if (n < 16) return BASIC[n];
     if (n < 232) {
@@ -77,433 +90,127 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
     var v = 8 + 10 * (n - 232);
     return rgb(v, v, v);
   }
+  // colour: -1 the default, 0-255 the palette, 256 + 0xRRGGBB a true colour.
+  function colour(v, dflt) {
+    if (typeof v !== "number" || v < 0) return dflt;
+    if (v < 256) return palette(v);
+    v -= 256;
+    return rgb((v >> 16) & 255, (v >> 8) & 255, v & 255);
+  }
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
-  function newAttr() {
-    return { fg: null, bg: null, bold: false, dim: false, italic: false, underline: false, inverse: false };
-  }
-  function copyAttr(a) {
-    return { fg: a.fg, bg: a.bg, bold: a.bold, dim: a.dim, italic: a.italic, underline: a.underline, inverse: a.inverse };
-  }
 
-  // ── The VT core: no DOM ──────────────────────────────────────────
-  // Parser states: 0 ground, 1 after ESC, 2 CSI, 3 OSC / DCS string,
-  // 4 ESC inside a string, 5 skip one character (charset designation).
-  function VT(cols, rows) {
-    this.cols = clamp((cols | 0) || 80, 1, 1000);
-    this.rows = clamp((rows | 0) || 24, 1, 1000);
-    this.scrollback = [];
-    this.reset();
+  // ── The screen model: the frame ops, no DOM ──────────────────────
+  var DEF = [-1, -1, 0];
+  var BLANK = { t: " ", s: DEF, w: 1 };
+  // decodeLine turns [style, text, ...] (from index i) into cells. A cell is
+  // {t: text, s: [fg, bg, flags], w: 1 | 2 | 0 (the tail of a wide one)}.
+  function decodeLine(styles, runs, i) {
+    var out = [];
+    for (i = i || 0; i + 1 < runs.length; i += 2) {
+      var s = styles[runs[i]] || DEF, fl = s[2] | 0, text = String(runs[i + 1]);
+      var wide = (fl & 64) !== 0, cw = wide ? 2 : 1;
+      if (fl & 128) {
+        out.push({ t: text, s: s, w: cw });
+        if (wide) out.push({ t: "", s: s, w: 0 });
+        continue;
+      }
+      for (var k = 0; k < text.length; k++) {
+        var c = text.charAt(k), code = text.charCodeAt(k);
+        if (code >= 0xD800 && code <= 0xDBFF && k + 1 < text.length) { c = text.substr(k, 2); k++; }
+        out.push(c === " " && fl === 0 ? BLANK : { t: c, s: s, w: cw });
+        if (wide) out.push({ t: "", s: s, w: 0 });
+      }
+    }
+    return out;
   }
-  VT.prototype.blank = function () {
-    return { ch: " ", fg: null, bg: this.attr ? this.attr.bg : null, bold: false, dim: false,
-      italic: false, underline: false, inverse: false };
-  };
-  VT.prototype.blankLine = function () {
-    var l = [];
-    for (var i = 0; i < this.cols; i++) l.push(this.blank());
-    return l;
-  };
-  VT.prototype.reset = function (keepScrollback) {
-    if (!keepScrollback) this.scrollback = [];
-    this.attr = newAttr();
-    this.lines = [];
-    for (var y = 0; y < this.rows; y++) this.lines.push(this.blankLine());
-    this.cursor = { x: 0, y: 0, visible: true };
-    this.wrapPending = false;
-    this.autowrap = true;
-    this.top = 0;
-    this.bottom = this.rows - 1;
-    this.saved = null;
-    this.alt = null;
-    this.state = 0;
-    this.params = "";
-    this.priv = "";
-  };
-  VT.prototype.write = function (s) {
-    s = String(s);
-    for (var i = 0; i < s.length; i++) {
-      var c = s.charAt(i), code = s.charCodeAt(i);
-      if (code >= 0xD800 && code <= 0xDBFF && i + 1 < s.length) {
-        var lo = s.charCodeAt(i + 1);
-        if (lo >= 0xDC00 && lo <= 0xDFFF) { c = s.substr(i, 2); i++; }
-      }
-      this.feed(c, code);
-    }
-  };
-  VT.prototype.feed = function (c, code) {
-    switch (this.state) {
-      case 1: this.esc(c); return;
-      case 2:
-        if (code === 0x1b) { this.state = 1; return; }
-        if (code === 0x18 || code === 0x1a) { this.state = 0; return; }
-        if (code < 0x20) { this.control(code); return; }
-        if (code >= 0x40 && code <= 0x7e) { this.state = 0; this.csi(c); return; }
-        if (c === "?" || c === ">" || c === "=" || c === "<") { this.priv += c; return; }
-        this.params += c;
-        return;
-      case 3:
-        if (code === 7) { this.state = 0; return; }
-        if (code === 0x1b) { this.state = 4; return; }
-        return;
-      case 4:
-        this.state = 0;
-        if (c !== "\\") { this.state = 1; this.esc(c); }
-        return;
-      case 5: this.state = 0; return;
-    }
-    if (code === 0x1b) { this.state = 1; return; }
-    if (code < 0x20 || code === 0x7f) { this.control(code); return; }
-    this.print(c);
-  };
-  VT.prototype.esc = function (c) {
-    this.state = 0;
-    switch (c) {
-      case "[": this.state = 2; this.params = ""; this.priv = ""; return;
-      case "]": case "P": case "X": case "^": case "_": this.state = 3; return;
-      case "7": this.save(); return;
-      case "8": this.restore(); return;
-      case "c": this.reset(true); return;
-      case "D": this.index(); return;
-      case "M": this.reverseIndex(); return;
-      case "E": this.cursor.x = 0; this.index(); return;
-      case "(": case ")": case "*": case "+": case "-": case ".": case "/":
-      case "#": case "%": case " ":
-        this.state = 5; return;
-    }
-  };
-  VT.prototype.control = function (code) {
-    var cur = this.cursor;
-    switch (code) {
-      case 8: if (cur.x > 0) cur.x--; this.wrapPending = false; return;
-      case 9: cur.x = Math.min(this.cols - 1, (Math.floor(cur.x / 8) + 1) * 8); this.wrapPending = false; return;
-      case 10: case 11: case 12: this.index(); return;
-      case 13: cur.x = 0; this.wrapPending = false; return;
-    }
-  };
-  VT.prototype.index = function () {
-    this.wrapPending = false;
-    if (this.cursor.y === this.bottom) this.scrollUp(1);
-    else if (this.cursor.y < this.rows - 1) this.cursor.y++;
-  };
-  VT.prototype.reverseIndex = function () {
-    this.wrapPending = false;
-    if (this.cursor.y === this.top) this.scrollDown(1);
-    else if (this.cursor.y > 0) this.cursor.y--;
-  };
-  VT.prototype.scrollUp = function (n) {
-    n = clamp(n, 1, this.bottom - this.top + 1);
-    for (var k = 0; k < n; k++) {
-      var gone = this.lines.splice(this.top, 1)[0];
-      if (this.top === 0 && !this.alt) {
-        this.scrollback.push(gone);
-        if (this.scrollback.length > SCROLLBACK) this.scrollback.shift();
-      }
-      this.lines.splice(this.bottom, 0, this.blankLine());
-    }
-  };
-  VT.prototype.scrollDown = function (n) {
-    n = clamp(n, 1, this.bottom - this.top + 1);
-    for (var k = 0; k < n; k++) {
-      this.lines.splice(this.bottom, 1);
-      this.lines.splice(this.top, 0, this.blankLine());
-    }
-  };
-  VT.prototype.print = function (c) {
-    var cur = this.cursor, a = this.attr;
-    if (this.wrapPending) {
-      this.wrapPending = false;
-      if (this.autowrap) { cur.x = 0; this.index(); }
-    }
-    this.lines[cur.y][cur.x] = { ch: c, fg: a.fg, bg: a.bg, bold: a.bold, dim: a.dim, italic: a.italic,
-      underline: a.underline, inverse: a.inverse };
-    if (cur.x >= this.cols - 1) {
-      if (this.autowrap) this.wrapPending = true;
-    } else {
-      cur.x++;
-    }
-  };
-  VT.prototype.save = function () {
-    this.saved = { x: this.cursor.x, y: this.cursor.y, attr: copyAttr(this.attr) };
-  };
-  VT.prototype.restore = function () {
-    this.wrapPending = false;
-    if (!this.saved) { this.cursor.x = 0; this.cursor.y = 0; return; }
-    this.cursor.x = clamp(this.saved.x, 0, this.cols - 1);
-    this.cursor.y = clamp(this.saved.y, 0, this.rows - 1);
-    this.attr = copyAttr(this.saved.attr);
-  };
-  VT.prototype.erase = function (y, a, b) {
-    var line = this.lines[y];
-    for (var i = Math.max(0, a); i < b && i < this.cols; i++) line[i] = this.blank();
-  };
-  VT.prototype.csi = function (fin) {
-    var raw = this.params.split(/[;:]/), n = [], i;
-    for (i = 0; i < raw.length; i++) n.push(raw[i] === "" ? NaN : parseInt(raw[i], 10));
-    var priv = this.priv;
-    function num(k, d) { var v = n[k]; return (v === undefined || isNaN(v)) ? d : v; }
-    function cnt(k) { var v = num(k, 1); return v < 1 ? 1 : v; }
-    if (priv !== "" && priv !== "?") return;
-    var cur = this.cursor, C = this.cols, R = this.rows, line, k;
-    if (priv === "?") {
-      if (fin !== "h" && fin !== "l") return;
-      var on = fin === "h";
-      for (i = 0; i < n.length; i++) {
-        switch (n[i]) {
-          case 25: cur.visible = on; break;
-          case 7: this.autowrap = on; if (!on) this.wrapPending = false; break;
-          case 47: case 1047: case 1049:
-            if (on) this.enterAlt(); else this.leaveAlt();
-            break;
-        }
-      }
-      return;
-    }
-    if (fin.charCodeAt(0) === 96) fin = "G"; // HPA is CHA
-    if (fin === "m") { this.sgr(n); return; }
-    this.wrapPending = false;
-    switch (fin) {
-      case "A": cur.y = Math.max(0, cur.y - cnt(0)); return;
-      case "B": cur.y = Math.min(R - 1, cur.y + cnt(0)); return;
-      case "C": cur.x = Math.min(C - 1, cur.x + cnt(0)); return;
-      case "D": cur.x = Math.max(0, cur.x - cnt(0)); return;
-      case "E": cur.y = Math.min(R - 1, cur.y + cnt(0)); cur.x = 0; return;
-      case "F": cur.y = Math.max(0, cur.y - cnt(0)); cur.x = 0; return;
-      case "G": cur.x = clamp(cnt(0) - 1, 0, C - 1); return;
-      case "d": cur.y = clamp(cnt(0) - 1, 0, R - 1); return;
-      case "H": case "f":
-        cur.y = clamp(cnt(0) - 1, 0, R - 1);
-        cur.x = clamp(cnt(1) - 1, 0, C - 1);
-        return;
-      case "J":
-        switch (num(0, 0)) {
-          case 0:
-            this.erase(cur.y, cur.x, C);
-            for (k = cur.y + 1; k < R; k++) this.lines[k] = this.blankLine();
-            return;
-          case 1:
-            for (k = 0; k < cur.y; k++) this.lines[k] = this.blankLine();
-            this.erase(cur.y, 0, cur.x + 1);
-            return;
-          case 2:
-            for (k = 0; k < R; k++) this.lines[k] = this.blankLine();
-            return;
-          case 3:
-            this.scrollback = [];
-            return;
-        }
-        return;
-      case "K":
-        switch (num(0, 0)) {
-          case 0: this.erase(cur.y, cur.x, C); return;
-          case 1: this.erase(cur.y, 0, cur.x + 1); return;
-          case 2: this.erase(cur.y, 0, C); return;
-        }
-        return;
-      case "L":
-        if (cur.y < this.top || cur.y > this.bottom) return;
-        for (k = 0; k < Math.min(cnt(0), this.bottom - cur.y + 1); k++) {
-          this.lines.splice(this.bottom, 1);
-          this.lines.splice(cur.y, 0, this.blankLine());
-        }
-        cur.x = 0;
-        return;
-      case "M":
-        if (cur.y < this.top || cur.y > this.bottom) return;
-        for (k = 0; k < Math.min(cnt(0), this.bottom - cur.y + 1); k++) {
-          this.lines.splice(cur.y, 1);
-          this.lines.splice(this.bottom, 0, this.blankLine());
-        }
-        cur.x = 0;
-        return;
-      case "P":
-        line = this.lines[cur.y];
-        line.splice(cur.x, Math.min(cnt(0), C - cur.x));
-        while (line.length < C) line.push(this.blank());
-        return;
-      case "@":
-        line = this.lines[cur.y];
-        for (k = 0; k < Math.min(cnt(0), C - cur.x); k++) line.splice(cur.x, 0, this.blank());
-        line.length = C;
-        return;
-      case "X": this.erase(cur.y, cur.x, cur.x + cnt(0)); return;
-      case "S": this.scrollUp(cnt(0)); return;
-      case "T": this.scrollDown(cnt(0)); return;
-      case "r":
-        var t = num(0, 1) - 1, b = num(1, R) - 1;
-        if (t < 0) t = 0;
-        if (b >= R || b < 0) b = R - 1;
-        if (t < b) { this.top = t; this.bottom = b; }
-        cur.x = 0;
-        cur.y = 0;
-        return;
-      case "s": this.save(); return;
-      case "u": this.restore(); return;
-    }
-  };
-  VT.prototype.sgr = function (n) {
-    if (n.length === 0) n = [0];
-    for (var i = 0; i < n.length; i++) {
-      var v = isNaN(n[i]) ? 0 : n[i], a = this.attr;
-      if (v === 0) { this.attr = newAttr(); continue; }
-      if (v === 1) a.bold = true;
-      else if (v === 2) a.dim = true;
-      else if (v === 3) a.italic = true;
-      else if (v === 4) a.underline = true;
-      else if (v === 7) a.inverse = true;
-      else if (v === 22) { a.bold = false; a.dim = false; }
-      else if (v === 23) a.italic = false;
-      else if (v === 24) a.underline = false;
-      else if (v === 27) a.inverse = false;
-      else if (v >= 30 && v <= 37) a.fg = BASIC[v - 30];
-      else if (v === 39) a.fg = null;
-      else if (v >= 40 && v <= 47) a.bg = BASIC[v - 40];
-      else if (v === 49) a.bg = null;
-      else if (v >= 90 && v <= 97) a.fg = BASIC[v - 90 + 8];
-      else if (v >= 100 && v <= 107) a.bg = BASIC[v - 100 + 8];
-      else if (v === 38 || v === 48) {
-        var col, mode = n[i + 1];
-        if (mode === 5) { col = palette(n[i + 2]); i += 2; }
-        else if (mode === 2) { col = rgb(n[i + 2], n[i + 3], n[i + 4]); i += 4; }
-        else { i = n.length; }
-        if (col !== undefined) { if (v === 38) a.fg = col; else a.bg = col; }
-      }
-    }
-  };
-  VT.prototype.enterAlt = function () {
-    if (this.alt) return;
-    this.alt = { lines: this.lines, x: this.cursor.x, y: this.cursor.y, attr: copyAttr(this.attr) };
-    this.lines = [];
-    for (var y = 0; y < this.rows; y++) this.lines.push(this.blankLine());
-    this.wrapPending = false;
-  };
-  VT.prototype.leaveAlt = function () {
-    var s = this.alt;
-    if (!s) return;
-    this.alt = null;
-    this.lines = s.lines;
-    this.cursor.x = clamp(s.x, 0, this.cols - 1);
-    this.cursor.y = clamp(s.y, 0, this.rows - 1);
-    this.attr = s.attr;
-    this.wrapPending = false;
-  };
-  VT.prototype.fitCols = function (lines) {
-    for (var y = 0; y < lines.length; y++) {
-      var l = lines[y];
-      if (l.length > this.cols) l.length = this.cols;
-      while (l.length < this.cols) l.push(this.blank());
-    }
-  };
-  VT.prototype.resize = function (cols, rows) {
-    cols = clamp((cols | 0) || this.cols, 1, 1000);
-    rows = clamp((rows | 0) || this.rows, 1, 1000);
-    this.cols = cols;
-    var cur = this.cursor, lines = this.lines;
-    this.fitCols(lines);
-    if (rows < lines.length) {
-      var drop = Math.max(0, Math.min(cur.y - (rows - 1), lines.length - rows));
-      for (var k = 0; k < drop; k++) {
-        var gone = lines.shift();
-        if (!this.alt) {
-          this.scrollback.push(gone);
-          if (this.scrollback.length > SCROLLBACK) this.scrollback.shift();
-        }
-      }
-      cur.y -= drop;
-      lines.length = rows;
-    }
-    while (lines.length < rows) lines.push(this.blankLine());
-    if (this.alt) {
-      var al = this.alt.lines;
-      this.fitCols(al);
-      if (al.length > rows) al.length = rows;
-      while (al.length < rows) al.push(this.blankLine());
-    }
-    this.rows = rows;
-    this.top = 0;
-    this.bottom = rows - 1;
-    cur.x = clamp(cur.x, 0, cols - 1);
-    cur.y = clamp(cur.y, 0, rows - 1);
-    this.wrapPending = false;
-  };
-  function rowText(l) {
+  function lineText(cells) {
     var s = "";
-    for (var i = 0; i < l.length; i++) s += l[i].ch;
+    for (var i = 0; i < cells.length; i++) if (cells[i].w !== 0) s += cells[i].t;
     return s.replace(/ +$/, "");
   }
-  VT.prototype.text = function () {
-    var out = [];
-    for (var y = 0; y < this.lines.length; y++) out.push(rowText(this.lines[y]));
-    return out;
+  function Model() {
+    this.cols = 0; this.rows = 0; this.grid = []; this.sb = []; this.seq = 0;
+    this.cx = 0; this.cy = 0; this.cursorOn = true; this.title = ""; this.modes = 0; this.bells = 0;
+    this.dirty = {}; this.all = true; this.pushed = 0;
+  }
+  Model.prototype.blankRow = function () {
+    var r = [];
+    for (var i = 0; i < this.cols; i++) r.push(BLANK);
+    return r;
   };
-  VT.prototype.scrollbackText = function () {
-    var out = [];
-    for (var y = 0; y < this.scrollback.length; y++) out.push(rowText(this.scrollback[y]));
-    return out;
-  };
-
-  // ── Bytes: base64 and streaming UTF-8 ────────────────────────────
-  var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  function b64ToBytes(s) {
-    s = String(s === null || s === undefined ? "" : s).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
-    var bin = null, i, u;
-    if (typeof w.atob === "function") {
-      try { bin = w.atob(s); } catch (_) { bin = null; }
-    }
-    if (bin !== null) {
-      u = new Uint8Array(bin.length);
-      for (i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i) & 255;
-      return u;
-    }
-    var clean = s.replace(/[^A-Za-z0-9+\/]/g, ""), out = [], buf = 0, bits = 0;
-    for (i = 0; i < clean.length; i++) {
-      buf = (buf << 6) | B64.indexOf(clean.charAt(i));
-      bits += 6;
-      if (bits >= 8) {
-        bits -= 8;
-        out.push((buf >> bits) & 255);
-        buf &= (1 << bits) - 1;
+  Model.prototype.mark = function (a, b) { for (var y = a; y <= b; y++) this.dirty[y] = true; };
+  Model.prototype.push = function (l) { this.sb.push(l); this.pushed++; };
+  // apply applies one frame; false when it does not apply on top of the
+  // last one (a frame was lost): the caller asks for a repaint.
+  Model.prototype.apply = function (f) {
+    if (!f || typeof f.seq !== "number" || !f.ops) return true;
+    if (f.base !== -1 && f.base !== this.seq) return false;
+    this.seq = f.seq;
+    var st = f.st || [], ops = f.ops, i, k, y;
+    for (var o = 0; o < ops.length; o++) {
+      var op = ops[o];
+      switch (op[0]) {
+        case "z":
+          this.cols = clamp(op[1] | 0, 1, 1000);
+          this.rows = clamp(op[2] | 0, 1, 1000);
+          this.grid = [];
+          for (y = 0; y < this.rows; y++) this.grid.push(this.blankRow());
+          this.all = true;
+          break;
+        case "x":
+          this.sb = [];
+          this.all = true;
+          break;
+        case "p":
+          for (i = 1; i < op.length; i++) this.push(decodeLine(st, op[i], 0));
+          break;
+        case "u": case "d":
+          var top = op[1] | 0, bot = Math.min(op[2] | 0, this.rows - 1), n = op[3] | 0;
+          if (top > bot) break;
+          k = Math.min(n, bot - top + 1);
+          if (op[0] === "u") {
+            var p = op[4];
+            if (p === 1) { for (i = 0; i < k; i++) this.push(this.grid[top + i]); }
+            else if (p && p.length) { for (i = 0; i < p.length; i++) this.push(decodeLine(st, p[i], 0)); }
+            this.grid.splice(top, k);
+            for (i = 0; i < k; i++) this.grid.splice(bot - k + 1 + i, 0, this.blankRow());
+          } else {
+            this.grid.splice(bot - k + 1, k);
+            for (i = 0; i < k; i++) this.grid.splice(top, 0, this.blankRow());
+          }
+          this.mark(top, bot);
+          break;
+        case "r":
+          y = op[1] | 0;
+          if (y < 0 || y >= this.rows) break;
+          var x = op[2] | 0, cells = decodeLine(st, op, 3), row = this.grid[y].slice();
+          for (i = x; i < this.cols; i++) row[i] = i - x < cells.length ? cells[i - x] : BLANK;
+          this.grid[y] = row;
+          this.dirty[y] = true;
+          break;
+        case "c":
+          this.dirty[this.cy] = true;
+          this.cx = op[1] | 0; this.cy = op[2] | 0; this.cursorOn = op[3] === 1;
+          this.dirty[this.cy] = true;
+          break;
+        case "t": this.title = String(op[1]); break;
+        case "m": this.modes = op[1] | 0; break;
+        case "b": this.bells += op[1] | 0; break;
       }
     }
-    return new Uint8Array(out);
-  }
-  function cpString(cp) {
-    if (cp < 0x10000) return String.fromCharCode(cp);
-    cp -= 0x10000;
-    return String.fromCharCode(0xD800 + (cp >> 10), 0xDC00 + (cp & 0x3ff));
-  }
-  // utf8(forceManual) returns a streaming decoder: a function from bytes to
-  // text that keeps an incomplete trailing sequence for the next call.
-  function utf8(forceManual) {
-    if (!forceManual && typeof w.TextDecoder === "function") {
-      try {
-        var td = new w.TextDecoder("utf-8");
-        return function (bytes) { return td.decode(bytes, { stream: true }); };
-      } catch (_) {}
-    }
-    var pend = [];
-    return function (bytes) {
-      var all = pend.concat(Array.prototype.slice.call(bytes)), out = "", i = 0;
-      pend = [];
-      while (i < all.length) {
-        var b = all[i], need, cp, k, ok = true;
-        if (b < 0x80) { out += String.fromCharCode(b); i++; continue; }
-        if (b >= 0xC2 && b < 0xE0) { need = 1; cp = b & 0x1f; }
-        else if (b >= 0xE0 && b < 0xF0) { need = 2; cp = b & 0x0f; }
-        else if (b >= 0xF0 && b < 0xF5) { need = 3; cp = b & 0x07; }
-        else { out += "�"; i++; continue; }
-        for (k = 1; k <= need && i + k < all.length; k++) {
-          var cb = all[i + k];
-          if ((cb & 0xC0) !== 0x80) { ok = false; break; }
-          cp = (cp << 6) | (cb & 0x3f);
-        }
-        if (!ok) { out += "�"; i++; continue; }
-        if (i + need >= all.length) { pend = all.slice(i); break; }
-        out += cpString(cp);
-        i += need + 1;
-      }
-      return out;
-    };
-  }
+    if (this.sb.length > SCROLLBACK) this.sb.splice(0, this.sb.length - SCROLLBACK);
+    return true;
+  };
+  Model.prototype.text = function () {
+    var out = [];
+    for (var y = 0; y < this.grid.length; y++) out.push(lineText(this.grid[y]));
+    return out;
+  };
+  Model.prototype.scrollbackText = function () {
+    var out = [];
+    for (var y = 0; y < this.sb.length; y++) out.push(lineText(this.sb[y]));
+    return out;
+  };
 
   // ── Keys ─────────────────────────────────────────────────────────
   var NAMED = {
@@ -513,6 +220,7 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
     PageUp: "\x1b[5~", PageDown: "\x1b[6~",
     F1: "\x1bOP", F2: "\x1bOQ", F3: "\x1bOR", F4: "\x1bOS"
   };
+  var APP = { ArrowUp: "\x1bOA", ArrowDown: "\x1bOB", ArrowRight: "\x1bOC", ArrowLeft: "\x1bOD", Home: "\x1bOH", End: "\x1bOF" };
   var MODIFIER = { Shift: 1, Control: 1, Alt: 1, AltGraph: 1, Meta: 1, OS: 1, CapsLock: 1,
     NumLock: 1, ScrollLock: 1, Fn: 1, Dead: 1, Unidentified: 1, Process: 1 };
   function single(k) {
@@ -521,11 +229,14 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
     var h = k.charCodeAt(0), l = k.charCodeAt(1);
     return h >= 0xD800 && h <= 0xDBFF && l >= 0xDC00 && l <= 0xDFFF;
   }
-  function keyToSeq(ev) {
+  // keyToSeq maps a keydown to the bytes a terminal sends; appCursor is the
+  // cursor-keys mode (?1h) the program set.
+  function keyToSeq(ev, appCursor) {
     if (!ev || typeof ev.key !== "string" || ev.key === "") return null;
     var k = ev.key, seq;
     if (ev.metaKey || MODIFIER[k]) return null;
     if (k === "Tab" && ev.shiftKey) seq = "\x1b[Z";
+    else if (appCursor && !ev.ctrlKey && !ev.altKey && Object.prototype.hasOwnProperty.call(APP, k)) seq = APP[k];
     else if (Object.prototype.hasOwnProperty.call(NAMED, k)) seq = NAMED[k];
     else if (!single(k)) return null;
     else if (ev.ctrlKey) {
@@ -544,41 +255,49 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
     return seq;
   }
 
-  Sky.__vt = { VT: VT, b64ToBytes: b64ToBytes, keyToSeq: keyToSeq, utf8: utf8 };
+  Sky.__term = { Model: Model, decodeLine: decodeLine, lineText: lineText, keyToSeq: keyToSeq, colour: colour };
 
   // ── The island ───────────────────────────────────────────────────
   function labelOf(props) {
     return props && typeof props.label === "string" && props.label !== "" ? props.label : "Terminal";
   }
-  // eff is a cell's effective style; inv is true for the cursor cell.
-  function eff(c, inv) {
-    var fg = c.fg || DEF_FG, bg = c.bg || DEF_BG;
-    if (c.inverse !== inv) { var t = fg; fg = bg; bg = t; }
-    return { fg: fg, bg: bg, b: c.bold, u: c.underline, i: c.italic, d: c.dim,
-      key: fg + "|" + bg + "|" + (c.bold ? 1 : 0) + (c.underline ? 1 : 0) + (c.italic ? 1 : 0) + (c.dim ? 1 : 0) };
+  var sheetDone = false;
+  function selectionSheet() {
+    if (sheetDone) return;
+    sheetDone = true;
+    try {
+      var d = w.document, sh = new w.CSSStyleSheet();
+      sh.replaceSync(".sky-term-text ::selection, .sky-term-text::selection { background: rgba(90, 140, 255, 0.45); color: transparent; }");
+      d.adoptedStyleSheets = d.adoptedStyleSheets.concat([sh]);
+    } catch (_) {}
   }
+  function now() { return w.performance && w.performance.now ? w.performance.now() : Date.now(); }
   Sky.island("sky-terminal", {
     mount: function (el, props, send) {
       var self = this, d = w.document;
       self.el = el;
       self.send = send;
       self.dead = false;
-      self.next = 0;
-      self.dec = utf8(false);
+      self.model = new Model();
+      self.back = 0;
+      self.gapAsked = false;
       self.q = "";
       self.qt = null;
       self.rsz = null;
       self.raf = null;
+      self.texts = [];
       self.rowEls = [];
-      self.sigs = [];
+      self.lastSay = 0;
+      self.say = null;
+      self.bellT = null;
+      self.passes = 0;
       el.tabIndex = 0;
       el.setAttribute("role", "application");
       el.setAttribute("aria-label", labelOf(props));
       var box = d.createElement("div"), s = box.style;
-      s.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
-      s.whiteSpace = "pre";
+      s.position = "relative";
+      s.fontFamily = FONT;
       s.overflow = "hidden";
-      s.lineHeight = "1.2";
       s.background = DEF_BG;
       s.color = DEF_FG;
       s.width = "100%";
@@ -586,19 +305,60 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
       s.boxSizing = "border-box";
       el.appendChild(box);
       self.box = box;
+      var cv = d.createElement("canvas"), ctx = null;
+      try { ctx = cv.getContext ? cv.getContext("2d") : null; } catch (_) { ctx = null; }
+      if (ctx) {
+        cv.style.position = "absolute";
+        cv.style.left = "0";
+        cv.style.top = "0";
+        cv.style.display = "block";
+        box.appendChild(cv);
+        self.canvas = cv;
+        self.ctx = ctx;
+      } else {
+        self.canvas = null;
+        self.ctx = null;
+      }
+      el.setAttribute("data-term-renderer", ctx ? "canvas" : "text");
+      var tl = d.createElement("div"), ts = tl.style;
+      tl.className = "sky-term-text";
+      ts.position = "absolute";
+      ts.left = "0";
+      ts.top = "0";
+      ts.width = "100%";
+      ts.whiteSpace = "pre";
+      ts.overflow = "hidden";
+      ts.color = ctx ? "transparent" : DEF_FG;
+      ts.userSelect = "text";
+      ts.cursor = "text";
+      box.appendChild(tl);
+      self.textLayer = tl;
+      var live = d.createElement("div"), ls = live.style;
+      live.setAttribute("aria-live", "polite");
+      live.setAttribute("aria-atomic", "false");
+      ls.position = "absolute";
+      ls.width = "1px";
+      ls.height = "1px";
+      ls.overflow = "hidden";
+      ls.clip = "rect(0 0 0 0)";
+      ls.whiteSpace = "pre";
+      box.appendChild(live);
+      self.live = live;
+      if (ctx) selectionSheet();
       var sz = self.measure();
       self.size = sz;
-      self.vt = new VT(sz[0], sz[1]);
-      self.layoutRows();
+      self.layout();
       self.onKey = function (ev) { self.key(ev); };
       self.onPaste = function (ev) { self.paste(ev); };
-      self.onDown = function () { try { el.focus(); } catch (_) {} };
-      self.onFocus = function () { self.schedule(); };
+      self.onDown = function () { try { el.focus({ preventScroll: true }); } catch (_) { try { el.focus(); } catch (_) {} } };
+      self.onFocus = function () { self.model.dirty[self.model.cy] = true; self.schedule(); };
+      self.onWheel = function (ev) { self.wheel(ev); };
       el.addEventListener("keydown", self.onKey);
       el.addEventListener("paste", self.onPaste);
       el.addEventListener("mousedown", self.onDown);
       el.addEventListener("focus", self.onFocus);
       el.addEventListener("blur", self.onFocus);
+      el.addEventListener("wheel", self.onWheel);
       self.onResize = function () { self.resized(); };
       if (typeof w.ResizeObserver === "function") {
         self.ro = new w.ResizeObserver(self.onResize);
@@ -612,32 +372,43 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
       send("ready", {});
       self.schedule();
     },
+    // measure returns [cols, rows] for the box and sets the cell size.
     measure: function () {
       var el = this.el, d = w.document, probe = d.createElement("span"), ps = probe.style, r = null;
       probe.textContent = "MMMMMMMMMM";
       ps.position = "absolute";
       ps.visibility = "hidden";
       ps.whiteSpace = "pre";
+      ps.lineHeight = "1.2";
       this.box.appendChild(probe);
       try { r = probe.getBoundingClientRect ? probe.getBoundingClientRect() : null; } catch (_) { r = null; }
       this.box.removeChild(probe);
-      var cw = r ? r.width / 10 : 0, chh = r ? r.height : 0;
-      var W = el.clientWidth || 0, H = el.clientHeight || 0;
-      if (!(cw > 0) || !(chh > 0) || !(W > 0) || !(H > 0)) return [80, 24];
-      return [clamp(Math.floor(W / cw), 2, 500), clamp(Math.floor(H / chh), 2, 200)];
+      var cw = r ? r.width / 10 : 0, chh = r ? Math.round(r.height) : 0;
+      var fs = 0;
+      try { fs = parseFloat(w.getComputedStyle(this.box).fontSize) || 0; } catch (_) { fs = 0; }
+      this.cw = cw > 0 ? cw : 8;
+      this.ch = chh > 0 ? chh : 16;
+      this.fontPx = fs > 0 ? fs : Math.round(this.ch / 1.2);
+      this.W = el.clientWidth || 0;
+      this.H = el.clientHeight || 0;
+      if (!(cw > 0) || !(chh > 0) || !(this.W > 0) || !(this.H > 0)) return [80, 24];
+      return [clamp(Math.floor(this.W / cw), 2, 500), clamp(Math.floor(this.H / chh), 2, 200)];
     },
-    layoutRows: function () {
-      var d = w.document, n = this.vt.rows;
-      while (this.rowEls.length < n) {
-        var row = d.createElement("div");
-        row.style.whiteSpace = "pre";
-        this.box.appendChild(row);
-        this.rowEls.push(row);
+    // layout sizes the canvas to the box (in device pixels) and the text rows
+    // to the cell height, and repaints everything.
+    layout: function () {
+      var dpr = w.devicePixelRatio || 1, cv = this.canvas;
+      if (cv) {
+        cv.width = Math.max(1, Math.round(this.W * dpr));
+        cv.height = Math.max(1, Math.round(this.H * dpr));
+        cv.style.width = this.W + "px";
+        cv.style.height = this.H + "px";
+        this.dpr = dpr;
       }
-      while (this.rowEls.length > n) this.box.removeChild(this.rowEls.pop());
-      this.sigs = [];
-      this.el.setAttribute("data-term-cols", String(this.vt.cols));
-      this.el.setAttribute("data-term-rows", String(this.vt.rows));
+      this.textLayer.style.lineHeight = this.ch + "px";
+      this.el.setAttribute("data-term-cols", String(this.size[0]));
+      this.el.setAttribute("data-term-rows", String(this.size[1]));
+      this.model.all = true;
     },
     resized: function () {
       var self = this;
@@ -646,19 +417,28 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
       self.rsz = setTimeout(function () {
         self.rsz = null;
         if (self.dead) return;
-        var sz = self.measure();
-        if (sz[0] === self.size[0] && sz[1] === self.size[1]) return;
+        var W = self.W, H = self.H, sz = self.measure();
+        if (sz[0] === self.size[0] && sz[1] === self.size[1] && W === self.W && H === self.H) return;
+        var sent = sz[0] !== self.size[0] || sz[1] !== self.size[1];
         self.size = sz;
-        self.vt.resize(sz[0], sz[1]);
-        self.layoutRows();
-        self.send("resize", { cols: sz[0], rows: sz[1] });
+        self.layout();
+        if (sent) self.send("resize", { cols: sz[0], rows: sz[1] });
         self.schedule();
       }, 50);
     },
+    selected: function () {
+      try {
+        var sel = w.getSelection && w.getSelection();
+        return !!(sel && !sel.isCollapsed && String(sel) !== "" && sel.anchorNode && this.textLayer.contains(sel.anchorNode));
+      } catch (_) { return false; }
+    },
     key: function (ev) {
-      var seq = keyToSeq(ev);
+      // Copy with a selection: Ctrl+Shift+C (Cmd+C never reaches keyToSeq).
+      if (ev.ctrlKey && ev.shiftKey && (ev.key === "C" || ev.key === "c") && this.selected()) return;
+      var seq = keyToSeq(ev, (this.model.modes & 1) !== 0);
       if (seq === null) return;
       if (ev.preventDefault) ev.preventDefault();
+      if (this.back) { this.back = 0; this.model.all = true; this.schedule(); }
       this.queue(seq);
     },
     paste: function (ev) {
@@ -666,7 +446,20 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
       try { t = (ev.clipboardData || w.clipboardData).getData("text"); } catch (_) { t = ""; }
       if (!t) return;
       if (ev.preventDefault) ev.preventDefault();
-      this.queue(String(t).replace(/\r?\n/g, "\r"));
+      t = String(t).replace(/\r?\n/g, "\r");
+      if (this.model.modes & 2) t = "\x1b[200~" + t + "\x1b[201~";
+      this.queue(t);
+    },
+    wheel: function (ev) {
+      var m = this.model;
+      if ((m.modes & 4) || !m.sb.length) return;
+      var lines = ev.deltaY < 0 ? -3 : (ev.deltaY > 0 ? 3 : 0);
+      var b = clamp(this.back - lines, 0, m.sb.length);
+      if (b === this.back) return;
+      if (ev.preventDefault) ev.preventDefault();
+      this.back = b;
+      m.all = true;
+      this.schedule();
     },
     queue: function (s) {
       var self = this;
@@ -693,81 +486,159 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
         self.raf = setTimeout(f, 16);
       }
     },
+    // lineAt is the line shown on screen row y (scrolled back by this.back).
+    lineAt: function (y) {
+      var m = this.model, i = m.sb.length - this.back + y;
+      return i < m.sb.length ? m.sb[i] : (m.grid[i - m.sb.length] || null);
+    },
+    // render is the one draw pass of an animation frame: the dirty rows.
     render: function () {
-      var vt = this.vt, cur = vt.cursor;
-      for (var y = 0; y < vt.rows && y < this.rowEls.length; y++) {
-        var line = vt.lines[y], cx = (cur.visible && cur.y === y) ? Math.min(cur.x, vt.cols - 1) : -1;
-        var sig = "", x;
-        for (x = 0; x < line.length; x++) sig += eff(line[x], x === cx).key + "\u0001" + line[x].ch + "\u0002";
-        if (sig === this.sigs[y]) continue;
-        this.sigs[y] = sig;
-        this.paintRow(this.rowEls[y], line, cx);
+      var m = this.model, rows = this.size[1], y;
+      this.passes++;
+      if (!m.cols) return;
+      var n = Math.max(rows, m.rows);
+      while (this.rowEls.length < n) {
+        var r = w.document.createElement("div");
+        r.style.height = this.ch + "px";
+        r.style.overflow = "hidden";
+        this.textLayer.appendChild(r);
+        this.rowEls.push(r);
+        this.texts.push(null);
+      }
+      while (this.rowEls.length > n) { this.textLayer.removeChild(this.rowEls.pop()); this.texts.pop(); }
+      var all = m.all || this.back > 0, ctx = this.ctx, changed = [];
+      if (ctx && all) {
+        ctx.setTransform(this.dpr || 1, 0, 0, this.dpr || 1, 0, 0);
+        ctx.fillStyle = DEF_BG;
+        ctx.fillRect(0, 0, this.W, this.H);
+      }
+      var focused = w.document.activeElement === this.el;
+      for (y = 0; y < n; y++) {
+        if (!all && !m.dirty[y]) continue;
+        var line = this.lineAt(y) || [];
+        var cx = (this.back === 0 && m.cursorOn && m.cy === y) ? Math.min(m.cx, m.cols - 1) : -1;
+        if (ctx) this.drawRow(ctx, y, line, cx, focused);
+        var t = lineText(line);
+        if (this.texts[y] !== t) {
+          this.texts[y] = t;
+          this.rowEls[y].textContent = t;
+          if (t !== "") changed.push(t);
+        }
+      }
+      m.dirty = {};
+      m.all = false;
+      if (changed.length) this.announce(changed);
+    },
+    font: function (fl) {
+      return ((fl & 4) ? "italic " : "") + ((fl & 1) ? "bold " : "") + this.fontPx + "px " + FONT;
+    },
+    drawRow: function (ctx, y, line, cx, focused) {
+      var cw = this.cw, ch = this.ch, y0 = y * ch, mid = y0 + ch / 2, i, c, x;
+      ctx.setTransform(this.dpr || 1, 0, 0, this.dpr || 1, 0, 0);
+      ctx.fillStyle = DEF_BG;
+      ctx.fillRect(0, y0, this.W, ch);
+      // Resolve each cell's colours once (inverse and the cursor swap them).
+      var n = Math.min(line.length, this.model.cols), fgs = [], bgs = [];
+      for (x = 0; x < n; x++) {
+        c = line[x];
+        var s = c.s, fg = colour(s[0], DEF_FG), bg = colour(s[1], DEF_BG);
+        var inv = ((s[2] & 16) !== 0) !== (x === cx && focused);
+        if (inv) { var t = fg; fg = bg; bg = t; }
+        fgs.push(fg);
+        bgs.push(bg);
+      }
+      // Backgrounds: one fillRect per run of equal colour.
+      for (x = 0; x < n;) {
+        var b = bgs[x], e = x + 1;
+        while (e < n && bgs[e] === b) e++;
+        if (b !== DEF_BG) { ctx.fillStyle = b; ctx.fillRect(x * cw, y0, (e - x) * cw, ch); }
+        x = e;
+      }
+      ctx.textBaseline = "middle";
+      // Text: one fillText per run of ASCII cells of equal colour and font.
+      var run = "", rx = 0, rf = null, rfont = null, rdim = false;
+      var self = this;
+      function flush() {
+        run = run.replace(/ +$/, "");
+        if (run !== "") {
+          ctx.globalAlpha = rdim ? 0.6 : 1;
+          ctx.fillStyle = rf;
+          ctx.fillText(run, rx * cw, mid);
+        }
+        run = "";
+      }
+      for (x = 0; x < n; x++) {
+        c = line[x];
+        if (c.w === 0) continue;
+        var fl = c.s[2] | 0, f = self.font(fl), dim = (fl & 2) !== 0;
+        if (f !== rfont) { flush(); rfont = f; ctx.font = f; }
+        var ascii = c.w === 1 && c.t.length === 1 && c.t.charCodeAt(0) < 0x7f;
+        if (!ascii) {
+          flush();
+          if (c.t !== " " && c.t !== "") {
+            ctx.globalAlpha = dim ? 0.6 : 1;
+            ctx.fillStyle = fgs[x];
+            ctx.fillText(c.t, x * cw, mid);
+          }
+          continue;
+        }
+        if (run === "" || fgs[x] !== rf || dim !== rdim) { flush(); rx = x; rf = fgs[x]; rdim = dim; }
+        run += c.t;
+      }
+      flush();
+      ctx.globalAlpha = 1;
+      // Underline and strike: one rule per run.
+      for (x = 0; x < n;) {
+        var dec = line[x].s[2] & 40, col = fgs[x], e2 = x + 1;
+        while (e2 < n && (line[e2].s[2] & 40) === dec && fgs[e2] === col) e2++;
+        if (dec) {
+          ctx.fillStyle = col;
+          if (dec & 8) ctx.fillRect(x * cw, y0 + ch - 2, (e2 - x) * cw, 1);
+          if (dec & 32) ctx.fillRect(x * cw, mid, (e2 - x) * cw, 1);
+        }
+        x = e2;
+      }
+      if (cx >= 0 && !focused) {
+        ctx.strokeStyle = DEF_FG;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cx * cw + 0.5, y0 + 0.5, cw - 1, ch - 1);
       }
     },
-    paintRow: function (row, line, cx) {
-      var d = w.document;
-      while (row.firstChild) row.removeChild(row.firstChild);
-      var run = null, text = "";
-      function flushRun() {
-        if (run === null) return;
-        var span = d.createElement("span"), st = span.style;
-        span.textContent = text;
-        st.color = run.fg;
-        st.backgroundColor = run.bg;
-        if (run.b) st.fontWeight = "bold";
-        if (run.u) st.textDecoration = "underline";
-        if (run.i) st.fontStyle = "italic";
-        if (run.d) st.opacity = "0.7";
-        row.appendChild(span);
-      }
-      for (var x = 0; x < line.length; x++) {
-        var e = eff(line[x], x === cx);
-        if (run === null || e.key !== run.key) {
-          flushRun();
-          run = e;
-          text = "";
-        }
-        text += line[x].ch;
-      }
-      flushRun();
+    announce: function (lines) {
+      var self = this, t = now();
+      self.pendingSay = lines.slice(-5).join("\n");
+      if (self.say !== null) return;
+      var wait = Math.max(0, 1000 - (t - self.lastSay));
+      self.say = setTimeout(function () {
+        self.say = null;
+        self.lastSay = now();
+        if (!self.dead) self.live.textContent = self.pendingSay;
+      }, wait);
     },
     command: function (name, payload) {
-      payload = payload || {};
-      if (name === "reset") {
-        this.vt.reset();
-        this.next = 0;
-        this.dec = utf8(false);
-        this.sigs = [];
-        this.gapAsked = false;
-        this.schedule();
-        return;
-      }
-      if (name === "output") {
-        var bytes = b64ToBytes(payload.data);
-        var from = typeof payload.from === "number" ? payload.from : this.next;
-        var next = typeof payload.next === "number" ? payload.next : from + bytes.length;
-        if (from + bytes.length <= this.next) return;
-        if (from > this.next && !payload.dropped && !this.gapAsked) {
-          // Bytes are missing that the process's ring still holds (a command
-          // lost with a dropped connection): ask for a repaint, once until
-          // the reset arrives, and write what came meanwhile.
+      if (name !== "frame") return;
+      var m = this.model, before = m.bells, title = m.title;
+      m.pushed = 0;
+      if (!m.apply(payload)) {
+        if (!this.gapAsked) {
+          // A frame was lost on the way: ask for a repaint, once until it comes.
           this.gapAsked = true;
           this.send("ready", {});
         }
-        if (from < this.next) bytes = bytes.subarray(this.next - from);
-        var text = this.dec(bytes);
-        if (text) this.vt.write(text);
-        this.next = next;
-        this.schedule();
         return;
       }
-      if (name === "exit") {
-        var how = (payload.signal !== null && payload.signal !== undefined)
-          ? "terminated by signal " + payload.signal
-          : "exited with code " + (payload.code === null || payload.code === undefined ? "?" : payload.code);
-        this.vt.write("\r\n[process " + how + "]\r\n");
-        this.schedule();
-      }
+      if (payload && payload.base === -1) this.gapAsked = false;
+      if (this.back > 0) this.back = Math.min(this.back + m.pushed, m.sb.length);
+      if (m.title !== title) this.el.setAttribute("data-term-title", m.title);
+      if (m.bells !== before) this.bell();
+      this.schedule();
+    },
+    bell: function () {
+      var self = this, s = self.box.style;
+      self.el.setAttribute("data-term-bell", String(self.model.bells));
+      s.outline = "2px solid " + DEF_FG;
+      if (self.bellT !== null) clearTimeout(self.bellT);
+      self.bellT = setTimeout(function () { self.bellT = null; s.outline = ""; }, 150);
     },
     update: function (props) {
       this.el.setAttribute("aria-label", labelOf(props));
@@ -782,13 +653,16 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
       el.removeEventListener("mousedown", this.onDown);
       el.removeEventListener("focus", this.onFocus);
       el.removeEventListener("blur", this.onFocus);
+      el.removeEventListener("wheel", this.onWheel);
       if (this.qt !== null) clearTimeout(this.qt);
       if (this.rsz !== null) clearTimeout(this.rsz);
+      if (this.say !== null) clearTimeout(this.say);
+      if (this.bellT !== null) clearTimeout(this.bellT);
       if (this.raf !== null) {
         if (this.rafKind === 1 && w.cancelAnimationFrame) w.cancelAnimationFrame(this.raf);
         else clearTimeout(this.raf);
       }
-      this.qt = this.rsz = this.raf = null;
+      this.qt = this.rsz = this.raf = this.say = this.bellT = null;
     }
   });
 })();

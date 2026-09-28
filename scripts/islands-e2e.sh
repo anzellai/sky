@@ -10,12 +10,17 @@
 # scripts/islands-e2e-verify.mjs has the case list: typing in the widget
 # survives >= 100 re-renders of its parent, widget events arrive as typed Msgs
 # (a rejected payload is dropped), Cmd.toIsland reaches the widget, a new id
-# remounts it from props, and zero policy violations or console errors.
+# remounts it from props, a flood of 400 commands in one update is either
+# delivered whole and in order or ends in an explicit resync the app answers
+# (never a silent loss; the view patch the flood crowds out is recovered),
+# and zero policy violations or console errors.
 #
 # Proven to FAIL with island adoption disabled in the client runtime (the
 # widget remounted on every render and lost the typed text) and on the Sky.Spa
 # static shell before App.withHead was applied there (the widget file never
-# loaded), and to PASS on the fixed runtime.
+# loaded), and to PASS on the fixed runtime. The flood case FAILS on Sky.Live
+# before the island delivery contract (live_island_delivery.go): 384 of 400
+# commands were dropped with nothing to tell the widget.
 #
 # Prereqs (all fail loudly): a fresh sky-out/sky, go, node + playwright.
 set -euo pipefail

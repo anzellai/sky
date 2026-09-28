@@ -49,6 +49,30 @@
     }
   });
 
+  // A sink for the flood case: it records every "item" command (in the order
+  // it arrived) and the last "state". window.__sinkRuns keeps one list per
+  // mount, so a resync (a remount) starts a new list.
+  window.__sinkRuns = [];
+  window.Sky.island("sink", {
+    mount: function (el) {
+      this.got = [];
+      this.state = null;
+      window.__sinkRuns.push(this.got);
+      this.out = document.createElement("div");
+      this.out.className = "sink-state";
+      el.appendChild(this.out);
+      this.show();
+    },
+    show: function () {
+      this.out.textContent = "items=" + this.got.length + " state=" + this.state;
+    },
+    command: function (name, payload) {
+      if (name === "item") this.got.push(payload.i);
+      if (name === "state") this.state = payload.n;
+      this.show();
+    }
+  });
+
   // A click counter: send uses a mixed-case type on purpose (types are
   // matched case-insensitively).
   window.Sky.island("counter", {

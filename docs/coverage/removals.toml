@@ -679,3 +679,9 @@ symbol = "Std.Css.floatStr"
 reason = "internal helper, un-exposed from the Std.Ui / Std.Css public API in the B1 API-surface curation. Zero external references across sky-stdlib/examples/tests/apps/corpus/rust-fixtures/conformance (renderer, layout/flex, style-string, marker, grid-template, nearby-positioning, or wire-encoding machinery never intended as public API). Verified: full scripts/example-sweep.sh green, Std.Ui.* test suites green, cargo test -p sky green."
 owner  = "anzel"
 commit = "b1-curate-ui-css (pending squash)"
+
+[[removal]]
+symbol = "Std.Ui.Terminal.encodeOutput"
+reason = "v0.27.0 (unreleased) terminal redesign: the widget no longer takes raw output bytes. The runtime emulates the terminal on the server (runtime-go/rt/term_screen.go) and Process.screen returns screen-diff frames, so the base64 'output' payload has no consumer. Measured and recorded in docs/perf/runs/terminal-20260928/README.md. Std.Ui.Terminal.encodeExit went with it (the exit line is written into the server screen), and Sky.Core.Process.screen was added, so stdlib.values moves by -1 net. Their conformance and corpus cases were replaced by checks of the element Terminal.view renders; the frames are covered by term_screen_test.go, island_terminal_test.go and process_terminal_test.go."
+owner  = "anzel"
+commit = "fix/v027-terminal"

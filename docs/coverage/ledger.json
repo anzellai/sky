@@ -13117,10 +13117,12 @@
           ]
         },
         "Sky.Core.Process": {
-          "count": 2,
+          "count": 4,
           "symbols": [
+            "Screen",
             "pid",
-            "run"
+            "run",
+            "screen"
           ]
         },
         "Sky.Core.Pure": {
@@ -14033,13 +14035,6 @@
             "tablet"
           ]
         },
-        "Std.Ui.Terminal": {
-          "count": 2,
-          "symbols": [
-            "exitStatus",
-            "process"
-          ]
-        },
         "Std.Ui.Transform": {
           "count": 7,
           "symbols": [
@@ -14218,14 +14213,16 @@
           ]
         },
         "Sky.Core.Process": {
-          "count": 6,
+          "count": 8,
           "symbols": [
             "Event",
             "ExitStatus",
+            "Screen",
             "Signal",
             "Stream",
             "pid",
-            "run"
+            "run",
+            "screen"
           ]
         },
         "Sky.Core.Pure": {
@@ -15221,11 +15218,9 @@
           ]
         },
         "Std.Ui.Terminal": {
-          "count": 3,
+          "count": 1,
           "symbols": [
-            "Terminal",
-            "exitStatus",
-            "process"
+            "Terminal"
           ]
         },
         "Std.Ui.Transform": {
@@ -15292,8 +15287,8 @@
       "id": "apps:cli-verbs",
       "modules_imported": 54,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 357,
-      "refs_qualified": 333,
+      "refs_generous": 358,
+      "refs_qualified": 334,
       "role": "Layer2",
       "sky_files": 160,
       "sky_toml_sections": []
@@ -16450,8 +16445,8 @@
       "id": "tests/conformance",
       "modules_imported": 53,
       "path": "tests/conformance",
-      "refs_generous": 691,
-      "refs_qualified": 675,
+      "refs_generous": 696,
+      "refs_qualified": 680,
       "role": "Conformance",
       "sky_files": 41,
       "sky_toml_sections": []

@@ -1,7 +1,9 @@
 module UiCanvasConformanceTest exposing (main, tests)
 
-{-| Behavioral conformance for `Std.Ui.Canvas` (v0.27.0) and the terminal
-widget payloads of `Std.Ui.Terminal`.
+{-| Behavioral conformance for `Std.Ui.Canvas` (v0.27.0) and the element
+`Std.Ui.Terminal` renders. (The terminal's frames come from the runtime's
+screen emulator; runtime-go/rt/term_screen_test.go and
+island_terminal_test.go assert them.)
 
 The scene is asserted as the exact SVG it renders (the SVG golden): every web
 backend (Sky.Live, Sky.Spa, the desktop window) draws that markup, so the bytes
@@ -12,17 +14,21 @@ attribute the typed decoder hangs on.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
-import Sky.Core.Json.Encode as Encode
 import Std.Html as Html
 import Std.Ui as Ui
 import Std.Ui.Canvas as Canvas exposing (PathCommand(..))
 import Std.Ui.Terminal as Terminal
-import Sky.Core.Process exposing (ExitStatus(..))
 import Sky.Test as Test exposing (Test)
 
 type Msg
     = Moved Canvas.Point
     | Clicked
+    | Term Terminal.Msg
+
+
+termHtml : String
+termHtml =
+    Html.render (Ui.layout [] (Terminal.view Term (Terminal.init "shell") []))
 
 
 cfg : { width : Int
@@ -264,47 +270,55 @@ tests =
                                 ])))
           ]
     , Test.suite
-          "Std.Ui.Terminal — widget command payloads"
+          "Std.Ui.Terminal — the element and the state"
           [ Test.test
-                "output carries the bytes as base64 with their offsets"
+                "the view is the sky-terminal island with its id and label"
                 (\_ ->
-                    Test.equal
-                        "{\"data\":\"aGkNCg==\",\"from\":7,\"next\":11,\"dropped\":false}"
-                        (Encode.encode
-                            0
-                            (Terminal.encodeOutput
-                                { data = "hi\r\n"
-                                , from = 7
-                                , next = 11
-                                , dropped = False
-                                , eof = False
-                                })))
+                    let
+                        out = termHtml
+                    in
+                        Test.isTrue
+                            (String.contains
+                                "data-sky-island=\"sky-terminal\""
+                                out
+                                && String.contains
+                                       "data-sky-island-id=\"shell\""
+                                       out
+                                && String.contains "Terminal shell" out))
           , Test.test
-                "output carries raw UTF-8 bytes and the dropped flag"
+                "the view binds the widget's ready, input and resize events"
                 (\_ ->
-                    Test.equal
-                        "{\"data\":\"w6k=\",\"from\":0,\"next\":2,\"dropped\":true}"
-                        (Encode.encode
-                            0
-                            (Terminal.encodeOutput
-                                { data = "é"
-                                , from = 0
-                                , next = 2
-                                , dropped = True
-                                , eof = False
-                                })))
+                    let
+                        out = termHtml
+                    in
+                        Test.isTrue
+                            (String.contains "skyisland-ready" out
+                                && String.contains "skyisland-input" out
+                                && String.contains "skyisland-resize" out))
           , Test.test
-                "exit with a code"
+                "the caller's attributes come after the defaults (a height wins)"
                 (\_ ->
-                    Test.equal
-                        "{\"code\":3,\"signal\":null}"
-                        (Encode.encode 0 (Terminal.encodeExit (ExitCode 3))))
+                    Test.isTrue
+                        (String.contains
+                            "height: 400px"
+                            (Html.render
+                                (Ui.layout
+                                    []
+                                    (Terminal.view
+                                        Term
+                                        (Terminal.init "shell")
+                                        [ Ui.height (Ui.px 400) ])))))
           , Test.test
-                "exit by a signal"
+                "a new terminal has no process and no exit status"
                 (\_ ->
-                    Test.equal
-                        "{\"code\":null,\"signal\":9}"
-                        (Encode.encode 0 (Terminal.encodeExit (Signalled 9))))
+                    let
+                        t = Terminal.init "shell"
+                    in
+                        Test.equal
+                            ( True, True )
+                            ( Terminal.process t == Nothing
+                            , Terminal.exitStatus t == Nothing
+                            ))
           ]
     ]
 
