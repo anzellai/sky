@@ -871,6 +871,29 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`sky add ./dir` works for a fresh local Go module.** A module whose
+  `go.mod` declares a `go` line newer than the generated one (`go 1.26`
+  against `go 1.25.0`), or requirements of its own, was not loadable after
+  `require` + `replace`, and `sky add` failed with `inspector JSON parse:
+  invalid type: null`. The wiring now runs `go get <module>@v0.0.0`, the
+  inspector writes every list as `[]`, a failure names Go's own error, and a
+  failed add leaves `sky.toml` and `sky-out/go.mod` as they were.
+- **`sky install` refreshes an FFI surface made by another sky.** It compared
+  only `kernel.json`, so a surface with the old Task-era `.skyi` header was
+  reported `verified` and kept. Every generated file now carries a surface
+  format stamp; `sky install` compares all three files and refreshes a
+  surface with another stamp, and the build warns about such a surface.
+- **`sky test <file>` builds only that suite and its imports.** A type error
+  in another suite under `tests/` stopped every suite (exit 2).
+- **`sky doc` prints record type aliases with their fields** (`type alias
+  Chunk = { data : String , … }`, not `type alias Chunk`), and its first
+  line names the stdlib it reads: the working tree inside the Sky repository,
+  the embedded copy elsewhere.
+- **Test harnesses stop the servers they start on every exit path.** A gate
+  e2e run could leave its app server listening for hours. Every Node harness
+  spawn goes through `scripts/lib/child-guard.mjs`, and every shell script
+  that keeps a background PID traps EXIT, INT and TERM; an xtask test holds
+  both rules.
 - **`Cmd.toIsland`: a widget command is never lost silently (Sky.Live and
   Sky.Spa).** A flood of commands (400 in one update, in the
   `scripts/islands-e2e.sh` flood case) lost 384 of them on Sky.Live with
