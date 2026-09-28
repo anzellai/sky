@@ -3,6 +3,7 @@ package rt
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -39,7 +40,17 @@ const (
 	nativeOpSecureGet    = "sky:secureGet"
 	nativeOpSecureRemove = "sky:secureRemove"
 	nativeOpAuthenticate = "sky:authenticate"
+	nativeOpScanCode     = "sky:scanCode"
 )
+
+// nativeCodeFormats is every Std.Native.CodeFormat by its wire name, in the
+// order the Sky type declares them. Keep it in step with
+// sky-stdlib/Std/Native.sky (`formatName`); TestNativeCodeFormatsMatchTheStdlib
+// reads the Sky source and checks.
+var nativeCodeFormats = []string{
+	"qr", "aztec", "datamatrix", "pdf417", "ean8", "ean13",
+	"upce", "code39", "code93", "code128", "itf", "codabar",
+}
 
 // nativeKeyMax bounds a secure-store key. The Keychain account attribute and
 // an Android SharedPreferences key both take far more; the bound keeps a key a
@@ -76,6 +87,8 @@ func nativeShellErr(data string) any {
 		return ErrUnavailable(msg)
 	case "cancelled":
 		return ErrPermissionDenied("cancelled: " + msg)
+	case "denied":
+		return ErrPermissionDenied(msg)
 	case "invalid":
 		return ErrInvalidInput(msg)
 	default:
@@ -97,6 +110,16 @@ func nativeValidKey(key string) error {
 		}
 	}
 	return nil
+}
+
+// nativeFormatArgs reads the kernel's list of format wire names.
+func nativeFormatArgs(v any) []string {
+	xs := AsList(v)
+	out := make([]string, 0, len(xs))
+	for _, x := range xs {
+		out = append(out, AsString(x))
+	}
+	return out
 }
 
 func nativePayload(fields map[string]string) string {
@@ -187,6 +210,56 @@ func nativeAuthenticateVia(t nativeShellTransport, reason string) SkyResult[any,
 	}
 }
 
+// nativeScanReply is the shell's success reply for sky:scanCode: found is
+// false when the user closed the scanner without a code.
+type nativeScanReply struct {
+	Found  bool   `json:"found"`
+	Format string `json:"format"`
+	Text   string `json:"text"`
+}
+
+// nativeScanCodeVia runs sky:scanCode. The payload names the formats to look
+// for (comma-separated wire names; every format when the app asked for none)
+// and the prompt the scanner shows. The result is the list the Sky side
+// decodes: [] when the user closed the scanner, [format, text] for a code.
+// A shell that cannot scan (no camera, the iOS simulator, a desktop window)
+// rejects "unavailable:"; a refused camera permission rejects "denied:".
+func nativeScanCodeVia(t nativeShellTransport, formats []string, prompt string) SkyResult[any, any] {
+	for _, f := range formats {
+		if !slices.Contains(nativeCodeFormats, f) {
+			return Err[any, any](ErrInvalidInput("Native.scanCode: " + f + " is not a code format"))
+		}
+	}
+	want := formats
+	if len(want) == 0 {
+		want = nativeCodeFormats
+	}
+	r := t(nativeOpScanCode, nativePayload(map[string]string{
+		"formats": strings.Join(want, ","),
+		"prompt":  strings.TrimSpace(prompt),
+	}))
+	switch {
+	case !r.Present:
+		return Err[any, any](nativeNoShell("Native.scanCode"))
+	case !r.Ok:
+		return Err[any, any](nativeShellErr(r.Data))
+	}
+	var rep nativeScanReply
+	if err := json.Unmarshal([]byte(r.Data), &rep); err != nil {
+		return Err[any, any](ErrDecode("Native.scanCode: the shell replied with " +
+			"something that is not {found, format, text}: " + err.Error()))
+	}
+	if !rep.Found {
+		return Ok[any, any]([]any{})
+	}
+	if !slices.Contains(want, rep.Format) {
+		return Err[any, any](ErrDecode("Native.scanCode: the shell reported a " +
+			rep.Format + " code, which is not one of the formats the app asked for (" +
+			strings.Join(want, ", ") + ")"))
+	}
+	return Ok[any, any]([]any{rep.Format, rep.Text})
+}
+
 // ── the shell side (used by the macOS desktop shell) ─────────────────────────
 
 // nativeSecureStore is a platform secret store.
@@ -223,6 +296,10 @@ func nativeShellDispatch(store nativeSecureStore, auth nativeBiometric, op, payl
 		if auth == nil {
 			return "", errors.New("unavailable: this shell has no biometric prompt")
 		}
+	case nativeOpScanCode:
+		// The desktop window has no camera scanner. Scan with the iOS or
+		// Android app, or with a widget island in the web view.
+		return "", errors.New("unavailable: the desktop app has no camera code scanner")
 	default:
 		return "", errors.New("invalid: unknown op " + op)
 	}

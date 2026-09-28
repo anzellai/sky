@@ -25,6 +25,10 @@ module Std.Native exposing
     , secureGet
     , secureRemove
     , authenticate
+    , CodeFormat(..)
+    , ScanOptions
+    , ScannedCode
+    , scanCode
     , bridge
     )
 
@@ -41,8 +45,10 @@ module Std.Native exposing
 -- request and the Task returns `Err`.
 
 import Sky.Ffi as Ffi
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
 import Sky.Core.Secret exposing (Secret)
+import Sky.Core.Task as Task
 
 -- | A geographic fix: `lat`/`lng` in degrees, `accuracy` in metres.
 type alias Coords =
@@ -304,6 +310,185 @@ secureRemove =
 authenticate : String -> Task Error Bool
 authenticate =
     Ffi.kernel "Native_authenticate"
+
+-- | A barcode symbology `scanCode` looks for. A UPC-A code is reported as
+-- `Ean13` (its 13-digit form, with a leading 0) on every platform, the form
+-- Apple's Vision reports it in.
+type CodeFormat
+    = Qr
+    | Aztec
+    | DataMatrix
+    | Pdf417
+    | Ean8
+    | Ean13
+    | UpcE
+    | Code39
+    | Code93
+    | Code128
+    | Itf
+    | Codabar
+
+-- | What to scan for: the `formats` to recognise (an empty list means every
+-- `CodeFormat`) and the `prompt` the scanner shows above the camera view
+-- ("Point the camera at the pairing code").
+type alias ScanOptions =
+    { formats : List CodeFormat
+    , prompt : String
+    }
+
+-- | A code the camera read: its `format` and the `text` it carries.
+type alias ScannedCode =
+    { format : CodeFormat
+    , text : String
+    }
+
+
+-- | Scan a QR code or a barcode with the device camera. The native shell shows
+-- a full-screen scanner with a Cancel button: VisionKit's
+-- `DataScannerViewController` on iOS and iPadOS, the camera with the ZXing
+-- decoder on Android.
+--
+--   * `Ok (Just code)` — the camera read a code of one of the asked formats.
+--   * `Ok Nothing` — the user closed the scanner without one.
+--   * `Err PermissionDenied` — the user refused the camera.
+--   * `Err Unavailable` — no camera scanner here: a plain browser, the desktop
+--     window, a server, the iOS simulator (VisionKit's scanner needs a device
+--     camera), or a device without a camera.
+--
+--     Scan ->
+--         ( model
+--         , Cmd.perform
+--             (Native.scanCode { formats = [ Native.Qr ], prompt = "Scan the pairing code" })
+--             Scanned
+--         )
+--
+-- Declare the camera with `Bundle.withUsage Bundle.Camera "…"`: iOS shows the
+-- text in its permission prompt and Android asks for CAMERA. A build for either
+-- shell that calls `scanCode` without it fails and names that line. In a
+-- browser, scan with a widget island instead (see docs/skyapp/native.md).
+scanCode : ScanOptions -> Task Error (Maybe ScannedCode)
+scanCode options =
+    scanCodeWith (List.map formatName options.formats) options.prompt
+        |> Task.andThen decodeScan
+
+
+decodeScan : List String -> Task Error (Maybe ScannedCode)
+decodeScan reply =
+    case reply of
+
+        [] ->
+            Task.succeed Nothing
+
+        [name, text] ->
+            case formatFromName name of
+
+                Just format ->
+                    Task.succeed (Just { format = format, text = text })
+
+                Nothing ->
+                    Task.fail
+                        (Error.decode
+                            ("Native.scanCode: the shell reported an unknown code format "
+                                ++ name))
+
+        _ ->
+            Task.fail
+                (Error.decode
+                    "Native.scanCode: the shell reply is not a format and a text")
+
+
+-- | The wire name of a format (runtime-go/rt/native_shell.go
+-- `nativeCodeFormats` lists the same names in the same order).
+formatName : CodeFormat -> String
+formatName format =
+    case format of
+
+        Qr ->
+            "qr"
+
+        Aztec ->
+            "aztec"
+
+        DataMatrix ->
+            "datamatrix"
+
+        Pdf417 ->
+            "pdf417"
+
+        Ean8 ->
+            "ean8"
+
+        Ean13 ->
+            "ean13"
+
+        UpcE ->
+            "upce"
+
+        Code39 ->
+            "code39"
+
+        Code93 ->
+            "code93"
+
+        Code128 ->
+            "code128"
+
+        Itf ->
+            "itf"
+
+        Codabar ->
+            "codabar"
+
+
+formatFromName : String -> Maybe CodeFormat
+formatFromName name =
+    case name of
+
+        "qr" ->
+            Just Qr
+
+        "aztec" ->
+            Just Aztec
+
+        "datamatrix" ->
+            Just DataMatrix
+
+        "pdf417" ->
+            Just Pdf417
+
+        "ean8" ->
+            Just Ean8
+
+        "ean13" ->
+            Just Ean13
+
+        "upce" ->
+            Just UpcE
+
+        "code39" ->
+            Just Code39
+
+        "code93" ->
+            Just Code93
+
+        "code128" ->
+            Just Code128
+
+        "itf" ->
+            Just Itf
+
+        "codabar" ->
+            Just Codabar
+
+        _ ->
+            Nothing
+
+
+-- The kernel: the format wire names and the prompt, answered with [] (the
+-- scanner was closed) or [format, text].
+scanCodeWith : List String -> String -> Task Error (List String)
+scanCodeWith =
+    Ffi.kernel "Native_scanCode"
 
 
 -- | Call a CUSTOM native capability the app registers itself — the extension

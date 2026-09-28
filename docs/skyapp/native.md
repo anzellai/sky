@@ -1,12 +1,16 @@
 # Native shells: permissions, entitlements, secure storage, release
 
-The `mobile:ios`, `mobile:android` and `desktop:mac` targets wrap the Sky.Spa
-client in a native web view (see [Client targets](overview.md#client-targets--same-source-no-stdspa-entry)).
+The `mobile:ios`, `mobile:android`, `tablet:ipad`, `tablet:android` and
+`desktop:mac` targets wrap the Sky.Spa client in a native web view (see
+[Client targets](overview.md#client-targets--same-source-no-stdspa-entry)). A
+tablet build is the phone's shell: the iOS app declares both device families,
+and the Android app has no form-factor split. Before v0.27.0 `tablet:ipad` and
+`tablet:android` built the responsive web bundle, with no native capabilities.
 This page covers what a native app needs beyond the web build: the purpose
 strings the operating system shows in its permission prompts, the Apple
 entitlements, the device's secure store, the biometric prompt, and the store
-artefact that `sky package --release` makes. The last section is a recipe that
-scans and generates QR codes.
+artefact that `sky package --release` makes, and the camera code scanner. The
+last section is a recipe that scans and generates QR codes.
 
 Everything here is declared in code, in the optional `bundle` binding of the
 entry module. `sky.toml` gains no keys. The build reads the declarations
@@ -30,7 +34,7 @@ bundle =
 
 | Builder | Writes | Default |
 |---|---|---|
-| `withName` | CFBundleDisplayName, `android:label`, window title | the project name |
+| `withName` | CFBundleDisplayName, CFBundleName, `android:label`, window title; the product name | the project name |
 | `withId` | CFBundleIdentifier, the Android package | `sky.spa.<name>` (with a note) |
 | `withVersion` | CFBundleShortVersionString, `android:versionName` | `1.0` |
 | `withBuild` | CFBundleVersion, `android:versionCode` | `1` |
@@ -38,6 +42,13 @@ bundle =
 
 A store refuses a second upload with the same build number, so raise
 `withBuild` for each release. Before v0.27.0 the build number was always 1.
+
+The product name (the executable, the `.app`, the `.apk`) is made from the whole
+display name, as Xcode makes a module name: each character that is not an ASCII
+letter, digit or `_` becomes `_`, and a leading digit gets a `_` prefix.
+`withName "Sky Probe"` builds `Sky_Probe.app` with CFBundleName `Sky Probe`.
+Before v0.27.0 the product name was the last part of the bundle id (`Probe`
+for `com.example.probe`), and CFBundleName was that part too.
 
 ## Permissions and purpose strings — `withPermission`, `withUsage`
 
@@ -72,13 +83,19 @@ declared:
 | `Native.authenticate` | `FaceId` |
 | `Native.capturePhoto` | `Camera` |
 | `Native.geolocation` | `Location` or `LocationAlways` |
+| `Native.scanCode` | `Camera` |
 
 ```
 sky build --target mobile:ios: missing permission purpose string:
-  - the app calls `Native.authenticate`, which needs NSFaceIDUsageDescription on iOS.
-    Add `|> Bundle.withUsage Bundle.FaceId "<why the app needs it>"` to the
-    `bundle` binding in the entry module.
+  - the app calls `Native.authenticate` at src/Main.sky:42, which needs
+    NSFaceIDUsageDescription on iOS. Add `|> Bundle.withUsage Bundle.FaceId
+    "<why the app needs it>"` to the `bundle` binding at src/Main.sky:14.
 ```
+
+The error names the user's own files: the line that calls the capability and
+the `bundle` binding to fix (or, when there is none, how to add one). An
+`App.app` entry is checked before the build derives its client entry, so the
+error never points at the derived files.
 
 The check runs before the toolchain probe and before any compile, and `sky
 check --target …` runs it too, so check and build agree. It finds a call
@@ -109,8 +126,28 @@ an associated domain names its service, an iCloud container starts with
 `iCloud.`). A signed release also checks that the provisioning profile grants
 every entitlement the app asks for, and names the ones it does not.
 
-The simulator build is signed ad hoc with the entitlements, so the Keychain
-works there.
+**The simulator build.** The iOS simulator build carries its entitlements the
+way Xcode's does: they are written into the executable's `__TEXT,__entitlements`
+and `__TEXT,__ents_der` sections, with the application identifier
+(`<team>.<bundle id>`) and, when the app declares none, a keychain access group
+for the app's own id. The signature is ad hoc and carries no entitlements. The
+simulator reads the sections, so the Keychain works with no declared
+entitlement, and a declared one (a keychain access group, an associated domain,
+push, iCloud) never stops the launch. The team prefix is the one the app's
+first keychain access group carries, else `SKYSIMTEAM`.
+
+Before v0.27.0 the simulator build was signed ad hoc WITH the entitlements. The
+kernel does not launch an ad hoc signed binary that asks for a restricted
+entitlement (`simctl launch` reported "No such process"), and without one every
+Keychain call failed with -34018 (errSecMissingEntitlement).
+
+**The macOS app.** Signed ad hoc (no `SKY_MACOS_SIGN_IDENTITY`), the `.app`
+keeps only the entitlements an ad hoc signature may carry (an app group) and
+the build names the ones it leaves out; the app runs on this Mac and reaches
+the login Keychain without an access group. Signed with a Developer ID
+identity, a restricted entitlement needs `SKY_MACOS_PROVISIONING_PROFILE`: the
+profile is embedded in the `.app` and must grant every entitlement the app asks
+for.
 
 ## Native fragments and how they merge
 
@@ -205,6 +242,55 @@ Android 9 and later. The four outcomes are distinct:
 Declare `Bundle.withUsage Bundle.FaceId "…"`: iOS needs the purpose string and
 Android the `USE_BIOMETRIC` permission. The build refuses the call without it.
 
+## Scanning codes — `Native.scanCode`
+
+```elm
+-- doc-example: skip  (fragment)
+type CodeFormat = Qr | Aztec | DataMatrix | Pdf417 | Ean8 | Ean13 | UpcE | Code39 | Code93 | Code128 | Itf | Codabar
+type alias ScanOptions = { formats : List CodeFormat, prompt : String }
+type alias ScannedCode = { format : CodeFormat, text : String }
+
+scanCode : ScanOptions -> Task Error (Maybe ScannedCode)
+```
+
+The native shell shows a full-screen camera scanner with the prompt and a
+Cancel button, and returns the first code of one of the asked formats (an empty
+list asks for all of them).
+
+| Shell | Scanner |
+|---|---|
+| iOS and iPadOS | VisionKit's `DataScannerViewController` (iOS 16 and later; the shell targets iOS 17) |
+| Android | the camera (Camera2) with the ZXing decoder |
+| a browser, the desktop window, a server | none: `Err Unavailable` (use a widget island, see the recipe) |
+
+| Result | Meaning |
+|---|---|
+| `Ok (Just code)` | the camera read a code |
+| `Ok Nothing` | the user closed the scanner (Cancel, or Back on Android) |
+| `Err PermissionDenied` | the user refused the camera |
+| `Err Unavailable` | no camera scanner: no camera, the iOS simulator, a browser |
+
+Declare `Bundle.withUsage Bundle.Camera "…"`: iOS shows the text when it asks
+for the camera, and Android asks for CAMERA. The build refuses the call without
+it. A UPC-A code is reported as `Ean13` (its 13-digit form, with a leading 0) on
+both platforms, as Apple's Vision reports it.
+
+**Android and ZXing.** The Android scanner decodes with
+[ZXing](https://github.com/zxing/zxing) core 3.5.3 (Apache License 2.0). It is
+a plain Java jar, so the shell's SDK-tools build (`javac` + `d8`, no Gradle)
+compiles it in as it is. An app that calls `Native.scanCode` gets it; the build
+fetches it once from Maven Central, checks its pinned SHA-256
+(`8d8064c1…c109fd82`) and caches it in `~/.cache/sky/android/`. Without network,
+put the jar there yourself. An app that does not call `scanCode` builds without
+it. An app that ships ZXing states the Apache License 2.0 (for example in its
+licences screen).
+
+**Testing on a device.** VisionKit's scanner never runs on the iOS simulator
+(`Err Unavailable` there), so test the iOS scanner on a device: `sky package
+--release --target mobile:ios` with your signing identity, then install the
+`.ipa` with Xcode's Devices window or `xcrun devicectl device install app`. The
+Android emulator has an emulated back camera, so the scanner opens there.
+
 ## Release packaging — `sky package --release`
 
 ```bash
@@ -221,7 +307,7 @@ in release mode and copies the artefact to `sky-out/release/`:
 |---|---|---|
 | `mobile:ios` | `<App>.ipa` built for devices (arm64, iphoneos SDK) | `SKY_IOS_SIGN_IDENTITY` + `SKY_IOS_PROVISIONING_PROFILE`. Without both: `<App>-unsigned.ipa`, with a note that it does not install on a device. |
 | `mobile:android` | a release `.apk` signed with your upload key, plus an `.aab` when `bundletool` is on PATH | `SKY_ANDROID_KEYSTORE`, `SKY_ANDROID_KEYSTORE_PASSWORD`, `SKY_ANDROID_KEY_ALIAS`, optional `SKY_ANDROID_KEY_PASSWORD` (defaults to the keystore password). Required. |
-| `desktop:mac` | `<App>.app` and `<App>.dmg` | `SKY_MACOS_SIGN_IDENTITY` (a Developer ID Application identity; hardened runtime). Without it the `.app` is signed ad hoc, with a note. |
+| `desktop:mac` | `<App>.app` and `<App>.dmg` | `SKY_MACOS_SIGN_IDENTITY` (a Developer ID Application identity; hardened runtime), plus `SKY_MACOS_PROVISIONING_PROFILE` when the app asks for a restricted entitlement. Without the identity the `.app` is signed ad hoc, with a note, and leaves restricted entitlements out. |
 
 The passwords are passed to `apksigner` and `jarsigner` by environment-variable
 name, never on a command line. A release differs from a development build: the
@@ -232,37 +318,51 @@ debug key.
 
 `sky package` refuses, before any build and with the fix named:
 
-- no `--release`, or a target that is not a native shell (`web`, `tablet`,
-  `terminal`), or a desktop target other than `desktop:mac`;
+- no `--release`, or a target that is not a native shell (`web`, bare
+  `tablet`, `tablet:windows`, `terminal`), or a desktop target other than
+  `desktop:mac`;
 - a backend address that is the development default or a local host (set
   `App.withAppUrl "https://…"` or `SKY_APP_URL`), or plain `http` (serve the
   backend over https);
 - a declared permission whose purpose string is the generic default;
 - an Android release without its signing variables, or an iOS identity
   without a provisioning profile (or the reverse);
-- entitlements the provisioning profile does not grant.
+- entitlements the provisioning profile does not grant, and a macOS Developer
+  ID build that asks for a restricted entitlement without
+  `SKY_MACOS_PROVISIONING_PROFILE`.
 
 A notarised `.dmg` needs `xcrun notarytool submit --wait` and `xcrun stapler
 staple` after packaging, with your Apple credentials. An App Store upload of the
 `.ipa` uses Transporter or `xcrun altool`.
 
-The release workflow's `gate-native` job builds the iOS shell for the
-simulator, launches it on a booted simulator, and packages and verifies a
-signed Android release on a macOS runner.
+The release workflow's `gate-native` job builds a probe app for the iOS
+simulator (`mobile:ios`, and `tablet:ipad` with restricted entitlements
+declared), launches each on a booted simulator, and reads the app's own results
+back through its backend: the Keychain round-trips a value, and
+`Native.scanCode` and `Native.authenticate` are `Err Unavailable` (the simulator
+has no scanner and no enrolled biometric). It also packages and verifies a
+signed Android release. Its `gate-native-android` job does the same on an
+Android emulator (a Linux runner with KVM): `mobile:android` and
+`tablet:android` launch, the Keystore round-trips a value, the scanner opens
+and Back closes it (`Ok Nothing`), and `Native.authenticate` with no enrolled
+finger is `Err Unavailable`.
 
 ## Recipe — scan and show a QR code
 
 A pairing flow: one device shows a QR code; the other scans it with the camera
 and turns the text into a typed value. Generation is `Std.Qr`, which is pure
-and runs anywhere. Scanning runs the camera in a widget island
+and runs anywhere. Scanning asks the native shell first (`Native.scanCode`: the
+iOS and Android apps). Where there is no native scanner (`Err Unavailable`: a
+browser, the desktop window) it runs the camera in a widget island
 ([Widget islands](../skyui/overview.md#widget-islands--third-party-js-widgets)),
-which reports each decoded code to `update` as a typed `Msg`.
+which reports each decoded code to `update` as a typed `Msg`. Both paths end in
+the same `accept` step.
 
 ```elm
 module Main exposing (main, bundle)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 import Sky.Core.Json.Decode as Decode
 import Sky.Core.Json.Encode as Encode
 import Sky.Core.String as String
@@ -271,14 +371,15 @@ import Std.Bundle as Bundle exposing (Bundle)
 import Std.Cmd as Cmd
 import Std.Html as Html
 import Std.Html.Attributes as Attr
+import Std.Native as Native
 import Std.Qr as Qr
 import Std.Sub as Sub
 import Std.Ui as Ui exposing (Element)
 
 
 -- The camera purpose string: iOS shows it in the permission prompt, and the
--- Android build adds the CAMERA permission. `sky package --release` refuses a
--- camera app without it.
+-- Android build adds the CAMERA permission. The native build refuses
+-- `Native.scanCode` without it.
 bundle : Bundle
 bundle =
     Bundle.default
@@ -307,6 +408,7 @@ type alias Model =
 
 type Msg
     = StartScan
+    | NativeScanned (Result Error (Maybe Native.ScannedCode))
     | StopScan
     | Scanned String
     | ScanFailed String
@@ -337,24 +439,46 @@ init _ =
     ( { scanning = False, paired = Nothing, problem = "" }, Cmd.none )
 
 
+-- A scanned text, from either scanner: a pairing, or a problem to show.
+accept : String -> Model -> Model
+accept text model =
+    case parsePairing text of
+        Just pairing ->
+            { model | scanning = False, paired = Just pairing }
+
+        Nothing ->
+            { model | problem = "That QR code is not a pairing code." }
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        -- The native scanner first (the iOS and Android apps).
         StartScan ->
-            ( { model | scanning = True, problem = "" }, Cmd.none )
+            ( { model | problem = "" }
+            , Cmd.perform
+                (Native.scanCode { formats = [ Native.Qr ], prompt = "Scan the pairing code on your other device" })
+                NativeScanned
+            )
+
+        NativeScanned (Ok (Just code)) ->
+            ( accept code.text model, Cmd.none )
+
+        NativeScanned (Ok Nothing) ->
+            ( model, Cmd.none )
+
+        -- No native scanner here (a browser): run the widget island instead.
+        NativeScanned (Err (Error Unavailable _)) ->
+            ( { model | scanning = True }, Cmd.none )
+
+        NativeScanned (Err e) ->
+            ( { model | problem = Error.toString e }, Cmd.none )
 
         StopScan ->
             ( { model | scanning = False }, Cmd.toIsland "pair-scanner" "stop" (Encode.object []) )
 
         Scanned text ->
-            case parsePairing text of
-                Just pairing ->
-                    ( { model | scanning = False, paired = Just pairing }
-                    , Cmd.toIsland "pair-scanner" "stop" (Encode.object [])
-                    )
-
-                Nothing ->
-                    ( { model | problem = "That QR code is not a pairing code." }, Cmd.none )
+            ( accept text model, Cmd.toIsland "pair-scanner" "stop" (Encode.object []) )
 
         ScanFailed reason ->
             ( { model | scanning = False, problem = reason }, Cmd.none )
@@ -476,16 +600,21 @@ window.Sky.island("qr-scanner", {
 
 What to know:
 
-- **The camera permission.** The widget calls `getUserMedia`, which the build
-  cannot see, so the recipe declares `Bundle.withUsage Bundle.Camera "…"`
-  itself. The iOS shell grants the web view's media-capture request and iOS
+- **Native first.** `Native.scanCode` is the scanner in the iOS and Android
+  apps: VisionKit on iOS, the camera and ZXing on Android. It is `Err
+  Unavailable` where no native scanner exists, and the recipe then shows the
+  island. On the iOS simulator it is also `Err Unavailable`, so the island runs
+  there (WKWebView has no `BarcodeDetector`, so it reports "failed").
+- **The camera permission.** `Native.scanCode` needs `Bundle.withUsage
+  Bundle.Camera "…"`, and the build refuses the call without it. The island's
+  `getUserMedia` needs it too, but the build cannot see that call. The iOS shell grants the web view's media-capture request and iOS
   shows the purpose string; the Android shell declares `CAMERA`, requests it at
   start, and grants the web view's request.
 - **The decoder.** `BarcodeDetector` exists in Chrome and the Android
   System WebView. WKWebView (iOS, macOS) has none: bundle a decoder, for
   example jsQR, into the same same-origin file and run it on a canvas frame of
   the video. The file must stay same-origin with no `eval` (strict CSP).
-- **A native scanner.** To scan with AVFoundation or ML Kit instead, ship a
+- **Another native scanner.** To scan with a different library, ship a
   `native/ios/QrScan.swift` / `native/android/QrScan.java` handler and call it
   with `Native.bridge "qrScan" "{}"`, then decode the JSON reply into the same
   `Scanned` Msg.

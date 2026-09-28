@@ -3,6 +3,7 @@ package rt
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -269,5 +270,120 @@ func TestShellDispatchRefusesUnknownOpsAndBadPayloads(t *testing.T) {
 	if _, err := nativeShellDispatch(nil, nil, nativeOpSecureGet, `{"key":"k"}`); err == nil ||
 		!strings.HasPrefix(err.Error(), "unavailable:") {
 		t.Errorf("no store: %v", err)
+	}
+}
+
+// mockScanner is the mobile shells' side of sky:scanCode: it reads the
+// payload the way the Swift and Java scanners do and answers with a fixed
+// outcome.
+type mockScanner struct {
+	payload map[string]string
+	reply   nativeShellReply
+}
+
+func (m *mockScanner) transport(op, payload string) nativeShellReply {
+	if op != nativeOpScanCode {
+		return nativeShellReply{Present: true, Ok: false, Data: "invalid: unknown op " + op}
+	}
+	_ = json.Unmarshal([]byte(payload), &m.payload)
+	return m.reply
+}
+
+// Native.scanCode: a scanned code is [format, text], a closed scanner is [],
+// and the formats and prompt reach the shell.
+func TestScanCodeReturnsTheCodeOrNothing(t *testing.T) {
+	sc := &mockScanner{reply: nativeShellReply{Present: true, Ok: true,
+		Data: `{"found":true,"format":"qr","text":"sky-pair:tablet-1:k3y"}`}}
+	r := nativeScanCodeVia(sc.transport, []string{"qr", "ean13"}, " Scan the pairing code ")
+	if r.Tag != 0 {
+		t.Fatalf("scan: %+v", r)
+	}
+	got, _ := r.OkValue.([]any)
+	if len(got) != 2 || got[0] != "qr" || got[1] != "sky-pair:tablet-1:k3y" {
+		t.Fatalf("scan result %v, want [qr, sky-pair:tablet-1:k3y]", r.OkValue)
+	}
+	if sc.payload["formats"] != "qr,ean13" || sc.payload["prompt"] != "Scan the pairing code" {
+		t.Errorf("payload %v", sc.payload)
+	}
+
+	// The user closed the scanner: Ok [] (Nothing on the Sky side).
+	sc.reply = nativeShellReply{Present: true, Ok: true, Data: `{"found":false}`}
+	r = nativeScanCodeVia(sc.transport, nil, "")
+	if xs, ok := r.OkValue.([]any); r.Tag != 0 || !ok || len(xs) != 0 {
+		t.Fatalf("cancel: %+v", r)
+	}
+	// No formats asked for means every format.
+	if sc.payload["formats"] != strings.Join(nativeCodeFormats, ",") {
+		t.Errorf("no formats must ask for all of them: %q", sc.payload["formats"])
+	}
+}
+
+func TestScanCodeErrorKinds(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply nativeShellReply
+		kind  int
+	}{
+		{"no shell", nativeShellReply{}, kindUnavailable},
+		{"simulator", nativeShellReply{Present: true, Data: "unavailable: this device cannot scan codes"}, kindUnavailable},
+		{"camera refused", nativeShellReply{Present: true, Data: "denied: camera access is off for this app"}, kindPermissionDenied},
+		{"bad reply", nativeShellReply{Present: true, Ok: true, Data: "not json"}, kindDecode},
+		{"unasked format", nativeShellReply{Present: true, Ok: true, Data: `{"found":true,"format":"code39","text":"X"}`}, kindDecode},
+	}
+	for _, c := range cases {
+		sc := &mockScanner{reply: c.reply}
+		transport := sc.transport
+		if !c.reply.Present {
+			transport = func(string, string) nativeShellReply { return nativeShellReply{} }
+		}
+		kind, msg := errKind(t, nativeScanCodeVia(transport, []string{"qr"}, ""))
+		if kind != c.kind {
+			t.Errorf("%s: kind %d (%q), want %d", c.name, kind, msg, c.kind)
+		}
+	}
+	// An unknown format is refused before the shell is asked.
+	sc := &mockScanner{}
+	if kind, _ := errKind(t, nativeScanCodeVia(sc.transport, []string{"qr", "barcode"}, "")); kind != kindInvalidInput {
+		t.Errorf("unknown format: kind %d, want InvalidInput", kind)
+	}
+	if sc.payload != nil {
+		t.Errorf("an unknown format must not reach the shell: %v", sc.payload)
+	}
+	// Off the client (a server, a CLI): Unavailable.
+	r := Native_scanCode([]any{"qr"}, "Scan").(func() any)().(SkyResult[any, any])
+	if kind, _ := errKind(t, r); kind != kindUnavailable {
+		t.Errorf("Native_scanCode off-client: kind %d, want Unavailable", kind)
+	}
+	// The macOS desktop shell has no camera scanner.
+	if _, err := nativeShellDispatch(nil, nil, nativeOpScanCode, `{"formats":"qr"}`); err == nil ||
+		!strings.HasPrefix(err.Error(), "unavailable:") {
+		t.Errorf("desktop scan: %v", err)
+	}
+}
+
+// The wire names are the Std.Native.CodeFormat constructors, in order. The
+// Sky side maps each constructor to its name (`formatName`) and back
+// (`formatFromName`); a name added on one side only would make a scanned code
+// fail to decode.
+func TestNativeCodeFormatsMatchTheStdlib(t *testing.T) {
+	src, err := os.ReadFile("../../sky-stdlib/Std/Native.sky")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	start := strings.Index(body, "formatName : CodeFormat -> String")
+	if start < 0 {
+		t.Fatal("Std.Native has no formatName")
+	}
+	end := strings.Index(body[start:], "\n\n\n")
+	var names []string
+	for _, line := range strings.Split(body[start:start+end], "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "\"") && strings.HasSuffix(line, "\"") {
+			names = append(names, strings.Trim(line, "\""))
+		}
+	}
+	if strings.Join(names, ",") != strings.Join(nativeCodeFormats, ",") {
+		t.Fatalf("Std.Native formatName %v, runtime %v", names, nativeCodeFormats)
 	}
 }

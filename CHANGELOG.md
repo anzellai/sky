@@ -537,20 +537,72 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     upload key (`SKY_ANDROID_KEYSTORE`, `SKY_ANDROID_KEYSTORE_PASSWORD`,
     `SKY_ANDROID_KEY_ALIAS`, optional `SKY_ANDROID_KEY_PASSWORD`) plus an
     `.aab` when `bundletool` is on PATH, and a `.app` + `.dmg`
-    (`SKY_MACOS_SIGN_IDENTITY`, else signed ad hoc with a note). A release
+    (`SKY_MACOS_SIGN_IDENTITY`, plus `SKY_MACOS_PROVISIONING_PROFILE` when the
+    app asks for a restricted entitlement, else signed ad hoc with a note: an
+    ad hoc signature leaves the restricted entitlements out and names them,
+    because macOS kills an ad hoc signed app that asks for one). A release
     turns off the web inspector, and refuses, before any build: the
     development backend address or a local host, plain `http` (decision: a
     release sends its session over https only), a generic purpose string,
     missing Android signing, an iOS identity without a profile, and an
     entitlement the provisioning profile does not grant. Desktop packaging is
     macOS only (the desktop shell builds on macOS in this version).
-  - The simulator build is signed ad hoc with its entitlements, so the
-    Keychain works there.
-  - A recipe that scans a QR code in a widget island and draws one with
-    `Std.Qr` (`docs/skyapp/native.md`, checked by `scripts/doc-examples.sh`).
-  - The release workflow has a macOS gate, `gate-native`: it builds the iOS
-    shell for the simulator, installs and launches it, and packages and
-    verifies a signed Android release.
+  - The iOS simulator build carries its entitlements the way Xcode's does: in
+    the executable's `__TEXT,__entitlements` and `__TEXT,__ents_der` sections
+    (`ld -sectcreate`), with the application identifier and, when the app
+    declares none, a keychain access group for its own id added, and an ad
+    hoc signature with NO entitlements. The Keychain works on the simulator
+    with no declared entitlement, and a declared restricted one (a keychain
+    access group, an associated domain, push, iCloud) no longer stops the
+    launch. Found downstream on the release branch: the first cut signed the
+    simulator build ad hoc WITH the entitlements, so `simctl launch` failed
+    with "No such process" (AMFI error -424, "adhoc signed but contains
+    restricted entitlements"), and with none every `secureSet` / `secureGet`
+    failed with Keychain status -34018. The team prefix is the one the first
+    declared keychain access group carries, else `SKYSIMTEAM`; the device and
+    release signing is unchanged.
+  - The missing-purpose-string error names the user's own files: the line
+    that calls the capability and the `bundle` binding to fix, or how to add
+    one. An `App.app` entry is checked before the client entry is derived;
+    the first cut reported the error from the derived project and ended with
+    "the failure above is in the SYNTHESISED client entry".
+  - `Native.scanCode : ScanOptions -> Task Error (Maybe ScannedCode)` scans a
+    QR code or a barcode with the device camera (`CodeFormat`: `Qr`, `Aztec`,
+    `DataMatrix`, `Pdf417`, `Ean8`, `Ean13`, `UpcE`, `Code39`, `Code93`,
+    `Code128`, `Itf`, `Codabar`; a UPC-A code is reported as `Ean13`). iOS
+    and iPadOS use VisionKit's `DataScannerViewController`; Android uses
+    Camera2 and the ZXing decoder, and asks for the camera permission when
+    it is not granted. `Ok Nothing` is a closed scanner, `Err
+    PermissionDenied` a refused camera, `Err Unavailable` no camera scanner
+    (a browser, the desktop window, a server, the iOS simulator). The build
+    refuses the call without `Bundle.withUsage Bundle.Camera "…"`. Android
+    dependency: ZXing core 3.5.3 (`com.google.zxing:core`, Apache License
+    2.0), a plain Java jar compiled in by the shell's `javac` + `d8` build (the
+    shell has no Gradle project, so ML Kit's Android archives, resources and
+    native libraries are not an option). It is fetched once from Maven Central
+    only for an app that calls `scanCode`, checked against its pinned SHA-256
+    and cached in `~/.cache/sky/android/`. An app that ships it states the
+    licence.
+  - A recipe that scans a QR code (`Native.scanCode` in the native shells, a
+    widget island where there is none) and draws one with `Std.Qr`
+    (`docs/skyapp/native.md`, checked by `scripts/doc-examples.sh`).
+  - `tablet:ipad` and `tablet:android` build the phone's native shell (the
+    iOS app declares both device families; the APK has no form-factor
+    split), and `sky package --release` packages them. The first cut built
+    the responsive web bundle for them, so a tablet app had no secure store,
+    biometric prompt or scanner.
+  - Two release gates launch a probe app and read its own results back
+    through its backend. `gate-native` (macOS) builds it for the iOS
+    simulator as `mobile:ios` and as `tablet:ipad` with restricted
+    entitlements declared, launches each on a booted simulator, and checks
+    the Keychain round trip and that `Native.scanCode` and
+    `Native.authenticate` answer `Err Unavailable` there; it also packages and
+    verifies a signed Android release. `gate-native-android` (a Linux runner
+    with KVM and an x86_64 emulator) builds it as `mobile:android` and
+    `tablet:android`, launches each, and checks the Keystore round trip, the
+    scanner opened and closed with Back (`Ok Nothing`), and
+    `Native.authenticate` with no enrolled finger (`Err Unavailable`). The
+    other `--ignored` legs skip the emulator test by name.
 - **`--format json` for `sky check`, `sky build`, `sky test` and `sky fmt
   --check`.** Stdout carries only NDJSON: one LSP-shaped `diagnostic` line per
   diagnostic (`file` relative to the project root, a 0-based `range`,
@@ -871,6 +923,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **The native product name is made from the whole display name.**
+  `Bundle.withName "Sky Probe"` with id `com.example.probe` built `Probe.app`
+  with the executable and CFBundleName `Probe`: the name was the capitalised
+  last part of the bundle id. It is now built from the whole display name as
+  Xcode builds a module name (`Sky_Probe`: a character that is not an ASCII
+  letter, digit or `_` becomes `_`), and CFBundleName and
+  CFBundleDisplayName keep the name as written. An app with no `withName`
+  takes its product name from the project name, as its display name already
+  did.
+- **A Sky.Spa server branch that matches inside its Msg's argument is refused
+  by name.** The split sends the names a server arm binds and rebuilds the
+  Msg on the backend from them, so an arm such as `Report (Ok line) -> (model,
+  Cmd.perform (Log.println line) Reported)` became `update (Report p.line)`
+  and the backend failed to compile with a type error in generated code,
+  reported against the derived project. The split now stops with an error
+  that names the arm and the form that works (`Report value -> case value of
+  …`).
 - **`sky add ./dir` works for a fresh local Go module.** A module whose
   `go.mod` declares a `go` line newer than the generated one (`go 1.26`
   against `go 1.25.0`), or requirements of its own, was not loadable after

@@ -1705,12 +1705,28 @@ With no native shell (a browser, a server) they are `Err Unavailable`; the
 secure store never falls back to `localStorage`. `authenticate` is `Ok True`,
 `Ok False` (no match), `Err PermissionDenied` (cancelled) or `Err Unavailable`.
 
+It also adds the camera code scanner:
+
+```elm
+-- doc-example: skip  (signatures)
+type CodeFormat = Qr | Aztec | DataMatrix | Pdf417 | Ean8 | Ean13 | UpcE | Code39 | Code93 | Code128 | Itf | Codabar
+type alias ScanOptions = { formats : List CodeFormat, prompt : String }
+type alias ScannedCode = { format : CodeFormat, text : String }
+scanCode : ScanOptions -> Task Error (Maybe ScannedCode)   -- VisionKit / camera + ZXing
+```
+
+`Ok (Just code)` is a code of one of the asked formats (an empty list asks for
+all of them), `Ok Nothing` means the user closed the scanner, `Err
+PermissionDenied` means the camera was refused, and `Err Unavailable` means
+there is no camera scanner (a browser, the desktop window, a server, the iOS
+simulator). A UPC-A code is reported as `Ean13`.
+
 `Std.Bundle` declares what the native shells ship with: identity (`withId`,
 `withName`, `withVersion`, `withBuild`, `withIcon`), assets, permissions with
 their purpose strings (`withPermission`, `withUsage Bundle.Camera "…"`) and
 typed Apple entitlements (`withEntitlement (Bundle.AppGroup "group.…")`). A call
-to `Native.authenticate`, `capturePhoto` or `geolocation` without its
-permission fails the iOS and Android builds. `sky package --release` makes the
+to `Native.authenticate`, `capturePhoto`, `geolocation` or `scanCode` without
+its permission fails the iOS and Android builds. `sky package --release` makes the
 store artefact. Full guide: [`docs/skyapp/native.md`](skyapp/native.md).
 
 ### `Event` — typed DOM event bindings (`Std.Html.Events`)

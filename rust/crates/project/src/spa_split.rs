@@ -2097,6 +2097,17 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             continue;
         }
         if b.server {
+            if b.matches_inside_msg_args {
+                return Err(format!(
+                    "the SERVER branch `{label}` of `update` matches inside its message's \
+                     arguments. A server branch runs on the backend from the message the \
+                     client sends, and the build rebuilds that message from the names the \
+                     branch binds, so bind each argument to a plain name and match it in \
+                     the branch:\n\n    {name} value ->\n        case value of\n            \
+                     …\n",
+                    label = b.msg
+                ));
+            }
             let io =
                 b.io.clone()
                     .ok_or_else(|| format!("server branch `{name}` has no derived RPC I/O"))?;

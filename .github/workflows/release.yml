@@ -660,7 +660,9 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo test -p sky --locked -- --ignored
+        # The Android emulator test runs in gate-native-android (it needs a
+        # running emulator); skip it here by name.
+        run: cargo test -p sky --locked -- --ignored --skip android_emulator
 
       - name: Bound the Go caches before save
         if: always()
@@ -1051,17 +1053,22 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-native — the native shells on a real macOS runner: the iOS shell (with
-  # the Keychain secure store and the LocalAuthentication prompt) is compiled
-  # for the simulator, installed on a booted simulator and launched, and an
-  # Android release is packaged and verified against its upload key
-  # (rust/crates/sky/tests/native_shell_flow.rs). The runner image carries
-  # Xcode, the iOS simulators, the Android SDK and a JDK. The Linux `--ignored`
-  # leg in gate-app does not compile these tests (they are macOS-only).
+  # gate-native — the native shells on a real macOS runner: a Std.App probe is
+  # built for the iOS simulator twice (no entitlement; a keychain access group
+  # and an associated domain declared), installed on a booted simulator and
+  # LAUNCHED, and the app's own results are read back through its backend: the
+  # Keychain round-trips a value (Native.secureSet / secureGet) and
+  # Native.scanCode answers Err Unavailable (VisionKit's scanner needs a device
+  # camera). An Android release is packaged and verified against its upload
+  # key (rust/crates/sky/tests/native_shell_flow.rs). The runner image carries
+  # Xcode, the iOS simulators, the Android SDK and a JDK. The Android EMULATOR
+  # test is skipped here by name: the arm64 macOS runner has no hardware
+  # virtualisation for the emulator. It runs in gate-native-android below.
   gate-native:
     runs-on: macos-latest
-    # A cold `cargo test -p sky` build (~15-20 min on macOS) plus the two smoke
-    # tests (~2 min measured locally). 1.5x.
+    # A cold `cargo test -p sky` build (~15-20 min on macOS) plus the smoke
+    # tests (~3.5 min measured locally: the iOS launch gate 158 s, the Android
+    # release 36 s). 1.5x.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1079,7 +1086,55 @@ jobs:
         env:
           SKY_LIVE_TESTS: require
           DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
-        run: cargo test -p sky --locked --test native_shell_flow -- --ignored --test-threads=1
+        run: cargo test -p sky --locked --test native_shell_flow -- --ignored --test-threads=1 --skip android_emulator
+
+  # gate-native-android — the Android counterpart of gate-native's launch gate,
+  # on a Linux runner with KVM (hardware virtualisation for the emulator). The
+  # same probe app is built for `mobile:android` and `tablet:android` (with the
+  # restricted Apple entitlements declared, which must change nothing on
+  # Android), installed on a running x86_64 emulator and LAUNCHED; the app's own
+  # results are read back through its backend: the Keystore round trip, the
+  # camera scanner opened and closed with Back (Ok Nothing), and the biometric
+  # prompt with no enrolled finger (Err Unavailable)
+  # (`android_emulator_…` in rust/crates/sky/tests/native_shell_flow.rs). The
+  # runner image carries the Android SDK and a JDK; the emulator action boots
+  # the AVD and the test uses the running emulator.
+  gate-native-android:
+    runs-on: ubuntu-latest
+    # A cold `cargo test -p sky` build (~15 min), the emulator boot (~3 min)
+    # and the test (~100 s measured locally). 1.5x.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: runtime-go/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build the test binary before the emulator starts
+        working-directory: rust
+        run: cargo test -p sky --locked --test native_shell_flow --no-run
+      - name: Android emulator gate (Keystore, scanner, biometrics; phone + tablet)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SKY_LIVE_TESTS: require
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          # The scanner needs a back camera; the emulated one opens.
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated
+          disable-animations: true
+          script: cd rust && cargo test -p sky --locked --test native_shell_flow android_emulator -- --ignored --test-threads=1
 
   # ────────────────────────────────────────────────────────────────
   # Assemble release assets, generate checksums, publish GitHub Release.
@@ -1123,6 +1178,7 @@ jobs:
       - gate-web
       - gate-sweep
       - gate-native
+      - gate-native-android
     runs-on: ubuntu-latest
     # No compilation: download 4 artifacts, checksum, extract CHANGELOG notes,
     # create the Release (asset upload dominates) ≈ 3 min. 1.5x ≈ 5.

@@ -380,14 +380,17 @@ constant, read at build time), else `SKY_APP_URL` at build time (which wins over
 the builder), else the dev default `localhost` / `10.0.2.2` / `127.0.0.1` on
 `PORT` (8951). Permissions carry their purpose string
 (`Bundle.withUsage Bundle.Camera "…"`; a `Native.authenticate` / `capturePhoto`
-/ `geolocation` call without its permission fails the iOS and Android builds),
+/ `geolocation` / `scanCode` call without its permission fails the iOS and
+Android builds, naming the `bundle` binding),
 entitlements are typed (`Bundle.withEntitlement (Bundle.AppGroup "group.…")`),
 `Native.secureSet`/`secureGet`/`secureRemove` (a `Secret`, Keychain / Android
 Keystore, `Err Unavailable` in a browser, never `localStorage`) and
-`Native.authenticate` (biometrics) reach the device, and `sky package --release
+`Native.authenticate` (biometrics) and `Native.scanCode` (a QR code or barcode
+from the camera: VisionKit on iOS, ZXing on Android; `Err Unavailable` in a
+browser and on the iOS simulator) reach the device, and `sky package --release
 --target mobile:ios|mobile:android|desktop:mac` makes the signed store artefact
-(signing from `SKY_IOS_*` / `SKY_ANDROID_*` / `SKY_MACOS_SIGN_IDENTITY`; the dev
-backend address is refused). See `docs/skyapp/native.md`.
+(signing from `SKY_IOS_*` / `SKY_ANDROID_*` / `SKY_MACOS_*`; the dev backend
+address is refused). See `docs/skyapp/native.md`.
 `web` requires `App.withNotFound` (compile-enforced). Invalid combos are rejected
 at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` checks
 the same target a bare `sky build` builds (`--target`, else `[app] target`, else

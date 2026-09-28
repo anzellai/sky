@@ -853,7 +853,8 @@ None of these is read by the app, and none is prefix-affected.
 | `SKY_ANDROID_KEYSTORE_PASSWORD` | `mobile:android` | The keystore password, passed to `apksigner` / `jarsigner` by variable name. Required. |
 | `SKY_ANDROID_KEY_ALIAS` | `mobile:android` | The key alias. Required. |
 | `SKY_ANDROID_KEY_PASSWORD` | `mobile:android` | The key password, when it differs from the keystore password. |
-| `SKY_MACOS_SIGN_IDENTITY` | `desktop:mac` | A `Developer ID Application` identity; signs the `.app` and `.dmg` with the hardened runtime. Without it the `.app` is signed ad hoc. |
+| `SKY_MACOS_SIGN_IDENTITY` | `desktop:mac` | A `Developer ID Application` identity; signs the `.app` and `.dmg` with the hardened runtime. Without it the `.app` is signed ad hoc, and a restricted entitlement (a keychain access group, an associated domain, push, iCloud) is left out of the signature with a note, because macOS does not launch an ad hoc signed app that asks for one. |
+| `SKY_MACOS_PROVISIONING_PROFILE` | `desktop:mac` | Path to the app's `.provisionprofile`. Required with the identity when the app asks for a restricted entitlement; it is embedded in the `.app`, and every entitlement the app requests must be one it grants. |
 
 `SKY_PACKAGE_RELEASE` is internal: `sky package` sets it to the release
 directory (`<project>/sky-out/release`) so that the child build legs build the
