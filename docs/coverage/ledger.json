@@ -728,10 +728,10 @@
   "summary": {
     "stdlib_entries": 2108,
     "stdlib_modules": 109,
-    "surfaces_covered": 160,
-    "surfaces_covered_pct": 91.4,
-    "surfaces_equal": 20,
-    "surfaces_stronger": 155,
+    "surfaces_covered": 161,
+    "surfaces_covered_pct": 92.0,
+    "surfaces_equal": 19,
+    "surfaces_stronger": 156,
     "surfaces_total": 175,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -1023,9 +1023,15 @@
     {
       "category": "cli",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -1034,7 +1040,7 @@
       },
       "description": "`sky fmt`",
       "id": "cli.fmt",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -12849,12 +12855,11 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 13,
+      "count": 12,
       "surfaces": [
         "cli.config",
         "cli.console",
         "cli.console-serve",
-        "cli.fmt",
         "cli.lsp",
         "cli.spa-partition",
         "cli.upgrade-claude",

@@ -144,6 +144,9 @@ pub fn add(project_dir: &Path, repo_root: &Path, pkg: &str, spec: Option<&str>) 
 /// `sky remove <pkg>` — drop the committed surface files, remove the dep from
 /// `go.mod` (`go mod edit -droprequire` + `go mod tidy`) and `sky.toml`.
 pub fn remove(project_dir: &Path, pkg: &str) -> FfiReport {
+    if let Some(r) = remove_path_dep(project_dir, pkg) {
+        return r;
+    }
     let mut r = FfiReport::new();
     // Locate the committed surface whose "package" == pkg → delete its files.
     if let Some(slug) = slug_for_package(project_dir, pkg) {
@@ -185,6 +188,9 @@ pub fn remove(project_dir: &Path, pkg: &str) -> FfiReport {
 /// no-op "nothing to remove"). Purely local — reads `sky.toml`, no network — so
 /// unlike `add` there is no probe, just a deterministic section lookup.
 pub fn remove_smart(project_dir: &Path, pkg: &str) -> FfiReport {
+    if let Some(r) = remove_path_dep(project_dir, pkg) {
+        return r;
+    }
     let sky_toml = project_dir.join("sky.toml");
     let is_sky_dep = read_sky_dependencies(&sky_toml)
         .iter()
@@ -262,6 +268,9 @@ fn record_sky_dep(
 /// `sky remove --sky <path>` — drop the `[dependencies]` entry and the fetched
 /// `.skydeps/<slug>/` tree.
 pub fn remove_sky(project_dir: &Path, pkg: &str) -> FfiReport {
+    if let Some(r) = remove_path_dep(project_dir, pkg) {
+        return r;
+    }
     let mut r = FfiReport::new();
     let slug = pkg.replace('/', "_");
     let dir = project_dir.join(".skydeps").join(&slug);
@@ -280,6 +289,303 @@ pub fn remove_sky(project_dir: &Path, pkg: &str) -> FfiReport {
     }
     r.say(format!("Removed Sky package {pkg}."));
     r
+}
+
+// ---------------------------------------------------------------------------
+// sky add ./path  (local path dependencies — `crate::path_deps`)
+// ---------------------------------------------------------------------------
+
+/// `sky add ./dir` (or `../dir`, or an absolute path) — record a LOCAL path
+/// dependency. The directory decides the kind: a `go.mod` makes it a Go module
+/// (recorded under `["go.dependencies"]` by its module path, wired into the
+/// generated go.mod with `require` + `replace`, and inspected for its FFI
+/// surface like any Go dependency); a `sky.toml` or `.sky` sources make it a Sky
+/// package (recorded under `[dependencies]`, loaded from the directory by every
+/// build). `arg` is resolved against `cwd`; `sky.toml` stores it relative to
+/// the project root unless it was given as an absolute path.
+pub fn add_path(
+    project_dir: &Path,
+    repo_root: &Path,
+    cwd: &Path,
+    arg: &str,
+    force: Option<crate::path_deps::PathDepKind>,
+) -> FfiReport {
+    use crate::path_deps::{self, PathDepKind};
+    let r = FfiReport::new();
+    let given = Path::new(arg);
+    let joined = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        cwd.join(given)
+    };
+    let Ok(dir) = joined.canonicalize() else {
+        return r.fail(format!(
+            "sky add: {arg} does not exist (resolved to {})",
+            joined.display()
+        ));
+    };
+    if !dir.is_dir() {
+        return r.fail(format!("sky add: {arg} is not a directory"));
+    }
+    let root = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    if dir == root {
+        return r.fail("sky add: a project cannot depend on itself".to_string());
+    }
+    let stored = if given.is_absolute() {
+        dir.to_string_lossy().replace('\\', "/")
+    } else {
+        path_deps::relative_path(&root, &dir)
+    };
+    let module = path_deps::go_module_path(&dir);
+    let is_sky = path_deps::is_sky_package_dir(&dir);
+    let kind = match force {
+        Some(PathDepKind::Go) if module.is_none() => {
+            return r.fail(format!("sky add --go: {arg} has no go.mod"));
+        }
+        Some(PathDepKind::Sky) if !is_sky => {
+            return r.fail(format!(
+                "sky add --sky: {arg} is not a Sky package (no sky.toml, no .sky sources)"
+            ));
+        }
+        Some(k) => k,
+        // A directory that is both (a Sky package with a go.mod) is a Sky
+        // package, the same tie-break the remote smart resolver applies.
+        None if is_sky => PathDepKind::Sky,
+        None if module.is_some() => PathDepKind::Go,
+        None => {
+            return r.fail(format!(
+                "sky add: {arg} is neither a Go module (no go.mod) nor a Sky package \
+                 (no sky.toml, no .sky sources)"
+            ));
+        }
+    };
+    match kind {
+        PathDepKind::Go => add_go_path(
+            project_dir,
+            repo_root,
+            &module.unwrap_or_default(),
+            &stored,
+            r,
+        ),
+        PathDepKind::Sky => {
+            let name = path_deps::sky_package_name(&dir);
+            add_sky_path(project_dir, &name, &stored, r)
+        }
+    }
+}
+
+/// The Go half of [`add_path`]: record, wire into `sky-out/go.mod`, inspect.
+fn add_go_path(
+    project_dir: &Path,
+    repo_root: &Path,
+    module: &str,
+    stored: &str,
+    mut r: FfiReport,
+) -> FfiReport {
+    // Record first: `apply_go_path_deps` reads the manifest, so the go.mod
+    // wiring below and every later build come from this one entry.
+    match upsert_path_dependency(
+        &project_dir.join("sky.toml"),
+        "go.dependencies",
+        module,
+        stored,
+    ) {
+        Ok(DepEdit::Added) => r.say(format!(
+            "  recorded {module} = {{ path = \"{stored}\" }} in sky.toml [\"go.dependencies\"]"
+        )),
+        Ok(DepEdit::Updated(old)) => r.say(format!(
+            "  updated {module} in sky.toml: {old} → {{ path = \"{stored}\" }}"
+        )),
+        Ok(DepEdit::Unchanged) => r.say(format!("  {module} already at {{ path = \"{stored}\" }}")),
+        Err(e) => return r.fail(format!("sky add: sky.toml update: {e}")),
+    }
+    let sky_out = project_dir.join("sky-out");
+    if let Err(e) = ensure_go_mod(repo_root, &sky_out) {
+        return r.fail(format!("sky add: {e}"));
+    }
+    if let Err(e) = crate::path_deps::apply_go_path_deps(project_dir, &sky_out) {
+        return r.fail(format!("sky add: {e}"));
+    }
+    let bin = match ffi::ensure_inspector(repo_root) {
+        Ok(b) => b,
+        Err(e) => return r.fail(format!("sky add: {e}")),
+    };
+    r.say(format!(
+        "Inspecting {module} (local, GOOS={}/{}, normalised)…",
+        ffi::inspect::PIN_GOOS,
+        ffi::inspect::PIN_GOARCH
+    ));
+    match regenerate_committed_reporting(&bin, &sky_out, project_dir, module) {
+        Ok((slug, note)) => {
+            if let Some(n) = note {
+                r.say(format!("  note: {n}"));
+            }
+            r.say(format!(
+                "  wrote sky-ffi/{slug}.{{kernel.json,skyi}} + go/{slug}_bindings.go"
+            ));
+        }
+        Err(e) => return r.fail(format!("sky add: {e}")),
+    }
+    let dir = crate::path_deps::PathDep {
+        key: module.to_string(),
+        path: stored.to_string(),
+        kind: crate::path_deps::PathDepKind::Go,
+    }
+    .resolve(project_dir);
+    if let Err(e) = crate::path_deps::record_signature(project_dir, module, &dir) {
+        r.say(format!("  note: {e}"));
+    }
+    r.say(format!("Added {module} (local path {stored})."));
+    r
+}
+
+/// The Sky half of [`add_path`]: record it. Nothing is fetched or copied; the
+/// build loads the package's modules from the directory.
+fn add_sky_path(project_dir: &Path, name: &str, stored: &str, mut r: FfiReport) -> FfiReport {
+    match upsert_path_dependency(&project_dir.join("sky.toml"), "dependencies", name, stored) {
+        Ok(DepEdit::Added) => r.say(format!(
+            "  recorded {name} = {{ path = \"{stored}\" }} in sky.toml [dependencies]"
+        )),
+        Ok(DepEdit::Updated(old)) => r.say(format!(
+            "  updated {name} in sky.toml: {old} → {{ path = \"{stored}\" }}"
+        )),
+        Ok(DepEdit::Unchanged) => r.say(format!("  {name} already at {{ path = \"{stored}\" }}")),
+        Err(e) => return r.fail(format!("sky add: sky.toml update: {e}")),
+    }
+    r.say(format!("Added Sky package {name} (local path {stored})."));
+    r
+}
+
+/// `sky remove <key-or-path>` for a declared path dependency: drop the
+/// manifest entry, and for a Go module its generated surface and its
+/// `require` / `replace` in `sky-out/go.mod`. `None` when `arg` names no path
+/// dependency (the caller then runs the version-dependency remove).
+fn remove_path_dep(project_dir: &Path, arg: &str) -> Option<FfiReport> {
+    use crate::path_deps::{self, PathDepKind};
+    let sky_toml = project_dir.join("sky.toml");
+    let deps = path_deps::read_path_dependencies(&sky_toml);
+    let by_path = if path_deps::is_path_arg(arg) {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| project_dir.to_path_buf());
+        let want = cwd.join(arg);
+        let want = want.canonicalize().unwrap_or(want);
+        deps.iter().find(|d| {
+            let have = d.resolve(project_dir);
+            have.canonicalize().unwrap_or(have) == want
+        })
+    } else {
+        None
+    };
+    let dep = by_path
+        .or_else(|| deps.iter().find(|d| d.key == arg))?
+        .clone();
+    let mut r = FfiReport::new();
+    if dep.kind == PathDepKind::Go {
+        if let Some(slug) = slug_for_package(project_dir, &dep.key) {
+            for rel in [
+                format!("sky-ffi/{slug}.kernel.json"),
+                format!("sky-ffi/{slug}.skyi"),
+                format!("sky-ffi/go/{slug}_bindings.go"),
+                format!("sky-ffi/{slug}.pathsig"),
+            ] {
+                let p = project_dir.join(&rel);
+                if p.exists() && std::fs::remove_file(&p).is_ok() {
+                    r.say(format!("  removed {rel}"));
+                }
+            }
+        }
+        let sky_out = project_dir.join("sky-out");
+        if sky_out.join("go.mod").is_file() {
+            match path_deps::drop_go_path_dep(&sky_out, &dep.key) {
+                Ok(()) => r.say(format!("  dropped {} from sky-out/go.mod", dep.key)),
+                Err(e) => r.say(format!("  note: sky-out/go.mod: {e}")),
+            }
+        }
+    }
+    match remove_dependency(&sky_toml, dep.kind.section(), &dep.key) {
+        Ok(true) => r.say(format!(
+            "  removed {} = {{ path = \"{}\" }} from sky.toml",
+            dep.key, dep.path
+        )),
+        Ok(false) => {}
+        Err(e) => r.say(format!("  warn: sky.toml update: {e}")),
+    }
+    r.say(format!("Removed {} (local path {}).", dep.key, dep.path));
+    Some(r)
+}
+
+/// The path-dependency half of `sky install`: each declared directory must
+/// exist; a Go module is wired into `sky-out/go.mod` and its FFI surface is
+/// re-inspected from the directory as it is now (a local module changes
+/// without a version bump, so a present surface is refreshed, not trusted).
+fn install_path_deps(
+    project_dir: &Path,
+    repo_root: &Path,
+    deps: &[crate::path_deps::PathDep],
+    r: &mut FfiReport,
+) {
+    use crate::path_deps::{self, PathDepKind};
+    if let Some(e) = path_deps::missing_error(project_dir) {
+        r.ok = false;
+        r.say(format!("sky install: {e}"));
+        return;
+    }
+    for w in path_deps::drift_warnings(project_dir) {
+        // Surface staleness is exactly what this install fixes; the module-path
+        // drift is not, so only that one is repeated here.
+        if w.contains("now declares module") || w.contains("has no go.mod") {
+            r.say(format!("  warning: {w}"));
+        }
+    }
+    let go: Vec<&path_deps::PathDep> = deps.iter().filter(|d| d.kind == PathDepKind::Go).collect();
+    for d in deps.iter().filter(|d| d.kind == PathDepKind::Sky) {
+        r.say(format!(
+            "  {}: local Sky package at {} (nothing to fetch)",
+            d.key, d.path
+        ));
+    }
+    if go.is_empty() {
+        return;
+    }
+    let sky_out = project_dir.join("sky-out");
+    if let Err(e) = ensure_go_mod(repo_root, &sky_out)
+        .and_then(|()| path_deps::apply_go_path_deps(project_dir, &sky_out))
+    {
+        r.ok = false;
+        r.say(format!("sky install: {e}"));
+        return;
+    }
+    let bin = match ffi::ensure_inspector(repo_root) {
+        Ok(b) => b,
+        Err(e) => {
+            r.ok = false;
+            r.say(format!("sky install: {e}"));
+            return;
+        }
+    };
+    for d in go {
+        match regenerate_committed_reporting(&bin, &sky_out, project_dir, &d.key) {
+            Ok((slug, note)) => {
+                if let Err(e) =
+                    path_deps::record_signature(project_dir, &d.key, &d.resolve(project_dir))
+                {
+                    r.say(format!("  note: {e}"));
+                }
+                r.say(format!(
+                    "  {}: local Go module at {} → sky-ffi/{slug}.* refreshed",
+                    d.key, d.path
+                ));
+                if let Some(n) = note {
+                    r.say(format!("  note: {n}"));
+                }
+            }
+            Err(e) => {
+                r.ok = false;
+                r.say(format!("  ERROR inspecting {} ({}): {e}", d.key, d.path));
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -409,11 +715,15 @@ pub fn install(project_dir: &Path, repo_root: &Path) -> FfiReport {
     let sky_toml = project_dir.join("sky.toml");
     let deps = read_go_dependencies(&sky_toml);
     let sky_deps = read_sky_dependencies(&sky_toml);
-    if deps.is_empty() && sky_deps.is_empty() {
+    let path_deps = crate::path_deps::read_path_dependencies(&sky_toml);
+    if deps.is_empty() && sky_deps.is_empty() && path_deps.is_empty() {
         r.say(
             "sky install: no [\"go.dependencies\"] or [dependencies] in sky.toml — nothing to do.",
         );
         return r;
+    }
+    if !path_deps.is_empty() {
+        install_path_deps(project_dir, repo_root, &path_deps, &mut r);
     }
     if !deps.is_empty() {
         install_go_deps(project_dir, repo_root, &deps, &mut r);
@@ -589,7 +899,19 @@ pub fn update(project_dir: &Path, repo_root: &Path) -> FfiReport {
     let sky_toml = project_dir.join("sky.toml");
     let deps = read_go_dependencies(&sky_toml);
     let sky_deps = read_sky_dependencies(&sky_toml);
+    // A path dependency has no version to move: it IS the directory. Say so,
+    // once per dependency, rather than skip it without a word.
+    for d in crate::path_deps::read_path_dependencies(&sky_toml) {
+        r.say(format!(
+            "  {}: local path dependency ({}), nothing to update — its sources are \
+             built as they are; run `sky install` to refresh its FFI surface",
+            d.key, d.path
+        ));
+    }
     if deps.is_empty() && sky_deps.is_empty() {
+        if !crate::path_deps::read_path_dependencies(&sky_toml).is_empty() {
+            return r;
+        }
         // No user-declared surfaces, but if the project has already been built
         // there's a runtime go.mod worth tidying (drop stale requires, sync the
         // sum) — a useful action rather than a bare no-op. Absent a build, the
@@ -784,7 +1106,7 @@ fn write_generated_surface(
 }
 
 /// Find the slug of a committed surface whose `kernel.json` `"package"` == `pkg`.
-fn slug_for_package(project_dir: &Path, pkg: &str) -> Option<String> {
+pub(crate) fn slug_for_package(project_dir: &Path, pkg: &str) -> Option<String> {
     let ffi_dir = project_dir.join("sky-ffi");
     let rd = std::fs::read_dir(&ffi_dir).ok()?;
     let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
@@ -1098,6 +1420,58 @@ fn upsert_sky_dependency(sky_toml: &Path, pkg: &str, spec: &str) -> Result<DepEd
     upsert_dependency(sky_toml, "dependencies", pkg, spec)
 }
 
+/// Record `"<key>" = { path = "<path>" }` under `[<section>]`, replacing any
+/// existing entry for `key` in that section (a version spec or an older path).
+fn upsert_path_dependency(
+    sky_toml: &Path,
+    section: &str,
+    key: &str,
+    path: &str,
+) -> Result<DepEdit, String> {
+    let existing = std::fs::read_to_string(sky_toml).unwrap_or_default();
+    let quoted = format!("\"{key}\"");
+    let value = crate::path_deps::inline_value(path);
+    let entry = format!("{quoted} = {value}");
+    let mut lines: Vec<String> = existing.lines().map(str::to_string).collect();
+    let mut cur_in_section = false;
+    for line in lines.iter_mut() {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            cur_in_section = section_matches(t, section);
+            continue;
+        }
+        if !cur_in_section {
+            continue;
+        }
+        if let Some(rest) = line.trim_start().strip_prefix(&quoted) {
+            if let Some(val) = rest.trim_start().strip_prefix('=') {
+                let old = val.trim().to_string();
+                if old == value {
+                    return Ok(DepEdit::Unchanged);
+                }
+                *line = entry;
+                write_lines(sky_toml, &lines)?;
+                return Ok(DepEdit::Updated(old));
+            }
+        }
+    }
+    let header_idx = lines
+        .iter()
+        .position(|l| section_matches(l.trim(), section));
+    match header_idx {
+        Some(i) => lines.insert(i + 1, entry),
+        None => {
+            if !lines.is_empty() && !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
+                lines.push(String::new());
+            }
+            lines.push(canonical_header(section));
+            lines.push(entry);
+        }
+    }
+    write_lines(sky_toml, &lines)?;
+    Ok(DepEdit::Added)
+}
+
 fn write_lines(sky_toml: &Path, lines: &[String]) -> Result<(), String> {
     let mut out = lines.join("\n");
     out.push('\n');
@@ -1151,7 +1525,7 @@ fn remove_sky_dependency(sky_toml: &Path, pkg: &str) -> Result<bool, String> {
 /// the bare (`[dependencies]`) and dotted-quoted (`["go.dependencies"]`) TOML
 /// spellings. Exact equality — so `dependencies` never matches
 /// `["go.dependencies"]` and vice-versa.
-fn section_matches(line: &str, section: &str) -> bool {
+pub(crate) fn section_matches(line: &str, section: &str) -> bool {
     line == format!("[\"{section}\"]") || line == format!("[{section}]")
 }
 
@@ -1199,9 +1573,15 @@ pub(crate) fn read_dependencies(sky_toml: &Path, section: &str) -> Vec<(String, 
         if !in_section || line.is_empty() || line.starts_with('#') {
             continue;
         }
-        // `"pkg" = "version"`
+        // `"pkg" = "version"`. A `"pkg" = { path = "…" }` inline table is a
+        // LOCAL path dependency (`crate::path_deps`): it has no version to
+        // fetch, so the version readers skip it and every verb handles it
+        // through `path_deps::read_path_dependencies` instead.
         if let Some((k, v)) = line.split_once('=') {
             let key = k.trim().trim_matches('"').to_string();
+            if v.trim_start().starts_with('{') {
+                continue;
+            }
             if !key.is_empty() {
                 let spec = v.trim().trim_matches('"').trim();
                 let spec = if spec.is_empty() { "latest" } else { spec };

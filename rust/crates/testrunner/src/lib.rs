@@ -26,6 +26,19 @@ pub struct TestRun {
     pub exit_code: Option<i32>,
     /// A short human note when something upstream of running failed.
     pub note: String,
+    /// The build's structured diagnostics (warnings, and the failure when the
+    /// suite did not build) — what `sky test --format json` prints.
+    pub diagnostics: Vec<project::diagnostics::Reported>,
+}
+
+/// How [`run_test_with`] runs the suite binary.
+#[derive(Clone, Debug, Default)]
+pub struct TestOptions {
+    /// Ask the suite for its per-case JSON report at this path (`SKY_TEST_JSON`).
+    pub json_report: Option<std::path::PathBuf>,
+    /// Send the suite binary's stdout (the human `ok` / `FAIL` lines) to
+    /// stderr, so the caller's stdout stays machine-readable.
+    pub stdout_to_stderr: bool,
 }
 
 /// `sky test` exit status: every test passed.
@@ -77,7 +90,16 @@ const ENTRY_MODULE: &str = "SkyTestEntry__";
 ///
 /// `_out_dir_name` is accepted for signature stability with the CLI but is
 /// ignored: output always goes to the scratch `sky-out/`.
-pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestRun> {
+pub fn run_test(suite_path: &Path, out_dir_name: &str) -> std::io::Result<TestRun> {
+    run_test_with(suite_path, out_dir_name, &TestOptions::default())
+}
+
+/// [`run_test`] with [`TestOptions`] (the `sky test --format json` path).
+pub fn run_test_with(
+    suite_path: &Path,
+    _out_dir_name: &str,
+    topts: &TestOptions,
+) -> std::io::Result<TestRun> {
     let mut run = TestRun::default();
 
     // `assets_root_for` (not `repo_root_for`) so `sky test` works in a standalone
@@ -164,6 +186,7 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
 
     run.emitted = report.emitted;
     run.build_ok = report.go_build_ok;
+    run.diagnostics = report.diagnostics();
 
     // The suite reference must have resolved to a real Sky module. If it fell
     // through to the FFI-package path the lowerer emits `nil` for `Suite.tests`
@@ -187,6 +210,13 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
              declares `module {module}` and sits under a source root.",
             suite_path.display()
         );
+        run.diagnostics
+            .retain(|d| d.severity != project::diagnostics::Severity::Error);
+        run.diagnostics.push(project::diagnostics::Reported::plain(
+            project::diagnostics::Severity::Error,
+            project::diagnostics::Origin::Sky,
+            run.note.clone(),
+        ));
         let _ = std::fs::remove_dir_all(&scratch);
         return Ok(run);
     }
@@ -211,6 +241,12 @@ pub fn run_test(suite_path: &Path, _out_dir_name: &str) -> std::io::Result<TestR
         let bin_abs = out_dir.join(configured_bin_name(&project_dir));
         let mut cmd = std::process::Command::new(&bin_abs);
         cmd.current_dir(&project_dir);
+        if let Some(p) = &topts.json_report {
+            cmd.env("SKY_TEST_JSON", p);
+        }
+        if topts.stdout_to_stderr {
+            cmd.stdout(std::process::Stdio::from(std::io::stderr()));
+        }
 
         // Test-mode activation (opt-in): a project declares it by committing a
         // `.env.test`. When present, run the suite in TEST MODE — set

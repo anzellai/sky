@@ -425,8 +425,10 @@ pub struct BuildConfig {
 pub struct GoProgram {
     /// The emitted `main.go` bytes, or `None` when lowering found no entry / erred.
     pub source: Option<String>,
-    pub warnings: Vec<String>,
-    pub errors: Vec<String>,
+    /// Lowering warnings and errors, each with the span of the node being
+    /// lowered (`lower::LowerDiag`).
+    pub warnings: Vec<lower::LowerDiag>,
+    pub errors: Vec<lower::LowerDiag>,
     /// True when `main` was found + lowered.
     pub entry_ok: bool,
     /// Sky module paths of the Go-FFI packages the emitted program actually calls.

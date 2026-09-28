@@ -40,6 +40,8 @@ pub mod memory;
 /// `sky doc --api openapi` — a valid OpenAPI 3.1 spec generated statically from
 /// the app's typed source, reusing the `diagram::wire` analysis.
 pub mod openapi;
+/// `sky add ./path` — local path dependencies (Go modules and Sky packages).
+pub mod path_deps;
 pub mod sha256;
 /// `spa_diff_gen` — the type-directed value-generator EMITTER for the Sky.Spa
 /// differential split fuzzer (phase 1 of `docs/design/auto-testing.md`). Emits
@@ -58,11 +60,14 @@ pub mod spa_split;
 pub mod timings;
 pub use build::{
     build_example, build_project, configured_bin_name, configured_source_root, db_driver_conflict,
-    driver_for_dsn, emit_example_source, emit_example_warnings, enumerate_skydep_files,
-    ffi_type_surface, load_ffi_surface, migration_hint_for, offline_db_plan, sky_toml_flag,
-    sky_toml_project_key, sky_toml_section_key, BuildOptions, BuildReport, OfflineDbPlan,
-    EMBEDDED_BUNDLE_FILENAME,
+    driver_for_dsn, emit_example_source, emit_example_warnings, enumerate_dependency_files,
+    enumerate_skydep_files, ffi_type_surface, front_half_errors, go_diagnostics, load_ffi_surface,
+    migration_hint_for, offline_db_plan, sky_toml_flag, sky_toml_project_key, sky_toml_section_key,
+    BuildOptions, BuildReport, OfflineDbPlan, EMBEDDED_BUNDLE_FILENAME,
 };
+/// The structured diagnostic types a [`BuildReport`] carries, re-exported so
+/// the CLI and `testrunner` read them without a second dependency edge.
+pub use diagnostics;
 pub use doc::{
     list_modules, render_doc_site, render_doc_site_export, render_guides, render_landing,
     render_learn_tour, render_module, stdlib_denominators, ModuleDenominator,
@@ -76,9 +81,9 @@ pub use driver::{
 pub use ffi::assets::embed_fingerprint;
 pub use ffi::extract_template;
 pub use ffi_ops::{
-    add as ffi_add, add_sky as ffi_add_sky, add_smart as ffi_add_smart, install as ffi_install,
-    remove as ffi_remove, remove_sky as ffi_remove_sky, remove_smart as ffi_remove_smart,
-    update as ffi_update, FfiReport,
+    add as ffi_add, add_path as ffi_add_path, add_sky as ffi_add_sky, add_smart as ffi_add_smart,
+    install as ffi_install, remove as ffi_remove, remove_sky as ffi_remove_sky,
+    remove_smart as ffi_remove_smart, update as ffi_update, FfiReport,
 };
 
 use skydb::{parse, SkyDatabase, SourceFile};

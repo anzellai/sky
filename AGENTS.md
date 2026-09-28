@@ -476,6 +476,7 @@ sky init [name] [--production]   # new project
 sky build src/Main.sky           # compile → sky-out/app
 sky run src/Main.sky             # build + run  (--profile for pprof)
 sky check src/Main.sky           # type-check + go build  (≡ sky build)
+sky check --format json src/Main.sky   # NDJSON diagnostics on stdout (also build / test / fmt --check)
 sky watch src/Main.sky           # file-watch rebuild + restart
 sky verify                       # project pre-release gate: fmt + check + build + tests
 sky fmt src/Main.sky             # opinionated formatter (idempotent)
@@ -491,6 +492,7 @@ sky db provision --shared [--service] [--app <name>]           # one host cluste
 sky build --embed src/Main.sky   # bundle PostgreSQL INTO the binary; ./sky-out/app --embed
 sky spa-split src/Main.sky --out .split --build   # explicit Sky.Spa split (advanced)
 sky add <go/module> | remove | install | update                # Go FFI deps
+sky add ./local/dir              # local path dep: go.mod → Go module, sky.toml/src → Sky package
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
 

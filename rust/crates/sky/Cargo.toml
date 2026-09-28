@@ -28,7 +28,9 @@ serde_json.workspace = true
 [target.'cfg(unix)'.dependencies]
 # Safe SIGTERM wrapper for `sky watch --kill-timeout` graceful shutdown — the
 # crate forbids `unsafe`, so we use nix's safe `kill` rather than raw `libc`.
-nix = { version = "0.29", features = ["signal", "resource"] }
+# `fs` for `dup2`: `--format json` points fd 1 at stderr so nothing but the
+# NDJSON stream reaches stdout (src/json_out.rs).
+nix = { version = "0.29", features = ["signal", "resource", "fs"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 # The live cluster tests take down a spawned `sky run` / `sky watch` by process

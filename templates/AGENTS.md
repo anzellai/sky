@@ -528,6 +528,7 @@ sky init [name] [--production]  # new project — SQLite default; --production =
 sky build src/Main.sky       # compile → sky-out/app
 sky run src/Main.sky         # build + run   (--profile for runtime CPU/mem/hang profiling)
 sky check src/Main.sky       # type-check + go build (keeps no binary — but DOES compile)
+sky check --format json src/Main.sky   # NDJSON diagnostics on stdout, for CI and tools (also build / test / fmt --check)
 sky verify                   # one-shot project gate: fmt + check + build + tests
 sky test tests/MyTest.sky    # Sky.Test runner (SKY_TEST_JSON=<path> also writes a per-case JSON report)
 sky fuzz src/Main.sky [--target web:app]   # no-panic model fuzz of update; a Sky.Spa target adds the differential split oracle
@@ -536,6 +537,7 @@ sky doc <Module> | --list    # API docs (the source of truth for signatures)
 sky doc --diagram <kind>     # architecture diagram from the typed IR: components (C4) | wire (DFD) | journey | telemetry; --format puml|md|svg
 sky watch src/Main.sky       # rebuild + restart on save
 sky add <go/pkg> | remove | install | update   # Go FFI deps
+sky add ./local/dir          # a local Go module (go.mod) or Sky package, by path
 ```
 
 **Sky.Spa entries auto-split.** Building the same `App.app` source to a client

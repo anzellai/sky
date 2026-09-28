@@ -45,6 +45,7 @@ use testrunner::run_test;
 
 mod app_url;
 mod bundled;
+mod json_out;
 mod leg_plan;
 mod precompress;
 mod target;
@@ -91,11 +92,11 @@ fn dispatch(args: &[String]) -> ExitCode {
             print_help();
             ExitCode::SUCCESS
         }
-        Some("build") => cmd_build(&args[1..], /*check_only=*/ false),
-        Some("check") => cmd_build(&args[1..], /*check_only=*/ true),
+        Some("build") => cmd_build_verb(&args[1..], /*check_only=*/ false),
+        Some("check") => cmd_build_verb(&args[1..], /*check_only=*/ true),
         Some("run") => cmd_run(&args[1..]),
-        Some("fmt") => cmd_fmt(&args[1..]),
-        Some("test") => cmd_test(&args[1..]),
+        Some("fmt") => cmd_fmt_verb(&args[1..]),
+        Some("test") => cmd_test_verb(&args[1..]),
         Some("lsp") => cmd_lsp(&args[1..]),
         Some("clean") => cmd_clean(&args[1..]),
         Some("init") => cmd_init(&args[1..]),
@@ -144,6 +145,40 @@ fn dispatch(args: &[String]) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// `--format text|json` for the verbs that report diagnostics (`check`,
+/// `build`, `test`, `fmt --check`): strip the flag, then run the verb, inside
+/// the json sink when asked (`json_out`: NDJSON on stdout, human text on
+/// stderr, a summary line always last, the same exit code as text mode).
+fn with_format(
+    args: &[String],
+    command: &'static str,
+    f: impl FnOnce(&[String]) -> ExitCode,
+) -> ExitCode {
+    match json_out::take_format(args) {
+        Err(e) => {
+            eprintln!("sky {command}: {e}");
+            ExitCode::from(2)
+        }
+        Ok((rest, false)) => f(&rest),
+        Ok((rest, true)) => json_out::run(command, || f(&rest)),
+    }
+}
+
+/// `sky build` / `sky check`, with `--format` handled ([`with_format`]).
+fn cmd_build_verb(args: &[String], check_only: bool) -> ExitCode {
+    with_format(args, verb(check_only), |a| cmd_build(a, check_only))
+}
+
+/// `sky fmt`, with `--format` handled ([`with_format`]).
+fn cmd_fmt_verb(args: &[String]) -> ExitCode {
+    with_format(args, "fmt", cmd_fmt)
+}
+
+/// `sky test`, with `--format` handled ([`with_format`]).
+fn cmd_test_verb(args: &[String]) -> ExitCode {
+    with_format(args, "test", cmd_test)
 }
 
 /// `sky upgrade [--force]` — self-update the `sky` binary from the latest GitHub
@@ -1158,7 +1193,13 @@ fn stage_std_app_derived(project_dir: &Path, out_root: &Path) -> Result<PathBuf,
     }
     let toml_src = project_dir.join("sky.toml");
     if toml_src.exists() {
-        if let Err(e) = std::fs::copy(&toml_src, out_root.join("sky.toml")) {
+        // A local path dependency's relative `path` is relative to THIS
+        // project's root; the staged copy lives under `.skyapp/`, so each one
+        // is rewritten absolute (`path_deps::absolutize_manifest`).
+        let staged = std::fs::read_to_string(&toml_src)
+            .map(|t| project::path_deps::absolutize_manifest(&t, project_dir))
+            .and_then(|t| std::fs::write(out_root.join("sky.toml"), t));
+        if let Err(e) = staged {
             eprintln!("sky build: stage sky.toml: {e}");
             return Err(ExitCode::FAILURE);
         }
@@ -1274,15 +1315,49 @@ fn remap_fallback_error(output: &str, tgt: target::Target) -> bool {
     // The `HasFallback vs NoFallback` mismatch only arises for the Live-based
     // runners (`runLive`/`runLiveWindow`, which `web` / bare `desktop` / bare
     // `tablet` use), so its presence IS the signal — no need to gate on target.
-    if output.contains("HasFallback") && output.contains("NoFallback") {
-        eprintln!(
-            "sky: target '{}' requires a fallback page.\n  \
+    match fallback_message(output, tgt) {
+        Some(m) => {
+            eprintln!("sky: {m}");
+            true
+        }
+        None => false,
+    }
+}
+
+/// The message [`remap_fallback_error`] prints, when `output` carries the
+/// `HasFallback vs NoFallback` phantom error; `None` otherwise. `--format json`
+/// reports it as the one diagnostic of the failed check.
+fn fallback_message(output: &str, tgt: target::Target) -> Option<String> {
+    (output.contains("HasFallback") && output.contains("NoFallback")).then(|| {
+        format!(
+            "target '{}' requires a fallback page.\n  \
              Live routing is total, so a server-driven app must set a not-found\n  \
              page: add `|> App.withNotFound <page>` to your `app`.",
             tgt.canonical()
-        );
+        )
+    })
+}
+
+/// A child `sky check|build <derived entry>` run for a `Std.App` entry:
+/// in `--format json` mode the child is run with `--format json` too and its
+/// diagnostics are relayed; the fallback phantom becomes one clean diagnostic.
+/// Returns whether the fallback remap applied.
+fn relay_std_app_child(out: &std::process::Output, tgt: target::Target) -> bool {
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    eprint!("{}", String::from_utf8_lossy(&out.stderr));
+    if let Some(m) = fallback_message(&combined, tgt) {
+        json_out::diagnostic(&project::diagnostics::Reported::plain(
+            project::diagnostics::Severity::Error,
+            project::diagnostics::Origin::Sky,
+            m,
+        ));
         return true;
     }
+    json_out::relay(&out.stdout, |_| None);
     false
 }
 
@@ -1368,25 +1443,42 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: target::Target) -> 
             return ExitCode::FAILURE;
         }
     };
-    let out = match Command::new(&sky).arg("check").arg(&derived_entry).output() {
+    let mut child = Command::new(&sky);
+    child.arg("check");
+    if json_out::active() {
+        child.args(["--format", "json"]);
+    }
+    let out = match child.arg(&derived_entry).output() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("sky check: run derived check: {e}");
             return ExitCode::FAILURE;
         }
     };
+    if json_out::active() {
+        relay_std_app_child(&out, tgt);
+    }
     if out.status.success() {
-        print!("{}", String::from_utf8_lossy(&out.stdout));
-        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        if !json_out::active() {
+            print!("{}", String::from_utf8_lossy(&out.stdout));
+            eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        }
         // `sky check` ≡ `sky build`: a client target reads `App.withAppUrl`
         // statically, so a value the build cannot read fails the check too.
         if std_app_runner(tgt).1 == StdAppBuild::Spa {
             if let Err(e) = std_app_builder_url(&entry_src, tgt) {
                 eprintln!("sky check --target {}: {e}", tgt.canonical());
+                json_out::diagnostic(&project::diagnostics::Reported::plain(
+                    project::diagnostics::Severity::Error,
+                    project::diagnostics::Origin::Sky,
+                    e,
+                ));
                 return ExitCode::FAILURE;
             }
         }
         ExitCode::SUCCESS
+    } else if json_out::active() {
+        ExitCode::FAILURE
     } else {
         let combined = format!(
             "{}{}",
@@ -2818,6 +2910,9 @@ fn build_std_app(
     if embed {
         cmd.arg("--embed");
     }
+    if json_out::active() {
+        cmd.args(["--format", "json"]);
+    }
     cmd.arg(&derived_entry);
     // Capture (not inherit) so a `HasFallback vs NoFallback` phantom error from
     // the generated entry can be remapped to a clean 'add App.withNotFound' hint.
@@ -2831,7 +2926,12 @@ fn build_std_app(
             return ExitCode::FAILURE;
         }
     };
-    if !out.status.success() {
+    if json_out::active() {
+        relay_std_app_child(&out, tgt);
+        if !out.status.success() {
+            return ExitCode::FAILURE;
+        }
+    } else if !out.status.success() {
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
@@ -2849,8 +2949,10 @@ fn build_std_app(
         }
         return ExitCode::FAILURE;
     }
-    print!("{}", String::from_utf8_lossy(&out.stdout));
-    eprint!("{}", String::from_utf8_lossy(&out.stderr));
+    if !json_out::active() {
+        print!("{}", String::from_utf8_lossy(&out.stdout));
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+    }
     let binary = out_root.join("sky-out").join("app");
     println!(
         "\nBuilt Std.App entry ({}) → {}",
@@ -2951,6 +3053,14 @@ fn spa_split_and_build(
         Ok(r) => r,
         Err(e) => {
             eprintln!("sky spa-split: {e}");
+            // The split refuses the app as a whole ("cannot auto-split: …"):
+            // the generator reports no source span, so the message is the
+            // diagnostic, unlocated.
+            json_out::diagnostic(&project::diagnostics::Reported::plain(
+                project::diagnostics::Severity::Error,
+                project::diagnostics::Origin::Sky,
+                e.to_string(),
+            ));
             return Err(ExitCode::FAILURE);
         }
     };
@@ -3059,11 +3169,17 @@ fn spa_split_and_build(
     // printed grouped afterwards, so the two streams never interleave and every
     // error is still surfaced. (--embed belongs on the BACKEND: it owns the DB.)
     let sky_ref = &sky;
+    // In `--format json` mode each leg runs with `--format json` too, and its
+    // diagnostics are relayed (see `report_leg`).
+    let json_leg = json_out::active();
     let build_backend = || {
         let mut c = Command::new(sky_ref);
         c.arg("build");
         if embed {
             c.arg("--embed");
+        }
+        if json_leg {
+            c.args(["--format", "json"]);
         }
         if let Some(n) = leg_go_jobs {
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
@@ -3077,6 +3193,9 @@ fn spa_split_and_build(
         let t = project::timings::phase("frontend leg (child sky build, wasm)");
         let mut c = Command::new(sky_ref);
         c.args(["build", "--target", target, "src/Main.sky"]);
+        if json_leg {
+            c.args(["--format", "json"]);
+        }
         if let Some(u) = builder_app_url {
             c.arg(format!("{}{u}", app_url::BUILDER_FLAG));
         }
@@ -3109,29 +3228,42 @@ fn spa_split_and_build(
     t_legs.end();
     // Each leg recorded its own `sky` and Go peaks in its `sky-out/` for the
     // next build's plan (`project::go_jobs::record_peaks`).
-    let report_leg =
-        |label: &str, res: std::thread::Result<std::io::Result<std::process::Output>>| -> bool {
-            use std::io::Write;
-            println!("\n== {label} ==");
-            match res {
-                Ok(Ok(out)) => {
+    let report_leg = |label: &str,
+                      half: &str,
+                      leg_dir: &Path,
+                      res: std::thread::Result<std::io::Result<std::process::Output>>|
+     -> bool {
+        use std::io::Write;
+        println!("\n== {label} ==");
+        match res {
+            Ok(Ok(out)) => {
+                if json_leg {
+                    let _ = std::io::stderr().write_all(&out.stderr);
+                    relay_split_leg(&out.stdout, half, leg_dir, project_dir);
+                } else {
                     let _ = std::io::stdout().write_all(&out.stdout);
                     let _ = std::io::stderr().write_all(&out.stderr);
-                    out.status.success()
                 }
-                Ok(Err(e)) => {
-                    eprintln!("sky spa-split --build: {label}: spawn failed: {e}");
-                    false
-                }
-                Err(_) => {
-                    eprintln!("sky spa-split --build: {label}: build thread panicked");
-                    false
-                }
+                out.status.success()
             }
-        };
+            Ok(Err(e)) => {
+                eprintln!("sky spa-split --build: {label}: spawn failed: {e}");
+                false
+            }
+            Err(_) => {
+                eprintln!("sky spa-split --build: {label}: build thread panicked");
+                false
+            }
+        }
+    };
     // Report BOTH legs (so both outputs are shown even if both fail), then decide.
-    let backend_ok = report_leg("backend (native)", backend_res);
-    let frontend_ok = report_leg(&format!("frontend (--target {target})"), frontend_res);
+    let backend_ok = report_leg("backend (native)", "backend", &backend_dir, backend_res);
+    let frontend_ok = report_leg(
+        &format!("frontend (--target {target})"),
+        "frontend",
+        &frontend_dir,
+        frontend_res,
+    );
     if !backend_ok {
         eprintln!("sky spa-split --build: backend failed to build");
         return Err(ExitCode::FAILURE);
@@ -3141,6 +3273,44 @@ fn spa_split_and_build(
         return Err(ExitCode::FAILURE);
     }
     Ok(od)
+}
+
+/// Relay one Sky.Spa split leg's `--format json` diagnostics (`half` is
+/// `frontend` or `backend`, added to each line as `"half"`). A leg reports
+/// `file` relative to its own generated project. When that file is a copy of
+/// one of the app's own modules (same path under the project, same bytes), it
+/// is reported as the app's file, which is where the user fixes it; otherwise
+/// (a generated or rewritten module, the emitted Go) it is reported as the
+/// generated file's real path under the project (`.split/frontend/src/…`).
+fn relay_split_leg(stdout: &[u8], half: &str, leg_dir: &Path, project_dir: &Path) {
+    let leg_rel = leg_dir
+        .strip_prefix(project_dir)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| leg_dir.to_path_buf());
+    let leg_rel = leg_rel.to_string_lossy().replace('\\', "/");
+    json_out::relay(stdout, |v| {
+        if v.get("kind").and_then(serde_json::Value::as_str) != Some("diagnostic") {
+            return None;
+        }
+        let file = v["file"].as_str().map(|f| {
+            let same_bytes = std::fs::read(leg_dir.join(f))
+                .ok()
+                .zip(std::fs::read(project_dir.join(f)).ok())
+                .is_some_and(|(a, b)| a == b);
+            if same_bytes && !Path::new(f).is_absolute() {
+                f.to_string()
+            } else if Path::new(f).is_absolute() {
+                f.to_string()
+            } else {
+                format!("{leg_rel}/{f}")
+            }
+        });
+        Some(json_out::rewrite_diagnostic(
+            v,
+            file,
+            &[("half", json_out::enc(half))],
+        ))
+    });
 }
 
 /// `sky spa-split <entry.sky> --out <dir>` — the Sky.Spa auto-split GENERATOR.
@@ -3545,6 +3715,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
+    json_out::set_root(&project_dir);
     // Resolve the build identity ONCE, here at the user's project root, and pin
     // it for every child build this command spawns (Std.App derived entry,
     // both Sky.Spa split legs, a desktop shell), so all of them embed the same
@@ -3694,6 +3865,23 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     {
         let out_dir = project_dir.join(out_override.as_deref().unwrap_or(".split"));
         let fe_target = target.as_deref().unwrap_or("web");
+        // Check the app's OWN source first (the front half `sky check` runs:
+        // parse, types, lowering). An error there is reported against `src/…`,
+        // where the user can fix it, instead of surfacing later from a
+        // generated split project. Both output modes print these same values.
+        let front = project::front_half_errors(
+            &repo_root,
+            &project_dir,
+            entry_module_name(file).as_deref(),
+        );
+        if !front.is_empty() {
+            for d in &front {
+                json_out::diagnostic(d);
+            }
+            let rendered: Vec<&str> = front.iter().map(|d| d.rendered.as_str()).collect();
+            eprintln!("sky build: {}", rendered.join("\n"));
+            return ExitCode::FAILURE;
+        }
         return match spa_split_and_build(
             &repo_root,
             &project_dir,
@@ -3760,19 +3948,33 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         wasm,
     };
     let report = build_example(&opts);
-    for w in &report.warnings {
-        eprintln!("warning: {w}");
+    // ONE list of diagnostics drives both output modes: `--format json` writes
+    // each as a line, and the text mode below renders the same values, so the
+    // two cannot disagree on what went wrong.
+    let diags = report.diagnostics();
+    for d in &diags {
+        json_out::diagnostic(d);
     }
-    // The legacy→`withX` migration LIST (design §8.2): printed on the same
-    // stderr channel as the warnings above, self-extinguishing (silent once the
-    // keys are gone). Not `warning:`-prefixed — it is a distinct block a user
-    // reads to act, and the three classes inside it (moved / removed / changed)
-    // are already visually distinct.
-    if let Some(hint) = &report.migration_hint {
-        eprintln!("\n{hint}\n");
+    use project::diagnostics::{Origin, Severity};
+    for d in diags.iter().filter(|d| d.severity == Severity::Warning) {
+        eprintln!("warning: {}", d.rendered);
+    }
+    // The legacy→`withX` migration LIST (design §8.2), carried as the one
+    // `info` diagnostic: printed on the same stderr channel as the warnings
+    // above, self-extinguishing (silent once the keys are gone). Not
+    // `warning:`-prefixed — it is a distinct block a user reads to act, and the
+    // three classes inside it (moved / removed / changed) are already visually
+    // distinct.
+    for d in diags.iter().filter(|d| d.severity == Severity::Info) {
+        eprintln!("\n{}\n", d.rendered);
     }
     if !report.emitted {
-        eprintln!("sky {}: {}", verb(check_only), report.note);
+        let rendered: Vec<&str> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error && d.origin == Origin::Sky)
+            .map(|d| d.rendered.as_str())
+            .collect();
+        eprintln!("sky {}: {}", verb(check_only), rendered.join("\n"));
         return ExitCode::FAILURE;
     }
     println!(
@@ -6402,6 +6604,16 @@ fn run_app_open(
 fn cmd_fmt(args: &[String]) -> ExitCode {
     let check = args.iter().any(|a| a == "--check");
     let stdin_mode = args.iter().any(|a| a == "--stdin" || a == "-");
+    // `--format json` reports; it never rewrites files. It needs `--check`.
+    if json_out::active() && (!check || stdin_mode) {
+        eprintln!("sky fmt: --format json needs --check and file arguments");
+        return ExitCode::from(2);
+    }
+    if json_out::active() {
+        if let Ok(cwd) = std::env::current_dir() {
+            json_out::set_root(&cwd);
+        }
+    }
     let files: Vec<&String> = args
         .iter()
         .filter(|a| !a.starts_with("--") && a.as_str() != "-")
@@ -6433,14 +6645,25 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
     let mut changed_or_error = false;
     for f in files {
         let path = Path::new(f);
+        let fmt_diag = |message: String| {
+            let mut d = project::diagnostics::Reported::plain(
+                project::diagnostics::Severity::Error,
+                project::diagnostics::Origin::Sky,
+                message,
+            );
+            d.file = Some(f.replace('\\', "/"));
+            json_out::diagnostic(&d);
+        };
         let Ok(src) = std::fs::read_to_string(path) else {
             eprintln!("sky fmt: could not read {f}");
+            fmt_diag("could not read the file".to_string());
             changed_or_error = true;
             continue;
         };
         if check {
             if !is_formatted(&src) {
                 println!("would reformat: {f}");
+                fmt_diag(format!("not formatted: run `sky fmt {f}`"));
                 changed_or_error = true;
             }
             continue;
@@ -6476,6 +6699,9 @@ fn cmd_test(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     };
     let out_dir_name = out_override.unwrap_or_else(|| "sky-out".to_string());
+    if json_out::active() {
+        return cmd_test_json(Path::new(file), &out_dir_name);
+    }
     match run_test(Path::new(file), &out_dir_name) {
         Ok(run) => {
             if !run.note.is_empty() {
@@ -6491,6 +6717,112 @@ fn cmd_test(args: &[String]) -> ExitCode {
             ExitCode::from(testrunner::EXIT_NOT_RUN)
         }
     }
+}
+
+/// `sky test --format json`: the build's diagnostics, one `test` line per
+/// `Sky.Test` case (read from the suite's own `SKY_TEST_JSON` report, so the
+/// cases are the ones the suite ran, never re-derived), then the summary with
+/// the case counts. The suite binary's human `ok` / `FAIL` lines go to stderr.
+/// The exit code is the text mode's: 0 all passed, 1 a test failed, 2 nothing
+/// ran.
+fn cmd_test_json(suite: &Path, out_dir_name: &str) -> ExitCode {
+    use serde_json::Value;
+    let root = project_dir_for(suite);
+    json_out::set_root(&root);
+    let report_path = std::env::temp_dir().join(format!(
+        "sky-test-report-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let topts = testrunner::TestOptions {
+        json_report: Some(report_path.clone()),
+        stdout_to_stderr: true,
+    };
+    let run = match testrunner::run_test_with(suite, out_dir_name, &topts) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("sky test: {e}");
+            json_out::diagnostic(&project::diagnostics::Reported::plain(
+                project::diagnostics::Severity::Error,
+                project::diagnostics::Origin::Sky,
+                e.to_string(),
+            ));
+            return ExitCode::from(testrunner::EXIT_NOT_RUN);
+        }
+    };
+    if !run.note.is_empty() {
+        eprintln!("sky test: {}", run.note);
+    }
+    let mut diags = run.diagnostics.clone();
+    let has_error = diags
+        .iter()
+        .any(|d| d.severity == project::diagnostics::Severity::Error);
+    if run.exit_status() == testrunner::EXIT_NOT_RUN && !has_error && !run.note.is_empty() {
+        diags.push(project::diagnostics::Reported::plain(
+            project::diagnostics::Severity::Error,
+            project::diagnostics::Origin::Sky,
+            run.note.clone(),
+        ));
+    }
+    for d in &diags {
+        json_out::diagnostic(d);
+    }
+    let module = project::declared_module_name(suite).unwrap_or_default();
+    let report: Option<Value> = std::fs::read_to_string(&report_path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    let _ = std::fs::remove_file(&report_path);
+    let (mut passed, mut failed) = (0u64, 0u64);
+    let cases = report
+        .as_ref()
+        .and_then(|r| r.get("cases"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for c in &cases {
+        let full = c.get("name").and_then(Value::as_str).unwrap_or("");
+        let outcome = c.get("outcome").and_then(Value::as_str).unwrap_or("fail");
+        let status = if outcome == "pass" { "pass" } else { "fail" };
+        if status == "pass" {
+            passed += 1;
+        } else {
+            failed += 1;
+        }
+        // `Suite > Inner > leaf` — the suite path is everything before the
+        // last ` > `; a top-level case belongs to the test module.
+        let (suite_name, name) = match full.rfind(" > ") {
+            Some(i) => (full[..i].to_string(), full[i + 3..].to_string()),
+            None => (module.clone(), full.to_string()),
+        };
+        let mut fields: Vec<(&str, String)> = vec![
+            ("kind", json_out::enc("test")),
+            ("schema", json_out::SCHEMA.to_string()),
+            ("suite", json_out::enc(&suite_name)),
+            ("name", json_out::enc(&name)),
+            ("fullName", json_out::enc(full)),
+            ("status", json_out::enc(status)),
+        ];
+        let msg = c.get("message").and_then(Value::as_str).unwrap_or("");
+        if !msg.is_empty() {
+            fields.push(("message", json_out::enc(msg)));
+        }
+        // Sky.Test runs every case in one pure pass, with no clock between
+        // cases, so there is no per-case duration to report. `null` says so;
+        // a made-up 0 would not.
+        fields.push(("durationMs", "null".to_string()));
+        json_out::test_line(&json_out::obj(&fields), status == "fail");
+    }
+    let total = passed + failed;
+    json_out::summary_field("total", serde_json::json!(total));
+    json_out::summary_field("passed", serde_json::json!(passed));
+    json_out::summary_field("failed", serde_json::json!(failed));
+    json_out::summary_field("skipped", serde_json::json!(0));
+    let status = run.exit_status();
+    json_out::summary_field("exitCode", serde_json::json!(status));
+    ExitCode::from(status)
 }
 
 /// `sky test --scaffold-mocks [entry]` — write mock-fixture skeletons for the
@@ -9309,6 +9641,20 @@ fn cmd_watch(args: &[String]) -> ExitCode {
     for extra in &opts.extra_watch {
         roots.push(extra.clone());
     }
+    // Local path dependencies (`sky add ./dir`) are sources of this build too:
+    // a Sky package's `.sky` files, and a Go module's `.go` / `go.mod`.
+    let mut go_dep_roots: Vec<PathBuf> = Vec::new();
+    for d in project::path_deps::read_path_dependencies(&project_dir.join("sky.toml")) {
+        let dir = d.resolve(&project_dir);
+        if !dir.is_dir() {
+            continue;
+        }
+        let dir = dir.canonicalize().unwrap_or(dir);
+        if d.kind == project::path_deps::PathDepKind::Go {
+            go_dep_roots.push(dir.clone());
+        }
+        roots.push(dir);
+    }
     roots.sort();
     roots.dedup();
 
@@ -9317,7 +9663,11 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         let tx = tx.clone();
         move |res: notify::Result<notify::Event>| {
             if let Ok(event) = res {
-                if event.paths.iter().any(|p| is_watched_change(p)) {
+                if event
+                    .paths
+                    .iter()
+                    .any(|p| is_watched_change(p) || is_go_dep_change(p, &go_dep_roots))
+                {
                     let _ = tx.send(());
                 }
             }
@@ -9567,6 +9917,17 @@ fn is_watched_change(path: &Path) -> bool {
     is_sky || is_toml
 }
 
+/// A `.go` file or `go.mod` inside a local Go path dependency (`sky add
+/// ./dir`): `sky watch` rebuilds on it, because the build compiles that
+/// directory as it is.
+fn is_go_dep_change(path: &Path, go_dep_roots: &[PathBuf]) -> bool {
+    if !go_dep_roots.iter().any(|r| path.starts_with(r)) {
+        return false;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    (name.ends_with(".go") && !name.ends_with("_test.go")) || name == "go.mod"
+}
+
 // ---- FFI verbs (add / remove / install / update) -------------------------
 
 use project::{
@@ -9606,9 +9967,28 @@ fn cmd_add(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     let Some(raw) = args.iter().find(|a| !a.starts_with('-')) else {
-        eprintln!("usage: sky add [--go|--sky] <import-path>[@version]");
+        eprintln!("usage: sky add [--go|--sky] <import-path>[@version]  |  sky add <./local/dir>");
         return ExitCode::from(2);
     };
+    // A local directory (`./x`, `../x`, `/abs/x`): a path dependency. Routed
+    // before the `@version` split — a path has no version, and may contain `@`.
+    if project::path_deps::is_path_arg(raw) {
+        let Some((repo_root, project_dir)) = resolve_ffi_ctx() else {
+            return ExitCode::FAILURE;
+        };
+        let force = match (force_go, force_sky) {
+            (true, _) => Some(project::path_deps::PathDepKind::Go),
+            (_, true) => Some(project::path_deps::PathDepKind::Sky),
+            _ => None,
+        };
+        return emit_ffi_report(project::ffi_add_path(
+            &project_dir,
+            &repo_root,
+            &project_dir,
+            raw,
+            force,
+        ));
+    }
     // Split an optional version off the LAST `@` — import paths never contain one,
     // so `github.com/foo/bar@v1.2.3` → (`github.com/foo/bar`, `v1.2.3`).
     let (pkg, spec) = match raw.rfind('@') {
@@ -9814,6 +10194,75 @@ fn run_all_checks(root: &Path) -> Vec<Finding> {
     out.extend(check_missing_ffi(root));
     out.extend(check_auth_secret(root));
     out.extend(check_embedded_postgres(root));
+    out.extend(check_path_deps(root));
+    out
+}
+
+/// Local path dependencies (`sky add ./dir`): one that does not exist breaks
+/// every build; one outside the repository builds here but not in a CI
+/// checkout or a deploy that copies only the repository. Both are warnings with
+/// the fix in the hint. The boundary is the git work tree holding the project
+/// (`git rev-parse --show-toplevel`), else the project directory itself.
+fn check_path_deps(root: &Path) -> Vec<Finding> {
+    let deps = project::path_deps::read_path_dependencies(&root.join("sky.toml"));
+    if deps.is_empty() {
+        return Vec::new();
+    }
+    let git_top = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()));
+    let (boundary, label) = match git_top {
+        Some(t) => (t, "this repository"),
+        None => (
+            root.to_path_buf(),
+            "the project directory (not a git repository)",
+        ),
+    };
+    let boundary = boundary.canonicalize().unwrap_or(boundary);
+    let mut out = Vec::new();
+    for d in deps {
+        let dir = d.resolve(root);
+        if !dir.is_dir() {
+            out.push(Finding {
+                check: "path-dep-missing",
+                severity: Severity::Warn,
+                message: format!(
+                    "path dependency \"{}\" points at {} ({}), which does not exist",
+                    d.key,
+                    d.path,
+                    dir.display()
+                ),
+                hint: format!(
+                    "restore the directory, or drop the dependency with `sky remove {}`",
+                    d.key
+                ),
+                fix: None,
+            });
+            continue;
+        }
+        let real = dir.canonicalize().unwrap_or(dir);
+        if !real.starts_with(&boundary) {
+            out.push(Finding {
+                check: "path-dep-outside-repo",
+                severity: Severity::Warn,
+                message: format!(
+                    "path dependency \"{}\" = {} is outside {label} ({})",
+                    d.key,
+                    d.path,
+                    boundary.display()
+                ),
+                hint: "a CI checkout or a deploy that copies only this repository will not \
+                       have it; move it into the repository, or publish it and depend on a \
+                       version"
+                    .to_string(),
+                fix: None,
+            });
+        }
+    }
     out
 }
 
@@ -11083,6 +11532,7 @@ fn print_help() {
          \x20                   tablet:ipad|android · mobile:ios|android (native wasm)\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
          \x20 test  <file>     run a Sky.Test suite\n\
+         \x20 --format json    check / build / test / fmt --check: NDJSON diagnostics on stdout\n\
          \x20 lsp              launch the sky-lsp server (stdio)\n\
          \x20 clean            remove sky-out/ + .skycache/\n\
          \x20 init  [name]     scaffold a new project\n\
@@ -11096,6 +11546,7 @@ fn print_help() {
          \x20 db    <start|stop|ps>          local PostgreSQL cluster (--all for ps/stop)\n\
          \x20 db    provision --embed        fetch PostgreSQL into ~/.sky/postgres\n\
          \x20 add    <import-path>  inspect a Go pkg → commit its FFI surface\n\
+         \x20 add    <./dir>        a local path dependency (Go module or Sky package)\n\
          \x20 remove <import-path>  drop a Go pkg's FFI surface + dep\n\
          \x20 install               regen/verify committed FFI surfaces\n\
          \x20 update                bump Go deps + regen surfaces\n\
@@ -12146,6 +12597,20 @@ mod tests {
         assert!(!is_watched_change(Path::new("README.md")));
         assert!(!is_watched_change(Path::new("Cargo.toml")));
         assert!(!is_watched_change(Path::new("src/data.json")));
+    }
+
+    #[test]
+    fn go_path_dependency_sources_trigger_a_rebuild() {
+        let roots = vec![PathBuf::from("/w/greet")];
+        assert!(is_go_dep_change(Path::new("/w/greet/greet.go"), &roots));
+        assert!(is_go_dep_change(Path::new("/w/greet/sub/x.go"), &roots));
+        assert!(is_go_dep_change(Path::new("/w/greet/go.mod"), &roots));
+        assert!(!is_go_dep_change(
+            Path::new("/w/greet/greet_test.go"),
+            &roots
+        ));
+        assert!(!is_go_dep_change(Path::new("/w/greet/README.md"), &roots));
+        assert!(!is_go_dep_change(Path::new("/w/other/x.go"), &roots));
     }
 
     #[test]
