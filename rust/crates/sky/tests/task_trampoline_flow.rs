@@ -161,9 +161,7 @@ fn recursive_task_code_runs_two_million_steps() {
          Output tail:\n{tail}"
     );
     assert!(
-        combined.contains(
-            "andThen 2000000 | onError 2000000 | map 1000000 | sequence 5000050000"
-        ),
+        combined.contains("andThen 2000000 | onError 2000000 | map 1000000 | sequence 5000050000"),
         "output:\n{tail}"
     );
     let _ = std::fs::remove_dir_all(&dir);
