@@ -208,6 +208,13 @@ const MIXED_KERNELS: &[(&str, &[&str])] = &[
         &["verify", "publicKeyFromBytes", "publicKeyToBytes"],
     ),
     ("Kx", &["publicKeyFromBytes", "publicKeyToBytes"]),
+    // `Sky.Core.Secret`: wrapping a string the client already holds
+    // (`fromString` / `unsafeFromString`, both `Secret_fromString`) and
+    // revealing a Secret the client already holds are pure and work in wasm.
+    // A client Secret comes from the device (`Native.secureGet`), never from
+    // the server: a Secret has no codec, so none crosses the wire. `fromEnv`
+    // reads the SERVER's environment and stays server (fail-closed).
+    ("Secret", &["fromString", "reveal"]),
 ];
 
 /// The client-safe members of a [`MIXED_KERNELS`] family, or `None` when
@@ -5473,6 +5480,41 @@ mod tests {
         record_ffi_symbol("Subprocess_spawn", &mut acc);
         record_ffi_symbol("Watch_changes", &mut acc);
         assert_eq!(acc.server_kernels.len(), 2, "{:?}", acc.server_kernels);
+    }
+
+    /// The device secure store and biometric prompt run in the wasm client,
+    /// through the native shell: a server has no user's Keychain. A Secret the
+    /// client read from it can be revealed there (`Secret_reveal`, pure), while
+    /// `Secret.fromEnv` reads the server's environment and stays server.
+    #[test]
+    fn secure_store_and_biometrics_are_client_effects_and_secret_is_per_function() {
+        let mut acc = Refs::default();
+        for sym in [
+            "Native_secureSet",
+            "Native_secureGet",
+            "Native_secureRemove",
+            "Native_authenticate",
+        ] {
+            record_ffi_symbol(sym, &mut acc);
+        }
+        assert!(acc.server_kernels.is_empty(), "{:?}", acc.server_kernels);
+        assert_eq!(acc.client_kernels.len(), 4, "{:?}", acc.client_kernels);
+
+        let mut acc = Refs::default();
+        record_ffi_symbol("Secret_fromString", &mut acc);
+        record_ffi_symbol("Secret_reveal", &mut acc);
+        assert!(
+            acc.server_kernels.is_empty() && acc.client_kernels.is_empty(),
+            "fromString / reveal are pure and client-safe: {:?}",
+            acc.server_kernels
+        );
+        let mut acc = Refs::default();
+        record_ffi_symbol("Secret_fromEnv", &mut acc);
+        assert_eq!(
+            acc.server_kernels.len(),
+            1,
+            "Secret.fromEnv reads the server's environment"
+        );
     }
 
     /// A `Std.Native.*` FFI symbol (`Native_<cap>`) records as a CLIENT effect,

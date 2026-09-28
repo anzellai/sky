@@ -527,5 +527,23 @@ warning that a production device build should use `https://`. If the shell
 cannot load the address, it shows a native message with the URL and the error
 instead of a blank page. Full rules: `docs/sky-toml.md` (`SKY_APP_URL`).
 
+### Permissions, entitlements, secure storage and release — `docs/skyapp/native.md`
+
+A native shell needs more than the web build. [`native.md`](native.md) covers:
+
+- `Bundle.withUsage Bundle.Camera "…"`: the purpose string each permission
+  prompt shows, with the matching iOS / macOS `Info.plist` key and Android
+  permission. A `Native.authenticate` / `capturePhoto` / `geolocation` call
+  without its permission fails the iOS and Android builds, naming the fix.
+- `Bundle.withEntitlement`: typed Apple entitlements (keychain access groups,
+  app groups, associated domains, push, iCloud), merged structurally with any
+  `native/ios/app.entitlements` fragment.
+- `Native.secureSet` / `secureGet` / `secureRemove` (Keychain, Android Keystore)
+  and `Native.authenticate` (Face ID, Touch ID, BiometricPrompt).
+- `sky package --release --target mobile:ios|mobile:android|desktop:mac`: the
+  signed `.ipa`, the release `.apk` / `.aab`, the `.app` / `.dmg`. A release
+  refuses the development backend address.
+- A recipe that scans a QR code in a widget island and draws one with `Std.Qr`.
+
 See also: `sky doc Std.App`, `docs/skylive/overview.md`, `docs/skyspa/overview.md`,
 and the design rationale in `docs/design/unified-app-builder.md`.

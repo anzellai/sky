@@ -47,8 +47,11 @@ mod app_url;
 mod bundled;
 mod json_out;
 mod leg_plan;
+mod native_pkg;
+mod plist;
 mod precompress;
 mod target;
+mod xmlmini;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -94,6 +97,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         }
         Some("build") => cmd_build_verb(&args[1..], /*check_only=*/ false),
         Some("check") => cmd_build_verb(&args[1..], /*check_only=*/ true),
+        Some("package") => cmd_package(&args[1..]),
         Some("run") => cmd_run(&args[1..]),
         Some("fmt") => cmd_fmt_verb(&args[1..]),
         Some("test") => cmd_test_verb(&args[1..]),
@@ -169,6 +173,175 @@ fn with_format(
 /// `sky build` / `sky check`, with `--format` handled ([`with_format`]).
 fn cmd_build_verb(args: &[String], check_only: bool) -> ExitCode {
     with_format(args, verb(check_only), |a| cmd_build(a, check_only))
+}
+
+const PACKAGE_USAGE: &str = r#"usage: sky package --release --target <mobile:ios | mobile:android | desktop:mac> [src/Main.sky]
+
+Builds the store / distribution artefact for a native shell into sky-out/release/:
+  mobile:ios      a signed .ipa (SKY_IOS_SIGN_IDENTITY + SKY_IOS_PROVISIONING_PROFILE),
+                  else an unsigned -unsigned.ipa
+  mobile:android  a release .apk signed with your upload key, and an .aab when bundletool
+                  is on PATH (SKY_ANDROID_KEYSTORE, SKY_ANDROID_KEYSTORE_PASSWORD,
+                  SKY_ANDROID_KEY_ALIAS, optional SKY_ANDROID_KEY_PASSWORD)
+  desktop:mac     a .app and a .dmg (SKY_MACOS_SIGN_IDENTITY, else signed ad hoc)
+
+A release must load a deployed https backend (App.withAppUrl or SKY_APP_URL), and every
+declared permission must state its purpose string (Bundle.withUsage)."#;
+
+/// `sky package --release --target <t> [entry]` — the release artefact for a
+/// native shell. It runs the ordinary `sky build --target <t>` with
+/// `SKY_PACKAGE_RELEASE` set to `<project>/sky-out/release`, which switches
+/// the shell builders to their release path (device build, release signing,
+/// no web inspector) and makes them copy the artefact there; every child build
+/// leg inherits the variable. The release policy is checked here first, so a
+/// refusal costs no build.
+fn cmd_package(args: &[String]) -> ExitCode {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{PACKAGE_USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    if !args.iter().any(|a| a == "--release") {
+        eprintln!(
+            "sky package: pass --release. `sky package` builds the signed store artefact; a \
+             development build of a native shell is `sky build --target <t>`.\n\n{PACKAGE_USAGE}"
+        );
+        return ExitCode::from(2);
+    }
+    let raw_target = args
+        .iter()
+        .position(|a| a == "--target")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .or_else(|| {
+            args.iter()
+                .find_map(|a| a.strip_prefix("--target=").map(str::to_string))
+        });
+    let Some(raw_target) = raw_target else {
+        eprintln!("sky package: name the platform with --target.\n\n{PACKAGE_USAGE}");
+        return ExitCode::from(2);
+    };
+    let tgt = match target::Target::parse(&raw_target) {
+        Ok(t) => t,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return ExitCode::from(2);
+        }
+    };
+    use target::{DesktopOs, MobileOs, Target};
+    let tgt = match tgt {
+        Target::Mobile(MobileOs::Ios) | Target::Mobile(MobileOs::Android) => tgt,
+        Target::Desktop(DesktopOs::Mac) => tgt,
+        Target::Desktop(DesktopOs::Host) if cfg!(target_os = "macos") => {
+            Target::Desktop(DesktopOs::Mac)
+        }
+        Target::Desktop(_) => {
+            eprintln!(
+                "sky package: `{}` — a desktop release is packaged on macOS only: the desktop \
+                 shell is a Sky.Webview window, which builds on macOS in this version. Package \
+                 `desktop:mac` on a Mac.",
+                tgt.canonical()
+            );
+            return ExitCode::FAILURE;
+        }
+        Target::Tablet(_) => {
+            eprintln!(
+                "sky package: `{}` ships as the responsive web bundle, which needs no package. \
+                 The iOS shell runs on iPad (it declares both device families): package \
+                 `mobile:ios` for the App Store.",
+                tgt.canonical()
+            );
+            return ExitCode::FAILURE;
+        }
+        Target::Web | Target::WebApp | Target::Terminal(_) => {
+            eprintln!(
+                "sky package: `{}` is not a native shell. A web app deploys its build output \
+                 (`sky build`); a terminal app ships its binary.",
+                tgt.canonical()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let canonical = tgt.canonical();
+    let (positional, _) = parse_out(args);
+    let file = match resolve_entry_arg(&positional, PACKAGE_USAGE) {
+        Ok(f) => f,
+        Err(code) => return code,
+    };
+    let Some((_, project_dir)) = resolve(&file) else {
+        return ExitCode::FAILURE;
+    };
+    if is_compiler_repo_root(&project_dir) {
+        eprintln!("sky package: run it inside an app project, not the compiler repo root.");
+        return ExitCode::FAILURE;
+    }
+    let release_dir = project_dir.join("sky-out").join("release");
+    // Stale artefacts from an earlier package run must not be reported as
+    // this run's output.
+    let _ = std::fs::remove_dir_all(&release_dir);
+    if let Err(e) = std::fs::create_dir_all(&release_dir) {
+        eprintln!("sky package: create {}: {e}", release_dir.display());
+        return ExitCode::FAILURE;
+    }
+    std::env::set_var(native_pkg::RELEASE_ENV, &release_dir);
+
+    // The release policy, before any build: the backend address and the
+    // purpose strings / signing (`native_preflight`).
+    let shell = tgt.frontend_shell().unwrap_or("web");
+    let builder = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|src| project::app_entry::builder_string_arg(&src, "withAppUrl").ok())
+        .flatten();
+    let url = match app_url::Shell::from_frontend_shell(shell)
+        .map(|sh| app_url::resolve_from_process(sh, builder.as_deref()))
+    {
+        Some(Ok(u)) => Some(u),
+        Some(Err(e)) => {
+            eprintln!("sky package --target {canonical}: {e}");
+            return ExitCode::FAILURE;
+        }
+        None => None,
+    };
+    if let Err(e) = native_preflight(&project_dir, shell, url.as_ref()) {
+        eprintln!("sky package --target {canonical}: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    let mut build_args = vec![
+        "--target".to_string(),
+        canonical.clone(),
+        file.to_string_lossy().into_owned(),
+    ];
+    if args.iter().any(|a| a == "--embed") {
+        build_args.push("--embed".to_string());
+    }
+    let code = cmd_build_verb(&build_args, false);
+    if code != ExitCode::SUCCESS {
+        return code;
+    }
+    let mut made: Vec<String> = std::fs::read_dir(&release_dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    made.sort();
+    if made.is_empty() {
+        eprintln!(
+            "sky package --target {canonical}: the build finished but produced no release \
+             artefact in {}. This entry does not build through a native shell for that target.",
+            release_dir.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    println!(
+        "\nRelease artefacts ({canonical}) → {}:",
+        release_dir.display()
+    );
+    for m in &made {
+        println!("  {m}");
+    }
+    ExitCode::SUCCESS
 }
 
 /// `sky fmt`, with `--format` handled ([`with_format`]).
@@ -3827,6 +4000,14 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
                 }
             }
         }
+        // Purpose strings, entitlements and (for `sky package --release`) the
+        // release policy, checked before the toolchain and the slower wasm
+        // build: they are properties of the app, not of this machine. `sky
+        // check` runs the same check, so check and build agree.
+        if let Err(e) = native_preflight(&project_dir, shell, shell_app_url.as_ref()) {
+            eprintln!("sky {} --target {}: {e}", verb(check_only), tgt.canonical());
+            return ExitCode::FAILURE;
+        }
         let toolchain = match shell {
             "ios" => detect_ios_toolchain(),
             "android" => detect_android_toolchain(),
@@ -4087,6 +4268,27 @@ fn cmd_build_target(
                  Server.static \"/\" \"../{dist_name}\"   -- serves the client same-origin with your /api routes\n\
                  (tablet == responsive web — Std.Ui adapts to the viewport)"
             );
+        }
+        (shell, Some(url)) if native_pkg::release_dir().is_some() => {
+            // `sky package --release`: the builders write the release artefact
+            // into the release dir; `sky package` lists what landed there.
+            let built = match shell {
+                "desktop" => build_desktop_shell(project_dir, out_dir, url),
+                "ios" => build_ios_app(project_dir, out_dir, url),
+                "android" => build_android_apk(project_dir, out_dir, url),
+                _ => return ExitCode::SUCCESS,
+            };
+            match built {
+                Ok(p) => println!(
+                    "\n{shell} release built → {}\n  It {}.",
+                    p.display(),
+                    url.summary()
+                ),
+                Err(e) => {
+                    eprintln!("sky package --target {target}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
         }
         ("desktop", Some(url)) => {
             // Generate a tiny Sky.Webview shell and build it to a native binary.
@@ -4390,7 +4592,178 @@ fn build_desktop_shell(
     std::fs::copy(&built, &dest)
         .map_err(|e| format!("copy the desktop binary to {}: {e}", dest.display()))?;
     let _ = std::fs::remove_dir_all(&shell);
+    if let Some(release_dir) = native_pkg::release_dir() {
+        return package_macos_release(project_dir, out_dir, &dest, &id, &release_dir);
+    }
     Ok(dest)
+}
+
+/// `sky package --release --target desktop:mac`: wrap the desktop shell binary
+/// in a `.app` bundle (Info.plist with the macOS purpose strings, the icon, the
+/// entitlements), sign it (Developer ID with the hardened runtime when
+/// `SKY_MACOS_SIGN_IDENTITY` is set, else ad hoc, with a note), and put it in a
+/// `.dmg`. Returns the `.dmg`.
+fn package_macos_release(
+    project_dir: &Path,
+    out_dir: &Path,
+    bin: &Path,
+    id: &BundleIdentity,
+    release_dir: &Path,
+) -> Result<PathBuf, String> {
+    use plist::Value::{Bool, Dict, String as S};
+    let decl = native_pkg::read_declarations(project_dir)?;
+    let stage = out_dir.join("desktop-release");
+    let _ = std::fs::remove_dir_all(&stage);
+    let app = stage.join("dmg").join(format!("{}.app", id.exe_name));
+    let macos = app.join("Contents/MacOS");
+    let resources = app.join("Contents/Resources");
+    for d in [&macos, &resources] {
+        std::fs::create_dir_all(d).map_err(|e| format!("create {}: {e}", d.display()))?;
+    }
+    std::fs::copy(bin, macos.join(&id.exe_name))
+        .map_err(|e| format!("copy the desktop binary into the .app: {e}"))?;
+
+    let icon = bundle_icon_source(project_dir, id);
+    if let Some(icon) = &icon {
+        let st = Command::new("sips")
+            .args(["-s", "format", "icns"])
+            .arg(icon)
+            .arg("--out")
+            .arg(resources.join("AppIcon.icns"))
+            .stdout(Stdio::null())
+            .status()
+            .map_err(|e| format!("run sips: {e}"))?;
+        if !st.success() {
+            return Err(format!(
+                "sips could not convert {} to .icns",
+                icon.display()
+            ));
+        }
+    }
+
+    let mut generated = vec![
+        ("CFBundleName".to_string(), S(id.exe_name.clone())),
+        (
+            "CFBundleDisplayName".to_string(),
+            S(id.display_name.clone()),
+        ),
+        ("CFBundleIdentifier".to_string(), S(id.bundle_id.clone())),
+        ("CFBundleExecutable".to_string(), S(id.exe_name.clone())),
+        ("CFBundlePackageType".to_string(), S("APPL".into())),
+        (
+            "CFBundleShortVersionString".to_string(),
+            S(id.short_version.clone()),
+        ),
+        ("CFBundleVersion".to_string(), S(id.build_number.clone())),
+        ("CFBundleInfoDictionaryVersion".to_string(), S("6.0".into())),
+        ("LSMinimumSystemVersion".to_string(), S("12.0".into())),
+        ("NSHighResolutionCapable".to_string(), Bool(true)),
+        // A release window is not inspectable (webview.go reads it).
+        (
+            "LSEnvironment".to_string(),
+            Dict(vec![("SKY_WEBVIEW_DEBUG".to_string(), S("0".into()))]),
+        ),
+    ];
+    if icon.is_some() {
+        generated.push(("CFBundleIconFile".to_string(), S("AppIcon".into())));
+    }
+    let native_dirs = collect_native_dirs(project_dir, "macos");
+    let mut info_layers = vec![
+        plist::Layer {
+            origin: "sky (generated)".to_string(),
+            rank: plist::Rank::Generated,
+            entries: generated,
+        },
+        plist::Layer {
+            origin: "Bundle.withUsage / withPermission".to_string(),
+            rank: plist::Rank::Declared,
+            entries: native_pkg::usage_entries(&decl.permissions, true),
+        },
+    ];
+    info_layers.extend(native_pkg::fragment_layers(
+        &native_pkg::fragments(&native_dirs, project_dir, "Info.plist.append"),
+        project_dir,
+    )?);
+    std::fs::write(
+        app.join("Contents/Info.plist"),
+        native_pkg::merge_document("Info.plist", &info_layers)?,
+    )
+    .map_err(|e| format!("write Info.plist: {e}"))?;
+
+    let mut ent_layers = vec![plist::Layer {
+        origin: "Bundle.withEntitlement".to_string(),
+        rank: plist::Rank::Declared,
+        entries: native_pkg::entitlement_entries(&decl.entitlements),
+    }];
+    ent_layers.extend(native_pkg::fragment_layers(
+        &native_pkg::fragments(&native_dirs, project_dir, "app.entitlements"),
+        project_dir,
+    )?);
+    let ent_path = stage.join(format!("{}.entitlements", id.exe_name));
+    let has_ent = ent_layers.iter().any(|l| !l.entries.is_empty());
+    if has_ent {
+        std::fs::write(
+            &ent_path,
+            native_pkg::merge_document("entitlements", &ent_layers)?,
+        )
+        .map_err(|e| format!("write entitlements: {e}"))?;
+    }
+
+    let identity = native_pkg::macos_identity();
+    let mut cs = Command::new("codesign");
+    cs.arg("--force");
+    match &identity {
+        Some(idn) => {
+            cs.args(["--options", "runtime", "--timestamp", "--sign", idn]);
+        }
+        None => {
+            cs.args(["--sign", "-"]);
+            eprintln!(
+                "  note: {} is not set, so the .app is signed ad hoc. It runs on this Mac; \
+                 on another Mac Gatekeeper blocks it. Set a \"Developer ID Application\" \
+                 identity, package again, then notarise the .dmg with `xcrun notarytool \
+                 submit --wait` and `xcrun stapler staple`.",
+                native_pkg::MACOS_SIGN_IDENTITY
+            );
+        }
+    }
+    if has_ent {
+        cs.arg("--entitlements").arg(&ent_path);
+    }
+    let st = cs
+        .arg(&app)
+        .status()
+        .map_err(|e| format!("run codesign: {e}"))?;
+    if !st.success() {
+        return Err(format!("codesign {} failed", app.display()));
+    }
+
+    // The .dmg: the .app next to an /Applications link, for drag-to-install.
+    let _ = std::os::unix::fs::symlink("/Applications", stage.join("dmg/Applications"));
+    let dmg = stage.join(format!("{}.dmg", id.exe_name));
+    let st = Command::new("hdiutil")
+        .args(["create", "-quiet", "-ov", "-format", "UDZO", "-volname"])
+        .arg(&id.display_name)
+        .arg("-srcfolder")
+        .arg(stage.join("dmg"))
+        .arg(&dmg)
+        .status()
+        .map_err(|e| format!("run hdiutil: {e}"))?;
+    if !st.success() {
+        return Err("hdiutil could not create the .dmg".to_string());
+    }
+    if let Some(idn) = &identity {
+        let st = Command::new("codesign")
+            .args(["--force", "--timestamp", "--sign", idn])
+            .arg(&dmg)
+            .status()
+            .map_err(|e| format!("run codesign: {e}"))?;
+        if !st.success() {
+            return Err(format!("codesign {} failed", dmg.display()));
+        }
+    }
+    native_pkg::publish_artefact(&app, release_dir)?;
+    native_pkg::publish_artefact(&dmg, release_dir)
 }
 
 /// Desktop shell template. `{{TITLE}}` is substituted with the app's window
@@ -4791,115 +5164,10 @@ fn stage_bundle_assets(project_dir: &Path, dist: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The native permissions the app declares via `Bundle.withPermission <P>`, as
-/// their constructor names (`Location` / `Camera` / `Microphone` /
-/// `Notifications`), deduped in declaration order. Matches `withPermission`
-/// followed by the constructor identifier (with an optional `Bundle.` qualifier).
-fn scan_bundle_permissions(src: &str) -> Vec<String> {
-    let bytes = src.as_bytes();
-    let func = "withPermission";
-    let known = ["Location", "Camera", "Microphone", "Notifications"];
-    let mut out: Vec<String> = Vec::new();
-    let mut from = 0;
-    while let Some(rel) = src[from..].find(func) {
-        let at = from + rel;
-        from = at + func.len();
-        let before_ok =
-            at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
-        if !before_ok || in_line_comment(src, at) {
-            continue;
-        }
-        let rest = src[at + func.len()..].trim_start();
-        let ident: String = rest
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
-            .collect();
-        let name = ident.rsplit('.').next().unwrap_or(&ident).to_string();
-        if known.contains(&name.as_str()) && !out.contains(&name) {
-            out.push(name);
-        }
-    }
-    out
-}
-
-/// How one declared permission maps onto each platform's manifest + shell.
-struct PermSpec {
-    /// iOS Info.plist usage-description key (None → no plist key needed).
-    ios_plist_key: Option<&'static str>,
-    /// The usage-description text shown in the OS prompt.
-    ios_usage: &'static str,
-    /// Android `<uses-permission>` names.
-    android_perms: &'static [&'static str],
-    /// Needs location plumbing (CLLocationManager / setGeolocationEnabled).
-    location: bool,
-    /// Needs media-capture plumbing (WKUIDelegate / onPermissionRequest).
-    media: bool,
-}
-
-fn perm_spec(name: &str) -> Option<PermSpec> {
-    match name {
-        "Location" => Some(PermSpec {
-            ios_plist_key: Some("NSLocationWhenInUseUsageDescription"),
-            ios_usage: "Uses your location.",
-            android_perms: &[
-                "android.permission.ACCESS_FINE_LOCATION",
-                "android.permission.ACCESS_COARSE_LOCATION",
-            ],
-            location: true,
-            media: false,
-        }),
-        "Camera" => Some(PermSpec {
-            ios_plist_key: Some("NSCameraUsageDescription"),
-            ios_usage: "Uses the camera.",
-            android_perms: &["android.permission.CAMERA"],
-            location: false,
-            media: true,
-        }),
-        "Microphone" => Some(PermSpec {
-            ios_plist_key: Some("NSMicrophoneUsageDescription"),
-            ios_usage: "Uses the microphone.",
-            android_perms: &["android.permission.RECORD_AUDIO"],
-            location: false,
-            media: true,
-        }),
-        "Notifications" => Some(PermSpec {
-            ios_plist_key: None,
-            ios_usage: "",
-            android_perms: &["android.permission.POST_NOTIFICATIONS"],
-            location: false,
-            media: false,
-        }),
-        _ => None,
-    }
-}
-
-/// The declared permissions + whether any needs location / media plumbing, for
-/// one project's entry source.
-fn resolve_permissions(project_dir: &Path) -> (Vec<PermSpec>, bool, bool) {
-    let src = read_entry_source(project_dir).unwrap_or_default();
-    let specs: Vec<PermSpec> = scan_bundle_permissions(&src)
-        .iter()
-        .filter_map(|n| perm_spec(n))
-        .collect();
-    let location = specs.iter().any(|s| s.location);
-    let media = specs.iter().any(|s| s.media);
-    (specs, location, media)
-}
-
-/// The `requestPermissions(...)` call for any runtime-dangerous declared perms.
-fn android_runtime_request(perms: &[PermSpec]) -> String {
-    let mut seen = std::collections::HashSet::new();
-    let dangerous: Vec<&str> = perms
-        .iter()
-        .flat_map(|s| s.android_perms.iter().copied())
-        .filter(|p| {
-            p.contains("LOCATION")
-                || p.contains("CAMERA")
-                || p.contains("RECORD_AUDIO")
-                || p.contains("POST_NOTIFICATIONS")
-        })
-        .filter(|p| seen.insert(*p))
-        .collect();
+/// The Android `requestPermissions(...)` call for the declared permissions
+/// that need a run-time grant (empty when none do).
+fn android_runtime_request(perms: &[native_pkg::Declared]) -> String {
+    let dangerous = native_pkg::android_runtime_permissions(perms);
     if dangerous.is_empty() {
         return String::new();
     }
@@ -4914,12 +5182,10 @@ fn android_runtime_request(perms: &[PermSpec]) -> String {
 /// Build the MainActivity Java for the declared permissions: (extra imports, the
 /// WebChromeClient + geolocation-enable block, the runtime permission request).
 /// A WebChromeClient is only needed for location/media (the in-page prompts);
-/// notifications need just the manifest permission + the runtime request.
-fn android_permission_java(
-    perms: &[PermSpec],
-    want_location: bool,
-    want_media: bool,
-) -> (String, String, String) {
+/// the other permissions need just the manifest entry + the runtime request.
+fn android_permission_java(perms: &[native_pkg::Declared]) -> (String, String, String) {
+    let want_location = perms.iter().any(|d| d.spec().location);
+    let want_media = perms.iter().any(|d| d.spec().media);
     if !want_location && !want_media {
         return (String::new(), String::new(), android_runtime_request(perms));
     }
@@ -5037,6 +5303,45 @@ fn bundle_icon_source(project_dir: &Path, id: &BundleIdentity) -> Option<PathBuf
     Some(path)
 }
 
+/// The user's app name for a Sky.Spa split frontend. The native shell of a
+/// Sky.Spa app is built from the GENERATED frontend project
+/// (`<app>/.split/frontend`), whose directory is always `frontend`, so the
+/// directory-name default made every such app's home-screen name "frontend".
+/// The generator names that project `<app>-frontend` in the sky.toml it writes
+/// (`project::spa_split::generate`); this reads the name back from that
+/// Sky-generated file, never from a user's sky.toml. `None` for any other
+/// project.
+fn split_frontend_app_name(project_dir: &Path) -> Option<String> {
+    if !is_generated_split_project(project_dir) {
+        return None;
+    }
+    // A Std.App client build stages the app at `<app>/.skyapp/<target>/` and
+    // splits THAT (`.skyapp/<target>/.split/frontend`), so the generated name
+    // is `<target>-frontend`; the app is the directory above `.skyapp`.
+    let split_input = project_dir.parent().and_then(Path::parent);
+    if let Some(stage) = split_input {
+        if stage.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new(".skyapp")) {
+            return stage
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned());
+        }
+    }
+    let toml = std::fs::read_to_string(project_dir.join("sky.toml")).ok()?;
+    toml.lines().find_map(|l| {
+        let v = l
+            .trim()
+            .strip_prefix("name")?
+            .trim_start()
+            .strip_prefix('=')?;
+        let v = v.trim().trim_matches('"');
+        v.strip_suffix("-frontend")
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+    })
+}
+
 /// Resolve the packaging identity from the app's optional `bundle` binding
 /// (`Std.Bundle` `withX` in the entry source), falling back to the project
 /// name / version for any field left unset. Errors only when a user-SUPPLIED
@@ -5050,10 +5355,12 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
     let id_cfg = scan_bundle_call(&src, "withId").and_then(nonblank);
     let version_cfg = scan_bundle_call(&src, "withVersion").and_then(nonblank);
 
-    let dir_name = project_dir
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "app".to_string());
+    let dir_name = split_frontend_app_name(project_dir).unwrap_or_else(|| {
+        project_dir
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "app".to_string())
+    });
     // "the sky app name IS the app name": default the display name to the project
     // directory name (which `sky init` makes equal to the project's own `name`).
     // Read from the directory rather than sky.toml's `name` on purpose — a
@@ -5101,9 +5408,13 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
     // the pre-binary config surface entirely); `Bundle.withVersion` sets a real
     // one, which you do for a release anyway.
     let short_version = version_cfg.unwrap_or_else(|| "1.0".to_string());
-    // versionCode (Android) has no `withX` yet; a marketing string cannot be one,
-    // so it stays 1 until a `Bundle.withBuild` lands.
-    let build_number = "1".to_string();
+    // The store build number (CFBundleVersion / versionCode): `Bundle.withBuild`,
+    // else 1. A store refuses a second upload with the same number, so a release
+    // sets it.
+    let build_number = native_pkg::scan_build_number(&src)
+        .map_err(|e| format!("Std.Bundle: {e}"))?
+        .unwrap_or(1)
+        .to_string();
     let icon = scan_bundle_call(&src, "withIcon").and_then(nonblank);
 
     Ok(BundleIdentity {
@@ -5158,25 +5469,33 @@ fn build_android_apk(
         None => "",
     };
 
-    // Native permissions (Bundle.withPermission): manifest <uses-permission> +
-    // the WebView plumbing that grants the in-page prompt + a runtime request.
-    let (perms, want_location, want_media) = resolve_permissions(project_dir);
-    let mut seen = std::collections::HashSet::new();
-    let mut manifest_perms: String = perms
+    // Native permissions (Bundle.withPermission / withUsage): manifest
+    // <uses-permission> + the WebView plumbing that grants the in-page prompt +
+    // a runtime request. The purpose-string check ran before the build
+    // (`native_preflight`).
+    let decl = native_pkg::read_declarations(project_dir)?;
+    let declared_perms = native_pkg::android_permissions(&decl.permissions);
+    let mut manifest_perms: String = declared_perms
         .iter()
-        .flat_map(|s| s.android_perms.iter())
-        .filter(|p| seen.insert(**p))
         .map(|p| format!("\n    <uses-permission android:name=\"{p}\" />"))
         .collect();
-    // A native/android/permissions.xml fragment from the project or a lib — extra
-    // <uses-permission …/> lines (or other manifest-root nodes) a capability needs.
-    let ext_perms = collect_native_fragment(project_dir, "android", "permissions.xml");
-    if !ext_perms.trim().is_empty() {
-        manifest_perms.push('\n');
-        manifest_perms.push_str(ext_perms.trim_end());
-    }
-    let (perm_imports, webchrome, runtime_request) =
-        android_permission_java(&perms, want_location, want_media);
+    // native/android/permissions.xml fragments from the project and its Sky
+    // deps — extra manifest-root elements a capability needs — merged
+    // structurally (a permission two sources declare appears once).
+    let mut generated = declared_perms.clone();
+    generated.push("android.permission.INTERNET");
+    let frags = native_pkg::fragments(
+        &collect_native_dirs(project_dir, "android"),
+        project_dir,
+        "permissions.xml",
+    );
+    manifest_perms.push_str(&native_pkg::merge_android_fragments(
+        &frags,
+        project_dir,
+        &generated,
+    )?);
+    let (perm_imports, webchrome, runtime_request) = android_permission_java(&decl.permissions);
+    let release = native_pkg::release_dir();
 
     // Cleartext policy for the backend address: the development default keeps
     // the global flag; a plain-http remote host gets a network security config
@@ -5213,7 +5532,11 @@ fn build_android_apk(
         render_android_main_activity(package, url)
             .replace("{{PERMISSION_IMPORTS}}", &perm_imports)
             .replace("{{WEBCHROME}}", &webchrome)
-            .replace("{{RUNTIME_REQUEST}}", &runtime_request),
+            .replace("{{RUNTIME_REQUEST}}", &runtime_request)
+            .replace(
+                "{{WEBVIEW_DEBUG}}",
+                if release.is_some() { "false" } else { "true" },
+            ),
     )
     .map_err(|e| format!("write MainActivity.java: {e}"))?;
 
@@ -5254,7 +5577,44 @@ fn build_android_apk(
         );
     }
 
-    let apk_name = format!("{}.apk", sanitize_pkg_segment(&id.exe_name));
+    let base = sanitize_pkg_segment(&id.exe_name);
+    let apk_name = format!("{base}.apk");
+    if let Some(release_dir) = release {
+        // A release: signed with the upload key from the environment (checked
+        // in `native_preflight`), never the debug keystore, plus an .aab when
+        // bundletool is on PATH.
+        let signing = native_pkg::android_signing()?;
+        let aab_name = format!("{base}.aab");
+        std::fs::write(
+            root.join("build-release.sh"),
+            ANDROID_BUILD_RELEASE
+                .replace("{{APK}}", &apk_name)
+                .replace("{{AAB}}", &aab_name),
+        )
+        .map_err(|e| format!("write build-release.sh: {e}"))?;
+        let status = Command::new("bash")
+            .arg("build-release.sh")
+            .current_dir(&root)
+            .env(native_pkg::ANDROID_KEYSTORE, &signing.keystore)
+            .status()
+            .map_err(|e| format!("run build-release.sh: {e}"))?;
+        if !status.success() {
+            return Err("the Android release build failed (see the errors above)".to_string());
+        }
+        let apk =
+            native_pkg::publish_artefact(&root.join("release").join(&apk_name), &release_dir)?;
+        let aab = root.join("release").join(&aab_name);
+        if aab.is_file() {
+            native_pkg::publish_artefact(&aab, &release_dir)?;
+        } else {
+            eprintln!(
+                "  note: no `bundletool` on PATH, so only the signed release .apk was built. \
+                 Google Play takes an .aab: install bundletool (e.g. `brew install bundletool`) \
+                 and package again."
+            );
+        }
+        return Ok(apk);
+    }
     std::fs::write(
         root.join("build-apk.sh"),
         ANDROID_BUILD_APK.replace("{{APK}}", &apk_name),
@@ -5325,19 +5685,6 @@ fn collect_native_files(project_dir: &Path, platform: &str, ext: &str) -> Vec<(S
     out
 }
 
-/// Concatenate a named fragment file (`Info.plist.append`, manifest appends,
-/// entitlements) across the project + its deps' `native/<platform>/` dirs.
-fn collect_native_fragment(project_dir: &Path, platform: &str, file: &str) -> String {
-    let mut out = String::new();
-    for dir in collect_native_dirs(project_dir, platform) {
-        if let Ok(s) = std::fs::read_to_string(dir.join(file)) {
-            out.push_str(s.trim_end());
-            out.push('\n');
-        }
-    }
-    out
-}
-
 /// The Swift registry the shell's `skyNative` handler consults for custom
 /// `Native.bridge` capabilities. Always emitted; the installer body is filled
 /// from the injected `native/ios/*.swift` files (each defines `register<Stem>`).
@@ -5390,15 +5737,8 @@ fn build_ios_app(
     let id = resolve_bundle_identity(project_dir)?;
     let name = &id.exe_name;
     let icon_src = bundle_icon_source(project_dir, &id);
-    let do_icons = icon_src.is_some();
-    let (perms, want_location, _want_media) = resolve_permissions(project_dir);
-    let plist_perms: String = perms
-        .iter()
-        .filter_map(|s| {
-            s.ios_plist_key
-                .map(|k| format!("\n    <key>{k}</key><string>{}</string>", s.ios_usage))
-        })
-        .collect();
+    let decl = native_pkg::read_declarations(project_dir)?;
+    let want_location = decl.permissions.iter().any(|d| d.spec().location);
     let (loc_import, loc_manager, loc_onappear) = if want_location {
         (
             "import CoreLocation\n",
@@ -5408,6 +5748,7 @@ fn build_ios_app(
     } else {
         ("", "", "")
     };
+    let release = native_pkg::release_dir();
 
     let root = out_dir.join("ios");
     let src = root.join(name);
@@ -5420,8 +5761,14 @@ fn build_ios_app(
             .replace("{{LOCATION_ONAPPEAR}}", loc_onappear),
     )
     .map_err(|e| format!("write App.swift: {e}"))?;
-    std::fs::write(src.join("WebView.swift"), IOS_WEBVIEW_SWIFT)
-        .map_err(|e| format!("write WebView.swift: {e}"))?;
+    std::fs::write(
+        src.join("WebView.swift"),
+        IOS_WEBVIEW_SWIFT.replace(
+            "{{INSPECTABLE}}",
+            if release.is_some() { "false" } else { "true" },
+        ),
+    )
+    .map_err(|e| format!("write WebView.swift: {e}"))?;
 
     // Native extensions (Std.Native.bridge): copy each native/ios/*.swift from
     // the project + its Sky deps into the shell, and generate the registry
@@ -5453,34 +5800,88 @@ fn build_ios_app(
         );
     }
 
-    // Merge any native/ios/Info.plist.append fragments (extra plist keys a lib
-    // needs) alongside the permission keys, and write an .entitlements file from
-    // native/ios/app.entitlements (applied at codesign time — the simulator build
-    // is unsigned, so an entitlement like in-app-payments needs a real signed
-    // device build; the file is emitted so a signed build can use it).
-    let ext_plist = collect_native_fragment(project_dir, "ios", "Info.plist.append");
-    let entitlements = collect_native_fragment(project_dir, "ios", "app.entitlements");
+    // Info.plist: the keys Sky generates, the app's purpose strings, and every
+    // native/ios/Info.plist.append fragment (project + deps), merged as trees
+    // (see plist.rs) — never joined as text.
+    let native_dirs = collect_native_dirs(project_dir, "ios");
+    let mut info_layers = vec![
+        plist::Layer {
+            origin: "sky (generated)".to_string(),
+            rank: plist::Rank::Generated,
+            entries: ios_generated_info(&id, url, icon_src.is_some(), release.is_some())?,
+        },
+        plist::Layer {
+            origin: "Bundle.withUsage / withPermission".to_string(),
+            rank: plist::Rank::Declared,
+            entries: native_pkg::usage_entries(&decl.permissions, false),
+        },
+    ];
+    info_layers.extend(native_pkg::fragment_layers(
+        &native_pkg::fragments(&native_dirs, project_dir, "Info.plist.append"),
+        project_dir,
+    )?);
     std::fs::write(
         src.join("Info.plist"),
-        IOS_INFO_PLIST
-            .replace("{{NAME}}", name)
-            .replace("{{DISPLAY}}", &xml_escape(&id.display_name))
-            .replace("{{BUNDLE_ID}}", &id.bundle_id)
-            .replace("{{SHORT_VERSION}}", &xml_escape(&id.short_version))
-            .replace("{{BUILD_NUMBER}}", &xml_escape(&id.build_number))
-            .replace("{{ICONS}}", if do_icons { IOS_ICON_PLIST } else { "" })
-            .replace("{{PERMISSIONS}}", &format!("{plist_perms}{ext_plist}"))
-            .replace("{{ATS}}", &render_ios_ats(url)),
+        native_pkg::merge_document("Info.plist", &info_layers)?,
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
-    if !entitlements.trim().is_empty() {
-        std::fs::write(root.join(format!("{name}.entitlements")), &entitlements)
-            .map_err(|e| format!("write entitlements: {e}"))?;
-        eprintln!(
-            "  native/ios: wrote {name}.entitlements — apply it with a SIGNED device build \
-             (the simulator build is unsigned, so signing entitlements are not active here)."
+
+    // Entitlements: Bundle.withEntitlement + every native/ios/app.entitlements
+    // fragment, merged the same way. A signed release also carries the
+    // profile's identity keys, and each requested key must be one the profile
+    // grants.
+    let mut ent_layers = vec![plist::Layer {
+        origin: "Bundle.withEntitlement".to_string(),
+        rank: plist::Rank::Declared,
+        entries: native_pkg::entitlement_entries(&decl.entitlements),
+    }];
+    ent_layers.extend(native_pkg::fragment_layers(
+        &native_pkg::fragments(&native_dirs, project_dir, "app.entitlements"),
+        project_dir,
+    )?);
+    let signing = if release.is_some() {
+        native_pkg::ios_signing()?
+    } else {
+        None
+    };
+    if let Some(sign) = &signing {
+        let requested = plist::merge(&ent_layers)
+            .map_err(|e| format!("entitlements: {}", e.join("; ")))?
+            .entries;
+        let profile = native_pkg::profile_entitlements(&sign.profile)?;
+        let generated = native_pkg::signed_entitlements(&profile, &requested)?;
+        ent_layers.insert(
+            0,
+            plist::Layer {
+                origin: "the provisioning profile".to_string(),
+                rank: plist::Rank::Generated,
+                entries: generated,
+            },
         );
     }
+    let ent_has_keys = ent_layers.iter().any(|l| !l.entries.is_empty());
+    let ent_path = root.join(format!("{name}.entitlements"));
+    let _ = std::fs::remove_file(&ent_path);
+    if ent_has_keys {
+        std::fs::write(
+            &ent_path,
+            native_pkg::merge_document("entitlements", &ent_layers)?,
+        )
+        .map_err(|e| format!("write entitlements: {e}"))?;
+    }
+
+    if let Some(release_dir) = release {
+        return package_ios_release(
+            &root,
+            name,
+            &id,
+            icon_src.as_deref(),
+            ent_has_keys.then_some(ent_path.as_path()),
+            signing.as_ref(),
+            &release_dir,
+        );
+    }
+
     std::fs::write(
         root.join("build-app.sh"),
         IOS_BUILD_APP.replace("{{NAME}}", name),
@@ -5490,6 +5891,8 @@ fn build_ios_app(
     let status = Command::new("bash")
         .arg("build-app.sh")
         .current_dir(&root)
+        .env("DEVELOPER_DIR", ios_developer_dir()?)
+        .env_remove("SDKROOT")
         .status()
         .map_err(|e| format!("run build-app.sh: {e}"))?;
     if !status.success() {
@@ -5499,7 +5902,154 @@ fn build_ios_app(
     if let Some(icon) = &icon_src {
         generate_ios_app_icons(icon, &app)?;
     }
+    // Ad-hoc sign the simulator build with its entitlements. The simulator
+    // honours an ad-hoc signature, and the Keychain (Native.secureSet) needs
+    // the app to carry a signature at all.
+    let mut cs = Command::new("codesign");
+    cs.args(["--force", "--sign", "-"]);
+    if ent_has_keys {
+        cs.arg("--entitlements").arg(&ent_path);
+    }
+    let st = cs
+        .arg(&app)
+        .status()
+        .map_err(|e| format!("run codesign: {e}"))?;
+    if !st.success() {
+        return Err(format!("codesign --sign - {} failed", app.display()));
+    }
     Ok(app)
+}
+
+/// The Info.plist keys Sky owns for the iOS shell: identity, version, device
+/// family, the launch screen, the app icon and transport security. A fragment
+/// that sets one of these differently is a build error.
+fn ios_generated_info(
+    id: &BundleIdentity,
+    url: &app_url::AppUrl,
+    icons: bool,
+    device: bool,
+) -> Result<Vec<(String, plist::Value)>, String> {
+    use plist::Value::{Array, Bool, Dict, Integer, String as S};
+    let name = &id.exe_name;
+    let mut out = vec![
+        ("CFBundleName".to_string(), S(name.clone())),
+        (
+            "CFBundleDisplayName".to_string(),
+            S(id.display_name.clone()),
+        ),
+        ("CFBundleIdentifier".to_string(), S(id.bundle_id.clone())),
+        ("CFBundleExecutable".to_string(), S(name.clone())),
+        ("CFBundlePackageType".to_string(), S("APPL".into())),
+        (
+            "CFBundleShortVersionString".to_string(),
+            S(id.short_version.clone()),
+        ),
+        ("CFBundleVersion".to_string(), S(id.build_number.clone())),
+        ("CFBundleInfoDictionaryVersion".to_string(), S("6.0".into())),
+        ("LSRequiresIPhoneOS".to_string(), Bool(true)),
+        ("MinimumOSVersion".to_string(), S("17.0".into())),
+        (
+            "UIDeviceFamily".to_string(),
+            Array(vec![Integer("1".into()), Integer("2".into())]),
+        ),
+        ("UILaunchScreen".to_string(), Dict(vec![])),
+        (
+            "CFBundleSupportedPlatforms".to_string(),
+            Array(vec![S(if device {
+                "iPhoneOS".into()
+            } else {
+                "iPhoneSimulator".into()
+            })]),
+        ),
+    ];
+    if icons {
+        out.extend(plist::parse_entries(IOS_ICON_PLIST)?);
+    }
+    out.extend(plist::parse_entries(&render_ios_ats(url))?);
+    Ok(out)
+}
+
+/// `sky package --release --target mobile:ios`: compile the shell for DEVICES
+/// (arm64, the iphoneos SDK), then sign it with the configured identity and
+/// provisioning profile into an `.ipa`, or, without signing configured, pack
+/// an unsigned `-unsigned.ipa` and say what it is for.
+fn package_ios_release(
+    root: &Path,
+    name: &str,
+    id: &BundleIdentity,
+    icon_src: Option<&Path>,
+    entitlements: Option<&Path>,
+    signing: Option<&native_pkg::IosSigning>,
+    release_dir: &Path,
+) -> Result<PathBuf, String> {
+    std::fs::write(
+        root.join("build-release.sh"),
+        IOS_BUILD_RELEASE.replace("{{NAME}}", name),
+    )
+    .map_err(|e| format!("write build-release.sh: {e}"))?;
+    let status = Command::new("bash")
+        .arg("build-release.sh")
+        .current_dir(root)
+        .env("DEVELOPER_DIR", ios_developer_dir()?)
+        .env_remove("SDKROOT")
+        .status()
+        .map_err(|e| format!("run build-release.sh: {e}"))?;
+    if !status.success() {
+        return Err("the iOS release build failed (see the errors above)".to_string());
+    }
+    let payload = root.join("release").join("Payload");
+    let app = payload.join(format!("{name}.app"));
+    if let Some(icon) = icon_src {
+        generate_ios_app_icons(icon, &app)?;
+    }
+    let ipa_name = match signing {
+        Some(sign) => {
+            std::fs::copy(&sign.profile, app.join("embedded.mobileprovision"))
+                .map_err(|e| format!("embed the provisioning profile: {e}"))?;
+            let mut cs = Command::new("codesign");
+            cs.args(["--force", "--sign", &sign.identity]);
+            if let Some(ent) = entitlements {
+                cs.arg("--entitlements").arg(ent);
+            }
+            let st = cs
+                .arg(&app)
+                .status()
+                .map_err(|e| format!("run codesign: {e}"))?;
+            if !st.success() {
+                return Err(format!(
+                    "codesign with {} failed. Check the identity with `security \
+                     find-identity -v -p codesigning` and that the provisioning profile \
+                     names bundle id {}.",
+                    native_pkg::IOS_SIGN_IDENTITY,
+                    id.bundle_id
+                ));
+            }
+            format!("{name}.ipa")
+        }
+        None => {
+            eprintln!(
+                "  note: {} and {} are not set, so the .ipa is UNSIGNED. It does not \
+                 install on a device and the App Store does not accept it; sign it by \
+                 setting both and packaging again.",
+                native_pkg::IOS_SIGN_IDENTITY,
+                native_pkg::IOS_PROVISIONING_PROFILE
+            );
+            format!("{name}-unsigned.ipa")
+        }
+    };
+    let ipa = root.join("release").join(&ipa_name);
+    let _ = std::fs::remove_file(&ipa);
+    let st = Command::new("zip")
+        .args(["-qry", "-X"])
+        .arg(&ipa)
+        .arg("Payload")
+        .current_dir(root.join("release"))
+        .status()
+        .map_err(|e| format!("run zip: {e}"))?;
+    if !st.success() {
+        return Err("zip of the .ipa failed".to_string());
+    }
+    native_pkg::publish_artefact(&ipa, release_dir)
 }
 
 /// `App.swift` with the app name and the backend address filled in. The
@@ -5564,6 +6114,8 @@ struct {{NAME}}App: App {
 const IOS_WEBVIEW_SWIFT: &str = r#"import SwiftUI
 import WebKit
 import UserNotifications
+import Security
+import LocalAuthentication
 
 /// SwiftUI wrapper over WKWebView. JS + WebAssembly run by default. A
 /// WKUIDelegate grants in-page media-capture requests (getUserMedia for the
@@ -5593,6 +6145,9 @@ struct WebView: UIViewRepresentable {
         cfg.userContentController.addScriptMessageHandler(
             context.coordinator, contentWorld: .page, name: "skyNative")
         let web = WKWebView(frame: .zero, configuration: cfg)
+        // A development build is inspectable from Safari's Develop menu; a
+        // release build (`sky package --release`) is not.
+        if #available(iOS 16.4, *) { web.isInspectable = {{INSPECTABLE}} }
         web.uiDelegate = context.coordinator
         web.navigationDelegate = context.coordinator   // a failed load shows a native message
         UNUserNotificationCenter.current().delegate = context.coordinator
@@ -5682,6 +6237,11 @@ struct WebView: UIViewRepresentable {
                         else { replyHandler(nil, nil) }
                     }
                 }
+            case "sky:secureSet", "sky:secureGet", "sky:secureRemove", "sky:authenticate":
+                // The built-in native-shell protocol (runtime-go/rt/native_shell.go).
+                let payload = dict["payload"] as? String ?? "{}"
+                let p = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: String] ?? [:]
+                skyBuiltin(type, p, replyHandler)
             default:
                 // A custom Std.Native.bridge capability registered by an injected
                 // native/ios/*.swift file (e.g. a payments library). The build
@@ -5695,6 +6255,77 @@ struct WebView: UIViewRepresentable {
             }
         }
 
+        // ── Built-in capabilities: the Keychain as the secure store and
+        // LocalAuthentication as the biometric prompt. A failure replies
+        // "<kind>: <message>" (unavailable / cancelled / failed / invalid).
+        private func keychainQuery(_ key: String) -> [String: Any] {
+            [kSecClass as String: kSecClassGenericPassword,
+             kSecAttrService as String: Bundle.main.bundleIdentifier ?? "sky",
+             kSecAttrAccount as String: key]
+        }
+
+        private func skyBuiltin(_ op: String, _ p: [String: String],
+                                _ reply: @escaping (Any?, String?) -> Void) {
+            let key = p["key"] ?? ""
+            switch op {
+            case "sky:secureSet":
+                var q = keychainQuery(key)
+                SecItemDelete(q as CFDictionary)
+                q[kSecValueData as String] = Data((p["value"] ?? "").utf8)
+                q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+                let st = SecItemAdd(q as CFDictionary, nil)
+                if st == errSecSuccess { reply("", nil) } else { reply(nil, keychainError(st)) }
+            case "sky:secureGet":
+                var q = keychainQuery(key)
+                q[kSecReturnData as String] = true
+                q[kSecMatchLimit as String] = kSecMatchLimitOne
+                var out: CFTypeRef?
+                let st = SecItemCopyMatching(q as CFDictionary, &out)
+                if st == errSecItemNotFound {
+                    reply("{\"found\":false}", nil)
+                } else if st == errSecSuccess, let d = out as? Data {
+                    let obj: [String: Any] = ["found": true, "value": String(decoding: d, as: UTF8.self)]
+                    let json = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+                    reply(String(decoding: json, as: UTF8.self), nil)
+                } else {
+                    reply(nil, keychainError(st))
+                }
+            case "sky:secureRemove":
+                let st = SecItemDelete(keychainQuery(key) as CFDictionary)
+                if st == errSecSuccess || st == errSecItemNotFound { reply("", nil) }
+                else { reply(nil, keychainError(st)) }
+            default: // sky:authenticate
+                let ctx = LAContext()
+                var err: NSError?
+                guard ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err) else {
+                    reply(nil, "unavailable: " + (err?.localizedDescription ?? "no biometrics on this device"))
+                    return
+                }
+                ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
+                                   localizedReason: p["reason"] ?? "") { ok, e in
+                    DispatchQueue.main.async {
+                        if ok { reply("true", nil); return }
+                        let code = (e as? LAError)?.code
+                        let msg = e?.localizedDescription ?? ""
+                        switch code {
+                        case .userCancel?, .systemCancel?, .appCancel?, .userFallback?:
+                            reply(nil, "cancelled: " + msg)
+                        case .authenticationFailed?:
+                            reply(nil, "failed: " + msg)
+                        default:
+                            reply(nil, "unavailable: " + msg)
+                        }
+                    }
+                }
+            }
+        }
+
+        private func keychainError(_ st: OSStatus) -> String {
+            if st == errSecInteractionNotAllowed { return "unavailable: the device is locked" }
+            let text = SecCopyErrorMessageString(st, nil) as String? ?? ""
+            return "keychain status \(st) \(text)"
+        }
+
         // Show the banner even while the app is in the foreground.
         func userNotificationCenter(_ center: UNUserNotificationCenter,
                                     willPresent notification: UNNotification,
@@ -5704,25 +6335,6 @@ struct WebView: UIViewRepresentable {
         }
     }
 }
-"#;
-
-const IOS_INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key><string>{{NAME}}</string>
-    <key>CFBundleDisplayName</key><string>{{DISPLAY}}</string>
-    <key>CFBundleIdentifier</key><string>{{BUNDLE_ID}}</string>
-    <key>CFBundleExecutable</key><string>{{NAME}}</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>{{SHORT_VERSION}}</string>
-    <key>CFBundleVersion</key><string>{{BUILD_NUMBER}}</string>
-    <key>LSRequiresIPhoneOS</key><true/>
-    <key>MinimumOSVersion</key><string>17.0</string>
-    <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
-    <key>UILaunchScreen</key><dict/>{{ICONS}}{{PERMISSIONS}}{{ATS}}
-</dict>
-</plist>
 "#;
 
 const IOS_BUILD_APP: &str = r#"#!/usr/bin/env bash
@@ -5739,6 +6351,22 @@ xcrun --sdk iphonesimulator swiftc -sdk "$SDK" -target arm64-apple-ios17.0-simul
   -o "build/{{NAME}}.app/{{NAME}}"
 cp {{NAME}}/Info.plist "build/{{NAME}}.app/Info.plist"
 echo "OK -> build/{{NAME}}.app"
+"#;
+
+/// The DEVICE build of the iOS shell for `sky package --release`: arm64 for the
+/// iphoneos SDK, optimised. Signing and the .ipa are done by the caller.
+const IOS_BUILD_RELEASE: &str = r#"#!/usr/bin/env bash
+# Build the SwiftUI + WKWebView shell for iOS DEVICES with swiftc (no .xcodeproj).
+set -euo pipefail
+cd "$(dirname "$0")"
+: "${DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"; export DEVELOPER_DIR; unset SDKROOT || true
+SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+rm -rf release && mkdir -p "release/Payload/{{NAME}}.app"
+xcrun --sdk iphoneos swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -O \
+  -parse-as-library {{NAME}}/*.swift \
+  -o "release/Payload/{{NAME}}.app/{{NAME}}"
+cp {{NAME}}/Info.plist "release/Payload/{{NAME}}.app/Info.plist"
+echo "OK -> release/Payload/{{NAME}}.app"
 "#;
 
 const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -5818,9 +6446,9 @@ public class MainActivity extends Activity {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);   // the wasm bootstrap needs JS
         s.setDomStorageEnabled(true);
-        if (android.os.Build.VERSION.SDK_INT >= 19) {
-            WebView.setWebContentsDebuggingEnabled(true);  // dev: chrome://inspect
-        }
+        // A development build is inspectable (chrome://inspect); a release
+        // build (`sky package --release`) is not.
+        WebView.setWebContentsDebuggingEnabled({{WEBVIEW_DEBUG}});
         // Keep navigation inside the WebView. A main-frame load that fails (the
         // backend is down, the address is wrong) shows a native message naming
         // the address and the error, instead of a blank page.
@@ -5890,6 +6518,9 @@ public class MainActivity extends Activity {
         // reply() when done. EXTENSION POINT: add your capability to handleBridge.
         @JavascriptInterface
         public void call(String name, String payload, final String cbId) {
+            // The built-in "sky:" capabilities (secure store, biometrics) first:
+            // the reserved prefix means an app's own handler can never shadow one.
+            if (handleSky(name, payload, cbId)) return;
             // A capability registered by an injected native/android/*.java lib
             // (via sky.nativeext.SkyRegistry) — may reply asynchronously.
             if (sky.nativeext.SkyRegistry.has(name)) {
@@ -5904,6 +6535,171 @@ public class MainActivity extends Activity {
                 replyOk(cbId, reply);
             } else {
                 replyErr(cbId, "no native handler for '" + name + "'");
+            }
+        }
+
+        // ── Built-in capabilities of the native-shell protocol
+        // (runtime-go/rt/native_shell.go). A reply is a string; a failure is
+        // "<kind>: <message>" with kind unavailable / cancelled / failed / invalid.
+        private boolean handleSky(String name, String payload, String cbId) {
+            if (!name.startsWith("sky:")) return false;
+            try {
+                org.json.JSONObject p = new org.json.JSONObject(payload);
+                switch (name) {
+                    case "sky:secureSet":
+                        secureSet(p.getString("key"), p.optString("value", ""));
+                        replyOk(cbId, "");
+                        break;
+                    case "sky:secureGet":
+                        replyOk(cbId, secureGet(p.getString("key")));
+                        break;
+                    case "sky:secureRemove":
+                        if (!prefs().edit().remove("v:" + p.getString("key")).commit()) {
+                            throw new java.io.IOException("could not write the secure store");
+                        }
+                        replyOk(cbId, "");
+                        break;
+                    case "sky:authenticate":
+                        authenticate(p.optString("reason", ""), cbId);
+                        break;
+                    default:
+                        replyErr(cbId, "invalid: unknown op " + name);
+                }
+            } catch (Throwable t) {
+                replyErr(cbId, String.valueOf(t));
+            }
+            return true;
+        }
+
+        // The secure store: each value is AES-256-GCM encrypted under a key that
+        // is generated inside the Android Keystore and never leaves it; the
+        // ciphertext (IV:ciphertext, base64) sits in private SharedPreferences.
+        // The entry's name is bound in as associated data, so a ciphertext cannot
+        // be moved under another name.
+        private static final String STORE_KEY_ALIAS = "sky_secure_store_v1";
+
+        private android.content.SharedPreferences prefs() {
+            return act.getSharedPreferences("sky_secure_store", Context.MODE_PRIVATE);
+        }
+
+        private javax.crypto.SecretKey storeKey() throws Exception {
+            java.security.KeyStore ks = java.security.KeyStore.getInstance("AndroidKeyStore");
+            ks.load(null);
+            if (!ks.containsAlias(STORE_KEY_ALIAS)) {
+                javax.crypto.KeyGenerator kg = javax.crypto.KeyGenerator.getInstance(
+                    android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+                kg.init(new android.security.keystore.KeyGenParameterSpec.Builder(STORE_KEY_ALIAS,
+                        android.security.keystore.KeyProperties.PURPOSE_ENCRYPT
+                            | android.security.keystore.KeyProperties.PURPOSE_DECRYPT)
+                    .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .build());
+                kg.generateKey();
+            }
+            return (javax.crypto.SecretKey) ks.getKey(STORE_KEY_ALIAS, null);
+        }
+
+        private void secureSet(String key, String value) throws Exception {
+            javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(javax.crypto.Cipher.ENCRYPT_MODE, storeKey());
+            c.updateAAD(key.getBytes("UTF-8"));
+            byte[] ct = c.doFinal(value.getBytes("UTF-8"));
+            String enc = android.util.Base64.encodeToString(c.getIV(), android.util.Base64.NO_WRAP)
+                + ":" + android.util.Base64.encodeToString(ct, android.util.Base64.NO_WRAP);
+            if (!prefs().edit().putString("v:" + key, enc).commit()) {
+                throw new java.io.IOException("could not write the secure store");
+            }
+        }
+
+        private String secureGet(String key) throws Exception {
+            org.json.JSONObject r = new org.json.JSONObject();
+            String enc = prefs().getString("v:" + key, null);
+            if (enc == null) {
+                r.put("found", false);
+                return r.toString();
+            }
+            String[] parts = enc.split(":", 2);
+            try {
+                javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+                c.init(javax.crypto.Cipher.DECRYPT_MODE, storeKey(), new javax.crypto.spec.GCMParameterSpec(
+                    128, android.util.Base64.decode(parts[0], android.util.Base64.NO_WRAP)));
+                c.updateAAD(key.getBytes("UTF-8"));
+                byte[] pt = c.doFinal(android.util.Base64.decode(parts[1], android.util.Base64.NO_WRAP));
+                r.put("found", true);
+                r.put("value", new String(pt, "UTF-8"));
+            } catch (javax.crypto.AEADBadTagException
+                     | android.security.keystore.KeyPermanentlyInvalidatedException e) {
+                // The Keystore key that sealed this entry is gone (the app data was
+                // restored onto another device, or the key was invalidated). The
+                // secret cannot be recovered by anyone, so the entry is removed
+                // and reads as absent rather than failing every read forever.
+                prefs().edit().remove("v:" + key).commit();
+                r.put("found", false);
+            }
+            return r.toString();
+        }
+
+        // Biometrics: the system BiometricPrompt (Android 9+). Replies "true", or
+        // rejects with cancelled / failed / unavailable.
+        private void authenticate(final String reason, final String cbId) {
+            if (android.os.Build.VERSION.SDK_INT < 28) {
+                replyErr(cbId, "unavailable: a biometric prompt needs Android 9 or later");
+                return;
+            }
+            if (reason.trim().isEmpty()) {
+                replyErr(cbId, "invalid: the reason is empty");
+                return;
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.hardware.biometrics.BiometricManager bm =
+                    act.getSystemService(android.hardware.biometrics.BiometricManager.class);
+                int can = bm == null ? 12 : bm.canAuthenticate();
+                if (can != 0) {   // BIOMETRIC_SUCCESS
+                    replyErr(cbId, "unavailable: " + (can == 11
+                        ? "no biometrics are enrolled on this device"
+                        : "this device has no usable biometric hardware"));
+                    return;
+                }
+            }
+            act.runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    java.util.concurrent.Executor ex = act.getMainExecutor();
+                    android.hardware.biometrics.BiometricPrompt prompt =
+                        new android.hardware.biometrics.BiometricPrompt.Builder(act)
+                            .setTitle(reason)
+                            .setNegativeButton("Cancel", ex, new android.content.DialogInterface.OnClickListener() {
+                                @Override public void onClick(android.content.DialogInterface d, int w) {
+                                    replyErr(cbId, "cancelled: the user tapped Cancel");
+                                }
+                            })
+                            .build();
+                    prompt.authenticate(new android.os.CancellationSignal(), ex,
+                        new android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                            @Override public void onAuthenticationSucceeded(
+                                    android.hardware.biometrics.BiometricPrompt.AuthenticationResult r) {
+                                replyOk(cbId, "true");
+                            }
+                            @Override public void onAuthenticationError(int code, CharSequence msg) {
+                                replyErr(cbId, authKind(code) + ": " + msg);
+                            }
+                        });
+                }
+            });
+        }
+
+        // BiometricPrompt error codes → protocol kinds.
+        private static String authKind(int code) {
+            switch (code) {
+                case 3:   // TIMEOUT
+                case 5:   // CANCELED
+                case 10:  // USER_CANCELED
+                case 13:  // NEGATIVE_BUTTON
+                    return "cancelled";
+                case 7:   // LOCKOUT: too many attempts that did not match
+                    return "failed";
+                default:  // HW_UNAVAILABLE, LOCKOUT_PERMANENT, NO_BIOMETRICS, HW_NOT_PRESENT, …
+                    return "unavailable";
             }
         }
 
@@ -6007,6 +6803,58 @@ javac --release 11 -cp "$PLAT" -d build/classes \
 "$BT/apksigner" verify build/{{APK}} && echo "OK -> build/{{APK}}"
 "#;
 
+/// The release build (`sky package --release --target mobile:android`): the
+/// same SDK-tools pipeline as `ANDROID_BUILD_APK`, compiled with `d8 --release`,
+/// signed with the upload key from the environment (passwords are passed to
+/// apksigner / jarsigner by environment-variable NAME, never on the command
+/// line), and bundled to an .aab when `bundletool` is on PATH.
+const ANDROID_BUILD_RELEASE: &str = r#"#!/usr/bin/env bash
+# Build + sign a RELEASE of the WebView shell with the SDK tools directly.
+# Signing comes from the environment: SKY_ANDROID_KEYSTORE,
+# SKY_ANDROID_KEYSTORE_PASSWORD, SKY_ANDROID_KEY_ALIAS and (optionally)
+# SKY_ANDROID_KEY_PASSWORD, which defaults to the keystore password.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+: "${ANDROID_HOME:=$HOME/Library/Android/sdk}"
+: "${SKY_ANDROID_KEY_PASSWORD:=$SKY_ANDROID_KEYSTORE_PASSWORD}"
+export SKY_ANDROID_KEY_PASSWORD
+BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+PLAT="$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)/android.jar"
+
+rm -rf release && mkdir -p release/gen release/classes
+"$BT/aapt2" compile --dir app/src/main/res -o release/res.zip
+"$BT/aapt2" link -o release/base.apk -I "$PLAT" \
+  --manifest app/src/main/AndroidManifest.xml -R release/res.zip --java release/gen \
+  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
+javac --release 11 -cp "$PLAT" -d release/classes \
+  $(find release/gen -name '*.java') $(find app/src/main/java -name '*.java')
+"$BT/d8" --release --lib "$PLAT" --min-api 24 --output release/ $(find release/classes -name '*.class')
+( cd release && zip -q base.apk classes.dex )
+"$BT/zipalign" -f 4 release/base.apk release/aligned.apk
+"$BT/apksigner" sign --ks "$SKY_ANDROID_KEYSTORE" --ks-key-alias "$SKY_ANDROID_KEY_ALIAS" \
+  --ks-pass env:SKY_ANDROID_KEYSTORE_PASSWORD --key-pass env:SKY_ANDROID_KEY_PASSWORD \
+  --min-sdk-version 24 --out release/{{APK}} release/aligned.apk
+"$BT/apksigner" verify release/{{APK}}
+echo "OK -> release/{{APK}}"
+
+# The Play Store takes an Android App Bundle. aapt2 links the resources in
+# protobuf form, the module gets the bundle layout, bundletool builds the
+# .aab, and jarsigner signs it with the same upload key.
+if command -v bundletool >/dev/null 2>&1; then
+  "$BT/aapt2" link --proto-format -o release/proto.apk -I "$PLAT" \
+    --manifest app/src/main/AndroidManifest.xml -R release/res.zip \
+    --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
+  rm -rf release/module && mkdir -p release/module/manifest release/module/dex
+  ( cd release/module && unzip -q ../proto.apk && mv AndroidManifest.xml manifest/ \
+      && cp ../classes.dex dex/ && zip -qr ../base-module.zip . )
+  bundletool build-bundle --modules=release/base-module.zip --output=release/{{AAB}}
+  jarsigner -keystore "$SKY_ANDROID_KEYSTORE" -storepass:env SKY_ANDROID_KEYSTORE_PASSWORD \
+    -keypass:env SKY_ANDROID_KEY_PASSWORD release/{{AAB}} "$SKY_ANDROID_KEY_ALIAS"
+  echo "OK -> release/{{AAB}}"
+fi
+"#;
+
 const WASM_INDEX_HTML: &str = r#"<!doctype html>
 <html lang="en" data-sky-hydrating="1">
   <head>
@@ -6077,23 +6925,82 @@ fn spa_boot_name() -> String {
     )
 }
 
+/// The checks a native shell build runs before any compiling: every
+/// `Std.Native` capability the app calls has its permission declared
+/// (`Bundle.withUsage`), the typed entitlements read, and, for a release
+/// (`sky package --release`), the backend address is a deployed https host, a
+/// declared permission states its own purpose string, and signing is
+/// configured. `shell` is the frontend-shell name; web and tablet have no
+/// native shell and pass.
+fn native_preflight(
+    project_dir: &Path,
+    shell: &str,
+    url: Option<&app_url::AppUrl>,
+) -> Result<(), String> {
+    let platform = match shell {
+        "ios" => native_pkg::Platform::Ios,
+        "android" => native_pkg::Platform::Android,
+        "desktop" => native_pkg::Platform::Macos,
+        _ => return Ok(()),
+    };
+    let release = native_pkg::release_dir().is_some();
+    let decl = native_pkg::read_declarations(project_dir)?;
+    native_pkg::check_usage(&decl.capabilities, &decl.permissions, platform, release)?;
+    if release {
+        if let Some(u) = url {
+            native_pkg::check_release_url(u)?;
+        }
+        match platform {
+            native_pkg::Platform::Android => {
+                native_pkg::android_signing()?;
+            }
+            native_pkg::Platform::Ios => {
+                native_pkg::ios_signing()?;
+            }
+            native_pkg::Platform::Macos => {}
+        }
+    }
+    Ok(())
+}
+
+/// The Xcode developer directory the iOS build uses: the first of
+/// `DEVELOPER_DIR` and the standard Xcode install that has the iOS simulator
+/// SDK. Two ordinary setups break a bare `xcrun --sdk iphonesimulator`:
+/// `xcode-select` pointing at the Command Line Tools (no iOS SDK), and a Nix
+/// (or similar) dev shell exporting `DEVELOPER_DIR` for a macOS-only SDK. In
+/// both a working Xcode is installed and the build should use it. The chosen
+/// directory is passed to the build scripts explicitly.
+fn ios_developer_dir() -> Result<std::ffi::OsString, String> {
+    let mut candidates: Vec<std::ffi::OsString> = Vec::new();
+    if let Some(d) = std::env::var_os("DEVELOPER_DIR").filter(|v| !v.is_empty()) {
+        candidates.push(d);
+    }
+    candidates.push("/Applications/Xcode.app/Contents/Developer".into());
+    for dir in &candidates {
+        let ok = Command::new("xcrun")
+            .args(["--sdk", "iphonesimulator", "--show-sdk-path"])
+            .env("DEVELOPER_DIR", dir)
+            .env_remove("SDKROOT")
+            .output()
+            .map(|o| o.status.success() && !o.stdout.is_empty())
+            .unwrap_or(false);
+        if ok {
+            return Ok(dir.clone());
+        }
+    }
+    Err("sky build --target ios: no iOS toolchain found.\n  \
+         Install the full Xcode (the App Store) — Command Line Tools alone is not\n  \
+         enough — then run `xcodebuild -downloadPlatform iOS` once for the simulator\n  \
+         runtime. (`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk\n  \
+         iphonesimulator --show-sdk-path` must succeed; a DEVELOPER_DIR set in the\n  \
+         environment is tried first.)"
+        .to_string())
+}
+
 /// Verify an iOS build toolchain is present (full Xcode + the iPhone Simulator
 /// SDK), returning an actionable install message otherwise.
 fn detect_ios_toolchain() -> Result<(), String> {
-    let ok = Command::new("xcrun")
-        .args(["--sdk", "iphonesimulator", "--show-sdk-path"])
-        .output()
-        .map(|o| o.status.success() && !o.stdout.is_empty())
-        .unwrap_or(false);
-    if ok {
-        Ok(())
-    } else {
-        Err("sky build --target ios: no iOS toolchain found.\n  \
-             Install the full Xcode (the App Store) — Command Line Tools alone is not\n  \
-             enough — then run `xcodebuild -downloadPlatform iOS` once for the simulator\n  \
-             runtime. (`xcrun --sdk iphonesimulator --show-sdk-path` must succeed.)"
-            .to_string())
-    }
+    ios_developer_dir().map(|_| ())
 }
 
 /// Verify an Android build toolchain is present (the SDK, via ANDROID_HOME /
@@ -11530,6 +12437,8 @@ fn print_help() {
          \x20                   web · tablet (Sky.Live) · desktop (Live in a window) ·\n\
          \x20                   terminal:tui|cli · web:app · desktop:mac|windows|linux ·\n\
          \x20                   tablet:ipad|android · mobile:ios|android (native wasm)\n\
+         \x20 package --release --target mobile:ios|mobile:android|desktop:mac [file]\n\
+         \x20                  the signed store artefact → sky-out/release/ (.ipa · .apk/.aab · .app/.dmg)\n\
          \x20 fmt   <file...>  format in place (--check / --stdin)\n\
          \x20 test  <file>     run a Sky.Test suite\n\
          \x20 --format json    check / build / test / fmt --check: NDJSON diagnostics on stdout\n\
@@ -12761,7 +13670,12 @@ mod tests {
         );
         // A withPermission in a comment is not a real declaration.
         let perm = "-- Bundle.withPermission Bundle.Camera\nbundle = Bundle.withPermission Bundle.Location";
-        assert_eq!(scan_bundle_permissions(perm), vec!["Location".to_string()]);
+        let ctors: Vec<String> = native_pkg::scan_permissions(perm)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.ctor)
+            .collect();
+        assert_eq!(ctors, vec!["Location".to_string()]);
     }
 
     #[test]
@@ -12782,6 +13696,48 @@ mod tests {
             scan_bundle_call(decoy, "withId").as_deref(),
             Some("com.real.id")
         );
+    }
+
+    /// Regression: a Sky.Spa app's native shell is built from the generated
+    /// `.split/frontend` project, so the directory-name default named every
+    /// such app "frontend" on the home screen. It is the user's app name.
+    #[test]
+    fn a_split_frontend_is_named_for_the_app_not_frontend() {
+        let dir = bundle_scratch(
+            "splitname",
+            "name = \"vault-frontend\"\nversion = \"0.1.0\"\n\n[spa]\ngenerated = true\nrole = \"frontend\"\n",
+            "module Main exposing (main)\nmain = 0\n",
+        );
+        let id = resolve_bundle_identity(&dir).unwrap();
+        assert_eq!(id.display_name, "vault");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // A Std.App client build splits the staged `<app>/.skyapp/<target>`
+        // project, so the generated name is `<target>-frontend`; the shell is
+        // still named for the app.
+        let root = std::env::temp_dir().join(format!(
+            "sky-bundle-stdapp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let front = root.join("pairing/.skyapp/mobile-android/.split/frontend");
+        std::fs::create_dir_all(front.join("src")).unwrap();
+        std::fs::write(
+            front.join("sky.toml"),
+            "name = \"mobile-android-frontend\"\n\n[spa]\ngenerated = true\nrole = \"frontend\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            front.join("src/Main.sky"),
+            "module Main exposing (main)\nmain = 0\n",
+        )
+        .unwrap();
+        let id = resolve_bundle_identity(&front).unwrap();
+        assert_eq!(id.display_name, "pairing");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -13070,32 +14026,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(&bad);
     }
 
+    fn declared(ctors: &[&str]) -> Vec<native_pkg::Declared> {
+        ctors
+            .iter()
+            .map(|c| native_pkg::Declared {
+                ctor: c.to_string(),
+                text: None,
+            })
+            .collect()
+    }
+
     #[test]
     fn scan_bundle_permissions_collects_known_constructors() {
         let src = "bundle = Bundle.default \
                    |> Bundle.withPermission Bundle.Location \
                    |> Bundle.withPermission Camera \
                    |> Bundle.withPermission Bundle.Notifications";
-        assert_eq!(
-            scan_bundle_permissions(src),
-            vec!["Location", "Camera", "Notifications"]
-        );
+        let ctors = |s: &str| -> Vec<String> {
+            native_pkg::scan_permissions(s)
+                .unwrap()
+                .into_iter()
+                .map(|d| d.ctor)
+                .collect()
+        };
+        assert_eq!(ctors(src), vec!["Location", "Camera", "Notifications"]);
         // An unknown constructor is ignored (not every withPermission is valid).
-        assert!(scan_bundle_permissions("withPermission Nonsense").is_empty());
+        assert!(ctors("withPermission Nonsense").is_empty());
         // Deduped.
         assert_eq!(
-            scan_bundle_permissions("withPermission Location\nwithPermission Location"),
+            ctors("withPermission Location\nwithPermission Location"),
             vec!["Location"]
         );
     }
 
     #[test]
     fn android_permission_java_wires_location_media_and_notifications() {
-        let lm: Vec<PermSpec> = ["Location", "Camera"]
-            .iter()
-            .filter_map(|n| perm_spec(n))
-            .collect();
-        let (imports, webchrome, runtime) = android_permission_java(&lm, true, true);
+        let (imports, webchrome, runtime) =
+            android_permission_java(&declared(&["Location", "Camera"]));
         assert!(
             imports.contains("GeolocationPermissions") && imports.contains("PermissionRequest")
         );
@@ -13106,10 +14073,154 @@ mod tests {
         assert!(runtime.contains("ACCESS_FINE_LOCATION") && runtime.contains("CAMERA"));
 
         // Notifications-only: no WebChromeClient plumbing, just the runtime request.
-        let notif: Vec<PermSpec> = perm_spec("Notifications").into_iter().collect();
-        let (i2, wc2, rt2) = android_permission_java(&notif, false, false);
+        let (i2, wc2, rt2) = android_permission_java(&declared(&["Notifications"]));
         assert!(i2.is_empty() && wc2.is_empty());
         assert!(rt2.contains("POST_NOTIFICATIONS"));
+
+        // Face ID's Android side (USE_BIOMETRIC) is a normal permission: in the
+        // manifest, never in the run-time request.
+        let (_, _, rt3) = android_permission_java(&declared(&["FaceId"]));
+        assert!(rt3.is_empty(), "{rt3}");
+    }
+
+    /// The generated iOS Info.plist is ONE valid property list: the identity
+    /// keys, the app's purpose strings from `Bundle.withUsage`, and a library's
+    /// `Info.plist.append` merged as trees. Before the structured merge the
+    /// library's `NSCameraUsageDescription` was appended as text next to the
+    /// generated one, so the dict held the key twice.
+    #[test]
+    fn ios_info_plist_is_one_valid_document_with_purpose_strings() {
+        let dir = bundle_scratch(
+            "infoplist",
+            "name = \"p\"\n",
+            "module Main exposing (main, bundle)\n\nimport Std.Bundle as Bundle exposing (Bundle)\n\n\
+             bundle : Bundle\nbundle =\n    Bundle.default\n        |> Bundle.withId \"com.acme.pair\"\n\
+             \x20       |> Bundle.withBuild 12\n\
+             \x20       |> Bundle.withUsage Bundle.Camera \"Scans the pairing code.\"\n\
+             \x20       |> Bundle.withUsage Bundle.FaceId \"Unlocks your vault.\"\n\nmain = 0\n",
+        );
+        let lib = dir.join(".skydeps/github.com_acme_scan/native/ios");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(
+            lib.join("Info.plist.append"),
+            "<key>NSCameraUsageDescription</key><string>Uses the camera.</string>\n\
+             <key>LSApplicationQueriesSchemes</key><array><string>acme</string></array>\n",
+        )
+        .unwrap();
+        let id = resolve_bundle_identity(&dir).unwrap();
+        assert_eq!(id.build_number, "12");
+        let url = app_url::resolve(
+            app_url::Shell::Ios,
+            None,
+            Some("https://app.example.test/"),
+            None,
+        )
+        .unwrap();
+        let decl = native_pkg::read_declarations(&dir).unwrap();
+        let mut layers = vec![
+            plist::Layer {
+                origin: "sky".into(),
+                rank: plist::Rank::Generated,
+                entries: ios_generated_info(&id, &url, false, true).unwrap(),
+            },
+            plist::Layer {
+                origin: "Bundle.withUsage".into(),
+                rank: plist::Rank::Declared,
+                entries: native_pkg::usage_entries(&decl.permissions, false),
+            },
+        ];
+        layers.extend(
+            native_pkg::fragment_layers(
+                &native_pkg::fragments(
+                    &collect_native_dirs(&dir, "ios"),
+                    &dir,
+                    "Info.plist.append",
+                ),
+                &dir,
+            )
+            .unwrap(),
+        );
+        let doc = native_pkg::merge_document("Info.plist", &layers).unwrap();
+        let entries = plist::parse_entries(&doc).expect("one valid plist");
+        let get = |k: &str| entries.iter().find(|(e, _)| e == k).map(|(_, v)| v.clone());
+        assert_eq!(doc.matches("NSCameraUsageDescription").count(), 1, "{doc}");
+        assert_eq!(
+            get("NSCameraUsageDescription"),
+            Some(plist::Value::String("Scans the pairing code.".into()))
+        );
+        assert_eq!(
+            get("NSFaceIDUsageDescription"),
+            Some(plist::Value::String("Unlocks your vault.".into()))
+        );
+        assert_eq!(
+            get("CFBundleVersion"),
+            Some(plist::Value::String("12".into()))
+        );
+        assert_eq!(
+            get("CFBundleIdentifier"),
+            Some(plist::Value::String("com.acme.pair".into()))
+        );
+        assert!(get("LSApplicationQueriesSchemes").is_some());
+        assert!(get("NSAppTransportSecurity").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The shells carry the built-in half of the native-shell protocol
+    /// (runtime-go/rt/native_shell.go): the reserved `sky:` ops, the platform
+    /// secure store, the biometric prompt, and the inspector switch a release
+    /// turns off.
+    #[test]
+    fn mobile_shells_implement_the_secure_store_and_biometrics() {
+        for needle in [
+            "case \"sky:secureSet\", \"sky:secureGet\", \"sky:secureRemove\", \"sky:authenticate\":",
+            "SecItemAdd",
+            "SecItemCopyMatching",
+            "kSecAttrAccessibleWhenUnlockedThisDeviceOnly",
+            "LAContext()",
+            ".deviceOwnerAuthenticationWithBiometrics",
+            "\"cancelled: \"",
+            "\"failed: \"",
+            "\"unavailable: \"",
+            "web.isInspectable = {{INSPECTABLE}}",
+        ] {
+            assert!(
+                IOS_WEBVIEW_SWIFT.contains(needle),
+                "iOS shell: missing `{needle}`"
+            );
+        }
+        for needle in [
+            "if (handleSky(name, payload, cbId)) return;",
+            "\"AndroidKeyStore\"",
+            "AES/GCM/NoPadding",
+            "c.updateAAD(key.getBytes(\"UTF-8\"))",
+            "android.hardware.biometrics.BiometricPrompt",
+            "case \"sky:secureGet\":",
+            "WebView.setWebContentsDebuggingEnabled({{WEBVIEW_DEBUG}});",
+        ] {
+            assert!(
+                ANDROID_MAIN_ACTIVITY.contains(needle),
+                "Android shell: missing `{needle}`"
+            );
+        }
+        // Release scripts: device SDK for iOS; the upload key by env NAME (never
+        // a password on the command line) and d8 --release for Android.
+        assert!(
+            IOS_BUILD_RELEASE.contains("--sdk iphoneos")
+                && IOS_BUILD_RELEASE.contains("arm64-apple-ios17.0")
+        );
+        for needle in [
+            "--ks-pass env:SKY_ANDROID_KEYSTORE_PASSWORD",
+            "--key-pass env:SKY_ANDROID_KEY_PASSWORD",
+            "-storepass:env SKY_ANDROID_KEYSTORE_PASSWORD",
+            "d8\" --release",
+            "bundletool build-bundle",
+        ] {
+            assert!(
+                ANDROID_BUILD_RELEASE.contains(needle),
+                "release script: missing `{needle}`"
+            );
+        }
+        assert!(!ANDROID_BUILD_RELEASE.contains("debug.keystore"));
     }
 
     /// Both mobile shells must install the `skyNative` native notification bridge
@@ -13319,7 +14430,11 @@ mod tests {
             "func registerAppOwn(_ r: Any) {}\n",
         )
         .unwrap();
-        std::fs::write(dir.join("native/ios/app.entitlements"), "<own/>\n").unwrap();
+        std::fs::write(
+            dir.join("native/ios/app.entitlements"),
+            "<?xml version=\"1.0\"?>\n<plist version=\"1.0\"><dict><key>com.apple.security.application-groups</key><array><string>group.own</string></array></dict></plist>\n",
+        )
+        .unwrap();
         // A fetched Sky dependency shipping its own native file + fragment.
         let dep = dir.join(".skydeps/github.com_acme_pay/native/ios");
         std::fs::create_dir_all(&dep).unwrap();
@@ -13328,7 +14443,11 @@ mod tests {
             "func registerApplePay(_ r: Any) {}\n",
         )
         .unwrap();
-        std::fs::write(dep.join("app.entitlements"), "<dep/>\n").unwrap();
+        std::fs::write(
+            dep.join("app.entitlements"),
+            "<?xml version=\"1.0\"?>\n<plist version=\"1.0\"><dict><key>com.apple.security.application-groups</key><array><string>group.dep</string></array></dict></plist>\n",
+        )
+        .unwrap();
 
         let files = collect_native_files(&dir, "ios", "swift");
         let stems: Vec<&str> = files.iter().map(|(s, _)| s.as_str()).collect();
@@ -13336,11 +14455,32 @@ mod tests {
             stems.contains(&"AppOwn") && stems.contains(&"ApplePay"),
             "native files from BOTH the project and its deps must be discovered, got {stems:?}"
         );
-        // Fragments concatenate across project + deps.
-        let ent = collect_native_fragment(&dir, "ios", "app.entitlements");
+        // Fragments from the project + deps merge into ONE document (they used
+        // to be concatenated as text, which gave two plist documents in one
+        // file): the arrays are unioned, the project's items first.
+        let frags =
+            native_pkg::fragments(&collect_native_dirs(&dir, "ios"), &dir, "app.entitlements");
+        assert_eq!(frags.len(), 2);
         assert!(
-            ent.contains("<own/>") && ent.contains("<dep/>"),
-            "fragments merge, got:\n{ent}"
+            frags[0].own && !frags[1].own,
+            "the project's fragment ranks first"
+        );
+        let ent = native_pkg::merge_document(
+            "entitlements",
+            &native_pkg::fragment_layers(&frags, &dir).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(ent.matches("<?xml").count(), 1, "{ent}");
+        let entries = plist::parse_entries(&ent).expect("valid");
+        assert_eq!(
+            entries,
+            vec![(
+                "com.apple.security.application-groups".to_string(),
+                plist::Value::Array(vec![
+                    plist::Value::String("group.own".into()),
+                    plist::Value::String("group.dep".into())
+                ])
+            )]
         );
         // A platform with no native dir yields nothing.
         assert!(collect_native_files(&dir, "android", "java").is_empty());

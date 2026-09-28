@@ -1656,6 +1656,39 @@ on the first build pass; the stub `runtime-go/rt/webview_stub.go`
 covers `!cgo || !darwin` so non-macOS builds link cleanly and surface
 a runtime `Err Error` on call.  Example: `examples/31-webview-stopwatch-ui`.
 
+### `Std.Native` / `Std.Bundle` — device capabilities and native packaging
+
+`Std.Native` is the device from a Sky.Spa client (web, or the `mobile:ios`,
+`mobile:android` and `desktop:mac` shells). Each capability is a `Task Error a`
+run through `Cmd.perform`, so a denial or an absent API is an `Err`, never a
+crash: `geolocation`, `clipboardWrite` / `clipboardRead`, `vibrate`, `share`,
+`storageSet` / `storageGet` / `storageRemove` (`localStorage`), `isOnline`,
+`language`, `setTitle`, `prefersDarkMode`, `openUrl`, `notify`,
+`batteryStatus`, `pickFile` / `pickImage` / `capturePhoto`, and `bridge` for a
+capability the app registers itself.
+
+v0.27.0 adds the device's secure store and its biometric prompt:
+
+```elm
+-- doc-example: skip  (signatures)
+secureSet : String -> Secret -> Task Error ()          -- Keychain / Android Keystore AES-GCM
+secureGet : String -> Task Error (Maybe Secret)
+secureRemove : String -> Task Error ()
+authenticate : String -> Task Error Bool               -- Face ID / Touch ID / BiometricPrompt
+```
+
+With no native shell (a browser, a server) they are `Err Unavailable`; the
+secure store never falls back to `localStorage`. `authenticate` is `Ok True`,
+`Ok False` (no match), `Err PermissionDenied` (cancelled) or `Err Unavailable`.
+
+`Std.Bundle` declares what the native shells ship with: identity (`withId`,
+`withName`, `withVersion`, `withBuild`, `withIcon`), assets, permissions with
+their purpose strings (`withPermission`, `withUsage Bundle.Camera "…"`) and
+typed Apple entitlements (`withEntitlement (Bundle.AppGroup "group.…")`). A call
+to `Native.authenticate`, `capturePhoto` or `geolocation` without its
+permission fails the iOS and Android builds. `sky package --release` makes the
+store artefact. Full guide: [`docs/skyapp/native.md`](skyapp/native.md).
+
 ### `Event` — typed DOM event bindings (`Std.Html.Events`)
 
 v0.13: `Std.Html.Events` (renamed from `Std.Live.Events`). Each builder

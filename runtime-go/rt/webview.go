@@ -139,6 +139,29 @@ func webviewURLRun(urlArg any, windowCfg any) any {
 
 	w.SetTitle(title)
 	w.SetSize(width, height, webview.HintNone)
+	// The native-shell protocol (native_shell.go) for the hosted Sky.Spa
+	// client: Native.secureSet/Get/Remove on the Keychain and
+	// Native.authenticate on Touch ID. The op runs on its own goroutine and
+	// the result is settled on the UI thread, so a prompt never blocks the
+	// window's event loop.
+	store := newKeychainStore()
+	w.Init(desktopNativeInitJS)
+	if err := w.Bind("__skyNativeStart", func(op, payload, id string) {
+		go func() {
+			out, err := nativeShellDispatch(store, touchIDPrompt, op, payload)
+			ok, data := err == nil, out
+			if err != nil {
+				data = err.Error()
+			}
+			idJSON, _ := json.Marshal(id)
+			dataJSON, _ := json.Marshal(data)
+			js := fmt.Sprintf("window.__skyNativeCb && window.__skyNativeCb[%s] && window.__skyNativeCb[%s](%t, %s)",
+				idJSON, idJSON, ok, dataJSON)
+			w.Dispatch(func() { w.Eval(js) })
+		}()
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.webview] Bind __skyNativeStart failed: %v\n", err)
+	}
 	w.Navigate(url)
 	// Blocks on the native event loop until the window closes; the loaded page
 	// (the Sky.Spa client) owns all rendering + interaction.

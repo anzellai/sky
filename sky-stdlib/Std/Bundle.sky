@@ -8,8 +8,13 @@ module Std.Bundle exposing
     , withAsset
     , withAssetDir
     , assetUrl
+    , withBuild
     , Permission(..)
     , withPermission
+    , withUsage
+    , Entitlement(..)
+    , PushEnvironment(..)
+    , withEntitlement
     )
 
 -- | `Std.Bundle` — everything a Sky app ships WITH: its cross-platform identity
@@ -50,8 +55,11 @@ type Bundle
 , id : Maybe String
 , icon : Maybe String
 , version : Maybe String
+, build : Maybe Int
 , assets : List String
 , permissions : List Permission
+, usages : List ( Permission, String )
+, entitlements : List Entitlement
 }
 
 
@@ -65,8 +73,11 @@ default =
         , id = Nothing
         , icon = Nothing
         , version = Nothing
+        , build = Nothing
         , assets = []
         , permissions = []
+        , usages = []
+        , entitlements = []
         }
 
 
@@ -101,6 +112,15 @@ withVersion version (Bundle fields) =
     Bundle { fields | version = Just version }
 
 
+-- | Set the store build number — CFBundleVersion / `android:versionCode`. A
+-- positive integer the store requires to rise with every upload (the marketing
+-- `withVersion` may stay the same across builds). Defaults to 1. The build
+-- reads it statically, so write an integer literal: `Bundle.withBuild 7`.
+withBuild : Int -> Bundle -> Bundle
+withBuild n (Bundle fields) =
+    Bundle { fields | build = Just n }
+
+
 -- | Ship a single asset FILE with the app (a path relative to the project, e.g.
 -- `"images/logo.png"`). `sky build` stages it into the served bundle under
 -- `/assets/<basename>`, so `Bundle.assetUrl "logo.png"` resolves it — e.g.
@@ -128,21 +148,120 @@ assetUrl path =
     "/assets/" ++ path
 
 -- | A native device permission an app needs. Declaring one with
--- `withPermission` makes the packager wire the OS-level plumbing so a
--- `Std.Native` capability can actually be granted on a mobile shell: the iOS
--- usage-description key + `CLLocationManager`/`WKUIDelegate`, the Android
--- `<uses-permission>` + `WebChromeClient` prompt. In a plain browser these are a
--- no-op (the browser owns the prompt).
+-- `withPermission` (or `withUsage`, which also sets the text the OS shows)
+-- makes the packager wire the OS-level plumbing so a `Std.Native` capability can
+-- actually be granted on a native shell: the iOS / macOS `Info.plist`
+-- purpose-string key, the Android `<uses-permission>` (and its run-time request
+-- where Android needs one), and the web view prompt handling. In a plain browser
+-- these are a no-op (the browser owns the prompt).
+--
+--   * `Location` — iOS NSLocationWhenInUseUsageDescription; Android
+--     ACCESS_FINE_LOCATION + ACCESS_COARSE_LOCATION.
+--   * `LocationAlways` — adds NSLocationAlwaysAndWhenInUseUsageDescription and
+--     ACCESS_BACKGROUND_LOCATION.
+--   * `Camera` — NSCameraUsageDescription; CAMERA.
+--   * `Microphone` — NSMicrophoneUsageDescription; RECORD_AUDIO.
+--   * `Notifications` — no iOS key; POST_NOTIFICATIONS.
+--   * `PhotoLibrary` — NSPhotoLibraryUsageDescription (+ the Add variant);
+--     READ_MEDIA_IMAGES.
+--   * `Contacts` — NSContactsUsageDescription; READ_CONTACTS.
+--   * `FaceId` — NSFaceIDUsageDescription; USE_BIOMETRIC. Needed by
+--     `Std.Native.authenticate`.
+--   * `LocalNetwork` — NSLocalNetworkUsageDescription; no Android permission.
+--   * `Bluetooth` — NSBluetoothAlwaysUsageDescription; BLUETOOTH_CONNECT +
+--     BLUETOOTH_SCAN.
+--
+-- The macOS desktop `.app` carries the same keys where macOS has one (Face ID
+-- has none on a Mac: Touch ID needs no purpose string).
 type Permission
     = Location
+    | LocationAlways
     | Camera
     | Microphone
     | Notifications
+    | PhotoLibrary
+    | Contacts
+    | FaceId
+    | LocalNetwork
+    | Bluetooth
 
 
 -- | Declare that the app needs a native `Permission` (e.g.
--- `Bundle.withPermission Bundle.Location` for `Std.Native.geolocation`). Without
--- it the OS denies the request and the capability's `Task` returns `Err`.
+-- `Bundle.withPermission Bundle.Location` for `Std.Native.geolocation`), with a
+-- generic purpose string. Without it the OS denies the request and the
+-- capability's `Task` returns `Err`. A development build accepts the generic
+-- text; `sky package --release` refuses it for a permission whose prompt shows
+-- text, because App Review rejects a generic purpose string — use `withUsage`.
 withPermission : Permission -> Bundle -> Bundle
 withPermission perm (Bundle fields) =
     Bundle { fields | permissions = fields.permissions ++ [ perm ] }
+
+
+-- | Declare a `Permission` AND the purpose string the OS shows in its prompt
+-- (the iOS / macOS `NS…UsageDescription` value). Say why the app needs it, in
+-- the user's terms:
+--
+--     bundle =
+--         Bundle.default
+--             |> Bundle.withId "com.acme.pair"
+--             |> Bundle.withUsage Bundle.Camera "Scans the QR code on your other device to pair it."
+--             |> Bundle.withUsage Bundle.FaceId "Unlocks your saved sign-in."
+--
+-- The build reads the text statically, so write a string literal. A call to a
+-- capability that needs a permission the app has not declared
+-- (`Native.authenticate` without `FaceId`, `Native.capturePhoto` without
+-- `Camera`, `Native.geolocation` without `Location`) is a build error for the
+-- iOS and Android shells, naming this builder.
+withUsage : Permission -> String -> Bundle -> Bundle
+withUsage perm text (Bundle fields) =
+    Bundle
+        { fields | permissions = fields.permissions ++ [ perm ]
+        , usages = fields.usages ++ [ ( perm, text ) ]
+        }
+
+-- | Which Apple Push Notification service environment a build registers with.
+-- Development builds use `PushDevelopment`; a store build `PushProduction`.
+type PushEnvironment
+    = PushDevelopment
+    | PushProduction
+
+-- | A typed Apple entitlement (iOS and the macOS `.app`). The build writes these
+-- into the signed app's `.entitlements` file, merged with any
+-- `native/ios/app.entitlements` fragment the project or a library ships, and a
+-- signed release checks each one against the provisioning profile.
+--
+-- * `KeychainAccessGroup "TEAMID.com.acme.shared"` — `keychain-access-groups`,
+--   to share `Native.secureSet` items between your apps (the team prefix is part
+--   of the value).
+-- * `AppGroup "group.com.acme.app"` — `com.apple.security.application-groups`.
+-- * `AssociatedDomain "applinks:acme.com"` —
+--   `com.apple.developer.associated-domains` (universal links,
+--   `webcredentials:` for password autofill).
+-- * `PushNotifications PushProduction` — `aps-environment`.
+-- * `ICloudContainer "iCloud.com.acme.app"` —
+--   `com.apple.developer.icloud-container-identifiers` (CloudKit).
+--
+-- Android has no entitlements file; these are ignored there.
+type Entitlement
+    = KeychainAccessGroup String
+    | AppGroup String
+    | AssociatedDomain String
+    | PushNotifications PushEnvironment
+    | ICloudContainer String
+
+
+-- | Declare an `Entitlement` the signed app carries:
+--
+--     bundle =
+--         Bundle.default
+--             |> Bundle.withEntitlement (Bundle.AppGroup "group.com.acme.app")
+--             |> Bundle.withEntitlement (Bundle.AssociatedDomain "applinks:acme.com")
+--
+-- The build reads the constructor and its string literal statically; a computed
+-- value is a build error. Use this instead of a hand-written
+-- `native/ios/app.entitlements` file (which still works, and is merged
+-- structurally: arrays are unioned, and a key two sources set differently is
+-- reported).
+withEntitlement : Entitlement -> Bundle -> Bundle
+withEntitlement ent (Bundle fields) =
+    Bundle { fields | entitlements = fields.entitlements ++ [ ent ] }

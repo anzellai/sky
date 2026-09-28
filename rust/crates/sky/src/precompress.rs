@@ -78,6 +78,11 @@ pub fn compress(file: &Path, tool: &Tool, cache: Option<&Path>) -> Outcome {
     out_name.push(".");
     out_name.push(tool.ext);
     let out = PathBuf::from(out_name);
+    // An earlier build's output may be read-only: a compressor keeps its
+    // input's permissions, and Go's `wasm_exec.js` is read-only when GOROOT is
+    // (a Nix store). Neither the cache copy nor the tool can open it for
+    // writing, so remove it first; the directory is ours and writable.
+    let _ = std::fs::remove_file(&out);
     let cached = cache.and_then(|dir| {
         let bytes = std::fs::read(file).ok()?;
         Some(dir.join(cache_key(&bytes, tool)))
@@ -209,6 +214,33 @@ mod tests {
             std::fs::read(d.join("main.abc.wasm.fk")).unwrap(),
             b"wasm bytes v2"
         );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Regression: a compressor keeps the input's permissions on its output, so
+    /// a READ-ONLY input (Go's `wasm_exec.js`, copied from a read-only GOROOT
+    /// such as a Nix store) left a read-only `.br` / `.gz`, and the next build
+    /// could not overwrite it: the tool failed ("Permission denied"), the build
+    /// warned that brotli was missing, and the stale output stayed on disk.
+    #[test]
+    fn a_read_only_output_from_an_earlier_build_is_replaced() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = scratch("readonly");
+        let (tool, _log) = fake_tool(&d);
+        let f = d.join("wasm_exec.js");
+        let out = d.join("wasm_exec.js.fk");
+        for cache in [None, Some(d.join("cache"))] {
+            std::fs::write(&out, b"stale").unwrap();
+            std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o444)).unwrap();
+            std::fs::write(&f, b"fresh glue").unwrap();
+            assert_ne!(
+                compress(&f, &tool, cache.as_deref()),
+                Outcome::Failed,
+                "a read-only output must not fail the compressor (cache: {cache:?})"
+            );
+            assert_eq!(std::fs::read(&out).unwrap(), b"fresh glue");
+            let _ = std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644));
+        }
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -538,6 +538,7 @@ sky doc --diagram <kind>     # architecture diagram from the typed IR: component
 sky watch src/Main.sky       # rebuild + restart on save
 sky add <go/pkg> | remove | install | update   # Go FFI deps
 sky add ./local/dir          # a local Go module (go.mod) or Sky package, by path
+sky package --release --target mobile:ios   # signed store artefact → sky-out/release/ (also mobile:android, desktop:mac)
 ```
 
 **Sky.Spa entries auto-split.** Building the same `App.app` source to a client
@@ -550,7 +551,14 @@ and `--embed` (bundle PostgreSQL into the backend) COMPOSE with the split. A
 native shell (`mobile:ios|android`, `desktop:<os>`) loads the backend at
 `App.withAppUrl "https://app.example.test/"` (read at build time; a literal or
 a top-level `String` constant), or `SKY_APP_URL` at build time, which wins; with
-neither it loads the dev default on `PORT` (8951). `sky
+neither it loads the dev default on `PORT` (8951). Declare each native
+permission with the text its prompt shows (`Bundle.withUsage Bundle.Camera
+"…"`; `Native.authenticate` needs `Bundle.FaceId`, and the iOS / Android build
+fails without it), Apple entitlements with `Bundle.withEntitlement`, keep
+secrets in `Native.secureSet` (Keychain / Android Keystore; `Err Unavailable`
+in a browser, never `localStorage`), and make the store build with `sky package
+--release` (it refuses a local or `http` backend address). Guide:
+`docs/skyapp/native.md`. `sky
 check` type-checks the shared source without splitting; `sky spa-split <entry>
 --out <dir>` is the explicit form when you want the split trees kept at a path.
 Each `/_rpc/<Msg>` is a `Server.rpc` route: it takes only same-origin

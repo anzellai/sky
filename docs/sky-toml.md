@@ -838,6 +838,31 @@ warning: a production device build should use `https://`. The iOS shell gets
 an App Transport Security exception (`NSExceptionDomains`) for exactly that
 host, and the Android shell gets a network security config that permits
 cleartext for exactly that host.
+
+### Native release signing — `sky package --release` *(v0.27.0+)*
+
+`sky package --release --target <t>` reads its signing configuration from the
+environment only, because a keystore password never belongs in a tracked file.
+None of these is read by the app, and none is prefix-affected.
+
+| Variable | Target | Meaning |
+|---|---|---|
+| `SKY_IOS_SIGN_IDENTITY` | `mobile:ios` | The signing identity (`security find-identity -v -p codesigning`), e.g. `Apple Distribution: Acme Ltd (TEAMID)`. Without it (and without the profile) the build makes an unsigned `-unsigned.ipa`. |
+| `SKY_IOS_PROVISIONING_PROFILE` | `mobile:ios` | Path to the `.mobileprovision` file. Required with the identity; its identity keys go into the entitlements, and every entitlement the app requests must be one it grants. |
+| `SKY_ANDROID_KEYSTORE` | `mobile:android` | Path to the upload keystore. Required: a release is never signed with the debug key. |
+| `SKY_ANDROID_KEYSTORE_PASSWORD` | `mobile:android` | The keystore password, passed to `apksigner` / `jarsigner` by variable name. Required. |
+| `SKY_ANDROID_KEY_ALIAS` | `mobile:android` | The key alias. Required. |
+| `SKY_ANDROID_KEY_PASSWORD` | `mobile:android` | The key password, when it differs from the keystore password. |
+| `SKY_MACOS_SIGN_IDENTITY` | `desktop:mac` | A `Developer ID Application` identity; signs the `.app` and `.dmg` with the hardened runtime. Without it the `.app` is signed ad hoc. |
+
+`SKY_PACKAGE_RELEASE` is internal: `sky package` sets it to the release
+directory (`<project>/sky-out/release`) so that the child build legs build the
+release artefacts. Do not set it yourself.
+
+A release also refuses the development backend address: `SKY_APP_URL` (or
+`App.withAppUrl`) must name a deployed `https://` host. See
+[`docs/skyapp/native.md`](skyapp/native.md).
+
 ### Content-Security-Policy — `SKY_CSP` *(v0.25.19+)*
 
 Every page that Sky serves (Sky.Live, the Sky Console, Sky.Spa, `Std.Ui`
