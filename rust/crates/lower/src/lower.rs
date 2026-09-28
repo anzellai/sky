@@ -8417,6 +8417,15 @@ impl<'a> Ctx<'a> {
             // extracted `.OkValue` to the sub-pattern's nominal so the recursive
             // `pattern_test` reads `.Tag` off a concrete `rt.SkyMaybe` / ADT
             // rather than off `any`. Mirrors the sealed-ADT `Fields[i]` arm.
+            //
+            // When the payload's type is NOT `any`, the selector already has
+            // that Go type: every caller binds `subj` at its exact Go type
+            // (`_subj := …` in `lower_case`, a typed param, a typed temp), so
+            // `_subj.ErrValue` of an `rt.SkyResult[E, A]` IS an `E`. Read it
+            // directly. Wrapping it in an `any → E` Coerce boxed a typed value
+            // and asserted it straight back (`rt.Coerce[Sky_Core_Error_Error]
+            // (_subj.ErrValue)`, `rt.AsInt(_subj.OkValue)`) — doc 14 R8,
+            // closed by §5.2: both shapes are known here and equal (§1).
             let sub_ty = if *ty == GoTy::Any {
                 self.pattern_nominal_ty(&self.body.pats[*a])
                     .unwrap_or(GoTy::Any)
@@ -8427,7 +8436,7 @@ impl<'a> Ctx<'a> {
                 GoExprKind::Selector(Box::new(subj.clone()), field.into()),
                 GoTy::Any,
             );
-            let field_expr = if sub_ty == GoTy::Any {
+            let field_expr = if sub_ty == GoTy::Any || *ty != GoTy::Any {
                 GoExpr::new(
                     GoExprKind::Selector(Box::new(subj.clone()), field.into()),
                     ty.clone(),

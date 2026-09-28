@@ -3668,7 +3668,7 @@ func Overview_focusedPane(v_0 State_Model_R) Std_Ui_Element {
 				return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(Overview_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(14), Std_Ui_spacing(10), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(13), Std_Ui_Font_color(Overview_textSecondary()), Std_Ui_Font_italic()}, Std_Ui_text(("Service \"" + (v_0.SelectedService + ("\" has no recent samples yet — " + "click All services to return to aggregate.")))))})
 			}
 			if _subj.Tag == 0 {
-				v_2 := /* generic erase */ rt.Coerce[State_ServiceStat_R](_subj.JustValue)
+				v_2 := _subj.JustValue
 				_ = v_2
 				return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_spacing(12)}, []Std_Ui_Element{Overview_focusedHeader(v_2), Overview_focusedCharts(v_2), Overview_focusedHint()})
 			}
@@ -3723,7 +3723,7 @@ func Overview_intToFloat(v_0 int) float64 {
 	{
 		_subj := /* FFI return */ rt.MaybeCoerce[float64](rt.String_toFloat(any( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0))))))
 		if _subj.Tag == 0 {
-			v_1 := /* generic erase */ rt.AsFloat(_subj.JustValue)
+			v_1 := _subj.JustValue
 			_ = v_1
 			return v_1
 		}
@@ -3817,7 +3817,7 @@ func Std_Ui_Chart_titleNode(v_0 Std_Ui_Chart_Cfg_R) rt.SkyMaybe[Std_Html_Html] {
 			return rt.Nothing[Std_Html_Html]()
 		}
 		if _subj.Tag == 0 {
-			v_1 := /* generic erase */ rt.AsString(_subj.JustValue)
+			v_1 := _subj.JustValue
 			_ = v_1
 			return rt.Just[Std_Html_Html](Std_Html_node("text", []Std_Html_Attributes_Attribute{Std_Html_Attributes_attribute("x" /* FFI return */, rt.AsString(rt.String_fromInt(rt.IntDiv(any(v_0.Width), any(2))))), Std_Html_Attributes_attribute("y", "14"), Std_Html_Attributes_attribute("text-anchor", "middle"), Std_Html_Attributes_attribute("fill", "#1a1a2e"), Std_Html_Attributes_attribute("font-size", "12"), Std_Html_Attributes_attribute("font-weight", "600")}, []Std_Html_Html{Std_Html_text(v_1)}))
 		}
@@ -3836,7 +3836,7 @@ func Std_Ui_Chart_maybeCons(v_0 rt.SkyMaybe[Std_Html_Html], v_1 []Std_Html_Html)
 			return v_1
 		}
 		if _subj.Tag == 0 {
-			v_2 := /* generic erase */ rt.Coerce[Std_Html_Html](_subj.JustValue)
+			v_2 := _subj.JustValue
 			_ = v_2
 			return /* FFI return */ rt.AsListT[Std_Html_Html](rt.List_cons(any(v_2), any( /* primitive join */ rt.AsListT[any](v_1))))
 		}
@@ -3928,7 +3928,7 @@ func Std_Ui_Chart_intToFloat(v_0 int) float64 {
 	{
 		_subj := /* FFI return */ rt.MaybeCoerce[float64](rt.String_toFloat(any( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0))))))
 		if _subj.Tag == 0 {
-			v_1 := /* generic erase */ rt.AsFloat(_subj.JustValue)
+			v_1 := _subj.JustValue
 			_ = v_1
 			return v_1
 		}
@@ -3976,7 +3976,7 @@ func Std_Ui_Chart_labelTitle(v_0 rt.SkyMaybe[string]) []Std_Html_Html {
 			return []Std_Html_Html{}
 		}
 		if _subj.Tag == 0 {
-			v_1 := /* generic erase */ rt.AsString(_subj.JustValue)
+			v_1 := _subj.JustValue
 			_ = v_1
 			return []Std_Html_Html{Std_Html_node("title", []Std_Html_Attributes_Attribute{}, []Std_Html_Html{Std_Html_text(v_1)})}
 		}
@@ -4091,7 +4091,7 @@ func Std_Ui_Chart_seriesColor(v_0 Std_Ui_Chart_Cfg_R, v_1 Std_Ui_Chart_Series_R)
 	{
 		_subj := v_1.Color
 		if _subj.Tag == 0 {
-			v_2 := /* generic erase */ rt.Coerce[Std_Ui_Color](_subj.JustValue)
+			v_2 := _subj.JustValue
 			_ = v_2
 			return v_2
 		}
@@ -4124,7 +4124,7 @@ func Std_Ui_Chart_effectiveYRange(v_0 Std_Ui_Chart_Cfg_R, v_1 []Std_Ui_Chart_Ser
 	{
 		_subj := v_0.YRange
 		if _subj.Tag == 0 {
-			v_2 := /* generic erase */ rt.Coerce[rt.T2[float64, float64]](_subj.JustValue)
+			v_2 := _subj.JustValue
 			_ = v_2
 			return v_2
 		}
@@ -4612,7 +4612,7 @@ func Std_Ui_Chart_sparkline(v_0 Std_Ui_Chart_Cfg_R, v_1 []float64) Std_Ui_Elemen
 		ys_6 := func() rt.T2[float64, float64] {
 			_subj := v_0.YRange
 			if _subj.Tag == 0 {
-				v_13 := /* generic erase */ rt.Coerce[rt.T2[float64, float64]](_subj.JustValue)
+				v_13 := _subj.JustValue
 				_ = v_13
 				return v_13
 			}
@@ -8562,18 +8562,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 						{
 							_subj := v_0.OnRequest
 							if _subj.Tag == 0 {
-								v_23 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.T2[any, any] {
-									_s := any(_subj.JustValue)
-									if _f, _ok := _s.(func(Sky_Http_Server_Request_R, any) rt.T2[any, any]); _ok {
-										return _f
-									}
-									if _c, _ok := _s.(func(any) any); _ok {
-										return func(_a0 Sky_Http_Server_Request_R, _a1 any) rt.T2[any, any] {
-											return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
-										}
-									}
-									return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_s)
-								}()
+								v_23 := _subj.JustValue
 								_ = v_23
 								{
 									_t2 := v_23(Std_App_requestFromSeed_(v_20), v_21)
@@ -8643,7 +8632,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStore__4 := func() any {
 					_subj := w_2.Store
 					if _subj.Tag == 0 {
-						v_30 := /* generic erase */ rt.AsString(_subj.JustValue)
+						v_30 := _subj.JustValue
 						_ = v_30
 						return rt.Live_withStore(any(v_30), base_3)
 					}
@@ -8656,7 +8645,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStatic__5 := func() any {
 					_subj := w_2.Static
 					if _subj.Tag == 0 {
-						v_31 := /* generic erase */ rt.AsString(_subj.JustValue)
+						v_31 := _subj.JustValue
 						_ = v_31
 						return rt.Live_withStatic(any(v_31), withStore__4)
 					}
@@ -8669,7 +8658,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withStaticUrl__6 := func() any {
 					_subj := w_2.StaticUrl
 					if _subj.Tag == 0 {
-						v_32 := /* generic erase */ rt.AsString(_subj.JustValue)
+						v_32 := _subj.JustValue
 						_ = v_32
 						return rt.Live_withStaticUrl(any(v_32), withStatic__5)
 					}
@@ -8682,7 +8671,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withTtl__7 := func() any {
 					_subj := w_2.Ttl
 					if _subj.Tag == 0 {
-						v_33 := /* generic erase */ rt.AsString(_subj.JustValue)
+						v_33 := _subj.JustValue
 						_ = v_33
 						return rt.Live_withTtl(any(v_33), withStaticUrl__6)
 					}
@@ -8695,7 +8684,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withIdle__8 := func() any {
 					_subj := w_2.IdleEvict
 					if _subj.Tag == 0 {
-						v_34 := /* generic erase */ rt.AsString(_subj.JustValue)
+						v_34 := _subj.JustValue
 						_ = v_34
 						return rt.Live_withIdleEvict(any(v_34), withTtl__7)
 					}
@@ -8708,7 +8697,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withMaxBody__9 := func() any {
 					_subj := w_2.MaxBodyBytes
 					if _subj.Tag == 0 {
-						v_35 := /* generic erase */ rt.AsInt(_subj.JustValue)
+						v_35 := _subj.JustValue
 						_ = v_35
 						return rt.Live_withMaxBodyBytes(any(v_35), withIdle__8)
 					}
@@ -8721,7 +8710,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withInputMode__10 := func() any {
 					_subj := w_2.InputMode
 					if _subj.Tag == 0 {
-						v_36 := /* generic erase */ rt.AsString(_subj.JustValue)
+						v_36 := _subj.JustValue
 						_ = v_36
 						return rt.Live_withInput(any(v_36), withMaxBody__9)
 					}
@@ -8736,12 +8725,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withAnalytics__12 := func() any {
 					_subj := w_2.Analytics
 					if _subj.Tag == 0 {
-						v_37 := /* generic erase */ func(_s any) struct{ PageViews bool } {
-							if _m, _ok := _s.(struct{ PageViews any }); _ok {
-								return struct{ PageViews bool }{PageViews: rt.AsBool(_m.PageViews)}
-							}
-							return rt.Coerce[struct{ PageViews bool }](_s)
-						}(_subj.JustValue)
+						v_37 := _subj.JustValue
 						_ = v_37
 						return rt.Live_withAnalytics(any(v_37), withPort__11)
 					}
@@ -8754,16 +8738,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withHead__13 := func() any {
 					_subj := v_0.Head
 					if _subj.Tag == 0 {
-						v_38 := /* generic erase */ func() func(any) []Std_Html_Html {
-							_s := any(_subj.JustValue)
-							if _f, _ok := _s.(func(any) []Std_Html_Html); _ok {
-								return _f
-							}
-							if _g, _ok := _s.(func(any) any); _ok {
-								return func(_a0 any) []Std_Html_Html { return rt.AsListT[Std_Html_Html](_g(any(_a0))) }
-							}
-							return rt.CoerceFuncSlot[func(any) []Std_Html_Html](_s)
-						}()
+						v_38 := _subj.JustValue
 						_ = v_38
 						return rt.Live_withHead(any(func(_w4 any) any { return any(v_38(_w4)) }), withAnalytics__12)
 					}
@@ -8776,18 +8751,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withGuard__14 := func() any {
 					_subj := v_0.Guard
 					if _subj.Tag == 0 {
-						v_39 := /* generic erase */ func() func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}] {
-							_s := any(_subj.JustValue)
-							if _f, _ok := _s.(func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]); _ok {
-								return _f
-							}
-							if _c, _ok := _s.(func(any) any); _ok {
-								return func(_a0 any, _a1 any) rt.SkyResult[Sky_Core_Error_Error, struct{}] {
-									return rt.ResultCoerceOk[Sky_Core_Error_Error, struct{}]((_c(any(_a0))).(func(any) any)(any(_a1)), func(_v any) struct{} { return rt.Coerce[struct{}](_v) })
-								}
-							}
-							return rt.CoerceFuncSlot[func(any, any) rt.SkyResult[Sky_Core_Error_Error, struct{}]](_s)
-						}()
+						v_39 := _subj.JustValue
 						_ = v_39
 						return rt.Live_withGuard(any(func(_w5 any) any { return any(func(_w6 any) any { return any(v_39(_w5, _w6)) }) }), withHead__13)
 					}
@@ -8800,16 +8764,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withNav__15 := func() any {
 					_subj := v_0.OnNavigate
 					if _subj.Tag == 0 {
-						v_40 := /* generic erase */ func() func(any) any {
-							_s := any(_subj.JustValue)
-							if _f, _ok := _s.(func(any) any); _ok {
-								return _f
-							}
-							if _g, _ok := _s.(func(any) any); _ok {
-								return func(_a0 any) any { return rt.Coerce[any](_g(any(_a0))) }
-							}
-							return rt.CoerceFuncSlot[func(any) any](_s)
-						}()
+						v_40 := _subj.JustValue
 						_ = v_40
 						return rt.Live_withOnNavigate(any(v_40), withGuard__14)
 					}
@@ -8865,18 +8820,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 				withConsole__17 := func() any {
 					_subj := v_0.ConsoleAuth
 					if _subj.Tag == 0 {
-						v_41 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]] {
-							_s := any(_subj.JustValue)
-							if _f, _ok := _s.(func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]); _ok {
-								return _f
-							}
-							if _c, _ok := _s.(func(any) any); _ok {
-								return func(_a0 Sky_Http_Server_Request_R, _a1 any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]] {
-									return rt.TaskCoerceT[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]((_c(any(_a0))).(func(any) any)(any(_a1)))
-								}
-							}
-							return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.SkyTask[Sky_Core_Error_Error, rt.SkyMaybe[Std_Live_Console_Identity_R]]](_s)
-						}()
+						v_41 := _subj.JustValue
 						_ = v_41
 						return rt.Live_withConsoleAuthModel(any(func(_w8 any) any {
 							return any(func(_w9 any) any { return any(v_41( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](_w8), _w9)) })
@@ -9102,23 +9046,12 @@ func Std_App_liveDurable_(v_0 func(any) Sky_Http_Server_Request_R, v_1 rt.SkyMay
 		{
 			_subj := v_1
 			if _subj.Tag == 0 {
-				v_6 := /* generic erase */ func() func(Sky_Http_Server_Request_R, any) rt.T2[any, any] {
-					_s := any(_subj.JustValue)
-					if _f, _ok := _s.(func(Sky_Http_Server_Request_R, any) rt.T2[any, any]); _ok {
-						return _f
-					}
-					if _c, _ok := _s.(func(any) any); _ok {
-						return func(_a0 Sky_Http_Server_Request_R, _a1 any) rt.T2[any, any] {
-							return rt.Coerce[rt.T2[any, any]]((_c(any(_a0))).(func(any) any)(any(_a1)))
-						}
-					}
-					return rt.CoerceFuncSlot[func(Sky_Http_Server_Request_R, any) rt.T2[any, any]](_s)
-				}()
+				v_6 := _subj.JustValue
 				_ = v_6
 				{
 					_subj := v_4
-					if (_subj.Tag == 0) && ( /* generic erase */ rt.MaybeCoerce[any](_subj.OkValue).Tag == 0) {
-						v_7 := /* generic erase */ rt.MaybeCoerce[any](_subj.OkValue).JustValue
+					if (_subj.Tag == 0) && (_subj.OkValue.Tag == 0) {
+						v_7 := _subj.OkValue.JustValue
 						_ = v_7
 						{
 							_t0 := v_6( /* FFI return */ rt.Coerce[Sky_Http_Server_Request_R](v_0(v_3)), v_7)
@@ -9249,7 +9182,7 @@ func Std_App_baseToConfig_(v_0 Std_App_BaseConfig_R) any {
 		withDb__2 := func() any {
 			_subj := v_0.Database
 			if _subj.Tag == 0 {
-				v_4 := /* generic erase */ rt.Coerce[Sky_Config_Database](_subj.JustValue)
+				v_4 := _subj.JustValue
 				_ = v_4
 				return Sky_Config_withDatabase(v_4, withLog__1)
 			}
@@ -9262,7 +9195,7 @@ func Std_App_baseToConfig_(v_0 Std_App_BaseConfig_R) any {
 		withTel__3 := func() any {
 			_subj := v_0.Telemetry
 			if _subj.Tag == 0 {
-				v_5 := /* generic erase */ rt.Coerce[Sky_Config_Telemetry](_subj.JustValue)
+				v_5 := _subj.JustValue
 				_ = v_5
 				return Sky_Config_withTelemetry(v_5, withDb__2)
 			}
