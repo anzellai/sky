@@ -1760,10 +1760,12 @@ func vnodeEqualShallow(a, b *VNode) bool {
 //
 // Operations, applied in this order when several are set:
 //
-//   - Replace: replace the target element ITSELF (outerHTML). Emitted only
-//     when the root changes tag — every other tag change is handled at the
+//   - Replace: replace the target element ITSELF (outerHTML). Emitted when
+//     the root changes tag — every other tag change is handled at the
 //     parent by Kids / HTML, and an innerHTML write at the old root nested
-//     the new root inside it.
+//     the new root inside it — and, at any depth, for a form that became
+//     another form (sameForm) and a widget island whose identity changed
+//     (island_core.go).
 //   - Text: the target's only child becomes this text.
 //   - HTML: the target's children become this markup.
 //   - Kids: reconcile the target's children in place (see KidOp).

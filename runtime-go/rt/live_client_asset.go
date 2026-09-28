@@ -788,6 +788,9 @@ function __skyReviveScripts(root) {
   var scripts = root.querySelectorAll("script:not([data-sky-script-revived])");
   for (var i = 0; i < scripts.length; i++) {
     var old = scripts[i];
+    // A widget island's DOM is the widget's (island_client.go): a script it
+    // inserted has already run as the widget meant, so it is never revived.
+    if (old.closest && old.closest("[data-sky-island]")) continue;
     // Mark the source element revived FIRST so a rejection branch
     // (no-src + inline body) doesn't re-trip on the next pass.
     try { old.setAttribute("data-sky-script-revived", "1"); } catch (_) {}
