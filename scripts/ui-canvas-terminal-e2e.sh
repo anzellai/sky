@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+#
+# scripts/ui-canvas-terminal-e2e.sh — browser e2e for Std.Ui.Canvas, the
+# Ui.text wrapping and Std.Ui.Terminal (v0.27.0).
+#
+# Builds, from temp copies:
+#   * the ui-canvas fixture for Sky.Live (--target web) and Sky.Spa
+#     (--target web:app, run from its split backend directory);
+#   * the ui-terminal fixture for Sky.Live (--target web), and checks that
+#     the same program built for Sky.Spa is REFUSED with the error that names
+#     Std.Ui.Terminal and the target that works.
+# Then drives each app in headless Chromium with SKY_CSP=strict.
+# scripts/ui-canvas-terminal-verify.mjs has the case list: scene pointer
+# events in scene units, a new shape patched into a live scene is an SVG
+# element (the Sky.Spa client created it in the HTML namespace before), a
+# click on a shape, two texts in a column are two lines and a long text wraps
+# in a narrow box; a terminal bound to `sh` prints `echo hi`, follows a
+# resize (`stty size`), survives a dropped SSE connection, and repaints its
+# scrollback after a reload. Zero policy violations or console errors.
+#
+# Proven to FAIL on the Sky.Spa canvas case when the wasm renderer creates SVG
+# elements in the HTML namespace (the pre-fix renderer: the scene drew nothing
+# and took no pointer events), and on the terminal reload case before widget
+# events sent from mount() were held until the page's client is ready and
+# before widget commands pushed with no SSE connection were kept for the next
+# one (the terminal stayed blank after a reload); PASSES on the fixed runtime.
+#
+# Prereqs (all fail loudly): a fresh sky-out/sky, go, node + playwright, sh.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SKY="$ROOT/sky-out/sky"
+if [ ! -x "$SKY" ]; then
+  echo "ui-canvas-terminal-e2e: $SKY not found — run ./scripts/build.sh first." >&2
+  exit 1
+fi
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+require_fresh_compiler "$SKY" "$ROOT"
+source "$ROOT/scripts/lib/with-timeout.sh"
+command -v node >/dev/null 2>&1 || { echo "ui-canvas-terminal-e2e: 'node' is required." >&2; exit 1; }
+command -v go >/dev/null 2>&1 || { echo "ui-canvas-terminal-e2e: 'go' is required." >&2; exit 1; }
+command -v sh >/dev/null 2>&1 || { echo "ui-canvas-terminal-e2e: 'sh' is required (the terminal runs it)." >&2; exit 1; }
+
+source "$ROOT/scripts/lib/gate-build-cache.sh"
+BASE_PORT="${UI_CANVAS_TERMINAL_E2E_PORT:-9570}"
+
+stage() { # stage <fixture> <name>
+  local dir
+  dir="$(gate_e2e_dir "$ROOT" "ui-$2")"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/$1/." "$dir/"
+  printf '%s\n' "$dir"
+}
+
+CANVAS_WEB="$(stage ui-canvas canvas-web)"
+echo "==> building the ui-canvas fixture (--target web)"
+with_timeout 1200 bash "$ROOT/scripts/lib/gate-build-cache.sh" build "$SKY" "$CANVAS_WEB" \
+  --clean --artefact .skyapp/web -- build --target web src/Main.sky
+CANVAS_WEB_APP="$CANVAS_WEB/.skyapp/web/sky-out/app"
+
+CANVAS_SPA="$(stage ui-canvas canvas-web-app)"
+echo "==> building the ui-canvas fixture (--target web:app)"
+with_timeout 1200 bash "$ROOT/scripts/lib/gate-build-cache.sh" build "$SKY" "$CANVAS_SPA" \
+  --clean --artefact .skyapp/web-app -- build --target web:app src/Main.sky
+CANVAS_SPA_BACKEND="$CANVAS_SPA/.skyapp/web-app/.split/backend"
+CANVAS_SPA_APP="$CANVAS_SPA_BACKEND/sky-out/app"
+
+TERM_WEB="$(stage ui-terminal terminal-web)"
+echo "==> building the ui-terminal fixture (--target web)"
+with_timeout 1200 bash "$ROOT/scripts/lib/gate-build-cache.sh" build "$SKY" "$TERM_WEB" \
+  --clean --artefact .skyapp/web -- build --target web src/Main.sky
+TERM_WEB_APP="$TERM_WEB/.skyapp/web/sky-out/app"
+
+for bin in "$CANVAS_WEB_APP" "$CANVAS_SPA_APP" "$TERM_WEB_APP"; do
+  [ -x "$bin" ] || { echo "ui-canvas-terminal-e2e: app not built at $bin" >&2; exit 1; }
+done
+
+rc=0
+TERM_SPA="$(stage ui-terminal terminal-web-app)"
+echo "==> the ui-terminal fixture must be refused for Sky.Spa (--target web:app)"
+set +e
+spa_out="$(cd "$TERM_SPA" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky 2>&1)"
+spa_rc=$?
+set -e
+if [ "$spa_rc" -eq 0 ]; then
+  echo "FAIL a Std.Ui.Terminal app built for Sky.Spa (it must be refused)" >&2
+  rc=1
+elif ! printf '%s' "$spa_out" | grep -q "Std.Ui.Terminal is not available on a Sky.Spa target"; then
+  echo "FAIL the Sky.Spa refusal does not name Std.Ui.Terminal:" >&2
+  printf '%s\n' "$spa_out" | tail -20 >&2
+  rc=1
+else
+  echo "ok   the Sky.Spa build of a terminal app is refused with the reason"
+fi
+
+echo "==> Std.Ui.Canvas on Sky.Live (--target web)"
+with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$CANVAS_WEB_APP" \
+  --port "$BASE_PORT" --mode canvas-live --cwd "$CANVAS_WEB" || rc=1
+echo "==> Std.Ui.Canvas on Sky.Spa (--target web:app, from the split backend)"
+with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$CANVAS_SPA_APP" \
+  --port $((BASE_PORT + 2)) --mode canvas-spa --cwd "$CANVAS_SPA_BACKEND" || rc=1
+echo "==> Std.Ui.Terminal on Sky.Live (--target web)"
+with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$TERM_WEB_APP" \
+  --port $((BASE_PORT + 4)) --mode terminal --cwd "$TERM_WEB" || rc=1
+
+if [ "$rc" -ne 0 ]; then
+  echo "ui-canvas-terminal-e2e: FAIL (see above)." >&2
+  exit 1
+fi
+echo "ui-canvas-terminal-e2e: PASS — canvas scenes (Sky.Live and Sky.Spa), text wrapping and a PTY terminal work under a strict Content-Security-Policy."
+rm -rf "$CANVAS_WEB" "$CANVAS_SPA" "$TERM_WEB" "$TERM_SPA"

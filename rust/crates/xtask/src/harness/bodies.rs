@@ -84,7 +84,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 1305; // +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.26.2
+pub const CONFORMANCE_EXPECTED: u64 = 1336; // +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.26.2
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -735,12 +735,20 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// **510 since the v0.27.0 process and watch surfaces** (+5: `process` 3 —
 /// nominal, boundary, failure — and `watch` 2 — nominal, failure).
 /// `Sky.Core.Process` (dark until now) and the new `Std.Watch` land covered.
-pub const CORPUS_EXPECTED: u64 = 510;
+///
+/// **519 since the v0.27.0 canvas and terminal surfaces** (+9: `canvas` 4 —
+/// nominal, empty, boundary, unicode — and `terminal` 5 edge classes). The new
+/// `Std.Ui.Canvas` and `Std.Ui.Terminal` land covered, so the dark-module
+/// count stays at its ceiling.
+pub const CORPUS_EXPECTED: u64 = 519;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
+///
+/// **373 since the v0.27.0 canvas and terminal Family-S surfaces** (+9, every
+/// one built and run; the same +9 as `CORPUS_EXPECTED`).
 ///
 /// **364 since the v0.27.0 process and watch Family-S surfaces** (+5, every
 /// one built and run; the same +5 as `CORPUS_EXPECTED`).
@@ -759,7 +767,7 @@ pub const CORPUS_EXPECTED: u64 = 510;
 /// T1 tier — so a behavioural-case addition that forgets this const surfaces a
 /// tier late. Both `CORPUS_EXPECTED` (all cases) and this (the built-and-run
 /// subset) move by the same +2 when a behavioural case lands.
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 364;
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 373;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -3295,7 +3303,16 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// `rust/crates/sky/tests/cli_verb_flow.rs`) and the macOS release gate
 /// `gate-native` (`native_shell_flow.rs`). The new `Std.Bundle` / `Std.Native`
 /// members extend existing module surfaces and add none.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 180;
+///
+/// 180 -> 182: v0.27.0 phase 6C adds two stdlib modules, one surface each
+/// (`surfaces_total` 176 -> 178): `stdlib.Std.Ui.Canvas` and
+/// `stdlib.Std.Ui.Terminal`. Each is covered by the conformance suite
+/// `UiCanvasConformanceTest.sky` (the exact SVG, the terminal payloads), the
+/// Family-S corpus surfaces `canvas` / `terminal`, Go tests in
+/// `runtime-go/rt` (`tui_scene_test.go`, `scene_client_test.go`,
+/// `island_terminal_test.go`, `process_terminal_test.go`) and the browser
+/// e2e `scripts/ui-canvas-terminal-e2e.sh`.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 182;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

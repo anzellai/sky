@@ -82,8 +82,10 @@ func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view
 var liveClientPath = "/_sky/live." + assetHash(liveClientJS) + ".js"
 
 // liveClientJS is the whole Sky.Live browser client: the widget-island
-// runtime (island_client.go), then the Live client proper.
-const liveClientJS = islandClientJS + liveClientCoreJS
+// runtime (island_client.go), the Std.Ui.Canvas pointer runtime
+// (scene_client.go), the built-in terminal widget (island_terminal.go), then
+// the Live client proper.
+const liveClientJS = islandClientJS + sceneClientJS + terminalWidgetJS + liveClientCoreJS
 
 // liveClientCoreJS is the Sky.Live client proper.
 const liveClientCoreJS = `// Sky.Live client (runtime-go/rt/live_client_asset.go). Served as the
@@ -2874,6 +2876,9 @@ document.addEventListener("visibilitychange", function() {
 function __skyInit() {
   __skyBindEvents(document);
   __skyInjectStatusBanner();
+  // The listeners are bound: widget-island events held until now go out
+  // (island_client.go, hostReady).
+  if (window.Sky && window.Sky.__islandHostReady) window.Sky.__islandHostReady();
 }
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", __skyInit);

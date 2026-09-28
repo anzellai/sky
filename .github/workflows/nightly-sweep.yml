@@ -228,6 +228,12 @@ jobs:
       # commands, and remounts on a new id; Sky.Live and Sky.Spa, strict CSP.
       - name: Gate — widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
         run: scripts/islands-e2e.sh
+      # Std.Ui.Canvas pointer events in scene units (Sky.Live and Sky.Spa; the
+      # Sky.Spa client must build SVG in the SVG namespace), Ui.text wrapping,
+      # and Std.Ui.Terminal on a PTY: echo, resize, a dropped SSE connection
+      # and a reload that repaints the scrollback. Strict CSP.
+      - name: Gate — Std.Ui canvas, text wrapping + terminal e2e (strict CSP)
+        run: scripts/ui-canvas-terminal-e2e.sh
       # Sky.Live without cookies: the header session transport in a browser
       # that blocks every cookie — counter, pushes, a dropped stream, a
       # sign-in rotation and the SSE ticket fallback, strict CSP.

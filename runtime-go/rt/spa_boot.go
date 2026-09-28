@@ -17,18 +17,20 @@ import (
 // build and one hash names it everywhere.
 //
 // The build (rust/crates/sky/src/main.rs, spa_boot_js + stage_web_bundle)
-// writes the SAME bytes: it reads the two literals below (islandClientJS from
-// island_client.go, spaBootLoaderJS from this file) out of the Go sources at
+// writes the SAME bytes: it reads the literals below (islandClientJS from
+// island_client.go, sceneClientJS from scene_client.go, terminalWidgetJS from
+// island_terminal.go, spaBootLoaderJS from this file) out of the Go sources at
 // compile time, so there is one copy. The Rust unit test
 // `spa_boot_js_matches_the_runtime` checks the extraction, because a drift
 // would point the SSR page at a file name the build never wrote.
 
 // SpaBootJS is the file: the widget-island runtime (island_client.go), so a
 // widget file loaded with <script src defer> can register before the wasm
-// boots, then the loader. `document.currentScript` is the <script> element
+// boots, the Std.Ui.Canvas pointer runtime (scene_client.go), the built-in
+// terminal widget (island_terminal.go), then the loader. `document.currentScript` is the <script> element
 // that is running it (a classic, non-module script), so its data-wasm
 // attribute names the wasm to instantiate.
-const SpaBootJS = islandClientJS + spaBootLoaderJS
+const SpaBootJS = islandClientJS + sceneClientJS + terminalWidgetJS + spaBootLoaderJS
 
 // spaBootLoaderJS is the loader proper. It follows the widget-island runtime
 // (island_client.go), which a widget file needs before the wasm boots.

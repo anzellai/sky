@@ -1250,6 +1250,9 @@ pub fn analyze_loaded(
     // Build the reachability + taint graph over every def reachable from the
     // app modules (pulls in only the stdlib defs actually referenced).
     let graph = build_graph(db, &check_ids);
+    if let Some(err) = spa_unsupported_module(db, &graph) {
+        return Err(err);
+    }
 
     // ---- server-tainted top-level bindings (app modules only) ----
     let mut tainted: Vec<TaintedBinding> = Vec::new();
@@ -2006,6 +2009,43 @@ impl Graph {
 }
 
 /// Build the taint graph over every def reachable from the app modules.
+/// Stdlib modules a Sky.Spa program cannot use yet, with the reason the
+/// build states. `Std.Ui.Terminal` binds a widget to a server PTY: its output
+/// loop sends `Cmd.toIsland` from the branch that reads the process, which is
+/// a server branch under the split, and Sky.Spa does not deliver a widget
+/// command from a server branch (the backend logs `SpaIslandCommandOnServer`).
+/// The split would build and show a terminal that never prints, so it is
+/// refused up front instead.
+const SPA_UNSUPPORTED_MODULES: &[(&str, &str)] = &[(
+    "Std.Ui.Terminal",
+    "Std.Ui.Terminal is not available on a Sky.Spa target (web:app and the native \
+     client targets): the terminal's process runs on the server, and Sky.Spa cannot \
+     send its output to the widget from a server branch. Build this app for Sky.Live \
+     (--target web, or desktop) to use a terminal element.",
+)];
+
+/// The refusal for a program that reaches a module in
+/// [`SPA_UNSUPPORTED_MODULES`], or `None`.
+fn spa_unsupported_module(db: &dyn SkyDb, graph: &Graph) -> Option<String> {
+    let mut hits: Vec<&str> = Vec::new();
+    for def in graph.nodes.keys() {
+        let Some(loc) = db.def_loc(*def) else {
+            continue;
+        };
+        let name = db.module_name(loc.module);
+        for (module, reason) in SPA_UNSUPPORTED_MODULES {
+            if name == *module && !hits.contains(reason) {
+                hits.push(reason);
+            }
+        }
+    }
+    if hits.is_empty() {
+        None
+    } else {
+        Some(hits.join("\n"))
+    }
+}
+
 fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
     let mut nodes: HashMap<DefId, DefNode> = HashMap::new();
     let mut work: Vec<DefId> = Vec::new();

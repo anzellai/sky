@@ -323,9 +323,82 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - **A deploy without `ENV` no longer accepts WebSocket upgrades from any
   origin.** Set `ENV=production` and `Ws.withOriginPatterns`, which
   production has always required.
+- **`Ui.text` outside a paragraph is now its own wrapping box** (see
+  Changed). To keep a label on one line, write `Ui.textNoWrap "label"`. To
+  flow several texts as one line of prose, put them in a `Ui.paragraph`. A
+  test or a CSS selector that matched the old bare text node directly under
+  its parent now finds it inside `<span style="overflow-wrap: anywhere;">`.
+
+### Changed
+
+- **`Ui.text` wraps like a text box outside a paragraph (elm-ui style).**
+  Before, it was a bare HTML text node wherever it sat. Two adjacent text
+  nodes are ONE run to the browser, so in a `Ui.column`,
+  `[ Ui.text "first", Ui.text "second" ]` showed `firstsecond` on one line;
+  and the terminal renderer cut a long text at the edge of its box. Now,
+  outside a paragraph, a text renders as its own
+  `<span style="overflow-wrap: anywhere;">`: a column shows one text per
+  line, and a text wraps at word boundaries within the width it is given (a
+  word longer than the line breaks instead of overflowing). Sky.Live,
+  Sky.Spa and the desktop window render the same markup. The terminal
+  renderer (Sky.Tui) wraps the text at the cell width, and texts in a row
+  share the width the other children leave. Inside a `Ui.paragraph` nothing
+  changed: texts stay inline and flow together. `Ui.text ""` still renders
+  nothing. New: `Ui.textNoWrap` for a text that stays on one line. The
+  embedded Sky Console is regenerated. (`sky-stdlib/Std/Ui.sky`
+  `renderText`, `runtime-go/rt/tui_ui.go` `tuiTextBox`; tests
+  `UiTextWrapConformanceTest`, `tui_text_wrap_test.go`,
+  `scripts/ui-canvas-terminal-e2e.sh`.)
 
 ### Added
 
+- **`Std.Ui.Canvas`: typed 2D scenes.** `Canvas.scene { width, height, label }
+  shapes` draws rectangles, circles, ellipses, lines, polylines, polygons,
+  paths from typed commands (`MoveTo`, `LineTo`, `QuadTo`, `CubicTo`,
+  `ArcTo`, `Close`), text and groups, with fill, stroke, stroke width,
+  opacity, font size, text anchors and transforms (translate, rotate,
+  scale, in order). `onClick` gives a message; `onPointerDown`,
+  `onPointerMove` (coalesced to one per animation frame) and
+  `onPointerUp` give a typed `Point` in scene units, whatever size the
+  scene is drawn at; `sceneWith` puts events on the whole scene. `label` is
+  required and is the scene's accessible name. Every web backend (Sky.Live,
+  Sky.Spa, the desktop window) draws the scene as inline SVG diffed like
+  any element; a batched `<canvas>` draw list was not taken for Sky.Spa and
+  the desktop client, because it would repaint every shape per frame
+  through one wasm-to-JS call per operation and lose per-shape hit testing
+  and the accessibility tree (the reasoning is in
+  `docs/skyui/overview.md`). Sky.Tui rasterises the scene into Braille
+  cells. (`sky-stdlib/Std/Ui/Canvas.sky`, `runtime-go/rt/scene_client.go`,
+  `runtime-go/rt/tui_scene.go`.)
+- **`Std.Ui.Terminal`: an interactive terminal element bound to a PTY
+  process.** `Terminal.init id`, `Terminal.attach toMsg process`,
+  `Terminal.update toMsg msg` and `Terminal.view toMsg terminal attrs` wire a
+  `Process.withPty` child to a built-in widget island: a small VT100 /
+  xterm renderer shipped inside the Sky client files (no script to load,
+  strict-CSP clean; cursor movement, 16 / 256 / true colours, erase,
+  scroll regions, the alternate screen, UTF-8 across chunks). The output is
+  read with `Process.readWithin` and sent to the widget with
+  `Cmd.toIsland` as base64 with its ring offsets; key presses and pastes go
+  to `Process.write`; the widget's measured size goes to `Process.resize`.
+  A remounted widget (a reload, a navigation back) asks for a repaint and
+  the terminal replays the output from the oldest byte the ring still
+  holds; a widget that sees output commands were lost on a dropped
+  connection asks for the same repaint. Sky.Live and the desktop window;
+  a Sky.Spa build (`web:app`, native client targets) refuses a program that
+  uses it, naming the reason (the PTY is on the server, and Sky.Spa cannot
+  send a widget command from a server branch). (`sky-stdlib/Std/Ui/
+  Terminal.sky`, `runtime-go/rt/island_terminal.go`,
+  `rust/crates/project/src/spa_partition.rs`.)
+- **Tests:** conformance suites `UiTextWrapConformanceTest` (12) and
+  `UiCanvasConformanceTest` (19: the exact SVG, the pointer markers, the
+  terminal payloads); Go tests for the Braille cell golden, the text wrap,
+  the pointer runtime (node), the VT renderer (node), the scrollback replay
+  on a real PTY, and the widget-command queue; a Sky.Spa split test; and
+  `scripts/ui-canvas-terminal-e2e.sh` (Playwright under `SKY_CSP=strict`:
+  scene pointer events on Sky.Live and Sky.Spa, text wrapping, and a
+  terminal bound to `sh` that runs `echo hi`, follows a resize, survives a
+  dropped SSE connection and repaints after a reload), wired into the
+  release and nightly web gates.
 - **Native shells: purpose strings, typed entitlements, secure storage,
   biometrics and release packaging** (`docs/skyapp/native.md`).
   - `Bundle.withUsage : Permission -> String -> Bundle -> Bundle` declares a
@@ -677,6 +750,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **The Sky.Spa client drew SVG it built or patched as nothing.** The wasm
+  renderer created every element with `document.createElement`, so a
+  `<rect>` or `<circle>` under an `<svg>` was an HTMLUnknownElement: a
+  `Std.Ui.Chart` rendered by the client (no SSR, or after a patch added a
+  point) and every `Std.Ui.Canvas` shape a patch added were blank. Elements
+  inside an `<svg>` (except under `<foreignObject>`) are now created in the
+  SVG namespace. (`runtime-go/rt/dom_render_wasm.go`.)
+- **A widget event sent from `mount()` during page load was lost.** The
+  island runtime runs before the page's client binds its listeners (at
+  `DOMContentLoaded` on Sky.Live, when the wasm hydrates on Sky.Spa), so a
+  widget that registered while the page was loading and sent from `mount()`
+  dispatched to no listener. The island runtime now holds such events and
+  sends them once the client calls `Sky.__islandHostReady`.
+  (`runtime-go/rt/island_client.go`, `live_client_asset.go`,
+  `island_wasm.go`.)
+- **A `Cmd.toIsland` pushed while a session had no SSE connection was
+  lost.** A patch lost that way is harmless (a connecting tab gets a
+  resync), but a widget command is not in the body: a reply to a widget
+  that asked for its state during a page load or reload went to nobody.
+  Such commands are now kept (up to 256) and delivered to the next
+  connection. (`runtime-go/rt/live.go`,
+  `live_island_pending_test.go`.)
 - **Native fragments were merged as text, which produced invalid property
   lists.** Two `native/ios/app.entitlements` files (the project's and a
   library's), each a whole plist, became two XML documents in one file,

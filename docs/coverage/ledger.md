@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 176 |
-| covered by the new corpus (>= Asserted) | 164 |
-| verdict `stronger` | 159 |
+| surfaces | 178 |
+| covered by the new corpus (>= Asserted) | 166 |
+| verdict `stronger` | 161 |
 | verdict `equal` | 17 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
-| stdlib modules (denominator) | 109 |
-| stdlib entries (denominator) | 2117 |
+| stdlib modules (denominator) | 111 |
+| stdlib entries (denominator) | 2160 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 8.3% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 744 | 35.1% |
-| symbols unreferenced under the generous rule | 657 | 31.0% |
+| stdlib modules imported by nothing | 9 | 8.1% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 753 | 34.9% |
+| symbols unreferenced under the generous rule | 664 | 30.7% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -242,6 +242,7 @@ None.
 | `stdlib.Std.Ui.Animation` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Background` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Border` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ui.Canvas` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Chart` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Events` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Font` | stdlib | Asserted | Falsified | stronger |
@@ -251,6 +252,7 @@ None.
 | `stdlib.Std.Ui.Lazy` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Region` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Responsive` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ui.Terminal` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Transform` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Transition` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Watch` | stdlib | Asserted | Falsified | stronger |

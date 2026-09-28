@@ -1,0 +1,355 @@
+-- | Std.Ui.Terminal — an interactive terminal element bound to a PTY process
+-- (v0.27.0, Sky.Live).
+--
+-- The element is a widget island (`Ui.island`) with a built-in widget, a
+-- small VT100 / xterm renderer that ships inside the Sky client files (no
+-- script to load, strict-CSP clean). The process is a `Sky.Core.Process`
+-- spawned with `withPty`. This module wires the two together:
+--
+--   * the process output streams to the widget: the terminal reads the
+--     output with `Process.readWithin` and sends each chunk to the widget
+--     with `Cmd.toIsland` (base64, with its ring offsets);
+--   * a key press in the widget reaches `Process.write` as typed input;
+--   * a size change of the widget reaches `Process.resize`;
+--   * a remount (a reload, a lost connection, a navigation back) repaints:
+--     the widget asks for the scrollback and the terminal replays the
+--     process output from the oldest byte its ring still holds (1 MiB by
+--     default, `Process.withBufferSize`).
+--
+-- The app code is three calls: keep a `Terminal` in the model, forward its
+-- messages to `update`, and render `view`:
+--
+--     import Sky.Core.Process as Process
+--     import Std.Ui.Terminal as Terminal
+--
+--     type Msg
+--         = Spawned (Result Error Process.Process)
+--         | Term Terminal.Msg
+--
+--     init _ =
+--         ( { term = Terminal.init "shell" }
+--         , Cmd.perform
+--             (Process.command "sh"
+--                 |> Process.withPty { cols = 80, rows = 24 }
+--                 |> Process.spawn)
+--             Spawned
+--         )
+--
+--     update msg model =
+--         case msg of
+--             Spawned (Ok p) ->
+--                 Terminal.attach Term p model.term
+--                     |> Tuple.mapFirst (\t -> { model | term = t })
+--             Spawned (Err _) ->
+--                 ( model, Cmd.none )
+--             Term m ->
+--                 Terminal.update Term m model.term
+--                     |> Tuple.mapFirst (\t -> { model | term = t })
+--
+--     view model =
+--         Terminal.view Term model.term [ Ui.height (Ui.px 400) ]
+--
+-- No subscription is needed: the output is read by a chain of `Cmd.perform`
+-- reads, not by `Process.events`, because a process read by an `events`
+-- subscription cannot be read again from an offset, and the replay on a
+-- remount needs exactly that.
+--
+-- Targets. Sky.Live (`--target web`, and the `desktop` window) is supported.
+-- A Sky.Spa build (`web:app` and the native client targets) refuses a
+-- program that uses this module: the PTY lives on the server, and Sky.Spa
+-- cannot send a widget command from a server branch. A terminal target
+-- renders the empty element.
+module Std.Ui.Terminal exposing
+    ( Terminal
+    , Msg
+    , init
+    , attach
+    , update
+    , view
+    , process
+    , exitStatus
+    , encodeOutput
+    , encodeExit
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Json.Encode as Encode exposing (Value)
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Process as Process exposing (Process, Chunk, ExitStatus(..), Stream(..))
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element, Attribute)
+
+-- | The state of one terminal element. Opaque.
+type Terminal
+    = Terminal State
+
+type alias State =
+    { id : String
+    , proc : Maybe Process
+    , gen : Int
+    , cols : Int
+    , rows : Int
+    , exit : Maybe ExitStatus
+    }
+
+-- | A terminal message. Forward it to `update`.
+type Msg
+    = Ready
+    | Input String
+    | Resized Int Int
+    | Read Int (Result Error Chunk)
+    | Waited Int (Result Error ExitStatus)
+    | Done (Result Error ())
+
+
+-- | A terminal element with this id (unique on the page) and no process yet.
+init : String -> Terminal
+init id =
+    Terminal
+        { id = id, proc = Nothing, gen = 0, cols = 0, rows = 0, exit = Nothing }
+
+
+-- | The process shown in the terminal, if one is attached.
+process : Terminal -> Maybe Process
+process term =
+    case term of
+
+        Terminal st ->
+            st.proc
+
+
+-- | How the attached process ended, once it has.
+exitStatus : Terminal -> Maybe ExitStatus
+exitStatus term =
+    case term of
+
+        Terminal st ->
+            st.exit
+
+
+-- | Show `proc` in the terminal (a process spawned with `Process.withPty`).
+-- The screen is cleared and the output streams from its first byte. When
+-- the widget has already reported its size, the PTY is resized to it.
+attach : (Msg -> msg) -> Process -> Terminal -> ( Terminal, Cmd msg )
+attach toMsg proc term =
+    case term of
+
+        Terminal st ->
+            let
+                next =
+                    { st | proc = Just proc, gen = st.gen + 1, exit = Nothing }
+                resizeCmd =
+                    if st.cols > 0 && st.rows > 0 then
+                        [ Cmd.perform
+                              (Process.resize
+                                  proc
+                                  { cols = st.cols, rows = st.rows })
+                              (\r -> toMsg (Done r))
+                        ]
+
+                    else
+                        []
+            in
+                ( Terminal next
+                , Cmd.batch
+                      ([ Cmd.toIsland st.id "reset" (Encode.object [])
+                      , readCmd toMsg next.gen proc 0
+                      ]
+                          ++ resizeCmd)
+                )
+
+
+-- | Handle a terminal message.
+update : (Msg -> msg) -> Msg -> Terminal -> ( Terminal, Cmd msg )
+update toMsg msg term =
+    case term of
+
+        Terminal st ->
+            case msg of
+
+                Ready ->
+                    -- A (re)mounted widget holds nothing: clear it and replay
+                    -- the output from the oldest byte the ring still holds. A
+                    -- new read generation retires the read in flight.
+                    let
+                        next = { st | gen = st.gen + 1 }
+                        replay =
+                            case st.proc of
+
+                                Just p ->
+                                    [ readCmd toMsg next.gen p 0 ]
+
+                                Nothing ->
+                                    []
+                    in
+                        ( Terminal next
+                        , Cmd.batch
+                              (Cmd.toIsland st.id "reset" (Encode.object [])
+                                  :: replay)
+                        )
+
+                Input data ->
+                    case st.proc of
+
+                        Just p ->
+                            ( term
+                            , Cmd.perform
+                                  (Process.write p data)
+                                  (\r -> toMsg (Done r))
+                            )
+
+                        Nothing ->
+                            ( term, Cmd.none )
+
+                Resized cols rows ->
+                    let
+                        next = Terminal { st | cols = cols, rows = rows }
+                    in
+                        case st.proc of
+
+                            Just p ->
+                                ( next
+                                , Cmd.perform
+                                      (Process.resize
+                                          p
+                                          { cols = cols, rows = rows })
+                                      (\r -> toMsg (Done r))
+                                )
+
+                            Nothing ->
+                                ( next, Cmd.none )
+
+                Read gen result ->
+                    if gen /= st.gen then
+                        -- A read of an earlier generation (before a replay):
+                        -- its bytes are sent again by the current one.
+                        ( term
+                        , Cmd.none
+                        )
+
+                    else
+                        case ( result, st.proc ) of
+
+                            ( Ok chunk, Just p ) ->
+                                let
+                                    output =
+                                        if chunk.data == "" then
+                                            []
+
+                                        else
+                                            [ Cmd.toIsland
+                                                  st.id
+                                                  "output"
+                                                  (encodeOutput chunk)
+                                            ]
+                                    follow =
+                                        if chunk.eof then
+                                            Cmd.perform
+                                                (Process.wait p)
+                                                (\r -> toMsg (Waited gen r))
+
+                                        else
+                                            readCmd toMsg gen p chunk.next
+                                in
+                                    ( term, Cmd.batch (output ++ [ follow ]) )
+
+                            _ ->
+                                ( term, Cmd.none )
+
+                Waited gen result ->
+                    case result of
+
+                        Ok status ->
+                            if gen /= st.gen then
+                                ( Terminal { st | exit = Just status }
+                                , Cmd.none
+                                )
+
+                            else
+                                ( Terminal { st | exit = Just status }
+                                , Cmd.toIsland st.id "exit" (encodeExit status)
+                                )
+
+                        Err _ ->
+                            ( term, Cmd.none )
+
+                Done _ ->
+                    ( term, Cmd.none )
+
+
+-- | The terminal element. It fills the width of its parent and is 360 px
+-- tall unless the attributes say otherwise; the widget fits as many columns
+-- and rows as the box holds and resizes the PTY to them.
+view : (Msg -> msg) -> Terminal -> List (Attribute msg) -> Element msg
+view toMsg term attrs =
+    case term of
+
+        Terminal st ->
+            Ui.island
+                { name = "sky-terminal"
+                , id = st.id
+                , props =
+                    Encode.object
+                        [ ( "label", Encode.string ("Terminal " ++ st.id) ) ]
+                }
+                ([ Ui.width Ui.fill
+                , Ui.height (Ui.px 360)
+                , Ui.onIslandEvent
+                      "ready"
+                      (Decode.succeed ())
+                      (\_ -> toMsg Ready)
+                , Ui.onIslandEvent
+                      "input"
+                      (Decode.field "data" Decode.string)
+                      (\s -> toMsg (Input s))
+                , Ui.onIslandEvent
+                      "resize"
+                      (Decode.map2
+                          (\c r -> ( c, r ))
+                          (Decode.field "cols" Decode.int)
+                          (Decode.field "rows" Decode.int))
+                      (\( c, r ) -> toMsg (Resized c r))
+                ]
+                    ++ attrs)
+
+
+-- Read the next output at `offset`: wait up to 20 s for bytes, so an idle
+-- terminal costs one message every 20 s.
+readCmd : (Msg -> msg) -> Int -> Process -> Int -> Cmd msg
+readCmd toMsg gen p offset =
+    Cmd.perform
+        (Process.readWithin 20000 p Stdout offset)
+        (\r -> toMsg (Read gen r))
+
+
+-- | The payload of the widget's "output" command for a chunk of process
+-- output: `{ data, from, next, dropped }`, the bytes as base64 (a chunk may
+-- end inside a UTF-8 character, and JSON cannot carry raw bytes) with their
+-- ring offsets, so the widget writes each byte once; `dropped` says the ring
+-- overwrote bytes before `from`, so a gap is expected (without it the widget
+-- asks for a repaint). For custom wiring and tests.
+encodeOutput : Chunk -> Value
+encodeOutput chunk =
+    Encode.object
+        [ ( "data", Encode.string (Encoding.base64Encode chunk.data) )
+        , ( "from", Encode.int chunk.from )
+        , ( "next", Encode.int chunk.next )
+        , ( "dropped", Encode.bool chunk.dropped )
+        ]
+
+
+-- | The payload of the widget's "exit" command: `{ code, signal }`, one of
+-- them null.
+encodeExit : ExitStatus -> Value
+encodeExit status =
+    case status of
+
+        ExitCode code ->
+            Encode.object
+                [ ( "code", Encode.int code ), ( "signal", Encode.null ) ]
+
+        Signalled sig ->
+            Encode.object
+                [ ( "code", Encode.null ), ( "signal", Encode.int sig ) ]

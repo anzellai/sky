@@ -905,6 +905,13 @@ type layoutBox struct {
 	borderWidth [4]int // top, right, bottom, left — 1 cell each if border present
 	borderColor tuiColor
 	borderStyle string // "solid" | "dashed" | "dotted"
+	// lines holds a "text" box wrapped over more than one row (a Ui.text
+	// wider than the width it was given, or one holding a newline). Empty
+	// for a one-line text, which paints `text` itself.
+	lines []string
+	// scene is the <svg data-sky-scene> of a Std.Ui.Canvas scene (kind
+	// "scene"), rasterised at paint time (tui_scene.go).
+	scene *VNode
 }
 
 // layoutElement walks one Element node + computes its box for the
@@ -927,7 +934,7 @@ func layoutElement(elem any, ctx tuiLayoutCtx, maxW, maxH int, parentAxis layout
 				s = str
 			}
 		}
-		return layoutBox{kind: "text", text: s, width: runeLen(s), height: 1}
+		return tuiTextBox(s, maxW)
 	case 2: // Node desc attrs children
 		return layoutNode("", fields, ctx, maxW, maxH, parentAxis)
 	case 3: // TaggedNode tag desc attrs children
@@ -942,6 +949,10 @@ func layoutElement(elem any, ctx tuiLayoutCtx, maxW, maxH int, parentAxis layout
 	case 4: // Raw node — the Std.Html node's text content (markup cannot draw)
 		s := ""
 		if len(fields) > 0 {
+			// A Std.Ui.Canvas scene is drawn in Braille cells (tui_scene.go).
+			if vn, ok := tuiSceneNode(fields[0]); ok {
+				return tuiSceneLayout(vn, ctx, maxW, maxH)
+			}
 			s = tuiRawText(fields[0])
 		}
 		if s == "" {
@@ -950,6 +961,26 @@ func layoutElement(elem any, ctx tuiLayoutCtx, maxW, maxH int, parentAxis layout
 		return layoutBox{kind: "text", text: s, width: runeLen(s), height: 1}
 	}
 	return layoutBox{kind: "empty"}
+}
+
+// tuiTextBox lays out a Ui.text (v0.27.0): it wraps at word boundaries
+// within maxW cells, like the `<span>` the web renderers emit, and breaks a
+// word longer than the line (wrapText). A newline in the text breaks the
+// line. A text that fits stays a one-line box. Before, a long text was one
+// row cut at the edge of its box. Ui.textNoWrap is a Raw node and keeps the
+// one-row layout.
+func tuiTextBox(s string, maxW int) layoutBox {
+	if maxW <= 0 || (!strings.Contains(s, "\n") && runeLen(s) <= maxW) {
+		return layoutBox{kind: "text", text: s, width: runeLen(s), height: 1}
+	}
+	lines := wrapText(s, maxW)
+	w := 0
+	for _, ln := range lines {
+		if n := runeLen(ln); n > w {
+			w = n
+		}
+	}
+	return layoutBox{kind: "text", text: s, lines: lines, width: w, height: len(lines)}
 }
 
 // layoutNode handles both Node and TaggedNode (after stripping the tag).
@@ -1373,14 +1404,23 @@ func layoutChildren(children []any, ctx tuiLayoutCtx, availW, availH int, axis l
 	used := 0
 	totalFill := 0
 
-	for i, c := range children {
-		// Measure with potentially generous bounds; we'll adjust if needed.
-		var box layoutBox
-		if axis == layoutAxisRow {
-			box = layoutElement(c, ctx, availW, availH, axis)
-		} else {
-			box = layoutElement(c, ctx, availW, availH, axis)
+	// In a row, a Ui.text wraps within the width its siblings leave it
+	// (the web's flex row does the same with its <span>), so the texts are
+	// measured after every other child, sharing what is left.
+	var deferredTexts []int
+	if axis == layoutAxisRow {
+		for i, c := range children {
+			if tuiIsTextElement(c) {
+				deferredTexts = append(deferredTexts, i)
+			}
 		}
+	}
+	for i, c := range children {
+		if len(deferredTexts) > 0 && tuiIsTextElement(c) {
+			continue
+		}
+		// Measure with potentially generous bounds; we'll adjust if needed.
+		box := layoutElement(c, ctx, availW, availH, axis)
 		// Detect Fill via the resolved Length on the main axis. We need
 		// to peek into the Element's attrs to know — simpler heuristic:
 		// re-walk attrs for Fill-on-main-axis. For now we treat any
@@ -1404,6 +1444,18 @@ func layoutChildren(children []any, ctx tuiLayoutCtx, availW, availH int, axis l
 				entries[i].measured = box.height
 			}
 			used += entries[i].measured
+		}
+	}
+
+	if len(deferredTexts) > 0 {
+		textW := (availW - used - totalSpacing) / len(deferredTexts)
+		if textW < 1 {
+			textW = 1
+		}
+		for _, i := range deferredTexts {
+			box := layoutElement(children[i], ctx, textW, availH, axis)
+			entries[i] = entry{idx: i, box: box, measured: box.width}
+			used += box.width
 		}
 	}
 
@@ -1443,6 +1495,12 @@ func layoutChildren(children []any, ctx tuiLayoutCtx, availW, availH int, axis l
 		out[i] = e.box
 	}
 	return out
+}
+
+// tuiIsTextElement reports whether an Element is a Ui.text.
+func tuiIsTextElement(elem any) bool {
+	_, tag, _, ok := unwrapADTShape(elem)
+	return ok && tag == 1
 }
 
 // childFillPortion peeks inside an Element's attrs for Fill on the main
@@ -2162,8 +2220,19 @@ func paintBox(grid [][]tuiCell, box layoutBox, col0, row0, maxW, maxH, focusIdx 
 	style := mergeStyle(inherited, boxOwnStyle(box))
 
 	switch box.kind {
+	case "scene":
+		paintScene(grid, box.scene, innerCol, innerRow, innerW, innerH)
 	case "text":
-		paintText(grid, box.text, innerCol, innerRow, innerW, style)
+		if len(box.lines) == 0 {
+			paintText(grid, box.text, innerCol, innerRow, innerW, style)
+			break
+		}
+		for i, ln := range box.lines {
+			if i >= innerH {
+				break
+			}
+			paintText(grid, ln, innerCol, innerRow+i, innerW, style)
+		}
 	case "node":
 		// Inputs render their persistent buffer + cursor instead of
 		// recursing into children (Std.Ui's input creates a TaggedNode

@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 510
+n_min = 519
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 509
+class_v = 518
 class_d = 1
-family_S = 159
+family_S = 168
 family_L = 206
 family_E = 10
 family_R = 135
@@ -4397,6 +4397,123 @@ axes       = { edge = "failure", surface = "watch" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-canvas"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "canvas" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T|T|T|T|T|T|T|T"
+
+[[case]]
+id         = "stdlib_edge/empty-canvas"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "canvas" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T"
+
+[[case]]
+id         = "stdlib_edge/boundary-canvas"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "canvas" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T|T"
+
+[[case]]
+id         = "stdlib_edge/unicode-canvas"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "canvas" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T"
+
+[[case]]
+id         = "stdlib_edge/nominal-terminal"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "terminal" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "{"data":"aGk=","from":0,"next":2,"dropped":false}|{"code":0,"signal":null}|N/N"
+
+[[case]]
+id         = "stdlib_edge/empty-terminal"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "terminal" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "{"data":"","from":5,"next":5,"dropped":false}"
+
+[[case]]
+id         = "stdlib_edge/boundary-terminal"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "terminal" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "{"data":"eA==","from":1048576,"next":1048577,"dropped":true}"
+
+[[case]]
+id         = "stdlib_edge/unicode-terminal"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "terminal" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "{"data":"w6ninJM=","from":0,"next":5,"dropped":false}"
+
+[[case]]
+id         = "stdlib_edge/failure-terminal"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "terminal" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "{"code":null,"signal":9}"
 
 [[case]]
 id         = "stdlib_import/plain-none"

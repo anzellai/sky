@@ -788,6 +788,8 @@ func renderCurrent() {
 		} else {
 			spaMount(spaRoot, vn)
 		}
+		// Every listener is bound: widget events held until now go out.
+		spaIslandHostReady()
 	} else {
 		// clientState tells diffTrees what the focused input actually shows
 		// right now, so it skips emitting a value patch that would only

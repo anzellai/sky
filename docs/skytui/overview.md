@@ -141,6 +141,9 @@ exercise the full primitive set on every release.
 | Area | Details |
 |---|---|
 | Layout | row, column, wrappedRow, paragraph (word-wrap), textColumn, grid + gridColumns, el |
+| Text | `Ui.text` wraps at word boundaries within the cells it is given (v0.27.0; in a row, texts share the width the other children leave); `Ui.textNoWrap` stays one row, cut at its box |
+| Canvas | `Std.Ui.Canvas` scenes rasterised into Braille cells (2 × 4 dots per cell): shapes filled and stroked on the dot grid, a cell in the colour of the last shape that set a dot in it, text on the cell grid at its anchor. The scene is sized from its CSS px through the logical-pixel canvas and scaled down to fit, keeping its aspect ratio. Opacity below 0.2 hides a shape; stroke width and pointer events do not apply |
+| Islands | a widget island (and so `Std.Ui.Terminal`) renders its empty element |
 | Sized elements | text, link, image, button, input, form |
 | Length | px, fill, fillPortion N, content, shrink, minimum N L, maximum N L, vh N, vw N |
 | Padding / spacing | padding N, paddingXY x y, paddingEach { top, right, bottom, left }, spacing N |

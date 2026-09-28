@@ -1,0 +1,91 @@
+module Main exposing (main)
+
+{-| Std.Ui.Terminal e2e fixture, driven by scripts/ui-canvas-terminal-verify.mjs
+(see scripts/ui-canvas-terminal-e2e.sh) under a strict Content-Security-Policy,
+as a Sky.Live app. The page shows a terminal bound to `sh` on a PTY. The same
+program built for Sky.Spa (--target web:app) must be refused with a clear
+error: the PTY lives on the server.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Process as Process exposing (Process)
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Sub as Sub exposing (Sub)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Terminal as Terminal exposing (Terminal)
+
+type alias Model =
+    { term : Terminal
+    , status : String
+    }
+
+type Msg
+    = Spawned (Result Error Process)
+    | Term Terminal.Msg
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { term = Terminal.init "shell", status = "starting" }
+    , Cmd.perform
+          (Process.command "sh"
+              |> Process.withEnv
+                     [ ( "PS1", "$ " ), ( "TERM", "xterm-256color" ) ]
+              |> Process.withPty { cols = 80, rows = 24 }
+              |> Process.spawn)
+          Spawned
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Spawned (Ok p) ->
+            let
+                ( term, cmd ) = Terminal.attach Term p model.term
+            in
+                ( { model | term = term, status = "running" }, cmd )
+
+        Spawned (Err _) ->
+            ( { model | status = "spawn failed" }, Cmd.none )
+
+        Term m ->
+            let
+                ( term, cmd ) = Terminal.update Term m model.term
+            in
+                ( { model | term = term }, cmd )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8, Ui.padding 8, Ui.width Ui.fill ]
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "status" ]
+              (Ui.text ("status=" ++ model.status))
+        , Ui.el
+              [ Ui.htmlAttribute "id" "term-box", Ui.width Ui.fill ]
+              (Terminal.view Term model.term [ Ui.height (Ui.px 300) ])
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app

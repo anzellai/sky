@@ -178,9 +178,15 @@ tests =
                             "<div style=\"display: flex; flex-direction: column; font-weight: 700;\""
                             (render elInColumn)))
           , Test.test
-                "el outside a paragraph emits no <span>"
+                "el outside a paragraph is not an inline <span>"
                 (\_ ->
-                    Test.isFalse (String.contains "<span" (render elInColumn)))
+                    -- Since v0.27.0 the TEXT inside it is a wrapping span
+                    -- (UiTextWrapConformanceTest); the el itself must stay a
+                    -- block, never the inline span a paragraph child becomes.
+                    Test.isFalse
+                        (String.contains
+                            "<span style=\"display: inline"
+                            (render elInColumn)))
           , Test.test
                 "row outside a paragraph is still display: flex (not inline-flex)"
                 (\_ ->

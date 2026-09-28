@@ -199,6 +199,40 @@ func spaInjectBaseCSS(doc js.Value) {
 // user-facing input properties (.value/.checked/.disabled) so the live DOM
 // tracks the model from the first mount.
 func buildDOM(el VNode) js.Value {
+	return buildDOMNS(el, "")
+}
+
+// spaSVGNS is the SVG namespace. An element inside an <svg> must be created
+// in it: document.createElement("rect") makes an HTMLUnknownElement that
+// draws nothing, so a Std.Ui.Chart or Std.Ui.Canvas scene the Sky.Spa client
+// built or patched was blank (the server-rendered first paint was right,
+// because the HTML parser switches namespace at <svg> itself).
+const spaSVGNS = "http://www.w3.org/2000/svg"
+
+// buildDOMUnder builds el as a child of parent, in parent's namespace: the
+// SVG namespace inside an <svg> (except under a <foreignObject>, whose
+// children are HTML again), else the HTML one.
+func buildDOMUnder(parent js.Value, el VNode) js.Value {
+	return buildDOMNS(el, spaChildNS(parent))
+}
+
+func spaChildNS(parent js.Value) string {
+	if !parent.Truthy() {
+		return ""
+	}
+	ns := parent.Get("namespaceURI")
+	if ns.Type() != js.TypeString || ns.String() != spaSVGNS {
+		return ""
+	}
+	if strings.EqualFold(tagName(parent), "foreignObject") {
+		return ""
+	}
+	return spaSVGNS
+}
+
+// buildDOMNS is buildDOM in namespace ns ("" is HTML). An <svg> element
+// opens the SVG namespace whatever its parent.
+func buildDOMNS(el VNode, ns string) js.Value {
 	doc := js.Global().Get("document")
 	switch el.Kind {
 	case "text":
@@ -217,7 +251,15 @@ func buildDOM(el VNode) js.Value {
 		span.Set("innerHTML", el.Text)
 		return span
 	default: // "element"
-		n := doc.Call("createElement", el.Tag)
+		if el.Tag == "svg" {
+			ns = spaSVGNS
+		}
+		var n js.Value
+		if ns == spaSVGNS {
+			n = doc.Call("createElementNS", spaSVGNS, el.Tag)
+		} else {
+			n = doc.Call("createElement", el.Tag)
+		}
 		// Stamp the sky-id so diff patches can address this node by
 		// querySelector('[sky-id="..."]') — the same addressing the server diff
 		// uses. Without it the applier below could not find its targets.
@@ -298,7 +340,7 @@ func spaSetChildren(parent js.Value, children []VNode) {
 		return
 	}
 	for i := range children {
-		parent.Call("appendChild", buildDOM(children[i]))
+		parent.Call("appendChild", buildDOMUnder(parent, children[i]))
 	}
 }
 
@@ -778,7 +820,7 @@ func spaReplaceNode(el js.Value, id string, newRoot *VNode) {
 	pool := spaIslandPool(el)
 	focus := spaSaveIslandFocus(el)
 	releaseDOMSubtree(el)
-	n := buildDOM(*nv)
+	n := buildDOMUnder(el.Get("parentNode"), *nv)
 	n = spaAdoptIslands(pool, n, newRoot)
 	el.Call("replaceWith", n)
 	focus.restore()
@@ -864,7 +906,7 @@ func spaApplyKids(el js.Value, p Patch, newRoot *VNode) {
 		if k.Keep != "" && kept[k.Keep] {
 			n = byID[k.Keep]
 		} else if nv != nil && i < len(nv.Children) {
-			n = spaAdoptIslands(islands, buildDOM(nv.Children[i]), newRoot)
+			n = spaAdoptIslands(islands, buildDOMUnder(el, nv.Children[i]), newRoot)
 		} else {
 			continue
 		}

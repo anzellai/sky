@@ -5111,7 +5111,7 @@ func Std_Ui_renderElementIn(v_0 Std_Ui_Nesting_R, v_1 Std_Ui_LayoutContext, v_2 
 		if _subj.Tag == 1 {
 			v_4 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_4
-			return Std_Html_text(v_4)
+			return Std_Ui_renderText(v_0, v_1, v_4)
 		}
 		if _subj.Tag == 2 {
 			v_5 := /* generic erase */ rt.Coerce[Std_Ui_Description](_subj.Fields[0])
@@ -7082,6 +7082,25 @@ func Std_Ui_tagForDescription(v_0 string, v_1 Std_Ui_Description) string {
 		if _subj.Tag == 10 {
 			return "p"
 		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Std_Ui_renderText(v_0 Std_Ui_Nesting_R, v_1 Std_Ui_LayoutContext, v_2 string) Std_Html_Html {
+	if (v_2 == "") || (v_0.Phrasing || Std_Ui_isParagraphContext(v_1)) {
+		return Std_Html_text(v_2)
+	} else {
+		return Std_Html_span([]Std_Html_Attributes_Attribute{Std_Html_Attributes_style("overflow-wrap: anywhere;")}, []Std_Html_Html{Std_Html_text(v_2)})
+	}
+}
+
+func Std_Ui_isParagraphContext(v_0 Std_Ui_LayoutContext) bool {
+	{
+		_subj := v_0
+		if _subj == Std_Ui_LayoutContext_AsParagraph {
+			return true
+		}
+		return false
 		panic(rt.Unreachable("case"))
 	}
 }
