@@ -258,9 +258,21 @@ if (mode === "widget") {
   T("exit with a code", inst().vt.text()[2], "[process exited with code 0]");
   I.command("t1", "exit", { code: null, signal: 9 });
   T("exit by a signal", inst().vt.text()[4], "[process terminated by signal 9]");
+  // A chunk that starts past the widget's offset, not flagged dropped, means
+  // commands were lost: the widget asks for a repaint, once until the reset.
+  island.events.length = 0;
+  const later = inst().next + 5;
+  I.command("t1", "output", { data: b64(Buffer.from("Z")), from: later, next: later + 1, dropped: false });
+  I.command("t1", "output", { data: b64(Buffer.from("Q")), from: later + 10, next: later + 11, dropped: false });
+  T("a gap asks for a repaint once", evs(), [["skyisland-ready", {}]]);
+  island.events.length = 0;
   I.command("t1", "reset", {});
   runTimers();
   T("reset clears the screen and the offset", [inst().vt.text().join(""), inst().next, rowText(0)], ["", 0, ""]);
+  I.command("t1", "output", { data: b64(Buffer.from("tail")), from: 900, next: 904, dropped: true });
+  T("a gap the ring reported (dropped) asks for nothing", island.events.length, 0);
+  I.command("t1", "reset", {});
+  runTimers();
   // a resize without ResizeObserver comes from the window resize event
   island.events.length = 0;
   island.clientWidth = 480;

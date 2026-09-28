@@ -358,6 +358,22 @@ pub const SURFACES: &[Surface] = &[
         "Std.Watch",
         &["Sky.Core.Task as Task", "Sky.Core.File as File"],
     ),
+    // v0.27.0 Std.Ui.Canvas and Std.Ui.Terminal. A scene is asserted as the
+    // SVG it renders (`Html.render (Canvas.toSvg …)`), which is exactly what
+    // every web backend draws; the terminal as the widget command payloads it
+    // sends (`Encode.encode 0 (Terminal.encodeOutput …)`). The expected
+    // markup follows the renderer's rules (attributes in name order, text
+    // escaped), not an observation of it.
+    sf2(
+        "canvas",
+        "Std.Ui.Canvas",
+        &["Std.Html as Html", "Std.Ui as Ui"],
+    ),
+    sf2(
+        "terminal",
+        "Std.Ui.Terminal",
+        &["Sky.Core.Json.Encode", "Sky.Core.Process"],
+    ),
 ];
 
 pub fn surface(slug: &str) -> &'static Surface {
@@ -668,6 +684,10 @@ pub const ASSERTED_MODULES: &[&str] = &[
     // v0.27.0: the streaming process surface and Std.Watch land covered.
     "Sky.Core.Process",
     "Std.Watch",
+    // v0.27.0: Std.Ui.Canvas (its SVG) and Std.Ui.Terminal (its widget
+    // payloads) land covered, not dark.
+    "Std.Ui.Canvas",
+    "Std.Ui.Terminal",
 ];
 
 /// Stdlib modules with NO Family-S assertion at all — item 3's "dark" number.
@@ -1252,6 +1272,8 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "qr" => qr_battery(edge),
         "process" => process_battery(edge),
         "watch" => watch_battery(edge),
+        "canvas" => canvas_battery(edge),
+        "terminal" => terminal_battery(edge),
         other => panic!("no battery for surface {other:?}"),
     }
 }
@@ -3482,6 +3504,128 @@ fn process_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ui.Canvas ---------------------------------------------------------
+//
+// `svg shapes` renders a 10 × 5 scene labelled "S" (`fixtures`). A check is a
+// `String.contains` on the markup, so each one pins one shape's attributes.
+fn canvas_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            bo(
+                &["Canvas.toSvg", "Canvas.rect", "Canvas.fill"],
+                "svg [ Canvas.rect { x = 1.0, y = 2.0, width = 3.0, height = 4.0 } [ Canvas.fill (Ui.rgb 255 0 0) ] ] == sceneRoot ++ \"<rect fill=\\\"rgba(255, 0, 0, 1)\\\" height=\\\"4\\\" width=\\\"3\\\" x=\\\"1\\\" y=\\\"2\\\"></rect></svg>\"",
+                true,
+            ),
+            bo(
+                &["Canvas.path", "Canvas.PathCommand"],
+                "String.contains \"d=\\\"M 0 0 L 10 0 Q 1 2 3 4 C 1 2 3 4 5 6 A 5 5 0 0 1 20 20 Z\\\"\" (svg [ Canvas.path [ MoveTo 0.0 0.0, LineTo 10.0 0.0, QuadTo 1.0 2.0 3.0 4.0, CubicTo 1.0 2.0 3.0 4.0 5.0 6.0, ArcTo 5.0 5.0 0.0 False True 20.0 20.0, Close ] [] ])",
+                true,
+            ),
+            bo(
+                &["Canvas.group", "Canvas.translate", "Canvas.rotate", "Canvas.scale"],
+                "String.contains \"transform=\\\"translate(1 2) rotate(45) scale(2 3)\\\"\" (svg [ Canvas.group [ Canvas.translate 1.0 2.0, Canvas.rotate 45.0, Canvas.scale 2.0 3.0 ] [] ])",
+                true,
+            ),
+            bo(
+                &["Canvas.line"],
+                "String.contains \"<line stroke=\\\"currentColor\\\" x1=\\\"0\\\" x2=\\\"4\\\" y1=\\\"0\\\" y2=\\\"3\\\"></line>\" (svg [ Canvas.line { x = 0.0, y = 0.0 } { x = 4.0, y = 3.0 } [] ])",
+                true,
+            ),
+            bo(
+                &["Canvas.circle", "Canvas.noFill", "Canvas.stroke", "Canvas.strokeWidth", "Canvas.opacity"],
+                "String.contains \"<circle cx=\\\"5\\\" cy=\\\"6\\\" fill=\\\"none\\\" opacity=\\\"0.5\\\" r=\\\"7\\\" stroke=\\\"rgba(0, 0, 255, 1)\\\" stroke-width=\\\"2.5\\\"></circle>\" (svg [ Canvas.circle { x = 5.0, y = 6.0, radius = 7.0 } [ Canvas.noFill, Canvas.stroke (Ui.rgb 0 0 255), Canvas.strokeWidth 2.5, Canvas.opacity 0.5 ] ])",
+                true,
+            ),
+            bo(
+                &["Canvas.text", "Canvas.fontSize", "Canvas.anchorMiddle"],
+                "String.contains \"<text font-size=\\\"12\\\" text-anchor=\\\"middle\\\" x=\\\"5\\\" y=\\\"4\\\">hi</text>\" (svg [ Canvas.text { x = 5.0, y = 4.0 } \"hi\" [ Canvas.fontSize 12, Canvas.anchorMiddle ] ])",
+                true,
+            ),
+            bo(
+                &["Canvas.polyline", "Canvas.polygon", "Canvas.ellipse"],
+                "String.contains \"<polyline fill=\\\"none\\\" points=\\\"0,0 1,2\\\" stroke=\\\"currentColor\\\"></polyline><polygon points=\\\"3,4 5,6 7,8\\\"></polygon><ellipse cx=\\\"1\\\" cy=\\\"2\\\" rx=\\\"3\\\" ry=\\\"4\\\"></ellipse>\" (svg [ Canvas.polyline [ { x = 0.0, y = 0.0 }, { x = 1.0, y = 2.0 } ] [], Canvas.polygon [ { x = 3.0, y = 4.0 }, { x = 5.0, y = 6.0 }, { x = 7.0, y = 8.0 } ] [], Canvas.ellipse { x = 1.0, y = 2.0, rx = 3.0, ry = 4.0 } [] ])",
+                true,
+            ),
+            bo(
+                &["Canvas.onPointerMove"],
+                "sceneEvents (Canvas.toSvg sceneCfg [ Canvas.onPointerMove (\\p -> p.x) ] [])",
+                true,
+            ),
+        ],
+        "empty" => vec![bo(
+            &["Canvas.toSvg"],
+            "svg [] == sceneRoot ++ \"</svg>\"",
+            true,
+        )],
+        "boundary" => vec![
+            bo(
+                &["Canvas.rect"],
+                "String.contains \"height=\\\"0\\\" width=\\\"0\\\" x=\\\"-1.5\\\" y=\\\"-2\\\"\" (svg [ Canvas.rect { x = -1.5, y = -2.0, width = 0.0, height = 0.0 } [] ])",
+                true,
+            ),
+            bo(
+                &["Canvas.toSvg"],
+                "String.contains \"aria-label=\\\"a &amp; b\\\"\" (Html.render (Canvas.toSvg { width = 1, height = 1, label = \"a & b\" } [] []))",
+                true,
+            ),
+        ],
+        "unicode" => vec![bo(
+            &["Canvas.text", "Canvas.toSvg"],
+            "String.contains \">日本</text>\" (Html.render (Canvas.toSvg { width = 1, height = 1, label = \"café\" } [] [ Canvas.text { x = 0.0, y = 0.0 } \"日本\" [] ])) && String.contains \"aria-label=\\\"café\\\"\" (Html.render (Canvas.toSvg { width = 1, height = 1, label = \"café\" } [] []))",
+            true,
+        )],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ui.Terminal -------------------------------------------------------
+//
+// The widget command payloads: output bytes as standard base64 with their
+// ring offsets (keys in the order the payload builds them), and the
+// exit status with the other field null.
+fn terminal_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Terminal.encodeOutput"],
+                "Encode.encode 0 (Terminal.encodeOutput { data = \"hi\", from = 0, next = 2, dropped = False, eof = False })",
+                "{\"data\":\"aGk=\",\"from\":0,\"next\":2,\"dropped\":false}",
+            ),
+            s(
+                &["Terminal.encodeExit"],
+                "Encode.encode 0 (Terminal.encodeExit (ExitCode 0))",
+                "{\"code\":0,\"signal\":null}",
+            ),
+            s(
+                &["Terminal.init", "Terminal.process", "Terminal.exitStatus"],
+                "termFresh",
+                "N|N",
+            ),
+        ],
+        "empty" => vec![s(
+            &["Terminal.encodeOutput"],
+            "Encode.encode 0 (Terminal.encodeOutput { data = \"\", from = 5, next = 5, dropped = False, eof = True })",
+            "{\"data\":\"\",\"from\":5,\"next\":5,\"dropped\":false}",
+        )],
+        "boundary" => vec![s(
+            &["Terminal.encodeOutput"],
+            "Encode.encode 0 (Terminal.encodeOutput { data = \"x\", from = 1048576, next = 1048577, dropped = True, eof = False })",
+            "{\"data\":\"eA==\",\"from\":1048576,\"next\":1048577,\"dropped\":true}",
+        )],
+        "unicode" => vec![s(
+            &["Terminal.encodeOutput"],
+            "Encode.encode 0 (Terminal.encodeOutput { data = \"é✓\", from = 0, next = 5, dropped = False, eof = False })",
+            "{\"data\":\"w6ninJM=\",\"from\":0,\"next\":5,\"dropped\":false}",
+        )],
+        "failure" => vec![s(
+            &["Terminal.encodeExit"],
+            "Encode.encode 0 (Terminal.encodeExit (Signalled 9))",
+            "{\"code\":null,\"signal\":9}",
+        )],
+        _ => vec![],
+    }
+}
+
 fn watch_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
@@ -5226,6 +5370,58 @@ watchAfterClose =
         |> Result.map (\cs -> String.fromInt (List.length cs))
         |> orE"#
         }
+        "canvas" => {
+            r#"sceneCfg : { width : Int, height : Int, label : String }
+sceneCfg =
+    { width = 10, height = 5, label = "S" }
+
+
+sceneRoot : String
+sceneRoot =
+    "<svg aria-label=\"S\" data-sky-scene=\"1\" height=\"5\" role=\"img\" style=\"display: block; max-width: 100%; height: auto;\" viewBox=\"0 0 10 5\" width=\"10\" xmlns=\"http://www.w3.org/2000/svg\"><title>S</title>"
+
+
+svg : List (Canvas.Shape msg) -> String
+svg shapes =
+    Html.render (Canvas.toSvg sceneCfg [] shapes)
+
+
+sceneEvents : Html.Html msg -> Bool
+sceneEvents node =
+    let
+        out =
+            Html.render node
+    in
+    String.contains "data-sky-scene-ev=\"pointermove\"" out
+        && String.contains "touch-action: none;" out
+"#
+        }
+        "terminal" => {
+            r#"termFresh : String
+termFresh =
+    let
+        t =
+            Terminal.init "t"
+
+        p =
+            case Terminal.process t of
+                Just _ ->
+                    "P"
+
+                Nothing ->
+                    "N"
+
+        e =
+            case Terminal.exitStatus t of
+                Just _ ->
+                    "X"
+
+                Nothing ->
+                    "N"
+    in
+    p ++ "|" ++ e
+"#
+        }
         "qr" => {
             r#"tf : Bool -> String
 tf b =
@@ -5319,6 +5515,8 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // The batteries name streams, exit statuses, signals and changes by
         // their constructors.
         "Sky.Core.Process" => Some("Stream(..), ExitStatus(..), Signal(..)"),
+        // The canvas battery builds paths from the command constructors.
+        "Std.Ui.Canvas" => Some("PathCommand(..)"),
         "Std.Watch" => Some("Change(..)"),
         _ => None,
     }

@@ -386,10 +386,14 @@ toSvg cfg attrs shapes =
             , HAttr.style
                   ("display: block; max-width: 100%; height: auto;" ++ touch)
             ]
+        events = List.filter attrIsEvent attrs
+        paint = List.filter (\a -> not (attrIsEvent a)) attrs
         -- A transparent backdrop takes the scene-level events, so a pointer
-        -- over an empty part of the scene still reports its position.
+        -- over an empty part of the scene still reports its position (a
+        -- shape's event bubbles to the <svg>, not to its sibling backdrop,
+        -- so the backdrop fires only over empty parts).
         backdrop =
-            if List.isEmpty attrs then
+            if List.isEmpty events then
                 []
 
             else
@@ -401,15 +405,22 @@ toSvg cfg attrs shapes =
                       , HAttr.attribute "height" h
                       , HAttr.attribute "fill" "transparent"
                       ]
-                          ++ attrsToHtml "rect" attrs)
+                          ++ attrsToHtml "rect" events)
                       []
                 ]
+        -- Paint and transforms on the scene apply to every shape: a group
+        -- around them.
+        drawn =
+            if List.isEmpty paint then
+                List.map renderShape shapes
+
+            else
+                [ renderShape (group paint shapes) ]
     in
         Html.node
             "svg"
             rootAttrs
-            (Html.node "title" [] [ Html.text cfg.label ]
-                :: (backdrop ++ List.map renderShape shapes))
+            (Html.node "title" [] [ Html.text cfg.label ] :: (backdrop ++ drawn))
 
 
 renderShape : Shape msg -> Html msg
@@ -595,6 +606,20 @@ pointDecoder =
         (\x y -> { x = x, y = y })
         (Decode.field "x" Decode.float)
         (Decode.field "y" Decode.float)
+
+
+attrIsEvent : Attr msg -> Bool
+attrIsEvent a =
+    case a of
+
+        OnClick _ ->
+            True
+
+        OnPointer _ _ ->
+            True
+
+        _ ->
+            False
 
 
 attrIsPointer : Attr msg -> Bool

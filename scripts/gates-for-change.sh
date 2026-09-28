@@ -110,6 +110,7 @@ web_e2e() {
     add 60 "e2e: Sky.Spa + Sky.Live DOM identity" "scripts/spa-vdom-identity-e2e.sh"
     add 60 "e2e: widget islands (Sky.Live + Sky.Spa)" "scripts/islands-e2e.sh"
     add 60 "e2e: Sky.Live without cookies (header sessions)" "scripts/header-session-e2e.sh"
+    add 60 "e2e: Std.Ui canvas, text wrapping + terminal (Sky.Live + Sky.Spa)" "scripts/ui-canvas-terminal-e2e.sh"
 }
 
 compiler_core() {
@@ -185,6 +186,14 @@ while IFS= read -r f; do
             needs_compiler
             web_e2e
             add 58 "stdlib conformance" "scripts/conformance.sh" ;;
+        sky-stdlib/Std/Ui.sky | sky-stdlib/Std/Ui/*)
+            # Std.Ui renders in the browser: the canvas / text / terminal e2e
+            # is the gate that sees the markup a browser keeps.
+            needs_compiler
+            add 58 "stdlib conformance" "scripts/conformance.sh"
+            add 50 "harness: sky-suites" "$HARNESS --only sky-suites"
+            add 60 "e2e: Std.Ui canvas, text wrapping + terminal (Sky.Live + Sky.Spa)" "scripts/ui-canvas-terminal-e2e.sh"
+            add 62 "live-docs examples" "scripts/doc-examples.sh" ;;
         sky-stdlib/*)
             needs_compiler
             add 58 "stdlib conformance" "scripts/conformance.sh"

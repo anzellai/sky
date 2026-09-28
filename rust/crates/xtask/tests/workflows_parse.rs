@@ -1141,6 +1141,10 @@ fn the_release_workflow_is_the_full_suite() {
         ("scripts/csp-e2e.sh", "e2e: strict Content-Security-Policy"),
         ("scripts/islands-e2e.sh", "e2e: widget islands"),
         (
+            "scripts/ui-canvas-terminal-e2e.sh",
+            "e2e: Std.Ui canvas, text wrapping and terminal",
+        ),
+        (
             "scripts/header-session-e2e.sh",
             "e2e: Sky.Live without cookies",
         ),

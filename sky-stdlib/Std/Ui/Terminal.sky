@@ -325,15 +325,18 @@ readCmd toMsg gen p offset =
 
 
 -- | The payload of the widget's "output" command for a chunk of process
--- output: `{ data, from, next }`, the bytes as base64 (a chunk may end inside
--- a UTF-8 character, and JSON cannot carry raw bytes) with their ring offsets,
--- so the widget writes each byte once. For custom wiring and tests.
+-- output: `{ data, from, next, dropped }`, the bytes as base64 (a chunk may
+-- end inside a UTF-8 character, and JSON cannot carry raw bytes) with their
+-- ring offsets, so the widget writes each byte once; `dropped` says the ring
+-- overwrote bytes before `from`, so a gap is expected (without it the widget
+-- asks for a repaint). For custom wiring and tests.
 encodeOutput : Chunk -> Value
 encodeOutput chunk =
     Encode.object
         [ ( "data", Encode.string (Encoding.base64Encode chunk.data) )
         , ( "from", Encode.int chunk.from )
         , ( "next", Encode.int chunk.next )
+        , ( "dropped", Encode.bool chunk.dropped )
         ]
 
 

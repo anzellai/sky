@@ -235,6 +235,22 @@ tests =
                             "<rect data-sky-scene-ev=\"pointermove\" fill=\"transparent\" height=\"50\""
                             (render [ Canvas.onPointerMove Moved ] [])))
           , Test.test
+                "scene-level paint and transforms wrap the shapes in a group"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<title>Plot</title><g fill=\"rgba(255, 0, 0, 1)\" transform=\"translate(1 2)\"><rect"
+                            (render
+                                [ Canvas.translate 1.0 2.0, Canvas.fill red ]
+                                [ Canvas.rect
+                                      { x = 0.0
+                                      , y = 0.0
+                                      , width = 1.0
+                                      , height = 1.0
+                                      }
+                                      []
+                                ])))
+          , Test.test
                 "a click is the plain click event"
                 (\_ ->
                     Test.isTrue
@@ -253,7 +269,7 @@ tests =
                 "output carries the bytes as base64 with their offsets"
                 (\_ ->
                     Test.equal
-                        "{\"data\":\"aGkNCg==\",\"from\":7,\"next\":11}"
+                        "{\"data\":\"aGkNCg==\",\"from\":7,\"next\":11,\"dropped\":false}"
                         (Encode.encode
                             0
                             (Terminal.encodeOutput
@@ -264,17 +280,17 @@ tests =
                                 , eof = False
                                 })))
           , Test.test
-                "output keeps a UTF-8 character split across chunks as raw bytes"
+                "output carries raw UTF-8 bytes and the dropped flag"
                 (\_ ->
                     Test.equal
-                        "{\"data\":\"w6k=\",\"from\":0,\"next\":2}"
+                        "{\"data\":\"w6k=\",\"from\":0,\"next\":2,\"dropped\":true}"
                         (Encode.encode
                             0
                             (Terminal.encodeOutput
                                 { data = "é"
                                 , from = 0
                                 , next = 2
-                                , dropped = False
+                                , dropped = True
                                 , eof = False
                                 })))
           , Test.test

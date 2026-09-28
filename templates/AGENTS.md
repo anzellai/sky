@@ -106,6 +106,14 @@ The `<main>` landmark element is `Std.Html.mainNode` (not `main`, which would
 collide with your program's `main` entry point). Prefer `Std.Ui.Region` for
 landmarks anyway.
 
+`Ui.text` outside a `Ui.paragraph` is its own box that wraps within its width
+(two texts in a column are two lines); `Ui.textNoWrap` keeps one line; texts in
+a paragraph flow inline. For a picture whose parts react to the pointer (a
+board, a diagram, a gauge) use `Std.Ui.Canvas` (typed shapes, paths,
+transforms, pointer events in scene units; a `label` is required). For a shell
+in the page use `Std.Ui.Terminal` with a `Process.withPty` child (Sky.Live and
+desktop only; a `web:app` build refuses it) and put it behind sign-in.
+
 ## Pinned defaults (apply unless the user overrules)
 
 | Concern | Default |

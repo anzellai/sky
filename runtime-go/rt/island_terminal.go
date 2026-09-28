@@ -25,13 +25,17 @@ package rt
 //
 //	app -> widget  (Cmd.toIsland id name payload)
 //	  "reset"      {}: clear the screen, the scrollback and the offset
-//	  "output"     {"data": base64 String, "from": Int, "next": Int}: the
-//	               bytes of the process output that start at offset "from";
-//	               "next" is the offset after them. Bytes the widget already
-//	               has (below its own offset) are skipped, so a repeated or
-//	               overlapping chunk writes each byte once. Bytes are decoded
-//	               as streaming UTF-8, so a character split across two
-//	               chunks decodes correctly.
+//	  "output"     {"data": base64 String, "from": Int, "next": Int,
+//	               "dropped": Bool}: the bytes of the process output that
+//	               start at offset "from"; "next" is the offset after them.
+//	               Bytes the widget already has (below its own offset) are
+//	               skipped, so a repeated or overlapping chunk writes each
+//	               byte once. Bytes are decoded as streaming UTF-8, so a
+//	               character split across two chunks decodes correctly. A
+//	               chunk that starts past the widget's offset without
+//	               "dropped" (the ring overwrote them) means commands were
+//	               lost on the way: the widget sends "ready" again, once until
+//	               the next "reset", to get a repaint.
 //	  "exit"       {"code": Int|null, "signal": Int|null}: prints
 //	               "[process exited with code N]" or
 //	               "[process terminated by signal N]"
@@ -734,6 +738,7 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
         this.next = 0;
         this.dec = utf8(false);
         this.sigs = [];
+        this.gapAsked = false;
         this.schedule();
         return;
       }
@@ -742,6 +747,13 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
         var from = typeof payload.from === "number" ? payload.from : this.next;
         var next = typeof payload.next === "number" ? payload.next : from + bytes.length;
         if (from + bytes.length <= this.next) return;
+        if (from > this.next && !payload.dropped && !this.gapAsked) {
+          // Bytes are missing that the process's ring still holds (a command
+          // lost with a dropped connection): ask for a repaint, once until
+          // the reset arrives, and write what came meanwhile.
+          this.gapAsked = true;
+          this.send("ready", {});
+        }
         if (from < this.next) bytes = bytes.subarray(this.next - from);
         var text = this.dec(bytes);
         if (text) this.vt.write(text);

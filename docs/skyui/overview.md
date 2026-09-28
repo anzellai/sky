@@ -113,9 +113,15 @@ Ui.grid       [Attr] [Element]         -- CSS-Grid auto-fit container.
                                        --   children contain <img>.
 Ui.paragraph [Attr] [Element]          -- inline text flow with wrapping
 Ui.textColumn [Attr] [Element]         -- vertical text-flow column
-Ui.text   String                       -- bare text (no wrapping element)
+Ui.text   String                       -- text; inline in a paragraph,
+                                       --   its own wrapping box elsewhere
+Ui.textNoWrap String                   -- text that stays on one line
 Ui.none                                -- empty placeholder (`Element msg`)
 ```
+
+**How `Ui.text` wraps (v0.27.0).** Inside a `Ui.paragraph` a text is inline: it flows with its siblings and the paragraph wraps the whole run. Anywhere else a text is its own box (a `<span style="overflow-wrap: anywhere;">` on the web) that wraps at word boundaries within the width it is given, and a word longer than the line breaks rather than overflowing. So `Ui.column [] [ Ui.text "a", Ui.text "b" ]` shows two lines, and a long text in a narrow `Ui.el` wraps inside it. Sky.Live, Sky.Spa and the desktop window render the same markup. The terminal renderer (Sky.Tui) wraps the same text at the cell width; in a row, the texts share the width the other children leave.
+
+Before v0.27.0 a text outside a paragraph was a bare text node, so two adjacent texts were one run to the browser (in a column, `"a"` and `"b"` showed as `ab` on one line), and the terminal renderer cut a long text at the edge of its box. To keep a text on one line, use `Ui.textNoWrap`. To flow several texts as one line of prose, put them in a `Ui.paragraph`. An empty `Ui.text ""` still renders nothing, so it takes no `spacing` gap.
 
 **Markup the HTML parser keeps.** Std.Ui never emits a nesting the browser's HTML parser restructures. Inside a `Ui.paragraph` (at any depth, for example in a link label or a checkbox caption) a block element renders as a `<span>` with the same inline style, so the box on screen does not change. A link inside a link and a button inside a button render the inner one as a `<span>`, and a form inside a form or a heading directly inside a heading renders the inner one as a `<div>`. A heading or landmark that loses its tag keeps its role (`role="heading" aria-level`, `role="navigation"`, and so on). Sky.Live, the Sky.Spa server and the Sky.Spa client share this renderer, so the served page hydrates in place.
 
@@ -1115,6 +1121,104 @@ to case (HTML attribute names are lower case).
 The regression gate is `scripts/islands-e2e.sh` (Sky.Live and Sky.Spa, under
 `SKY_CSP=strict`).
 
+## Canvas — typed 2D scenes (`Std.Ui.Canvas`)
+
+`Std.Ui.Canvas` draws a scene: a fixed coordinate space of `width` × `height` scene units and a list of shapes drawn in order. It suits a diagram, a game board, a gauge, a floor plan: a picture whose parts are typed values in the model and react to the pointer.
+
+```elm
+import Std.Ui.Canvas as Canvas exposing (PathCommand(..), Point)
+
+board : Model -> Element Msg
+board model =
+    Canvas.sceneWith [ Canvas.onPointerMove Moved ]
+        { width = 400, height = 200, label = "Game board" }
+        [ Canvas.rect { x = 0.0, y = 0.0, width = 400.0, height = 200.0 }
+            [ Canvas.fill (Ui.rgb 240 240 250) ]
+        , Canvas.circle { x = model.ball.x, y = model.ball.y, radius = 10.0 }
+            [ Canvas.fill (Ui.rgb 200 40 40), Canvas.onClick Hit ]
+        , Canvas.path [ MoveTo 10.0 190.0, LineTo 390.0 190.0 ]
+            [ Canvas.stroke (Ui.rgb 0 0 0), Canvas.strokeWidth 2.0 ]
+        , Canvas.text { x = 200.0, y = 30.0 } "Score" [ Canvas.anchorMiddle, Canvas.fontSize 18 ]
+        ]
+```
+
+| Function | Type |
+|---|---|
+| `Canvas.scene` | `{ width : Int, height : Int, label : String } -> List (Shape msg) -> Element msg` |
+| `Canvas.sceneWith` | `List (Attr msg) -> { width, height, label } -> List (Shape msg) -> Element msg` (attributes and pointer events on the whole scene) |
+| `Canvas.toSvg` | `{ width, height, label } -> List (Attr msg) -> List (Shape msg) -> Html msg` (for a `Std.Html` view) |
+| Shapes | `rect { x, y, width, height }`, `circle { x, y, radius }`, `ellipse { x, y, rx, ry }`, `line Point Point`, `polyline (List Point)`, `polygon (List Point)`, `path (List PathCommand)`, `text Point String`, `group (List (Attr msg)) (List (Shape msg))`; each shape but `group` takes `List (Attr msg)` last |
+| `PathCommand` | `MoveTo x y`, `LineTo x y`, `QuadTo cx cy x y`, `CubicTo c1x c1y c2x c2y x y`, `ArcTo rx ry rotation largeArc sweep x y`, `Close` (absolute scene units) |
+| Paint | `fill Color`, `noFill`, `stroke Color`, `strokeWidth Float`, `opacity Float`, `fontSize Int`, `anchorStart / anchorMiddle / anchorEnd` |
+| Transforms | `translate dx dy`, `rotate degrees`, `scale sx sy`, applied in the order given; a transform on a group applies to every shape in it |
+| Events | `onClick msg`; `onPointerDown / onPointerMove / onPointerUp : (Point -> msg) -> Attr msg`, with `Point = { x : Float, y : Float }` in scene units |
+
+**The rules.**
+
+- **Scene units.** Coordinates are scene units, `x` right and `y` down from the top left. The scene is drawn at `width` × `height` CSS pixels and scales down, keeping its aspect ratio, when its parent is narrower. A pointer event reports the position in scene units whatever the drawn size.
+- **Defaults.** A shape has SVG's defaults: a black fill and no stroke. A `line` and a `polyline` have no area, so they start with a current-colour stroke (and a polyline with no fill). A later attribute of the same kind wins.
+- **Pointer events.** A move is coalesced to one message per animation frame (the last position wins). An event on a shape bubbles to its groups; `sceneWith` puts the scene's own events on a transparent backdrop, so they fire over empty parts of the scene too. A scene with pointer events sets `touch-action: none`, so a drag on a touch screen does not scroll the page; a static scene lets it scroll.
+- **Accessibility.** `label` is required. It is the scene's accessible name (`role="img"`, `aria-label` and a `<title>`), so a screen reader says what the picture shows.
+
+**Backends.** Sky.Live, Sky.Spa (`--target web:app`) and the desktop window all draw the scene as inline SVG, diffed like any other element: moving a shape is one attribute patch. A batched `<canvas>` draw list was considered for the Sky.Spa and desktop clients and not taken. Both clients already diff the view, so a changed scene costs a few attribute writes as SVG, while a canvas repaints every shape each frame through one JS call per draw operation from wasm. A canvas also has no per-shape hit testing and no accessibility tree, and both would have to be rebuilt in the runtime. Canvas pays off only for thousands of shapes that all change every frame, which the one-update-per-event TEA loop does not produce. A terminal (Sky.Tui) rasterises the scene into Braille cells (2 × 4 dots per cell): shapes are filled and stroked on the dot grid, a cell takes the colour of the last shape that set a dot in it, and text is written on the cell grid at its anchor. Opacity below 0.2 hides a shape; other opacity, stroke width and pointer events do not apply in a terminal.
+
+The regression gates are the conformance suite `UiCanvasConformanceTest` (the exact SVG), `tui_scene_test.go` (the cell golden), `scene_client_test.go` (the pointer mapping) and `scripts/ui-canvas-terminal-e2e.sh` (Sky.Live and Sky.Spa in Chromium under `SKY_CSP=strict`).
+
+## Terminal — a PTY in the page (`Std.Ui.Terminal`)
+
+`Std.Ui.Terminal` is an interactive terminal element bound to a `Sky.Core.Process` spawned with `withPty`. It is a widget island with a built-in widget: a small VT100 / xterm renderer (cursor movement, colours including 256-colour and true colour, erase, scroll regions, the alternate screen, UTF-8) that ships inside the Sky client files, so there is no script to load and it runs under a strict Content-Security-Policy.
+
+```elm
+import Sky.Core.Process as Process exposing (Process)
+import Std.Ui.Terminal as Terminal exposing (Terminal)
+
+type Msg
+    = Spawned (Result Error Process)
+    | Term Terminal.Msg
+
+init _ =
+    ( { term = Terminal.init "shell" }
+    , Cmd.perform
+        (Process.command "sh" |> Process.withPty { cols = 80, rows = 24 } |> Process.spawn)
+        Spawned
+    )
+
+update msg model =
+    case msg of
+        Spawned (Ok p) ->
+            let ( term, cmd ) = Terminal.attach Term p model.term
+            in ( { model | term = term }, cmd )
+
+        Spawned (Err _) ->
+            ( model, Cmd.none )
+
+        Term m ->
+            let ( term, cmd ) = Terminal.update Term m model.term
+            in ( { model | term = term }, cmd )
+
+view model =
+    Terminal.view Term model.term [ Ui.height (Ui.px 400) ]
+```
+
+| Function | Type |
+|---|---|
+| `Terminal.init` | `String -> Terminal` (the element id, unique on the page) |
+| `Terminal.attach` | `(Msg -> msg) -> Process -> Terminal -> ( Terminal, Cmd msg )` |
+| `Terminal.update` | `(Msg -> msg) -> Msg -> Terminal -> ( Terminal, Cmd msg )` |
+| `Terminal.view` | `(Msg -> msg) -> Terminal -> List (Attribute msg) -> Element msg` |
+| `Terminal.process`, `Terminal.exitStatus` | the attached process, and how it ended |
+| `Terminal.encodeOutput`, `Terminal.encodeExit` | the widget command payloads, for custom wiring |
+
+**How it works.** The output is read with `Process.readWithin` (a chain of `Cmd.perform` reads, no subscription) and each chunk goes to the widget with `Cmd.toIsland` as base64 with its ring offsets, so a character split across two chunks decodes correctly and a repeated chunk is written once. A key press or a paste in the widget arrives as typed input and goes to `Process.write`; the widget measures how many columns and rows fit its box and a change goes to `Process.resize`. When the process ends, the widget prints how (`[process exited with code 0]`).
+
+**Reconnects.** The widget holds nothing the server does not have. When it mounts again (a reload, a navigation back, a lost session connection that re-rendered it), it asks for a repaint, and the terminal replays the process output from the oldest byte the output ring still holds (1 MiB by default, `Process.withBufferSize`). A dropped SSE connection that does not remount the widget loses nothing it needs: typing keeps working when the connection comes back. The output is read from offsets rather than with `Process.events`, because a process read by an `events` subscription cannot be read again from an offset.
+
+**Targets.** Sky.Live (`--target web`) and the desktop window. A Sky.Spa build (`web:app` and the native client targets) refuses a program that uses `Std.Ui.Terminal`, naming the module and the target that works: the PTY lives on the server, and Sky.Spa cannot send a widget command from a server branch. A terminal target (Sky.Tui) renders the empty element. A child process spawned from a Sky.Live session is closed when the session ends.
+
+**Security.** The terminal gives whoever sees the page a shell with the server's rights. Put it behind `Std.Auth` (or an equivalent check in `update`), and spawn the least-privileged program that does the job.
+
+The regression gates are `island_terminal_test.go` (the VT renderer in node: cursor moves, colours, erase, wrap, scrolling, the alternate screen, UTF-8 across chunks, key mapping), `process_terminal_test.go` (the scrollback replay on a real PTY), `UiCanvasConformanceTest` (the payloads) and `scripts/ui-canvas-terminal-e2e.sh` (`echo hi`, resize with `stty size`, a dropped SSE connection and a reload, under `SKY_CSP=strict`).
+
 ## Putting it all together — a non-trivial example
 
 `examples/19-skyforum` is the canonical Sky.Ui demo: a Reddit/HackerNews-style forum split across 8 modules. Highlights:
@@ -1137,6 +1241,9 @@ The 8-module split (`State.sky` / `Update.sky` / `View/{Common,Posts,Detail,Comp
 | Layout: `input` (real `<input>`) | ✅ | `Ui.el` renders as `<div>`, so a dedicated helper exists |
 | Layout: `form` (with `onSubmit`-into-typed-record) | ✅ | Wire driver decodes formData into a typed record |
 | Layout: `html` escape hatch | ✅ | `Ui.html node : any -> Element msg` wraps a Std.Html `Html msg` node |
+| Layout: `text / textNoWrap` | ✅ | v0.27.0: `text` is inline in a paragraph and its own wrapping `<span>` elsewhere (the terminal wraps it at the cell width); `textNoWrap` stays on one line |
+| **Canvas**: `Std.Ui.Canvas` scenes | ✅ | v0.27.0: typed shapes, paths, transforms and pointer events in scene units; SVG on the web, Braille cells on a terminal |
+| **Terminal**: `Std.Ui.Terminal` | ✅ | v0.27.0: a PTY `Process` in a built-in widget island; Sky.Live and desktop (refused on Sky.Spa targets) |
 | **Length**: `px / content / fill / fillPortion / minimum / maximum / shrink / vh / vw` | ✅ | `fill : Length` is bare; use `fillPortion n` for proportional weights; `vh n` / `vw n` are viewport-relative |
 | **Alignment**: `centerX/Y / align*` | ✅ | |
 | **Padding**: `padding / paddingXY / paddingEach` / `spacing` | ✅ | `paddingXY x y` is X-first/Y-second (matches elm-ui — `paddingXY 24 16` = 24px horizontal, 16px vertical). `paddingEach` is record-shaped: `{ top, right, bottom, left }` (matches `Border.widthEach` and elm-ui). |

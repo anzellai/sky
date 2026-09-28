@@ -265,7 +265,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1305,
+      "expected_assertions": 1336,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -288,7 +288,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 364,
+      "expected_assertions": 373,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -348,7 +348,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 510,
+      "expected_assertions": 519,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -381,7 +381,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 180,
+      "expected_assertions": 182,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -719,13 +719,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2117,
-    "stdlib_modules": 109,
-    "surfaces_covered": 164,
-    "surfaces_covered_pct": 93.2,
+    "stdlib_entries": 2160,
+    "stdlib_modules": 111,
+    "surfaces_covered": 166,
+    "surfaces_covered_pct": 93.3,
     "surfaces_equal": 17,
-    "surfaces_stronger": 159,
-    "surfaces_total": 176,
+    "surfaces_stronger": 161,
+    "surfaces_total": 178,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -4501,6 +4501,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
@@ -11970,6 +11975,39 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Ui.Canvas public API",
+      "id": "stdlib.Std.Ui.Canvas",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:bundled (gate `apps-bundled`)",
             "class": "Falsified",
             "strength": 4
@@ -12637,6 +12675,39 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Ui.Terminal public API",
+      "id": "stdlib.Std.Ui.Terminal",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -12886,7 +12957,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 8.3
+      "pct_of_denominator": 8.1
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -13865,6 +13936,16 @@
             "innerShadow"
           ]
         },
+        "Std.Ui.Canvas": {
+          "count": 5,
+          "symbols": [
+            "anchorEnd",
+            "anchorStart",
+            "ellipse",
+            "onPointerUp",
+            "scene"
+          ]
+        },
         "Std.Ui.Chart": {
           "count": 2,
           "symbols": [
@@ -13946,6 +14027,13 @@
             "tablet"
           ]
         },
+        "Std.Ui.Terminal": {
+          "count": 2,
+          "symbols": [
+            "exitStatus",
+            "process"
+          ]
+        },
         "Std.Ui.Transform": {
           "count": 7,
           "symbols": [
@@ -13981,8 +14069,8 @@
           ]
         }
       },
-      "count": 657,
-      "pct_of_denominator": 31.0
+      "count": 664,
+      "pct_of_denominator": 30.7
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -15033,6 +15121,17 @@
             "innerShadow"
           ]
         },
+        "Std.Ui.Canvas": {
+          "count": 6,
+          "symbols": [
+            "PathCommand",
+            "anchorEnd",
+            "anchorStart",
+            "ellipse",
+            "onPointerUp",
+            "scene"
+          ]
+        },
         "Std.Ui.Chart": {
           "count": 2,
           "symbols": [
@@ -15115,6 +15214,14 @@
             "tablet"
           ]
         },
+        "Std.Ui.Terminal": {
+          "count": 3,
+          "symbols": [
+            "Terminal",
+            "exitStatus",
+            "process"
+          ]
+        },
         "Std.Ui.Transform": {
           "count": 7,
           "symbols": [
@@ -15156,8 +15263,8 @@
           ]
         }
       },
-      "count": 744,
-      "pct_of_denominator": 35.1
+      "count": 753,
+      "pct_of_denominator": 34.9
     }
   },
   "units": [
@@ -15177,12 +15284,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 51,
+      "modules_imported": 54,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 331,
-      "refs_qualified": 310,
+      "refs_generous": 357,
+      "refs_qualified": 333,
       "role": "Layer2",
-      "sky_files": 158,
+      "sky_files": 160,
       "sky_toml_sections": []
     },
     {
@@ -16335,12 +16442,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 51,
+      "modules_imported": 53,
       "path": "tests/conformance",
-      "refs_generous": 654,
-      "refs_qualified": 639,
+      "refs_generous": 686,
+      "refs_qualified": 670,
       "role": "Conformance",
-      "sky_files": 39,
+      "sky_files": 41,
       "sky_toml_sections": []
     }
   ]
