@@ -33,6 +33,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"sky-app/rt/periodic"
 )
 
 // subSource is implemented by a runtime object that can feed a Sub.
@@ -175,4 +177,29 @@ func (r *sourceRunner) decode(ev any) (msg any) {
 func subSourceOf(leaf subT) (subSource, bool) {
 	src, ok := leaf.source.(subSource)
 	return src, ok && leaf.sourceKey != ""
+}
+
+// runSourceCycles drives a source pump one cycle at a time, each cycle under
+// its own recover (periodic.Guard). A panicking cycle is reported and lost,
+// and the pump continues after a short pause; it does not take the
+// subscription down with it. cycle reports true when the pump is finished.
+func runSourceCycles(name string, stop <-chan struct{}, cycle func() bool) {
+	for {
+		done, completed := false, false
+		periodic.Guard(name, periodicReport, func() error {
+			done = cycle()
+			completed = true
+			return nil
+		})
+		if done {
+			return
+		}
+		if !completed {
+			select {
+			case <-stop:
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
 }

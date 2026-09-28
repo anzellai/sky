@@ -695,66 +695,71 @@ func (h *procHandle) releaseSub() {
 // pump emits Output events in order, then Exited once the child exited and
 // its output is drained. Resumes from the cursor a previous Sub left.
 func (h *procHandle) pump(stop <-chan struct{}, emit func(ev any) bool) {
-	for {
-		h.mu.Lock()
-		if h.subExitSent {
-			h.mu.Unlock()
-			return
-		}
-		cursor := h.subCursor
-		h.mu.Unlock()
-		// Sampled BEFORE the reads: Exited is emitted only after a full pass
-		// that started once the output was already drained found nothing.
-		drainedAtStart := false
-		select {
-		case <-h.drained:
-			drainedAtStart = true
-		default:
-		}
+	runSourceCycles("process.events", stop, func() bool { return h.pumpCycle(stop, emit) })
+}
 
-		progressed := false
-		var waits []<-chan struct{}
-		for s := procStreamStdout; s <= procStreamStderr; s++ {
-			ring := h.out[s]
-			ready, changed := ring.wait(cursor[s])
-			waits = append(waits, changed)
-			if !ready {
-				continue
-			}
-			c := ring.readFrom(cursor[s], maxProcessChunkBytes)
-			if len(c.data) == 0 && !c.dropped {
-				continue // at EOF with nothing new
-			}
-			ev := SkyADT{Tag: 0, SkyName: "Output", Fields: []any{streamValue(s), chunkValue(c)}}
-			if !emit(ev) {
-				return
-			}
-			h.mu.Lock()
-			h.subCursor[s] = c.next
-			h.mu.Unlock()
-			progressed = true
-		}
-		if progressed {
+// pumpCycle emits what is available, or waits for a change. It reports true
+// when the pump is finished (Exited delivered, or the runner is stopping).
+func (h *procHandle) pumpCycle(stop <-chan struct{}, emit func(ev any) bool) bool {
+	h.mu.Lock()
+	if h.subExitSent {
+		h.mu.Unlock()
+		return true
+	}
+	cursor := h.subCursor
+	h.mu.Unlock()
+	// Sampled BEFORE the reads: Exited is emitted only after a full pass
+	// that started once the output was already drained found nothing.
+	drainedAtStart := false
+	select {
+	case <-h.drained:
+		drainedAtStart = true
+	default:
+	}
+
+	progressed := false
+	var waits [2]<-chan struct{}
+	for s := procStreamStdout; s <= procStreamStderr; s++ {
+		ring := h.out[s]
+		ready, changed := ring.wait(cursor[s])
+		waits[s] = changed
+		if !ready {
 			continue
 		}
-		if drainedAtStart {
-			// Exited and drained, and this pass read nothing new.
-			if !emit(SkyADT{Tag: 1, SkyName: "Exited", Fields: []any{h.exitStatusValue()}}) {
-				return
-			}
-			h.mu.Lock()
-			h.subExitSent = true
-			h.mu.Unlock()
-			return
+		c := ring.readFrom(cursor[s], maxProcessChunkBytes)
+		if len(c.data) == 0 && !c.dropped {
+			continue // at EOF with nothing new
 		}
-		select {
-		case <-stop:
-			return
-		case <-waits[0]:
-		case <-waits[1]:
-		case <-h.drained:
+		ev := SkyADT{Tag: 0, SkyName: "Output", Fields: []any{streamValue(s), chunkValue(c)}}
+		if !emit(ev) {
+			return true
 		}
+		h.mu.Lock()
+		h.subCursor[s] = c.next
+		h.mu.Unlock()
+		progressed = true
 	}
+	if progressed {
+		return false
+	}
+	if drainedAtStart {
+		// Exited and drained, and this pass read nothing new.
+		if !emit(SkyADT{Tag: 1, SkyName: "Exited", Fields: []any{h.exitStatusValue()}}) {
+			return true
+		}
+		h.mu.Lock()
+		h.subExitSent = true
+		h.mu.Unlock()
+		return true
+	}
+	select {
+	case <-stop:
+		return true
+	case <-waits[0]:
+	case <-waits[1]:
+	case <-h.drained:
+	}
+	return false
 }
 
 // deadSource is the source of a Sub on an unknown (closed) handle: it claims

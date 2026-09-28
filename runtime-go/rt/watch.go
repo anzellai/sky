@@ -593,32 +593,36 @@ func (w *watcher) releaseSub() {
 
 // pump delivers each batch as one List Change until the watcher closes.
 func (w *watcher) pump(stop <-chan struct{}, emit func(ev any) bool) {
-	for {
-		b, ok, closed, changed := w.take()
-		if ok {
-			if !emit(changesValue(b)) {
-				// Not delivered (the Sub is stopping): put it back so the
-				// next consumer still sees it.
-				w.mu.Lock()
-				if len(b) == 1 && b[0].kind == watchOverflow {
-					w.overflow = true
-				} else {
-					w.batches = append([][]change{b}, w.batches...)
-				}
-				w.mu.Unlock()
-				return
+	runSourceCycles("watch.changes", stop, func() bool { return w.pumpCycle(stop, emit) })
+}
+
+// pumpCycle delivers one batch, or waits for one. True: the pump is done.
+func (w *watcher) pumpCycle(stop <-chan struct{}, emit func(ev any) bool) bool {
+	b, ok, closed, changed := w.take()
+	if ok {
+		if !emit(changesValue(b)) {
+			// Not delivered (the Sub is stopping): put it back so the next
+			// consumer still sees it.
+			w.mu.Lock()
+			if len(b) == 1 && b[0].kind == watchOverflow {
+				w.overflow = true
+			} else {
+				w.batches = append([][]change{b}, w.batches...)
 			}
-			continue
+			w.mu.Unlock()
+			return true
 		}
-		if closed {
-			return
-		}
-		select {
-		case <-stop:
-			return
-		case <-changed:
-		}
+		return false
 	}
+	if closed {
+		return true
+	}
+	select {
+	case <-stop:
+		return true
+	case <-changed:
+	}
+	return false
 }
 
 // injectOverflow simulates an OS queue overflow (tests).
