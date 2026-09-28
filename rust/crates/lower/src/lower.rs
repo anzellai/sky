@@ -4716,10 +4716,14 @@ impl<'a> Ctx<'a> {
         }
         // Go-FFI direct call (doc 09): `Uuid.newString ()` → the typed wrapper
         // `rt.Go_Uuid_newStringT(…)`. The wrapper drops Sky's `()` unit params
-        // (its Go signature takes zero args), so unit call-args are elided. The
-        // per-usage HM inference already gave the call its `SkyResult[…]` shape,
-        // so the enclosing `case`/coercion narrows the `any` return exactly as
-        // for a kernel call.
+        // (its Go signature takes zero args), so unit call-args are elided.
+        //
+        // The call's type comes from the binding's PINNED signature: the checker
+        // and this lowering's own inference (`ty::compute_body_types`) both
+        // instantiate the `skyType` through `SkyDb::ffi_fn`, so `actual` is the
+        // wrapper's `SkyResult[…]` (or `any` where the signature is a wildcard).
+        // The backstop below refuses anything else rather than narrowing a
+        // `SkyResult` to a payload type at run time.
         if let Expr::Var(Res::Foreign { package, name }) = &self.body.exprs[callee] {
             if let Some((sym, typed)) = self.ffi.call_symbol(package.as_str(), name.as_str()) {
                 self.ffi_used.insert(package.as_str().to_string());
@@ -4727,7 +4731,37 @@ impl<'a> Ctx<'a> {
                 // FFI wrappers live in `package skyffi` (a dot-import of rt), not
                 // `package rt`, so base rt stays byte-stable and caches across
                 // projects. The call + its typed slot aliases are `skyffi.`-qualified.
-                return self.ffi_call(&format!("skyffi.{sym}"), args, actual, &wparams, typed);
+                let go = format!("skyffi.{sym}");
+                // Partial application: the Go wrapper does not curry, so an
+                // under-applied call (`Strings.repeat "ab"`) eta-expands into a
+                // closure over the remaining parameters instead of emitting an
+                // under-applied Go call that `go build` rejects. The count is the
+                // wrapper's real Go parameter count (units elided for a typed
+                // wrapper), the same authority the call form narrows against.
+                let given = if typed {
+                    args.iter()
+                        .filter(|a| !matches!(&self.body.exprs[**a], Expr::Unit))
+                        .count()
+                } else {
+                    args.len()
+                };
+                if given < wparams.len() {
+                    return self.ffi_partial(&go, args, actual, &wparams, typed);
+                }
+                if !matches!(actual, GoTy::Any)
+                    && !matches!(actual, GoTy::Named(n, _) if n == "rt.SkyResult")
+                {
+                    self.errors.push(format!(
+                        "[E2001] the Go FFI call `{}.{}` returns `Result Error a`, but its \
+                         result is used here as `{}` (in module {}). Handle the Result with \
+                         `case`, `Result.withDefault` or `Result.andThen`.",
+                        package.as_str(),
+                        name.as_str(),
+                        render_goty(actual),
+                        self.cur_module
+                    ));
+                }
+                return self.ffi_call(&go, args, actual, &wparams, typed);
             }
             // A Go-FFI call with no wrapper symbol for `name`. Two distinct
             // causes need two distinct developer actions:
@@ -5251,6 +5285,60 @@ impl<'a> Ctx<'a> {
             pi += 1;
         }
         self.ffi_emit_call(go, largs, actual)
+    }
+
+    /// Eta-expand an under-applied Go-FFI call into a closure over the
+    /// remaining wrapper parameters (mirrors [`Self::kernel_partial`]). Each
+    /// argument — given or closure parameter — is narrowed to its wrapper slot
+    /// exactly as the full call form narrows it ([`Self::ffi_coerce_arg`]), and
+    /// the wrapper's `any` result is narrowed to the closure's result type.
+    fn ffi_partial(
+        &mut self,
+        go: &str,
+        given: &[ExprId],
+        actual: &GoTy,
+        wrapper_params: &[String],
+        typed: bool,
+    ) -> GoExpr {
+        let base = go
+            .strip_prefix("skyffi.")
+            .unwrap_or(go)
+            .strip_suffix('T')
+            .unwrap_or(go)
+            .to_string();
+        let mut largs: Vec<GoExpr> = Vec::new();
+        let mut pi = 0usize;
+        for a in given {
+            if typed && matches!(&self.body.exprs[*a], Expr::Unit) {
+                continue;
+            }
+            let e = self.lower_expr(*a, &GoTy::Any);
+            largs.push(self.ffi_coerce_arg(&base, pi, e, wrapper_params));
+            pi += 1;
+        }
+        let n_rest = wrapper_params.len() - pi;
+        let (rest_tys, ret): (Vec<GoTy>, GoTy) = match actual {
+            GoTy::Func(ps, r) if ps.len() == n_rest => (ps.clone(), (**r).clone()),
+            _ => (vec![GoTy::Any; n_rest], GoTy::Any),
+        };
+        let mut gparams: Vec<GoParam> = Vec::new();
+        for pty in &rest_tys {
+            let pname = format!("_p{}", self.local_counter);
+            self.local_counter += 1;
+            gparams.push(GoParam {
+                name: pname.clone(),
+                ty: pty.clone(),
+            });
+            let e = GoExpr::new(GoExprKind::Ident(pname), pty.clone());
+            largs.push(self.ffi_coerce_arg(&base, pi, e, wrapper_params));
+            pi += 1;
+        }
+        let body = self.ffi_emit_call(go, largs, &ret);
+        let fn_ty = GoTy::Func(rest_tys, Box::new(ret.clone()));
+        GoExpr::new(
+            GoExprKind::FuncLit(gparams, ret, vec![GoStmt::Return(Some(body))]),
+            fn_ty,
+        )
     }
 
     /// Narrow one lowered argument to the Go-FFI wrapper's param slot `pi`.

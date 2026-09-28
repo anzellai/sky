@@ -102,7 +102,10 @@ evaluated, and the Result is its outcome (a Go error, a nil or a recovered
 panic is `Err`). Handling it at each call site marks where the code leaves
 Sky's guarantees, so prefer the stdlib and keep FFI for what it does not cover.
 To run a call later, off `update`, wrap it yourself:
-`Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`. See
+`Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`. The checker
+enforces the `Result` from the binding's pinned signature (v0.27.0): using a
+call's result as the bare value is an `[E2001]` type error, and `Sky.Ffi.call`
+/ `callPure` / `callTask` are stdlib-only. See
 `docs/ffi/boundary-philosophy.md`.
 
 `let _ = someTask` auto-forces the task (fires the effect). A top-level

@@ -89,12 +89,20 @@ pub struct Analysis {
     /// Project roots whose `src/`+`tests/` have already been loaded, so opening
     /// a second file in the same project doesn't re-walk it.
     loaded_projects: std::collections::HashSet<PathBuf>,
-    /// The merged Go-FFI surface across every loaded project (keyed by Sky module
-    /// path). Loaded by [`Analysis::ensure_project_for`] from each project's
-    /// `sky-ffi/` (or `.skycache/ffi/`) via the BUILD path's `load_ffi_surface`,
-    /// so hover / completion on a Go-FFI alias (`Uuid.newString`) render the
-    /// pinned HM signature the build uses — never a fork.
-    ffi: ffi::FfiRegistry,
+    /// The Go-FFI surface of each loaded project, keyed by PROJECT ROOT (then by
+    /// Sky module path inside the registry). Loaded by
+    /// [`Analysis::ensure_project_for`] from each project's `sky-ffi/` (or
+    /// `.skycache/ffi/`) via the BUILD path's `load_ffi_surface`, so hover /
+    /// completion on a Go-FFI alias (`Uuid.newString`) render the pinned HM
+    /// signature the build uses — never a fork. Keyed per project, not merged:
+    /// two projects may pin different versions of one Go package, and the type
+    /// checker must see the surface of the project being edited, exactly as
+    /// `sky check` in that project would.
+    ffi: HashMap<PathBuf, ffi::FfiRegistry>,
+    /// The project whose surface is installed on the salsa db (the checker's
+    /// `SkyDb::ffi_fn`). Switched by [`Analysis::activate_ffi_for`] when the
+    /// edited document belongs to another project.
+    active_ffi: Option<PathBuf>,
     /// Per-root newest-mtime snapshot of `.skydeps/` + `sky-ffi/`, taken at the
     /// last load. When a subsequent `ensure_project_for` finds the newest mtime
     /// has advanced (a mid-session `sky add` / `install` / `update` rewrote a
@@ -135,7 +143,8 @@ impl Analysis {
             by_path: HashMap::new(),
             stdlib_loaded: false,
             loaded_projects: std::collections::HashSet::new(),
-            ffi: ffi::FfiRegistry::default(),
+            ffi: HashMap::new(),
+            active_ffi: None,
             project_scan: HashMap::new(),
             field_index: Mutex::new(HashMap::new()),
             field_index_valid: std::sync::atomic::AtomicBool::new(false),
@@ -268,6 +277,8 @@ impl Analysis {
             // without an editor restart (the #1 staleness gap).
             self.reload_project(&proj);
         }
+        // The checker must read THIS project's Go-FFI surface.
+        self.activate_ffi(&proj);
     }
 
     /// Whether `proj`'s `.skydeps/`+`sky-ffi/` newest mtime has advanced since the
@@ -295,14 +306,50 @@ impl Analysis {
         self.loaded_projects.insert(proj.to_path_buf());
     }
 
-    /// Load `proj`'s pinned Go-FFI surface via the BUILD path's loader and merge
-    /// it into `self.ffi`. Reusing `project::load_ffi_surface` (not a fork) keeps
-    /// the LSP's rendered FFI signatures byte-identical to what `sky build` sees.
-    /// Later projects' packages extend the map; a re-add of the same package key
-    /// overwrites with the freshly-read surface (post-`sky add` refresh).
+    /// Load `proj`'s pinned Go-FFI surface via the BUILD path's loader, replacing
+    /// any earlier load of the same project (post-`sky add` refresh), and make
+    /// it the surface the type checker reads. Reusing `project::load_ffi_surface`
+    /// (not a fork) keeps the LSP's rendered FFI signatures — and its FFI type
+    /// errors — identical to what `sky build` sees.
     fn load_ffi_for(&mut self, proj: &Path) {
         let reg = project::load_ffi_surface(proj);
-        self.ffi.packages.extend(reg.packages);
+        self.ffi.insert(proj.to_path_buf(), reg);
+        self.active_ffi = None;
+        self.activate_ffi(proj);
+    }
+
+    /// Install the Go-FFI surface of the project owning `file` on the salsa db,
+    /// when it is not already the active one. Cheap on the common path (same
+    /// project): one directory walk to find `sky.toml` and a path compare. The
+    /// server calls this before every analysis of an edited document.
+    pub fn activate_ffi_for(&mut self, file: &Path) {
+        let proj = project::project_dir_for(file);
+        self.activate_ffi(&proj);
+    }
+
+    fn activate_ffi(&mut self, proj: &Path) {
+        if self.active_ffi.as_deref() == Some(proj) {
+            return;
+        }
+        let surface = self
+            .ffi
+            .get(proj)
+            .map(project::ffi_type_surface)
+            .unwrap_or_default();
+        self.db.set_ffi_surface(std::sync::Arc::new(surface));
+        self.active_ffi = Some(proj.to_path_buf());
+    }
+
+    /// The Go-FFI registry of the project that owns module `m`'s document (the
+    /// hover / completion source), falling back to the active project's.
+    fn ffi_for_module(&self, m: ModuleId) -> Option<&ffi::FfiRegistry> {
+        let from_doc = self
+            .docs
+            .get(m.index() as usize)
+            .and_then(|d| d.url.to_file_path().ok())
+            .map(|p| project::project_dir_for(&p))
+            .and_then(|proj| self.ffi.get(&proj));
+        from_doc.or_else(|| self.active_ffi.as_ref().and_then(|p| self.ffi.get(p)))
     }
 
     fn load_dir(&mut self, dir: &Path) {
@@ -584,7 +631,7 @@ impl Analysis {
             // that omit `skyType` (`requestCancel`, …) so hover falls back to `?`
             // rather than an empty type — never a spurious blank.
             Res::Foreign { package, name } => self
-                .ffi
+                .ffi_for_module(ModuleId(o.span.file.index()))?
                 .resolve(package.as_str())
                 .and_then(|p| p.functions.get(name.as_str()))
                 .map(|f| f.sky_type.clone())
@@ -880,7 +927,7 @@ impl Analysis {
             // detail when non-empty). Turns a previously-empty list into the full
             // member set.
             if let Some(ImportSource::Foreign(pkg)) = resolved.qualifiers.get(&recv) {
-                if let Some(p) = self.ffi.resolve(pkg) {
+                if let Some(p) = self.ffi_for_module(module).and_then(|r| r.resolve(pkg)) {
                     return p
                         .functions
                         .iter()
@@ -1052,7 +1099,11 @@ impl Analysis {
                 continue;
             }
             // A resolved Go-FFI package is a real import — never an unfetched dep.
-            if self.ffi.resolve(&path).is_some() {
+            if self
+                .ffi
+                .get(&proj)
+                .is_some_and(|r| r.resolve(&path).is_some())
+            {
                 continue;
             }
             let Some(dep) = missing.iter().find(|d| dep_matches_import(d, &path)) else {

@@ -12,7 +12,7 @@ use crate::tytable::{TyRef, TyTable, TyTableBuilder};
 use crate::{Scheme, Ty};
 use base::{DefId, ModuleId, Span};
 use diagnostics::{Code, Diagnostic, Severity};
-use hir::{Body, ExprId, LocalId};
+use hir::{Body, Expr, ExprId, LocalId, Res};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -240,6 +240,10 @@ impl<'a> Typer<'a> {
     }
 }
 
+/// `Sky.Ffi` members that invoke a registered Go binding by name. Stdlib-only
+/// (see the `[E1011]` scan in [`check_modules_with_world`]).
+const STDLIB_ONLY_FFI: &[&str] = &["call", "callPure", "callTask"];
+
 /// Advance a span's start byte past any leading whitespace (within the span),
 /// so a diagnostic caret anchors under the first real character of the offending
 /// expression rather than the trailing newline / indentation trivia the CST
@@ -286,6 +290,27 @@ fn secret_migration_hint(message: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// When a type error involves a `Result` in a def that calls a Go-FFI binding,
+/// the likeliest cause is code written before v0.27.0, when a Go-FFI call was
+/// not typed and its `Result Error a` could be used as the bare `a`. Say so,
+/// with the three ways to handle it.
+fn ffi_result_hint(message: &str, body: &Body) -> Option<String> {
+    if !message.contains("Result") {
+        return None;
+    }
+    let calls_ffi = body
+        .exprs
+        .iter()
+        .any(|(_, e)| matches!(e, Expr::Var(Res::Foreign { .. })));
+    calls_ffi.then(|| {
+        "every Go FFI call returns `Result Error a` (since v0.27.0 the checker \
+         enforces it): handle the Result with `case … of Ok v -> … ; Err e -> …`, \
+         `Result.withDefault fallback`, or chain with `Result.andThen` / \
+         `Result.map`. See docs/ffi/boundary-philosophy.md"
+            .to_string()
+    })
 }
 
 fn trim_leading_ws(src: &str, span: base::Span) -> base::Span {
@@ -538,6 +563,53 @@ pub fn check_modules_with_world(
         // `[E2010]` state (per module, one diagnostic per offending call).
         let mut form_submits = crate::form_submit::FormSubmitScan::default();
 
+        // `[E1011]` — `Sky.Ffi`'s Go-binding entry points are stdlib-only.
+        // `Ffi.call` / `Ffi.callPure` / `Ffi.callTask` reach a registered Go
+        // binding by NAME and infer to a free type, so in app code they would
+        // be an escape hatch around the `Result Error a` every Go-FFI call is
+        // held to. The stdlib uses them behind a declared, audited signature
+        // (`Std.Decimal`, `Std.Time`, `Std.Money`, …); app code calls a `sky
+        // add` binding directly instead, and `Ffi.kernel` (a typed runtime-
+        // kernel binding that needs the def's own annotation) stays available.
+        if !hir::is_reserved_sky_namespace(&mname) {
+            for body in resolved.bodies.values() {
+                for (e, expr) in body.exprs.iter() {
+                    let Expr::Var(Res::Kernel { module, func }) = expr else {
+                        continue;
+                    };
+                    if module.as_str() != "Ffi" || !STDLIB_ONLY_FFI.contains(&func.as_str()) {
+                        continue;
+                    }
+                    out.name_errors += 1;
+                    out.diagnostics.push(Diagnostic {
+                        severity: Severity::Error,
+                        code: Code("E1011".to_string()),
+                        message: format!(
+                            "`Ffi.{}` is not exposed to application code. It calls a Go \
+                             binding by name with an unchecked type, which would bypass \
+                             the `Result Error a` every Go FFI call returns.",
+                            func.as_str()
+                        ),
+                        labels: body
+                            .expr_span(e)
+                            .map(|sp| {
+                                vec![diagnostics::Label {
+                                    span: trim_leading_ws(&module_src, sp),
+                                    message: "stdlib-only".into(),
+                                }]
+                            })
+                            .unwrap_or_default(),
+                        suggestion: Some(
+                            "call the Go binding directly (`sky add <go/module>`, then \
+                             `import` it): its pinned signature returns `Result Error a`, \
+                             handled with `case`, `Result.withDefault` or `Result.andThen`."
+                                .to_string(),
+                        ),
+                    });
+                }
+            }
+        }
+
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
             // `with_record_exprs` makes the solved per-expression types readable
@@ -582,7 +654,8 @@ pub fn check_modules_with_world(
                         })
                         .unwrap_or_default(),
                     suggestion: builder_cfg_migration_hint(&err.message)
-                        .or_else(|| secret_migration_hint(&err.message)),
+                        .or_else(|| secret_migration_hint(&err.message))
+                        .or_else(|| ffi_result_hint(&err.message, body)),
                 });
             }
 

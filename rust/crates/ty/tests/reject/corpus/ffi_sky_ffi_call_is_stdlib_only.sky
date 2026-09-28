@@ -1,0 +1,23 @@
+-- gate: reject
+-- defect: `Sky.Ffi.callPure` used in app code to call a Go binding untyped
+-- rust: reject [E1011] `Ffi.call` / `callPure` / `callTask` are stdlib-only
+--
+-- `Ffi.callPure "name" args` reaches a registered Go binding by name and infers
+-- to a free type, so in app code it would bypass the `Result Error a` every
+-- Go-FFI call is held to. The stdlib keeps using it behind declared, audited
+-- signatures; app code calls a `sky add` binding directly.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Ffi as Ffi
+import Std.Log exposing (println)
+
+
+probe : Int
+probe =
+    Ffi.callPure "Go_Pkg_read" []
+
+
+main =
+    println (String.fromInt probe)

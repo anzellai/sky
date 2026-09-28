@@ -156,6 +156,9 @@ pub fn compare(root: &Path, inject: bool) -> Result<Report, String> {
         for (n, p) in &stdlib {
             db.add_module(n, p.clone());
         }
+        if let Some(ffi) = ty::ffi_sig::surface_from_parses(&item.modules) {
+            db.set_ffi_surface(ffi);
+        }
         let mut ids = Vec::new();
         for (n, p) in &item.modules {
             let id = db.add_module(n, p.clone());

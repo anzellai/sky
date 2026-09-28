@@ -120,6 +120,9 @@ impl SkyDb for ScopedDb<'_> {
     fn def_loc(&self, def: DefId) -> Option<DefLoc> {
         self.inner.def_loc(def)
     }
+    fn ffi_fn(&self, package: &str, name: &str) -> Option<hir::FfiFnSig> {
+        self.inner.ffi_fn(package, name)
+    }
 }
 
 /// Why a case could not use the prebuilt world. Every variant is counted and
@@ -261,6 +264,9 @@ impl SharedWorld {
         to_check: &[String],
     ) -> CaseCheck {
         let mut db = self.base_db.clone();
+        if let Some(ffi) = crate::ffi_sig::surface_from_parses(case_modules) {
+            db.set_ffi_surface(ffi);
+        }
         let mut case_ids = Vec::new();
         for (name, parse) in case_modules {
             case_ids.push(db.add_module(name, parse.clone()));
@@ -293,6 +299,9 @@ impl SharedWorld {
         // interner) is cloned, so the case's `add_module` calls append at fresh
         // indices in a table no other case shares.
         let mut db = self.base_db.clone();
+        if let Some(ffi) = crate::ffi_sig::surface_from_parses(case_modules) {
+            db.set_ffi_surface(ffi);
+        }
         let mut case_ids = Vec::new();
         for (name, parse) in case_modules {
             case_ids.push(db.add_module(name, parse.clone()));
@@ -333,6 +342,9 @@ impl SharedWorld {
         for m in self.base_db.module_ids() {
             let name = self.base_db.module_name(m).to_string();
             db.add_module(&name, self.base_db.module_parse(m).clone());
+        }
+        if let Some(ffi) = crate::ffi_sig::surface_from_parses(case_modules) {
+            db.set_ffi_surface(ffi);
         }
         let mut case_ids = Vec::new();
         for (name, parse) in case_modules {

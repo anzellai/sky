@@ -320,11 +320,23 @@ fn assemble_and_emit_with(
     // wired only into the LSP + the `xtask infer/reject` gates, so the shipped
     // CLI pipeline accepted programs like `1 + "x"` and emitted Go that panics at
     // runtime. Gate on TYPE-ERROR diagnostics (the `[E2001]` unify-clash class —
-    // proven zero across the accept corpus by `xtask infer`, and safe for FFI
-    // because a `Res::Foreign` reference infers to a fresh var, never clashing).
+    // proven zero across the accept corpus by `xtask infer`). A `Res::Foreign`
+    // (Go-FFI) reference is typed from its pinned `skyType` — installed on the
+    // db just below — so a program that uses an FFI `Result Error a` as its bare
+    // payload is rejected here rather than crashing at run time.
     // Halt HERE — before `write_out` + `go build` — so the failure surfaces as a
     // check-time diagnostic. Name-resolution + exhaustiveness handling stays with
     // the existing lowering path; only the type-clash hole is closed here.
+    // Load the pinned Go-FFI surface (doc 09) BEFORE type checking: the
+    // checker types every Go-FFI reference from it (`SkyDb::ffi_fn`), and the
+    // same registry feeds the lowering table below, so check and emit agree.
+    // The committed `sky-ffi/` directory is preferred; the oracle's gitignored
+    // `.skycache/` cache is the fallback so a project that hasn't yet migrated
+    // to the committed layout still builds. Absent both → an empty table (no
+    // FFI), and a Go-FFI reference then stays flexible in the checker while
+    // lowering refuses it with a `sky install` hint.
+    let registry = load_ffi_surface(example_dir);
+    db.set_ffi_surface(std::sync::Arc::new(ffi_type_surface(&registry)));
     let t_check = crate::timings::phase("canonicalise + typecheck");
     let checked = ty::check_modules(&db, &check_ids);
     t_check.end();
@@ -454,11 +466,7 @@ fn assemble_and_emit_with(
     // migration table. Captured before `cfg` is moved. Self-extinguishing —
     // `None` once no migratable key remains, so a clean project prints nothing.
     let migration_hint = crate::config_migration::migration_hint(&cfg.present_runtime_config_keys);
-    // Load the pinned Go-FFI surface (doc 09): the committed `sky-ffi/`
-    // directory is preferred; the oracle's gitignored `.skycache/` cache is the
-    // fallback so a project that hasn't yet migrated to the committed layout
-    // still builds. Absent both → an empty table (no FFI).
-    let registry = load_ffi_surface(example_dir);
+    // The lowering half of the Go-FFI surface loaded before the type check.
     cfg.ffi = build_ffi_table(&registry);
     // Authoritative kernel arities, scanned from the runtime `rt.*` param counts
     // (`abi_guard::runtime_arities`, cached once per process). The lowerer uses
@@ -1688,6 +1696,31 @@ pub fn load_ffi_surface(example_dir: &Path) -> ffi::FfiRegistry {
     ffi::load_surface(&cache_ffi, &cache_go)
 }
 
+/// Project the loaded registry to the signature table the type checker reads
+/// (`hir::FfiSurface`, served by `SkyDb::ffi_fn`). Only the raw `skyType`
+/// strings and arities are copied; `ty::ffi_sig` parses one lazily when a
+/// reference to it is first inferred.
+pub fn ffi_type_surface(reg: &ffi::FfiRegistry) -> hir::FfiSurface {
+    let mut surface = hir::FfiSurface::new();
+    for (module, pkg) in &reg.packages {
+        let fns = pkg
+            .functions
+            .iter()
+            .map(|(name, info)| {
+                (
+                    name.clone(),
+                    hir::FfiFnSig {
+                        arity: info.arity,
+                        sky_type: std::sync::Arc::from(info.sky_type.as_str()),
+                    },
+                )
+            })
+            .collect();
+        surface.insert_package(module, fns);
+    }
+    surface
+}
+
 /// Project the loaded registry to the `lower::FfiTable` the lowerer consumes.
 fn build_ffi_table(reg: &ffi::FfiRegistry) -> lower::FfiTable {
     let mut table = lower::FfiTable::default();
@@ -2219,6 +2252,12 @@ pub(crate) fn load_source_db(
         Some(want) => format!("no entry module named {want}"),
         None => "no entry module named Main".into(),
     })?;
+    // The same pinned Go-FFI signatures the build checks against, so an
+    // analysis over this db (the Sky.Spa partition) types FFI calls exactly as
+    // `sky check` does.
+    db.set_ffi_surface(std::sync::Arc::new(ffi_type_surface(&load_ffi_surface(
+        example_dir,
+    ))));
     Ok((db, entry, check_ids))
 }
 

@@ -1,0 +1,23 @@
+-- gate: reject
+-- defect: a binding whose skyType the inspector omitted still returns a Result
+-- rust: reject [E2001] the arity-only fallback `any -> any -> Result Error any`
+-- ffi: Pkg noType/2 :
+--
+-- A handful of inspector entries carry no `skyType` (net/http's
+-- `requestCancel`, …). Such a binding gets the arity-only scheme, which keeps
+-- the `Result Error` wrapper enforced even though nothing else is known.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Pkg
+
+
+probe : Int
+probe =
+    Pkg.noType 1 2
+
+
+main =
+    println (String.fromInt probe)

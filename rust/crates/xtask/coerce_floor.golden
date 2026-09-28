@@ -164,19 +164,40 @@
 #     retired id restores nothing. The one new token is the field's copy into
 #     the Live wiring record, the same narrowing the sibling `persist` field
 #     already pays there. Only the one durable example builds that record.
+#
+# ── Recorded transition, 2026-09-28 — v0.27 Go-FFI calls typed from their
+#    pinned signature ──
+#     narrow  03-tea-external 4 -> 5 (+1), 05-mux-server 10 -> 11 (+1),
+#             13-skyshop 1479 -> 1509 (+30); adapter and dispatch unchanged
+#             (0); no other row moved (the other FFI rows, 02/07/08/11, are
+#             unchanged). Nothing got less typed: the reverse. A Go-FFI call
+#             used to type as a free variable, so its `Result`'s ERROR
+#             parameter stayed `any` wherever usage did not pin it. It now
+#             types from the binding's `skyType`, whose error is
+#             `Sky.Core.Error.Error`, so the subject is
+#             `rt.SkyResult[Sky_Core_Error_Error, A]` like every kernel Result.
+#             The existing case-pattern lowering reads a ctor field as `any` and
+#             narrows it to the binder's type, so each `Err e ->` branch over an
+#             FFI result now binds `e` through one
+#             `rt.Coerce[Sky_Core_Error_Error](_subj.ErrValue)` — measured on
+#             the emitted Go (sky check, before/after): 0 -> 1 (03), 0 -> 1
+#             (05), 33 -> 61 (13-skyshop). The assertion runs only on the error
+#             path. The remaining skyshop delta is String params of unannotated
+#             helpers now inferred from the FFI signatures they call: the
+#             `rt.AsString` moves from inside the helper to its call sites.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
-03-tea-external	adapter=0	dispatch=0	narrow=4
+03-tea-external	adapter=0	dispatch=0	narrow=5
 04-local-pkg	adapter=0	dispatch=0	narrow=2
-05-mux-server	adapter=0	dispatch=0	narrow=10
+05-mux-server	adapter=0	dispatch=0	narrow=11
 06-json	adapter=0	dispatch=0	narrow=79
 07-todo-cli	adapter=0	dispatch=0	narrow=177
 08-notes-app	adapter=0	dispatch=0	narrow=462
 09-live-counter	adapter=0	dispatch=0	narrow=137
 10-live-component	adapter=0	dispatch=0	narrow=140
 12-skyvote	adapter=0	dispatch=0	narrow=506
-13-skyshop	adapter=0	dispatch=0	narrow=1479
+13-skyshop	adapter=0	dispatch=0	narrow=1509
 14-task-demo	adapter=0	dispatch=0	narrow=10
 15-http-server	adapter=0	dispatch=0	narrow=19
 16-skychess	adapter=0	dispatch=0	narrow=614

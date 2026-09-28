@@ -351,17 +351,23 @@ pub fn wrapper_sky_type(fn_: &Function) -> String {
     let is_unit = fn_.results.is_empty()
         || (fn_.results.len() == 1 && fn_.results[0].ty == "error")
         || non_err.is_empty();
+    // comma-ok: exactly `(T, bool)` with T neither `bool` nor `error` → `Maybe T`,
+    // matching what the typed wrapper returns (`SkyMaybe[T]`,
+    // `gen_bindings::classify_typed_result`). This test used to sit inside the
+    // `non_err.len() == 1` branch, where it could never fire (a `(T, bool)` pair
+    // has TWO non-error results), so the surface said `(T, Bool)` while the
+    // runtime value was a Maybe — and a checker that types FFI calls from the
+    // surface would have held programs to the wrong shape.
+    let is_comma_ok = fn_.results.len() == 2
+        && fn_.results[1].ty == "bool"
+        && fn_.results[0].ty != "bool"
+        && fn_.results[0].ty != "error";
     let inner_ok = if is_unit {
         "()".to_string()
+    } else if is_comma_ok {
+        format!("Maybe {}", wrap_if_multi(&resolve(&fn_.results[0])))
     } else if non_err.len() == 1 {
-        // comma-ok: (T, bool) with T != bool → Maybe T
-        let is_comma_ok =
-            fn_.results.len() == 2 && fn_.results[1].ty == "bool" && fn_.results[0].ty != "bool";
-        if is_comma_ok {
-            format!("Maybe {}", wrap_if_multi(&resolve(non_err[0])))
-        } else {
-            resolve(non_err[0])
-        }
+        resolve(non_err[0])
     } else {
         format!(
             "({})",
@@ -627,6 +633,40 @@ mod tests {
             "Go_Stripe_goV84"
         );
         assert_eq!(slugify("uuid"), "uuid");
+    }
+
+    /// A Go `(T, bool)` comma-ok result is `Result Error (Maybe T)` — what the
+    /// typed wrapper returns (`SkyMaybe[T]`). It rendered `(T, Bool)`, and the
+    /// type checker reads this string to type the call.
+    #[test]
+    fn comma_ok_result_renders_as_maybe() {
+        let p = |ty: &str| Param {
+            ty: ty.to_string(),
+            ..Default::default()
+        };
+        let f = |params: Vec<Param>, results: Vec<Param>| Function {
+            name: "F".into(),
+            params,
+            results,
+            ..Default::default()
+        };
+        assert_eq!(
+            wrapper_sky_type(&f(vec![p("string")], vec![p("string"), p("bool")])),
+            "String -> Result Error (Maybe String)"
+        );
+        // Not comma-ok: two bools, a trailing error, three results.
+        assert_eq!(
+            wrapper_sky_type(&f(vec![], vec![p("bool"), p("bool")])),
+            "() -> Result Error (Bool, Bool)"
+        );
+        assert_eq!(
+            wrapper_sky_type(&f(vec![], vec![p("string"), p("bool"), p("error")])),
+            "() -> Result Error (String, Bool)"
+        );
+        assert_eq!(
+            wrapper_sky_type(&f(vec![], vec![p("string"), p("error")])),
+            "() -> Result Error String"
+        );
     }
 
     #[test]
