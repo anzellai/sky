@@ -36,6 +36,7 @@ module Sky.Core.Maybe exposing
     , combine
     , isJust
     , isNothing
+    , toResult
     )
 
 
@@ -248,3 +249,20 @@ isNothing m =
 
         Nothing ->
             True
+
+
+-- | `toResult err maybe` — `Just a` becomes `Ok a`, `Nothing` becomes
+-- `Err err`: give a missing value the error that says why it is missing.
+-- The error comes first, so a pipeline reads `maybe |> Maybe.toResult err`.
+-- `Result.fromMaybe` is the same function under `Result`.
+--
+--     Dict.get id users |> Maybe.toResult Error.notFound
+toResult : e -> Maybe a -> Result e a
+toResult err maybe =
+    case maybe of
+
+        Just x ->
+            Ok x
+
+        Nothing ->
+            Err err

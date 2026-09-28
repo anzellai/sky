@@ -244,7 +244,7 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
             "fromList",
         ],
     ),
-    ("Maybe", &["withDefault", "map", "andThen"]),
+    ("Maybe", &["withDefault", "map", "andThen", "toResult"]),
     (
         "Result",
         &[
@@ -261,6 +261,7 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
             "traverse",
             "andThenTask",
             "toMaybe",
+            "fromMaybe",
         ],
     ),
     (
@@ -451,6 +452,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "andMap",
             "combine",
             "traverse",
+            "toResult",
         ],
     ),
     (
@@ -469,6 +471,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "traverse",
             "andThenTask",
             "toMaybe",
+            "fromMaybe",
         ],
     ),
     (

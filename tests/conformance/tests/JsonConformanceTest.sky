@@ -9,6 +9,8 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Result as Result
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Error as Error
 import Sky.Core.Json.Encode as Encode
 import Sky.Core.Json.Decode as Decode
 import Sky.Core.Json.Decode.Pipeline as Pipeline
@@ -458,6 +460,34 @@ tests =
               Test.equal
                   (Just 3)
                   (Result.toMaybe (Decode.decodeString Decode.int "3")))
+    , Test.test
+          "Result.fromMaybe (imported Sky.Core.Result): Just becomes Ok"
+          (\_ ->
+              Test.equal
+                  (Ok 3)
+                  (Result.fromMaybe
+                      Error.notFound
+                      (Result.toMaybe (Decode.decodeString Decode.int "3"))))
+    , Test.test
+          "Result.fromMaybe (imported Sky.Core.Result): Nothing becomes the given Err"
+          (\_ ->
+              Test.equal
+                  (Err (Error.invalidInput "no int"))
+                  (Result.fromMaybe
+                      (Error.invalidInput "no int")
+                      (Result.toMaybe (Decode.decodeString Decode.int "\"x\""))))
+    , Test.test
+          "Maybe.toResult (imported Sky.Core.Maybe): Just becomes Ok"
+          (\_ ->
+              Test.equal
+                  (Ok "a")
+                  (Maybe.toResult Error.notFound (List.head [ "a", "b" ])))
+    , Test.test
+          "Maybe.toResult (imported Sky.Core.Maybe): Nothing becomes the given Err"
+          (\_ ->
+              Test.equal
+                  (Err Error.notFound)
+                  (Maybe.toResult Error.notFound (List.head [])))
     ]
 
 

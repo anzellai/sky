@@ -979,7 +979,11 @@ jobs:
       - name: Widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
         run: scripts/islands-e2e.sh
       - name: Std.Ui canvas, text wrapping + terminal e2e (Sky.Live + Sky.Spa, strict CSP)
-        run: scripts/ui-canvas-terminal-e2e.sh
+        # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
+        run: |
+          npx playwright install --with-deps webkit
+          command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
+          scripts/ui-canvas-terminal-e2e.sh
       - name: Sky.Live without cookies e2e (header session transport, strict CSP)
         run: scripts/header-session-e2e.sh
       - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)

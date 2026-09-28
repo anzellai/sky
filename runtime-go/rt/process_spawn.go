@@ -122,6 +122,11 @@ type procHandle struct {
 	scr     atomic.Pointer[procScreen]
 	ptyCols int // the PTY size (guarded by mu)
 	ptyRows int
+	// sizeMu makes a size change one step: the making of the screen (which
+	// takes ptyCols x ptyRows) and each resize (the screen, ptyCols x
+	// ptyRows and the PTY's window size) run one at a time, so the screen,
+	// the recorded size and the PTY always end at the same size.
+	sizeMu sync.Mutex
 }
 
 var (
@@ -613,15 +618,7 @@ func Subprocess_resize(idArg, colsArg, rowsArg any) any {
 		if cols <= 0 || rows <= 0 || cols > 65535 || rows > 65535 {
 			return Err[any, any](ErrInvalidInput("Process.resize: cols and rows must be 1 to 65535"))
 		}
-		// The screen takes the new size first: the output the process
-		// writes after it learns the size is laid out at that size.
-		if sc := h.scr.Load(); sc != nil {
-			sc.resize(cols, rows)
-		}
-		h.mu.Lock()
-		h.ptyCols, h.ptyRows = cols, rows
-		h.mu.Unlock()
-		if err := procSetWinsize(h.pty, cols, rows); err != nil {
+		if err := h.resize(cols, rows); err != nil {
 			return Err[any, any](ErrIo("Process.resize: " + err.Error()))
 		}
 		return Ok[any, any](struct{}{})

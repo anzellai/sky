@@ -21,6 +21,15 @@
 # down, and is repainted after a reload by one repaint frame from the
 # server's screen (no byte replay). Zero policy violations or console errors.
 #
+# The terminal-race case (Chromium and WebKit) attaches a fresh `sh` to the
+# mounted widget 16 times and runs vim in it: the server's screen must have
+# the widget's size, and vim's Escape must keep row 0. It FAILS on the runtime
+# before the screen was made under the resize lock (procHandle.sizeMu): the
+# first screen read and the widget's resize ran at once, the resize found no
+# screen, and the screen stayed at the spawn size, 80x24, under a wider PTY;
+# vim's "^[" then wrapped at the bottom row and scrolled row 0 away (about 3
+# runs in 10 in either browser).
+#
 # Proven to FAIL on the Sky.Spa canvas case when the wasm renderer creates SVG
 # elements in the HTML namespace (the pre-fix renderer: the scene drew nothing
 # and took no pointer events), and on the terminal reload case before widget
@@ -31,7 +40,8 @@
 # stream this replaced (f4e98f10): no canvas, no text layer, and a reload
 # replays "output" bytes instead of one repaint frame.
 #
-# Prereqs (all fail loudly): a fresh sky-out/sky, go, node + playwright, sh.
+# Prereqs (all fail loudly): a fresh sky-out/sky, go, node + playwright with
+# Chromium and WebKit, sh, vim.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKY="$ROOT/sky-out/sky"
@@ -45,6 +55,9 @@ source "$ROOT/scripts/lib/with-timeout.sh"
 command -v node >/dev/null 2>&1 || { echo "ui-canvas-terminal-e2e: 'node' is required." >&2; exit 1; }
 command -v go >/dev/null 2>&1 || { echo "ui-canvas-terminal-e2e: 'go' is required." >&2; exit 1; }
 command -v sh >/dev/null 2>&1 || { echo "ui-canvas-terminal-e2e: 'sh' is required (the terminal runs it)." >&2; exit 1; }
+source "$ROOT/scripts/lib/require-tool.sh"
+HAVE_VIM=1
+require_tool vim "install vim (the terminal-race case runs it in the terminal; apt-get install vim)" || HAVE_VIM=0
 
 source "$ROOT/scripts/lib/gate-build-cache.sh"
 BASE_PORT="${UI_CANVAS_TERMINAL_E2E_PORT:-9570}"
@@ -108,6 +121,14 @@ with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$CANVAS_SPA
 echo "==> Std.Ui.Terminal on Sky.Live (--target web)"
 with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$TERM_WEB_APP" \
   --port $((BASE_PORT + 4)) --mode terminal --cwd "$TERM_WEB" || rc=1
+if [ "$HAVE_VIM" -eq 1 ]; then
+  echo "==> Std.Ui.Terminal attach race: 16 fresh shells + vim Escape (Chromium)"
+  with_timeout 600 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$TERM_WEB_APP" \
+    --port $((BASE_PORT + 6)) --mode terminal-race --browser chromium --cwd "$TERM_WEB" || rc=1
+  echo "==> Std.Ui.Terminal attach race: 16 fresh shells + vim Escape (WebKit)"
+  with_timeout 600 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$TERM_WEB_APP" \
+    --port $((BASE_PORT + 8)) --mode terminal-race --browser webkit --cwd "$TERM_WEB" || rc=1
+fi
 
 if [ "$rc" -ne 0 ]; then
   echo "ui-canvas-terminal-e2e: FAIL (see above)." >&2

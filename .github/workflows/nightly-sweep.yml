@@ -234,7 +234,11 @@ jobs:
       # loop within its frame budget, resize, a dropped SSE connection and a
       # reload repainted from the server's screen. Strict CSP.
       - name: Gate — Std.Ui canvas, text wrapping + terminal e2e (strict CSP)
-        run: scripts/ui-canvas-terminal-e2e.sh
+        # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
+        run: |
+          npx playwright install --with-deps webkit
+          command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
+          scripts/ui-canvas-terminal-e2e.sh
       # Sky.Live without cookies: the header session transport in a browser
       # that blocks every cookie — counter, pushes, a dropped stream, a
       # sign-in rotation and the SSE ticket fallback, strict CSP.

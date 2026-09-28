@@ -1,13 +1,15 @@
 module CoreHelpersConformanceTest exposing (main, tests)
 
 -- Behavioral conformance for the small core helpers added in v0.27.0:
--- `Result.toMaybe` and the `Sky.Core.Tuple` module.
+-- `Result.toMaybe`, `Result.fromMaybe`, `Maybe.toResult` and the
+-- `Sky.Core.Tuple` module.
 --
--- This suite deliberately does NOT import `Sky.Core.Result`: a bare
--- `Result.toMaybe` resolves through the kernel qualifier to
--- `rt.Result_toMaybe`. The imported path (the Sky definition in
--- `Sky/Core/Result.sky`) is exercised by JsonConformanceTest, which imports
--- `Sky.Core.Result as Result`. Both paths must agree.
+-- This suite deliberately does NOT import `Sky.Core.Result` or
+-- `Sky.Core.Maybe`: a bare `Result.toMaybe` resolves through the kernel
+-- qualifier to `rt.Result_toMaybe` (likewise `rt.Result_fromMaybe`,
+-- `rt.Maybe_toResult`). The imported path (the Sky definitions in
+-- `Sky/Core/Result.sky` and `Sky/Core/Maybe.sky`) is exercised by
+-- JsonConformanceTest, which imports both. Both paths must agree.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
@@ -58,6 +60,34 @@ tests =
             Test.equal
                 [ 3, 4 ]
                 (List.filterMap (\s -> Result.toMaybe (parsePoint s) |> Maybe.map (\p -> p.x + p.y)) [ "1,2", "x", "2,2" ])
+        )
+
+    -- ─── Result.fromMaybe / Maybe.toResult ─────────────────────
+    , Test.test
+        "Result.fromMaybe: Just becomes Ok"
+        (\_ -> Test.equal (Ok 5) (Result.fromMaybe (Error.invalidInput "none") (Just 5)))
+    , Test.test
+        "Result.fromMaybe: Nothing becomes Err with the given error"
+        (\_ -> Test.equal (Err (Error.invalidInput "not a number")) (Result.fromMaybe (Error.invalidInput "not a number") (String.toInt "x")))
+    , Test.test
+        "Maybe.toResult: a record payload survives"
+        (\_ -> Test.equal (Ok { x = 1, y = 2 }) (Maybe.toResult Error.notFound (Result.toMaybe (parsePoint "1,2"))))
+    , Test.test
+        "Maybe.toResult: Nothing becomes Err with the given error"
+        (\_ -> Test.equal (Err Error.notFound) (Maybe.toResult Error.notFound (List.head [])))
+    , Test.test
+        "Maybe.toResult and Result.fromMaybe agree, and undo Result.toMaybe on Ok"
+        (\_ ->
+            Test.equal
+                (List.map (\s -> Maybe.toResult Error.notFound (String.toInt s)) [ "1", "x", "3" ])
+                (List.map (\s -> Result.fromMaybe Error.notFound (String.toInt s)) [ "1", "x", "3" ])
+        )
+    , Test.test
+        "Result.fromMaybe in a pipeline, partially applied"
+        (\_ ->
+            Test.equal
+                (Ok 43)
+                (String.toInt "42" |> Result.fromMaybe Error.notFound |> Result.map (\n -> n + 1))
         )
 
     -- ─── Sky.Core.Tuple ────────────────────────────────────────

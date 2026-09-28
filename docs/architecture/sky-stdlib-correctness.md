@@ -97,6 +97,7 @@ type Maybe a = Just a | Nothing
 | `andMap`       | `Maybe a -> Maybe (a -> b) -> Maybe b`             | applicative `<*>` |
 | `combine`      | `List (Maybe a) -> Maybe (List a)`                 | `Maybe.sky:193` |
 | `isJust`/`isNothing` | `Maybe a -> Bool`                            | `Maybe.sky` |
+| `toResult`     | `e -> Maybe a -> Result e a`                       | `Maybe.sky` + `rt.Maybe_toResult` |
 
 **Mathematical claims (Functor / Applicative / Monad)**:
 
@@ -155,6 +156,7 @@ type Result e a = Ok a | Err e
 | `andMap`       | `Result e a -> Result e (a -> b) -> Result e b`    | applicative `<*>` |
 | `combine`      | `List (Result e a) -> Result e (List a)`           | `Result.sky:199` |
 | `toMaybe`      | `Result e a -> Maybe a`                            | `Result.sky` + `rt.Result_toMaybe` |
+| `fromMaybe`    | `e -> Maybe a -> Result e a`                       | `Result.sky` + `rt.Result_fromMaybe` |
 
 **Mathematical claims**:
 
@@ -177,6 +179,11 @@ type Result e a = Ok a | Err e
   definition (an imported `Sky.Core.Result`) and the runtime kernel (the bare
   `Result.toMaybe` qualifier) agree; `CoreHelpersConformanceTest` pins the
   kernel path and `JsonConformanceTest` the imported one.
+* `fromMaybe err (Just a) == Ok a`, `fromMaybe err Nothing == Err err`, and
+  `Maybe.toResult == Result.fromMaybe`. `toMaybe (fromMaybe err m) == m` for
+  every `m`; `fromMaybe err (toMaybe r) == r` when `r` is `Ok`. The Sky
+  definitions and the kernels (`rt.Result_fromMaybe`, `rt.Maybe_toResult`)
+  agree; the same two suites pin both paths.
 
 **Verification**: by inspection. The CLAUDE.md non-regression rule
 "no `Result String a` in public surfaces" is enforced by the compiler

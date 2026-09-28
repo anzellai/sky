@@ -6573,6 +6573,33 @@ func Result_toMaybe(result any) any {
 	return Nothing[any]()
 }
 
+// Result_fromMaybe : e -> Maybe a -> Result e a — `Just a` becomes `Ok a`,
+// `Nothing` becomes `Err err`. Backs the qualifier path `Result.fromMaybe`
+// (no import); an imported `Sky.Core.Result` uses the Sky definition, which
+// agrees. Maybe_toResult is the same function under Maybe.
+func Result_fromMaybe(err any, maybe any) any {
+	return maybeToResult("Result.fromMaybe", err, maybe)
+}
+
+// Maybe_toResult : e -> Maybe a -> Result e a — the qualifier path of
+// `Maybe.toResult`; see Result_fromMaybe.
+func Maybe_toResult(err any, maybe any) any {
+	return maybeToResult("Maybe.toResult", err, maybe)
+}
+
+func maybeToResult(name string, err any, maybe any) any {
+	tag, v := anyMaybeView(maybe)
+	switch {
+	case tag == 0:
+		return Ok[any, any](v)
+	case tag < 0:
+		// Only a Maybe reaches here in well-typed code; anything else is a
+		// compiler bug, reported loudly rather than guessed into an Ok.
+		panic(fmt.Sprintf("rt.Coerce: expected a Maybe for %s, got %T", name, maybe))
+	}
+	return Err[any, any](err)
+}
+
 // Task_sequence: run tasks in order, collect results as a list.
 // First error short-circuits. A sequence node: the interpreter runs each
 // element inside its own loop (a node fold), so neither a long list nor a

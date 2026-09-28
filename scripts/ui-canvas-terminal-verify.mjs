@@ -35,17 +35,32 @@
 //       server's screen by a repaint frame (base -1), no byte replay: `hi`
 //       and `again` are back, each once.
 //
+//   --mode terminal-race  (fixture ui-terminal, Sky.Live; --browser chromium
+//   | webkit, --iterations N, default 16)
+//     N times: "new shell" spawns a fresh `sh` at 80x24 and attaches it to the
+//     mounted widget, whose size differs (the first screen read and the
+//     resize to the widget's size run at once), then:
+//     * the server's screen has the widget's size (the text layer has
+//       exactly the widget's rows);
+//     * in `vim -u NONE -N -n -c 'set showcmd'`, typing `ihello from vim`
+//       and Escape keeps row 0 as the typed line. The Escape draws "^[" in
+//       the showcmd column (10 from the right); on a screen left at 80
+//       columns under a wider PTY that write wraps at the bottom row and
+//       scrolls row 0 away, which is how the race used to show (about 3 runs
+//       in 10). 16 clean runs leave a 30% failure rate a 0.3% chance.
+//
 // In every mode: zero securitypolicyviolation events, zero page errors, zero
 // console errors.
 //
 // Usage: node scripts/ui-canvas-terminal-verify.mjs <app-binary> --port N
-//          --mode canvas-live|canvas-spa|terminal [--cwd DIR]
+//          --mode canvas-live|canvas-spa|terminal|terminal-race [--cwd DIR]
+//          [--browser chromium|webkit] [--iterations N]
 import pw from "playwright";
 import { spawn } from "node:child_process";
 import { guardChild } from "./lib/child-guard.mjs";
 import { dirname } from "node:path";
 
-const { chromium } = pw;
+const { chromium, webkit } = pw;
 const argv = process.argv.slice(2);
 const APP = argv[0];
 function arg(name, dflt) {
@@ -60,7 +75,13 @@ const PORT = Number(arg("--port", "9570"));
 const MODE = arg("--mode", "canvas-live");
 const CWD = arg("--cwd", dirname(dirname(APP)));
 const ORIGIN = `http://127.0.0.1:${PORT}`;
-const TAG = `ui-canvas-terminal/${MODE}`;
+const BROWSER = arg("--browser", "chromium");
+const ITERATIONS = Number(arg("--iterations", "16"));
+const TAG = `ui-canvas-terminal/${MODE}` + (BROWSER === "chromium" ? "" : `/${BROWSER}`);
+if (BROWSER !== "chromium" && BROWSER !== "webkit") {
+  console.error(`${TAG}: --browser must be chromium or webkit`);
+  process.exit(2);
+}
 
 try {
   await fetch(ORIGIN + "/", { signal: AbortSignal.timeout(1000) });
@@ -371,6 +392,72 @@ async function terminalCases(page, context, cdp) {
   check("the repaint shows each line once", (all.match(/^again\s*$/gm) || []).length === 1, JSON.stringify(all.slice(-400)));
 }
 
+// terminalRaceCases attaches a fresh shell ITERATIONS times and checks, each
+// time, that the server's screen took the widget's size and that vim's Escape
+// does not scroll row 0 away (see the header).
+async function terminalRaceCases(page) {
+  const T = '[data-sky-island="sky-terminal"]';
+  check(
+    "the terminal widget mounted and measured a size",
+    await waitFor(page, (s) => {
+      const el = document.querySelector(s);
+      return el && el.getAttribute("data-term-ready") === "1" && Number(el.getAttribute("data-term-cols")) > 20;
+    }, T, 15000)
+  );
+  check("the first shell is attached", await waitFor(page, () => /status=running 1\b/.test(document.body.innerText), null, 15000), await text(page, "#status"));
+  const size = await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    return [Number(el.getAttribute("data-term-cols")), Number(el.getAttribute("data-term-rows"))];
+  }, T);
+  check("the widget is not at the spawn size (80x24), so a lost resize shows", size[0] > 90 && size[1] !== 24, JSON.stringify(size));
+  const rowsShown = () => page.evaluate((s) => document.querySelector(s).querySelectorAll(".sky-term-text > div").length, T);
+  const row0 = () => page.evaluate((s) => {
+    const r = document.querySelector(s).querySelector(".sky-term-text > div");
+    return r ? r.textContent.trimEnd() : "";
+  }, T);
+  const bad = [];
+  for (let i = 1; i <= ITERATIONS; i++) {
+    const n = i + 1;
+    await page.click("#new-shell");
+    const attached = await waitFor(page, (want) => new RegExp("status=running " + want + "\\b").test(document.body.innerText), String(n), 15000);
+    const prompt = attached && (await waitFor(page, (s) => {
+      const r = document.querySelector(s).querySelector(".sky-term-text > div");
+      return !!r && r.textContent.trimEnd() === "$";
+    }, T, 15000));
+    if (!prompt) {
+      bad.push(`run ${i}: the new shell never showed its prompt (${JSON.stringify((await termText(page)).slice(0, 120))})`);
+      continue;
+    }
+    await page.waitForTimeout(300); // the resize reaches the PTY
+    const shown = await rowsShown();
+    await page.click(T);
+    await page.keyboard.type(`vim -u NONE -N -n -c 'set showcmd' /tmp/sky-term-race-${process.pid}-${i}.txt`, { delay: 5 });
+    await page.keyboard.press("Enter");
+    const inVim = await waitFor(page, (s) => /^~\s*$/m.test(document.querySelector(s).querySelector(".sky-term-text").innerText), T, 15000);
+    await page.waitForTimeout(400);
+    await page.keyboard.type("ihello from vim", { delay: 15 });
+    const typed = await waitFor(page, (s) => {
+      const r = document.querySelector(s).querySelector(".sky-term-text > div");
+      return !!r && r.textContent.trimEnd() === "hello from vim";
+    }, T, 10000);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(1200);
+    const after = await row0();
+    const rowsAfter = await rowsShown();
+    if (shown !== size[1] || rowsAfter !== size[1] || !inVim || !typed || after !== "hello from vim") {
+      bad.push(`run ${i}: widget ${size[0]}x${size[1]}, screen rows ${shown}/${rowsAfter}, vim ${inVim}, typed ${typed}, row 0 after Escape ${JSON.stringify(after)}`);
+    }
+    await page.keyboard.type(":q!", { delay: 15 });
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300);
+  }
+  check(
+    `${ITERATIONS} fresh shells attached to the mounted widget: the screen has the widget's size and vim's Escape keeps row 0`,
+    bad.length === 0,
+    bad.length ? `${bad.length} of ${ITERATIONS} runs failed: ` + bad.slice(0, 4).join(" | ") : ""
+  );
+}
+
 let browser;
 try {
   const first = await waitListening();
@@ -382,7 +469,7 @@ try {
     csp || "(no Content-Security-Policy header)"
   );
 
-  browser = await chromium.launch({ headless: true });
+  browser = await (BROWSER === "webkit" ? webkit : chromium).launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1000, height: 900 } });
   const violations = [];
   const consoleErrors = [];
@@ -399,8 +486,11 @@ try {
     );
   });
   const page = await context.newPage();
-  const cdp = await context.newCDPSession(page);
-  await cdp.send("Network.enable");
+  let cdp = null;
+  if (MODE === "terminal") {
+    cdp = await context.newCDPSession(page);
+    await cdp.send("Network.enable");
+  }
   let offline = false;
   page.on("console", (m) => {
     // A request that fails while the test holds the browser offline is the
@@ -416,6 +506,7 @@ try {
 
   await page.goto(ORIGIN + "/", { waitUntil: "load" });
   if (MODE === "terminal") await terminalCases(page, context, cdp);
+  else if (MODE === "terminal-race") await terminalRaceCases(page);
   else await canvasCases(page);
 
   check("zero securitypolicyviolation events", violations.length === 0, violations.slice(0, 3).join(" | "));
