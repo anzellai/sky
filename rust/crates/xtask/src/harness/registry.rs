@@ -553,7 +553,9 @@ pub static GATES: &[Gate] = &[
         name: "corpus",
         tier: Tier::T2,
         platforms: UNIX,
-        budget_s: 1800,
+        // 1800 s held 341 cases; v0.27.0 took the corpus to 373, and a CI
+        // runner reached 325 at 30 min. 3000 s keeps headroom for growth.
+        budget_s: 3000,
         expected: bodies::CORPUS_BEHAVIOURAL_EXPECTED,
         expect: Expect::Falsifiable,
         summary: "every generated case built + run; values compared against the generator's own",

@@ -316,8 +316,9 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "behaviour-corpus"]'), inputs.only) }}
     runs-on: ubuntu-latest
     # Killed at 25 min on its first real run. 45 gives a cold-cache run room
-    # while staying far inside the 90-min T3 ceiling.
-    timeout-minutes: 45
+    # while staying far inside the 90-min T3 ceiling. Raised to 65 in v0.27.0
+    # with the corpus gate's 3000 s budget (373 cases; 325 fitted in 30 min).
+    timeout-minutes: 65
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
