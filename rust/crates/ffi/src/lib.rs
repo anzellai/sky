@@ -173,6 +173,58 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
     reg
 }
 
+/// The surface format a `kernel.json` was generated at ([`gen::SURFACE_FORMAT`]).
+/// A file with no `"surfaceFormat"` predates the stamp: format 1.
+pub fn surface_format_of(kernel_json: &str) -> u32 {
+    serde_json::from_str::<serde_json::Value>(kernel_json)
+        .ok()
+        .and_then(|v| v.get("surfaceFormat").and_then(|f| f.as_u64()))
+        .map(|f| f as u32)
+        .unwrap_or(1)
+}
+
+/// A generated surface whose stamp is not this generator's format.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutdatedSurface {
+    pub slug: String,
+    pub package: String,
+    pub format: u32,
+}
+
+/// Every `<slug>.kernel.json` in `ffi_dir` stamped with a surface format other
+/// than [`gen::SURFACE_FORMAT`], sorted by slug. Read-only: the build reports
+/// them and `sky install` regenerates them.
+pub fn outdated_surfaces(ffi_dir: &Path) -> Vec<OutdatedSurface> {
+    let Ok(rd) = std::fs::read_dir(ffi_dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<OutdatedSurface> = rd
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter_map(|path| {
+            let slug = path
+                .file_name()?
+                .to_str()?
+                .strip_suffix(".kernel.json")?
+                .to_string();
+            let text = std::fs::read_to_string(&path).ok()?;
+            let format = surface_format_of(&text);
+            if format == gen::SURFACE_FORMAT {
+                return None;
+            }
+            let package = serde_json::from_str::<KernelJson>(&text)
+                .map(|k| k.package)
+                .unwrap_or_default();
+            Some(OutdatedSurface {
+                slug,
+                package,
+                format,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.slug.cmp(&b.slug));
+    out
+}
+
 /// Scan a Go wrapper file for its `type FfiT_… = …` slot-alias names.
 fn scan_ffi_slots(path: &Path) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -343,5 +395,69 @@ mod tests {
         // Prove the derive wiring compiles + round-trips (deterministic pin).
         let cloned = surface.clone();
         assert_eq!(surface, cloned);
+    }
+
+    /// A surface generated before the stamp (the Task-era `.skyi` header) and
+    /// one from a different format are both reported; a current one is not.
+    #[test]
+    fn outdated_surfaces_reads_the_stamp() {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-ffi-outdated-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let kj = |pkg: &str, stamp: Option<u32>| {
+            let s = stamp
+                .map(|n| format!("  \"surfaceFormat\": {n},\n"))
+                .unwrap_or_default();
+            format!(
+                "{{\n  \"moduleName\": \"M\",\n  \"kernelName\": \"Go_M\",\n  \"package\": \"{pkg}\",\n{s}  \"functions\": []\n}}\n"
+            )
+        };
+        std::fs::write(dir.join("old.kernel.json"), kj("example.com/old", None)).unwrap();
+        std::fs::write(
+            dir.join("other.kernel.json"),
+            kj("example.com/other", Some(99)),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("cur.kernel.json"),
+            kj("example.com/cur", Some(gen::SURFACE_FORMAT)),
+        )
+        .unwrap();
+        let got = outdated_surfaces(&dir);
+        assert_eq!(
+            got,
+            vec![
+                OutdatedSurface {
+                    slug: "old".into(),
+                    package: "example.com/old".into(),
+                    format: 1
+                },
+                OutdatedSurface {
+                    slug: "other".into(),
+                    package: "example.com/other".into(),
+                    format: 99
+                },
+            ]
+        );
+        // A fresh generation carries the current stamp in all three files.
+        let mut info = inspect::parse_one(
+            &std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/uuid.inspector.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        inspect::normalize(&mut info);
+        let s = generate(&info);
+        assert_eq!(surface_format_of(&s.kernel_json), gen::SURFACE_FORMAT);
+        assert!(s.skyi.contains(&gen::surface_format_line()), "{}", s.skyi);
+        assert!(s.bindings_go.contains(&gen::surface_format_line()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

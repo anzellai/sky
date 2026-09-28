@@ -2,6 +2,7 @@
   "moduleName": "Github.Com.Gorilla.Mux",
   "kernelName": "Go_Mux",
   "package": "github.com/gorilla/mux",
+  "surfaceFormat": 2,
   "functions": [
     {"name": "cORSMethodMiddleware", "arity": 1, "skyType": "Router@github.com/gorilla/mux -> Result Error MiddlewareFunc@github.com/gorilla/mux"},
     {"name": "currentRoute", "arity": 1, "skyType": "Request@net/http -> Result Error Route@github.com/gorilla/mux"},

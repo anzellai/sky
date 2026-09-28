@@ -837,25 +837,30 @@ fn install_go_deps(
             // (toolchain / dep-version moved on) and we simply REFRESH it with
             // the fresh bytes we already hold, rather than failing. Identical
             // bytes → skip the write.
+            //
+            // ALL THREE files are compared, not only kernel.json: a surface
+            // written by an older sky can carry the same kernel.json and a
+            // wrong `.skyi` catalogue or Go wrapper (the Task-era header).
             match regenerate_in_memory(&bin, &sky_out, dep) {
-                Ok(surface) => {
-                    let on_disk_path = project_dir
-                        .join("sky-ffi")
-                        .join(format!("{}.kernel.json", surface.slug));
-                    match std::fs::read_to_string(&on_disk_path) {
-                        Ok(on_disk) if on_disk == surface.kernel_json => verified += 1,
-                        _ => match write_generated_surface(project_dir, &surface) {
-                            Ok(()) => {
-                                refreshed += 1;
-                                r.say(format!(
-                                    "  refreshed sky-ffi/{}.* (was stale vs a fresh inspection of {dep})",
-                                    surface.slug
-                                ));
-                            }
-                            Err(e) => r.say(format!("  note: could not refresh {dep}: {e}")),
-                        },
-                    }
-                }
+                Ok(surface) => match surface_on_disk(project_dir, &surface.slug) {
+                    Some(on_disk) if on_disk.matches(&surface) => verified += 1,
+                    on_disk => match write_generated_surface(project_dir, &surface) {
+                        Ok(()) => {
+                            refreshed += 1;
+                            let why = match on_disk.map(|d| ffi::surface_format_of(&d.kernel_json))
+                            {
+                                Some(f) if f != ffi::gen::SURFACE_FORMAT => format!(
+                                    "made by another sky: surface format {f}, this sky \
+                                     writes {}",
+                                    ffi::gen::SURFACE_FORMAT
+                                ),
+                                _ => format!("was stale vs a fresh inspection of {dep}"),
+                            };
+                            r.say(format!("  refreshed sky-ffi/{}.* ({why})", surface.slug));
+                        }
+                        Err(e) => r.say(format!("  note: could not refresh {dep}: {e}")),
+                    },
+                },
                 Err(e) => r.say(format!("  note: could not verify {dep}: {e}")),
             }
         } else {
@@ -1107,6 +1112,33 @@ fn regenerate_committed_reporting(
         Err(e) => return Err(e),
     };
     write_surface(project_dir, &info).map(|slug| (slug, note))
+}
+
+/// The three surface files of `slug` as they are on disk; `None` when the
+/// kernel.json is absent (a missing `.skyi` or wrapper reads as empty, which
+/// never matches a fresh generation).
+struct SurfaceOnDisk {
+    kernel_json: String,
+    skyi: String,
+    bindings_go: String,
+}
+
+impl SurfaceOnDisk {
+    fn matches(&self, fresh: &ffi::GeneratedSurface) -> bool {
+        self.kernel_json == fresh.kernel_json
+            && self.skyi == fresh.skyi
+            && self.bindings_go == fresh.bindings_go
+    }
+}
+
+fn surface_on_disk(project_dir: &Path, slug: &str) -> Option<SurfaceOnDisk> {
+    let ffi_dir = project_dir.join("sky-ffi");
+    let read = |p: PathBuf| std::fs::read_to_string(p).unwrap_or_default();
+    Some(SurfaceOnDisk {
+        kernel_json: std::fs::read_to_string(ffi_dir.join(format!("{slug}.kernel.json"))).ok()?,
+        skyi: read(ffi_dir.join(format!("{slug}.skyi"))),
+        bindings_go: read(ffi_dir.join("go").join(format!("{slug}_bindings.go"))),
+    })
 }
 
 /// Write the three surface files for one inspected package. Returns the slug.

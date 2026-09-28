@@ -2,6 +2,7 @@
   "moduleName": "Github.Com.Google.Uuid",
   "kernelName": "Go_Uuid",
   "package": "github.com/google/uuid",
+  "surfaceFormat": 2,
   "functions": [
     {"name": "clockSequence", "arity": 1, "skyType": "() -> Result Error Int"},
     {"name": "disableRandPool", "arity": 1, "skyType": "() -> Result Error ()"},

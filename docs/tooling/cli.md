@@ -1193,8 +1193,11 @@ Regenerates the FFI surface from the declared dependencies. For each
 gitignored build artifact (not a committed reproducibility anchor), a present
 surface that no longer matches a fresh inspection — e.g. after a toolchain or
 dependency-version change — is simply **refreshed** in place (reported as
-`refreshed`), never a hard failure. Unchanged surfaces are left untouched
-(`verified`). For each `[dependencies]` entry it clones any Sky package that is
+`refreshed`), never a hard failure. All three files (`.kernel.json`, `.skyi`,
+`go/*_bindings.go`) are compared, and each carries a surface-format stamp: a
+surface written by a sky with another format (or none) is refreshed and named
+as such, and `sky build` warns about it until `sky install` runs. Unchanged
+surfaces are left untouched (`verified`). For each `[dependencies]` entry it clones any Sky package that is
 absent or whose pinned ref drifted. Idempotent.
 
 ### `sky update`
