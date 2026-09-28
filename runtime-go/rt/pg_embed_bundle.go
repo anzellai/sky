@@ -785,7 +785,7 @@ func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	err := syscall.Kill(pid, 0)
+	err := sysSignalPid(pid, 0)
 	// EPERM means the process exists and belongs to someone else — which is
 	// still "alive", and reporting it dead would let a second postmaster open
 	// the data directory.

@@ -2482,6 +2482,8 @@ type subT struct {
 	//   "subscribeStream" — Http.Stream.chunks streamId toMsg
 	//                       (Cycle 4 HS — Sub leaf reads streamHandle.ch
 	//                       and dispatches ChunkEvent values to update)
+	//   "subscribeSource" — Process.events / Watch.changes: a runtime
+	//                       source object (sub_source.go)
 	kind  string
 	ms    int
 	toMsg any
@@ -2500,6 +2502,13 @@ type subT struct {
 	// "message" | "open" | "close" | "error".
 	socketID int64
 	wsKind   string
+	// Source fields (kind = "subscribeSource"): a subscription fed by a
+	// runtime object — a child process (Process.events) or a file watcher
+	// (Watch.changes). source is a subSource (sub_source.go, server only;
+	// typed `any` here so this file stays buildable for the wasm client);
+	// sourceKey identifies it for reconciliation across updates.
+	source    any
+	sourceKey string
 }
 
 // SkySub is the public type for Sky's Sub msg type.

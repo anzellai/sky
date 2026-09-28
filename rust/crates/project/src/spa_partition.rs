@@ -145,6 +145,11 @@ const EFFECT_KERNELS: &[&str] = &[
     "Kdf",
     "Noise",
     "Cpace",
+    // v0.27.0 streaming child processes (Sky.Core.Process spawn & co, kernel
+    // prefix `Subprocess_`) and file watching (Std.Watch): host effects a
+    // browser cannot perform at all.
+    "Subprocess",
+    "Watch",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -5436,6 +5441,38 @@ mod tests {
         record_ffi_symbol("Crypto_sha256", &mut acc);
         assert_eq!(acc.server_kernels.len(), 1, "{:?}", acc.server_kernels);
         assert_eq!(acc.server_kernels[0].1, "randomBytes");
+    }
+
+    /// Child processes and file watching run on the SERVER: a browser can
+    /// neither spawn a process nor watch a file system. Both families are
+    /// reached through `Ffi.kernel "<Family>_<fn>"` symbols, so the symbol
+    /// path must agree with the kernel classification.
+    #[test]
+    fn process_and_watch_kernels_are_server_only() {
+        for (m, f) in [
+            ("Subprocess", "spawn"),
+            ("Subprocess", "readFrom"),
+            ("Subprocess", "events"),
+            ("Subprocess", "write"),
+            ("Subprocess", "kill"),
+            ("Subprocess", "resize"),
+            ("Subprocess", "close"),
+            ("Watch", "watch"),
+            ("Watch", "next"),
+            ("Watch", "changes"),
+            ("Watch", "close"),
+            ("Process", "run"),
+        ] {
+            assert_eq!(
+                classify_kernel(m, f),
+                KernelClass::ServerOnly,
+                "{m}.{f} is a host effect: it must run on the server"
+            );
+        }
+        let mut acc = Refs::default();
+        record_ffi_symbol("Subprocess_spawn", &mut acc);
+        record_ffi_symbol("Watch_changes", &mut acc);
+        assert_eq!(acc.server_kernels.len(), 2, "{:?}", acc.server_kernels);
     }
 
     /// A `Std.Native.*` FFI symbol (`Native_<cap>`) records as a CLIENT effect,

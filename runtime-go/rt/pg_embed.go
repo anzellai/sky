@@ -130,6 +130,9 @@ func StopEmbeddedPostgres() {
 // A no-op-plus-exit when no cluster was ever started, which is every ordinary
 // build.
 func ExitProcess(code int) {
+	// Children started with Sky.Core.Process run in their own process
+	// groups, so they would outlive this process; end them first.
+	killAllChildProcesses()
 	StopEmbeddedPostgres()
 	os.Exit(code)
 }
@@ -705,7 +708,7 @@ func (s *pgSupervisor) spawn() error {
 	cmd.Env = s.bins.env()
 	cmd.Stdout = log
 	cmd.Stderr = log
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = procSysAttr(false) // own process group (process_unix.go)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("sky --embed: cannot start the postmaster: %w", err)
 	}
@@ -1042,7 +1045,7 @@ func (s *pgSupervisor) signalPostmaster() {
 	if pid <= 0 {
 		return
 	}
-	_ = syscall.Kill(pid, syscall.SIGINT)
+	_ = sysSignalPid(pid, syscall.SIGINT)
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if !processAlive(pid) {
@@ -1053,7 +1056,7 @@ func (s *pgSupervisor) signalPostmaster() {
 	// Still there: SIGQUIT is PostgreSQL's immediate shutdown (no checkpoint;
 	// recovery on next start). Preferred over SIGKILL, which leaves shared
 	// memory and semaphores behind.
-	_ = syscall.Kill(pid, syscall.SIGQUIT)
+	_ = sysSignalPid(pid, syscall.SIGQUIT)
 }
 
 // BlockIfEmbeddedShuttingDown parks a caller that has just had its listener

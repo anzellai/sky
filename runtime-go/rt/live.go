@@ -461,6 +461,19 @@ type liveSession struct {
 	// Protected by activeWsSubsMu (mirrors activeStreamSubsMu).
 	activeWsSubs   map[string]*wsSubReg
 	activeWsSubsMu sync.Mutex
+
+	// activeSourceSubs — "subscribeSource" leaves (Process.events,
+	// Watch.changes) currently running for this session, keyed by the
+	// leaf's sourceKey. Protected by activeSourceSubsMu (live_owned.go).
+	activeSourceSubs   map[string]*sourceRunner
+	activeSourceSubsMu sync.Mutex
+
+	// owned — runtime resources this session started (a child process, a
+	// file watcher), each with the func that releases it. markDone runs them
+	// all, so an evicted session or a stopped app leaves no child process
+	// or watcher behind. Protected by ownedMu (live_owned.go).
+	owned   map[string]func()
+	ownedMu sync.Mutex
 }
 
 // touchLastSeen — stamp the lastSeen counter with the current wall
@@ -579,6 +592,10 @@ func (s *liveSession) markDone() {
 				reg.cancel()
 			}
 		}
+		// Source subscriptions stop reading first, then the resources the
+		// session owns (child processes, file watchers) are released.
+		s.stopAllSourceSubs()
+		s.releaseOwned()
 	})
 }
 
@@ -4065,6 +4082,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 		// last dispatch, returns Sub.none / no subscriptions fn now).
 		app.applyTopicSubsDiff(sess, nil)
 		app.applyEverySubsDiff(sess, nil)
+		app.applySourceSubsDiff(sess, nil)
 		return
 	}
 	subResult := sky_call(app.subscriptions, sess.model)
@@ -4079,6 +4097,8 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	// four onMessage/onOpen/onClose/onError variants coexist per
 	// socket.
 	desiredWs := map[string]subT{}
+	// Source leaves (Process.events, Watch.changes) keyed by sourceKey.
+	desiredSources := map[string]subT{}
 	for i := range leaves {
 		leaf := leaves[i]
 		switch leaf.kind {
@@ -4093,6 +4113,11 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 		case "subscribeWebSocket":
 			key := fmt.Sprintf("%d:%s", leaf.socketID, leaf.wsKind)
 			desiredWs[key] = leaf
+		case "subscribeSource":
+			// Last-write-wins per source, like topics.
+			if leaf.sourceKey != "" {
+				desiredSources[leaf.sourceKey] = leaf
+			}
 		}
 	}
 
@@ -4102,6 +4127,7 @@ func (app *liveApp) setupSubscriptions(sess *liveSession) {
 	app.applyTopicSubsDiff(sess, desired)
 	app.applyStreamSubsDiff(sess, desiredStreams)
 	app.applyWsSubsDiff(sess, desiredWs)
+	app.applySourceSubsDiff(sess, desiredSources)
 
 	// Time.every — reconciled by interval (K4): a timer still requested
 	// keeps running with its phase across dispatches, instead of being
@@ -4646,35 +4672,9 @@ func (app *liveApp) runStreamSubscriberDispatch(sess *liveSession, toMsg any, ev
 		return
 	}
 
-	sess.mu.Lock()
-	prevShipped := sess.lastShippedBody
-	prevTreeBeforeDispatch := sess.prevTree
-	body := app.dispatch(sess, msg)
-	newTreeAfterDispatch := sess.prevTree
-	var snap frameSnapshot
-	var patches []Patch
-	var haveFrame bool
-	if body != "" && body != prevShipped {
-		snap = sess.prepareFrameSnapshot(body)
-		sess.lastShippedBody = body
-		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
-			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
-		}
-		haveFrame = true
-	}
-	sess.mu.Unlock()
-	// L7: persist the model this delivery changed.
-	app.persistSession(sess)
-	if !haveFrame {
-		return
-	}
-	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-	select {
-	case sess.sseCh <- frame:
-	default:
-		recordSseDrop(sess.currentSID())
-		sess.markAllConnsOutOfSync() // #9: ingress drop — every connection missed this frame
-	}
+	// Shared dispatch + frame path (live_owned.go): an ingress drop marks
+	// every connection out of sync.
+	app.deliverSubMsg(sess, msg)
 }
 
 // handleSSE: Server-Sent Events endpoint. Pushes view patches as they arrive.

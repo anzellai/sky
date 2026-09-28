@@ -1,0 +1,188 @@
+module Main exposing (main)
+
+{-| A Sky.Cli TEA app that drives `Process.events` and `Watch.changes` through
+`update`, then drops both subscriptions. It has no input handler, so it exits
+only once nothing is left to happen: no queued Msg, no Cmd in flight, and no
+subscription still running. A runner that outlived its dropped Sub would keep
+the program alive, and the test that runs it would time out.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.File as File
+import Sky.Core.Process as Process exposing (Event(..), ExitStatus(..), Stream(..))
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Watch as Watch exposing (Change(..))
+
+type Msg
+    = Spawned (Result Error Process.Process)
+    | GotEvent Event
+    | Watching (Result Error Watch.Watcher)
+    | Wrote (Result Error ())
+    | GotChanges (List Change)
+    | Closed (Result Error ())
+
+type alias Model =
+    { proc : Maybe Process.Process
+    , out : String
+    , err : String
+    , exit : String
+    , watcher : Maybe Watch.Watcher
+    , changes : List String
+    , log : List String
+    }
+
+
+watchDir : String
+watchDir =
+    System.getenvOr "FLOW_DIR" "."
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { proc = Nothing
+      , out = ""
+      , err = ""
+      , exit = ""
+      , watcher = Nothing
+      , changes = []
+      , log = []
+      }
+    , Cmd.perform
+          (Process.command "sh"
+              |> Process.withArgs
+                     [ "-c", "echo one; echo two 1>&2; sleep 0.2; exit 4" ]
+              |> Process.spawn)
+          Spawned
+    )
+
+
+statusText : ExitStatus -> String
+statusText st =
+    case st of
+
+        ExitCode c ->
+            "code " ++ String.fromInt c
+
+        Signalled s ->
+            "signal " ++ String.fromInt s
+
+
+changeText : Change -> String
+changeText c =
+    case c of
+
+        Created p ->
+            "Created " ++ p
+
+        Modified p ->
+            "Modified " ++ p
+
+        Removed p ->
+            "Removed " ++ p
+
+        Renamed a b ->
+            "Renamed " ++ a ++ " " ++ b
+
+        Overflow ->
+            "Overflow"
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Spawned (Ok p) ->
+            ( { model | proc = Just p }, Cmd.none )
+
+        Spawned (Err e) ->
+            ( { model | log = model.log ++ [ "spawn failed" ] }, Cmd.none )
+
+        GotEvent (Output Stdout chunk) ->
+            ( { model | out = model.out ++ chunk.data }, Cmd.none )
+
+        GotEvent (Output Stderr chunk) ->
+            ( { model | err = model.err ++ chunk.data }, Cmd.none )
+
+        GotEvent (Exited st) ->
+            -- Drop the events Sub (proc = Nothing) and start watching.
+            ( { model | exit = statusText st, proc = Nothing }
+            , Cmd.perform
+                  (Watch.watch
+                      [ watchDir ]
+                      (Watch.defaultOptions |> Watch.withDebounce 30))
+                  Watching
+            )
+
+        Watching (Ok w) ->
+            ( { model | watcher = Just w }
+            , Cmd.perform (File.writeFile (watchDir ++ "/flow.txt") "hi") Wrote
+            )
+
+        Watching (Err e) ->
+            ( { model | log = model.log ++ [ "watch failed" ] }, Cmd.none )
+
+        Wrote _ ->
+            ( model, Cmd.none )
+
+        GotChanges cs ->
+            case model.watcher of
+
+                Just w ->
+                    ( { model | changes = model.changes ++ List.map changeText cs
+                      , watcher = Nothing
+                      }
+                    , Cmd.perform (Watch.close w) Closed
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        Closed _ ->
+            ( { model | log = model.log ++ [ "closed" ] }, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ case model.proc of
+
+              Just p ->
+                  Process.events p GotEvent
+
+              Nothing ->
+                  Sub.none
+        , case model.watcher of
+
+              Just w ->
+                  Watch.changes w GotChanges
+
+              Nothing ->
+                  Sub.none
+        ]
+
+
+view : Model -> String
+view model =
+    "STATE out=" ++ String.trim model.out ++ " err=" ++ String.trim model.err
+        ++ " exit="
+        ++ model.exit
+        ++ " changes="
+        ++ String.join "," model.changes
+        ++ " log="
+        ++ String.join "," model.log
+        ++ "\n"
+
+
+main =
+    App.run
+        (App.cli
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

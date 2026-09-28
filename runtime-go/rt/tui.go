@@ -77,7 +77,6 @@ import (
 	"os/signal"
 	"reflect"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -300,7 +299,7 @@ func tuiLineEdit(line *[]rune, ev keyEvent) (handled, submitted bool, text strin
 // quitCh closes.
 func tuiWatchResize(msgCh chan<- any, quitCh <-chan struct{}) {
 	winchCh := make(chan os.Signal, 1)
-	signal.Notify(winchCh, syscall.SIGWINCH)
+	notifyWindowResize(winchCh) // SIGWINCH; no-op where there is none
 	safeGo("SIGWINCH watcher", func() {
 		defer signal.Stop(winchCh)
 		for {
