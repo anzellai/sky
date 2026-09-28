@@ -174,3 +174,10 @@ func Native_authenticate(reason any) any {
 	r := AsString(reason)
 	return func() any { return nativeAuthenticateVia(nativeNoShellTransport, r) }
 }
+
+// Native_scanCode on a non-client build: Err Unavailable. A server has no
+// camera; the scan runs on the device, through the native shell.
+func Native_scanCode(formats any, prompt any) any {
+	fs, pr := nativeFormatArgs(formats), AsString(prompt)
+	return func() any { return nativeScanCodeVia(nativeNoShellTransport, fs, pr) }
+}

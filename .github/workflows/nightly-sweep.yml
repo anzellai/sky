@@ -489,7 +489,9 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo test -p sky --locked --manifest-path rust/Cargo.toml -- --ignored
+        # The Android emulator test needs a running emulator: the release
+        # workflow's gate-native-android job runs it.
+        run: cargo test -p sky --locked --manifest-path rust/Cargo.toml -- --ignored --skip android_emulator
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh

@@ -379,7 +379,9 @@ run it, and the page never became interactive. On v0.25.19, add
 wasm client, and on a native shell they reach the device through the shell's
 bridge. The secure store (`Native.secureSet` / `secureGet` / `secureRemove`)
 and the biometric prompt (`Native.authenticate`) have no web API, so in a plain
-browser they are `Err Unavailable`, never a `localStorage` fallback.
+browser they are `Err Unavailable`, never a `localStorage` fallback. The camera
+code scanner (`Native.scanCode`) is the same: the native shells have one, a
+browser does not (scan there with a widget island).
 `Secret.fromString` and `Secret.reveal` are pure and run in the client, so a
 client branch can use a secret it read from the device; `Secret.fromEnv` reads
 the server's environment and stays on the server. A `Secret` has no codec and

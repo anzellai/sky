@@ -534,17 +534,21 @@ A native shell needs more than the web build. [`native.md`](native.md) covers:
 
 - `Bundle.withUsage Bundle.Camera "…"`: the purpose string each permission
   prompt shows, with the matching iOS / macOS `Info.plist` key and Android
-  permission. A `Native.authenticate` / `capturePhoto` / `geolocation` call
-  without its permission fails the iOS and Android builds, naming the fix.
+  permission. A `Native.authenticate` / `capturePhoto` / `geolocation` /
+  `scanCode` call without its permission fails the iOS and Android builds,
+  naming the call, the fix and the `bundle` binding.
 - `Bundle.withEntitlement`: typed Apple entitlements (keychain access groups,
   app groups, associated domains, push, iCloud), merged structurally with any
   `native/ios/app.entitlements` fragment.
 - `Native.secureSet` / `secureGet` / `secureRemove` (Keychain, Android Keystore)
   and `Native.authenticate` (Face ID, Touch ID, BiometricPrompt).
+- `Native.scanCode`: a QR code or barcode from the device camera (VisionKit on
+  iOS and iPadOS, the camera and ZXing on Android).
 - `sky package --release --target mobile:ios|mobile:android|desktop:mac`: the
   signed `.ipa`, the release `.apk` / `.aab`, the `.app` / `.dmg`. A release
   refuses the development backend address.
-- A recipe that scans a QR code in a widget island and draws one with `Std.Qr`.
+- A recipe that scans a QR code (`Native.scanCode` in the native shells, a
+  widget island on the web) and draws one with `Std.Qr`.
 
 See also: `sky doc Std.App`, `docs/skylive/overview.md`, `docs/skyspa/overview.md`,
 and the design rationale in `docs/design/unified-app-builder.md`.

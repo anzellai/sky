@@ -568,10 +568,12 @@ own end-to-end keys (Noise, CPace, Kx, Sign, Kdf), add `App.withClientCrypto`:
 those run in the client, a key field must be a `Maybe`, and the build refuses
 any flow that sends a key to the server (docs/skyspa/client-crypto.md). Declare each native
 permission with the text its prompt shows (`Bundle.withUsage Bundle.Camera
-"…"`; `Native.authenticate` needs `Bundle.FaceId`, and the iOS / Android build
-fails without it), Apple entitlements with `Bundle.withEntitlement`, keep
-secrets in `Native.secureSet` (Keychain / Android Keystore; `Err Unavailable`
-in a browser, never `localStorage`), and make the store build with `sky package
+"…"`; `Native.authenticate` needs `Bundle.FaceId` and `Native.scanCode`
+needs `Bundle.Camera`, and the iOS / Android build fails without it), Apple
+entitlements with `Bundle.withEntitlement`, keep secrets in `Native.secureSet`
+(Keychain / Android Keystore; `Err Unavailable` in a browser, never
+`localStorage`), scan a QR code or barcode with `Native.scanCode`, and make the
+store build with `sky package
 --release` (it refuses a local or `http` backend address). Guide:
 `docs/skyapp/native.md`. `sky
 check` type-checks the shared source without splitting; `sky spa-split <entry>

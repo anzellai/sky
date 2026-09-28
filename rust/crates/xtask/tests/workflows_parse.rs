@@ -1106,6 +1106,15 @@ fn the_release_workflow_is_the_full_suite() {
             if let Some(r) = step.get("run").and_then(|r| r.as_str()) {
                 runs.push(r.to_string());
             }
+            // An action that runs a command for the step (the Android
+            // emulator runner's `script`) counts as the step's command.
+            if let Some(r) = step
+                .get("with")
+                .and_then(|w| w.get("script"))
+                .and_then(|r| r.as_str())
+            {
+                runs.push(r.to_string());
+            }
         }
     }
     let hay = runs.join("\n");
@@ -1151,6 +1160,10 @@ fn the_release_workflow_is_the_full_suite() {
         (
             "--test native_shell_flow -- --ignored",
             "the native shells on macOS: iOS simulator smoke + Android release",
+        ),
+        (
+            "--test native_shell_flow android_emulator -- --ignored",
+            "the Android emulator gate: Keystore, scanner and biometrics on a running emulator",
         ),
     ];
     let missing: Vec<String> = required

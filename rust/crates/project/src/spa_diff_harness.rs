@@ -619,6 +619,7 @@ mod tests {
             msg_arg_tys: vec![],
             forces_effect: forces,
             effect_families: vec![],
+            matches_inside_msg_args: false,
         }
     }
     fn report_with(branches: Vec<BranchVerdict>) -> SpaPartitionReport {

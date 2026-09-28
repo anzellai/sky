@@ -265,7 +265,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1395,
+      "expected_assertions": 1398,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -702,7 +702,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2177,
+    "stdlib_entries": 2181,
     "stdlib_modules": 111,
     "surfaces_covered": 166,
     "surfaces_covered_pct": 93.3,
@@ -13799,8 +13799,11 @@
           ]
         },
         "Std.Native": {
-          "count": 1,
+          "count": 4,
           "symbols": [
+            "CodeFormat",
+            "ScanOptions",
+            "ScannedCode",
             "ShareContent"
           ]
         },
@@ -14068,8 +14071,8 @@
           ]
         }
       },
-      "count": 664,
-      "pct_of_denominator": 30.5
+      "count": 667,
+      "pct_of_denominator": 30.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -14978,9 +14981,12 @@
           ]
         },
         "Std.Native": {
-          "count": 2,
+          "count": 5,
           "symbols": [
+            "CodeFormat",
             "Coords",
+            "ScanOptions",
+            "ScannedCode",
             "ShareContent"
           ]
         },
@@ -15262,8 +15268,8 @@
           ]
         }
       },
-      "count": 753,
-      "pct_of_denominator": 34.6
+      "count": 756,
+      "pct_of_denominator": 34.7
     }
   },
   "units": [
@@ -16443,8 +16449,8 @@
       "id": "tests/conformance",
       "modules_imported": 53,
       "path": "tests/conformance",
-      "refs_generous": 709,
-      "refs_qualified": 693,
+      "refs_generous": 710,
+      "refs_qualified": 694,
       "role": "Conformance",
       "sky_files": 41,
       "sky_toml_sections": []

@@ -160,6 +160,14 @@ impl Target {
         match self {
             Target::Web | Target::WebApp => Some("web"),
             Target::Desktop(_) => Some("desktop"),
+            // An iPad or Android tablet runs the SAME native shell as the
+            // phone (the iOS app declares both device families; the APK has no
+            // form-factor split), so the native capabilities (Keychain /
+            // Keystore, biometrics, the code scanner) reach the device. Before
+            // v0.27.0 these mapped to the responsive web bundle, so a
+            // `tablet:android` app had none of them.
+            Target::Tablet(TabletOs::Ipad) => Some("ios"),
+            Target::Tablet(TabletOs::Android) => Some("android"),
             Target::Tablet(_) => Some("tablet"),
             Target::Mobile(MobileOs::Ios) => Some("ios"),
             Target::Mobile(MobileOs::Android) => Some("android"),
@@ -353,6 +361,16 @@ mod tests {
         assert_eq!(
             Target::Tablet(TabletOs::Any).frontend_shell(),
             Some("tablet")
+        );
+        assert_eq!(
+            Target::Tablet(TabletOs::Windows).frontend_shell(),
+            Some("tablet")
+        );
+        // iPad and Android tablets build the phone's native shell.
+        assert_eq!(Target::Tablet(TabletOs::Ipad).frontend_shell(), Some("ios"));
+        assert_eq!(
+            Target::Tablet(TabletOs::Android).frontend_shell(),
+            Some("android")
         );
         assert_eq!(Target::Terminal(TermRenderer::Tui).frontend_shell(), None);
         assert_eq!(Target::Terminal(TermRenderer::Cli).frontend_shell(), None);

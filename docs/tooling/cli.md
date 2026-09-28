@@ -199,7 +199,8 @@ mode (device build, release signing, no web inspector).
 Signing comes from the environment only (`SKY_IOS_SIGN_IDENTITY`,
 `SKY_IOS_PROVISIONING_PROFILE`, `SKY_ANDROID_KEYSTORE`,
 `SKY_ANDROID_KEYSTORE_PASSWORD`, `SKY_ANDROID_KEY_ALIAS`,
-`SKY_ANDROID_KEY_PASSWORD`, `SKY_MACOS_SIGN_IDENTITY`; see
+`SKY_ANDROID_KEY_PASSWORD`, `SKY_MACOS_SIGN_IDENTITY`,
+`SKY_MACOS_PROVISIONING_PROFILE`; see
 `docs/sky-toml.md`). Before any build it refuses: no `--release` (exit 2), a
 target that is not a native shell, a local or plain-`http` backend address, a
 generic permission purpose string, missing Android signing, and an iOS identity

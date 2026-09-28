@@ -76,6 +76,9 @@ pub enum Need {
     /// The Android SDK (build-tools + a platform) and a JDK, for the flow
     /// tests that build the Android shell.
     AndroidSdk,
+    /// The Android emulator with an AVD (`emulator -list-avds` lists one), for
+    /// the flow test that runs the Android shell and reads its results.
+    AndroidEmulator,
     /// Node.js, for the tests that run a `scripts/*.mjs` helper.
     Node,
 }
@@ -104,6 +107,11 @@ impl Need {
                  `sdkmanager \"build-tools;35.0.0\" \"platforms;android-35\"`), set ANDROID_HOME, \
                  and install a JDK (javac, keytool)"
             }
+            Need::AndroidEmulator => {
+                "install the Android emulator and a system image (`sdkmanager emulator \
+                 \"system-images;android-35;google_apis;arm64-v8a\"`) and create an AVD \
+                 (`avdmanager create avd -n sky -k …`); `emulator -list-avds` must list it"
+            }
             Need::Node => {
                 "install Node.js 20+ (the e2e harnesses under scripts/ are Node programs)"
             }
@@ -118,6 +126,7 @@ impl Need {
             Need::Network => "network",
             Need::Xcode => "Xcode with the iOS SDKs",
             Need::AndroidSdk => "the Android SDK and a JDK",
+            Need::AndroidEmulator => "the Android emulator with an AVD",
             Need::Node => "Node.js",
         }
     }

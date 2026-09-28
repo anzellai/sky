@@ -936,6 +936,13 @@ pub struct BranchVerdict {
     /// it, and so does the client-crypto refusal (a server branch that reaches a
     /// client-held crypto family); the split and the fuzzer never do.
     pub effect_families: Vec<String>,
+    /// A SERVER arm that matches INSIDE one of its Msg's arguments
+    /// (`Report (Ok line)`, `Pick { id }`, `Report _`) instead of binding each
+    /// argument to a plain name. The split sends the names an arm binds and
+    /// rebuilds the Msg from them on the backend (`update (Report p.line)`), so
+    /// such an arm cannot be rebuilt; the split refuses it, naming the arm
+    /// (see [`msg_args_are_plain_names`]). Always `false` for a client arm.
+    pub matches_inside_msg_args: bool,
 }
 
 /// A server-tainted top-level binding (excluded from the client build).
@@ -2716,6 +2723,7 @@ fn classify_case_arms(
                 client_io: None,
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
+                matches_inside_msg_args: !msg_args_are_plain_names(body, arms[i].pat),
             });
         } else if server[i] {
             out.push(BranchVerdict {
@@ -2734,6 +2742,7 @@ fn classify_case_arms(
                 client_io: None,
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
+                matches_inside_msg_args: !msg_args_are_plain_names(body, arms[i].pat),
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -2756,6 +2765,7 @@ fn classify_case_arms(
                 msg_arg_tys: Vec::new(),
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
+                matches_inside_msg_args: false,
             });
         }
     }
@@ -5170,6 +5180,20 @@ fn model_write_shape(
 /// `["id"]`; `StartEdit id current` → `["id", "current"]`). Names are sliced
 /// from each binder's source span (`Pattern::Var` carries a `LocalId`, not a
 /// name); a `Record`-destructure binder already carries its field name.
+/// Whether each argument of an arm's Msg pattern is a plain name
+/// (`Report line`), the only shape a SERVER arm's Msg can be rebuilt from on
+/// the backend. A nested pattern (`Report (Ok line)`, `Pick { id }`,
+/// `Pair ( a, b )`) or a wildcard (`Report _`) binds the pieces or nothing, not
+/// the argument, so the backend would apply the constructor to the wrong value.
+pub(crate) fn msg_args_are_plain_names(body: &Body, pat: PatId) -> bool {
+    match &body.pats[pat] {
+        Pattern::Ctor { args, .. } => args
+            .iter()
+            .all(|a| matches!(body.pats[*a], Pattern::Var(_))),
+        _ => true,
+    }
+}
+
 fn msg_arg_names(body: &Body, pat: PatId, src: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if let Pattern::Ctor { args, .. } = &body.pats[pat] {
@@ -5471,6 +5495,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             // Whole-update path: io is None → never phase-2 checkable regardless.
             forces_effect: acc.inline_force,
             effect_families: graph.families_for(acc),
+            matches_inside_msg_args: false,
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -5500,6 +5525,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             msg_arg_tys: Vec::new(),
             forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
             effect_families: graph.families_for(acc),
+            matches_inside_msg_args: false,
         };
     }
     // Client — note a client effect if present.
@@ -5516,6 +5542,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         msg_arg_tys: Vec::new(),
         forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
         effect_families: graph.families_for(acc),
+        matches_inside_msg_args: false,
     }
 }
 
@@ -5867,11 +5894,13 @@ mod tests {
             "Native_secureGet",
             "Native_secureRemove",
             "Native_authenticate",
+            // The camera code scanner (Native.scanCode) runs on the device too.
+            "Native_scanCode",
         ] {
             record_ffi_symbol(sym, &mut acc, false);
         }
         assert!(acc.server_kernels.is_empty(), "{:?}", acc.server_kernels);
-        assert_eq!(acc.client_kernels.len(), 4, "{:?}", acc.client_kernels);
+        assert_eq!(acc.client_kernels.len(), 5, "{:?}", acc.client_kernels);
 
         let mut acc = Refs::default();
         record_ffi_symbol("Secret_fromString", &mut acc, false);

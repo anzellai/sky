@@ -1,8 +1,8 @@
 module NativeConformanceTest exposing (main, tests)
 
--- Behavioural conformance for the Std.Native secure store and biometric
--- prompt, and the Std.Bundle builders that go with them, through the compiled
--- Sky surface.
+-- Behavioural conformance for the Std.Native secure store, biometric prompt
+-- and camera code scanner, and the Std.Bundle builders that go with them,
+-- through the compiled Sky surface.
 --
 -- This suite runs as a native (server / CLI) program, which has no native
 -- shell: every op must be Err Unavailable, never a silent success, and never a
@@ -109,6 +109,51 @@ tests =
               Test.expectErrorKind
                   Error.InvalidInput
                   (Task.run (Native.authenticate "  ")))
+    , Test.test
+          "scanCode without a native shell is Unavailable, not Nothing"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.Unavailable
+                  (Task.run
+                      (Native.scanCode
+                          { formats = [ Native.Qr, Native.Ean13 ]
+                          , prompt = "Scan the pairing code"
+                          })))
+    , Test.test
+          "scanCode with every format and no prompt is still Unavailable here"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.Unavailable
+                  (Task.run
+                      (Native.scanCode
+                          { formats =
+                              [ Native.Qr
+                              , Native.Aztec
+                              , Native.DataMatrix
+                              , Native.Pdf417
+                              , Native.Ean8
+                              , Native.Ean13
+                              , Native.UpcE
+                              , Native.Code39
+                              , Native.Code93
+                              , Native.Code128
+                              , Native.Itf
+                              , Native.Codabar
+                              ]
+                          , prompt = ""
+                          })))
+    , Test.test
+          "the scanCode Unavailable message names the native shell"
+          (\_ ->
+              Test.equal
+                  (Err True)
+                  (Task.run (Native.scanCode { formats = [], prompt = "" })
+                      |> Result.mapError
+                             (\e ->
+                                 String.contains
+                                     "native app shell"
+                                     (Error.toString e))
+                      |> Result.map (\_ -> False)))
     , Test.test
           "every Bundle builder and constructor composes"
           (\_ ->

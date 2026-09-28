@@ -227,9 +227,12 @@ fn cmd_package(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    use target::{DesktopOs, MobileOs, Target};
+    use target::{DesktopOs, MobileOs, TabletOs, Target};
     let tgt = match tgt {
         Target::Mobile(MobileOs::Ios) | Target::Mobile(MobileOs::Android) => tgt,
+        // A tablet build is the phone's native shell (see
+        // `Target::frontend_shell`), so it packages the same artefact.
+        Target::Tablet(TabletOs::Ipad) | Target::Tablet(TabletOs::Android) => tgt,
         Target::Desktop(DesktopOs::Mac) => tgt,
         Target::Desktop(DesktopOs::Host) if cfg!(target_os = "macos") => {
             Target::Desktop(DesktopOs::Mac)
@@ -246,8 +249,8 @@ fn cmd_package(args: &[String]) -> ExitCode {
         Target::Tablet(_) => {
             eprintln!(
                 "sky package: `{}` ships as the responsive web bundle, which needs no package. \
-                 The iOS shell runs on iPad (it declares both device families): package \
-                 `mobile:ios` for the App Store.",
+                 Package `tablet:ipad` or `tablet:android` (the phone's native shell, which \
+                 runs on tablets) for a store.",
                 tgt.canonical()
             );
             return ExitCode::FAILURE;
@@ -2887,6 +2890,30 @@ fn build_std_app(
                 return ExitCode::FAILURE;
             }
         };
+        // The native shells' purpose strings and entitlements, checked here on
+        // the USER's project before any client entry is derived. The frontend
+        // leg runs the same check on the derived project, but a failure there
+        // names the derived files, not the `bundle` binding the user edits.
+        if let Some(shell) = tgt.frontend_shell() {
+            let url = match app_url::Shell::from_frontend_shell(shell)
+                .map(|sh| app_url::resolve_from_process(sh, builder_app_url.as_deref()))
+            {
+                Some(Ok(u)) => Some(u),
+                Some(Err(e)) => {
+                    eprintln!("sky build --target {}: {e}", tgt.canonical());
+                    return ExitCode::FAILURE;
+                }
+                None => None,
+            };
+            if let Err(e) = native_preflight(project_dir, shell, url.as_ref()) {
+                eprintln!(
+                    "sky {} --target {}: {e}",
+                    if run { "run" } else { "build" },
+                    tgt.canonical()
+                );
+                return ExitCode::FAILURE;
+            }
+        }
         let src_to = match stage_std_app_derived(project_dir, &out_root) {
             Ok(p) => p,
             Err(code) => return code,
@@ -4666,7 +4693,7 @@ fn package_macos_release(
     }
 
     let mut generated = vec![
-        ("CFBundleName".to_string(), S(id.exe_name.clone())),
+        ("CFBundleName".to_string(), S(id.display_name.clone())),
         (
             "CFBundleDisplayName".to_string(),
             S(id.display_name.clone()),
@@ -4724,16 +4751,61 @@ fn package_macos_release(
         project_dir,
     )?);
     let ent_path = stage.join(format!("{}.entitlements", id.exe_name));
-    let has_ent = ent_layers.iter().any(|l| !l.entries.is_empty());
+    let requested = plist::merge(&ent_layers)
+        .map_err(|e| format!("entitlements: {}", e.join("; ")))?
+        .entries;
+    let signing = native_pkg::macos_signing(
+        native_pkg::macos_identity(),
+        native_pkg::macos_profile()?,
+        &requested,
+    )?;
+    let identity = match &signing {
+        native_pkg::MacSigning::Identity { identity, .. } => Some(identity.clone()),
+        native_pkg::MacSigning::AdHoc { .. } => None,
+    };
+    let entitlements: Vec<(String, plist::Value)> = match &signing {
+        native_pkg::MacSigning::AdHoc {
+            entitlements,
+            dropped,
+        } => {
+            if !dropped.is_empty() {
+                eprintln!(
+                    "  note: the ad hoc signature leaves out {}: macOS refuses to launch an \
+                     ad hoc signed app that asks for them. Sign with {} and {} to keep them.",
+                    dropped.join(", "),
+                    native_pkg::MACOS_SIGN_IDENTITY,
+                    native_pkg::MACOS_PROVISIONING_PROFILE
+                );
+            }
+            entitlements.clone()
+        }
+        native_pkg::MacSigning::Identity { profile, .. } => match profile {
+            Some(profile) => {
+                std::fs::copy(profile, app.join("Contents/embedded.provisionprofile"))
+                    .map_err(|e| format!("embed the provisioning profile: {e}"))?;
+                let granted = native_pkg::profile_entitlements(profile)?;
+                let mut layers = ent_layers.clone();
+                layers.insert(
+                    0,
+                    plist::Layer {
+                        origin: "the provisioning profile".to_string(),
+                        rank: plist::Rank::Generated,
+                        entries: native_pkg::signed_entitlements(&granted, &requested)?,
+                    },
+                );
+                plist::merge(&layers)
+                    .map_err(|e| format!("entitlements: {}", e.join("; ")))?
+                    .entries
+            }
+            None => requested.clone(),
+        },
+    };
+    let has_ent = !entitlements.is_empty();
     if has_ent {
-        std::fs::write(
-            &ent_path,
-            native_pkg::merge_document("entitlements", &ent_layers)?,
-        )
-        .map_err(|e| format!("write entitlements: {e}"))?;
+        std::fs::write(&ent_path, plist::render_document(&entitlements))
+            .map_err(|e| format!("write entitlements: {e}"))?;
     }
 
-    let identity = native_pkg::macos_identity();
     let mut cs = Command::new("codesign");
     cs.arg("--force");
     match &identity {
@@ -5041,12 +5113,17 @@ fn valid_bundle_id(id: &str) -> bool {
 /// `src/Main.sky`) — the file whose optional `bundle = Bundle.default |> …`
 /// binding declares the packaging identity.
 fn read_entry_source(project_dir: &Path) -> Option<String> {
-    let toml = std::fs::read_to_string(project_dir.join("sky.toml")).ok();
-    let entry = toml
+    std::fs::read_to_string(project_dir.join(entry_rel_path(project_dir))).ok()
+}
+
+/// The project's entry file relative to the project (sky.toml `entry`, default
+/// `src/Main.sky`), as a diagnostic names it.
+fn entry_rel_path(project_dir: &Path) -> String {
+    std::fs::read_to_string(project_dir.join("sky.toml"))
+        .ok()
         .as_deref()
         .and_then(parse_toml_entry)
-        .unwrap_or_else(|| "src/Main.sky".to_string());
-    std::fs::read_to_string(project_dir.join(entry)).ok()
+        .unwrap_or_else(|| "src/Main.sky".to_string())
 }
 
 /// Is the byte offset `at` inside a `--` line comment? (True if a `--` precedes
@@ -5419,17 +5496,7 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
         }
     };
 
-    // Executable / .app basename: capitalise the last id segment (id is the
-    // stable identity; the display name may contain spaces/emoji the filesystem
-    // and Swift/Java would choke on).
-    let exe_seg = bundle_id.rsplit('.').next().unwrap_or(&seg);
-    let exe_name = {
-        let mut c = exe_seg.chars();
-        match c.next() {
-            Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
-            None => "App".to_string(),
-        }
-    };
+    let exe_name = product_name(&display_name, &bundle_id);
 
     // Default to "1.0" (a literal, not a sky.toml read — keeping bundle out of
     // the pre-binary config surface entirely); `Bundle.withVersion` sets a real
@@ -5452,6 +5519,43 @@ fn resolve_bundle_identity(project_dir: &Path) -> Result<BundleIdentity, String>
         build_number,
         icon,
     })
+}
+
+/// The executable / `.app` / product name for a display name, derived from the
+/// WHOLE name the way Xcode derives a product's module name
+/// (`c99extidentifier`): a character that is not an ASCII letter, digit or `_`
+/// becomes `_`, and a leading digit gets a `_` prefix, so "Sky Probe" is
+/// `Sky_Probe`. The name is a file name, a Swift type name and a shell word, so
+/// it keeps to that set. Before v0.27.0 it was the capitalised last component of
+/// the bundle id, so `withName "Sky Probe"` with id `com.example.probe` built
+/// `Probe.app` and CFBundleName `Probe`. A name with nothing usable (only emoji,
+/// say) falls back to the capitalised last component of the bundle id. The
+/// display name itself (CFBundleDisplayName, CFBundleName, `android:label`)
+/// keeps the name as written.
+fn product_name(display_name: &str, bundle_id: &str) -> String {
+    let mut out: String = display_name
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if !out.chars().any(|c| c.is_ascii_alphanumeric()) {
+        let seg = bundle_id.rsplit('.').next().unwrap_or("");
+        let mut c = seg.chars();
+        return match c.next() {
+            Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
+            None => "App".to_string(),
+        };
+    }
+    if out.starts_with(|c: char| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    out
 }
 
 /// Generate a native Android WebView shell for the client and build a signed,
@@ -5566,6 +5670,31 @@ fn build_android_apk(
             ),
     )
     .map_err(|e| format!("write MainActivity.java: {e}"))?;
+
+    // Std.Native.scanCode: the camera scanner and its ZXing decoder, only for
+    // an app that calls it (a pinned jar from Maven Central, verified by its
+    // SHA-256 and cached); every other app gets a stub and no extra jar.
+    let scan_dir = root.join("app/src/main/java/sky/scan");
+    std::fs::create_dir_all(&scan_dir)
+        .map_err(|e| format!("create {}: {e}", scan_dir.display()))?;
+    let libs = root.join("app/libs");
+    let _ = std::fs::remove_dir_all(&libs);
+    std::fs::create_dir_all(&libs).map_err(|e| format!("create {}: {e}", libs.display()))?;
+    let scans = decl.capabilities.contains("scanCode");
+    if scans {
+        let jar = native_pkg::zxing_jar()?;
+        std::fs::copy(&jar, libs.join(native_pkg::ZXING_JAR_NAME))
+            .map_err(|e| format!("copy {}: {e}", jar.display()))?;
+    }
+    std::fs::write(
+        scan_dir.join("SkyScanner.java"),
+        if scans {
+            ANDROID_SCANNER_JAVA
+        } else {
+            ANDROID_SCANNER_STUB_JAVA
+        },
+    )
+    .map_err(|e| format!("write SkyScanner.java: {e}"))?;
 
     // Native extensions (Std.Native.bridge): the registry + installer + each
     // injected native/android/*.java from the project + its Sky deps, all in
@@ -5740,6 +5869,170 @@ public final class SkyRegistry {
 }
 "#;
 
+/// `Std.Native.scanCode` in the iOS shell: VisionKit's
+/// DataScannerViewController behind the `sky:scanCode` op (WebView.swift).
+const IOS_CODE_SCANNER_SWIFT: &str = r#"import UIKit
+import AVFoundation
+import Vision
+import VisionKit
+
+/// `Std.Native.scanCode` on iOS and iPadOS: VisionKit's
+/// DataScannerViewController, presented full screen over the web view with a
+/// Cancel button and the app's prompt. `SkyCodeScanner.run` replies exactly once
+/// through `reply(json, error)`: `{"found":true,"format":…,"text":…}` for a code,
+/// `{"found":false}` when the user cancels, or an error "<kind>: <message>"
+/// (unavailable / denied) as runtime-go/rt/native_shell.go reads it.
+/// Generated by `sky build`; do not edit.
+@MainActor
+final class SkyCodeScanner: NSObject, DataScannerViewControllerDelegate {
+    typealias Reply = (String?, String?) -> Void
+
+    /// The scan in progress. One at a time: a second request is refused.
+    private static var current: SkyCodeScanner?
+
+    private let names: [VNBarcodeSymbology: String]
+    private let prompt: String
+    private var reply: Reply?
+    private weak var nav: UINavigationController?
+    private weak var scanner: DataScannerViewController?
+
+    /// The Vision symbologies for one Sky wire name (the names of
+    /// Std.Native.CodeFormat; UPC-A arrives as EAN-13, as Vision reports it).
+    static func symbologies(_ name: String) -> [VNBarcodeSymbology] {
+        switch name {
+        case "qr": return [.qr]
+        case "aztec": return [.aztec]
+        case "datamatrix": return [.dataMatrix]
+        case "pdf417": return [.pdf417]
+        case "ean8": return [.ean8]
+        case "ean13": return [.ean13]
+        case "upce": return [.upce]
+        case "code39":
+            return [.code39, .code39Checksum, .code39FullASCII, .code39FullASCIIChecksum]
+        case "code93": return [.code93, .code93i]
+        case "code128": return [.code128]
+        case "itf": return [.itf14, .i2of5, .i2of5Checksum]
+        case "codabar": return [.codabar]
+        default: return []
+        }
+    }
+
+    private init(formats: [String], prompt: String, reply: @escaping Reply) {
+        var names: [VNBarcodeSymbology: String] = [:]
+        for f in formats {
+            for s in Self.symbologies(f) { names[s] = f }
+        }
+        self.names = names
+        self.prompt = prompt
+        self.reply = reply
+    }
+
+    /// Start a scan for the comma-separated `formats` over the web view.
+    static func run(formats: String, prompt: String, from web: UIView?, reply: @escaping Reply) {
+        guard current == nil else {
+            reply(nil, "invalid: a code scan is already open")
+            return
+        }
+        guard DataScannerViewController.isSupported else {
+            reply(nil, "unavailable: this device cannot scan codes with its camera "
+                + "(VisionKit's DataScannerViewController is not supported here; "
+                + "the iOS simulator never supports it)")
+            return
+        }
+        let wanted = formats.split(separator: ",").map(String.init).filter { !symbologies($0).isEmpty }
+        guard !wanted.isEmpty else {
+            reply(nil, "invalid: no code format to scan for")
+            return
+        }
+        let start = {
+            guard DataScannerViewController.isAvailable else {
+                reply(nil, "unavailable: the camera scanner cannot run now "
+                    + "(camera access is restricted on this device)")
+                return
+            }
+            guard var host = web?.window?.rootViewController else {
+                reply(nil, "unavailable: there is no window to show the scanner in")
+                return
+            }
+            while let next = host.presentedViewController { host = next }
+            let s = SkyCodeScanner(formats: wanted, prompt: prompt, reply: reply)
+            current = s
+            s.present(from: host)
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            start()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        start()
+                    } else {
+                        reply(nil, "denied: the user did not allow the camera")
+                    }
+                }
+            }
+        default:
+            reply(nil, "denied: camera access is off for this app (Settings > Privacy & Security > Camera)")
+        }
+    }
+
+    private func present(from host: UIViewController) {
+        let vc = DataScannerViewController(
+            recognizedDataTypes: [.barcode(symbologies: Array(names.keys))],
+            qualityLevel: .balanced,
+            recognizesMultipleItems: false,
+            isHighlightingEnabled: true)
+        vc.delegate = self
+        vc.navigationItem.title = prompt.isEmpty ? nil : prompt
+        vc.navigationItem.leftBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .cancel, target: self, action: #selector(cancel))
+        let nav = UINavigationController(rootViewController: vc)
+        nav.modalPresentationStyle = .fullScreen
+        self.nav = nav
+        self.scanner = vc
+        host.present(nav, animated: true) {
+            do {
+                try vc.startScanning()
+            } catch {
+                self.finish(nil, "unavailable: the camera scanner did not start: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc private func cancel() {
+        finish("{\"found\":false}", nil)
+    }
+
+    func dataScanner(_ dataScanner: DataScannerViewController,
+                     didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+        for item in addedItems {
+            guard case .barcode(let code) = item, let text = code.payloadStringValue,
+                  let format = names[code.observation.symbology] else { continue }
+            let obj: [String: Any] = ["found": true, "format": format, "text": text]
+            let json = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+            finish(String(decoding: json, as: UTF8.self), nil)
+            return
+        }
+    }
+
+    func dataScanner(_ dataScanner: DataScannerViewController,
+                     becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable) {
+        finish(nil, "unavailable: the camera scanner stopped: \(error.localizedDescription)")
+    }
+
+    /// Reply once, stop the camera and close the scanner.
+    private func finish(_ json: String?, _ err: String?) {
+        guard let reply = reply else { return }
+        self.reply = nil
+        scanner?.stopScanning()
+        nav?.dismiss(animated: true)
+        Self.current = nil
+        reply(json, err)
+    }
+}
+"#;
+
 const IOS_EXT_REGISTRY: &str = r#"import Foundation
 
 /// Registry of custom native capabilities (Std.Native.bridge). Each injected
@@ -5796,6 +6089,8 @@ fn build_ios_app(
         ),
     )
     .map_err(|e| format!("write WebView.swift: {e}"))?;
+    std::fs::write(src.join("SkyCodeScanner.swift"), IOS_CODE_SCANNER_SWIFT)
+        .map_err(|e| format!("write SkyCodeScanner.swift: {e}"))?;
 
     // Native extensions (Std.Native.bridge): copy each native/ios/*.swift from
     // the project + its Sky deps into the shell, and generate the registry
@@ -5909,6 +6204,38 @@ fn build_ios_app(
         );
     }
 
+    // The simulator build carries its entitlements the way Xcode's does: in
+    // the executable's `__TEXT,__entitlements` / `__TEXT,__ents_der` sections,
+    // with the application identifier and a keychain access group added, and
+    // an ad hoc signature with NO entitlements. An ad hoc signature that
+    // carries a restricted entitlement (a keychain access group, an associated
+    // domain, push, iCloud) is refused by the kernel, so the app never
+    // launched ("No such process"); and without an access group every Keychain
+    // call failed with -34018 (see `native_pkg::simulated_entitlements`).
+    let requested = plist::merge(&ent_layers)
+        .map_err(|e| format!("entitlements: {}", e.join("; ")))?
+        .entries;
+    let simulated = native_pkg::simulated_entitlements(&id.bundle_id, &requested);
+    let sim_ent = root.join(format!("{name}-Simulated.entitlements"));
+    std::fs::write(&sim_ent, plist::render_document(&simulated))
+        .map_err(|e| format!("write {}: {e}", sim_ent.display()))?;
+    let sim_der = root.join(format!("{name}-Simulated.entitlements.der"));
+    let _ = std::fs::remove_file(&sim_der);
+    let derq = Command::new("derq")
+        .args(["query", "-f", "xml", "-i"])
+        .arg(&sim_ent)
+        .arg("-o")
+        .arg(&sim_der)
+        .arg("--raw")
+        .output()
+        .map_err(|e| format!("run derq (macOS 12 or later ships it in /usr/bin): {e}"))?;
+    if !derq.status.success() || !sim_der.is_file() {
+        return Err(format!(
+            "derq could not encode {} as DER: {}",
+            sim_ent.display(),
+            String::from_utf8_lossy(&derq.stderr).trim()
+        ));
+    }
     std::fs::write(
         root.join("build-app.sh"),
         IOS_BUILD_APP.replace("{{NAME}}", name),
@@ -5929,15 +6256,11 @@ fn build_ios_app(
     if let Some(icon) = &icon_src {
         generate_ios_app_icons(icon, &app)?;
     }
-    // Ad-hoc sign the simulator build with its entitlements. The simulator
-    // honours an ad-hoc signature, and the Keychain (Native.secureSet) needs
-    // the app to carry a signature at all.
-    let mut cs = Command::new("codesign");
-    cs.args(["--force", "--sign", "-"]);
-    if ent_has_keys {
-        cs.arg("--entitlements").arg(&ent_path);
-    }
-    let st = cs
+    // Sign the simulator build ad hoc with no entitlements, as Xcode does: the
+    // entitlements are in the executable's sections (above), where the
+    // simulator reads them. The app must carry a signature for the Keychain.
+    let st = Command::new("codesign")
+        .args(["--force", "--sign", "-"])
         .arg(&app)
         .status()
         .map_err(|e| format!("run codesign: {e}"))?;
@@ -5959,7 +6282,7 @@ fn ios_generated_info(
     use plist::Value::{Array, Bool, Dict, Integer, String as S};
     let name = &id.exe_name;
     let mut out = vec![
-        ("CFBundleName".to_string(), S(name.clone())),
+        ("CFBundleName".to_string(), S(id.display_name.clone())),
         (
             "CFBundleDisplayName".to_string(),
             S(id.display_name.clone()),
@@ -6269,6 +6592,12 @@ struct WebView: UIViewRepresentable {
                 let payload = dict["payload"] as? String ?? "{}"
                 let p = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: String] ?? [:]
                 skyBuiltin(type, p, replyHandler)
+            case "sky:scanCode":
+                // Std.Native.scanCode: the camera code scanner (SkyCodeScanner.swift).
+                let payload = dict["payload"] as? String ?? "{}"
+                let p = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: String] ?? [:]
+                SkyCodeScanner.run(formats: p["formats"] ?? "", prompt: p["prompt"] ?? "",
+                                   from: message.webView) { reply, err in replyHandler(reply, err) }
             default:
                 // A custom Std.Native.bridge capability registered by an injected
                 // native/ios/*.swift file (e.g. a payments library). The build
@@ -6373,8 +6702,14 @@ cd "$(dirname "$0")"
 : "${DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"; export DEVELOPER_DIR; unset SDKROOT || true
 SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 rm -rf build && mkdir -p "build/{{NAME}}.app"
+# The simulator reads the app's entitlements from these two sections (XML and
+# DER), as it does for an Xcode build; the signature carries none.
 xcrun --sdk iphonesimulator swiftc -sdk "$SDK" -target arm64-apple-ios17.0-simulator \
   -parse-as-library {{NAME}}/*.swift \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements \
+  -Xlinker "{{NAME}}-Simulated.entitlements" \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __ents_der \
+  -Xlinker "{{NAME}}-Simulated.entitlements.der" \
   -o "build/{{NAME}}.app/{{NAME}}"
 cp {{NAME}}/Info.plist "build/{{NAME}}.app/Info.plist"
 echo "OK -> build/{{NAME}}.app"
@@ -6529,6 +6864,14 @@ public class MainActivity extends Activity {
         web.loadUrl(APP_URL);
     }
 
+    // The camera permission Native.scanCode asks for when it is not yet
+    // granted (sky/scan/SkyScanner.java).
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        sky.scan.SkyScanner.onPermissionResult(requestCode, results);
+    }
+
     /** JS-reachable native capabilities. Method names are the JS API. */
     public static class SkyNativeBridge {
         private final Activity act;
@@ -6588,6 +6931,14 @@ public class MainActivity extends Activity {
                         break;
                     case "sky:authenticate":
                         authenticate(p.optString("reason", ""), cbId);
+                        break;
+                    case "sky:scanCode":
+                        // Std.Native.scanCode (sky/scan/SkyScanner.java).
+                        sky.scan.SkyScanner.scan(act, p.optString("formats", ""),
+                            p.optString("prompt", ""), new sky.scan.SkyScanner.Reply() {
+                                @Override public void ok(String json) { replyOk(cbId, json); }
+                                @Override public void err(String msg) { replyErr(cbId, msg); }
+                            });
                         break;
                     default:
                         replyErr(cbId, "invalid: unknown op " + name);
@@ -6799,6 +7150,411 @@ public class MainActivity extends Activity {
 }
 "#;
 
+/// `Std.Native.scanCode` in the Android shell: Camera2 + the ZXing decoder,
+/// compiled in only when the app calls `Native.scanCode` (the ZXing jar is then
+/// on the class path; see `native_pkg::zxing_jar`).
+const ANDROID_SCANNER_JAVA: &str = r#"package sky.scan;
+
+import android.Manifest;
+import android.app.Activity;
+import android.app.Dialog;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.graphics.ImageFormat;
+import android.graphics.SurfaceTexture;
+import android.hardware.camera2.CameraCaptureSession;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraDevice;
+import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.Image;
+import android.media.ImageReader;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.util.Size;
+import android.view.Gravity;
+import android.view.Surface;
+import android.view.TextureView;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.DecodeHintType;
+import com.google.zxing.LuminanceSource;
+import com.google.zxing.MultiFormatReader;
+import com.google.zxing.PlanarYUVLuminanceSource;
+import com.google.zxing.ReaderException;
+import com.google.zxing.Result;
+import com.google.zxing.common.HybridBinarizer;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Std.Native.scanCode on Android: the camera (Camera2) in a full-screen dialog
+ * with the app's prompt and a Cancel button, decoded with ZXing (Apache License
+ * 2.0). Replies exactly once: {"found":true,"format":…,"text":…} for a code,
+ * {"found":false} when the user cancels (Cancel or Back), or an error
+ * "<kind>: <message>" (unavailable / denied) as runtime-go/rt/native_shell.go
+ * reads it. Generated by `sky build`; do not edit.
+ */
+public final class SkyScanner {
+    /** How the scanner answers the bridge. */
+    public interface Reply {
+        void ok(String json);
+        void err(String message);
+    }
+
+    /** The request code of the camera permission request (MainActivity). */
+    public static final int PERMISSION_REQUEST = 23721;
+
+    private static SkyScanner current;
+    private static SkyScanner pendingPermission;
+
+    private final Activity act;
+    private final String prompt;
+    private final Map<BarcodeFormat, String> names = new EnumMap<>(BarcodeFormat.class);
+    private final MultiFormatReader decoder = new MultiFormatReader();
+    private Reply reply;
+    private Dialog dialog;
+    private CameraDevice camera;
+    private CameraCaptureSession session;
+    private ImageReader reader;
+    private HandlerThread thread;
+    private Handler handler;
+    private int frame;
+
+    private SkyScanner(Activity act, String formats, String prompt, Reply reply) {
+        this.act = act;
+        this.prompt = prompt;
+        this.reply = reply;
+        for (String f : formats.split(",")) {
+            for (BarcodeFormat b : zxingFormats(f.trim())) {
+                names.put(b, f.trim());
+            }
+        }
+        Map<DecodeHintType, Object> hints = new EnumMap<>(DecodeHintType.class);
+        hints.put(DecodeHintType.POSSIBLE_FORMATS,
+            names.isEmpty() ? EnumSet.noneOf(BarcodeFormat.class) : EnumSet.copyOf(names.keySet()));
+        hints.put(DecodeHintType.TRY_HARDER, Boolean.TRUE);
+        decoder.setHints(hints);
+    }
+
+    /** The ZXing formats for one Sky wire name (Std.Native.CodeFormat). */
+    static List<BarcodeFormat> zxingFormats(String name) {
+        switch (name) {
+            case "qr": return Arrays.asList(BarcodeFormat.QR_CODE);
+            case "aztec": return Arrays.asList(BarcodeFormat.AZTEC);
+            case "datamatrix": return Arrays.asList(BarcodeFormat.DATA_MATRIX);
+            case "pdf417": return Arrays.asList(BarcodeFormat.PDF_417);
+            case "ean8": return Arrays.asList(BarcodeFormat.EAN_8);
+            // UPC-A is reported as EAN-13 (a leading 0), as iOS reports it.
+            case "ean13": return Arrays.asList(BarcodeFormat.EAN_13, BarcodeFormat.UPC_A);
+            case "upce": return Arrays.asList(BarcodeFormat.UPC_E);
+            case "code39": return Arrays.asList(BarcodeFormat.CODE_39);
+            case "code93": return Arrays.asList(BarcodeFormat.CODE_93);
+            case "code128": return Arrays.asList(BarcodeFormat.CODE_128);
+            case "itf": return Arrays.asList(BarcodeFormat.ITF);
+            case "codabar": return Arrays.asList(BarcodeFormat.CODABAR);
+            default: return new ArrayList<>();
+        }
+    }
+
+    /** Start a scan for the comma-separated `formats`. */
+    public static synchronized void scan(final Activity act, String formats, String prompt, Reply reply) {
+        if (current != null || pendingPermission != null) {
+            reply.err("invalid: a code scan is already open");
+            return;
+        }
+        if (!act.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+            reply.err("unavailable: this device has no camera");
+            return;
+        }
+        final SkyScanner s = new SkyScanner(act, formats, prompt, reply);
+        if (s.names.isEmpty()) {
+            reply.err("invalid: no code format to scan for");
+            return;
+        }
+        if (act.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            pendingPermission = s;
+            act.runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    act.requestPermissions(new String[] {Manifest.permission.CAMERA}, PERMISSION_REQUEST);
+                }
+            });
+            return;
+        }
+        s.start();
+    }
+
+    /** MainActivity.onRequestPermissionsResult forwards here. */
+    public static synchronized boolean onPermissionResult(int requestCode, int[] results) {
+        if (requestCode != PERMISSION_REQUEST || pendingPermission == null) return false;
+        SkyScanner s = pendingPermission;
+        pendingPermission = null;
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+            s.start();
+        } else {
+            s.finish(null, "denied: the user did not allow the camera");
+        }
+        return true;
+    }
+
+    private void start() {
+        current = this;
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() { show(); }
+        });
+    }
+
+    private void show() {
+        dialog = new Dialog(act, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        FrameLayout root = new FrameLayout(act);
+        TextureView preview = new TextureView(act);
+        root.addView(preview, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout bar = new LinearLayout(act);
+        bar.setOrientation(LinearLayout.VERTICAL);
+        bar.setGravity(Gravity.CENTER_HORIZONTAL);
+        bar.setPadding(32, 32, 32, 64);
+        bar.setBackgroundColor(0x99000000);
+        if (!prompt.isEmpty()) {
+            TextView title = new TextView(act);
+            title.setText(prompt);
+            title.setTextColor(Color.WHITE);
+            title.setTextSize(18);
+            title.setGravity(Gravity.CENTER);
+            bar.addView(title);
+        }
+        Button cancel = new Button(act);
+        cancel.setText(android.R.string.cancel);
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { finish("{\"found\":false}", null); }
+        });
+        bar.addView(cancel);
+        root.addView(bar, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
+        dialog.setContentView(root);
+        dialog.setOnCancelListener(new DialogInterface.OnCancelListener() {
+            @Override public void onCancel(DialogInterface d) { finish("{\"found\":false}", null); }
+        });
+        preview.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) { openCamera(st); }
+            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) {}
+            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) { return true; }
+            @Override public void onSurfaceTextureUpdated(SurfaceTexture st) {}
+        });
+        dialog.show();
+    }
+
+    private void openCamera(final SurfaceTexture st) {
+        try {
+            CameraManager cm = (CameraManager) act.getSystemService(Context.CAMERA_SERVICE);
+            String id = null;
+            for (String c : cm.getCameraIdList()) {
+                Integer facing = cm.getCameraCharacteristics(c).get(CameraCharacteristics.LENS_FACING);
+                if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                    id = c;
+                    break;
+                }
+                if (id == null) id = c;
+            }
+            if (id == null) {
+                finish(null, "unavailable: this device has no camera");
+                return;
+            }
+            StreamConfigurationMap map = cm.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+            Size size = new Size(640, 480);
+            if (map != null) {
+                // The largest YUV size up to 1280x720: enough detail for a
+                // small code, few enough pixels to decode every frame.
+                long best = 0;
+                for (Size sz : map.getOutputSizes(ImageFormat.YUV_420_888)) {
+                    long area = (long) sz.getWidth() * sz.getHeight();
+                    if (area <= 1280L * 720L && area > best) {
+                        best = area;
+                        size = sz;
+                    }
+                }
+            }
+            st.setDefaultBufferSize(size.getWidth(), size.getHeight());
+            thread = new HandlerThread("sky-scan");
+            thread.start();
+            handler = new Handler(thread.getLooper());
+            reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), ImageFormat.YUV_420_888, 2);
+            reader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
+                @Override public void onImageAvailable(ImageReader r) {
+                    Image img = r.acquireLatestImage();
+                    if (img == null) return;
+                    try {
+                        decode(img);
+                    } finally {
+                        img.close();
+                    }
+                }
+            }, handler);
+            cm.openCamera(id, new CameraDevice.StateCallback() {
+                @Override public void onOpened(CameraDevice c) {
+                    camera = c;
+                    startSession(st);
+                }
+                @Override public void onDisconnected(CameraDevice c) {
+                    c.close();
+                    finish(null, "unavailable: the camera was disconnected");
+                }
+                @Override public void onError(CameraDevice c, int error) {
+                    c.close();
+                    finish(null, "unavailable: the camera failed (error " + error + ")");
+                }
+            }, handler);
+        } catch (SecurityException e) {
+            finish(null, "denied: the app may not use the camera");
+        } catch (Exception e) {
+            finish(null, "unavailable: the camera did not open: " + e);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void startSession(SurfaceTexture st) {
+        try {
+            Surface previewSurface = new Surface(st);
+            Surface readerSurface = reader.getSurface();
+            final CaptureRequest.Builder b = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            b.addTarget(previewSurface);
+            b.addTarget(readerSurface);
+            b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+            camera.createCaptureSession(Arrays.asList(previewSurface, readerSurface),
+                new CameraCaptureSession.StateCallback() {
+                    @Override public void onConfigured(CameraCaptureSession s) {
+                        session = s;
+                        try {
+                            s.setRepeatingRequest(b.build(), null, handler);
+                        } catch (Exception e) {
+                            finish(null, "unavailable: the camera preview did not start: " + e);
+                        }
+                    }
+                    @Override public void onConfigureFailed(CameraCaptureSession s) {
+                        finish(null, "unavailable: the camera could not be configured");
+                    }
+                }, handler);
+        } catch (Exception e) {
+            finish(null, "unavailable: the camera preview did not start: " + e);
+        }
+    }
+
+    // Decode the luminance (Y) plane. Every other frame is turned a quarter
+    // turn, so a 1-D barcode reads whichever way the phone is held.
+    private void decode(Image img) {
+        if (reply == null) return;
+        Image.Plane plane = img.getPlanes()[0];
+        int w = img.getWidth();
+        int h = img.getHeight();
+        int stride = plane.getRowStride();
+        ByteBuffer buf = plane.getBuffer();
+        byte[] y = new byte[stride * h];
+        buf.get(y, 0, Math.min(buf.remaining(), y.length));
+        LuminanceSource src;
+        if ((frame++ & 1) == 0) {
+            src = new PlanarYUVLuminanceSource(y, stride, h, 0, 0, w, h, false);
+        } else {
+            byte[] rot = new byte[w * h];
+            for (int row = 0; row < h; row++) {
+                for (int col = 0; col < w; col++) {
+                    rot[col * h + (h - 1 - row)] = y[row * stride + col];
+                }
+            }
+            src = new PlanarYUVLuminanceSource(rot, h, w, 0, 0, h, w, false);
+        }
+        try {
+            Result r = decoder.decodeWithState(new BinaryBitmap(new HybridBinarizer(src)));
+            String format = names.get(r.getBarcodeFormat());
+            String text = r.getText();
+            if (r.getBarcodeFormat() == BarcodeFormat.UPC_A) {
+                format = "ean13";
+                text = "0" + text;
+            }
+            if (format == null) return;
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("found", true);
+            o.put("format", format);
+            o.put("text", text);
+            finish(o.toString(), null);
+        } catch (ReaderException e) {
+            // No code in this frame.
+        } catch (org.json.JSONException e) {
+            finish(null, "unavailable: " + e);
+        } finally {
+            decoder.reset();
+        }
+    }
+
+    /** Reply once, then stop the camera and close the scanner. */
+    private void finish(String json, String error) {
+        final Reply r;
+        synchronized (SkyScanner.class) {
+            r = reply;
+            reply = null;
+            if (current == this) current = null;
+        }
+        if (r == null) return;
+        try {
+            if (session != null) session.close();
+            if (camera != null) camera.close();
+            if (reader != null) reader.close();
+        } catch (Exception ignored) {
+            // Closing a camera that already failed.
+        }
+        if (thread != null) thread.quitSafely();
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (dialog != null && dialog.isShowing()) dialog.dismiss();
+            }
+        });
+        if (error != null) r.err(error);
+        else r.ok(json);
+    }
+}
+"#;
+
+/// The `sky.scan.SkyScanner` of an app that does not call `Native.scanCode`:
+/// no camera code, no ZXing.
+const ANDROID_SCANNER_STUB_JAVA: &str = r#"package sky.scan;
+
+import android.app.Activity;
+
+/**
+ * Std.Native.scanCode is not compiled into this app: it does not call
+ * Native.scanCode, so the build left out the camera scanner and its ZXing
+ * decoder. Generated by `sky build`; do not edit.
+ */
+public final class SkyScanner {
+    public interface Reply {
+        void ok(String json);
+        void err(String message);
+    }
+
+    public static void scan(Activity act, String formats, String prompt, Reply reply) {
+        reply.err("unavailable: this build has no code scanner (the app does not call Native.scanCode)");
+    }
+
+    public static boolean onPermissionResult(int requestCode, int[] results) {
+        return false;
+    }
+}
+"#;
+
 const ANDROID_BUILD_APK: &str = r#"#!/usr/bin/env bash
 # Build + sign a WebView shell APK with the Android SDK tools directly
 # (aapt2 -> javac -> d8 -> zipalign -> apksigner) — no Gradle, no Studio.
@@ -6820,9 +7576,13 @@ rm -rf build && mkdir -p build/gen build/classes
 "$BT/aapt2" link -o build/base.apk -I "$PLAT" \
   --manifest app/src/main/AndroidManifest.xml -R build/res.zip --java build/gen \
   --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
-javac --release 11 -cp "$PLAT" -d build/classes \
+# Library jars the shell compiles against and dexes in (app/libs: the ZXing
+# decoder when the app calls Native.scanCode).
+LIBS="$(find app/libs -name '*.jar' 2>/dev/null | sort | tr '\n' ':' || true)"
+javac --release 11 -cp "$PLAT:$LIBS" -d build/classes \
   $(find build/gen -name '*.java') $(find app/src/main/java -name '*.java')
-"$BT/d8" --lib "$PLAT" --min-api 24 --output build/ $(find build/classes -name '*.class')
+"$BT/d8" --lib "$PLAT" --min-api 24 --output build/ $(find build/classes -name '*.class') \
+  $(find app/libs -name '*.jar' 2>/dev/null | sort)
 ( cd build && zip -q base.apk classes.dex )
 "$BT/zipalign" -f 4 build/base.apk build/aligned.apk
 "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
@@ -6854,9 +7614,11 @@ rm -rf release && mkdir -p release/gen release/classes
 "$BT/aapt2" link -o release/base.apk -I "$PLAT" \
   --manifest app/src/main/AndroidManifest.xml -R release/res.zip --java release/gen \
   --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
-javac --release 11 -cp "$PLAT" -d release/classes \
+LIBS="$(find app/libs -name '*.jar' 2>/dev/null | sort | tr '\n' ':' || true)"
+javac --release 11 -cp "$PLAT:$LIBS" -d release/classes \
   $(find release/gen -name '*.java') $(find app/src/main/java -name '*.java')
-"$BT/d8" --release --lib "$PLAT" --min-api 24 --output release/ $(find release/classes -name '*.class')
+"$BT/d8" --release --lib "$PLAT" --min-api 24 --output release/ \
+  $(find release/classes -name '*.class') $(find app/libs -name '*.jar' 2>/dev/null | sort)
 ( cd release && zip -q base.apk classes.dex )
 "$BT/zipalign" -f 4 release/base.apk release/aligned.apk
 "$BT/apksigner" sign --ks "$SKY_ANDROID_KEYSTORE" --ks-key-alias "$SKY_ANDROID_KEY_ALIAS" \
@@ -6980,7 +7742,13 @@ fn native_preflight(
     };
     let release = native_pkg::release_dir().is_some();
     let decl = native_pkg::read_declarations(project_dir)?;
-    native_pkg::check_usage(&decl.capabilities, &decl.permissions, platform, release)?;
+    native_pkg::check_usage(
+        &decl.capabilities,
+        &decl.permissions,
+        platform,
+        release,
+        &decl.sites,
+    )?;
     if release {
         if let Some(u) = url {
             native_pkg::check_release_url(u)?;
@@ -13076,6 +13844,20 @@ mod tests {
     }
 
     #[test]
+    fn product_name_is_built_from_the_whole_display_name() {
+        // Before v0.27.0 `withName "Sky Probe"` with id com.example.probe built
+        // `Probe` (the last id component).
+        assert_eq!(product_name("Sky Probe", "com.example.probe"), "Sky_Probe");
+        assert_eq!(product_name("vault", "com.example.vault"), "vault");
+        assert_eq!(product_name("  Pair & Scan ", "com.x.pair"), "Pair___Scan");
+        // A leading digit gets a `_` prefix (a Swift type name follows it).
+        assert_eq!(product_name("3D Viewer", "com.x.viewer"), "_3D_Viewer");
+        // Nothing usable: the capitalised last bundle-id component.
+        assert_eq!(product_name("🙂", "com.example.smile"), "Smile");
+        assert_eq!(product_name("", "com.example.smile"), "Smile");
+    }
+
+    #[test]
     fn sanitize_pkg_segment_yields_a_valid_android_segment() {
         // lowercased, alnum-only
         assert_eq!(sanitize_pkg_segment("Spa-Todos"), "spatodos");
@@ -13832,7 +14614,24 @@ mod tests {
         let id = resolve_bundle_identity(&dir).unwrap();
         assert_eq!(id.display_name, "Sky Notes Pro");
         assert_eq!(id.bundle_id, "com.acme.notes");
-        assert_eq!(id.exe_name, "Notes"); // capitalised last id segment
+        // The product name comes from the WHOLE display name (Xcode's
+        // c99extidentifier), not the last id segment ("Notes" before v0.27.0).
+        assert_eq!(id.exe_name, "Sky_Notes_Pro");
+        // CFBundleName and CFBundleDisplayName keep the name as written; the
+        // executable is the product name.
+        let url = app_url::resolve(
+            app_url::Shell::Ios,
+            None,
+            Some("https://app.example.test/"),
+            None,
+        )
+        .unwrap();
+        let info = ios_generated_info(&id, &url, false, false).unwrap();
+        let get = |k: &str| info.iter().find(|(e, _)| e == k).map(|(_, v)| v.clone());
+        let s = |v: &str| Some(plist::Value::String(v.into()));
+        assert_eq!(get("CFBundleName"), s("Sky Notes Pro"));
+        assert_eq!(get("CFBundleDisplayName"), s("Sky Notes Pro"));
+        assert_eq!(get("CFBundleExecutable"), s("Sky_Notes_Pro"));
         assert_eq!(id.short_version, "2.3.0"); // withVersion wins over project
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -833,3 +833,12 @@ func Native_authenticate(reason any) any {
 	r := AsString(reason)
 	return func() any { return nativeAuthenticateVia(nativeShellJS, r) }
 }
+
+// Native_scanCode is the kernel behind Std.Native.scanCode
+// (`List String -> String -> Task Error (List String)`): the device camera
+// scanner of the native shell (VisionKit on iOS, the camera and ZXing on
+// Android). A plain browser has none: Err Unavailable (use a widget island).
+func Native_scanCode(formats any, prompt any) any {
+	fs, pr := nativeFormatArgs(formats), AsString(prompt)
+	return func() any { return nativeScanCodeVia(nativeShellJS, fs, pr) }
+}
