@@ -690,9 +690,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `native/android/permissions.xml` fragments are merged the same way, so a
   permission two sources declare appears once. (`rust/crates/sky/src/plist.rs`,
   `xmlmini.rs`, `native_pkg.rs`.)
-- **A Sky.Spa app's native shell was named "frontend".** The shell is built
-  from the generated `.split/frontend` project, and the display name defaulted
-  to that directory's name. It is now the app's name.
+- **A Sky.Spa app's native shell was named "frontend"** (a Std.App client
+  build's, after its target: "mobile-android"). The shell is built from the
+  generated `.split/frontend` project, and the display name defaulted to that
+  directory's name. It is now the app's name.
 - **The iOS build did not find Xcode under a `DEVELOPER_DIR` without the iOS
   SDK** (a Nix or similar dev shell exports one for a macOS-only SDK), and
   reported "no iOS toolchain" on a machine whose Xcode works. The build now

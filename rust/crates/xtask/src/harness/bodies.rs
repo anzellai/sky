@@ -84,7 +84,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 1295; // +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.26.2
+pub const CONFORMANCE_EXPECTED: u64 = 1305; // +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.26.2
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -3283,7 +3283,14 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// `stdlib.Sky.Core.Process` surface, which adds none). It is covered by the
 /// conformance suite `ProcessWatchConformanceTest.sky`, the Family-S corpus
 /// surface `watch`, and the Go tests in `runtime-go/rt/watch_test.go`.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 179;
+///
+/// 179 -> 180: v0.27.0 phase 6B adds the `sky package` verb, one new surface
+/// (`cli.package`; `surfaces_total` 175 -> 176). It is covered by the
+/// `cli-verbs` gate (`package_refuses_a_release_it_cannot_ship` in
+/// `rust/crates/sky/tests/cli_verb_flow.rs`) and the macOS release gate
+/// `gate-native` (`native_shell_flow.rs`). The new `Std.Bundle` / `Std.Native`
+/// members extend existing module surfaces and add none.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 180;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

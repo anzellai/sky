@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 175 |
-| covered by the new corpus (>= Asserted) | 161 |
-| verdict `stronger` | 156 |
-| verdict `equal` | 19 |
+| surfaces | 176 |
+| covered by the new corpus (>= Asserted) | 163 |
+| verdict `stronger` | 158 |
+| verdict `equal` | 18 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
 | stdlib modules (denominator) | 109 |
-| stdlib entries (denominator) | 2108 |
+| stdlib entries (denominator) | 2117 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 8.3% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 744 | 35.3% |
-| symbols unreferenced under the generous rule | 657 | 31.2% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 744 | 35.1% |
+| symbols unreferenced under the generous rule | 657 | 31.0% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -60,16 +60,10 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 23 |
-| stdlib modules owned by exactly one unit of any role | 23 |
+| stdlib modules owned by exactly one unit of any role | 22 |
 | sky.toml sections owned by exactly one unit | 2 |
-| **lost if `examples/` retired** — modules | **1** |
+| **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
-
-### Modules lost if `examples/` is retired
-
-| module | sole owner |
-|---|---|
-| `Std.Bundle` | `examples/64-app-native` |
 
 ### Config sections lost if `examples/` is retired
 
@@ -106,6 +100,7 @@ None.
 | `cli.install` | cli | Runs | Falsified | stronger |
 | `cli.lsp` | cli | None | None | equal |
 | `cli.migrate` | cli | None | Falsified | stronger |
+| `cli.package` | cli | None | Falsified | stronger |
 | `cli.remove` | cli | None | Falsified | stronger |
 | `cli.run` | cli | None | Falsified | stronger |
 | `cli.spa-partition` | cli | None | None | equal |
@@ -202,7 +197,7 @@ None.
 | `stdlib.Std.Analytics` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.App` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Bundle` | stdlib | Runs | Runs | equal |
+| `stdlib.Std.Bundle` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Cache` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Cli` | stdlib | None | None | equal |
 | `stdlib.Std.Cmd` | stdlib | Asserted | Falsified | stronger |
@@ -236,7 +231,7 @@ None.
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Native` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Native` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Qr` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |

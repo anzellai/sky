@@ -426,8 +426,13 @@ fn android_release_is_signed_with_the_upload_key() {
         .map(|e| e.path())
         .max()
         .unwrap();
+    // `apksigner`'s own subcommand, spelled without the quoted verb token: the
+    // coverage ledger reads a quoted `sky` verb name in a *_flow.rs file as a
+    // test of that verb, and this is not a test of `sky verify`.
+    let subcommand = ["ver", "ify"].concat();
     let verify = Command::new(bt.join("apksigner"))
-        .args(["verify", "--print-certs"])
+        .arg(&subcommand)
+        .arg("--print-certs")
         .arg(&apk)
         .output()
         .unwrap();

@@ -33,6 +33,7 @@
       "install",
       "lsp",
       "migrate",
+      "package",
       "remove",
       "run",
       "spa-partition",
@@ -208,7 +209,7 @@
       "tier": "T1"
     },
     "cli-verbs": {
-      "expected_assertions": 10,
+      "expected_assertions": 11,
       "falsifier_mutation": "cli-verbs.break-an-expectation",
       "falsifier_proven": true,
       "summary": "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",
@@ -380,7 +381,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 179,
+      "expected_assertions": 180,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -548,9 +549,7 @@
       "config_sections": {
         "[analytics]": "examples/52-blog-analytics"
       },
-      "stdlib_modules": {
-        "Std.Bundle": "examples/64-app-native"
-      }
+      "stdlib_modules": {}
     },
     "stdlib_modules_examples_only": {
       "Sky.Core.Process": "examples/17-skymon",
@@ -630,12 +629,6 @@
         "path": "rust/crates/sky/tests",
         "units": [
           "apps:cli-verbs"
-        ]
-      },
-      "Std.Bundle": {
-        "path": "examples/64-app-native",
-        "units": [
-          "examples/64-app-native"
         ]
       },
       "Std.Compression": {
@@ -726,13 +719,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2108,
+    "stdlib_entries": 2117,
     "stdlib_modules": 109,
-    "surfaces_covered": 161,
-    "surfaces_covered_pct": 92.0,
-    "surfaces_equal": 19,
-    "surfaces_stronger": 156,
-    "surfaces_total": 175,
+    "surfaces_covered": 163,
+    "surfaces_covered_pct": 92.6,
+    "surfaces_equal": 18,
+    "surfaces_stronger": 158,
+    "surfaces_total": 176,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -1165,6 +1158,28 @@
       },
       "description": "`sky migrate`",
       "id": "cli.migrate",
+      "verdict": "stronger"
+    },
+    {
+      "category": "cli",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "`sky package`",
+      "id": "cli.package",
       "verdict": "stronger"
     },
     {
@@ -7847,30 +7862,40 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Runs",
+        "class": "Falsified",
         "evidence": [
           {
             "by": "examples/64-app-native (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 2
+        "strength": 4
       },
       "cover_today": {
-        "class": "Runs",
+        "class": "Asserted",
         "evidence": [
           {
             "by": "examples/64-app-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
-        "strength": 2
+        "strength": 3
       },
       "description": "the Std.Bundle public API",
       "id": "stdlib.Std.Bundle",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -10740,20 +10765,30 @@
             "by": "examples/64-app-native (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "Runs",
+        "class": "Asserted",
         "evidence": [
           {
             "by": "examples/64-app-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
-        "strength": 2
+        "strength": 3
       },
       "description": "the Std.Native public API",
       "id": "stdlib.Std.Native",
@@ -13228,12 +13263,12 @@
         "Std.Bundle": {
           "count": 7,
           "symbols": [
+            "Entitlement",
             "Permission",
-            "assetUrl",
+            "PushEnvironment",
             "withAsset",
             "withAssetDir",
             "withIcon",
-            "withId",
             "withVersion"
           ]
         },
@@ -13942,7 +13977,7 @@
         }
       },
       "count": 657,
-      "pct_of_denominator": 31.2
+      "pct_of_denominator": 31.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -14335,12 +14370,12 @@
           "count": 8,
           "symbols": [
             "Bundle",
+            "Entitlement",
             "Permission",
-            "assetUrl",
+            "PushEnvironment",
             "withAsset",
             "withAssetDir",
             "withIcon",
-            "withId",
             "withVersion"
           ]
         },
@@ -15117,7 +15152,7 @@
         }
       },
       "count": 744,
-      "pct_of_denominator": 35.3
+      "pct_of_denominator": 35.1
     }
   },
   "units": [
@@ -16295,12 +16330,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 49,
+      "modules_imported": 51,
       "path": "tests/conformance",
-      "refs_generous": 641,
-      "refs_qualified": 627,
+      "refs_generous": 654,
+      "refs_qualified": 639,
       "role": "Conformance",
-      "sky_files": 38,
+      "sky_files": 39,
       "sky_toml_sections": []
     }
   ]

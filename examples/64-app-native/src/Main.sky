@@ -25,14 +25,21 @@ import Std.Native as Native exposing (Coords)
 import Std.Bundle as Bundle exposing (Bundle)
 
 
--- Declares the OS-level notification permission so `Native.notify` can post a
--- real system notification through the generated mobile shells' native bridge
--- (iOS UNUserNotificationCenter / Android POST_NOTIFICATIONS + NotificationManager).
+-- Declares the OS-level permissions the demo's capabilities need, with the
+-- purpose string each prompt shows: the notification permission so
+-- `Native.notify` can post a real system notification through the generated
+-- mobile shells' native bridge (iOS UNUserNotificationCenter / Android
+-- POST_NOTIFICATIONS + NotificationManager), the camera for
+-- `Native.capturePhoto`, and location for `Native.geolocation`. The iOS and
+-- Android builds refuse a capability whose permission is not declared.
 bundle : Bundle
 bundle =
     Bundle.default |> Bundle.withName "Sky Native"
         |> Bundle.withPermission Bundle.Notifications
-        |> Bundle.withPermission Bundle.Camera
+        |> Bundle.withUsage Bundle.Camera "Takes a photo for the capture demo."
+        |> Bundle.withUsage
+               Bundle.Location
+               "Shows your position in the location demo."
 
 -- MODEL
 type alias Model =

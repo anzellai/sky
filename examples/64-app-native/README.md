@@ -122,4 +122,7 @@ Then:
 The same view runs on **web, desktop (Sky.Webview), and mobile (iOS/Android
 webview)**. Clipboard, storage, geolocation, online status, language and title
 work everywhere; **vibrate** and the native **share sheet** come alive on mobile,
-where `Bundle.withPermission` wires the OS-level grants the shells need.
+where `Bundle.withPermission` / `Bundle.withUsage` wire the OS-level grants the
+shells need, with the purpose string each prompt shows. The iOS and Android
+builds refuse `Native.geolocation` without `Location` and `Native.capturePhoto`
+without `Camera` (see `docs/skyapp/native.md`).

@@ -5315,6 +5315,19 @@ fn split_frontend_app_name(project_dir: &Path) -> Option<String> {
     if !is_generated_split_project(project_dir) {
         return None;
     }
+    // A Std.App client build stages the app at `<app>/.skyapp/<target>/` and
+    // splits THAT (`.skyapp/<target>/.split/frontend`), so the generated name
+    // is `<target>-frontend`; the app is the directory above `.skyapp`.
+    let split_input = project_dir.parent().and_then(Path::parent);
+    if let Some(stage) = split_input {
+        if stage.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new(".skyapp")) {
+            return stage
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned());
+        }
+    }
     let toml = std::fs::read_to_string(project_dir.join("sky.toml")).ok()?;
     toml.lines().find_map(|l| {
         let v = l
@@ -13698,6 +13711,33 @@ mod tests {
         let id = resolve_bundle_identity(&dir).unwrap();
         assert_eq!(id.display_name, "vault");
         let _ = std::fs::remove_dir_all(&dir);
+
+        // A Std.App client build splits the staged `<app>/.skyapp/<target>`
+        // project, so the generated name is `<target>-frontend`; the shell is
+        // still named for the app.
+        let root = std::env::temp_dir().join(format!(
+            "sky-bundle-stdapp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let front = root.join("pairing/.skyapp/mobile-android/.split/frontend");
+        std::fs::create_dir_all(front.join("src")).unwrap();
+        std::fs::write(
+            front.join("sky.toml"),
+            "name = \"mobile-android-frontend\"\n\n[spa]\ngenerated = true\nrole = \"frontend\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            front.join("src/Main.sky"),
+            "module Main exposing (main)\nmain = 0\n",
+        )
+        .unwrap();
+        let id = resolve_bundle_identity(&front).unwrap();
+        assert_eq!(id.display_name, "pairing");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

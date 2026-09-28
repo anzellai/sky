@@ -1,0 +1,125 @@
+module NativeConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the Std.Native secure store and biometric
+-- prompt, and the Std.Bundle builders that go with them, through the compiled
+-- Sky surface.
+--
+-- This suite runs as a native (server / CLI) program, which has no native
+-- shell: every op must be Err Unavailable, never a silent success, and never a
+-- write to some other store. Arguments are validated first, so a bad key or an
+-- empty reason is Err InvalidInput on any runtime. The shell side (Keychain,
+-- Android Keystore, BiometricPrompt, LocalAuthentication) is covered by
+-- runtime-go/rt/native_shell_test.go (a mock shell) and
+-- rust/crates/sky/tests/native_shell_flow.rs (the iOS simulator and a signed
+-- Android release).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error
+import Sky.Core.Result as Result
+import Sky.Core.Secret as Secret
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Bundle as Bundle exposing (Bundle)
+import Std.Native as Native
+import Sky.Test as Test exposing (Test)
+
+
+-- Every new builder and constructor, composed. The build reads these values
+-- statically for the native shells; here they must type-check and evaluate.
+everything : Bundle
+everything =
+    Bundle.default |> Bundle.withId "com.example.vault" |> Bundle.withBuild 12
+        |> Bundle.withUsage Bundle.Camera "Scans the pairing code."
+        |> Bundle.withUsage Bundle.FaceId "Unlocks your vault."
+        |> Bundle.withPermission Bundle.LocationAlways
+        |> Bundle.withPermission Bundle.PhotoLibrary
+        |> Bundle.withPermission Bundle.Contacts
+        |> Bundle.withPermission Bundle.LocalNetwork
+        |> Bundle.withPermission Bundle.Bluetooth
+        |> Bundle.withEntitlement
+               (Bundle.KeychainAccessGroup "TEAMID.com.example.shared")
+        |> Bundle.withEntitlement (Bundle.AppGroup "group.com.example.vault")
+        |> Bundle.withEntitlement
+               (Bundle.AssociatedDomain "applinks:example.com")
+        |> Bundle.withEntitlement
+               (Bundle.PushNotifications Bundle.PushProduction)
+        |> Bundle.withEntitlement
+               (Bundle.ICloudContainer "iCloud.com.example.vault")
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "secureSet without a native shell is Unavailable"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.Unavailable
+                  (Task.run (Native.secureSet "token" (Secret.fromString "abc"))))
+    , Test.test
+          "secureGet without a native shell is Unavailable, not Nothing"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.Unavailable
+                  (Task.run (Native.secureGet "token")))
+    , Test.test
+          "secureRemove without a native shell is Unavailable"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.Unavailable
+                  (Task.run (Native.secureRemove "token")))
+    , Test.test
+          "authenticate without a native shell is Unavailable, not False"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.Unavailable
+                  (Task.run (Native.authenticate "Unlock")))
+    , Test.test
+          "the Unavailable message says there is no localStorage fallback"
+          (\_ ->
+              Test.equal
+                  (Err True)
+                  (Task.run (Native.secureGet "token")
+                      |> Result.mapError
+                             (\e ->
+                                 String.contains
+                                     "localStorage"
+                                     (Error.toString e))
+                      |> Result.map (\_ -> False)))
+    , Test.test
+          "an empty key is InvalidInput"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.InvalidInput
+                  (Task.run (Native.secureSet "" (Secret.fromString "abc"))))
+    , Test.test
+          "a key longer than 256 bytes is InvalidInput"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.InvalidInput
+                  (Task.run (Native.secureGet (String.repeat 257 "k"))))
+    , Test.test
+          "a key with a control character is InvalidInput"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.InvalidInput
+                  (Task.run (Native.secureRemove "a\nb")))
+    , Test.test
+          "an empty biometric reason is InvalidInput"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.InvalidInput
+                  (Task.run (Native.authenticate "  ")))
+    , Test.test
+          "every Bundle builder and constructor composes"
+          (\_ ->
+              Test.equal
+                  "/assets/logo.png"
+                  (let
+                      _ = everything
+                  in
+                      Bundle.assetUrl "logo.png"))
+    ]
+
+
+main =
+    Test.runMain tests
