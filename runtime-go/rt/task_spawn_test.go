@@ -55,13 +55,14 @@ func TestTaskSpawn_RunsInBackgroundAndReturnsImmediately(t *testing.T) {
 
 // A panic inside the spawned task must be recovered, never crash the process.
 func TestTaskSpawn_RecoversPanic(t *testing.T) {
+	// `done` closes after the spawn wrapper has recovered and logged the
+	// panic, so the test does not return while the log is still being written.
 	done := make(chan struct{})
 	panicky := func() any {
-		defer close(done)
 		panic("boom from a background task")
 	}
 	// Must not panic out of the returned thunk.
-	res := Task_spawn(any(panicky)).(func() any)()
+	res := taskSpawnWith(any(panicky), func() { close(done) }).(func() any)()
 	if tag, _, _ := anyResultView(res); tag != 0 {
 		t.Fatalf("Task_spawn: expected Ok on spawn, got tag %d", tag)
 	}

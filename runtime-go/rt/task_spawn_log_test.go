@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -26,16 +27,19 @@ func spawnPanicLogs(marker string) []telemetry.LogEntry {
 // without a trace. The panic must now reach the log through the classified
 // panic path (panic class + errId + hint), and the parent must keep running.
 func TestTaskSpawn_PanicIsLoggedClassified(t *testing.T) {
-	const marker = "spawned-task-boom-7c1f"
+	// Unique per run: the telemetry ring outlives a test, so a fixed marker
+	// would count the entries of an earlier -count repeat.
+	marker := fmt.Sprintf("spawned-task-boom-7c1f-%d", time.Now().UnixNano())
+	// `done` closes after the spawn wrapper has recovered and logged the
+	// panic, so the test does not return while the log is still being written.
 	done := make(chan struct{})
 	task := func() any {
-		defer close(done)
 		panic("rt.IntDiv: integer division by zero (" + marker + ")")
 	}
 
 	// Forcing the spawn returns Ok(unit) at once; the panic happens on the
 	// background goroutine and must not reach this goroutine.
-	r := anyTaskInvoke(Task_spawn(task))
+	r := anyTaskInvoke(taskSpawnWith(task, func() { close(done) }))
 	if r.Tag != 0 {
 		t.Fatalf("Task.spawn returned %+v, want Ok ()", r)
 	}
@@ -70,15 +74,15 @@ func TestTaskSpawn_PanicIsLoggedClassified(t *testing.T) {
 // TestTaskSpawn_ErrResultDoesNotLogPanic: a spawned task that ends in Err is a
 // normal outcome, not a panic; no panic line is written for it.
 func TestTaskSpawn_ErrResultDoesNotLogPanic(t *testing.T) {
-	const marker = "spawned-task-err-3b9d"
+	// Unique per run: the telemetry ring outlives a test, so a fixed marker
+	// would count the entries of an earlier -count repeat.
+	marker := fmt.Sprintf("spawned-task-err-3b9d-%d", time.Now().UnixNano())
 	done := make(chan struct{})
 	task := func() any {
-		defer close(done)
 		return Err[any, any](marker)
 	}
-	anyTaskInvoke(Task_spawn(task))
+	anyTaskInvoke(taskSpawnWith(task, func() { close(done) }))
 	<-done
-	time.Sleep(20 * time.Millisecond)
 	if n := len(spawnPanicLogs(marker)); n != 0 {
 		t.Fatalf("an Err result was logged as a panic %d time(s)", n)
 	}
