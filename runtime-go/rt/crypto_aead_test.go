@@ -154,7 +154,7 @@ func TestBytesToStringUTF8(t *testing.T) {
 // runCryptoTask forces a Task-typed crypto kernel (an encrypt that draws a
 // random nonce is an effect, so it is a Task: a `func() any`) and returns its
 // Result. A kernel that returns anything but a Task fails the test: before
-// v0.26.2 the encrypt kernels returned a bare Result, so the nonce draw ran at
+// v0.27.0 the encrypt kernels returned a bare Result, so the nonce draw ran at
 // evaluation time, outside the effect system.
 func runCryptoTask(t *testing.T, v any) SkyResult[any, any] {
 	t.Helper()

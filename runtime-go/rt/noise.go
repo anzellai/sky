@@ -1,5 +1,5 @@
 // noise.go — Std.Crypto.Noise: the Noise_IK_25519_ChaChaPoly_SHA256
-// handshake (The Noise Protocol Framework, revision 34), v0.26.2.
+// handshake (The Noise Protocol Framework, revision 34), v0.27.0.
 //
 //	IK:
 //	  <- s

@@ -724,7 +724,7 @@ fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
     //   * "Set" — it has no goty arm, so a Set field erases to Go `any`; the
     //     encode side emits an array but `Codec.auto`'s decode has no `Set` arm
     //     and errors ("cannot decode kind interface").
-    // A Std.Crypto secret key or protocol state (v0.26.2): each redacts
+    // A Std.Crypto secret key or protocol state (v0.27.0): each redacts
     // itself in every JSON path, like `Secret`. `SecretKey` is matched on its
     // tail (Std.Crypto.Sign / Std.Crypto.Kx); the protocol states by their
     // module-qualified tail, so a user's own `Transport` is not flagged.
@@ -8102,7 +8102,7 @@ mod fix7_tests {
             )),
         )));
 
-        // Std.Crypto secret keys and protocol states (v0.26.2) redact
+        // Std.Crypto secret keys and protocol states (v0.27.0) redact
         // themselves like a Secret, so they are flagged the same way —
         // resolved, surface-qualified, and nested.
         for (label, name) in [

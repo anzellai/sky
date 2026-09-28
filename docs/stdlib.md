@@ -208,9 +208,9 @@ hmac   = Crypto.hmacSha256 "secret" "message"
 | `Crypto.xchachaSealWith` | `Secret -> String -> String -> Task Error String` | As `xchachaSeal`, and authenticates associated data (key, AD, plaintext) |
 | `Crypto.xchachaOpen` | `Secret -> String -> Result Error String` | Inverse of `xchachaSeal`. Err on a wrong key or a tampered value |
 | `Crypto.xchachaOpenWith` | `Secret -> String -> String -> Result Error String` | Inverse of `xchachaSealWith`. Err when the associated data differs |
-| `Crypto.aesGcmEncrypt` | `Secret -> String -> Task Error String` | AES-256-GCM AEAD, random 12-byte nonce; output `base64(nonce \|\| ct \|\| tag)`. A `Task` since v0.26.2 |
+| `Crypto.aesGcmEncrypt` | `Secret -> String -> Task Error String` | AES-256-GCM AEAD, random 12-byte nonce; output `base64(nonce \|\| ct \|\| tag)`. A `Task` since v0.27.0 |
 | `Crypto.aesGcmDecrypt` | `Secret -> String -> Result Error String` | Inverse of `aesGcmEncrypt`. Err on tag/key mismatch |
-| `Crypto.chacha20Encrypt` | `Secret -> String -> Task Error String` | ChaCha20-Poly1305 AEAD, random 12-byte nonce. A `Task` since v0.26.2 |
+| `Crypto.chacha20Encrypt` | `Secret -> String -> Task Error String` | ChaCha20-Poly1305 AEAD, random 12-byte nonce. A `Task` since v0.27.0 |
 | `Crypto.chacha20Decrypt` | `Secret -> String -> Result Error String` | Inverse of `chacha20Encrypt` |
 | `Crypto.aesKeyFromPassword` | `Secret -> String -> Secret` | PBKDF2-HMAC-SHA256 100k iter → 32-byte key (a `Secret`) for any AEAD above |
 | `Crypto.chachaKeyFromPassword` | `Secret -> String -> Secret` | Same derivation, named for ChaCha |
@@ -227,7 +227,7 @@ hmac   = Crypto.hmacSha256 "secret" "message"
 - **Effects.** Anything that draws randomness is a `Task`: every seal and
   encrypt, `randomBytes`, `randomToken`, and key generation. Open, decrypt,
   hashing, MACs, key derivation, signing and verification are pure.
-- **v0.26.2 migration.** `aesGcmEncrypt` and `chacha20Encrypt` became
+- **v0.27.0 migration.** `aesGcmEncrypt` and `chacha20Encrypt` became
   `Task Error String` (they draw a nonce). In a `Task` chain use them
   directly; where a `Result` is needed, `Task.run (Crypto.aesGcmEncrypt key pt)`.
 

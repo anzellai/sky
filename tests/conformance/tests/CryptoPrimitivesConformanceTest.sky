@@ -1,13 +1,13 @@
 module CryptoPrimitivesConformanceTest exposing (main, tests)
 
--- Behavioural conformance for the v0.26.2 crypto primitives, driven through
+-- Behavioural conformance for the v0.27.0 crypto primitives, driven through
 -- the compiled Sky surface:
 --
 --   * Std.Crypto.Sign  — Ed25519, RFC 8032 §7.1 TEST 1 and TEST 2
 --   * Std.Crypto.Kx    — X25519, RFC 7748 §6.1 (Alice and Bob)
 --   * Std.Crypto.Kdf   — HKDF-SHA256, RFC 5869 A.1 and A.3
 --   * Sky.Core.Crypto  — xchachaSeal / xchachaOpen, and the AEAD encrypt
---                        functions, which are Tasks since v0.26.2
+--                        functions, which are Tasks since v0.27.0
 --
 -- plus the negative cases: tampered ciphertext, wrong key, wrong associated
 -- data, bad lengths, a low-order public key, and the redaction of secret keys.

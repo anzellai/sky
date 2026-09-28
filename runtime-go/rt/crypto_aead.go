@@ -66,7 +66,7 @@ func readBytes(v any) []byte {
 
 // Crypto.aesGcmEncrypt : Secret -> String -> Task Error String
 // (key, plaintext) → base64(nonce || ciphertext || tag). A Task since
-// v0.26.2: it draws a random nonce, which is an effect.
+// v0.27.0: it draws a random nonce, which is an effect.
 func Crypto_aesGcmEncrypt(key any, plaintext any) any {
 	return func() any {
 		k, err := readKey("Crypto.aesGcmEncrypt", key)
@@ -122,7 +122,7 @@ func Crypto_aesGcmDecrypt(key any, encoded any) any {
 	return Ok[any, any](string(pt))
 }
 
-// Crypto.chacha20Encrypt : Secret -> String -> Task Error String (a Task since v0.26.2)
+// Crypto.chacha20Encrypt : Secret -> String -> Task Error String (a Task since v0.27.0)
 // ChaCha20-Poly1305 AEAD.  Same key length + output shape as
 // aesGcmEncrypt — preferred when the host CPU lacks AES-NI.
 func Crypto_chacha20Encrypt(key any, plaintext any) any {

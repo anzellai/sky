@@ -1,6 +1,6 @@
 // crypto_sign_kx.go — Std.Crypto.Sign (Ed25519), Std.Crypto.Kx (X25519),
 // Std.Crypto.Kdf (HKDF-SHA256) and the XChaCha20-Poly1305 AEAD of
-// Sky.Core.Crypto (v0.26.2).
+// Sky.Core.Crypto (v0.27.0).
 //
 // Pure Go (crypto/ed25519, crypto/hkdf, golang.org/x/crypto): no cgo, so the
 // same code builds for the server and for the wasm client.

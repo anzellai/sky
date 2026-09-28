@@ -310,7 +310,7 @@ pub const SURFACES: &[Surface] = &[
         "image",
         "Std.Image",
         &["Sky.Core.Task as Task", "Sky.Core.Encoding as Encoding"],
-    ), // v0.26.2 crypto and QR modules. Sign / Kx / Kdf / Qr are pure and
+    ), // v0.27.0 crypto and QR modules. Sign / Kx / Kdf / Qr are pure and
     // byte-assertable against published vectors; Noise / CPace and key
     // generation are `Task`s bridged with `Task.run`, asserted by the
     // property the protocol promises (see the batteries).
@@ -669,7 +669,7 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Sky.Core.Tuple",
     "Std.Codec",
     "Std.Compression",
-    // v0.26.2: the crypto and QR modules land covered, not dark.
+    // v0.27.0: the crypto and QR modules land covered, not dark.
     "Std.Crypto.Cpace",
     "Std.Crypto.Kdf",
     "Std.Crypto.Kx",
@@ -3064,7 +3064,7 @@ fn crypto_battery(edge: &str) -> Vec<Check> {
     }
 }
 
-// --- Std.Crypto.Sign / Kx / Kdf / Noise / Cpace, Std.Qr (v0.26.2) ------------
+// --- Std.Crypto.Sign / Kx / Kdf / Noise / Cpace, Std.Qr (v0.27.0) ------------
 //
 // Every expected byte string below is a PUBLISHED constant, not an
 // observation: RFC 8032 §7.1 TEST 1 (Ed25519), RFC 7748 §6.1 (X25519 Alice and
@@ -5453,7 +5453,7 @@ fn extra_imports(slug: &str) -> &'static [&'static str] {
         "result" => &["Sky.Core.Error as Error"],
         // The AEAD keys are `Sky.Core.Secret` since the Secret migration; the
         // battery builds them with `Secret.unsafeFromString`. Every encrypt /
-        // seal is a `Task` since v0.26.2 (it draws a random nonce), bridged
+        // seal is a `Task` since v0.27.0 (it draws a random nonce), bridged
         // with `Task.run`.
         "crypto" => &["Sky.Core.Secret as Secret", "Sky.Core.Task as Task"],
         // `Jwt.hs256` takes a `Secret` signing key (Secret migration); the

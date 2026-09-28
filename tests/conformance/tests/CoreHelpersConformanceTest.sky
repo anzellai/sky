@@ -1,6 +1,6 @@
 module CoreHelpersConformanceTest exposing (main, tests)
 
--- Behavioral conformance for the small core helpers added in v0.26.2:
+-- Behavioral conformance for the small core helpers added in v0.27.0:
 -- `Result.toMaybe` and the `Sky.Core.Tuple` module.
 --
 -- This suite deliberately does NOT import `Sky.Core.Result`: a bare

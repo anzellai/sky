@@ -1,4 +1,4 @@
-// qr.go — Std.Qr: a pure QR Code encoder (ISO/IEC 18004), v0.26.2.
+// qr.go — Std.Qr: a pure QR Code encoder (ISO/IEC 18004), v0.27.0.
 //
 // The encoder is plain Go with no cgo, no reflection and no fmt, so it builds
 // for the server, for the wasm client and under TinyGo. Text is encoded in

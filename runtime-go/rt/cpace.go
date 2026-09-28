@@ -1,6 +1,6 @@
 // cpace.go — Std.Crypto.Cpace: the CPace balanced PAKE, cipher suite
 // CPACE-X25519-SHA512, initiator-responder setting (draft-irtf-cfrg-cpace-21),
-// v0.26.2.
+// v0.27.0.
 //
 // CPace turns a low-entropy password shared by two parties into a strong
 // shared key (the intermediate session key, ISK) without exposing the

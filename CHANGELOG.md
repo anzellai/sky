@@ -11,7 +11,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.26.2 — unreleased
+## v0.27.0 — widget islands, `App.serve`, cookieless sessions, new crypto, process and UI modules, `--format json`, native packaging, and a stack-safe Task (2026-09-28)
 
 ### ⚠ Security
 

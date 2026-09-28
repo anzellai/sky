@@ -316,7 +316,7 @@ tests =
                           (Decode.decodeString
                               (Decode.list Decode.int)
                               (Encode.encode 0 (Encode.list Encode.int []))))))
-    -- ─── Decode.value / Encode.raw (v0.26.2) ───────────────────────
+    -- ─── Decode.value / Encode.raw (v0.27.0) ───────────────────────
     , Test.test
           "Decode.value: an integer past 2^53 re-encodes exactly"
           (\_ ->

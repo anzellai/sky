@@ -116,7 +116,7 @@ your own code.
 the intended value (a fixed test fixture); the `unsafe` prefix marks it for
 review. Never use it for a real secret — read that from the environment.
 
-## Secret keys (v0.26.2)
+## Secret keys (v0.27.0)
 
 The key types of `Std.Crypto.Sign` (Ed25519) and `Std.Crypto.Kx` (X25519),
 `Sign.SecretKey` and `Kx.SecretKey`, follow the same contract as `Secret`: they
@@ -141,5 +141,5 @@ Key agreement and key derivation return `Secret`s too: `Kx.sharedSecret`,
 are plain values (`Sign.PublicKey`, `Kx.PublicKey`, printed as base64).
 
 The AEAD encrypt functions (`aesGcmEncrypt`, `chacha20Encrypt`) became
-`Task Error String` in v0.26.2 because they draw a random nonce; see the
+`Task Error String` in v0.27.0 because they draw a random nonce; see the
 CHANGELOG migration note. `Crypto.xchachaSeal` is the recommended AEAD.

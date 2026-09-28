@@ -395,7 +395,7 @@ It now classifies against two explicit, exhaustive lists in `spa_partition` —
 `KNOWN_PURE_KERNELS` (`Basics`/`String`/`List`/`Dict`/`Set`/`Maybe`/`Result`/
 `Task`/`Math`/`Regex`/`Encoding`/`Char`/`Path`/`Cmd`/`Sub`/`JsonEnc`/
 `JsonDec`/`JsonDecP`/`Fmt`/`Qr`) — and a family in **neither** falls through to a
-conservative **SERVER** verdict (never client). Since v0.26.2 a third list,
+conservative **SERVER** verdict (never client). Since v0.27.0 a third list,
 `MIXED_KERNELS`, classifies a family **per function**: `Crypto` keeps only
 `sha256`/`sha512`/`sha1`/`md5`/`constantTimeEqual`/`rsaSha256Verify` on the
 client, `Sign` only `verify` and public-key import/export, `Kx` only public-key

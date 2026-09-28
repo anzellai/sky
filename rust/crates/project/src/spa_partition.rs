@@ -139,7 +139,7 @@ const EFFECT_KERNELS: &[&str] = &[
     "Webview",
     "Context",
     "Image",
-    // v0.26.2 crypto protocols: every member holds or derives secret key
+    // v0.27.0 crypto protocols: every member holds or derives secret key
     // material (HKDF input, Noise handshake state, the CPace password), and
     // the Noise/CPace constructors draw randomness.
     "Kdf",
@@ -183,7 +183,7 @@ const KNOWN_PURE_KERNELS: &[&str] = &[
 /// family, including one added later, is a SERVER effect (fail-closed within the
 /// family).
 ///
-/// `Crypto` was in [`KNOWN_PURE_KERNELS`] as a whole until v0.26.2, on the
+/// `Crypto` was in [`KNOWN_PURE_KERNELS`] as a whole until v0.27.0, on the
 /// grounds that "a client-side hash is pure UI". That also put key derivation,
 /// keyed MACs, the AEAD ciphers (secret key + random nonce), `randomBytes` and
 /// `rsaSha256Sign` on the client. A function belongs here only when it is pure,
@@ -5414,7 +5414,7 @@ mod tests {
         );
     }
 
-    /// Crypto is classified per FUNCTION, not per family. Until v0.26.2 the
+    /// Crypto is classified per FUNCTION, not per family. Until v0.27.0 the
     /// whole `Crypto` family sat in KNOWN_PURE, so key generation, random
     /// nonces, keyed MACs and anything holding a secret key were treated as
     /// client-safe and could be split into the wasm frontend. Only functions

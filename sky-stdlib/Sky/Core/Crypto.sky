@@ -16,7 +16,7 @@
 -- `base64(nonce || ciphertext || tag)`.
 --
 -- Effects: anything that draws randomness — every encrypt/seal, and
--- `randomBytes` / `randomToken` — is a `Task Error a` (v0.26.2: the
+-- `randomBytes` / `randomToken` — is a `Task Error a` (v0.27.0: the
 -- encrypt functions were `Result` before). Decrypt/open, hashes, MACs and
 -- key derivation are pure.
 --
@@ -159,7 +159,7 @@ xchachaOpenWith =
 -- `base64(nonce || ciphertext || tag)` — a single opaque string
 -- safe to store / transmit.  A new random 12-byte nonce is drawn for
 -- every call (so encrypting the same message twice yields
--- different ciphertexts), which is why this is a `Task` (v0.26.2).
+-- different ciphertexts), which is why this is a `Task` (v0.27.0).
 -- Prefer `xchachaSeal` for new code: a 12-byte random nonce limits
 -- one key to well under 2^32 messages.
 aesGcmEncrypt : Secret -> String -> Task Error String
@@ -180,7 +180,7 @@ aesGcmDecrypt =
 -- ChaCha20-Poly1305 (RFC 8439).  Same key length (32 bytes) and
 -- output format as `aesGcmEncrypt`.  ChaCha20 is preferred on
 -- platforms without AES hardware acceleration — typically smaller
--- mobile / embedded CPUs. A `Task` (v0.26.2): it draws a random
+-- mobile / embedded CPUs. A `Task` (v0.27.0): it draws a random
 -- nonce. Prefer `xchachaSeal` for new code.
 chacha20Encrypt : Secret -> String -> Task Error String
 chacha20Encrypt =

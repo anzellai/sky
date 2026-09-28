@@ -172,7 +172,7 @@ lazy : (() -> a) -> Task e a
 lazy =
     Ffi.kernel "Task_lazy"
 
--- ─── Stack-safe loops (v0.26.2) ────────────────────────────────────
+-- ─── Stack-safe loops (v0.27.0) ────────────────────────────────────
 -- | One step of a `loop`: `Loop state` runs the step function again with
 -- the new state, `Done a` ends the loop with `a`.
 type Step state a

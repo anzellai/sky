@@ -426,7 +426,7 @@ delegates).
 | `constantTimeEqual`     | `String -> String -> Bool`                   | pure  |
 | `xchachaSeal`/`xchachaSealWith` | `Secret -> String (-> String) -> Task Error String` | effect (random nonce) |
 | `xchachaOpen`/`xchachaOpenWith` | `Secret -> String (-> String) -> Result Error String` | fallible-pure |
-| `aesGcmEncrypt`/`chacha20Encrypt` | `Secret -> String -> Task Error String` | effect (random nonce; a Task since v0.26.2) |
+| `aesGcmEncrypt`/`chacha20Encrypt` | `Secret -> String -> Task Error String` | effect (random nonce; a Task since v0.27.0) |
 | `aesGcmDecrypt`/`chacha20Decrypt` | `Secret -> String -> Result Error String` | fallible-pure |
 | `aesKeyFromPassword`/`chachaKeyFromPassword` | `Secret -> String -> Secret` | pure (PBKDF2) |
 | `randomBytes`           | `Int -> Task Error String`                   | effect |
@@ -457,7 +457,7 @@ round-trips, tamper and wrong-key refusal, and the Task shape;
 * No Argon2id surfaced (bcrypt only). For new-platform compliance
   this is a documented gap.
 
-### 2.7a `Std.Crypto.Sign` / `Kx` / `Kdf` / `Noise` / `Cpace`, `Std.Qr` (v0.26.2)
+### 2.7a `Std.Crypto.Sign` / `Kx` / `Kdf` / `Noise` / `Cpace`, `Std.Qr` (v0.27.0)
 
 **Laws and invariants**, each with its test
 (`runtime-go/rt/crypto_sign_kx_test.go`, `noise_test.go`, `cpace_test.go`,
@@ -587,7 +587,7 @@ exact runtime shape).
     Bool)`. Builders: `linearBackoff`, `exponentialBackoff`,
     `withJitter`, `withMaxAttempts`, `withBaseMs`, `withKind`,
     `withRetryOn`.
-* **`loop` / `forever` (v0.26.2) — stack safety**:
+* **`loop` / `forever` (v0.27.0) — stack safety**:
   * `loop step s0` runs `step s0`, then `step s1` for each `Loop s1`, and
     succeeds with `a` at the first `Done a`. The first `Err e` from a step is
     the result; no later step runs.
@@ -695,7 +695,7 @@ message).
 | `Time`    | 76    | now/sleep/every/unixMillis/format*/timeString                | UTC by default; IANA zones via Std.Time |
 | `ToString` | 54   | `fromInt`/`fromFloat`/`fromBool`/`fromTime`                  | Naming-consistency aliases; zero runtime cost |
 | `Pure`    | 143   | uniform `() -> Task Error a` companion surface (v0.15.50+)   | Tail-call aliases; HM-portable |
-| `Tuple`   | 74    | `pair`/`first`/`second`/`mapFirst`/`mapSecond`/`mapBoth` (v0.26.2) | Pure Sky, total; `first == fst`, `second == snd` |
+| `Tuple`   | 74    | `pair`/`first`/`second`/`mapFirst`/`mapSecond`/`mapBoth` (v0.27.0) | Pure Sky, total; `first == fst`, `second == snd` |
 | `Json.Encode` / `Json.Decode` | — | builders + decoders over one shared `Value` type; `Decode.value` (raw tree, `json.Number` keeps exact number text), `Encode.raw` (validated `json.RawMessage`) | Decode is total (`Result Error a`). `encode` is total except for a NaN/infinite Float, which is the classified `JsonEncodeFailure` panic (JSON has no such number; `encode` has no error result) — never a silent `""` |
 
 Algebraic correctness for these is uncontroversial. Effect-tier
@@ -1516,7 +1516,7 @@ implementation step OR a clear spec to write.
   backed by `golang.org/x/crypto/argon2`.
 * Effort: 0.5 session.
 
-**G6. Ed25519 / X25519 in Crypto module**. **CLOSED in v0.26.2**:
+**G6. Ed25519 / X25519 in Crypto module**. **CLOSED in v0.27.0**:
 `Std.Crypto.Sign` (Ed25519), `Std.Crypto.Kx` (X25519, low-order refusal) and
 `Std.Crypto.Kdf` (HKDF-SHA256), with RFC vectors (§2.7a).
 
