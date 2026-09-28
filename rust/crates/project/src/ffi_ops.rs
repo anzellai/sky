@@ -377,6 +377,12 @@ pub fn add_path(
 }
 
 /// The Go half of [`add_path`]: record, wire into `sky-out/go.mod`, inspect.
+///
+/// The manifest entry has to exist while the wiring runs (`apply_go_path_deps`
+/// reads it), but it is only KEPT when the whole add succeeds: any failure
+/// restores `sky.toml` and `sky-out/go.mod` + `go.sum` to what they were, so a
+/// failed `sky add ./dir` leaves no half-declared dependency that every later
+/// build would trip over.
 fn add_go_path(
     project_dir: &Path,
     repo_root: &Path,
@@ -384,33 +390,38 @@ fn add_go_path(
     stored: &str,
     mut r: FfiReport,
 ) -> FfiReport {
-    // Record first: `apply_go_path_deps` reads the manifest, so the go.mod
-    // wiring below and every later build come from this one entry.
-    match upsert_path_dependency(
-        &project_dir.join("sky.toml"),
-        "go.dependencies",
-        module,
-        stored,
-    ) {
-        Ok(DepEdit::Added) => r.say(format!(
-            "  recorded {module} = {{ path = \"{stored}\" }} in sky.toml [\"go.dependencies\"]"
-        )),
-        Ok(DepEdit::Updated(old)) => r.say(format!(
-            "  updated {module} in sky.toml: {old} → {{ path = \"{stored}\" }}"
-        )),
-        Ok(DepEdit::Unchanged) => r.say(format!("  {module} already at {{ path = \"{stored}\" }}")),
-        Err(e) => return r.fail(format!("sky add: sky.toml update: {e}")),
-    }
+    let sky_toml = project_dir.join("sky.toml");
     let sky_out = project_dir.join("sky-out");
+    let snapshot = Snapshot::take(&[
+        sky_toml.clone(),
+        sky_out.join("go.mod"),
+        sky_out.join("go.sum"),
+    ]);
+    let recorded = match upsert_path_dependency(&sky_toml, "go.dependencies", module, stored) {
+        Ok(DepEdit::Added) => format!(
+            "  recorded {module} = {{ path = \"{stored}\" }} in sky.toml [\"go.dependencies\"]"
+        ),
+        Ok(DepEdit::Updated(old)) => {
+            format!("  updated {module} in sky.toml: {old} → {{ path = \"{stored}\" }}")
+        }
+        Ok(DepEdit::Unchanged) => format!("  {module} already at {{ path = \"{stored}\" }}"),
+        Err(e) => return r.fail(format!("sky add: sky.toml update: {e}")),
+    };
+    let fail = |r: FfiReport, e: String| {
+        snapshot.restore();
+        r.fail(format!(
+            "sky add: {e}\n  sky.toml was left unchanged: {module} is not recorded"
+        ))
+    };
     if let Err(e) = ensure_go_mod(repo_root, &sky_out) {
-        return r.fail(format!("sky add: {e}"));
+        return fail(r, e);
     }
     if let Err(e) = crate::path_deps::apply_go_path_deps(project_dir, &sky_out) {
-        return r.fail(format!("sky add: {e}"));
+        return fail(r, e);
     }
     let bin = match ffi::ensure_inspector(repo_root) {
         Ok(b) => b,
-        Err(e) => return r.fail(format!("sky add: {e}")),
+        Err(e) => return fail(r, e),
     };
     r.say(format!(
         "Inspecting {module} (local, GOOS={}/{}, normalised)…",
@@ -426,8 +437,9 @@ fn add_go_path(
                 "  wrote sky-ffi/{slug}.{{kernel.json,skyi}} + go/{slug}_bindings.go"
             ));
         }
-        Err(e) => return r.fail(format!("sky add: {e}")),
+        Err(e) => return fail(r, e),
     }
+    r.say(recorded);
     let dir = crate::path_deps::PathDep {
         key: module.to_string(),
         path: stored.to_string(),
@@ -439,6 +451,33 @@ fn add_go_path(
     }
     r.say(format!("Added {module} (local path {stored})."));
     r
+}
+
+/// The bytes of a set of files before an edit, restored if the edit fails. A
+/// file that did not exist is removed again on restore.
+struct Snapshot(Vec<(PathBuf, Option<Vec<u8>>)>);
+
+impl Snapshot {
+    fn take(paths: &[PathBuf]) -> Self {
+        Snapshot(
+            paths
+                .iter()
+                .map(|p| (p.clone(), std::fs::read(p).ok()))
+                .collect(),
+        )
+    }
+    fn restore(&self) {
+        for (p, bytes) in &self.0 {
+            match bytes {
+                Some(b) => {
+                    let _ = std::fs::write(p, b);
+                }
+                None => {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
+    }
 }
 
 /// The Sky half of [`add_path`]: record it. Nothing is fetched or copied; the

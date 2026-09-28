@@ -249,7 +249,9 @@ pub fn inline_value(path: &str) -> String {
 /// Wire every Go path dependency into the `go.mod` in `go_dir`: `require <mod>
 /// v0.0.0` plus `replace <mod> => <absolute dir>`. Called on every build (the
 /// build rewrites `go.mod` from the runtime's copy first) and by `sky add` /
-/// `sky install`. `go mod edit` reads and writes the file only — no network.
+/// `sky install`. `go mod edit` writes the wiring; `go get <mod>@v0.0.0` then
+/// folds in the local module's own `go` directive and requirements (a network
+/// fetch only for a requirement not already in the module cache).
 pub fn apply_go_path_deps(project_dir: &Path, go_dir: &Path) -> Result<(), String> {
     let deps = read_path_dependencies_of(&project_dir.join("sky.toml"), PathDepKind::Go);
     if deps.is_empty() {
@@ -274,11 +276,33 @@ pub fn apply_go_path_deps(project_dir: &Path, go_dir: &Path) -> Result<(), Strin
         .current_dir(go_dir)
         .output()
         .map_err(|e| format!("spawn go mod edit: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "go mod edit (path dependencies) failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    // `require` + `replace` alone is not a loadable module graph. The local
+    // module's own `go.mod` still has to be folded in: a `go` directive newer
+    // than the generated go.mod's (`go 1.26` against `go 1.25.0`) and any
+    // `require` of its own each leave Go refusing to load the package with
+    // "updates to go.mod needed" — before and after any Go file imports it.
+    // `go get <module>@v0.0.0` resolves through the `replace`, raises the `go`
+    // line, adds the module's requirements and writes go.sum: the same step a
+    // version dependency gets from `inject_ffi_deps` on every build.
+    let mut get: Vec<String> = vec!["get".into()];
+    get.extend(deps.iter().map(|d| format!("{}@v0.0.0", d.key)));
+    let out = Command::new("go")
+        .args(&get)
+        .current_dir(go_dir)
+        .env("GOFLAGS", "-mod=mod")
+        .output()
+        .map_err(|e| format!("spawn go get: {e}"))?;
     if out.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "go mod edit (path dependencies) failed: {}",
+            "go get (path dependencies) failed: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         ))
     }
