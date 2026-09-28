@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -187,14 +188,22 @@ func assertNoHeapGrowth(t *testing.T, what string, samples []uint64, iterations 
 	// Skip the first sample: it includes warm-up allocations.
 	s := samples[1:]
 	half := len(s) / 2
-	avg := func(xs []uint64) float64 {
-		var sum float64
-		for _, x := range xs {
-			sum += float64(x)
+	// Compare half MEDIANS, not means. A sample taken after runtime.GC() can
+	// still hold what the running loop allocated after the mark phase, so one
+	// sample can read 3x the others (a CI run saw 34 MB among 10 MB samples)
+	// and move a mean past the slack with no leak. A retained frame per
+	// iteration grows the heap by hundreds of MB over these iteration counts,
+	// which moves every sample of the second half, so the median sees it.
+	median := func(xs []uint64) float64 {
+		c := append([]uint64(nil), xs...)
+		sort.Slice(c, func(i, j int) bool { return c[i] < c[j] })
+		m := len(c) / 2
+		if len(c)%2 == 0 {
+			return (float64(c[m-1]) + float64(c[m])) / 2
 		}
-		return sum / float64(len(xs))
+		return float64(c[m])
 	}
-	first, second := avg(s[:half]), avg(s[half:])
+	first, second := median(s[:half]), median(s[half:])
 	const slack = 4 << 20
 	t.Logf("%s: %d iterations, %d samples, heap first-half %.0f B, second-half %.0f B, min %d, max %d",
 		what, iterations, len(samples), first, second, minU(s), maxU(s))
