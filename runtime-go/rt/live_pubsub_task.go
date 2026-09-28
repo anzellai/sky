@@ -2,55 +2,87 @@
 
 package rt
 
-import "sync/atomic"
+import "sync"
 
-// processBroker — the process's active *liveApp, set by Live_app when
-// the broker is wired (see liveAppRun in live.go). Reads happen on the
-// hot path of PubSub_publish so the atomic.Pointer is preferable to a
-// sync.Mutex.
+// processBrokers — the host Sky.Live apps running in this process, in start
+// order. Each registers itself in liveAppRun / Live.serve after its broker is
+// wired, and a stopped app (Live.stop) removes itself.
 //
-// Single-app process: works trivially.
-// Multi-app process (rare — each Live.app binds its own port, but a
-// program could orchestrate several): the most-recently-registered app
-// wins. Documented limitation; consistent with the existing port-
-// binding model.
-var processBroker atomic.Pointer[liveApp]
+// Std.PubSub.publish has no update-tuple context, so it cannot name an app:
+// it publishes to EVERY registered app. A topic is a process-wide name, so a
+// job that publishes "orders" reaches the subscribers of every Live app in
+// the process that subscribed to it (v0.27: two apps started with Live.serve;
+// before, the first app to start took every publish and a second one never
+// saw any).
+//
+// Sub-apps mounted in-process (the inline console at /_sky/console) never
+// register: they have their own private broker for their own pub/sub, and
+// must not receive the host's publishes (v0.16.1 PR10-F).
+var (
+	processBrokersMu sync.Mutex
+	processBrokers   []*liveApp
+)
 
-// registerProcessBroker — called once per Live.app startup, after
-// app.topics has been wired from app.store.Broker().
-//
-// FIRST-WRITER-WINS semantics (v0.16.1 PR10-F):
-//
-//	The HOST application's broker is the canonical process broker for
-//	Std.PubSub.publish — that's the broker user code expects when it
-//	reaches for a Task-shaped publish from raw `api` handlers /
-//	post-init goroutines / scheduled jobs. Sub-apps mounted via
-//	MountLiveSubAppInProcess (e.g. the v0.16.1 PR10 inline console at
-//	/_sky/console) have their OWN private broker for their OWN
-//	internal pub/sub; they MUST NOT clobber the host's registration.
-//
-//	Pre-v0.16.1 PR10 the semantics were last-writer-wins: the most
-//	recent registration won. With the canonical Sky.Live mount path
-//	driving the inline console, MountEmbeddedConsole's sub-app
-//	registration would have shadowed the host app's broker right after
-//	AssertConsoleInvariantOrExit's predecessor (liveAppRun's
-//	registerProcessBroker call). The host's Std.PubSub.publish would
-//	then route to the console's empty broker — silent breakage.
-//
-// Tests use unregisterProcessBroker() to keep package state clean
-// between cases.
+// registerProcessBroker adds app to the process's publish targets. A second
+// call for the same app is a no-op.
 func registerProcessBroker(app *liveApp) {
-	// CompareAndSwap from nil to app: succeeds only when no prior
-	// broker is registered (host app's first call wins). Subsequent
-	// callers (sub-apps) silently no-op.
-	processBroker.CompareAndSwap(nil, app)
+	if app == nil {
+		return
+	}
+	processBrokersMu.Lock()
+	defer processBrokersMu.Unlock()
+	for _, a := range processBrokers {
+		if a == app {
+			return
+		}
+	}
+	processBrokers = append(processBrokers, app)
 }
 
-// unregisterProcessBroker — test helper; in production the process
-// exits when the Live.app's http.ListenAndServe returns, so manual
-// teardown is unnecessary.
+// unregisterProcessBrokerApp removes app (Live.stop). Idempotent.
+func unregisterProcessBrokerApp(app *liveApp) {
+	processBrokersMu.Lock()
+	defer processBrokersMu.Unlock()
+	for i, a := range processBrokers {
+		if a == app {
+			processBrokers = append(processBrokers[:i:i], processBrokers[i+1:]...)
+			return
+		}
+	}
+}
+
+// unregisterProcessBroker clears every registration. Test helper.
 func unregisterProcessBroker() {
-	processBroker.Store(nil)
+	processBrokersMu.Lock()
+	processBrokers = nil
+	processBrokersMu.Unlock()
+}
+
+// processBrokerApps snapshots the registered apps.
+func processBrokerApps() []*liveApp {
+	processBrokersMu.Lock()
+	defer processBrokersMu.Unlock()
+	return append([]*liveApp(nil), processBrokers...)
+}
+
+// publishToProcessApps publishes ev on every registered app's broker and
+// returns the total delivery count; ok is false when no app is registered.
+// Two apps that share one broker object publish once.
+func publishToProcessApps(topic string, ev SessionEvent) (int, bool) {
+	apps := processBrokerApps()
+	if len(apps) == 0 {
+		return 0, false
+	}
+	delivered := 0
+	seen := map[Broker]bool{}
+	for _, app := range apps {
+		if app.topics == nil || seen[app.topics] {
+			continue
+		}
+		seen[app.topics] = true
+		delivered += app.Publish(topic, ev)
+	}
+	return delivered, true
 }
 
 // PubSub_publish — Task-shaped publish callable from ANY goroutine.
@@ -77,19 +109,15 @@ func unregisterProcessBroker() {
 func PubSub_publish(topicArg, payloadArg any) any {
 	topic := AsString(topicArg)
 	return func() any {
-		app := processBroker.Load()
-		if app == nil {
+		delivered, ok := publishToProcessApps(topic, SessionEvent{
+			Payload: payloadArg,
+			Origin:  "",
+		})
+		if !ok {
 			return Err[any, any](ErrUnavailable(
 				"PubSub.publish: no Sky.Live app registered in this process — Task-shaped publish needs Live.app running",
 			))
 		}
-		if app.topics == nil {
-			return Ok[any, any](0)
-		}
-		delivered := app.Publish(topic, SessionEvent{
-			Payload: payloadArg,
-			Origin:  "",
-		})
 		return Ok[any, any](delivered)
 	}
 }
@@ -114,20 +142,16 @@ func PubSub_publish(topicArg, payloadArg any) any {
 func PubSub_publishNoEcho(topicArg, payloadArg any) any {
 	topic := AsString(topicArg)
 	return func() any {
-		app := processBroker.Load()
-		if app == nil {
-			return Err[any, any](ErrUnavailable(
-				"PubSub.publishNoEcho: no Sky.Live app registered in this process — Task-shaped publish needs Live.app running",
-			))
-		}
-		if app.topics == nil {
-			return Ok[any, any](0)
-		}
-		delivered := app.Publish(topic, SessionEvent{
+		delivered, ok := publishToProcessApps(topic, SessionEvent{
 			Payload:    payloadArg,
 			Origin:     "",
 			SkipOrigin: true,
 		})
+		if !ok {
+			return Err[any, any](ErrUnavailable(
+				"PubSub.publishNoEcho: no Sky.Live app registered in this process — Task-shaped publish needs Live.app running",
+			))
+		}
 		return Ok[any, any](delivered)
 	}
 }

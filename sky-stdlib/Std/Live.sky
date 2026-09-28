@@ -27,7 +27,11 @@
 module Std.Live exposing
     ( AppConfig
     , Route
+    , Running
     , app
+    , serve
+    , address
+    , stop
     , config
     , route
     , api
@@ -49,6 +53,7 @@ module Std.Live exposing
     , withAnalytics
     , withAnalyticsIdentify
     , withEmbedded
+    , withSessionTransport
     , withStatus
     , withDurable
     , withAuthSliding
@@ -78,6 +83,11 @@ type AppConfig model msg
 type Route
     = Route_OPAQUE
 
+-- | A Sky.Live app started with [`serve`]: pass it to [`address`] and
+-- [`stop`]. Opaque — its runtime shape is an implementation detail.
+type Running
+    = Running_OPAQUE
+
 
 -- | Build the app config from the six required fields. Attach optional
 -- fields (head, guard, static, analytics, …) with the `withX` builders.
@@ -106,6 +116,37 @@ config =
 app : AppConfig model msg -> Task Error ()
 app =
     Ffi.kernel "Live_app"
+
+
+-- | Start the app and return once its listener is bound, with a handle to
+-- stop it. The app runs embedded (see [`withEmbedded`]): no signal handler,
+-- no process exit. A port already in use, a session store that refuses to
+-- start and the console invariant are the Task's `Err`. Port 0 picks a free
+-- port; [`address`] names it.
+--
+--     main =
+--         Live.serve (Live.config { ... } |> Live.withPort 0)
+--             |> Task.andThen (\running -> work (Live.address running) |> Task.andThen (\_ -> Live.stop running))
+serve : AppConfig model msg -> Task Error Running
+serve =
+    Ffi.kernel "Live_serve"
+
+
+-- | The address a [`serve`]d app is bound to, as `host:port`
+-- (`127.0.0.1:54321` in development, `[::]:8080` bound to all interfaces).
+address : Running -> String
+address =
+    Ffi.kernel "Live_address"
+
+
+-- | Stop a [`serve`]d app: the listener stops accepting, every open SSE
+-- stream of the app closes, in-flight requests get up to 5 seconds to finish,
+-- every session ends (its `Sub.every` timers and topic subscriptions stop),
+-- the session store closes, and every process-wide registration the app made
+-- is removed. The port is free when the Task succeeds. Stopping twice is safe.
+stop : Running -> Task Error ()
+stop =
+    Ffi.kernel "Live_stop"
 
 
 -- | `route path page` — register a page route. Put literals before
@@ -309,6 +350,21 @@ withAnalyticsIdentify =
 withEmbedded : AppConfig model msg -> AppConfig model msg
 withEmbedded =
     Ffi.kernel "Live_withEmbedded"
+
+
+-- | How the session id travels: `"cookie"` (the default) or `"header"`.
+--
+-- `"header"` is for hosts that cannot keep cookies (a native shell whose
+-- custom-scheme handler drops `Set-Cookie`, some embedded web views). The
+-- page carries a session token; the client sends it in the `X-Sky-Session`
+-- header on every request and reads the SSE stream with `fetch`. No session
+-- cookie is set, the store keeps only a hash of the token, and the header is
+-- the CSRF defence. A full page reload starts a new session. The operator
+-- variable `SKY_LIVE_SESSION_TRANSPORT` overrides this. See
+-- docs/skylive/architecture.md.
+withSessionTransport : String -> AppConfig model msg -> AppConfig model msg
+withSessionTransport =
+    Ffi.kernel "Live_withSessionTransport"
 
 
 -- | Override the connection-status banner strings —

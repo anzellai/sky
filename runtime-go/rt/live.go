@@ -26,7 +26,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -1154,6 +1153,30 @@ type liveApp struct {
 	// scoped (the cross-process layer prepends its own id at the
 	// backbone). §5.4 of the design doc.
 	globalSeq atomic.Int64
+
+	// stopCh is closed by Live.stop (live_serve.go): every open SSE stream
+	// of this app returns, so the graceful HTTP shutdown can finish. nil for
+	// an app that is never stopped (a nil channel never selects).
+	stopCh chan struct{}
+	// storeRelease removes this app's session store from the process
+	// release phase (the store is closed by Live.stop instead). nil when
+	// nothing was registered.
+	storeRelease func()
+	// revocation is this app's own revocation gate (Live.withRevocation).
+	// Per app since v0.27, so two apps in one process can gate against
+	// different databases; see liveApp.revocationGate.
+	revocation *revocationGateConfig
+	// sliding is this app's sliding-auth config (Live.withAuthSliding), read
+	// by the app's own listener chain. nil = the feature is off.
+	sliding *authSlidingConfig
+	// headerSessions: the session id travels in the X-Sky-Session header,
+	// never in a cookie (Live.withSessionTransport "header",
+	// live_session_header.go). Resolved once at start.
+	headerSessions bool
+	// sseTickets holds the one-time SSE tickets of header mode (the
+	// EventSource fallback). Lazily created (ticketBook).
+	sseTickets     *sseTicketBook
+	sseTicketsOnce sync.Once
 }
 
 // nextGlobalSeq advances the app-wide broadcast counter and returns
@@ -1832,12 +1855,25 @@ func resolveLivePort(cfg any) int {
 	// a non-nil `Port` field means `withPort` was actually called.
 	builder := ""
 	if p := Field(cfg, "Port"); p != nil {
-		if n := AsInt(p); n > 0 {
+		if n := AsInt(p); n >= 0 {
+			// 0 asks the kernel for a free port (v0.27, for Live.serve /
+			// App.serve: App.address reports the port that was bound).
 			builder = strconv.Itoa(n)
 		}
 	}
-	if n := parsePortLayers(configLayers("LIVE_PORT", builder)); n > 0 {
-		return n
+	for _, raw := range configLayers("LIVE_PORT", builder) {
+		n, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		if n > 0 {
+			return n
+		}
+		// 0 is honoured from the builder layer only: an operator or a
+		// seeded default of 0 is a mistake, and falls through as before.
+		if n == 0 && raw == builder {
+			return 0
+		}
 	}
 	// The floor, when nothing supplied a usable port.
 	return 8080
@@ -1914,13 +1950,32 @@ func joinBindAddr(host string, port int) string {
 // outermost, so a request with a foreign Host reaches no route at all — the
 // dev console included.
 func liveListenerHandler(mux *http.ServeMux, bindHost string) http.Handler {
-	csrfed := CSRFMiddleware(skyAssetGuard(mux, nil))
+	return liveListenerHandlerFor(nil, mux, bindHost)
+}
+
+// liveListenerHandlerFor is liveListenerHandler for one app: the app's own
+// sliding-auth config and session transport choose the middleware. app nil
+// reads the process-wide sliding config (the pre-v0.27 behaviour, kept for
+// callers that build a handler without an app).
+func liveListenerHandlerFor(app *liveApp, mux *http.ServeMux, bindHost string) http.Handler {
+	var csrfed http.Handler
+	if app != nil && app.headerSessions {
+		// Header session transport: the X-Sky-Session header is the CSRF
+		// defence (live_session_header.go). No double-submit cookie.
+		csrfed = headerSessionCSRF(skyAssetGuard(mux, nil))
+	} else {
+		csrfed = CSRFMiddleware(skyAssetGuard(mux, nil))
+	}
 	// Sliding-auth re-issue — mounted ONLY when Live.withAuthSliding registered a
-	// config (getAuthSlidingConfig != nil). Sits inside observability (like CSRF)
-	// so a re-issue still meters as a request, and inside the auth-cookie flow it
-	// re-signs on activity. See auth_sliding.go.
+	// config. Sits inside observability (like CSRF) so a re-issue still meters as
+	// a request, and inside the auth-cookie flow it re-signs on activity. See
+	// auth_sliding.go.
 	authSlid := csrfed
-	if getAuthSlidingConfig() != nil {
+	if app != nil {
+		if app.sliding != nil {
+			authSlid = authSlidingMiddlewareWith(app.sliding, csrfed)
+		}
+	} else if getAuthSlidingConfig() != nil {
 		authSlid = AuthSlidingMiddleware(csrfed)
 	}
 	observed := ObservabilityMiddleware(authSlid)
@@ -2023,402 +2078,6 @@ func msgAdtFromUpdate(update any) string {
 		return ""
 	}
 	return in.String()
-}
-
-func liveAppRun(cfg any) any {
-	// Embedded mode (Live.withEmbedded / App.withEmbedded, live_embedded.go):
-	// the app is a guest in a larger Task program. It installs no signal
-	// handler and never exits the process; every refusal to start is the
-	// Task's Err, and the host owns shutdown.
-	embedded := AsBoolOrFalse(Field(cfg, "Embedded"))
-	app := &liveApp{
-		init:               Field(cfg, "Init"),
-		update:             Field(cfg, "Update"),
-		view:               Field(cfg, "View"),
-		subscriptions:      Field(cfg, "Subscriptions"),
-		notFound:           Field(cfg, "NotFound"),
-		guard:              Field(cfg, "Guard"),
-		head:               Field(cfg, "Head"),
-		consoleAuth:        Field(cfg, "ConsoleAuth"),
-		onNavigate:         Field(cfg, "OnNavigate"),
-		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
-		analyticsIdentify:  analyticsIdentifyFromCfg(cfg),
-		durable:            durableCtxOf(Field(cfg, "Durable")),
-		locker:             newSessionLocker(),
-		msgTags:            make(map[string]int),
-		bannerCfg:          resolveBannerStrings(loadLiveBannerConfig(), cfg),
-		basePath:           normaliseBasePath(skyGetenv("LIVE_BASE_PATH")),
-		cookieName:         "sky_sid",
-		skyIDPrefix:        "r",
-	}
-	app.routes, app.api = collectLiveRoutes(cfg)
-	// Static file serving. Sky-side: `static = "public"` → serve
-	// <cwd>/public/* at /static/*. Mount URL can be overridden with
-	// `staticUrl = "/assets"`.
-	if sd := Field(cfg, "Static"); sd != nil {
-		app.staticDir = fmt.Sprintf("%v", sd)
-	} else if v := skyGetenv("LIVE_STATIC_DIR"); v != "" {
-		// <PREFIX>_LIVE_STATIC_DIR is the documented name (matches
-		// the <PREFIX>_LIVE_* env var convention). <PREFIX>_STATIC_DIR
-		// is kept as a backward-compat alias so existing deployments
-		// don't break — read it only when the canonical name is
-		// unset. Both honour the configured env-prefix.
-		app.staticDir = v
-	} else if v := skyGetenv("STATIC_DIR"); v != "" {
-		app.staticDir = v
-	}
-	app.staticURL = "/static"
-	if su := Field(cfg, "StaticUrl"); su != nil {
-		if s := fmt.Sprintf("%v", su); s != "" {
-			app.staticURL = s
-		}
-	}
-	// Session store, TTL and idle-evict window — all four resolved by the one
-	// rule in `configLayers` (live_config_precedence.go):
-	//
-	//	operator env > withX builder > seeded sky.toml default > fallback
-	//
-	// Each accepts a Go-duration string ("30m", "24h", "1h30m", "45s") or a
-	// bare integer read as SECONDS, at every layer; an empty or unparseable
-	// value falls through to the next layer rather than to the fallback.
-	storeKind := resolveStoreKind(stringField(cfg, "Store"))
-	storePath := resolveStorePath(stringField(cfg, "StorePath"))
-	ttl := resolveTTL(stringField(cfg, "Ttl"), defaultSessionTTL)
-	// "0"/"off"/"none"/"disable(d)" disables idle-evict outright, which is the
-	// one way it differs from ttl. Bounds a durable store's RAM to the ACTIVE
-	// working set. See docs/skylive/tiered-session-cache.md.
-	idleEvict := resolveIdleEvict(stringField(cfg, "IdleEvict"), defaultIdleEvict)
-	// Event-body cap and input-report mode — resolved by the same one rule, so a
-	// Live.withMaxBodyBytes / Live.withInput builder beats a seeded sky.toml
-	// default while still losing to an operator env override. Resolved ONCE here
-	// (not per request / per /_sky/config hit) and stored on the app.
-	app.maxBodyBytes = resolveMaxBodyBytes(stringField(cfg, "MaxBodyBytes"), 5<<20)
-	app.inputMode = resolveInputMode(stringField(cfg, "Input"))
-	if embedded {
-		store, err := chooseStoreOrErr(storeKind, storePath, ttl, idleEvict)
-		if err != nil {
-			return Err[any, any](ErrUnavailable("Sky.Live (embedded) did not start: " + err.Error()))
-		}
-		app.store = store
-	} else {
-		app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
-	}
-	app.sessionTTL = ttl
-	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
-	// the backing DB is unreachable — instead of returning 200 while the store
-	// is down (the "readyz lies by default" class: RegisterReadinessProbe had
-	// zero callers, so an operator's health check stayed green through a store
-	// outage). Main app only — sub-apps (the inline console) don't own the
-	// readiness surface; the parent does (same app.basePath == "" gate the
-	// observability-endpoint mount uses).
-	if app.basePath == "" {
-		RegisterReadinessProbe("session-store", app.store.Ping)
-	}
-	// Cycle 3 P46: cache the store-bound broker on the app for
-	// hot-path Subscribe/Publish call sites (the broker is shared
-	// app-wide; the store owns the binding so v0.16+ cross-process
-	// backends can swap implementations without touching call sites).
-	app.topics = app.store.Broker()
-	// Phase 2: the broker is app-scoped, not store-scoped, so a deploy
-	// can run a Redis broker even with a non-Redis session store (e.g.
-	// Postgres sessions + Redis pub/sub) via SKY_LIVE_BROKER_URL. No-op
-	// when unset or when the store already provides a cross-instance
-	// broker (store=redis).
-	// "" configUrl: Sky.Config.withLiveBroker (if the app set it) already flowed
-	// into SKY_LIVE_BROKER_URL via ApplyConfig, so effectiveBrokerUrl reads it
-	// from the env here — with an operator's own value still winning.
-	app.topics = maybeOverrideBroker(app.topics, "")
-	// L6: a non-Redis broker is IN-PROCESS, so cross-replica broadcasts
-	// (Cmd.publish, and multi-tab fan-out across instances) silently don't reach
-	// users on OTHER replicas. Replica count can't be reliably detected from
-	// inside one process, so this is a heads-up (not a hard failure — single-
-	// instance postgres/sqlite deploys are correct and common). Main app +
-	// production only, once at startup.
-	if app.basePath == "" && productionFromEnv() {
-		if _, isRedis := app.topics.(*redisBroker); !isRedis {
-			logEmit(logLevelWarn, "warn",
-				"Sky.Live pub/sub broker is in-process — cross-replica broadcasts "+
-					"(Cmd.publish / multi-tab fan-out across instances) will NOT reach other replicas. "+
-					"If you run more than one replica, set SKY_LIVE_BROKER_URL to a Redis (or use "+
-					"store=redis). Single-instance deploys can ignore this.",
-				nil)
-		}
-	}
-	// Cycle 4 PT: register as the process-global broker so
-	// Std.PubSub.publish (Task-shaped, callable from raw api
-	// handlers / post-init goroutines / scheduled jobs) can find a
-	// *liveApp without an update-tuple context.
-	registerProcessBroker(app)
-
-	// Resolve listen port early. (Pre-v0.16.0 this was needed to seed
-	// SKY_PARENT_URL on subprocess-spawned console children; the
-	// inline console doesn't run as a child process so the port is
-	// just for the listener.)
-	port := resolveLivePort(cfg)
-	_ = port // referenced again below; keep the name in scope
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/_sky/event", app.handleEvent)
-	mux.HandleFunc("/_sky/sse", app.handleSSE)
-	// Session-id rotation: the signing-in tab exchanges its ticket for the new
-	// session cookie (live_session_rotation.go). CSRF-checked like /_sky/event.
-	mux.HandleFunc("/_sky/rotate", app.handleRotate)
-	mux.HandleFunc("/_sky/config", app.handleConfig)
-	// The client script (live_client_asset.go): a same-origin, content-hashed
-	// file so a strict Content-Security-Policy (script-src 'self') runs it.
-	mux.HandleFunc(liveClientPath, serveStaticJS(liveClientJS))
-	// v0.16.0: in-process inline Sky Console mount. Replaces the
-	// v0.15.x subprocess + reverse-proxy mount. The function
-	// internally gates on production-mode + sub-app context, so we
-	// can call it unconditionally. Must run BEFORE
-	// MountObservabilityEndpoints so the legacy HTML shell inside
-	// the latter doesn't collide on /_sky/console (safeMount's
-	// dedup catches that case anyway, but the explicit order
-	// documents intent).
-	//
-	// PR 3 (v0.16.0): the app's optional `consoleAuth` field rides
-	// in as an opaque `any` — `MountEmbeddedConsole` interprets it
-	// inside the `app`-mode gate. nil → token-mode / production-mode
-	// fallback per evaluateConsoleAuth.
-	SetConsoleAuthCallback(app.consoleAuth)
-	SetConsoleAuthModel(nil)
-	// Std.App.withConsoleAuth: the check also receives the console request's
-	// signed-in model, so an app whose sign-in lives in its model can decide
-	// from it. It replaces a one-argument consoleAuth if both are set.
-	if check := Field(cfg, "ConsoleAuthModel"); check != nil {
-		SetConsoleAuthCallback(check)
-		SetConsoleAuthModel(app.consoleModelFor)
-	}
-	// Sliding auth token (opt-in via Live.withAuthSliding). Register the config
-	// so AuthSlidingMiddleware (mounted below, alongside CSRF) and the
-	// builder-owned login setter (Auth.setSlidingCookie) both read ONE source of
-	// the cookie name / SameSite / revocation hook. Absent field ⇒ nil ⇒ inert.
-	SetAuthSlidingConfig(Field(cfg, "AuthSliding"))
-	// PULL-model revocation gate (opt-in via Live.withRevocation). The app-
-	// supplied Db is where the shared sky_revocations / users.disabled_at state
-	// lives (NOT the session store). Absent field ⇒ nil ⇒ the gate stays inert.
-	if dbAny := Field(cfg, "Revocation"); dbAny != nil {
-		if d, ok := dbAny.(*SkyDb); ok {
-			setRevocationGate(d, revocationCacheTTLFromEnv())
-		}
-	}
-	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's
-	// init_ reads OUR OWN listener's loopback when it builds the
-	// initial Model. The /_sky/console/api/* endpoints serve real
-	// telemetry via MountConsoleEndpoints (mounted later as part of
-	// MountObservabilityEndpoints). Without this, init_ falls back to
-	// `State_mockOverview()` + `State_mockLogs()` and the deployed
-	// console UI renders "Standalone mode — no parent URL configured"
-	// with all-zero stats.
-	//
-	// SAFE: StartPushExporter gates on BOTH SKY_PARENT_URL +
-	// SKY_LIVE_NAMESPACE being set. We only seed SKY_PARENT_URL, so
-	// the push-exporter stays a no-op for the parent app (only
-	// MountSubApp children set both).
-	//
-	// Only seed when UNSET — never overwrite a user-supplied value
-	// (legacy v0.15 subprocess apps may still set this in env).
-	if os.Getenv("SKY_PARENT_URL") == "" {
-		os.Setenv("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", port))
-	}
-	MountEmbeddedConsole(mux)
-	// If THIS process is a sub-app (env vars from MountSubApp set),
-	// kick the push exporter — Log.* / counter / span writes flow
-	// to the parent. No-op for standalone (parent) runs.
-	StartPushExporter()
-	// Observability endpoints — healthz / readyz / metrics / buildinfo.
-	// Default-on (per docs/v1-rfc/1-observability.md); opt-out via
-	// OBSERVABILITY_DISABLED=1. Mounted BEFORE the catch-all "/" route
-	// so the dispatchRoot handler doesn't shadow them.
-	//
-	// Skipped when this app is running AS a sub-app (basePath set)
-	// to avoid polluting the parent's observability namespace with
-	// nested /_sky/console/_sky/{healthz,readyz,metrics,buildinfo}
-	// duplicates. A console DOESN'T need its own metrics — its job
-	// is to read the parent's.
-	if app.basePath == "" {
-		MountObservabilityEndpoints(mux)
-	}
-	// v0.16.1 PR 2 — boot-time mount-precedence invariant. When the
-	// user EXPLICITLY asked for a console (SKY_CONSOLE_AUTH=token|app,
-	// not a sub-app, SKY_CONSOLE_EMBED not off) but neither the
-	// inline nor the legacy mount actually claimed /_sky/console,
-	// this prints a FATAL stderr line + os.Exit(1). Catches the
-	// hand-edited main.go that lost the console_app blank import.
-	// No-op when shouldHaveConsole is false (off / unset / sub-app).
-	if embedded {
-		if err := consoleInvariantError(); err != nil {
-			return Err[any, any](ErrInvalidInput("Sky.Live (embedded) did not start: console invariant: " + err.Error()))
-		}
-	} else {
-		AssertConsoleInvariantOrExit()
-	}
-	// Static assets (if configured) mounted first so api/page routing
-	// doesn't shadow them.
-	if app.staticDir != "" {
-		prefix := app.staticURL
-		if !strings.HasSuffix(prefix, "/") {
-			prefix += "/"
-		}
-		mux.Handle(prefix,
-			gzipStatic(http.StripPrefix(prefix, http.FileServer(http.Dir(app.staticDir)))))
-	}
-	// API handler dispatcher — matches method + pattern before page handler.
-	mux.HandleFunc("/", app.dispatchRoot)
-
-	// Pre-register model types with gob so DB-backed session stores
-	// can decode existing sessions on restart.
-	// Two passes:
-	//   1. Type-graph walk: registers SkyMaybe[User_R] etc. even when
-	//      init returns Nothing/[]/empty — walks the struct DEFINITION,
-	//      not the runtime value, so concrete generic instantiations
-	//      in struct fields are caught.
-	//   2. Value walk: catches anything the type walker misses (e.g.
-	//      dynamically-typed map entries).
-	func() {
-		defer func() { recover() }()
-		// v0.16.9 — keys are LOWERCASE for backward-compat with apps
-		// that read fields via Sky's `Dict.get "path" req` (literal
-		// lowercase strings — matched case-sensitively by Dict_get).
-		// Typed-codegen `req.path` access still works because
-		// rt.Field falls back to case-insensitive map lookup.  See
-		// the comment in Field for the full rationale.
-		req := map[string]any{
-			"path":    "/",
-			"query":   "",
-			"params":  Dict_empty(),
-			"method":  "GET",
-			"headers": Dict_empty(),
-			"cookies": Dict_empty(),
-		}
-		res := sky_call(app.init, req)
-		model := tupleFirst(res)
-		GobRegisterTypeGraph(reflect.TypeOf(model))
-		gobRegisterAll(model)
-	}()
-
-	// (port was resolved earlier so sub-app spawn could use it)
-
-	// Production-mode gate for /_sky/console + /_sky/metrics auth.
-	// Rule: ENV (or SKY_ENV) is SET to anything OTHER than the
-	// dev-marker set {"dev", "development", "local"} → gate.
-	// ENV unset OR matching a dev marker → open.
-	//
-	// This is intentionally bias-to-gate: if you bother setting
-	// ENV at all (staging, qa, production, prod, etc.), you mean
-	// it's not a casual dev session and the gate should apply.
-	// Default-open for unset ENV keeps dev workflows friction-free.
-	//
-	// NOTE: production-mode detection is PURELY env-based — it does
-	// NOT read the bind address. An earlier comment here claimed the
-	// mode was inferred from the interface (":PORT" ⇒ prod, 127.0.0.1
-	// ⇒ dev); that heuristic was unreliable under Docker / proxy /
-	// sidecar and was removed. The bind HOST is a SEPARATE decision,
-	// now made by resolveBindHost(): dev binds 127.0.0.1 (loopback),
-	// productionFromEnv() binds all interfaces, SKY_HOST overrides
-	// either way. So "local dev binds 127.0.0.1" — which this comment
-	// used to assert as an aspiration that was never wired — is now
-	// literally what the listener does.
-	SetProductionMode(productionFromEnv())
-
-	// Step 7 — OTel tracer init. Honours OTEL_EXPORTER_OTLP_ENDPOINT.
-	// Non-fatal: any failure logs + falls back to noop tracer
-	// (every span call becomes a zero-cost no-op).
-	if err := InitTracingFromEnv(); err != nil {
-		fmt.Fprintf(os.Stderr, "[sky.live] OTel init failed (continuing without trace export): %v\n", err)
-	}
-
-	// Wrap the mux with panic recovery so one bad handler can't crash the process.
-	// Layer order (outermost → innermost):
-	//   1. panic recovery     — turn handler panics into 500s
-	//   2. observability      — req-id, access log, metrics, OTel span
-	//   3. CSRF middleware    — Phase 1.2; double-submit cookie; default ON
-	//   4. user mux           — the actual handlers
-	// Putting CSRF inside observability means rejected CSRF requests
-	// STILL produce an access-log line + counter bump (you want to
-	// see CSRF rejection rates as a metric — sudden spike = attack
-	// or misconfiguration).
-	// The whole chain (Host guard, panic recovery, observability, CSRF,
-	// sliding auth, the mux) is built by liveListenerHandler so a test can
-	// drive the same handler the listener serves.
-	bindHost, _ := resolveBindHost()
-	listenerHandler := liveListenerHandler(mux, bindHost)
-
-	srv := &http.Server{
-		// bindAddr → 127.0.0.1:port in dev, :port (all interfaces) in
-		// prod, SKY_HOST:port when set. See resolveBindHost.
-		Addr:              joinBindAddr(bindHost, port),
-		Handler:           listenerHandler,
-		ReadHeaderTimeout: 10 * time.Second,
-		// IMPORTANT: do not set ReadTimeout or WriteTimeout here — the SSE
-		// endpoint needs to stream indefinitely. Per-handler deadlines can be
-		// enforced via r.Context() when needed.
-		IdleTimeout:    120 * time.Second,
-		MaxHeaderBytes: 1 << 20,
-	}
-	// Shutdown on SIGINT / SIGTERM / SIGHUP. SSE connections are
-	// long-lived (heartbeat every 15 s, otherwise idle) so the
-	// graceful `srv.Shutdown` would block forever waiting for them
-	// to return to idle — even with a context timeout it returns
-	// ctx.DeadlineExceeded WITHOUT actually closing the connections,
-	// leaving the goroutines alive and the process unable to exit.
-	// `srv.Close` forcibly closes the listener and every active
-	// connection; SSE writers see ErrConnClosed on their next Write
-	// and exit. Browsers see the dropped EventSource and the in-
-	// page banner flips to "Reconnecting…" — same UX as a deploy.
-	//
-	// Two-press escalation: a second SIGINT triggers os.Exit(130),
-	// which kills the process immediately even if something inside
-	// srv.Close is wedged. Familiar Ctrl-C-twice idiom.
-	// Under `--embed` the supervisor in pg_embed.go owns the shutdown
-	// SEQUENCE (stop accepting → drain → stop PostgreSQL). Handing it the
-	// listener is what makes its first phase real; a no-op when there is no
-	// embedded cluster.
-	RegisterAcceptStopper("live.Server", func() { _ = srv.Close() })
-	var sigCh chan os.Signal
-	if embedded {
-		// The host owns the process: no signal handler, no process-wide
-		// teardown (readiness, tracing, jobs, the shutdown chain are the
-		// host's). The app still stops in the right place when the host
-		// runs a termination sequence: closing the listener is a drain-phase
-		// hook, so it happens before the release phase closes this app's
-		// session store (RegisterResourceCloser in chooseStoreOrErr).
-		RegisterShutdownHook("live.embedded", func(context.Context) { _ = srv.Close() })
-	} else {
-		sigCh = make(chan os.Signal, 2)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-		go liveSignalShutdown(sigCh, srv)
-	}
-	fmt.Printf("Sky.Live listening on :%d\n", port)
-	// The block goes UNDER that line, never in place of it:
-	// `apps/fieldbook/verify.sh` greps it literally, and both `xtask
-	// build_run_gate` and `sky run`'s supervisor lift the port from the last
-	// `:PORT` of any line whose lowercase form contains "listening". See
-	// startup_report.go.
-	printStartupReport(port)
-	err := srv.ListenAndServe()
-	if sigCh != nil {
-		signal.Stop(sigCh)
-	}
-	// See the note in Server_listen: exiting here mid-shutdown would kill the
-	// embedded database instead of stopping it.
-	BlockIfEmbeddedShuttingDown()
-	if err != nil && err != http.ErrServerClosed {
-		// A port-already-bound failure is the common startup error — make it
-		// LOUD + actionable on stderr instead of a silent Task-Err exit.
-		if isAddrInUse(err) {
-			if embedded {
-				// A guest does not end its host: the host decides.
-				return Err[any, any](ErrUnavailable(fmt.Sprintf(
-					"Sky.Live (embedded) did not start: port %d is already in use "+
-						"(set SKY_LIVE_PORT, or [live] port in sky.toml)", port)))
-			}
-			reportPortInUse(port, "set SKY_LIVE_PORT, or [live] port in sky.toml")
-			ExitProcess(1)
-		}
-		return Err[any, any](ErrFfi(err.Error()))
-	}
-	return Ok[any, any](struct{}{})
 }
 
 // liveSignalShutdown is the shutdown sequence of a Sky.Live app that owns its
@@ -2588,7 +2247,9 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// pageSessionID (live_session_rotation.go) never adopts a malformed or
 	// rotated-away id, and answers an old cookie inside a rotation's grace
 	// window with a retry page (ok == false).
-	sid, ok := app.pageSessionID(w, r)
+	// Header session transport: pageToken is the token the page hands the
+	// client (live_session_header.go); "" in cookie mode.
+	sid, pageToken, ok := app.pageSessionID(w, r)
 	if !ok {
 		return
 	}
@@ -2603,6 +2264,10 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	}
 	restoreTab := stampLiveOriginTab(pageTab)
 	defer restoreTab()
+	// The page's session token rides the same way, so a rotation started by
+	// this request can derive the next token.
+	restoreTok := stampLiveSessionToken(pageToken)
+	defer restoreTok()
 	app.locker.Lock(sid)
 	defer app.locker.Unlock(sid)
 
@@ -2687,7 +2352,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// checks the user (and evicts a revoked one) instead of letting the
 		// restored signed-in model through as an unbound session.
 		if app.durable != nil {
-			if uid, boundAt, ok := lookupSessionBinding(sid); ok {
+			if uid, boundAt, ok := lookupSessionBinding(app, sid); ok {
 				sess.userID = uid
 				sess.boundAt = boundAt
 			}
@@ -2719,7 +2384,14 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// A first bind (or an account switch) moved the session to a new
 		// id; this response carries the new cookie and the page the new id.
 		if cur := sess.currentSID(); cur != sid {
-			writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			if app.headerSessions {
+				if nt, derived := app.tokenAfterRotation(pageToken, sid); derived {
+					pageToken = nt
+					writeSessionToken(w, nt)
+				}
+			} else {
+				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			}
 			w.Header().Set("X-Sky-Sid", cur)
 			sid = cur
 		}
@@ -2901,7 +2573,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// override in the app's head. Empty string when app didn't
 	// supply `head` — byte-identical to pre-v0.15.58 output.
 	headExtra := renderAppHead(app.head, model)
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScripts(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab), devBanner)
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScripts(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken), devBanner)
 }
 
 // renderAppHead invokes the optional `head : Model -> List (Html
@@ -3102,15 +2774,27 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// not let the cookie lapse while the server session keeps sliding on
 	// activity via touchLastSeen — that would 404 every subsequent click on
 	// a session that is demonstrably alive.
-	writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+	app.issueSession(w, r, sid)
 	if bs.tellSid {
 		w.Header().Set("X-Sky-Sid", sid)
+	}
+	// Header mode: the token this request presented. When it names an id
+	// that rotated (bs.setCookie: the rotating tab, inside the grace window)
+	// the tab is handed the derived token now.
+	evTok := presentedSessionToken(r)
+	if app.headerSessions && bs.setCookie {
+		if nt, derived := tokenThroughHopsFrom(app, evTok); derived {
+			evTok = nt
+			writeSessionToken(w, nt)
+		}
 	}
 	// This tab is the ORIGIN TAB of everything this event starts: a
 	// Cmd.perform that binds a user rotates the session id towards this tab
 	// only.
 	restoreTab := stampLiveOriginTab(req.Tab)
 	defer restoreTab()
+	restoreTok := stampLiveSessionToken(evTok)
+	defer restoreTok()
 	// PULL-model revocation: auto-bind from a verified sliding-auth token `sub`
 	// (stamped on the request context by AuthSlidingMiddleware) so token apps
 	// never forget to bind. No-op for session apps (they call
@@ -3121,7 +2805,14 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if sub := autoBindSubFromContext(r.Context()); sub != "" {
 		app.bindSessionUserTo(sess, canonicalSub(sub), time.Now().Unix())
 		if cur := sess.currentSID(); cur != sid {
-			writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			if app.headerSessions {
+				if nt, derived := app.tokenAfterRotation(evTok, sid); derived {
+					evTok = nt
+					writeSessionToken(w, nt)
+				}
+			} else {
+				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			}
 			w.Header().Set("X-Sky-Sid", cur)
 			sid = cur
 		}
@@ -3330,7 +3021,13 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if cur := sess.currentSID(); cur != sid && req.Tab != "" {
 		if a, has := app.store.getAlias(sid); has && a.inGrace(time.Now()) &&
 			subtle.ConstantTimeCompare([]byte(a.Tab), []byte(req.Tab)) == 1 {
-			writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			if app.headerSessions {
+				if nt, derived := app.tokenAfterRotation(evTok, sid); derived {
+					writeSessionToken(w, nt)
+				}
+			} else {
+				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
+			}
 			w.Header().Set("X-Sky-Sid", cur)
 		}
 	}
@@ -5011,6 +4708,10 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// cookie, gets the new cookie on this response's headers (an SSE
 	// response can set a cookie before its first byte). Any other old-cookie
 	// connection inside the grace window is told to reconnect shortly.
+	// Header session transport: an EventSource cannot send X-Sky-Session, so
+	// the fallback client presents a one-time ticket (?tk=) instead; it is
+	// redeemed (and consumed) here, once.
+	r = app.withSSETicket(r)
 	bs := app.resolveBoundSession(r, "", r.URL.Query().Get("tab"))
 	if bs.verdict == sessionRotating {
 		writeSSERotating(w)
@@ -5019,7 +4720,7 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	sid := bs.sid
 	if bs.verdict == sessionLost || sid == "" {
 		reason := sseLostNoCookie
-		if v, _ := readSessionCookie(r, app.cookieNameOrDefault()); v != "" {
+		if app.presentedSID(r) != "" {
 			reason = sseLostUnknownSession
 		}
 		app.writeSSESessionLost(w, r, reason)
@@ -5027,7 +4728,15 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, ok := app.store.Get(sid)
 	if ok && bs.setCookie {
-		writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+		if app.headerSessions {
+			// The rotating tab reconnects with its old token: hand it the
+			// derived one on this response (a fetch-stream client reads it).
+			if nt, derived := tokenThroughHopsFrom(app, presentedSessionToken(r)); derived {
+				writeSessionToken(w, nt)
+			}
+		} else {
+			writeSessionCookie(r, w, app.cookieNameOrDefault(), sid, app.sessionTTL)
+		}
 	}
 	if !ok {
 		// The memory-store-after-restart case (a redeploy, or a request
@@ -5225,6 +4934,11 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-app.stopCh:
+			// Live.stop (live_serve.go): the app is going away. End the
+			// stream plainly (no session-lost: the session did not end, the
+			// server did), so the graceful shutdown can finish.
 			return
 		case <-kickCh:
 			// A session-id rotation closed this connection (it is not the

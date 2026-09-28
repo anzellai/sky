@@ -476,6 +476,24 @@ func registerSharedPathPreflights(mux *http.ServeMux, routeList []any, pathRoute
 	}
 }
 
+// rpcRefusesHeaderSessions reports why a route set with a Server.rpc route
+// cannot run under SKY_LIVE_SESSION_TRANSPORT=header, or nil.
+func rpcRefusesHeaderSessions(routes []any) error {
+	if resolveSessionTransport("") != sessionTransportHeader {
+		return nil
+	}
+	for _, r := range routes {
+		if sr, ok := r.(SkyRoute); ok && sr.Rpc {
+			return fmt.Errorf("SKY_LIVE_SESSION_TRANSPORT=header is set, but this server has "+
+				"Server.rpc routes (%s %s; a Sky.Spa backend has one per Msg). They authenticate "+
+				"with the sky_sid session cookie, and the header session transport is Sky.Live "+
+				"only. Unset SKY_LIVE_SESSION_TRANSPORT for this server, or build the app for "+
+				"--target web (Sky.Live)", sr.Method, sr.Path)
+		}
+	}
+	return nil
+}
+
 // Server_listen builds the Task; the returned thunk binds and serves. Nothing
 // happens at the call: `Task.spawn (Server.listen port routes)` must reach the
 // spawn (see server_listen_deferred_test.go). The routes are captured now.
@@ -487,6 +505,16 @@ func Server_listen(port any, routes any) any {
 
 func serverListenRun(port any, routes any) any {
 	p := AsInt(port)
+	// The header session transport is Sky.Live's (live_session_header.go). A
+	// Server.rpc route (every Sky.Spa `/_rpc/<Msg>`, and `/_sky/sub`)
+	// authenticates with the session COOKIE, so an operator who set
+	// SKY_LIVE_SESSION_TRANSPORT=header for a Sky.Spa backend would get a
+	// server whose every RPC is anonymous in a cookie-less host. Refuse to
+	// start, and say why, rather than serve that.
+	if err := rpcRefusesHeaderSessions(AsList(routes)); err != nil {
+		fmt.Fprintln(os.Stderr, "[sky.http] "+err.Error())
+		return Err[any, any](ErrInvalidInput(err.Error()))
+	}
 	mux, rootFiles := serverRouteMux(AsList(routes))
 
 	// Observability endpoints (Phase 1.1a Step 4). Mount BEFORE

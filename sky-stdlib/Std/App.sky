@@ -39,6 +39,8 @@ module Std.App exposing
     , BaseConfig
     , Config(..)
     , WebOpts
+    , SessionTransport(..)
+    , Running
     , TabletOpts
     , DesktopOpts
     , TerminalOpts
@@ -69,6 +71,7 @@ module Std.App exposing
     , withDurable
     , withDurableId
     , withEmbedded
+    , withSessionTransport
     , DurableWiring
     , baseDefaults
     , webDefaults
@@ -77,6 +80,9 @@ module Std.App exposing
     , terminalDefaults
     , mobileDefaults
     , run
+    , serve
+    , address
+    , stop
     , runLive
     , runLiveWindow
     , runSpa
@@ -169,6 +175,8 @@ type Config
 -- `Live.withPort` / `withStore` / `withStatic` / `withStaticUrl` / `withTtl` /
 -- `withIdleEvict` / `withMaxBodyBytes` / `withInput` (`inputMode`). `embedded`
 -- (default `False`) is set by [`withEmbedded`]; it maps to `Live.withEmbedded`.
+-- `sessionTransport` (default `CookieSession`) is set by
+-- [`withSessionTransport`]; it maps to `Live.withSessionTransport`.
 type alias WebOpts =
     { port : Int
     , store : Maybe String
@@ -181,7 +189,19 @@ type alias WebOpts =
     , analytics : Maybe { pageViews : Bool }
     , csrf : Bool
     , embedded : Bool
+    , sessionTransport : SessionTransport
     }
+
+-- | How a Sky.Live session id travels between the browser and the server.
+-- `CookieSession` (the default) is the `sky_sid` cookie. `HeaderToken` is for
+-- hosts that cannot keep cookies: see [`withSessionTransport`].
+type SessionTransport
+    = CookieSession
+    | HeaderToken
+
+-- | A `web` app started with [`serve`]: pass it to [`address`] and [`stop`].
+type alias Running =
+    Live.Running
 
 
 -- | The built-in [`WebOpts`] default.
@@ -198,6 +218,7 @@ webDefaults =
     , analytics = Nothing
     , csrf = True
     , embedded = False
+    , sessionTransport = CookieSession
     }
 
 -- | Tablet-target config — same Live-backed shape as [`WebOpts`].
@@ -927,6 +948,52 @@ withEmbedded (App a) =
         }
 
 
+-- | Carry the Sky.Live session id in a header instead of a cookie:
+--
+--     appDef |> App.withSessionTransport HeaderToken
+--
+-- For hosts that cannot keep cookies: a native shell whose custom-scheme
+-- handler drops `Set-Cookie`, some embedded web views. The page carries a
+-- session token, the client sends it in the `X-Sky-Session` header on every
+-- request (and reads the live stream with `fetch`), no session cookie is set,
+-- and the server stores only a hash of the token. The header is also the CSRF
+-- defence. A full page reload starts a new session, because a navigation
+-- cannot carry a header. The operator variable `SKY_LIVE_SESSION_TRANSPORT`
+-- (`cookie` / `header`) overrides the builder.
+--
+-- Only the `web` / `tablet` targets (Sky.Live) read this. The `web:app`
+-- (Sky.Spa) build refuses it: its RPC and subscription endpoints authenticate
+-- with the session cookie.
+withSessionTransport : SessionTransport -> App fallback seed page model msg key -> App fallback seed page model msg key
+withSessionTransport transport (App a) =
+    -- Appended to the config list like withEmbedded, and read from ANY web
+    -- config (headerSessionIn_), so the order of builders does not matter.
+    App
+        { a | configs =
+            a.configs
+                ++ [ WebConfig { webDefaults | sessionTransport = transport } ]
+        }
+
+
+-- | True when any web / tablet config in the list asks for the header
+-- session transport.
+headerSessionIn_ : List Config -> Bool
+headerSessionIn_ configs =
+    case configs of
+
+        [] ->
+            False
+
+        (WebConfig o) :: rest ->
+            o.sessionTransport == HeaderToken || headerSessionIn_ rest
+
+        (TabletConfig o) :: rest ->
+            o.sessionTransport == HeaderToken || headerSessionIn_ rest
+
+        _ :: rest ->
+            headerSessionIn_ rest
+
+
 -- | True when any web / tablet config in the list asks for embedded mode.
 embeddedIn_ : List Config -> Bool
 embeddedIn_ configs =
@@ -1111,6 +1178,23 @@ runLive (App a) =
 
 runLiveBoot_ : App HasFallback () page model msg key -> Task Error ()
 runLiveBoot_ (App a) =
+    case liveConfig_ (App a) of
+
+        Just cfg ->
+            Live.app cfg
+
+        Nothing ->
+            Task.fail
+                (Error.invalidInput
+                    "target 'web' requires a fallback page — add `|> App.withNotFound <page>`")
+
+
+-- | The `Live.config` chain an [`App`] runs as on the `web` target: the
+-- accumulated [`WebOpts`] plus the `withHead` / `withGuard` / `withOnNavigate`
+-- / durable / console / embedded / session-transport builders. `Nothing` when
+-- the app has no fallback page. Shared by [`runLive`] and [`serve`].
+liveConfig_ : App HasFallback () page model msg key -> Maybe (Live.AppConfig model msg)
+liveConfig_ (App a) =
     case a.notFound of
 
         Just fallback ->
@@ -1271,13 +1355,75 @@ runLiveBoot_ (App a) =
 
                     else
                         withConsole_
+                withTransport_ =
+                    if headerSessionIn_ a.configs then
+                        Live.withSessionTransport "header" withEmbedded_
+
+                    else
+                        withEmbedded_
             in
-                Live.app withEmbedded_
+                Just withTransport_
 
         Nothing ->
+            Nothing
+
+
+-- | Start a `web` app and return once it is listening, with a handle to stop
+-- it. The Task program that calls it keeps running:
+--
+--     main =
+--         App.serve statusApp
+--             |> Task.andThen (\running -> Log.println ("status UI on " ++ App.address running))
+--             |> Task.andThen (\_ -> Task.loop work 0)
+--
+-- The app runs embedded ([`withEmbedded`] is implied): no signal handler, no
+-- process exit. A port already in use, a session store that refuses to start
+-- and the console boot check are the Task's `Err`. Port 0
+-- (`WebConfig { webDefaults | port = 0 }`) picks a free port; [`address`]
+-- names it. [`stop`] stops the app again.
+--
+-- `serve` always runs Sky.Live, whatever `--target` a build selects. A build
+-- whose target is not a Sky.Live target (`terminal:*`, `web:app`, `mobile:*`,
+-- `desktop:<os>`) refuses an entry that calls it.
+serve : App HasFallback () page model msg key -> Task Error Running
+serve (App a) =
+    case a.viewImpl of
+
+        ViewString _ ->
             Task.fail
                 (Error.invalidInput
-                    "target 'web' requires a fallback page — add `|> App.withNotFound <page>`")
+                    "App.serve runs a Sky.Live server: this app has a String view (App.cli / App.tui); use App.app or App.web")
+
+        _ ->
+            case liveConfig_ (App a) of
+
+                Just cfg ->
+                    Task.andThen
+                        (\_ -> Live.serve (Live.withEmbedded cfg))
+                        (Config.apply (baseToConfig_ a.base))
+
+                Nothing ->
+                    Task.fail
+                        (Error.invalidInput
+                            "App.serve requires a fallback page — add `|> App.withNotFound <page>`")
+
+
+-- | The address a [`serve`]d app is bound to, as `host:port`
+-- (`127.0.0.1:54321` in development, `[::]:8080` when bound to all
+-- interfaces).
+address : Running -> String
+address running =
+    Live.address running
+
+
+-- | Stop a [`serve`]d app. The listener stops accepting, the app's open live
+-- streams close, in-flight requests get up to 5 seconds to finish, every
+-- session ends, the session store closes, and the port is free when the Task
+-- succeeds. Other apps in the process are not touched. Stopping twice is
+-- safe.
+stop : Running -> Task Error ()
+stop running =
+    Live.stop running
 
 
 -- | Run as a client wasm SPA (`--target web:app` / `mobile:*` / `tablet:*`,

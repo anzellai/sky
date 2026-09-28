@@ -361,6 +361,49 @@ SIGINT / SIGTERM end the process at once; a host that runs `Server.listen` or
 closed in its drain phase, before the session store is released. The full
 account is `docs/skylive/embedded.md`.
 
+### Starting and stopping — `App.serve`
+
+`App.serve app : Task Error App.Running` starts a `web` app embedded and
+succeeds once it is listening; `App.address running` is its `host:port`
+(port `0` picks a free one); `App.stop running` stops it gracefully (live
+streams close, in-flight requests get 5 seconds, sessions end, the store
+closes, the port is free again). Stopping twice is safe.
+
+```elm
+main =
+    App.serve statusApp
+        |> Task.andThen (\running -> Log.println ("status UI on " ++ App.address running))
+        |> Task.andThen (\_ -> Task.loop workerStep 0)
+```
+
+Two apps served in one process keep their own sessions, routes, broker and
+store; the Sky Console is one per process (the first app owns it). A build for
+a target that does not run Sky.Live refuses an entry that calls `App.serve`.
+See `docs/skylive/embedded.md`.
+
+## Sessions without cookies — `App.withSessionTransport`
+
+For a host that cannot keep cookies (a native shell whose custom-scheme handler
+drops `Set-Cookie`, some embedded web views):
+
+```elm
+app =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound NotFound
+        |> App.withSessionTransport HeaderToken
+```
+
+`SessionTransport` is `CookieSession` (the default) or `HeaderToken`. With
+`HeaderToken` the session id travels in the `X-Sky-Session` header: the page
+carries a token, the client sends it on every request and reads the live stream
+with `fetch`, no session cookie is set, and the server stores only a hash of the
+token. The header is the CSRF defence (plus the Origin / `Sec-Fetch-Site`
+check). A full page reload starts a new session. `SKY_LIVE_SESSION_TRANSPORT`
+(`cookie` / `header`) overrides the builder. It is Sky.Live only: a
+`web:app` build refuses it, because Sky.Spa authenticates its RPC and
+subscription endpoints with the session cookie. The security model is in
+`docs/skylive/architecture.md` ("Sessions without cookies").
+
 ## View adapter
 
 You write one `view : model -> Element msg`. `Std.App` adapts it per backend:

@@ -68,6 +68,58 @@ func SetAuthSlidingConfig(rec any) {
 	authSlidingCfg.Store(cfg) // nil-tolerant: clears when cfg == nil
 }
 
+// Sliding-auth claims (v0.27). The middleware reads each app's own config,
+// but Auth.setSlidingCookie has no app in scope: it reads the process-wide
+// config. Two apps in one process (Live.serve) that name DIFFERENT cookies or
+// secrets would make that setter write the wrong app's cookie, so the second
+// such app refuses to start. Apps with the same config share it.
+var (
+	slidingClaimMu    sync.Mutex
+	slidingClaimCfg   *authSlidingConfig
+	slidingClaimCount int
+)
+
+// sameSlidingConfig compares the parts of two configs the setter uses.
+func sameSlidingConfig(a, b *authSlidingConfig) bool {
+	return a.cookie == b.cookie && a.secretEnv == b.secretEnv && a.sameSite == b.sameSite
+}
+
+// claimAuthSlidingConfig installs cfg as the process-wide config for
+// Auth.setSlidingCookie, or fails when another running app installed a
+// different one. release undoes the claim (idempotent). A nil cfg claims
+// nothing.
+func claimAuthSlidingConfig(cfg *authSlidingConfig) (release func(), err error) {
+	if cfg == nil {
+		return func() {}, nil
+	}
+	slidingClaimMu.Lock()
+	defer slidingClaimMu.Unlock()
+	if slidingClaimCount > 0 && !sameSlidingConfig(slidingClaimCfg, cfg) {
+		return nil, fmt.Errorf("Live.withAuthSliding: another Sky.Live app in this process "+
+			"slides cookie %q; Auth.setSlidingCookie cannot tell two configs apart, "+
+			"so apps served in one process must use the same sliding-auth config", slidingClaimCfg.cookie)
+	}
+	if slidingClaimCount == 0 {
+		slidingClaimCfg = cfg
+		authSlidingCfg.Store(cfg)
+	}
+	slidingClaimCount++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			slidingClaimMu.Lock()
+			defer slidingClaimMu.Unlock()
+			slidingClaimCount--
+			if slidingClaimCount == 0 {
+				// Clear what the claims installed, unless something replaced
+				// it since (SetAuthSlidingConfig from an embedder).
+				authSlidingCfg.CompareAndSwap(slidingClaimCfg, nil)
+				slidingClaimCfg = nil
+			}
+		})
+	}, nil
+}
+
 // ResetAuthSlidingConfig clears the config. Test-only; production never calls it.
 func ResetAuthSlidingConfig() { authSlidingCfg.Store(nil) }
 
@@ -178,8 +230,19 @@ func buildSlidingAuthCookie(r *http.Request, name, value, sameSite string) *http
 // ONLY when Live.withAuthSliding registered a config. It re-issues a sliding
 // auth token on activity; every other request passes straight through.
 func AuthSlidingMiddleware(next http.Handler) http.Handler {
+	return authSlidingMiddlewareWith(nil, next)
+}
+
+// authSlidingMiddlewareWith is AuthSlidingMiddleware for one app's config
+// (v0.27: two apps served in one process each slide their own cookie). A nil
+// fixed reads the process-wide config on every request.
+func authSlidingMiddlewareWith(fixed *authSlidingConfig, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cfg := getAuthSlidingConfig(); cfg != nil {
+		cfg := fixed
+		if cfg == nil {
+			cfg = getAuthSlidingConfig()
+		}
+		if cfg != nil {
 			// Set the re-issued cookie BEFORE the handler runs (like CSRF), so
 			// the Set-Cookie header is on the response the handler completes.
 			// The verified token subject is returned for PULL-model auto-bind:

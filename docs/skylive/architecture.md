@@ -41,6 +41,8 @@ Technical reference for how Sky.Live dispatches events, renders, and diffs. For 
 3. **Event post** — client sends `POST /_sky/event`. The session is resolved from the **cookie only** — the body's `sessionId` is advisory and must match it, so a leaked session id cannot be used to drive someone else's session (see `docs/skylive/input-authority-protocol.md` §Request). Server decodes `msg`, locks the session, runs `update`, diffs, emits patch over SSE.
 
 **Session-id rotation.** When the session's bound user changes (`Live.bindSessionUser`, sliding-auth auto-bind, an account switch) the session is re-keyed to a fresh id (`runtime-go/rt/live_session_rotation.go`). The same session object stays attached to the signing-in tab's SSE connection; that tab gets the new cookie through a one-time ticket on its SSE stream (`POST /_sky/rotate`) or on its next event POST / SSE connect / sky-nav. Every other SSE connection of the session is closed. The old id is kept in the session store as an alias: for 60 s a request carrying only the old cookie is answered `X-Sky-Status: session-rotating` (the client retries), then `session-lost`. A body `sessionId` that is an alias of the cookie's session is accepted and answered with `X-Sky-Sid: <new id>`. The durable snapshot moves to the new id. See `docs/skylive/overview.md#session-ids-change-at-sign-in`.
+**Header session transport (no cookies).** An app that opts in (`App.withSessionTransport HeaderToken`, `Live.withSessionTransport "header"`, or `SKY_LIVE_SESSION_TRANSPORT=header`) carries the session in the `X-Sky-Session` header instead of a cookie. See [Sessions without cookies](#sessions-without-cookies-the-header-transport) below.
+
 4. **Cmd dispatch** — if `update` returned a non-none `cmd`, server spawns a goroutine per command. Each goroutine holds the session lock only to apply the resulting `Msg`, not while the task runs — so long-running HTTP requests don't block other events.
 5. **TTL expiry** — sessions expire after `[live] ttl` seconds of inactivity. The store sweeps expired rows periodically.
 
@@ -599,6 +601,113 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
 > Rate limiting and origin control are the deployer's to add in front of
 > the app (reverse proxy / ingress), or per-route with
 > `Sky.Http.Middleware`.
+
+## Sessions without cookies: the header transport
+
+Some hosts cannot keep cookies: a native shell whose custom-scheme handler
+drops `Set-Cookie` (a `WKWebView` custom scheme has no cookie store), and some
+embedded web views. For them an app opts into the **header session transport**
+(`runtime-go/rt/live_session_header.go`):
+
+```elm
+app =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound NotFound
+        |> App.withSessionTransport HeaderToken
+```
+
+`Live.withSessionTransport "header"` is the same for a `Std.Live` app. The
+operator variable `SKY_LIVE_SESSION_TRANSPORT` (`cookie` / `header`) wins over
+the builder. An unknown value keeps cookies and prints a warning. Nothing
+changes for an app that does not opt in.
+
+**How the session travels.**
+
+- A page load mints a **session token** (16 random bytes, 32 hex characters).
+  The page carries it in its boot config (the non-executable
+  `<script type="application/json" id="sky-live-cfg">` block, `"tok"`), which
+  the same-origin client script reads under a strict CSP, and in the
+  `X-Sky-Session` response header.
+- The client sends the token in the `X-Sky-Session` header on every event
+  POST, sky-nav fetch, rotation exchange and live stream. No `sky_sid` cookie
+  is set or read. A session cookie that a request presents is ignored, even
+  one that names a live session.
+- `EventSource` cannot set a header, so the client reads the SSE stream with
+  `fetch()` and a `ReadableStream`. Where streaming `fetch` is not available it
+  falls back to a **one-time SSE ticket**: `POST /_sky/sse-ticket` (with the
+  header) returns a ticket that is single-use, bound to the session and to the
+  tab, and expires in 10 seconds; the client opens
+  `EventSource("/_sky/sse?...&tk=<ticket>")`. A dropped ticket stream asks for
+  a new ticket; a ticket is never replayed. Tickets live in the memory of the
+  replica that issued them (Sky.Live is already sticky; see
+  [Sessions are single-owner](#sessions-are-single-owner--route-sticky-by-cookie-load-bearing)).
+- A navigation (a reload, a typed URL, a bookmark) cannot carry a header, so a
+  **full page load starts a new session**. In-app navigation (`sky-nav`,
+  Back / Forward) is a fetch and keeps the session. Keep state that must
+  outlive a reload in the app's own store, keyed by the signed-in user.
+
+**What the server stores.** The store is keyed by `SHA-256("sky.live.session:"
++ token)`, truncated to the usual 32-hex id. The token itself exists only in
+the client, and in memory while a request that presented it is served. A
+leaked session store (a database dump, a Redis snapshot) names no usable
+token. The runtime never logs the token; the SSE ticket is in the stream URL,
+where a proxy access log can see it, which is why it is single-use and lives
+10 seconds.
+
+**Rotation.** Session-id rotation on a change of bound user works the same way,
+with one change: the server keeps no token to hand back, so the new id is
+**derived**. `newToken = HMAC-SHA256(key = oldToken, "sky.live.rotate:" +
+salt)`, and the new id is the hash of `newToken`. The alias record keeps only
+the salt. The token of the acting request is carried on the goroutine trace
+context (like the origin tab), so a rotation started by that request's
+`Cmd.perform` can derive from it.
+
+- The acting tab gets the `rotate` frame with a one-time ticket on its stream,
+  and `POST /_sky/rotate` (with the old token in the header) answers with the
+  new token in the `X-Sky-Session` header and the JSON body (`"token"`). The
+  client swaps it in.
+- That tab's next event POST, stream connect or sky-nav fetch that still
+  presents the old token inside the 60 s grace window gets the new token in
+  the `X-Sky-Session` response header.
+- Any other request with the old token gets `session-rotating`, then
+  `session-lost`, exactly as in cookie mode.
+- A rotation with no token in scope (a `Time.every` tick binding a user)
+  gets a random id: no client can derive its token, and the session ends
+  after the grace window.
+
+Each page load is its own session in this mode, so "every tab follows the
+sign-in" does not apply: a sign-in in one tab does not sign in another.
+
+**CSRF.** The `X-Sky-Session` header **is** the CSRF defence. A cross-site
+form cannot set a request header, and a cross-origin `fetch` that sets one
+needs a CORS preflight the runtime never grants. So header mode issues no
+double-submit CSRF cookie. A state-changing request (POST / PUT / PATCH /
+DELETE) is accepted only when it carries the header (or an `Authorization`
+header, or matches a CSRF exemption such as a `Live.api` route), **and** it
+passes the same Origin / `Sec-Fetch-Site` check as `Server.rpc`:
+`Sec-Fetch-Site: same-origin` / `none` passes, otherwise the `Origin` must be
+the app's public origin (`SKY_PUBLIC_URL`, else the request's scheme and
+`Host`); `Origin: null` is refused. A native shell that loads the app from a
+custom scheme and sends a cross-site `Origin` lists that origin in
+`SKY_PUBLIC_URL`. `SKY_CSRF=off` turns the check off, as in cookie mode.
+
+**What it does not cover.**
+
+- **Sky.Spa.** A `web:app` build authenticates `/_rpc/<Msg>` and
+  `/_sky/sub` with the `sky_sid` cookie (`verified<Field>_` helpers), so the
+  header transport is Sky.Live only: `App.withSessionTransport` fails the
+  `--target web:app` build with that reason, and a server with `Server.rpc`
+  routes refuses to start when `SKY_LIVE_SESSION_TRANSPORT=header` is set.
+- **The Sky Console** (`/_sky/console`) keeps its own cookie-based login.
+- **Your own auth cookies.** `Std.Auth` / `Live.withAuthSliding` set cookies
+  of their own; in a cookie-less host, carry the user in the model after a
+  sign-in `update`, and bind it with `Live.bindSessionUser`.
+
+The regression gates are `runtime-go/rt/live_session_header_test.go`,
+`live_js_header_session_test.go` (the client in node) and
+`scripts/header-session-e2e.sh` (Chromium with every cookie blocked, strict
+CSP: counter, pushes, a dropped stream, a sign-in rotation, the ticket
+fallback).
 
 ## Client-side runtime
 

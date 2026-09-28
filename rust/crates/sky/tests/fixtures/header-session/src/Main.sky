@@ -1,0 +1,142 @@
+module Main exposing (main)
+
+{-| Sky.Live without cookies: the header session transport
+(`App.withSessionTransport HeaderToken`). Driven by
+scripts/header-session-verify.mjs (see scripts/header-session-e2e.sh) in a
+browser whose cookies are blocked, under a strict Content-Security-Policy.
+
+A counter (event POSTs), a ticker (server pushes over the live stream), a
+sign-in that binds the session to a user (`Live.bindSessionUser`, which
+rotates the session id and so the token), and `Live.sessionKey`, which must
+not change across the rotation.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Std.App as App exposing (SessionTransport(..))
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Live as Live
+import Std.Sub as Sub exposing (Sub)
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { count : Int
+    , ticks : Int
+    , ticking : Bool
+    , user : String
+    , key : String
+    }
+
+type Msg
+    = Inc
+    | Tick
+    | StartTicks
+    | StopTicks
+    | SignIn
+    | Bound (Result Error ())
+    | AskKey
+    | GotKey (Result Error String)
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, ticks = 0, ticking = False, user = "anon", key = "" }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Inc ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        Tick ->
+            ( { model | ticks = model.ticks + 1 }, Cmd.none )
+
+        StartTicks ->
+            ( { model | ticking = True }, Cmd.none )
+
+        StopTicks ->
+            ( { model | ticking = False }, Cmd.none )
+
+        SignIn ->
+            ( model, Cmd.perform (Live.bindSessionUser "user-1") Bound )
+
+        Bound res ->
+            case res of
+
+                Ok _ ->
+                    ( { model | user = "user-1" }, Cmd.none )
+
+                Err _ ->
+                    ( { model | user = "bind-failed" }, Cmd.none )
+
+        AskKey ->
+            ( model, Cmd.perform (Live.sessionKey ()) GotKey )
+
+        GotKey res ->
+            case res of
+
+                Ok k ->
+                    ( { model | key = k }, Cmd.none )
+
+                Err _ ->
+                    ( { model | key = "key-failed" }, Cmd.none )
+
+
+idA : String -> Ui.Attribute msg
+idA s =
+    Ui.htmlAttribute "id" s
+
+
+button : String -> Msg -> String -> Element Msg
+button id msg label =
+    Ui.button [ idA id ] { onPress = Just msg, label = Ui.text label }
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 6 ]
+        [ button "inc" Inc "inc"
+        , button "start" StartTicks "start"
+        , button "stop" StopTicks "stop"
+        , button "signin" SignIn "sign in"
+        , button "ask-key" AskKey "ask key"
+        , Ui.el
+              [ idA "state" ]
+              (Ui.text
+                  ("count=" ++ String.fromInt model.count ++ "|ticks="
+                      ++ String.fromInt model.ticks
+                      ++ "|user="
+                      ++ model.user
+                      ++ "|key="
+                      ++ model.key))
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    if model.ticking then
+        Sub.every 150 Tick
+
+    else
+        Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withSessionTransport HeaderToken
+
+
+main =
+    App.run app

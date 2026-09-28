@@ -1,0 +1,191 @@
+module Main exposing (main)
+
+-- A Task program (no TEA loop of its own) that starts Sky.Live apps with
+-- App.serve and stops them with App.stop. Driven by
+-- tests/app_serve_flow.rs, which checks the printed lines:
+--
+--   SERVE_A <status> <count-shown>   app A answers on the port the kernel picked
+--   SERVE_B <status>                 app B answers next to it, on its own port
+--   DISTINCT_PORTS True              the two apps bound different ports
+--   STOPPED_A <result>               App.stop A, then a request to A fails
+--   STILL_B <status>                 B keeps serving after A stopped
+--   RESTART_A <status>               A starts again on the SAME port
+--   STOP_TWICE Ok                    a second App.stop is harmless
+--   HEADER_TOKEN True                a header-transport app hands out a token
+--   HEADER_NO_COOKIE True            ... and sets no session cookie
+--   SERVE_FLOW_DONE
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Http as Http
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.App as App exposing (Config(..), SessionTransport(..), webDefaults)
+import Std.Cmd as Cmd
+import Std.Log as Log
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { count : Int }
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : String -> Model -> Element Msg
+view name model =
+    Ui.text (name ++ "_COUNT=" ++ String.fromInt model.count)
+
+
+appOn name port =
+    App.app
+        { init = init
+        , update = update
+        , view = view name
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.withConfig (WebConfig { webDefaults | port = port })
+
+
+url : App.Running -> String
+url running =
+    "http://" ++ App.address running ++ "/"
+
+
+portOf : App.Running -> Int
+portOf running =
+    App.address running |> String.split ":" |> List.reverse |> List.head
+        |> Maybe.andThen String.toInt
+        |> Maybe.withDefault 0
+
+
+status : App.Running -> Task Error String
+status running =
+    Http.get (url running) |> Task.map (\r -> String.fromInt r.status)
+
+
+shows : String -> App.Running -> Task Error String
+shows name running =
+    Http.get (url running)
+        |> Task.map
+               (\r ->
+                   String.fromInt r.status ++ " "
+                       ++ (if String.contains (name ++ "_COUNT=0") r.body then
+                              "shown"
+
+                          else
+                              "missing"))
+
+
+header : String -> Dict String String -> Maybe String
+header name headers =
+    case Dict.get name headers of
+
+        Just v ->
+            Just v
+
+        Nothing ->
+            Dict.get (String.toLower name) headers
+
+
+checkHeaderMode : Task Error ()
+checkHeaderMode =
+    App.serve (appOn "H" 0 |> App.withSessionTransport HeaderToken)
+        |> Task.andThen
+               (\running ->
+                   Http.get (url running)
+                       |> Task.andThen
+                              (\r ->
+                                  let
+                                      token =
+                                          header "X-Sky-Session" r.headers
+                                              |> Maybe.withDefault ""
+                                      cookie =
+                                          header "Set-Cookie" r.headers
+                                              |> Maybe.withDefault ""
+                                  in
+                                      Log.println
+                                          ("HEADER_TOKEN "
+                                              ++ boolText
+                                                     (String.length token == 32))
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     Log.println
+                                                         ("HEADER_NO_COOKIE "
+                                                             ++ boolText
+                                                                    (not
+                                                                        (String.contains
+                                                                            "sky_sid"
+                                                                            cookie)))))
+                       |> Task.andThen (\_ -> App.stop running))
+
+
+boolText : Bool -> String
+boolText b =
+    if b then
+        "True"
+
+    else
+        "False"
+
+
+afterStop : App.Running -> Task Error String
+afterStop running =
+    Http.get (url running)
+        |> Task.map (\r -> "STILL_ANSWERS " ++ String.fromInt r.status)
+        |> Task.onError (\_ -> Task.succeed "Ok")
+
+
+main : Task Error ()
+main =
+    App.serve (appOn "A" 0)
+        |> Task.andThen
+               (\a -> App.serve (appOn "B" 0) |> Task.andThen (\b -> both a b))
+        |> Task.andThen (\_ -> checkHeaderMode)
+        |> Task.andThen (\_ -> Log.println "SERVE_FLOW_DONE")
+
+
+both : App.Running -> App.Running -> Task Error ()
+both a b =
+    shows "A" a |> Task.andThen (\s -> Log.println ("SERVE_A " ++ s))
+        |> Task.andThen (\_ -> status b)
+        |> Task.andThen (\s -> Log.println ("SERVE_B " ++ s))
+        |> Task.andThen
+               (\_ ->
+                   Log.println
+                       ("DISTINCT_PORTS " ++ boolText (portOf a /= portOf b)))
+        |> Task.andThen (\_ -> App.stop a)
+        |> Task.andThen (\_ -> afterStop a)
+        |> Task.andThen (\s -> Log.println ("STOPPED_A " ++ s))
+        |> Task.andThen (\_ -> status b)
+        |> Task.andThen (\s -> Log.println ("STILL_B " ++ s))
+        |> Task.andThen (\_ -> restart (portOf a))
+        |> Task.andThen (\_ -> App.stop b)
+        |> Task.andThen (\_ -> App.stop b)
+        |> Task.andThen (\_ -> Log.println "STOP_TWICE Ok")
+
+
+restart : Int -> Task Error ()
+restart port =
+    App.serve (appOn "A" port)
+        |> Task.andThen
+               (\again ->
+                   status again
+                       |> Task.andThen (\s -> Log.println ("RESTART_A " ++ s))
+                       |> Task.andThen (\_ -> App.stop again))

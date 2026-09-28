@@ -455,9 +455,27 @@ func ResetRevocationGate() {
 
 func getRevocationGate() *revocationGateConfig { return revocationGateCfg.Load() }
 
+// liveRevocationApps counts the running Sky.Live apps that carry their own
+// gate (Live.withRevocation). The gate is per app since v0.27: two apps served
+// in one process (Live.serve) may name different databases, and a process-wide
+// gate made the second app's Db the gate of both.
+var liveRevocationApps atomic.Int32
+
+// revocationGate is the gate this app enforces: its own (Live.withRevocation),
+// else the process-wide one an embedder or a test installed with
+// setRevocationGate. nil = no gate.
+func (app *liveApp) revocationGate() *revocationGateConfig {
+	if app != nil && app.revocation != nil {
+		return app.revocation
+	}
+	return getRevocationGate()
+}
+
 // revocationGateEnabled reports whether enforcement is active — i.e. the app
 // opted in via Live.withRevocation (the only source of the Db the gate needs).
-func revocationGateEnabled() bool { return getRevocationGate() != nil }
+func revocationGateEnabled() bool {
+	return getRevocationGate() != nil || liveRevocationApps.Load() > 0
+}
 
 // ─── "revocation used but not wired" detection (loud-on-misconfig) ──
 
@@ -485,7 +503,15 @@ type accessCacheEntry struct {
 	at    time.Time
 }
 
-var accessCache sync.Map // uid(string) -> accessCacheEntry
+// accessCache is keyed by the gate's Db AND the user id: two apps in one
+// process (Live.serve) can gate against different databases, where the same
+// user id names different users.
+var accessCache sync.Map // accessCacheKey -> accessCacheEntry
+
+type accessCacheKey struct {
+	db  *SkyDb
+	uid string
+}
 
 // accessStateCached resolves the verdict for uid, honouring the gate's TTL. At
 // ttl == 0 (the shipped default) every call is a FRESH shared-table read — the
@@ -493,7 +519,7 @@ var accessCache sync.Map // uid(string) -> accessCacheEntry
 // revocation latency for fewer reads on the hot path; document the latency.
 func (g *revocationGateConfig) accessStateCached(uid string, boundAt int64) (int, error) {
 	if g.ttl > 0 {
-		if v, ok := accessCache.Load(uid); ok {
+		if v, ok := accessCache.Load(accessCacheKey{g.db, uid}); ok {
 			if e, ok := v.(accessCacheEntry); ok && time.Since(e.at) < g.ttl {
 				return e.state, nil
 			}
@@ -504,7 +530,7 @@ func (g *revocationGateConfig) accessStateCached(uid string, boundAt int64) (int
 		return state, err
 	}
 	if g.ttl > 0 {
-		accessCache.Store(uid, accessCacheEntry{state: state, at: time.Now()})
+		accessCache.Store(accessCacheKey{g.db, uid}, accessCacheEntry{state: state, at: time.Now()})
 	}
 	return state, nil
 }
@@ -512,7 +538,12 @@ func (g *revocationGateConfig) accessStateCached(uid string, boundAt int64) (int
 // invalidateAccessCache drops a user's cached verdict so a same-replica
 // revoke/disable takes effect immediately even under a positive TTL.
 func invalidateAccessCache(uid string) {
-	accessCache.Delete(uid)
+	accessCache.Range(func(k, _ any) bool {
+		if key, ok := k.(accessCacheKey); ok && key.uid == uid {
+			accessCache.Delete(k)
+		}
+		return true
+	})
 }
 
 // revocationCacheTTLFromEnv reads the optional per-replica cache window from

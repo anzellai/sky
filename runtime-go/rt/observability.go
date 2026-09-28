@@ -36,7 +36,9 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -133,6 +135,53 @@ func RegisterReadinessProbe(name string, probe func() error) {
 	}
 }
 
+// scopedProbes holds readiness probes whose owner can go away before the
+// process does (the session store of a Sky.Live app started with Live.serve).
+// HandleReadyz checks them after the process-lifetime ones.
+var (
+	scopedProbesMu sync.Mutex
+	scopedProbes   = map[uint64]func() error{}
+)
+
+// registerReadinessProbeScoped is RegisterReadinessProbe with an unregister
+// func (idempotent). A stopped app removes its store probe, so /_sky/readyz
+// does not report 503 for a store that was closed on purpose.
+func registerReadinessProbeScoped(name string, probe func() error) (unregister func()) {
+	if probe == nil {
+		return func() {}
+	}
+	id := registryIDs.Add(1)
+	scopedProbesMu.Lock()
+	scopedProbes[id] = func() error {
+		if err := probe(); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		return nil
+	}
+	scopedProbesMu.Unlock()
+	return func() {
+		scopedProbesMu.Lock()
+		delete(scopedProbes, id)
+		scopedProbesMu.Unlock()
+	}
+}
+
+// scopedProbeList snapshots the scoped probes in registration order.
+func scopedProbeList() []func() error {
+	scopedProbesMu.Lock()
+	defer scopedProbesMu.Unlock()
+	ids := make([]uint64, 0, len(scopedProbes))
+	for id := range scopedProbes {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]func() error, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, scopedProbes[id])
+	}
+	return out
+}
+
 // SetReady flips the readyz flag. Call SetReady(false) at the top
 // of the SIGTERM handler so orchestrators stop routing new traffic
 // while in-flight requests drain.
@@ -223,7 +272,7 @@ func HandleReadyz(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"draining"}`))
 		return
 	}
-	probes := *readinessProbes.Load()
+	probes := append(append([]func() error{}, *readinessProbes.Load()...), scopedProbeList()...)
 	for _, probe := range probes {
 		if err := probe(); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)

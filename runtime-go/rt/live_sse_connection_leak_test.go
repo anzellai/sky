@@ -29,9 +29,15 @@ func TestSseOpenIsIdempotentAndClosesOnUnload(t *testing.T) {
 	if open < 0 {
 		t.Fatal("__skyOpenSSE missing")
 	}
-	newES := strings.Index(js[open:], "new EventSource(")
+	// The stream is created through __skyNewEventSource (an EventSource in
+	// cookie mode, the fetch-stream wrapper in header-session mode).
+	newES := strings.Index(js[open:], "__skyNewEventSource(")
 	if newES < 0 {
 		t.Fatal("__skyOpenSSE no longer creates an EventSource")
+	}
+	if f := strings.Index(js, "function __skyNewEventSource("); f < 0 ||
+		!strings.Contains(js[f:f+300], "new EventSource(") {
+		t.Fatal("__skyNewEventSource no longer creates an EventSource in cookie mode")
 	}
 	body := js[open : open+newES]
 	if !strings.Contains(body, "__skySSE.close()") {

@@ -96,17 +96,15 @@ func Test_PubSubPublishTask_DeliversToSubscriber(t *testing.T) {
 	}
 }
 
-// Test_PubSubPublishTask_FirstRegisteredWins — a process running
-// multiple Live.app starts (rare but legal) sees PubSub_publish
-// route to the FIRST registered app's broker.
+// Test_PubSubPublishTask_ReachesEveryHostApp — a process running two host
+// Live apps (two Live.serve starts, v0.27) sees PubSub_publish reach the
+// subscribers of BOTH. A topic is a process-wide name; before v0.27 the
+// first app took every publish and the second never saw one. A stopped app
+// (unregisterProcessBrokerApp, Live.stop) receives nothing more.
 //
-// v0.16.1 PR10-F flipped registerProcessBroker from last-writer-wins
-// to first-writer-wins so the canonical sub-app mount path
-// (MountLiveSubAppInProcess) couldn't accidentally shadow the host
-// app's broker after AssertConsoleInvariantOrExit runs the inline
-// console mount. The host app's call from liveAppRun happens first;
-// any sub-app's subsequent call is a no-op.
-func Test_PubSubPublishTask_FirstRegisteredWins(t *testing.T) {
+// Sub-apps (the inline console) never register, so the v0.16.1 PR10-F
+// guarantee holds: a sub-app's broker never receives the host's publishes.
+func Test_PubSubPublishTask_ReachesEveryHostApp(t *testing.T) {
 	unregisterProcessBroker()
 	t.Cleanup(unregisterProcessBroker)
 
@@ -114,33 +112,44 @@ func Test_PubSubPublishTask_FirstRegisteredWins(t *testing.T) {
 	second := &liveApp{topics: newTopicRegistry(16)}
 
 	registerProcessBroker(first)
-	registerProcessBroker(second) // no-op under first-writer-wins
+	registerProcessBroker(second)
+	registerProcessBroker(second) // a second registration is a no-op
 
 	firstCh, firstCancel := first.topics.Subscribe("topic")
 	defer firstCancel()
 	secondCh, secondCancel := second.topics.Subscribe("topic")
 	defer secondCancel()
 
-	taskFn := PubSub_publish("topic", "p").(func() any)
-	_ = taskFn()
-
-	// First app's subscriber receives — publish went to first app's
-	// broker (registered earlier).
-	select {
-	case ev := <-firstCh:
-		if ev.Payload != "p" {
-			t.Fatalf("expected payload \"p\", got %v", ev.Payload)
+	result := PubSub_publish("topic", "p").(func() any)()
+	if got := resultOkValue(result).(int); got != 2 {
+		t.Fatalf("delivery count: got %d, want 2 (one per app)", got)
+	}
+	for name, ch := range map[string]<-chan SessionEvent{"first": firstCh, "second": secondCh} {
+		select {
+		case ev := <-ch:
+			if ev.Payload != "p" {
+				t.Fatalf("%s app: expected payload \"p\", got %v", name, ev.Payload)
+			}
+		default:
+			t.Fatalf("%s app's subscriber did not receive the broadcast", name)
 		}
-	default:
-		t.Fatal("first app's subscriber did not receive the broadcast")
 	}
 
-	// Second app's subscriber must not receive — its registration was
-	// a no-op (first-writer-wins).
+	// The first app stops: only the second one is reached from now on.
+	unregisterProcessBrokerApp(first)
+	result = PubSub_publish("topic", "q").(func() any)()
+	if got := resultOkValue(result).(int); got != 1 {
+		t.Fatalf("after stop: delivery count %d, want 1", got)
+	}
 	select {
-	case ev := <-secondCh:
-		t.Fatalf("second app's subscriber unexpectedly received: %v", ev.Payload)
+	case ev := <-firstCh:
+		t.Fatalf("stopped app's subscriber received %v", ev.Payload)
 	default:
+	}
+	select {
+	case <-secondCh:
+	default:
+		t.Fatal("the running app's subscriber did not receive the broadcast")
 	}
 }
 

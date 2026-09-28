@@ -160,6 +160,13 @@ pub struct RunRef {
 /// match. Token-based, so comments and string literals never match, and it
 /// works on source fragments with parse errors.
 pub fn run_refs(src: &str) -> Vec<RunRef> {
+    dispatcher_refs(src, "run")
+}
+
+/// Every reference to the `Std.App` function `name` in `src` (qualified under
+/// whatever `Std.App` is imported as, or bare through `exposing`). Token-based
+/// like [`run_refs`], so comments and string literals never match.
+pub fn dispatcher_refs(src: &str, name: &str) -> Vec<RunRef> {
     let imp = app_import(src);
     let toks: Vec<syntax::LexToken> = syntax::lex(src);
     let skip = header_ranges(src);
@@ -201,7 +208,7 @@ pub fn run_refs(src: &str) -> Vec<RunRef> {
                     .map(|k| text(&toks[*k]))
                     .collect::<Vec<_>>()
                     .join(".");
-                if text(last) == "run"
+                if text(last) == name
                     && last.kind == SyntaxKind::LowerIdent
                     && imp.is_qualifier(&module)
                 {
@@ -212,8 +219,8 @@ pub fn run_refs(src: &str) -> Vec<RunRef> {
                     });
                 }
             } else if t.kind == SyntaxKind::LowerIdent
-                && text(t) == "run"
-                && imp.is_bare("run")
+                && text(t) == name
+                && imp.is_bare(name)
                 && !(i + 1 < toks.len()
                     && toks[i + 1].kind == SyntaxKind::Dot
                     && toks[i + 1].start == t.end)
@@ -233,6 +240,12 @@ pub fn run_refs(src: &str) -> Vec<RunRef> {
 /// True when `src` calls the `Std.App` dispatcher `run` (see [`run_refs`]).
 pub fn uses_run(src: &str) -> bool {
     !run_refs(src).is_empty()
+}
+
+/// True when `src` calls `Std.App.serve`, which always starts a Sky.Live
+/// server (see [`dispatcher_refs`]).
+pub fn uses_serve(src: &str) -> bool {
+    !dispatcher_refs(src, "serve").is_empty()
 }
 
 /// Rewrite every dispatcher reference to the concrete runner `runner`

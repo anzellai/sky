@@ -166,7 +166,7 @@ var unboundGateHits atomic.Int64
 // handleInitial's render block do). The gate therefore reads sess.userID /
 // sess.boundAt WITHOUT re-locking; sess.mu is not reentrant.
 func (app *liveApp) accessGateBlocks(sess *liveSession) bool {
-	gate := getRevocationGate()
+	gate := app.revocationGate()
 	if gate == nil {
 		return false // feature not enabled
 	}
@@ -270,7 +270,7 @@ func sessionBindingDb(app *liveApp) *SkyDb {
 	if app == nil || app.durable == nil {
 		return nil
 	}
-	g := getRevocationGate()
+	g := app.revocationGate()
 	if g == nil || g.db == nil || g.db.conn == nil {
 		return nil
 	}
@@ -325,8 +325,8 @@ func dropSessionBinding(app *liveApp, sid string) {
 
 // lookupSessionBinding reads the binding row for sid (a durable restore).
 // Reads nothing unless the revocation gate is on.
-func lookupSessionBinding(sid string) (uid string, boundAt int64, ok bool) {
-	g := getRevocationGate()
+func lookupSessionBinding(app *liveApp, sid string) (uid string, boundAt int64, ok bool) {
+	g := app.revocationGate()
 	if g == nil || g.db == nil || g.db.conn == nil || sid == "" {
 		return "", 0, false
 	}

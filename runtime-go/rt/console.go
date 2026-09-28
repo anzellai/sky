@@ -53,6 +53,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -287,8 +288,64 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 //     (the compiler emits the blank import; missing means a build
 //     that's been hand-edited away from the canonical codegen).
 func MountEmbeddedConsole(mux *http.ServeMux) {
-	if mux == nil {
+	mountEmbeddedConsoleFor(mux, &serverListenConsoleOwner, nil)
+}
+
+// The inline console is ONE per process (v0.27). It renders the process-wide
+// telemetry, its auth callback and internal token are process-wide, and its
+// sub-app registers at the fixed prefix /_sky/console. So the first listener
+// that mounts it owns it; a second listener in the same process (a second
+// Live.serve app, or a Sky.Live app next to a Server.listen) serves no
+// console of its own. Before v0.27 the second mount panicked ("sub-app
+// already mounted at /_sky/console") and a second app's console auth
+// callback replaced the first one's.
+//
+// A Sky.Live app started with Live.serve releases the console on Live.stop
+// (releaseConsole), so a later app can mount it again.
+var (
+	consoleClaimMu    sync.Mutex
+	consoleClaimOwner any
+	consoleClaimApp   *liveApp
+)
+
+// serverListenConsoleOwner is the owner token of every Server.listen: it owns
+// the console for the process lifetime.
+var serverListenConsoleOwner struct{ _ byte }
+
+// consoleOwnedBy reports whether owner holds the console claim.
+func consoleOwnedBy(owner any) bool {
+	consoleClaimMu.Lock()
+	defer consoleClaimMu.Unlock()
+	return consoleClaimOwner != nil && consoleClaimOwner == owner
+}
+
+// releaseConsole unmounts the console that owner mounted: its sessions end,
+// its store closes, the /_sky/console registry slot frees and the auth
+// callbacks the owner installed are cleared. A no-op for any other owner.
+func releaseConsole(owner any) {
+	consoleClaimMu.Lock()
+	if consoleClaimOwner == nil || consoleClaimOwner != owner {
+		consoleClaimMu.Unlock()
 		return
+	}
+	app := consoleClaimApp
+	consoleClaimOwner = nil
+	consoleClaimApp = nil
+	consoleClaimMu.Unlock()
+	inlineConsoleHealthy.Store(false)
+	SetConsoleAuthCallback(nil)
+	SetConsoleAuthModel(nil)
+	unmountInProcessSubApp("/_sky/console", app)
+}
+
+// mountEmbeddedConsoleFor mounts the inline console on mux for owner, unless
+// another owner already serves it in this process. onClaim runs once the
+// claim is taken, BEFORE the sub-app mounts (the Sky.Live app installs its
+// console auth callbacks there). Returns the console sub-app, or nil when
+// nothing was mounted.
+func mountEmbeddedConsoleFor(mux *http.ServeMux, owner any, onClaim func()) *liveApp {
+	if mux == nil {
+		return nil
 	}
 	// Sub-app mode (legacy SKY_LIVE_BASE_PATH carries a non-empty
 	// prefix): never auto-mount a console inside ourselves. This
@@ -296,21 +353,31 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	// transitioning from the old runtime don't gain an unexpected
 	// sub-mount.
 	if base := skyGetenv("LIVE_BASE_PATH"); base != "" {
-		return
+		return nil
 	}
 	if v := os.Getenv("SKY_CONSOLE_EMBED"); v == "off" || v == "0" || v == "false" {
-		return
+		return nil
 	}
 	st := loadConsoleAuthState()
 	switch st.mode {
 	case consoleAuthModeOff:
 		fmt.Fprintln(os.Stderr, "[sky.console] inline console skipped reason=auth-off (SKY_CONSOLE_AUTH=off)")
 		logStructured("info", "console.disabled", "reason", "auth-off")
-		return
+		return nil
 	case consoleAuthModeUnsetProd:
 		fmt.Fprintln(os.Stderr, "[sky.console] inline console skipped reason=auth-unset (production mode requires SKY_CONSOLE_AUTH; see docs/v0.16.x-console/EMBEDDED.md)")
 		logStructured("warn", "console.disabled", "reason", "auth-unset")
-		return
+		return nil
+	}
+	// One console per process: a listener that is not the owner mounts
+	// nothing, not even the login routes.
+	consoleClaimMu.Lock()
+	taken := consoleClaimOwner != nil && consoleClaimOwner != owner
+	consoleClaimMu.Unlock()
+	if taken {
+		fmt.Fprintln(os.Stderr, "[sky.console] inline console not mounted on this listener: "+
+			"another listener in this process already serves it")
+		return nil
 	}
 	// Initialise the ingest token even though the inline mount
 	// doesn't use it directly — keeps observability federation
@@ -350,14 +417,28 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	if cfg == nil {
 		fmt.Fprintln(os.Stderr, "[sky.console] inline console unavailable: console_app cfg-provider not registered "+
 			"(host binary missing `import _ \"sky-app/rt/console_app\"`); falling back to legacy HTML shell")
-		return
+		return nil
 	}
 
 	// Wrap the sub-app's routes with the auth gate. ConsoleGate
 	// evaluates the __Host-sky_console cookie / app callback / dev
 	// mode contract and writes the appropriate response on failure.
+	consoleClaimMu.Lock()
+	if consoleClaimOwner != nil && consoleClaimOwner != owner {
+		consoleClaimMu.Unlock()
+		fmt.Fprintln(os.Stderr, "[sky.console] inline console not mounted on this listener: "+
+			"another listener in this process already serves it")
+		return nil
+	}
+	consoleClaimOwner = owner
+	consoleClaimMu.Unlock()
+	if onClaim != nil {
+		onClaim()
+	}
 	app := MountLiveSubAppInProcessWithGate(mux, "/_sky/console", cfg, ConsoleGate)
-	_ = app
+	consoleClaimMu.Lock()
+	consoleClaimApp = app
+	consoleClaimMu.Unlock()
 
 	// PR 2 (v0.16.1): mark the inline mount healthy so
 	// MountConsoleEndpoints (called later from
@@ -369,6 +450,7 @@ func MountEmbeddedConsole(mux *http.ServeMux) {
 	inlineConsoleHealthy.Store(true)
 
 	fmt.Fprintf(os.Stderr, "[sky.console] inline console mounted as Sky.Live sub-app at /_sky/console mode=%s\n", describeConsoleAuthMode(st.mode))
+	return app
 }
 
 // HandleConsole serves the dashboard's HTML shell — a static
