@@ -141,6 +141,8 @@ view model =
     Ui.text ("EMBEDDED_COUNT=" ++ String.fromInt model.count)
 
 
+-- withEmbedded comes BEFORE withConfig on purpose: the flag must survive a
+-- later WebConfig, and that WebConfig's port must still apply.
 appDef =
     App.app
         { init = init
@@ -149,8 +151,8 @@ appDef =
         , subscriptions = \_ -> Sub.none
         }
         |> App.withNotFound ()
-        |> App.withConfig (WebConfig { webDefaults | port = port })
         |> App.withEmbedded
+        |> App.withConfig (WebConfig { webDefaults | port = port })
 
 
 poll : Int -> Task Error (Step Int String)

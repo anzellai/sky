@@ -167,7 +167,8 @@ type Config
 -- `True`; the `Maybe` fields are unset by default. `store` is the session store
 -- (`"memory"` / `"sqlite:path"` / `"redis:url"` / `"postgres"`). Maps to
 -- `Live.withPort` / `withStore` / `withStatic` / `withStaticUrl` / `withTtl` /
--- `withIdleEvict` / `withMaxBodyBytes` / `withInput` (`inputMode`).
+-- `withIdleEvict` / `withMaxBodyBytes` / `withInput` (`inputMode`). `embedded`
+-- (default `False`) is set by [`withEmbedded`]; it maps to `Live.withEmbedded`.
 type alias WebOpts =
     { port : Int
     , store : Maybe String
@@ -179,6 +180,7 @@ type alias WebOpts =
     , inputMode : Maybe String
     , analytics : Maybe { pageViews : Bool }
     , csrf : Bool
+    , embedded : Bool
     }
 
 
@@ -195,6 +197,7 @@ webDefaults =
     , inputMode = Nothing
     , analytics = Nothing
     , csrf = True
+    , embedded = False
     }
 
 -- | Tablet-target config — same Live-backed shape as [`WebOpts`].
@@ -366,7 +369,6 @@ type App fallback seed page model msg key
 , consoleAuth : Maybe (Request -> model -> Task Error (Maybe Console.Identity))
 , rpcError : Maybe (Error -> msg)
 , durable : DurableWiring model
-, embedded : Bool
 }
 
 -- | The durability wiring carried to the backend loop by `withDurable`. The
@@ -427,7 +429,6 @@ app cfg =
         , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
-        , embedded = False
         }
 
 
@@ -461,7 +462,6 @@ web cfg =
         , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
-        , embedded = False
         }
 
 
@@ -494,7 +494,6 @@ cli cfg =
         , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
-        , embedded = False
         }
 
 
@@ -529,7 +528,6 @@ tui cfg =
         , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
-        , embedded = False
         }
 
 
@@ -919,7 +917,32 @@ withRpcError onErr (App a) =
 -- terminal and desktop runners ignore it.
 withEmbedded : App fallback seed page model msg key -> App fallback seed page model msg key
 withEmbedded (App a) =
-    App { a | embedded = True }
+    -- The flag lives in the web config (`WebOpts.embedded`), not on the App
+    -- record, so the other builders do not copy it. It is APPENDED, so it
+    -- never shadows a `WebConfig` the app set (findWeb takes the first one),
+    -- and `runLive` reads it from ANY web config (embeddedIn_), so the order
+    -- of `withEmbedded` and `withConfig` does not matter.
+    App
+        { a | configs = a.configs ++ [ WebConfig { webDefaults | embedded = True } ]
+        }
+
+
+-- | True when any web / tablet config in the list asks for embedded mode.
+embeddedIn_ : List Config -> Bool
+embeddedIn_ configs =
+    case configs of
+
+        [] ->
+            False
+
+        (WebConfig o) :: rest ->
+            o.embedded || embeddedIn_ rest
+
+        (TabletConfig o) :: rest ->
+            o.embedded || embeddedIn_ rest
+
+        _ :: rest ->
+            embeddedIn_ rest
 
 
 -- | Set the backend address the NATIVE shells load: `mobile:ios`,
@@ -1243,7 +1266,7 @@ runLiveBoot_ (App a) =
                         Nothing ->
                             withDur_
                 withEmbedded_ =
-                    if a.embedded then
+                    if embeddedIn_ a.configs then
                         Live.withEmbedded withConsole_
 
                     else
