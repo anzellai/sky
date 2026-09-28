@@ -49,6 +49,33 @@ newPair prologueI prologueR =
                                               prologueI)
                                           (Noise.responder rKey prologueR))))
 
+
+-- Fresh keys and both handshake states, each side with its own suite.
+newPairSuite : Noise.Suite -> Noise.Suite -> Result Error Pair
+newPairSuite suiteI suiteR =
+    Task.run
+        (Kx.generate
+            |> Task.andThen
+                   (\iKey ->
+                       Kx.generate
+                           |> Task.andThen
+                                  (\rKey ->
+                                      Task.map2
+                                          (\i r ->
+                                              { initiator = i
+                                              , responder = r
+                                              , initiatorKey = iKey
+                                              })
+                                          (Noise.initiatorWith
+                                              suiteI
+                                              iKey
+                                              (Kx.publicKey rKey)
+                                              "app v1")
+                                          (Noise.responderWith
+                                              suiteR
+                                              rKey
+                                              "app v1"))))
+
 type alias Session =
     { initiator : Noise.Transport
     , responder : Noise.Transport
@@ -251,6 +278,56 @@ tests =
 
                   Err e ->
                       Test.fail (errorToString e))
+    , Test.test
+          "BLAKE2s: the handshake completes, both payloads arrive, the hash is 32 bytes"
+          (\_ ->
+              Test.equal
+                  (Ok ( "hello", "welcome", True ))
+                  (newPairSuite Noise.Blake2s Noise.Blake2s
+                      |> Result.andThen handshake
+                      |> Result.map
+                             (\s ->
+                                 ( s.payload0
+                                 , s.payload1
+                                 , Noise.handshakeHash s.initiator
+                                       == Noise.handshakeHash s.responder
+                                       && Bytes.length
+                                              (Noise.handshakeHash s.initiator)
+                                       == 32
+                                 ))))
+    , Test.test
+          "BLAKE2s: transport messages flow"
+          (\_ ->
+              Test.equal
+                  (Ok "ping")
+                  (newPairSuite Noise.Blake2s Noise.Blake2s
+                      |> Result.andThen handshake
+                      |> Result.andThen (send "ping")
+                      |> Result.map (\( _, pt ) -> pt)))
+    , Test.test
+          "a BLAKE2s initiator and a SHA256 responder do not complete a handshake"
+          (\_ ->
+              Test.err
+                  (newPairSuite Noise.Blake2s Noise.Sha256
+                      |> Result.andThen handshake))
+    , Test.test
+          "Sha256 is the suite of initiator / responder"
+          (\_ ->
+              Test.equal
+                  (Ok ( "hello", "welcome" ))
+                  (newPairSuite Noise.Sha256 Noise.Sha256
+                      |> Result.andThen handshake
+                      |> Result.map (\s -> ( s.payload0, s.payload1 ))))
+    , Test.test
+          "protocolName names each suite"
+          (\_ ->
+              Test.equal
+                  ( "Noise_IK_25519_ChaChaPoly_SHA256"
+                  , "Noise_IK_25519_ChaChaPoly_BLAKE2s"
+                  )
+                  ( Noise.protocolName Noise.Sha256
+                  , Noise.protocolName Noise.Blake2s
+                  ))
     , Test.test
           "handshake state prints as [REDACTED]"
           (\_ ->

@@ -1,0 +1,133 @@
+module Main exposing (main)
+
+-- A Std.App entry with `App.withClientCrypto`, built for `--target web:app` by
+-- rust/crates/sky/tests/spa_split_flow.rs. The device creates its own key and
+-- the initiator side of a Noise IK handshake in the wasm client; `Refresh` is a
+-- server branch (a file read), so the build emits the SSR first paint, which
+-- must write the device's `Maybe` handshake field as `Nothing`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Result as Result
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Crypto.Kx as Kx
+import Std.Crypto.Noise as Noise
+import Std.Sub as Sub
+import Std.Sub exposing (Sub)
+import Std.Ui as Ui
+
+type Page
+    = Home
+
+type alias Model =
+    { status : String
+    , outgoing : String
+    , handshake : Maybe Noise.Handshake
+    , note : String
+    }
+
+type Msg
+    = Connect
+    | GotHandshake (Result Error Noise.Handshake)
+    | Refresh
+    | Refreshed (Result Error String)
+
+
+serverPublicHex : String
+serverPublicHex =
+    "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f"
+
+
+connect : Task Error Noise.Handshake
+connect =
+    Kx.generate
+        |> Task.andThen
+               (\key ->
+                   Encoding.hexDecode serverPublicHex
+                       |> Result.andThen Kx.publicKeyFromBytes
+                       |> Task.fromResult
+                       |> Task.andThen
+                              (\pub ->
+                                  Noise.initiatorWith
+                                      Noise.Blake2s
+                                      key
+                                      pub
+                                      "app v1"))
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "ready", outgoing = "", handshake = Nothing, note = "" }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Connect ->
+            ( { model | status = "connecting" }
+            , Cmd.perform connect GotHandshake
+            )
+
+        GotHandshake (Ok hs) ->
+            case Noise.writeMessage "hello" hs of
+
+                Ok ( next, message ) ->
+                    ( { model | status = "sent"
+                      , outgoing = Encoding.hexEncode message
+                      , handshake = Just next
+                      }
+                    , Cmd.none
+                    )
+
+                Err _ ->
+                    ( { model | status = "failed" }, Cmd.none )
+
+        GotHandshake (Err _) ->
+            ( { model | status = "failed" }, Cmd.none )
+
+        Refresh ->
+            ( model, Cmd.perform (File.readFile "data/note.txt") Refreshed )
+
+        Refreshed (Ok text) ->
+            ( { model | note = text }, Cmd.none )
+
+        Refreshed (Err _) ->
+            ( model, Cmd.none )
+
+
+view : Model -> Ui.Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8 ]
+        [ Ui.text ("status: " ++ model.status)
+        , Ui.text ("outgoing: " ++ model.outgoing)
+        , Ui.button [] { onPress = Just Connect, label = Ui.text "Connect" }
+        , Ui.button [] { onPress = Just Refresh, label = Ui.text "Refresh" }
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound Home
+        |> App.withClientCrypto
+
+
+main =
+    App.run appDef

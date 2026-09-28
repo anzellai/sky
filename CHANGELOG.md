@@ -235,6 +235,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Migration
 
+- **A `Std.App` web app without a port setting now binds `sky.toml`'s
+  port (8000 by default), not 8080.** To keep 8080, set `[live] port = 8080`
+  in `sky.toml`, or `App.withConfig (App.WebConfig { App.webDefaults | port = 8080 })`.
+  `SKY_LIVE_PORT` still overrides both.
+
 - **AEAD encrypt is a Task.** In a `Task` chain, use the function directly.
   Where you need a `Result` (a pure helper, a test), run it:
 
@@ -412,6 +417,66 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **Sky.Spa: keys on the device with `App.withClientCrypto` /
+  `Spa.withClientCrypto`.** By default the split runs every Std.Crypto
+  function that holds a secret key on the server. An app whose device must
+  hold its own end of an end-to-end encrypted session now opts in: the
+  key-holding members of `Noise`, `Cpace`, `Kx`, `Sign` and `Kdf` run in the
+  wasm client (keys from `crypto.getRandomValues`), and the build refuses
+  every flow that would move a key to the server: a key on any wire (RPC
+  field, server Msg, follow-up, session projection, whatever codec the
+  project declares), a branch that mixes a key operation with a server
+  effect, a key operation in `init` / `withOnNavigate` / `withRequest` (they
+  also run on the server for the first paint), and a key-holding model field
+  that is not a top-level `Maybe`. A `Maybe` key field is written as
+  `Nothing` in the first-paint model and the saved model, so neither the page
+  HTML nor localStorage carries it. The marker is found by definition and
+  must be reachable from `main`; without it the split is unchanged. Threat
+  model (any script in the page can read a client key; use the strict CSP and
+  `Native.secureSet` on native shells) in `docs/skyspa/client-crypto.md`.
+  (`rust/crates/project/src/spa_partition.rs` `CLIENT_CRYPTO_MEMBERS`,
+  `detect_client_crypto`, `client_crypto_refusals`; `spa_split.rs`
+  `device_key_in`, `device_only_fields`; tests: partition unit tests,
+  `project/tests/spa_client_crypto.rs`, `spa_split_flow.rs`
+  `client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint`, and
+  `runtime-go/rt/noise_wasm_interop_test.go`, a Noise IK handshake between
+  the Go wasm build under Node.js and a native Go responder.)
+- **`Json.Decode.decodeValue : Decoder a -> Value -> Result Error a`.** Runs
+  a decoder on a `Value` already in memory (a `Decode.value` sub-document, a
+  `Json.Encode` tree, an `Encode.raw` document) without writing text. Pure.
+  It gives the same answer as `decodeString d (Encode.encode 0 v)`: an
+  `Encode.int` is a number `int` accepts, a key an `Encode.object` gives
+  twice keeps its last value. (`runtime-go/rt/stdlib_extra.go`
+  `JsonDec_decodeValue`, `json_decode_value_test.go`, Json conformance.)
+- **Decision: `Json.Decode.value` does not keep object key order, and this is
+  now documented.** A decoded object is a Go map, and `Encode.encode` writes
+  its keys sorted byte-wise at every depth (`{"b":1,"a":2}` comes back as
+  `{"a":2,"b":1}`); whitespace is not kept either. Keeping the source order
+  needs an order-carrying object node from the parser, which every decoder
+  then reads. Measured against the current parse with a token-driven parser
+  (the way `encoding/json` reports key order): 3.4x the time and 2.5x the
+  bytes on a 5-record document, 5.7x the time and 2.3x the bytes on 5,000
+  records, on every `decodeString` (every JSON request body), to serve only
+  the value-to-encode round trip. `Json.Encode.raw` keeps a document
+  byte-for-byte and is the path for text whose exact bytes matter (a signed
+  payload). `Encode.object` keeps the order given, as before.
+- **Base32 in `Sky.Core.Encoding` (RFC 4648).** `base32Encode` /
+  `base32Decode` (standard alphabet, padded), `base32EncodeNoPad` /
+  `base32DecodeNoPad` (no `=`, the TOTP-secret form) and `base32HexEncode` /
+  `base32HexDecode` (the extended-hex alphabet). The decoders accept only the
+  canonical text of some bytes: lower case, a line break, the wrong padding
+  or non-zero unused bits in the last symbol are an `Err` (Go's
+  `encoding/base32` alone skips line breaks and ignores those bits, so two
+  texts decoded to the same bytes). Tested with the RFC 4648 §10 vectors of
+  both alphabets. (`runtime-go/rt/encoding_base32.go`,
+  `encoding_base32_test.go`, Encoding conformance.)
+- **`Std.Crypto.Noise`: the `Noise_IK_25519_ChaChaPoly_BLAKE2s` suite.**
+  `Noise.initiatorWith` / `Noise.responderWith` take a typed
+  `Suite` (`Sha256` | `Blake2s`); `initiator` / `responder` stay SHA256.
+  `Noise.protocolName` names a suite. Tested against the four cacophony IK
+  BLAKE2s vectors (the same `flynn/noise` v1.1.0 `vectors.txt` as the SHA256
+  ones), a kernel round trip, and a SHA256/BLAKE2s mismatch that fails the
+  handshake. (`runtime-go/rt/noise.go`, `noise_test.go`, Noise conformance.)
 - **`Std.Ui.Canvas`: typed 2D scenes.** `Canvas.scene { width, height, label }
   shapes` draws rectangles, circles, ellipses, lines, polylines, polygons,
   paths from typed commands (`MoveTo`, `LineTo`, `QuadTo`, `CubicTo`,
@@ -894,6 +959,30 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   spawn goes through `scripts/lib/child-guard.mjs`, and every shell script
   that keeps a background PID traps EXIT, INT and TERM; an xtask test holds
   both rules.
+- **`Json.Decode.decodeString` accepted text after the JSON value.** It read
+  the first value and ignored the rest, so `decodeString int "3 x"` was
+  `Ok 3` and two concatenated documents decoded as the first. The string
+  must now be one JSON document; trailing whitespace is accepted, other text
+  is an `Err`. (`runtime-go/rt/stdlib_extra.go` `jsonParseDocument`.)
+- **`Std.App` web: `[live] port` in `sky.toml` had no effect, and
+  `WebOpts.csrf` did nothing.** `Std.App` passed `WebOpts.port` (default
+  8080) to `Live.withPort` on every build, so the default counted as an
+  explicit builder value and beat the port `sky.toml` seeds: every `App.app`
+  web app without `App.withConfig` bound :8080. `webDefaults.port` is now
+  `-1`, which means "not set": no `Live.withPort` is passed, and the port
+  comes from `<PREFIX>_LIVE_PORT`, then `[live] port`, then 8000 (the
+  `sky.toml` default, the same as a `Live.app`). An explicit
+  `{ webDefaults | port = n }` (`n >= 0`, `0` for a free port) still beats
+  `sky.toml`, and the operator's env var still beats both. The field stays
+  an `Int`, so existing record updates keep their type and no runtime
+  narrowing is added. The audit of the other `WebOpts` fields found one more
+  of the class: `csrf` was stored and never applied. `csrf = False` now turns
+  the CSRF middleware off (as `Sky.Config.withCsrf False`); the default
+  `True` leaves `<PREFIX>_CSRF` / `sky.toml` to decide. Every other field is
+  a `Maybe` that is forwarded only when set. (`sky-stdlib/Std/App.sky`,
+  `rust/crates/sky/tests/std_app_flow.rs`
+  `std_app_web_honours_sky_toml_port_and_explicit_web_config`,
+  `runtime-go/rt/std_app_window_test.go`.)
 - **`Cmd.toIsland`: a widget command is never lost silently (Sky.Live and
   Sky.Spa).** A flood of commands (400 in one update, in the
   `scripts/islands-e2e.sh` flood case) lost 384 of them on Sky.Live with

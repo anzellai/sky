@@ -1,5 +1,7 @@
-// noise.go — Std.Crypto.Noise: the Noise_IK_25519_ChaChaPoly_SHA256
-// handshake (The Noise Protocol Framework, revision 34), v0.27.0.
+// noise.go — Std.Crypto.Noise: the Noise_IK_25519_ChaChaPoly_SHA256 and
+// Noise_IK_25519_ChaChaPoly_BLAKE2s handshakes (The Noise Protocol Framework,
+// revision 34), v0.27.0. The two suites differ only in HASH (and so HMAC and
+// HKDF); both have HASHLEN 32 and BLOCKLEN 64, so the state layout is shared.
 //
 //	IK:
 //	  <- s
@@ -30,17 +32,47 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"sync/atomic"
 
+	"golang.org/x/crypto/blake2s"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+// noiseSuite is the hash half of a Noise protocol name. The DH (25519) and
+// the cipher (ChaChaPoly) are fixed.
+type noiseSuite struct {
+	name    string
+	newHash func() hash.Hash
+}
+
+var (
+	noiseSuiteSHA256 = &noiseSuite{name: "Noise_IK_25519_ChaChaPoly_SHA256", newHash: sha256.New}
+	// BLAKE2s-256 unkeyed. New256(nil) cannot fail (it only rejects a key
+	// longer than 32 bytes).
+	noiseSuiteBLAKE2s = &noiseSuite{name: "Noise_IK_25519_ChaChaPoly_BLAKE2s", newHash: func() hash.Hash {
+		h, _ := blake2s.New256(nil)
+		return h
+	}}
+)
+
+// noiseSuiteByName maps the Sky `Noise.Suite` (sent as its name by the Sky
+// wrapper) to its suite. An unknown name is an Err, never a default.
+func noiseSuiteByName(name string) (*noiseSuite, error) {
+	switch name {
+	case "SHA256":
+		return noiseSuiteSHA256, nil
+	case "BLAKE2s":
+		return noiseSuiteBLAKE2s, nil
+	}
+	return nil, fmt.Errorf("unknown Noise suite %q", name)
+}
+
 const (
-	noiseProtocolName = "Noise_IK_25519_ChaChaPoly_SHA256"
-	noiseMaxMsg       = 65535
-	noiseTagLen       = 16
-	noiseMaxNonce     = ^uint64(0) // reserved for rekey (§5.1)
+	noiseMaxMsg   = 65535
+	noiseTagLen   = 16
+	noiseMaxNonce = ^uint64(0) // reserved for rekey (§5.1)
 )
 
 var errNoiseStale = errors.New("this state value was already used (a newer one exists); " +
@@ -96,13 +128,15 @@ func (c *noiseCipher) rekey() {
 }
 
 type noiseSymmetric struct {
-	cs noiseCipher
-	ck [32]byte
-	h  [32]byte
+	suite *noiseSuite
+	cs    noiseCipher
+	ck    [32]byte
+	h     [32]byte
 }
 
-func noiseHmac(key []byte, parts ...[]byte) []byte {
-	m := hmac.New(sha256.New, key)
+// noiseHmac is HMAC-HASH of §4.3 for the suite's HASH.
+func noiseHmac(suite *noiseSuite, key []byte, parts ...[]byte) []byte {
+	m := hmac.New(suite.newHash, key)
 	for _, p := range parts {
 		m.Write(p)
 	}
@@ -110,19 +144,22 @@ func noiseHmac(key []byte, parts ...[]byte) []byte {
 }
 
 // noiseHkdf2 is HKDF(chaining_key, ikm, 2) of §4.3.
-func noiseHkdf2(ck, ikm []byte) (o1, o2 []byte) {
-	tmp := noiseHmac(ck, ikm)
-	o1 = noiseHmac(tmp, []byte{1})
-	o2 = noiseHmac(tmp, o1, []byte{2})
+func noiseHkdf2(suite *noiseSuite, ck, ikm []byte) (o1, o2 []byte) {
+	tmp := noiseHmac(suite, ck, ikm)
+	o1 = noiseHmac(suite, tmp, []byte{1})
+	o2 = noiseHmac(suite, tmp, o1, []byte{2})
 	return
 }
 
 func (s *noiseSymmetric) mixHash(data []byte) {
-	s.h = sha256.Sum256(append(s.h[:], data...))
+	h := s.suite.newHash()
+	h.Write(s.h[:])
+	h.Write(data)
+	copy(s.h[:], h.Sum(nil))
 }
 
 func (s *noiseSymmetric) mixKey(ikm []byte) {
-	ck, k := noiseHkdf2(s.ck[:], ikm)
+	ck, k := noiseHkdf2(s.suite, s.ck[:], ikm)
 	copy(s.ck[:], ck)
 	copy(s.cs.k[:], k)
 	s.cs.hasK = true
@@ -198,8 +235,22 @@ func (*NoiseTransport) GobDecode([]byte) error      { return errKeyNotStorable }
 // noiseNew builds a handshake with a given ephemeral scalar. The kernels draw
 // the ephemeral from crypto/rand; the Go tests pass the vectors' fixed ones.
 func noiseNew(initiator bool, s, rs, prologue, e string) NoiseHandshake {
+	return noiseNewSuite(noiseSuiteSHA256, initiator, s, rs, prologue, e)
+}
+
+func noiseNewSuite(suite *noiseSuite, initiator bool, s, rs, prologue, e string) NoiseHandshake {
 	hs := NoiseHandshake{initiator: initiator, s: s, sPub: kxPublic(s), e: e, ePub: kxPublic(e), rs: rs, guard: &noiseGuard{}}
-	copy(hs.sym.h[:], noiseProtocolName) // exactly HASHLEN bytes: used as is (§5.2)
+	hs.sym.suite = suite
+	// InitializeSymmetric (§5.2): a name of at most HASHLEN bytes is used as
+	// is, zero-padded; a longer one is hashed. The SHA256 name is exactly 32
+	// bytes, the BLAKE2s name 33.
+	if len(suite.name) <= len(hs.sym.h) {
+		copy(hs.sym.h[:], suite.name)
+	} else {
+		h := suite.newHash()
+		h.Write([]byte(suite.name))
+		copy(hs.sym.h[:], h.Sum(nil))
+	}
 	hs.sym.ck = hs.sym.h
 	hs.sym.mixHash([]byte(prologue))
 	if initiator {
@@ -345,7 +396,7 @@ func (hs NoiseHandshake) split() (NoiseTransport, error) {
 	if !hs.guard.claim(2) {
 		return NoiseTransport{}, errNoiseStale
 	}
-	k1, k2 := noiseHkdf2(hs.sym.ck[:], nil)
+	k1, k2 := noiseHkdf2(hs.sym.suite, hs.sym.ck[:], nil)
 	var c1, c2 noiseCipher
 	copy(c1.k[:], k1)
 	copy(c2.k[:], k2)
@@ -418,25 +469,46 @@ func noiseEphemeral() (string, error) {
 }
 
 // Noise.initiator : Kx.SecretKey -> Kx.PublicKey -> Bytes -> Task Error Handshake
-// (own static key, the responder's static public key, prologue).
+// (own static key, the responder's static public key, prologue). The SHA256
+// suite.
 func Noise_initiator(s any, rs any, prologue any) any {
+	return Noise_initiatorSuite("SHA256", s, rs, prologue)
+}
+
+// Noise.responder : Kx.SecretKey -> Bytes -> Task Error Handshake. The SHA256
+// suite.
+func Noise_responder(s any, prologue any) any {
+	return Noise_responderSuite("SHA256", s, prologue)
+}
+
+// Noise_initiatorSuite is `Noise.initiatorWith`: the Sky wrapper passes the
+// typed `Suite` as its name ("SHA256" / "BLAKE2s").
+func Noise_initiatorSuite(suite any, s any, rs any, prologue any) any {
 	return func() any {
+		st, err := noiseSuiteByName(AsString(suite))
+		if err != nil {
+			return Err[any, any](ErrInvalidInput("Noise.initiatorWith: " + err.Error()))
+		}
 		e, err := noiseEphemeral()
 		if err != nil {
 			return Err[any, any](ErrFfi("Noise.initiator: " + err.Error()))
 		}
-		return Ok[any, any](noiseNew(true, asKxSecret(s).k, asKxPublic(rs).k, AsString(prologue), e))
+		return Ok[any, any](noiseNewSuite(st, true, asKxSecret(s).k, asKxPublic(rs).k, AsString(prologue), e))
 	}
 }
 
-// Noise.responder : Kx.SecretKey -> Bytes -> Task Error Handshake.
-func Noise_responder(s any, prologue any) any {
+// Noise_responderSuite is `Noise.responderWith`.
+func Noise_responderSuite(suite any, s any, prologue any) any {
 	return func() any {
+		st, err := noiseSuiteByName(AsString(suite))
+		if err != nil {
+			return Err[any, any](ErrInvalidInput("Noise.responderWith: " + err.Error()))
+		}
 		e, err := noiseEphemeral()
 		if err != nil {
 			return Err[any, any](ErrFfi("Noise.responder: " + err.Error()))
 		}
-		return Ok[any, any](noiseNew(false, asKxSecret(s).k, "", AsString(prologue), e))
+		return Ok[any, any](noiseNewSuite(st, false, asKxSecret(s).k, "", AsString(prologue), e))
 	}
 }
 

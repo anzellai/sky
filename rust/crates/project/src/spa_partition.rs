@@ -226,6 +226,85 @@ fn mixed_client_safe(module: &str) -> Option<&'static [&'static str]> {
         .map(|(_, fs)| *fs)
 }
 
+/// **CLIENT-HELD CRYPTO** — the `Std.Crypto` members that hold, derive or use
+/// secret key material, keyed by runtime symbol `(prefix, rest)`. By default
+/// every one is a SERVER effect ([`EFFECT_KERNELS`] / [`MIXED_KERNELS`]). An app
+/// that opts in with `Spa.withClientCrypto` / `App.withClientCrypto`
+/// ([`detect_client_crypto`]) runs these in the wasm CLIENT instead
+/// ([`KernelClass::ClientEffect`]), so the device holds its own keys. A member
+/// of these families that is NOT listed (one added later) stays a server
+/// effect even with the opt-in: fail-closed within the family.
+///
+/// The public-key members that are already client-safe ([`MIXED_KERNELS`]) are
+/// not repeated. `Secret.fromEnv` and every `Crypto_*` member are unchanged.
+const CLIENT_CRYPTO_MEMBERS: &[(&str, &[&str])] = &[
+    (
+        "Noise",
+        &[
+            "initiator",
+            "responder",
+            "initiatorSuite",
+            "responderSuite",
+            "writeMessage",
+            "readMessage",
+            "isComplete",
+            "peer",
+            "transport",
+            "transportPeer",
+            "handshakeHash",
+            "encrypt",
+            "decrypt",
+            "rekeySend",
+            "rekeyReceive",
+        ],
+    ),
+    ("Cpace", &["start", "respond", "finish", "messageData"]),
+    (
+        "Kx",
+        &[
+            "generate",
+            "publicKey",
+            "sharedSecret",
+            "secretKeyFromBytes",
+            "secretKeyToBytes",
+            "secretKeyFromBase64",
+            "secretKeyToBase64",
+        ],
+    ),
+    (
+        "Sign",
+        &[
+            "generate",
+            "sign",
+            "publicKey",
+            "secretKeyFromBytes",
+            "secretKeyToBytes",
+            "secretKeyFromBase64",
+            "secretKeyToBase64",
+        ],
+    ),
+    ("Kdf", &["extract", "expand"]),
+];
+
+/// The families of [`CLIENT_CRYPTO_MEMBERS`] (for the mixed-branch refusal).
+const CLIENT_CRYPTO_FAMILIES: &[&str] = &["Noise", "Cpace", "Kx", "Sign", "Kdf"];
+
+fn is_client_crypto_member(module: &str, func: &str) -> bool {
+    CLIENT_CRYPTO_MEMBERS
+        .iter()
+        .any(|(m, fs)| *m == module && fs.contains(&func))
+}
+
+/// [`classify_kernel`] under the app's split policy: with the client-crypto
+/// opt-in, a [`CLIENT_CRYPTO_MEMBERS`] member is a client effect; everything
+/// else is classified exactly as without it.
+fn classify_kernel_in(client_crypto: bool, module: &str, func: &str) -> KernelClass {
+    if client_crypto && is_client_crypto_member(module, func) {
+        return KernelClass::ClientEffect;
+    }
+    classify_kernel(module, func)
+}
+
 /// **CLIENT-EFFECT** kernel families — effects that must run in the wasm CLIENT,
 /// never behind an RPC (maps to [`KernelClass::ClientEffect`]). These reach a
 /// browser/webview-only platform API (`navigator.clipboard`, `navigator.share`,
@@ -336,6 +415,9 @@ struct Refs {
 struct CollectCtx<'a> {
     db: Option<&'a dyn SkyDb>,
     update_def: Option<DefId>,
+    /// The client-crypto opt-in ([`detect_client_crypto`]). `false` (the
+    /// default) classifies every kernel exactly as before the opt-in existed.
+    client_crypto: bool,
 }
 
 impl Refs {
@@ -400,7 +482,7 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
                     return;
                 }
             }
-            record_res(res, acc);
+            record_res(res, acc, ctx);
         }
         Expr::Negate(x) => collect(body, *x, acc, ctx),
         Expr::Lambda { body: b, .. } => collect(body, *b, acc, ctx),
@@ -448,7 +530,7 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
                 if m == "Ffi" && func.as_str() == "kernel" {
                     if let Some(first) = args.first() {
                         if let Expr::Str(sym) = &body.exprs[*first] {
-                            record_ffi_symbol(sym, acc);
+                            record_ffi_symbol(sym, acc, ctx.client_crypto);
                         }
                     }
                 }
@@ -459,7 +541,7 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
             }
         }
         Expr::Binop { res, lhs, rhs, .. } => {
-            record_res(res, acc);
+            record_res(res, acc, ctx);
             collect(body, *lhs, acc, ctx);
             collect(body, *rhs, acc, ctx);
         }
@@ -513,7 +595,7 @@ fn collect_localdef(body: &Body, d: &LocalDef, acc: &mut Refs, ctx: &CollectCtx)
 /// Classify an `Ffi.kernel "<Symbol>"` string by its `<Prefix>_` — the runtime
 /// symbol's family (`Db_query` → Db, `Http_post` → Http, `System_getenvOr` →
 /// System). This is the actual effect origin under the Sky-source stdlib.
-fn record_ffi_symbol(sym: &str, acc: &mut Refs) {
+fn record_ffi_symbol(sym: &str, acc: &mut Refs, client_crypto: bool) {
     // `Task_run` is the FORCE primitive — the Sky-source stdlib defines
     // `Task.run = Ffi.kernel "Task_run"`, so a `Task.run <task>` call resolves to
     // this def, NOT to `Res::Kernel{Task, run}` (the arm at the `Expr::Call` site
@@ -532,7 +614,7 @@ fn record_ffi_symbol(sym: &str, acc: &mut Refs) {
         .unwrap_or("")
         .trim_start_matches('_');
     let rest = if rest.is_empty() { sym } else { rest };
-    match classify_kernel(prefix, rest) {
+    match classify_kernel_in(client_crypto, prefix, rest) {
         KernelClass::Neutral => {}
         KernelClass::ClientEffect => acc
             .client_kernels
@@ -543,7 +625,7 @@ fn record_ffi_symbol(sym: &str, acc: &mut Refs) {
     }
 }
 
-fn record_res(res: &Res, acc: &mut Refs) {
+fn record_res(res: &Res, acc: &mut Refs, ctx: &CollectCtx) {
     match res {
         Res::Kernel { module, func } => {
             let m = module
@@ -552,7 +634,7 @@ fn record_res(res: &Res, acc: &mut Refs) {
                 .next()
                 .unwrap_or(module.as_str());
             let f = func.as_str();
-            match classify_kernel(m, f) {
+            match classify_kernel_in(ctx.client_crypto, m, f) {
                 KernelClass::Neutral => {}
                 KernelClass::ClientEffect => {
                     acc.client_kernels.push((m.to_string(), f.to_string()))
@@ -850,8 +932,9 @@ pub struct BranchVerdict {
     /// calls, so a branch that reaches `Db` only through a `Std.Db` wrapper
     /// (a Sky-source def, not a raw kernel) still lists `Db`. It is the
     /// structured shape `sky doc --diagram` renders per branch (the Pure /
-    /// Effectful journey split, the components buckets). Only diagram rendering
-    /// reads it; the split and the fuzzer never do.
+    /// Effectful journey split, the components buckets). Diagram rendering reads
+    /// it, and so does the client-crypto refusal (a server branch that reaches a
+    /// client-held crypto family); the split and the fuzzer never do.
     pub effect_families: Vec<String>,
 }
 
@@ -1030,6 +1113,10 @@ pub struct SpaPartitionReport {
     /// on a full load the client keeps the SSR seed only for the fields the
     /// server settled for THIS page, and restores every other field.
     pub settle: SettleFacts,
+    /// The app opted in to client-held crypto (`Spa.withClientCrypto` /
+    /// `App.withClientCrypto`, [`detect_client_crypto`]). The split reads it to
+    /// refuse every flow that would move a device-held key to the server.
+    pub client_crypto: bool,
 }
 
 /// The static facts the reload rule (R2) is built from. A `None` list means
@@ -1249,7 +1336,11 @@ pub fn analyze_loaded(
 
     // Build the reachability + taint graph over every def reachable from the
     // app modules (pulls in only the stdlib defs actually referenced).
-    let graph = build_graph(db, &check_ids);
+    // The client-crypto opt-in is read from the typed program itself, so every
+    // caller of the analysis (the split, the fuzzer, `sky doc --diagram`) sees
+    // the same policy.
+    let client_crypto = detect_client_crypto(db, entry, &check_ids);
+    let graph = build_graph(db, &check_ids, client_crypto);
     if let Some(err) = spa_unsupported_module(db, &graph) {
         return Err(err);
     }
@@ -1409,6 +1500,18 @@ pub fn analyze_loaded(
         ));
     }
 
+    let crypto_refusals = client_crypto_refusals(
+        db,
+        &graph,
+        &check_ids,
+        entry,
+        &branches,
+        whole_update.as_ref(),
+    );
+    if !crypto_refusals.is_empty() {
+        return Err(crypto_refusals.join("\n\n"));
+    }
+
     Ok(SpaPartitionReport {
         project,
         entry_module: entry_module_name,
@@ -1431,7 +1534,127 @@ pub fn analyze_loaded(
             continuations: msg_continuations,
             ..settle_hook_facts(db, &check_ids, entry)
         },
+        client_crypto,
     })
+}
+
+/// Did the app opt in to client-held crypto? True when a `withClientCrypto`
+/// builder of `Std.Spa` or `Std.App` (matched by `DefId`, so an import alias
+/// or a same-named user function cannot trigger it) is reachable from the entry
+/// module's `main` through the PROJECT's own defs. Reachability means dead code
+/// does not turn the opt-in on, and walking only project modules means a
+/// dependency cannot turn it on for the app.
+pub fn detect_client_crypto(db: &dyn SkyDb, entry: ModuleId, check_ids: &[ModuleId]) -> bool {
+    let mut markers: HashSet<DefId> = HashSet::new();
+    for m in ["Std.Spa", "Std.App"] {
+        if let Some(mid) = db.module_by_name(m) {
+            if let Some(d) = def_by_name(db, mid, "withClientCrypto") {
+                markers.insert(d);
+            }
+        }
+    }
+    if markers.is_empty() {
+        return false;
+    }
+    let Some(main) = def_by_name(db, entry, "main") else {
+        return false;
+    };
+    let project: HashSet<ModuleId> = check_ids.iter().copied().collect();
+    let mut seen: HashSet<DefId> = HashSet::new();
+    let mut work = vec![main];
+    while let Some(d) = work.pop() {
+        if !seen.insert(d) {
+            continue;
+        }
+        let Some(loc) = db.def_loc(d) else {
+            continue;
+        };
+        if !project.contains(&loc.module) {
+            continue;
+        }
+        for c in body_def_callees(db, loc.module, d) {
+            if markers.contains(&c) {
+                return true;
+            }
+            work.push(c);
+        }
+    }
+    false
+}
+
+/// The client-crypto refusals the partition itself can decide (the wire and
+/// model-field refusals are in the split, which owns the codecs):
+///
+///   * a SERVER branch that reaches a client-crypto family: its key operation
+///     would run on the server, which would then hold the device's key;
+///   * `init`, the navigation hook or the request hook reaching a
+///     client-crypto family: each also runs on the server for the first paint,
+///     so the server would create or hold the key.
+///
+/// Empty when the app did not opt in.
+fn client_crypto_refusals(
+    db: &skydb::SkyDatabase,
+    graph: &Graph,
+    check_ids: &[ModuleId],
+    entry: ModuleId,
+    branches: &[BranchVerdict],
+    whole_update: Option<&BranchVerdict>,
+) -> Vec<String> {
+    if !graph.client_crypto {
+        return Vec::new();
+    }
+    let crypto_of = |fams: &[String]| -> Vec<String> {
+        fams.iter()
+            .filter(|f| CLIENT_CRYPTO_FAMILIES.contains(&f.as_str()))
+            .cloned()
+            .collect()
+    };
+    let mut out = Vec::new();
+    for b in branches.iter().chain(whole_update) {
+        if !b.server {
+            continue;
+        }
+        let crypto = crypto_of(&b.effect_families);
+        if crypto.is_empty() {
+            continue;
+        }
+        out.push(format!(
+            "sky.spa: branch `{}` uses client-held crypto ({}) and a server effect ({}). With \
+             `withClientCrypto` its key material stays on the device, so the branch can run on \
+             neither side. Do the key operation in this client arm, and dispatch a Msg whose \
+             server arm does the server work with public values only (ciphertext, a public key).",
+            b.msg,
+            crypto.join(", "),
+            b.reason
+        ));
+    }
+    let mut hooks: Vec<(&str, DefId)> = Vec::new();
+    if let Some(d) = find_config_field_def(db, check_ids, entry, "init") {
+        hooks.push(("init", d));
+    }
+    if let Some(d) = def_by_name(db, entry, "spaOnNavigate_")
+        .or_else(|| find_config_field_def(db, check_ids, entry, "onNavigate"))
+    {
+        hooks.push(("the navigation hook (withOnNavigate)", d));
+    }
+    if let Some(d) = def_by_name(db, entry, "spaOnRequest_") {
+        hooks.push(("the request hook (withRequest)", d));
+    }
+    for (what, d) in hooks {
+        let fams = graph.trans_fams.get(&d).cloned().unwrap_or_default();
+        let crypto = crypto_of(&fams);
+        if crypto.is_empty() {
+            continue;
+        }
+        out.push(format!(
+            "sky.spa: {what} reaches client-held crypto ({}). With `withClientCrypto` keys are \
+             created and used on the device, but {what} also runs on the server for the first \
+             paint. Create the key in a client arm (for example a `Connect` Msg), or load it \
+             with `Native.secureGet`.",
+            crypto.join(", ")
+        ));
+    }
+    out
 }
 
 /// The Msg constructors a command-valued tail expression dispatches: every
@@ -1958,8 +2181,11 @@ struct Graph {
     /// [`BranchVerdict::forces_effect`]).
     forces_effect: HashSet<DefId>,
     /// Transitive effect families per def (its own ∪ every reachable callee's).
-    /// Only diagram rendering reads it (via [`Graph::families_for`]).
+    /// Diagram rendering reads it (via [`Graph::families_for`]), and so does
+    /// the client-crypto refusal of `init` and the hooks.
     trans_fams: HashMap<DefId, Vec<String>>,
+    /// The client-crypto opt-in the graph was built under.
+    client_crypto: bool,
 }
 
 impl Graph {
@@ -2046,7 +2272,7 @@ fn spa_unsupported_module(db: &dyn SkyDb, graph: &Graph) -> Option<String> {
     }
 }
 
-fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
+fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId], client_crypto: bool) -> Graph {
     let mut nodes: HashMap<DefId, DefNode> = HashMap::new();
     let mut work: Vec<DefId> = Vec::new();
     let mut seen: HashSet<DefId> = HashSet::new();
@@ -2121,7 +2347,11 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
             // Conservative ctx: `update` is an ordinary callee here, so a helper
             // that calls `update` is forced to server (soundness — never under-
             // mark). Msg-constant precision applies ONLY to update's own arms.
-            collect(body, root, &mut acc, &CollectCtx::default());
+            let ctx = CollectCtx {
+                client_crypto,
+                ..CollectCtx::default()
+            };
+            collect(body, root, &mut acc, &ctx);
         }
         let direct = acc.direct_server_reason();
         let forces = acc.inline_force;
@@ -2251,6 +2481,7 @@ fn build_graph(db: &dyn SkyDb, check_ids: &[ModuleId]) -> Graph {
         root_reason,
         forces_effect,
         trans_fams,
+        client_crypto,
     }
 }
 
@@ -2297,12 +2528,16 @@ fn classify_update_body(
     // conservative ctx here means a `let` above the case using `update` is
     // treated conservatively (server) — sound; precision is per-arm below.
     let mut shared = Refs::default();
-    let case_expr = find_top_case(body, root, &mut shared, &CollectCtx::default());
+    let policy = CollectCtx {
+        client_crypto: graph.client_crypto,
+        ..CollectCtx::default()
+    };
+    let case_expr = find_top_case(body, root, &mut shared, &policy);
 
     let Some(case_expr) = case_expr else {
         // No `case msg of` — classify the whole update as one unit.
         let mut acc = Refs::default();
-        collect(body, root, &mut acc, &CollectCtx::default());
+        collect(body, root, &mut acc, &policy);
         *whole_update = Some(verdict(db, "(whole update)", &acc, graph));
         notes
             .push("update has no top-level `case msg of` — showing a whole-update verdict.".into());
@@ -2324,6 +2559,7 @@ fn classify_update_body(
         let ctx = CollectCtx {
             db: Some(db),
             update_def: Some(def),
+            client_crypto: graph.client_crypto,
         };
         classify_case_arms(
             db,
@@ -5184,7 +5420,10 @@ fn classify_lambda_update(
 ) {
     // A lambda `update` has no stable DefId for itself to compose against, so the
     // conservative ctx is correct here (any `update` reference stays server).
-    let ctx = CollectCtx::default();
+    let ctx = CollectCtx {
+        client_crypto: graph.client_crypto,
+        ..CollectCtx::default()
+    };
     let mut shared = Refs::default();
     let case_expr = find_top_case(body, root, &mut shared, &ctx);
     if let Some(ce) = case_expr {
@@ -5488,10 +5727,99 @@ mod tests {
         }
         // The FFI-symbol path (`Ffi.kernel "Crypto_randomBytes"`) agrees.
         let mut acc = Refs::default();
-        record_ffi_symbol("Crypto_randomBytes", &mut acc);
-        record_ffi_symbol("Crypto_sha256", &mut acc);
+        record_ffi_symbol("Crypto_randomBytes", &mut acc, false);
+        record_ffi_symbol("Crypto_sha256", &mut acc, false);
         assert_eq!(acc.server_kernels.len(), 1, "{:?}", acc.server_kernels);
         assert_eq!(acc.server_kernels[0].1, "randomBytes");
+    }
+
+    /// The client-crypto opt-in moves exactly the listed key-holding members
+    /// to the client. Without it nothing changes; with it, a member not in the
+    /// table (one added later), `Secret.fromEnv`, the `Crypto_*` family and
+    /// every other server effect stay on the server.
+    #[test]
+    fn client_crypto_policy_moves_only_the_listed_members() {
+        for (m, fs) in CLIENT_CRYPTO_MEMBERS {
+            for f in *fs {
+                assert_eq!(
+                    classify_kernel_in(true, m, f),
+                    KernelClass::ClientEffect,
+                    "{m}.{f} with the opt-in"
+                );
+                assert_eq!(
+                    classify_kernel_in(false, m, f),
+                    classify_kernel(m, f),
+                    "{m}.{f} without the opt-in must be classified as before"
+                );
+                assert_eq!(
+                    classify_kernel(m, f),
+                    KernelClass::ServerOnly,
+                    "{m}.{f} is a server effect by default"
+                );
+            }
+        }
+        for (m, f) in [
+            ("Noise", "aNewFunction"),
+            ("Kx", "aNewFunction"),
+            ("Secret", "fromEnv"),
+            ("Crypto", "randomBytes"),
+            ("Crypto", "xchachaSeal"),
+            ("Db", "query"),
+            ("Http", "get"),
+        ] {
+            assert_eq!(
+                classify_kernel_in(true, m, f),
+                KernelClass::ServerOnly,
+                "{m}.{f} must stay on the server even with the opt-in"
+            );
+        }
+        // The public-key members stay client-safe (Neutral) either way.
+        for (m, f) in [("Kx", "publicKeyFromBytes"), ("Sign", "verify")] {
+            assert_eq!(classify_kernel_in(true, m, f), KernelClass::Neutral);
+            assert_eq!(classify_kernel_in(false, m, f), KernelClass::Neutral);
+        }
+        let mut on = Refs::default();
+        record_ffi_symbol("Noise_initiatorSuite", &mut on, true);
+        assert!(on.server_kernels.is_empty() && on.client_kernels.len() == 1);
+        let mut off = Refs::default();
+        record_ffi_symbol("Noise_initiatorSuite", &mut off, false);
+        assert!(off.client_kernels.is_empty() && off.server_kernels.len() == 1);
+    }
+
+    /// Every key-holding `Ffi.kernel` symbol of the Std.Crypto modules the
+    /// opt-in covers is either client-safe already ([`MIXED_KERNELS`]) or in
+    /// [`CLIENT_CRYPTO_MEMBERS`], so the table cannot drift behind the stdlib:
+    /// a new member must be placed deliberately.
+    #[test]
+    fn client_crypto_members_cover_the_stdlib() {
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sky-stdlib/Std/Crypto");
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for module in ["Noise", "Cpace", "Kx", "Sign", "Kdf"] {
+            let src = std::fs::read_to_string(root.join(format!("{module}.sky")))
+                .unwrap_or_else(|e| panic!("read {module}.sky: {e}"));
+            for part in src.split("Ffi.kernel \"").skip(1) {
+                let sym = part.split('"').next().unwrap();
+                let (m, f) = sym.split_once('_').unwrap();
+                seen.insert(sym.to_string());
+                let client_safe = mixed_client_safe(m).is_some_and(|fs| fs.contains(&f));
+                assert!(
+                    client_safe || is_client_crypto_member(m, f),
+                    "`{sym}` (Std/Crypto/{module}.sky) is in neither MIXED_KERNELS nor \
+                     CLIENT_CRYPTO_MEMBERS: decide whether it holds a key"
+                );
+            }
+        }
+        assert!(seen.len() > 20, "read only {} kernel symbols", seen.len());
+        // And the other way: every listed member is a real stdlib symbol.
+        for (m, fs) in CLIENT_CRYPTO_MEMBERS {
+            for f in *fs {
+                assert!(
+                    seen.contains(&format!("{m}_{f}")),
+                    "CLIENT_CRYPTO_MEMBERS lists `{m}.{f}`, which no Std.Crypto module binds"
+                );
+            }
+        }
     }
 
     /// Child processes and file watching run on the SERVER: a browser can
@@ -5522,8 +5850,8 @@ mod tests {
             );
         }
         let mut acc = Refs::default();
-        record_ffi_symbol("Subprocess_spawn", &mut acc);
-        record_ffi_symbol("Watch_changes", &mut acc);
+        record_ffi_symbol("Subprocess_spawn", &mut acc, false);
+        record_ffi_symbol("Watch_changes", &mut acc, false);
         assert_eq!(acc.server_kernels.len(), 2, "{:?}", acc.server_kernels);
     }
 
@@ -5540,21 +5868,21 @@ mod tests {
             "Native_secureRemove",
             "Native_authenticate",
         ] {
-            record_ffi_symbol(sym, &mut acc);
+            record_ffi_symbol(sym, &mut acc, false);
         }
         assert!(acc.server_kernels.is_empty(), "{:?}", acc.server_kernels);
         assert_eq!(acc.client_kernels.len(), 4, "{:?}", acc.client_kernels);
 
         let mut acc = Refs::default();
-        record_ffi_symbol("Secret_fromString", &mut acc);
-        record_ffi_symbol("Secret_reveal", &mut acc);
+        record_ffi_symbol("Secret_fromString", &mut acc, false);
+        record_ffi_symbol("Secret_reveal", &mut acc, false);
         assert!(
             acc.server_kernels.is_empty() && acc.client_kernels.is_empty(),
             "fromString / reveal are pure and client-safe: {:?}",
             acc.server_kernels
         );
         let mut acc = Refs::default();
-        record_ffi_symbol("Secret_fromEnv", &mut acc);
+        record_ffi_symbol("Secret_fromEnv", &mut acc, false);
         assert_eq!(
             acc.server_kernels.len(),
             1,
@@ -5568,8 +5896,8 @@ mod tests {
     #[test]
     fn native_ffi_symbol_is_a_client_effect() {
         let mut acc = Refs::default();
-        record_ffi_symbol("Native_clipboardWrite", &mut acc);
-        record_ffi_symbol("Native_geolocation", &mut acc);
+        record_ffi_symbol("Native_clipboardWrite", &mut acc, false);
+        record_ffi_symbol("Native_geolocation", &mut acc, false);
         assert!(
             acc.server_kernels.is_empty(),
             "Std.Native must not record as a server kernel: {:?}",

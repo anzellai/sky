@@ -1740,6 +1740,12 @@ struct AppFields {
     /// `Server.setConsoleAuth` before `Server.listen`. It is server-only: the
     /// console is mounted by the backend, and the wasm client never calls it.
     console_auth: Option<String>,
+    /// `App.withClientCrypto` — the typed opt-in that keeps end-to-end key
+    /// material (Std.Crypto.Noise / Cpace / Kx / Sign / Kdf) in the wasm client.
+    /// It takes no argument; the synthesis carries it as
+    /// `|> Spa.withClientCrypto`, and the split reads it from the typed program
+    /// (`spa_partition::detect_client_crypto`).
+    client_crypto: bool,
     /// `App.with…` builder steps present in the source that the synthesis does
     /// NOT carry into the derived `Spa.app` entry (everything except the carried
     /// `withRoutes` / `withNotFound` / `withHead` / `withOnNavigate` /
@@ -1847,6 +1853,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let (mut on_navigate, mut on_request, mut guard) = (None, None, None);
     let mut rpc_error = None;
     let mut console_auth = None;
+    let mut client_crypto = false;
     let mut dropped_builders: Vec<String> = Vec::new();
     for step in &value.steps {
         let name = step.name.as_str();
@@ -1857,6 +1864,17 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
             if !dropped_builders.iter().any(|d| d == name) {
                 dropped_builders.push(name.to_string());
             }
+            continue;
+        }
+        if name == "withClientCrypto" {
+            // The one carried builder that takes no argument besides the app.
+            if step.arity != 0 {
+                return Err(format!(
+                    "`{q}.withClientCrypto` takes no argument besides the app, but is applied to {}",
+                    step.arity
+                ));
+            }
+            client_crypto = true;
             continue;
         }
         if name == "withSessionTransport" {
@@ -1911,6 +1929,7 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         guard,
         rpc_error,
         console_auth,
+        client_crypto,
         dropped_builders,
         hoisted,
         is_web: value.builder == "web",
@@ -2758,7 +2777,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          , update = {update}\n            \
          , view = spaView_\n            \
          , subscriptions = {subscriptions}\n            \
-         }}{routes_line}{not_found_line}{head_line}{on_navigate_line}\n        \
+         }}{routes_line}{not_found_line}{head_line}{on_navigate_line}{client_crypto_line}\n        \
          )\n",
         hoisted = fields.hoisted,
         boot_setup_binding = boot_setup_binding,
@@ -2775,6 +2794,11 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
         not_found_line = not_found_line,
         head_line = head_line,
         on_navigate_line = on_navigate_line,
+        client_crypto_line = if fields.client_crypto {
+            "\n            |> Spa.withClientCrypto"
+        } else {
+            ""
+        },
     ));
     Ok(out)
 }

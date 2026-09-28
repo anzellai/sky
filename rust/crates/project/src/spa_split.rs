@@ -272,6 +272,9 @@ struct CodecResolver<'a> {
     /// The records currently being blank-synthesised — the recursion guard for a
     /// self-referential record (`{ next : Node }`), which has no finite blank.
     synth_stack: Vec<String>,
+    /// The app opted in to client-held crypto: a device key type is refused on
+    /// every wire this resolver builds a codec for.
+    device_keys: bool,
 }
 
 impl<'a> CodecResolver<'a> {
@@ -282,10 +285,18 @@ impl<'a> CodecResolver<'a> {
             needed: BTreeSet::new(),
             auto_records: BTreeMap::new(),
             synth_stack: Vec::new(),
+            device_keys: false,
         }
     }
 
     fn resolve(&mut self, t: &ty::Ty) -> Result<ResolvedCodec, String> {
+        // `withClientCrypto`: a device-held key never gets a wire codec, whatever
+        // codec binding the project declares for it.
+        if self.device_keys {
+            if let Some(key) = device_key_in(t) {
+                return Err(device_key_wire_error(&key));
+            }
+        }
         // (a) A project-defined `Codec <T>` binding for exactly this type. Use
         // the binding's DECLARED surface for the field type (aliases un-expanded).
         for b in self.registry {
@@ -693,6 +704,95 @@ struct Wire {
 /// the Sky.Spa SSR model embed, returning the surface type label to name in the
 /// diagnostic (or `None` when the field round-trips).
 ///
+/// The key types a `withClientCrypto` app keeps on the DEVICE, by resolved
+/// qualified name (not a bare tail, so a user's own `SecretKey` or `Transport`
+/// is not matched): the Std.Crypto secret keys and protocol states, and
+/// `Sky.Core.Secret`.
+const DEVICE_KEY_TYPES: &[&str] = &[
+    "Std.Crypto.Kx.SecretKey",
+    "Std.Crypto.Sign.SecretKey",
+    "Std.Crypto.Noise.Handshake",
+    "Std.Crypto.Noise.Transport",
+    "Std.Crypto.Cpace.Pending",
+    "Sky.Core.Secret.Secret",
+];
+
+/// The first device-held key type anywhere in `t` (inside `List` / `Maybe` /
+/// `Result` / a tuple / a record / a function), as its qualified name.
+fn device_key_in(t: &ty::Ty) -> Option<String> {
+    match t {
+        ty::Ty::App(name, args) => {
+            if DEVICE_KEY_TYPES.contains(&name.as_str()) {
+                return Some(name.as_str().to_string());
+            }
+            args.iter().find_map(device_key_in)
+        }
+        ty::Ty::Record(fields, _) => fields.iter().find_map(|(_, t)| device_key_in(t)),
+        ty::Ty::Tuple(items) => items.iter().find_map(device_key_in),
+        ty::Ty::Fun(a, b) => device_key_in(a).or_else(|| device_key_in(b)),
+        _ => None,
+    }
+}
+
+/// The refusal for a device-held key on the client/server wire.
+fn device_key_wire_error(key_ty: &str) -> String {
+    format!(
+        "`{key_ty}` is key material the device keeps (`withClientCrypto`), and it never \
+         crosses between client and server. Send a value that is safe to share (a public \
+         key, a ciphertext), or handle the key in a client arm"
+    )
+}
+
+/// With `withClientCrypto`: the model fields that hold a device key. A field
+/// typed `Maybe K` (K a device key type, at the top level) is DEVICE-ONLY: the
+/// first-paint model and the saved model write it as `Nothing`, so neither the
+/// page HTML nor localStorage carries the key, and it is `Nothing` after a
+/// reload. Any other shape that holds a key is an `Err`: neither the first paint
+/// nor the saved model could leave it out.
+fn device_only_fields(model_fields: &[ModelFieldTy]) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for f in model_fields {
+        let Some(t) = &f.ty else {
+            continue;
+        };
+        let Some(key) = device_key_in(t) else {
+            continue;
+        };
+        let top_maybe_key = matches!(t, ty::Ty::App(n, args)
+            if tail_seg(n.as_str()) == "Maybe"
+                && args.len() == 1
+                && matches!(&args[0], ty::Ty::App(k, _) if DEVICE_KEY_TYPES.contains(&k.as_str())));
+        if top_maybe_key {
+            out.push(f.name.clone());
+        } else {
+            return Err(format!(
+                "sky.spa: model field `{}` has type `{}`, which holds `{key}`, key material the \
+                 device keeps (`withClientCrypto`). The first-paint model and the saved model \
+                 cannot carry it. Declare the field `Maybe {}` so the build leaves it out of \
+                 both (it is `Nothing` after a reload).",
+                f.name,
+                f.ty_name,
+                tail_seg(&key)
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// `{ <base> | f1 = Nothing, f2 = Nothing }` — the model with its device-only
+/// fields cleared, or `base` unchanged when there are none.
+fn clear_device_only(base: &str, device_only: &[String]) -> String {
+    if device_only.is_empty() {
+        return base.to_string();
+    }
+    let sets = device_only
+        .iter()
+        .map(|f| format!("{f} = Nothing"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{ {base} | {sets} }}")
+}
+
 /// The SSR first paint embeds `Codec.toJson (Codec.auto model)` and the client
 /// decodes it with the symmetric `Codec.fromJson (Codec.auto blank)`. Most
 /// stdlib shapes round-trip: the runtime encoder/decoder (runtime-go
@@ -1633,6 +1733,15 @@ fn build_wire(
             .collect()
     };
     for f in req.iter_mut().chain(resp.iter_mut()) {
+        if resolver.device_keys {
+            if let Some(key) = f.ty.as_ref().and_then(device_key_in) {
+                return Err(format!(
+                    "branch `{name}`, field `{}`: {}",
+                    f.name,
+                    device_key_wire_error(&key)
+                ));
+            }
+        }
         if f.codec.is_none() {
             let t = f.ty.clone().ok_or_else(|| {
                 format!(
@@ -2258,6 +2367,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // branch (fail closed, today's behaviour).
     let client_result_map = build_client_result_map(&db, &check_ids, &report.client_result);
     let mut resolver = CodecResolver::new(&registry, &shapes);
+    resolver.device_keys = report.client_crypto;
+    // `withClientCrypto`: the model fields the first paint and the saved model
+    // leave out (a `Maybe` key); any other key-holding field is refused here.
+    let device_only: Vec<String> = if report.client_crypto {
+        device_only_fields(&report.model_fields)?
+    } else {
+        Vec::new()
+    };
     let mut wires: Vec<Wire> = Vec::new();
     for (name, io) in &server {
         let args = server_args.get(name).cloned().unwrap_or_default();
@@ -2862,6 +2979,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &mut warnings,
         follow_ctx.as_ref().map(|fc| (fc, fc_q(fc, entry))),
         &settle_plan,
+        &device_only,
     )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
     // frontend so the client keeps them from the server-verified SSR seed on
@@ -2904,6 +3022,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &seed_field_names,
         follow_here(entry),
         pure_whole_update && update_in_entry,
+        &device_only,
     )?;
 
     // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
@@ -5600,6 +5719,9 @@ fn gen_backend(
     follow: Option<(&FollowCtx, &str)>,
     // R2: what the SSR settle writes, for the page's seed-field marker.
     settle: &SettlePlan,
+    // `withClientCrypto`: the `Maybe` key fields the first paint writes as
+    // `Nothing` (see [`device_only_fields`]).
+    device_only: &[String],
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -5822,6 +5944,10 @@ fn gen_backend(
         // in build_wire; this covers the SSR-embed path, which build_wire never
         // sees because it runs `Codec.auto` over the whole value at runtime.)
         for f in model_fields {
+            // A device-only key field is written as `Nothing` (cleared below).
+            if device_only.contains(&f.name) {
+                continue;
+            }
             if let Some((ty_label, why)) = codec_auto_unencodable(f) {
                 warnings.push(format!(
                     "model field `{}` has type `{}`, which `Codec.auto` cannot round-trip through the Sky.Spa SSR model embed. {}",
@@ -6579,9 +6705,16 @@ fn gen_backend(
         lets.push_str(
             "        initFields_ =\n            if initDone_ then\n                spaInitSeedFields_\n\n            else\n                []\n\n",
         );
-        lets.push_str(
-            "        modelJson =\n            Codec.toJson (Codec.auto resolved) resolved\n",
-        );
+        // `withClientCrypto`: the device-only key fields are embedded as `Nothing`.
+        let embedded = clear_device_only("resolved", device_only);
+        lets.push_str(&format!(
+            "        modelJson =\n            Codec.toJson (Codec.auto resolved) {}\n",
+            if device_only.is_empty() {
+                embedded
+            } else {
+                format!("({embedded})")
+            }
+        ));
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
              -- run init, seed it from the request (withRequest), resolve the path to\n\
@@ -6823,6 +6956,9 @@ fn gen_frontend(
     // A wholly PURE `update` with no `case msg of` (SA-12): it runs in the
     // client as written, so it is copied verbatim instead of regenerated.
     keep_update_verbatim: bool,
+    // `withClientCrypto`: the `Maybe` key fields the saved model writes as
+    // `Nothing` (see [`device_only_fields`]).
+    device_only: &[String],
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -7022,10 +7158,17 @@ fn gen_frontend(
         // model after each update to persist to localStorage, and once at boot to
         // compare prev/next for the sign-out check. Emitted only when the decoder
         // is (SSR-hydration path), so persistence rides the same GET-safe seed.
+        // `withClientCrypto`: the device-only key fields are saved as `Nothing`.
+        let saved = clear_device_only("m_", device_only);
+        let saved = if device_only.is_empty() {
+            saved
+        } else {
+            format!("({saved})")
+        };
         body.push_str(&format!(
             "spaModelEncoder_ : {model_ty} -> String\n\
              spaModelEncoder_ m_ =\n    \
-             Codec.toJson (Codec.auto spaModelBlank_) m_\n\n\n"
+             Codec.toJson (Codec.auto spaModelBlank_) {saved}\n\n\n"
         ));
     }
 

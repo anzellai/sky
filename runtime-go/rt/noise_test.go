@@ -258,3 +258,135 @@ func TestNoiseStateRedacts(t *testing.T) {
 		}
 	}
 }
+
+// Noise_IK_25519_ChaChaPoly_BLAKE2s vectors, from the same source as the
+// SHA256 ones (vectors.txt of github.com/flynn/noise v1.1.0, the four
+// non-PSK IK entries). The static and ephemeral keys are the same as above.
+var noiseIKBlake2sVectors = []struct {
+	prologue string
+	payloads [4]string
+	cts      [4]string
+}{
+	{"",
+		[4]string{"", "", "79656c6c6f777375626d6172696e65", "7375626d6172696e6579656c6c6f77"},
+		[4]string{
+			"358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254c9f0dff42c86abe5677abe74f6c87301577dbc1f3ffb2213827ca694a057fdbbff7f7350265fe61102c24d7d7a7e960ba8b90a679895087c7d28b1d6703f9727",
+			"64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d4846622bf9c6171ddd4c8f682080b03504eee",
+			"595694f9be48f03790f699455c84578b31d14a7baedfd736d73c53f66a5657",
+			"621ae446b11fda3cf08e56102dac9324dee37a4e536cdc878e8b454d98bcf2",
+		}},
+	{"",
+		[4]string{"746573745f6d73675f30", "746573745f6d73675f31", "79656c6c6f777375626d6172696e65", "7375626d6172696e6579656c6c6f77"},
+		[4]string{
+			"358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254c9f0dff42c86abe5677abe74f6c87301577dbc1f3ffb2213827ca694a057fdbbff7f7350265fe61102c24d7d7a7e960b7316fcb3b0687be852fd2fba8969816fbfaa8b459d0b59e8a42f",
+			"64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d484667f1d8bd2b9b659695f9077e7062bb0b9e7c08fd627913be183c3",
+			"595694f9be48f03790f699455c84578b31d14a7baedfd736d73c53f66a5657",
+			"621ae446b11fda3cf08e56102dac9324dee37a4e536cdc878e8b454d98bcf2",
+		}},
+	{"6e6f74736563726574",
+		[4]string{"", "", "79656c6c6f777375626d6172696e65", "7375626d6172696e6579656c6c6f77"},
+		[4]string{
+			"358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254c9f0dff42c86abe5677abe74f6c87301577dbc1f3ffb2213827ca694a057fdbbacac81d639bfae65c7827558f90acd27f14e182372e5bee2fa04eca3d32f09a9",
+			"64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d48466bbaba571a4d366dfe3958808b6a298f9",
+			"595694f9be48f03790f699455c84578b31d14a7baedfd736d73c53f66a5657",
+			"621ae446b11fda3cf08e56102dac9324dee37a4e536cdc878e8b454d98bcf2",
+		}},
+	{"6e6f74736563726574",
+		[4]string{"746573745f6d73675f30", "746573745f6d73675f31", "79656c6c6f777375626d6172696e65", "7375626d6172696e6579656c6c6f77"},
+		[4]string{
+			"358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254c9f0dff42c86abe5677abe74f6c87301577dbc1f3ffb2213827ca694a057fdbbacac81d639bfae65c7827558f90acd277316fcb3b0687be852fd7e392456bb6cbe070c749f1bd7c55fc2",
+			"64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d484667f1d8bd2b9b659695f90e35beaf5a5f5f1e7c83aa3194a2430cd",
+			"595694f9be48f03790f699455c84578b31d14a7baedfd736d73c53f66a5657",
+			"621ae446b11fda3cf08e56102dac9324dee37a4e536cdc878e8b454d98bcf2",
+		}},
+}
+
+func TestNoiseIKBlake2sVectors(t *testing.T) {
+	for vi, v := range noiseIKBlake2sVectors {
+		is, rs := unhex(t, noiseInitStatic), unhex(t, noiseRespStatic)
+		prologue := unhex(t, v.prologue)
+		ini := noiseNewSuite(noiseSuiteBLAKE2s, true, is, kxPublic(rs), prologue, unhex(t, noiseInitEph))
+		res := noiseNewSuite(noiseSuiteBLAKE2s, false, rs, "", prologue, unhex(t, noiseRespEph))
+		ini, m0, err := ini.writeMessage([]byte(unhex(t, v.payloads[0])))
+		if err != nil || string(m0) != unhex(t, v.cts[0]) {
+			t.Fatalf("BLAKE2s vector %d msg_0: %v\n got %x", vi, err, m0)
+		}
+		res, p0, err := res.readMessage(m0)
+		if err != nil || string(p0) != unhex(t, v.payloads[0]) {
+			t.Fatalf("BLAKE2s vector %d: responder could not read msg_0: %v", vi, err)
+		}
+		res, m1, err := res.writeMessage([]byte(unhex(t, v.payloads[1])))
+		if err != nil || string(m1) != unhex(t, v.cts[1]) {
+			t.Fatalf("BLAKE2s vector %d msg_1: %v\n got %x", vi, err, m1)
+		}
+		ini, p1, err := ini.readMessage(m1)
+		if err != nil || string(p1) != unhex(t, v.payloads[1]) {
+			t.Fatalf("BLAKE2s vector %d: initiator could not read msg_1: %v", vi, err)
+		}
+		it, err := ini.split()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt_, err := res.split()
+		if err != nil {
+			t.Fatal(err)
+		}
+		it, m2, err := it.encrypt([]byte(unhex(t, v.payloads[2])))
+		if err != nil || string(m2) != unhex(t, v.cts[2]) {
+			t.Fatalf("BLAKE2s vector %d msg_2: %v\n got %x", vi, err, m2)
+		}
+		rt_, p2, err := rt_.decrypt(m2)
+		if err != nil || string(p2) != unhex(t, v.payloads[2]) {
+			t.Fatalf("BLAKE2s vector %d: msg_2 did not decrypt: %v", vi, err)
+		}
+		_, m3, err := rt_.encrypt([]byte(unhex(t, v.payloads[3])))
+		if err != nil || string(m3) != unhex(t, v.cts[3]) {
+			t.Fatalf("BLAKE2s vector %d msg_3: %v\n got %x", vi, err, m3)
+		}
+		if _, p3, err := it.decrypt(m3); err != nil || string(p3) != unhex(t, v.payloads[3]) {
+			t.Fatalf("BLAKE2s vector %d: msg_3 did not decrypt: %v", vi, err)
+		}
+	}
+}
+
+// A round trip through the suite kernels, and the two suites do not
+// interoperate: a BLAKE2s initiator's first message fails on a SHA256
+// responder.
+func TestNoiseKernelBlake2sRoundTripAndSuiteMismatch(t *testing.T) {
+	iS := cryOk(t, runCryptoTaskAny(t, Kx_generate(nil)))
+	rS := cryOk(t, runCryptoTaskAny(t, Kx_generate(nil)))
+	ini := cryOk(t, runCryptoTaskAny(t, Noise_initiatorSuite("BLAKE2s", iS, Kx_publicKey(rS), "app v1")))
+	res := cryOk(t, runCryptoTaskAny(t, Noise_responderSuite("BLAKE2s", rS, "app v1")))
+	ini, m0 := tuple(t, Noise_writeMessage("hello", ini))
+	res, p0 := tuple(t, Noise_readMessage(m0, res))
+	if p0 != "hello" {
+		t.Fatalf("payload 0 = %q", p0)
+	}
+	res, m1 := tuple(t, Noise_writeMessage("welcome", res))
+	ini, p1 := tuple(t, Noise_readMessage(m1, ini))
+	if p1 != "welcome" {
+		t.Fatalf("payload 1 = %q", p1)
+	}
+	it := cryOk(t, Noise_transport(ini))
+	rt_ := cryOk(t, Noise_transport(res))
+	if Noise_handshakeHash(it) != Noise_handshakeHash(rt_) {
+		t.Fatal("handshake hashes differ")
+	}
+	it, c := tuple(t, Noise_encrypt("ping", it))
+	_, pt := tuple(t, Noise_decrypt(c, rt_))
+	if pt != "ping" {
+		t.Fatalf("transport payload = %q", pt)
+	}
+	_ = it
+
+	ini2 := cryOk(t, runCryptoTaskAny(t, Noise_initiatorSuite("BLAKE2s", iS, Kx_publicKey(rS), "app v1")))
+	sha := cryOk(t, runCryptoTaskAny(t, Noise_responderSuite("SHA256", rS, "app v1")))
+	_, m := tuple(t, Noise_writeMessage("hello", ini2))
+	if tag, _, _ := anyResultView(Noise_readMessage(m, sha)); tag == 0 {
+		t.Fatal("a SHA256 responder accepted a BLAKE2s initiator's message")
+	}
+	// An unknown suite name is an Err, never a silent default.
+	if tag, _, _ := anyResultView(runCryptoTaskAny(t, Noise_responderSuite("MD5", rS, ""))); tag == 0 {
+		t.Fatal("an unknown suite was accepted")
+	}
+}

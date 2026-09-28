@@ -641,6 +641,7 @@ mod tests {
             server_chain_warnings: vec![],
             follow_up: vec![],
             settle: Default::default(),
+            client_crypto: false,
         }
     }
     fn io_args(args: &[&str]) -> BranchIo {

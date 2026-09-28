@@ -484,8 +484,10 @@ corpus Family S surfaces `sign`, `kx`, `kdf`, `noise`, `cpace`, `qr`):
   `Noise.Handshake`, `Noise.Transport`, `Cpace.Pending` redact themselves in
   every fmt verb, `%#v`, `encoding/json` and `toString`, and refuse gob, so a
   Sky.Live session store cannot persist them. Export is to a `Secret` only.
-* **Noise IK** (`Noise_IK_25519_ChaChaPoly_SHA256`): the four cacophony IK
-  vectors; a state value is single-use (an older value returns `Err`, so a
+* **Noise IK** (`Noise_IK_25519_ChaChaPoly_SHA256` and, through
+  `initiatorWith` / `responderWith Blake2s`,
+  `Noise_IK_25519_ChaChaPoly_BLAKE2s`): the four cacophony IK vectors of each
+  suite; a SHA256 and a BLAKE2s peer do not complete a handshake; a state value is single-use (an older value returns `Err`, so a
   nonce is never reused); a different prologue, a tampered message or a
   low-order ephemeral key fails the step; a failed transport decrypt does
   not advance the nonce.

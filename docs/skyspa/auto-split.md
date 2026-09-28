@@ -403,7 +403,11 @@ import/export; every other member (key derivation, keyed MACs, AEAD, random
 draws, signing, key agreement), and any member added later, is SERVER. `Kdf`,
 `Noise` and `Cpace` are SERVER as a whole, and so (v0.27.0) are `Subprocess`
 (the streaming `Process.spawn` family) and `Watch` (`Std.Watch`): a browser can
-neither spawn a process nor watch a file system. Two enforcement legs:
+neither spawn a process nor watch a file system. An app whose device must hold
+its own keys opts in with `Spa.withClientCrypto` / `App.withClientCrypto`: the
+key-holding members of `Noise`, `Cpace`, `Kx`, `Sign` and `Kdf` then run in the
+client, and the build refuses every flow that would move a key to the server
+(`docs/skyspa/client-crypto.md`). Two enforcement legs:
 
 - **Compile-time completeness test** (`spa_partition::tests::classification_is_exhaustive`):
   enumerates every kernel pseudo-module the compiler knows from the authoritative

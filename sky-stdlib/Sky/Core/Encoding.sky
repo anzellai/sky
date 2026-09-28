@@ -6,6 +6,12 @@
 module Sky.Core.Encoding exposing
     ( base64Encode
     , base64Decode
+    , base32Encode
+    , base32Decode
+    , base32EncodeNoPad
+    , base32DecodeNoPad
+    , base32HexEncode
+    , base32HexDecode
     , urlEncode
     , urlDecode
     , hexEncode
@@ -25,6 +31,50 @@ base64Encode =
 base64Decode : String -> Result Error String
 base64Decode =
     Ffi.kernel "Encoding_base64Decode"
+
+
+-- ─── Base32 (RFC 4648) ────────────────────────────────────────────
+-- | RFC 4648 §6 base32, standard alphabet (`A`–`Z`, `2`–`7`), padded with `=`
+-- to a multiple of 8 characters. `base32Encode "foobar" == "MZXW6YTBOI======"`.
+base32Encode : String -> String
+base32Encode =
+    Ffi.kernel "Encoding_base32Encode"
+
+
+-- | The inverse of [`base32Encode`]. The input must be the canonical padded
+-- form: upper case, correct padding, no line breaks, and zero unused bits in
+-- the last symbol. Anything else is an `Err`, so one byte string has exactly
+-- one accepted text.
+base32Decode : String -> Result Error String
+base32Decode =
+    Ffi.kernel "Encoding_base32Decode"
+
+
+-- | [`base32Encode`] without the `=` padding (the form TOTP secrets and many
+-- identifiers use). `base32EncodeNoPad "foobar" == "MZXW6YTBOI"`.
+base32EncodeNoPad : String -> String
+base32EncodeNoPad =
+    Ffi.kernel "Encoding_base32EncodeNoPad"
+
+
+-- | The inverse of [`base32EncodeNoPad`]. Padded input is an `Err`; the other
+-- rules of [`base32Decode`] apply.
+base32DecodeNoPad : String -> Result Error String
+base32DecodeNoPad =
+    Ffi.kernel "Encoding_base32DecodeNoPad"
+
+
+-- | RFC 4648 §7 base32hex (`0`–`9`, `A`–`V`), padded. Its text sorts in the
+-- same order as the bytes. `base32HexEncode "foobar" == "CPNMUOJ1E8======"`.
+base32HexEncode : String -> String
+base32HexEncode =
+    Ffi.kernel "Encoding_base32HexEncode"
+
+
+-- | The inverse of [`base32HexEncode`], with the rules of [`base32Decode`].
+base32HexDecode : String -> Result Error String
+base32HexDecode =
+    Ffi.kernel "Encoding_base32HexDecode"
 
 
 -- ─── URL ───────────────────────────────────────────────────────────

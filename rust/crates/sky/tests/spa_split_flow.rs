@@ -464,6 +464,77 @@ fn client_only_app_generates_a_buildable_static_only_backend() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// `App.withClientCrypto` on a Std.App entry, built for `--target web:app`: the
+/// synthesis carries it to `Spa.withClientCrypto`, the key operations stay in the
+/// wasm client (no RPC), the SSR first paint and the saved model write the
+/// device's `Maybe Noise.Handshake` field as `Nothing`, and the backend and the
+/// wasm frontend both build.
+#[test]
+fn client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let src =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-client-crypto");
+    let dir = scratch();
+    let _ = std::fs::remove_dir_all(&dir);
+    let cp = Command::new("cp")
+        .arg("-R")
+        .arg(&src)
+        .arg(&dir)
+        .status()
+        .expect("cp -R fixture");
+    assert!(cp.success());
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("sky build --target web:app");
+    let log = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let split = dir.join(".skyapp/web-app/.split");
+    let read = |p: &str| std::fs::read_to_string(split.join(p)).unwrap_or_default();
+    let back = read("backend/src/Main.sky");
+    let front = read("frontend/src/Main.sky");
+    let backend_ok = split.join("backend/sky-out/app").exists();
+    let wasm_ok = dist_has_wasm(&split.join("frontend/dist"))
+        || split.join("frontend/sky-out/main.wasm").exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(out.status.success(), "the build must succeed:\n{log}");
+    assert!(
+        backend_ok && wasm_ok,
+        "backend + wasm frontend must be built:\n{log}"
+    );
+    assert!(
+        front.contains("Spa.withClientCrypto"),
+        "the synthesis must carry App.withClientCrypto:\n{front}"
+    );
+    assert!(
+        front.contains("Noise.initiatorWith") && front.contains("Kx.generate"),
+        "the key operations must stay in the wasm client:\n{front}"
+    );
+    assert!(
+        !back.contains("POST /_rpc/Connect") && !back.contains("POST /_rpc/GotHandshake"),
+        "the backend must have no RPC for a key operation:\n{back}"
+    );
+    assert!(
+        back.contains("({ resolved | handshake = Nothing })"),
+        "the SSR first paint must write the device handshake as Nothing:\n{back}"
+    );
+    assert!(
+        front.contains("({ m_ | handshake = Nothing })"),
+        "the saved model must write the device handshake as Nothing:\n{front}"
+    );
+    assert!(
+        !log.contains("Codec.auto` cannot round-trip"),
+        "a cleared device-only field must not raise the SSR-embed warning:\n{log}"
+    );
+}
+
 /// A `Std.Native.*` effect is a CLIENT effect: it must stay in the wasm frontend,
 /// never become a server RPC. Native capabilities (`clipboardWrite`, `share`, …)
 /// reach a browser/webview-only platform API whose `//go:build !js` counterpart is

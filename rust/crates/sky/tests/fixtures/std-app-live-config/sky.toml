@@ -1,0 +1,8 @@
+[project]
+name = "std-app-live-config"
+
+[app]
+entry = "src/Main.sky"
+
+[live]
+port = 8792

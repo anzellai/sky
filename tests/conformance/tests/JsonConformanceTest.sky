@@ -377,6 +377,75 @@ tests =
                   (Encode.raw "{\"n\":42}" |> Result.map (Encode.encode 0)
                       |> Result.andThen
                              (Decode.decodeString (Decode.field "n" Decode.int))))
+    -- ─── Decode.decodeValue / key order / one document (v0.27.0) ───
+    , Test.test
+          "decodeValue: reads an Encode.object without writing text"
+          (\_ ->
+              Test.equal
+                  (Ok ( 42, "hi" ))
+                  (Decode.decodeValue
+                      (Decode.map2
+                          (\n s -> ( n, s ))
+                          (Decode.field "n" Decode.int)
+                          (Decode.field "s" Decode.string))
+                      (Encode.object
+                          [ ( "n", Encode.int 42 )
+                          , ( "s", Encode.string "hi" )
+                          ])))
+    , Test.test
+          "decodeValue: a Decode.value sub-document decodes again, exact Int"
+          (\_ ->
+              Test.equal
+                  (Ok 9007199254740993)
+                  (Decode.decodeString
+                      (Decode.field "meta" Decode.value)
+                      "{\"meta\":{\"id\":9007199254740993}}"
+                      |> Result.andThen
+                             (Decode.decodeValue (Decode.field "id" Decode.int))))
+    , Test.test
+          "decodeValue: an Encode.raw document is parsed"
+          (\_ ->
+              Test.equal
+                  (Ok [ 1, 2, 3 ])
+                  (Encode.raw "[1,2,3]"
+                      |> Result.andThen
+                             (Decode.decodeValue (Decode.list Decode.int))))
+    , Test.test
+          "decodeValue: a type mismatch is an Err, as with decodeString"
+          (\_ ->
+              Test.err
+                  (Decode.decodeValue
+                      (Decode.field "n" Decode.int)
+                      (Encode.object [ ( "n", Encode.float 1.5 ) ])))
+    , Test.test
+          "decodeValue: a key given twice keeps its last value"
+          (\_ ->
+              Test.equal
+                  (Ok 2)
+                  (Decode.decodeValue
+                      (Decode.field "k" Decode.int)
+                      (Encode.object
+                          [ ( "k", Encode.int 1 ), ( "k", Encode.int 2 ) ])))
+    , Test.test
+          "Decode.value -> encode: keys come back sorted byte-wise at every depth"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "{\"B\":[{\"y\":1,\"z\":0}],\"a\":{\"c\":2,\"d\":1},\"b\":1}")
+                  (Decode.decodeString
+                      Decode.value
+                      "{\"b\":1,\"a\":{\"d\":1,\"c\":2},\"B\":[{\"z\":0,\"y\":1}]}"
+                      |> Result.map (Encode.encode 0)))
+    , Test.test
+          "decodeString: text after the JSON value is an Err"
+          (\_ -> Test.err (Decode.decodeString Decode.int "3 x"))
+    , Test.test
+          "decodeString: a second document after the first is an Err"
+          (\_ ->
+              Test.err (Decode.decodeString Decode.value "{\"a\":1} {\"a\":2}"))
+    , Test.test
+          "decodeString: trailing whitespace is accepted"
+          (\_ -> Test.equal (Ok 3) (Decode.decodeString Decode.int " 3 \n"))
     , Test.test
           "Result.toMaybe (imported Sky.Core.Result): a failed decode is Nothing"
           (\_ ->
