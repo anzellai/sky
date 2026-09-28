@@ -148,9 +148,11 @@ func Spa_withOnNavigate(fn, cfg any) any { return spaCfgSet(cfg, "OnNavigate", f
 
 // Spa_withHead stores the `model -> List (Html msg)` head builder under "Head".
 // The SSR backend route reads it and renders the per-route <head> for SEO
-// (renderAppHead-shape, live.go). The wasm client IGNORES it — head stays
-// server-owned, exactly as Sky.Live does (head is honoured only on the initial
-// GET). Stored on the config map so it survives the withX builder chain.
+// (renderAppHead-shape, live.go). The wasm client applies it once, only on a
+// page the server did not render (the static shell, spaApplyShellHead); on an
+// SSR page head stays server-owned, exactly as Sky.Live does (head is honoured
+// only on the initial GET). Stored on the config map so it survives the withX
+// builder chain.
 func Spa_withHead(fn, cfg any) any { return spaCfgSet(cfg, "Head", fn) }
 
 // Spa_withModelDecoder stores the `String -> Result Error model` decoder under

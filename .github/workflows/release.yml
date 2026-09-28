@@ -968,6 +968,8 @@ jobs:
         run: scripts/spa-vdom-identity-e2e.sh
       - name: Sky.Live client e2e (handler addressing, input authority)
         run: scripts/live-client-e2e.sh
+      - name: Widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
+        run: scripts/islands-e2e.sh
       - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
         run: scripts/ui-forms-e2e.sh
       - uses: ./.github/actions/install-caddy

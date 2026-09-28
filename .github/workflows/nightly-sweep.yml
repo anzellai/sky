@@ -223,6 +223,11 @@ jobs:
       # the panic banner and multi-tab reconnects.
       - name: Gate — Sky.Live client e2e (handler addressing, input authority)
         run: scripts/live-client-e2e.sh
+      # Widget islands: a third-party JS widget in a Std.Ui / Std.Html view keeps
+      # its state across re-renders, exchanges typed events and Cmd.toIsland
+      # commands, and remounts on a new id; Sky.Live and Sky.Spa, strict CSP.
+      - name: Gate — widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
+        run: scripts/islands-e2e.sh
       # Ui.onKeyDown renders + dispatches, typed Ui.onSubmit decodes strictly
       # (a bad field drops the submit with a FormDecode error), and a
       # literal-topic pub/sub delivers — on Sky.Live AND Sky.Spa.

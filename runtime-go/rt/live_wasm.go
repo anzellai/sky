@@ -244,6 +244,11 @@ func spaRun(cfg any) any {
 		}
 		renderCurrent()
 	}
+	// A page with no SSR (the static dist/index.html shell: an app whose backend
+	// has no per-request work, a CDN deploy) never got the app's head from the
+	// server. Apply it here, once, from the first-paint model — the same rule
+	// the SSR page and Sky.Live follow (head renders on the initial load only).
+	spaApplyShellHead(doc, Field(cfg, "Head"))
 	// The client has now rendered/hydrated, so every handler is attached: clear
 	// the first-paint hydration affordance (`<html data-sky-hydrating>` → progress
 	// cursor + top bar, liveBaseCSS). From here a click lands on a live handler.
@@ -994,6 +999,11 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 				step(m)
 			}
 		}()
+	case "island":
+		// Cmd.toIsland: straight to the island runtime (island_wasm.go).
+		if ic, ok := islandCmdOf(cmd); ok {
+			spaIslandCommand(ic)
+		}
 	case "spaError":
 		if c := js.Global().Get("console"); c.Truthy() {
 			c.Call("error", "[sky.spa] a server branch's follow-up could not be applied:",
@@ -1348,4 +1358,46 @@ func stopTimer(ms int, t *spaTimer) {
 // time.Now) so it reads the browser clock directly.
 func nowMillis() int {
 	return js.Global().Get("Date").Call("now").Int()
+}
+
+// spaApplyShellHead renders `head model` (App.withHead / Spa.withHead) into
+// document.head when the page was not server-rendered. On an SSR page the
+// server already wrote the same nodes (RenderSpaHead), so nothing is added.
+// Before this the head builder was dropped silently on the static shell: a
+// <script defer> for a widget island, a <link rel=stylesheet>, a <meta> never
+// reached the page. Nodes are built with the DOM API, so a <script src> runs
+// (a script parsed from markup does not); a <title> sets document.title.
+func spaApplyShellHead(doc js.Value, head any) {
+	if head == nil || !isFunc(head) {
+		return
+	}
+	if m := spaRoot.Call("getAttribute", spaSSRMarker); m.Type() == js.TypeString {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			spaReportPanic("head", r)
+		}
+	}()
+	h := doc.Get("head")
+	if !h.Truthy() {
+		return
+	}
+	for _, node := range spaAsList(sky_call(head, spaModel)) {
+		vn := HtmlToVNode(node)
+		if vn.Kind != "element" {
+			continue
+		}
+		if vn.Tag == "title" {
+			var sb strings.Builder
+			for _, c := range vn.Children {
+				sb.WriteString(c.Text)
+			}
+			doc.Set("title", sb.String())
+			continue
+		}
+		el := buildDOM(vn)
+		el.Call("setAttribute", "data-sky-head", "")
+		h.Call("appendChild", el)
+	}
 }

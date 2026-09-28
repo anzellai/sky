@@ -18,7 +18,8 @@ module Std.Html exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Ffi as Ffi
-import Std.Html.Attributes exposing (Attribute)
+import Std.Html.Attributes as HtmlAttr exposing (Attribute)
+import Sky.Core.Json.Encode as Encode exposing (Value)
 
 -- ─── Core type ──────────────────────────────────────────────────
 type Html msg
@@ -44,6 +45,28 @@ raw s =
 node : String -> List (Attribute msg) -> List (Html msg) -> Html msg
 node tag attrs children =
     HElement tag attrs children
+
+
+-- A widget island: an element a third-party JS widget owns (a code
+-- editor, a canvas painter). The server renders it empty and never patches
+-- inside it; the widget registers from a same-origin script with
+-- `window.Sky.island name { mount, update, command, destroy }`. `props`
+-- (JSON) reaches `mount` and `update`; a new `name` or `id` remounts the
+-- widget. Pair with `Std.Html.Events.onIslandEvent` and `Cmd.toIsland`.
+-- See docs/skyui/overview.md, "Widget islands".
+island : { name : String
+, id : String
+, props : Value
+} -> List (Attribute msg) -> Html msg
+island cfg attrs =
+    HElement
+        "div"
+        (HtmlAttr.attribute "data-sky-island" cfg.name
+            :: HtmlAttr.attribute "data-sky-island-id" cfg.id
+            :: HtmlAttr.attribute "data-sky-props" (Encode.encode 0 cfg.props)
+            :: HtmlAttr.attribute "sky-key" cfg.id
+            :: attrs)
+        []
 
 
 -- A void element of an arbitrary tag (no children).

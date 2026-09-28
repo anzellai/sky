@@ -149,7 +149,10 @@ func spaHydrationParity(node spaDOM, v *VNode) (bool, string) {
 			return false, "attribute " + k + " differs at " + v.SkyID
 		}
 	}
-	if spaChildrenContainRaw(v.Children) || spaValuedTextareaLeaf(v) {
+	// An island's children are the widget's (it may have mounted before the
+	// wasm client boots); the server renders none, so there is nothing to
+	// compare.
+	if spaChildrenContainRaw(v.Children) || spaValuedTextareaLeaf(v) || isIsland(v) {
 		return true, ""
 	}
 	dom := node.FirstChild()
@@ -186,7 +189,7 @@ func spaHydrationParity(node spaDOM, v *VNode) (bool, string) {
 // build. The first part stays the ORIGINAL server node. It runs only after
 // spaCanHydrate accepted the same trees, so every slot lines up.
 func spaHydrateTextRuns(node spaDOM, v *VNode) {
-	if node == nil || spaChildrenContainRaw(v.Children) || spaValuedTextareaLeaf(v) {
+	if node == nil || spaChildrenContainRaw(v.Children) || spaValuedTextareaLeaf(v) || isIsland(v) {
 		return
 	}
 	dom := node.FirstChild()

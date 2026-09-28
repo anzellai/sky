@@ -20,9 +20,10 @@
 --                        broker round-trip (v0.16+ cross-process
 --                        broker tiers turn that hop into 10-100ms+
 --                        of network latency).
-module Std.Cmd exposing (none, batch, perform, publish, publishNoEcho)
+module Std.Cmd exposing (none, batch, perform, publish, publishNoEcho, toIsland)
 
 import Sky.Ffi as Ffi
+import Sky.Core.Json.Encode exposing (Value)
 
 
 -- | No outbound effect.
@@ -81,3 +82,16 @@ publish =
 publishNoEcho : String -> any -> Cmd msg
 publishNoEcho =
     Ffi.kernel "Cmd_publishNoEcho"
+
+
+-- | `toIsland id name payload` — send a command to the widget island with
+-- this `id` (`Std.Ui.island`): its `command(name, payload)` runs in the
+-- browser with `payload` as parsed JSON. A command for an island that is not
+-- mounted yet waits until it mounts (up to 256 per island). Sky.Live
+-- delivers it to every tab of the session; a Sky.Spa client delivers it
+-- directly. A terminal target has no widget and ignores it; a Sky.Spa server
+-- branch cannot deliver it (the backend logs SpaIslandCommandOnServer), so
+-- return it from a client arm.
+toIsland : String -> String -> Value -> Cmd msg
+toIsland =
+    Ffi.kernel "Cmd_toIsland"

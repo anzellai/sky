@@ -108,6 +108,7 @@ web_e2e() {
     add 60 "browser tier (verify-all-web)" "scripts/verify-all-web.sh"
     add 60 "e2e: Sky.Live client" "scripts/live-client-e2e.sh"
     add 60 "e2e: Sky.Spa + Sky.Live DOM identity" "scripts/spa-vdom-identity-e2e.sh"
+    add 60 "e2e: widget islands (Sky.Live + Sky.Spa)" "scripts/islands-e2e.sh"
 }
 
 compiler_core() {

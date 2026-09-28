@@ -273,8 +273,11 @@ func applyHtmlAttrShape(vn *VNode, name string, fields []any) {
 			ev := unwrapAny(fields[0])
 			if _, _, evFields, ok := unwrapADTShape(ev); ok && len(evFields) >= 2 {
 				// OnMsg / OnString / OnBool: Fields[0] = event name,
-				// Fields[1] = Msg value (OnMsg) or handler fn.
-				vn.setEvent(AsString(evFields[0]), evFields[1])
+				// Fields[1] = Msg value (OnMsg) or handler fn. An island
+				// event's handler is wrapped so dispatch reads its Result
+				// (island_core.go).
+				evName := AsString(evFields[0])
+				vn.setEvent(evName, wrapIslandHandler(evName, evFields[1]))
 			}
 		}
 	case "NoAttr":
@@ -671,8 +674,11 @@ func renderVNodeInto(sb *strings.Builder, n VNode, handlers map[string]any) {
 	// tags; sub-elements still render normally (rare but valid for
 	// <style> @import chains). Matches html/template's behaviour for
 	// JSStr / CSSText contexts.
-	for i := range n.Children {
-		renderChildInto(sb, &n, &n.Children[i], handlers)
+	// An island renders no children: the widget owns them (island_core.go).
+	if !isIsland(&n) {
+		for i := range n.Children {
+			renderChildInto(sb, &n, &n.Children[i], handlers)
+		}
 	}
 	sb.WriteString("</")
 	sb.WriteString(n.Tag)
@@ -1849,7 +1855,12 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	// survived with the new root nested in it (and the Spa applier rebuilt
 	// only the children). A <form> that became a different form (sameForm)
 	// is replaced too, at any depth, so no field value carries over.
-	if old.Tag != new_.Tag || old.Kind != new_.Kind || !sameForm(old, new_) {
+	// An island whose identity (name + id) changed, or an element that
+	// became or stopped being an island, is replaced too, so the client
+	// destroys the old widget and mounts the new one (island_core.go).
+	island := islandIdentity(new_)
+	if old.Tag != new_.Tag || old.Kind != new_.Kind || !sameForm(old, new_) ||
+		islandIdentity(old) != island {
 		html := renderVNode(*new_, nil)
 		*out = append(*out, Patch{ID: old.SkyID, Replace: &html})
 		return
@@ -1946,6 +1957,11 @@ func diffNodes(old, new_ *VNode, clientState map[string]string, out *[]Patch) {
 	}
 	if attrChanges != nil && old.SkyID != "" {
 		*out = append(*out, Patch{ID: old.SkyID, Attrs: attrChanges})
+	}
+	// The same island: its attributes (the props) are all the server owns.
+	// The widget owns the children, so the diff never descends.
+	if island != "" {
+		return
 	}
 
 	// Single-text-child fast path — common for buttons / spans.
@@ -2429,6 +2445,9 @@ type cmdT struct {
 	//                     issue #359 — broker skips delivery to
 	//                     subscribers whose ownerSid matches the
 	//                     publisher's sid)
+	//   "island"        — Cmd.toIsland id name payload: a command for a
+	//                     widget island (island_core.go); payload is an
+	//                     islandCmd
 	kind  string
 	task  any
 	toMsg any
@@ -2605,6 +2624,9 @@ func Sub_subscribeStream(streamID, toMsg any) SkySub {
 func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
 	if msg == nil {
 		return msg
+	}
+	if ih, ok := msg.(islandEventHandler); ok {
+		return ih.applyWire(args)
 	}
 	rv := reflect.ValueOf(msg)
 	isFunc := rv.Kind() == reflect.Func

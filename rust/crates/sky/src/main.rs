@@ -3935,7 +3935,7 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
             }
         }
     }
-    std::fs::write(dist.join(&boot_name), SPA_BOOT_JS)
+    std::fs::write(dist.join(&boot_name), spa_boot_js())
         .map_err(|e| format!("write {boot_name}: {e}"))?;
 
     // index.html — always regenerated so it references the current hashed wasm.
@@ -5739,7 +5739,7 @@ const WASM_INDEX_HTML: &str = r#"<!doctype html>
   <body>
     <div id="app"></div>
     <script src="/wasm_exec.js"></script>
-    <!-- The boot loader is a same-origin file (SPA_BOOT_JS), never an inline
+    <!-- The boot loader is a same-origin file (spa_boot_js), never an inline
          script, so a strict Content-Security-Policy
          (script-src 'self' 'wasm-unsafe-eval') runs it. -->
     <script src="/{{BOOT}}" data-wasm="/{{WASM}}"></script>
@@ -5747,38 +5747,46 @@ const WASM_INDEX_HTML: &str = r#"<!doctype html>
 </html>
 "#;
 
-/// The Sky.Spa wasm boot loader, written to `dist/spa-boot.<hash>.js` by
-/// [`stage_web_bundle`]. It MUST be byte-identical to `SpaBootJS` in
-/// `runtime-go/rt/spa_boot.go`: the SSR page the backend renders references
-/// `/spa-boot.<sha256[:12]>.js` computed from the Go copy, so a drift would
-/// point every SSR page at a file the build never wrote
-/// (`spa_boot_js_matches_the_runtime` fails on it). An external file, not an
-/// inline script, so a strict Content-Security-Policy
-/// (`script-src 'self' 'wasm-unsafe-eval'`) runs it.
-const SPA_BOOT_JS: &str = r#"// Sky.Spa boot loader (runtime-go/rt/spa_boot.go). An external file so a strict
-// Content-Security-Policy (script-src 'self' 'wasm-unsafe-eval') runs it.
-const go = new Go();
-(function () {
-  var me = document.currentScript;
-  var wasm = (me && me.getAttribute("data-wasm")) || "/main.wasm";
-  WebAssembly.instantiateStreaming(fetch(wasm), go.importObject).then(function (res) {
-    go.run(res.instance);
-  });
-  // Safety net for the blocking hydration overlay: if the wasm never boots,
-  // drop data-sky-hydrating after 12s so the page is never locked. The client
-  // clears it on hydration first in the normal case.
-  setTimeout(function () {
-    document.documentElement.removeAttribute("data-sky-hydrating");
-  }, 12000);
-})();
-"#;
+/// The Go runtime sources the Sky.Spa boot loader is read from, at compile time.
+const ISLAND_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/island_client.go");
+const SPA_BOOT_GO: &str = include_str!("../../../../runtime-go/rt/spa_boot.go");
 
-/// The dist file name of [`SPA_BOOT_JS`]: `spa-boot.<first 12 hex of sha256>.js`
+/// The body of the Go raw-string constant `name` (a `const name = ` line
+/// followed by a backquoted literal) in `src`.
+fn go_raw_const<'a>(src: &'a str, name: &str) -> Option<&'a str> {
+    let marker = format!("const {name} = `");
+    let start = src.find(&marker)? + marker.len();
+    let len = src[start..].find('`')?;
+    Some(&src[start..start + len])
+}
+
+/// The Sky.Spa wasm boot loader, written to `dist/spa-boot.<hash>.js` by
+/// [`stage_web_bundle`]. It is `SpaBootJS` in `runtime-go/rt/spa_boot.go`,
+/// byte for byte: the widget-island runtime (`islandClientJS`,
+/// `island_client.go`) followed by the loader (`spaBootLoaderJS`). Both are
+/// read out of the Go sources, so there is one copy; the SSR page the backend
+/// renders references `/spa-boot.<sha256[:12]>.js` computed from the Go
+/// constant, and a drift would point every SSR page at a file the build never
+/// wrote (`spa_boot_js_matches_the_runtime` checks the extraction). An
+/// external file, not an inline script, so a strict Content-Security-Policy
+/// (`script-src 'self' 'wasm-unsafe-eval'`) runs it.
+fn spa_boot_js() -> &'static str {
+    static JS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    JS.get_or_init(|| {
+        let island = go_raw_const(ISLAND_CLIENT_GO, "islandClientJS")
+            .expect("runtime-go/rt/island_client.go defines islandClientJS as a raw string");
+        let loader = go_raw_const(SPA_BOOT_GO, "spaBootLoaderJS")
+            .expect("runtime-go/rt/spa_boot.go defines spaBootLoaderJS as a raw string");
+        format!("{island}{loader}")
+    })
+}
+
+/// The dist file name of [`spa_boot_js`]: `spa-boot.<first 12 hex of sha256>.js`
 /// (the same rule the Go runtime's `assetHash` uses).
 fn spa_boot_name() -> String {
     format!(
         "spa-boot.{}.js",
-        &db_provision::sha256_hex(SPA_BOOT_JS.as_bytes())[..12]
+        &db_provision::sha256_hex(spa_boot_js().as_bytes())[..12]
     )
 }
 
@@ -12289,18 +12297,29 @@ mod tests {
     /// the SSR page names `/spa-boot.<hash>.js` from the Go copy.
     #[test]
     fn spa_boot_js_matches_the_runtime() {
+        // SpaBootJS is `islandClientJS + spaBootLoaderJS` in Go; the Rust copy
+        // must be exactly that concatenation.
         let go = include_str!("../../../../runtime-go/rt/spa_boot.go");
-        let start = go
-            .find("const SpaBootJS = `")
-            .expect("runtime-go/rt/spa_boot.go defines SpaBootJS")
-            + "const SpaBootJS = `".len();
-        let len = go[start..].find('`').expect("SpaBootJS is a raw string");
-        assert_eq!(
-            &go[start..start + len],
-            SPA_BOOT_JS,
-            "SPA_BOOT_JS drifted from runtime-go/rt/spa_boot.go SpaBootJS; \
-             the SSR page would reference a loader the build never wrote"
+        assert!(
+            go.contains("const SpaBootJS = islandClientJS + spaBootLoaderJS"),
+            "runtime-go/rt/spa_boot.go no longer builds SpaBootJS from the two literals \
+             spa_boot_js reads; update spa_boot_js with it"
         );
+        let js = spa_boot_js();
+        assert!(
+            js.starts_with("// Sky widget islands"),
+            "the island runtime opens the file"
+        );
+        assert!(
+            js.contains("window.Sky.island"),
+            "the island runtime is present"
+        );
+        assert!(
+            js.contains("// Sky.Spa boot loader")
+                && js.contains("WebAssembly.instantiateStreaming"),
+            "the loader follows the island runtime"
+        );
+        assert!(!js.contains('`'), "a raw-string literal was cut short");
         let name = spa_boot_name();
         assert!(name.starts_with("spa-boot.") && name.ends_with(".js") && name.len() == 24);
     }
@@ -12361,7 +12380,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(dist.join(&boot)).unwrap(),
-            SPA_BOOT_JS,
+            spa_boot_js(),
             "dist must carry the boot loader"
         );
         for tag in index.split("<script").skip(1) {

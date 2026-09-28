@@ -283,6 +283,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Cmd", "perform", "rt.Cmd_perform"),
     ("Cmd", "publish", "rt.Cmd_publish"),
     ("Cmd", "publishNoEcho", "rt.Cmd_publishNoEcho"),
+    ("Cmd", "toIsland", "rt.Cmd_toIsland"),
     ("Webview", "app", "rt.Webview_app"),
     ("Webview", "url", "rt.Webview_url"),
     ("Time", "now", "rt.Time_now"),

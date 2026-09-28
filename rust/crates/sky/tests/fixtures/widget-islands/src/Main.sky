@@ -1,0 +1,189 @@
+module Main exposing (main)
+
+{-| Widget-island e2e fixture, driven by scripts/islands-e2e-verify.mjs (see
+scripts/islands-e2e.sh) under a strict Content-Security-Policy, as a Sky.Live
+app (--target web) and as a Sky.Spa app (--target web:app).
+
+  - `editor` (Std.Html.island) is a contenteditable widget. While `running`,
+    a 20 ms tick re-renders the page and flips a raw sibling in the island's
+    parent, so every tick rebuilds that parent's children (the HTML-swap
+    path): typing must survive. Its edits arrive as the typed Msg
+    TextChanged; `reset` sends it Cmd.toIsland; `swap` changes its id, which
+    remounts it from props.
+  - `counter` (Std.Ui.island) sends a mixed-case "Inc" event decoded as Int.
+
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Json.Encode as Encode
+import Sky.Core.Json.Decode as Decode
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Sub as Sub exposing (Sub)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Html as Html
+import Std.Html.Attributes as HA
+import Std.Html.Events as HE
+
+type alias Model =
+    { ticks : Int
+    , running : Bool
+    , text : String
+    , ctr : Int
+    , edId : String
+    }
+
+type Msg
+    = Tick
+    | Start
+    | Stop
+    | TextChanged String
+    | CounterInc Int
+    | ResetEditor
+    | SwapId
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { ticks = 0, running = False, text = "", ctr = 0, edId = "ed-a" }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Tick ->
+            ( { model | ticks = model.ticks + 1 }, Cmd.none )
+
+        Start ->
+            ( { model | running = True }, Cmd.none )
+
+        Stop ->
+            ( { model | running = False }, Cmd.none )
+
+        TextChanged t ->
+            ( { model | text = t }, Cmd.none )
+
+        CounterInc n ->
+            ( { model | ctr = n }, Cmd.none )
+
+        ResetEditor ->
+            ( model
+            , Cmd.toIsland
+                  model.edId
+                  "setText"
+                  (Encode.object [ ( "text", Encode.string "reset!" ) ])
+            )
+
+        SwapId ->
+            ( { model | edId = "ed-b" }, Cmd.none )
+
+
+editor : Model -> Element Msg
+editor model =
+    Ui.html
+        (Html.div
+            [ HA.class "ed-wrap" ]
+            [ Html.island
+                  { name = "editor"
+                  , id = model.edId
+                  , props =
+                      Encode.object
+                          [ ( "ticks", Encode.int model.ticks )
+                          , ( "initial", Encode.string model.text )
+                          ]
+                  }
+                  [ HE.onIslandEvent
+                        "changed"
+                        (Decode.field "text" Decode.string)
+                        TextChanged
+                  ]
+            , if modBy 2 model.ticks == 0 then
+                  Html.raw "<i class=\"parity\">even</i>"
+
+              else
+                  Html.span [ HA.class "parity" ] [ Html.text "odd" ]
+            ])
+
+
+counter : Model -> Element Msg
+counter model =
+    Ui.column
+        []
+        [ if modBy 2 model.ticks == 0 then
+              Ui.row [] [ Ui.text "before-counter" ]
+
+          else
+              Ui.none
+        , Ui.island
+              { name = "counter"
+              , id = "ctr"
+              , props = Encode.object [ ( "start", Encode.int 0 ) ]
+              }
+              [ Ui.onIslandEvent "inc" Decode.int CounterInc ]
+        ]
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8 ]
+        [ Ui.row [] [ Ui.text ("ticks=" ++ String.fromInt model.ticks) ]
+        , Ui.row [] [ Ui.text ("server-text=" ++ model.text) ]
+        , Ui.row [] [ Ui.text ("ctr=" ++ String.fromInt model.ctr) ]
+        , Ui.row
+              []
+              [ Ui.button [] { onPress = Just Start, label = Ui.text "start" } ]
+        , Ui.row
+              []
+              [ Ui.button [] { onPress = Just Stop, label = Ui.text "stop" } ]
+        , Ui.row
+              []
+              [ Ui.button
+                    []
+                    { onPress = Just ResetEditor, label = Ui.text "reset" }
+              ]
+        , Ui.row
+              []
+              [ Ui.button [] { onPress = Just SwapId, label = Ui.text "swap" } ]
+        , editor model
+        , counter model
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    if model.running then
+        Sub.every 20 Tick
+
+    else
+        Sub.none
+
+
+head : Model -> List (Html.Html Msg)
+head _ =
+    [ Html.node
+          "script"
+          [ HA.src "/static/widgets.js", HA.attribute "defer" "" ]
+          []
+    ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withHead head
+        |> App.withConfig
+               (App.WebConfig { App.webDefaults | static = Just "static" })
+
+
+main =
+    App.run app
