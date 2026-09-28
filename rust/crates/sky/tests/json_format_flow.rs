@@ -532,3 +532,207 @@ fn std_app_check_relays_the_child_diagnostics() {
     let _ = std::fs::remove_dir_all(&good);
     let _ = std::fs::remove_dir_all(&bad);
 }
+
+/// A lowering WARNING carries the span of the node being lowered: the
+/// memoised-CAF lint points at the definition's name.
+#[test]
+fn a_lowering_warning_has_a_file_and_range() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let src = "module Main exposing (main)\n\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Sky.Core.Result as Result\n\
+import Sky.Core.Task as Task\n\
+import Sky.Core.Uuid as Uuid\n\
+import Std.Log exposing (println)\n\n\n\
+stamp : String\n\
+stamp =\n    Task.run Uuid.v4 |> Result.withDefault \"\"\n\n\n\
+main =\n    println stamp\n";
+    let dir = project("lowerwarn", src, "");
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    check_stream(&o);
+    let w = diags(&o)
+        .into_iter()
+        .find(|d| {
+            d["severity"] == "warning"
+                && d["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("memoised to a SINGLE value")
+        })
+        .unwrap_or_else(|| panic!("the CAF lint: {:?}", o.lines));
+    assert_eq!(w["file"], "src/Main.sky", "{w}");
+    // 0-based line 10 is `stamp =`, the definition's name.
+    assert_eq!(w["range"]["start"]["line"], 10, "{w}");
+    assert_eq!(w["range"]["start"]["character"], 0, "{w}");
+    // The text mode prints the same location.
+    let text = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&text.stderr)
+            .contains("warning: src/Main.sky:11:1: top-level `stamp`"),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A lowering ERROR carries the span of the expression being lowered: a call
+/// into a Go package with no generated FFI surface points at the call.
+#[test]
+fn a_lowering_error_has_a_file_and_range() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let src = "module Main exposing (main)\n\n\
+import Github.Com.Nope.Pkg as P\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Std.Log exposing (println)\n\n\n\
+main =\n    println (P.thing 1)\n";
+    let dir = project("lowererr", src, "");
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let e = diags(&o)
+        .into_iter()
+        .find(|d| d["severity"] == "error")
+        .unwrap();
+    assert!(
+        e["message"]
+            .as_str()
+            .unwrap()
+            .contains("no generated FFI surface"),
+        "{e}"
+    );
+    assert_eq!(e["file"], "src/Main.sky", "{e}");
+    // 0-based line 8, the parenthesised `(P.thing 1)` call inside `println`:
+    // it starts at character 12, the `(` (the node's leading space is not
+    // part of the range).
+    assert_eq!(e["range"]["start"]["line"], 8, "{e}");
+    assert_eq!(e["range"]["start"]["character"], 12, "{e}");
+    assert_eq!(e["range"]["end"]["character"], 23, "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `sky build --format json` of a Sky.Spa entry (auto-split into a wasm
+/// frontend and a native backend): a clean build is one ok summary; an error
+/// in the app's own source is reported against `src/…` (checked before the
+/// split); a leg's diagnostic is relayed with its `half`, against the app's own
+/// file when the leg compiled a byte-identical copy of it.
+#[test]
+fn spa_build_json_reports_every_diagnostic() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    // Clean.
+    let clean = copy_fixture("spa-split-multimodule", "spa-clean");
+    let o = sky(&clean, &["build", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let s = check_stream(&o);
+    assert_eq!(s["errors"], 0, "{:?}", o.lines);
+    let _ = std::fs::remove_dir_all(&clean);
+
+    // A type error in a shared module.
+    let bad = copy_fixture("spa-split-multimodule", "spa-type");
+    let mut domain = std::fs::read_to_string(bad.join("src/Domain.sky")).unwrap();
+    // Appended after the file's last line: two blank lines, `bad : Int`,
+    // `bad =`, then `    "x"`, the 0-based line the error points at.
+    let line = domain.lines().count() + 4;
+    domain.push_str("\n\nbad : Int\nbad =\n    \"x\"\n");
+    std::fs::write(bad.join("src/Domain.sky"), domain).unwrap();
+    let o = sky(&bad, &["build", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let ds = diags(&o);
+    let e = ds
+        .iter()
+        .find(|d| d["code"] == "E2001")
+        .unwrap_or_else(|| panic!("the type error: {ds:?}"));
+    assert_eq!(e["file"], "src/Domain.sky", "{e}");
+    assert_eq!(e["range"]["start"]["line"], line, "{e}");
+    assert!(
+        !ds.iter().any(|d| d["message"]
+            .as_str()
+            .unwrap()
+            .contains("human-readable report")),
+        "a real diagnostic, not the pointer to stderr: {ds:?}"
+    );
+    let _ = std::fs::remove_dir_all(&bad);
+
+    // A warning from the backend leg (a memoised CAF in the backend-only
+    // `Store` module), relayed with `half` and mapped to the app's own file.
+    let warn = copy_fixture("spa-split-multimodule", "spa-leg");
+    let store = std::fs::read_to_string(warn.join("src/Store.sky"))
+        .unwrap()
+        .replace(
+            "import Domain exposing (..)\n",
+            "import Domain exposing (..)\nimport Sky.Core.Uuid as Uuid\n",
+        )
+        .replace(
+            "    \"todos.json\"",
+            "    \"todos-\" ++ (Task.run Uuid.v4 |> Result.withDefault \"\") ++ \".json\"",
+        );
+    std::fs::write(warn.join("src/Store.sky"), store).unwrap();
+    let o = sky(&warn, &["build", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    check_stream(&o);
+    let w = diags(&o)
+        .into_iter()
+        .find(|d| d["severity"] == "warning")
+        .unwrap_or_else(|| panic!("the relayed leg warning: {:?}", o.lines));
+    assert_eq!(w["half"], "backend", "{w}");
+    assert_eq!(w["file"], "src/Store.sky", "{w}");
+    assert!(w["range"].is_object(), "{w}");
+    let _ = std::fs::remove_dir_all(&warn);
+}
+
+/// A Sky.Spa split that refuses the app as a whole is reported as its own
+/// diagnostic (unlocated: the split names no source node), not as a pointer to
+/// stderr.
+#[test]
+fn spa_split_refusal_is_its_own_diagnostic() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = copy_fixture("spa-split-multimodule", "spa-refuse");
+    let domain = std::fs::read_to_string(dir.join("src/Domain.sky"))
+        .unwrap()
+        .replace(
+            "import Std.Codec as Codec exposing (Codec)\n",
+            "import Std.Codec as Codec exposing (Codec)\n\
+             import Sky.Core.Result as Result\n\
+             import Sky.Core.Task as Task\n\
+             import Sky.Core.Uuid as Uuid\n",
+        )
+        + "\n\nstamp : String\nstamp =\n    Task.run Uuid.v4 |> Result.withDefault \"\"\n";
+    std::fs::write(dir.join("src/Domain.sky"), domain).unwrap();
+    let main = std::fs::read_to_string(dir.join("src/Main.sky"))
+        .unwrap()
+        .replace(
+            "( { todos = [], draft = \"\" }, Cmd.none )",
+            "( { todos = [], draft = stamp }, Cmd.none )",
+        );
+    std::fs::write(dir.join("src/Main.sky"), main).unwrap();
+    let o = sky(&dir, &["build", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let ds = diags(&o);
+    assert!(
+        ds.iter().any(|d| d["severity"] == "error"
+            && d["message"].as_str().unwrap().contains("cannot auto-split")),
+        "{ds:?}"
+    );
+    assert!(
+        !ds.iter().any(|d| d["message"]
+            .as_str()
+            .unwrap()
+            .contains("human-readable report")),
+        "{ds:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

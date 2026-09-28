@@ -327,28 +327,50 @@ when a field changes meaning or type; a new field does not change it.
 
 | `kind` | Fields |
 |---|---|
-| `diagnostic` | `file`: the path relative to the project root (`root` on the summary), `/`-separated, or `null`. `range`: `start` / `end`, each `{line, character}`, 0-based, `character` in UTF-16 code units (the LSP `Range`), or `null`. `severity`: `error`, `warning` or `info`. `code`: the Sky error code (`E2001`) or `null`. `message`. `source`: `sky` or `go`. `relatedInformation` (only when present): a list of `{file, range, message}`. |
+| `diagnostic` | `file`: the path relative to the project root (`root` on the summary), `/`-separated, or `null`. `range`: `start` / `end`, each `{line, character}`, 0-based, `character` in UTF-16 code units (the LSP `Range`), or `null`. `severity`: `error`, `warning` or `info`. `code`: the Sky error code (`E2001`) or `null`. `message`. `source`: `sky` or `go`. `relatedInformation` (only when present): a list of `{file, range, message}`. `half` (a Sky.Spa `sky build` only): `frontend` or `backend`, the split project the diagnostic came from. |
 | `test` | `sky test` only, one per case: `suite` (the enclosing `Test.suite` labels joined with ` > `, or the test module's name for a top-level case), `name` (the case's own name), `fullName` (as the human output prints it), `status` (`pass` or `fail`), `message` (on a failure), `durationMs` (`null`: Sky.Test runs every case in one pure pass, with no clock between cases). |
 | `summary` | Always exactly one, always the **last** line: `command`, `ok` (the exit code was 0), `errors` and `warnings` (the counts of the diagnostic lines above), `durationMs`, `root` (the absolute project directory). `sky test` adds `total`, `passed`, `failed`, `skipped` (always 0; Sky.Test has no skip) and `exitCode`. |
 
 The diagnostics are the same values the text mode prints, so the two modes
-report the same errors. A Sky diagnostic has the location of its primary label.
-A diagnostic with no source span has `file` and `range` set to `null`: a lowering
-warning, a `sky.toml` warning, or a driver failure such as "no entry module". A
-`go build` failure is reported against the Go file `go` named (`sky-out/main.go`,
-or a file in a local Go path dependency) with `source: "go"`, because the
-generated Go carries no map back to the Sky source. A failing run that produced
-no error line of its own gets one that points at stderr, so `ok: false` always
-comes with a reason.
+report the same errors. A parse, name or type diagnostic has the location of its
+primary label. A lowering warning or error (the memoised-value lint, an
+unresolved Go-FFI call, an over-applied kernel, an internal compiler error) has
+the location of the expression being lowered when it was raised, else of the
+definition's name; the text mode prints it as `src/Main.sky:11:1: …`. A `go
+build` failure is reported against the Go file `go` named (`sky-out/main.go`, or
+a file in a local Go path dependency) with `source: "go"`, because the generated
+Go carries no map back to the Sky source.
 
-Two limits:
+`file` and `range` are `null` only for a diagnostic that is about the program
+or the project as a whole and so has no source node:
 
-- A `sky build` of a Sky.Spa auto-split app builds two generated projects. Its
-  json output is the summary plus, on failure, one error that points at stderr.
-  `sky check --format json` on the same entry reports every diagnostic, because
-  `check` type-checks the shared source directly.
-- `sky fmt --format json` needs `--check`: it reports, it never rewrites. Each
-  unformatted file is one `error` diagnostic with `range: null`.
+- the lowering warning `no \`main\` in entry module` and the driver errors
+  `no entry module named …`, `no .sky under …`, `lowering found no entry
+  \`main\``, `Sky dependency … not fetched` and the missing path-dependency
+  error;
+- `sky.toml` warnings (an unknown key, a `[database] driver` that contradicts
+  its DSN), path-dependency drift warnings, and the legacy-config migration
+  hint (`info`);
+- a Sky.Spa split that refuses the app as a whole (`cannot auto-split: …`);
+- a `go build` failure with no `file.go:line:col` line (a toolchain error);
+- `sky fmt --check` (one error per unformatted file: `file` is set, `range`
+  is `null`).
+
+A failing run that produced no error line of its own gets one that points at
+stderr, so `ok: false` always comes with a reason.
+
+**Sky.Spa builds.** `sky build` of a Sky.Spa entry checks the app's own source
+first (the same front half `sky check` runs), so an error in the app is
+reported against `src/…` in both output modes. It then builds the two generated
+projects of the auto-split. In json mode each of those builds runs with
+`--format json` and its diagnostics are relayed with an extra key, `"half":
+"frontend"` or `"half": "backend"` (an added key, so the schema stays 1). A
+diagnostic in a module the split copied unchanged is reported against the app's
+own file (`src/Store.sky`); one in a generated or rewritten file is reported
+against that file's real path (`.split/backend/src/Main.sky`). A module both
+halves compile can report the same warning once per half.
+
+`sky fmt --format json` needs `--check`: it reports, it never rewrites.
 
 ### `sky watch [path]`
 

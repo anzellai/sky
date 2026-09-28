@@ -3053,6 +3053,14 @@ fn spa_split_and_build(
         Ok(r) => r,
         Err(e) => {
             eprintln!("sky spa-split: {e}");
+            // The split refuses the app as a whole ("cannot auto-split: …"):
+            // the generator reports no source span, so the message is the
+            // diagnostic, unlocated.
+            json_out::diagnostic(&project::diagnostics::Reported::plain(
+                project::diagnostics::Severity::Error,
+                project::diagnostics::Origin::Sky,
+                e.to_string(),
+            ));
             return Err(ExitCode::FAILURE);
         }
     };
@@ -3161,11 +3169,17 @@ fn spa_split_and_build(
     // printed grouped afterwards, so the two streams never interleave and every
     // error is still surfaced. (--embed belongs on the BACKEND: it owns the DB.)
     let sky_ref = &sky;
+    // In `--format json` mode each leg runs with `--format json` too, and its
+    // diagnostics are relayed (see `report_leg`).
+    let json_leg = json_out::active();
     let build_backend = || {
         let mut c = Command::new(sky_ref);
         c.arg("build");
         if embed {
             c.arg("--embed");
+        }
+        if json_leg {
+            c.args(["--format", "json"]);
         }
         if let Some(n) = leg_go_jobs {
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
@@ -3179,6 +3193,9 @@ fn spa_split_and_build(
         let t = project::timings::phase("frontend leg (child sky build, wasm)");
         let mut c = Command::new(sky_ref);
         c.args(["build", "--target", target, "src/Main.sky"]);
+        if json_leg {
+            c.args(["--format", "json"]);
+        }
         if let Some(u) = builder_app_url {
             c.arg(format!("{}{u}", app_url::BUILDER_FLAG));
         }
@@ -3211,29 +3228,42 @@ fn spa_split_and_build(
     t_legs.end();
     // Each leg recorded its own `sky` and Go peaks in its `sky-out/` for the
     // next build's plan (`project::go_jobs::record_peaks`).
-    let report_leg =
-        |label: &str, res: std::thread::Result<std::io::Result<std::process::Output>>| -> bool {
-            use std::io::Write;
-            println!("\n== {label} ==");
-            match res {
-                Ok(Ok(out)) => {
+    let report_leg = |label: &str,
+                      half: &str,
+                      leg_dir: &Path,
+                      res: std::thread::Result<std::io::Result<std::process::Output>>|
+     -> bool {
+        use std::io::Write;
+        println!("\n== {label} ==");
+        match res {
+            Ok(Ok(out)) => {
+                if json_leg {
+                    let _ = std::io::stderr().write_all(&out.stderr);
+                    relay_split_leg(&out.stdout, half, leg_dir, project_dir);
+                } else {
                     let _ = std::io::stdout().write_all(&out.stdout);
                     let _ = std::io::stderr().write_all(&out.stderr);
-                    out.status.success()
                 }
-                Ok(Err(e)) => {
-                    eprintln!("sky spa-split --build: {label}: spawn failed: {e}");
-                    false
-                }
-                Err(_) => {
-                    eprintln!("sky spa-split --build: {label}: build thread panicked");
-                    false
-                }
+                out.status.success()
             }
-        };
+            Ok(Err(e)) => {
+                eprintln!("sky spa-split --build: {label}: spawn failed: {e}");
+                false
+            }
+            Err(_) => {
+                eprintln!("sky spa-split --build: {label}: build thread panicked");
+                false
+            }
+        }
+    };
     // Report BOTH legs (so both outputs are shown even if both fail), then decide.
-    let backend_ok = report_leg("backend (native)", backend_res);
-    let frontend_ok = report_leg(&format!("frontend (--target {target})"), frontend_res);
+    let backend_ok = report_leg("backend (native)", "backend", &backend_dir, backend_res);
+    let frontend_ok = report_leg(
+        &format!("frontend (--target {target})"),
+        "frontend",
+        &frontend_dir,
+        frontend_res,
+    );
     if !backend_ok {
         eprintln!("sky spa-split --build: backend failed to build");
         return Err(ExitCode::FAILURE);
@@ -3243,6 +3273,44 @@ fn spa_split_and_build(
         return Err(ExitCode::FAILURE);
     }
     Ok(od)
+}
+
+/// Relay one Sky.Spa split leg's `--format json` diagnostics (`half` is
+/// `frontend` or `backend`, added to each line as `"half"`). A leg reports
+/// `file` relative to its own generated project. When that file is a copy of
+/// one of the app's own modules (same path under the project, same bytes), it
+/// is reported as the app's file, which is where the user fixes it; otherwise
+/// (a generated or rewritten module, the emitted Go) it is reported as the
+/// generated file's real path under the project (`.split/frontend/src/…`).
+fn relay_split_leg(stdout: &[u8], half: &str, leg_dir: &Path, project_dir: &Path) {
+    let leg_rel = leg_dir
+        .strip_prefix(project_dir)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| leg_dir.to_path_buf());
+    let leg_rel = leg_rel.to_string_lossy().replace('\\', "/");
+    json_out::relay(stdout, |v| {
+        if v.get("kind").and_then(serde_json::Value::as_str) != Some("diagnostic") {
+            return None;
+        }
+        let file = v["file"].as_str().map(|f| {
+            let same_bytes = std::fs::read(leg_dir.join(f))
+                .ok()
+                .zip(std::fs::read(project_dir.join(f)).ok())
+                .is_some_and(|(a, b)| a == b);
+            if same_bytes && !Path::new(f).is_absolute() {
+                f.to_string()
+            } else if Path::new(f).is_absolute() {
+                f.to_string()
+            } else {
+                format!("{leg_rel}/{f}")
+            }
+        });
+        Some(json_out::rewrite_diagnostic(
+            v,
+            file,
+            &[("half", json_out::enc(half))],
+        ))
+    });
 }
 
 /// `sky spa-split <entry.sky> --out <dir>` — the Sky.Spa auto-split GENERATOR.
@@ -3797,6 +3865,23 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     {
         let out_dir = project_dir.join(out_override.as_deref().unwrap_or(".split"));
         let fe_target = target.as_deref().unwrap_or("web");
+        // Check the app's OWN source first (the front half `sky check` runs:
+        // parse, types, lowering). An error there is reported against `src/…`,
+        // where the user can fix it, instead of surfacing later from a
+        // generated split project. Both output modes print these same values.
+        let front = project::front_half_errors(
+            &repo_root,
+            &project_dir,
+            entry_module_name(file).as_deref(),
+        );
+        if !front.is_empty() {
+            for d in &front {
+                json_out::diagnostic(d);
+            }
+            let rendered: Vec<&str> = front.iter().map(|d| d.rendered.as_str()).collect();
+            eprintln!("sky build: {}", rendered.join("\n"));
+            return ExitCode::FAILURE;
+        }
         return match spa_split_and_build(
             &repo_root,
             &project_dir,

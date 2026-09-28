@@ -52,6 +52,9 @@ pub struct ClassA {
     pub name: String,
     pub kind: RefKind,
     pub reason: String,
+    /// The reference's source span, when the resolver had one (lowering
+    /// reports its own `[E1001]` at it).
+    pub span: Option<Span>,
 }
 
 /// A class-(b) reference into a Go FFI package — expected until the FFI surface
@@ -1303,6 +1306,7 @@ impl<'a> Resolver<'a> {
                     name: pkg.clone(),
                     kind: RefKind::Value,
                     reason: "unknown Sky module".to_string(),
+                    span,
                 });
             }
         }
@@ -3294,6 +3298,7 @@ impl<'a> Resolver<'a> {
             name: name.to_string(),
             kind,
             reason: reason.to_string(),
+            span,
         });
     }
 
@@ -3416,6 +3421,7 @@ impl<'a> Resolver<'a> {
                     name: name.to_string(),
                     kind: RefKind::Value,
                     reason: "unknown module member".to_string(),
+                    span,
                 });
             }
             return Some(Res::Error);
@@ -3438,6 +3444,7 @@ impl<'a> Resolver<'a> {
                 name: name.to_string(),
                 kind: RefKind::Value,
                 reason: "unknown kernel member".to_string(),
+                span,
             });
         }
         Some(Res::Error)

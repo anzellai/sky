@@ -28,13 +28,24 @@ fn unresolved_reference_is_an_ice_not_a_nil() {
     let mid = db.add_module("Main", syntax::parse(main, FileId(1)));
 
     let out = lower::lower_program(&db, mid);
+    let ice = out.errors.iter().find(|e| {
+        e.message.contains("internal compiler error") && e.message.contains("refuses to emit")
+    });
     assert!(
-        out.errors
-            .iter()
-            .any(|e| e.contains("internal compiler error") && e.contains("refuses to emit")),
+        ice.is_some(),
         "an unresolved reference must be a hard lowering error, got errors {:?} \
          and warnings {:?}",
         out.errors,
         out.warnings
+    );
+    // The error carries the span of the expression being lowered: the
+    // `Resp.decode "hi"` reference in `Main` (the file parsed as FileId(1)),
+    // so `sky check --format json` can give it a file and a range.
+    let sp = ice.unwrap().span.expect("a lowering error carries a span");
+    assert_eq!(sp.file, FileId(1), "{sp:?}");
+    let at = main.find("Resp.decode").unwrap() as u32;
+    assert!(
+        sp.range.0 <= at && at < sp.range.1,
+        "the span covers the reference: {sp:?}, reference at {at}"
     );
 }

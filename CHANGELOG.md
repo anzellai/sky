@@ -323,8 +323,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   structured values end to end (`BuildReport::diagnostics`): the text mode
   renders the same values, so the two modes cannot disagree, and the LSP maps
   a span to a range through the same function (`diagnostics::span_range`).
-  `go build` errors are reported against the Go file `go` named. Decisions
-  taken: `schema` is on every line, not only the summary, so a streaming reader
+  `go build` errors are reported against the Go file `go` named. Lowering
+  warnings and errors now carry the span of the expression being lowered (else
+  the definition's name), so they have a file and range in json and a
+  `src/Main.sky:11:1:` prefix in text (`lower::LowerDiag`; an unresolved name
+  the resolver records carries its span too). A Sky.Spa `sky build` checks the
+  app's own source before the auto-split, so an error in it is reported against
+  `src/…` in both modes, and in json mode relays both split builds'
+  diagnostics with a `"half": "frontend" | "backend"` key, mapped to the app's
+  own file when the split copied the module unchanged. A split that refuses the
+  app (`cannot auto-split: …`) is now its own diagnostic, not a pointer to
+  stderr. The diagnostics that stay unlocated (whole-program or project-level
+  conditions) are listed in `docs/tooling/cli.md`. Decisions taken: `schema` is on every line, not only the summary, so a streaming reader
   can check it before the end; a test case's `durationMs` is `null`, because
   Sky.Test runs every case in one pure pass with no clock between cases, and a
   made-up 0 would be wrong. (`rust/crates/sky/src/json_out.rs`,

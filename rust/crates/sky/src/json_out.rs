@@ -284,6 +284,51 @@ pub fn test_line(line: &str, failed: bool) {
     });
 }
 
+/// Re-encode a relayed `diagnostic` line with a new `file` and extra keys
+/// appended, keeping the wire key order (a parsed `Value` sorts its keys).
+pub fn rewrite_diagnostic(v: &Value, file: Option<String>, extra: &[(&str, String)]) -> String {
+    let range_of = |r: &Value| -> String {
+        if !r.is_object() {
+            return "null".into();
+        }
+        let pos = |p: &Value| {
+            obj(&[
+                ("line", p["line"].to_string()),
+                ("character", p["character"].to_string()),
+            ])
+        };
+        obj(&[("start", pos(&r["start"])), ("end", pos(&r["end"]))])
+    };
+    let mut f: Vec<(&str, String)> = vec![
+        ("kind", enc("diagnostic")),
+        ("schema", SCHEMA.to_string()),
+        (
+            "file",
+            file.as_deref().map(enc).unwrap_or_else(|| "null".into()),
+        ),
+        ("range", range_of(&v["range"])),
+        ("severity", v["severity"].to_string()),
+        ("code", v["code"].to_string()),
+        ("message", v["message"].to_string()),
+        ("source", v["source"].to_string()),
+    ];
+    if let Some(rel) = v["relatedInformation"].as_array() {
+        let items: Vec<String> = rel
+            .iter()
+            .map(|r| {
+                obj(&[
+                    ("file", r["file"].to_string()),
+                    ("range", range_of(&r["range"])),
+                    ("message", r["message"].to_string()),
+                ])
+            })
+            .collect();
+        f.push(("relatedInformation", format!("[{}]", items.join(","))));
+    }
+    f.extend(extra.iter().cloned());
+    obj(&f)
+}
+
 /// Relay a child `sky … --format json` stream: forward its diagnostic lines
 /// verbatim, unless `replace` returns a line to write instead (it sees the
 /// parsed line), and drop its summary (the parent writes its own). Lines that
@@ -328,6 +373,19 @@ mod tests {
         assert!(take_format(&c).is_err());
         let d: Vec<String> = ["--format"].iter().map(|s| s.to_string()).collect();
         assert!(take_format(&d).is_err());
+    }
+
+    /// A relayed line re-encodes in wire order (a parsed `Value` sorts its keys,
+    /// `character` before `line`), with the new `file` and the extra keys last.
+    #[test]
+    fn rewrite_diagnostic_keeps_the_wire_order() {
+        let child = r#"{"kind":"diagnostic","schema":1,"file":"src/A.sky","range":{"start":{"line":2,"character":3},"end":{"line":2,"character":5}},"severity":"warning","code":null,"message":"m","source":"sky"}"#;
+        let v: Value = serde_json::from_str(child).unwrap();
+        let out = rewrite_diagnostic(&v, Some("src/B.sky".into()), &[("half", enc("backend"))]);
+        assert_eq!(
+            out,
+            r#"{"kind":"diagnostic","schema":1,"file":"src/B.sky","range":{"start":{"line":2,"character":3},"end":{"line":2,"character":5}},"severity":"warning","code":null,"message":"m","source":"sky","half":"backend"}"#
+        );
     }
 
     /// The golden for one diagnostic line: the exact bytes a consumer parses.

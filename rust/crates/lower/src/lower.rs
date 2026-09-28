@@ -13,15 +13,40 @@ use hir::{Body, CaseBranch, Expr, ExprId, ImportSource, LocalId, PatId, Pattern,
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ty::{BodyTypes, Ty, TyDb, Typer};
 
+/// A lowering warning or error: its text and the source span of the node being
+/// lowered when it was raised (the expression, else the top-level definition's
+/// name). `span` is `None` only for a whole-program condition with no source
+/// node (no `main` in the entry module).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LowerDiag {
+    pub message: String,
+    pub span: Option<base::Span>,
+}
+
+impl LowerDiag {
+    pub fn new(message: impl Into<String>, span: Option<base::Span>) -> Self {
+        LowerDiag {
+            message: message.into(),
+            span,
+        }
+    }
+}
+
+impl std::fmt::Display for LowerDiag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 pub struct LowerOutput {
     pub items: Vec<GoItem>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<LowerDiag>,
     /// Hard lowering errors — conditions that would emit Go the toolchain
     /// rejects (e.g. a call to a Go-FFI function that has no callable wrapper).
     /// The build driver aborts before `go build` when this is non-empty, so a
     /// program that would break `go build` is rejected at check time instead
     /// (upholds the `sky check ≡ sky build` invariant).
-    pub errors: Vec<String>,
+    pub errors: Vec<LowerDiag>,
     /// True when `main` was found + lowered; false → nothing to build.
     pub entry_ok: bool,
     /// Sky module paths of the Go-FFI packages actually *called* by the emitted
@@ -229,8 +254,11 @@ pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
 
 pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> LowerOutput {
     let typer = Typer::new(db);
-    let mut warnings = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<LowerDiag> = Vec::new();
+    let mut errors: Vec<LowerDiag> = Vec::new();
+    // Each top-level definition's name span: where a lowering diagnostic points
+    // when no expression span is at hand.
+    let mut def_spans: HashMap<DefId, base::Span> = HashMap::new();
     // Whole-program console detection: does any module REACHABLE from the entry
     // import `Std.Live.*` or `Sky.Http.Server.*`? Those are the only surfaces
     // whose runtime reaches `MountEmbeddedConsole`, so their binaries link the
@@ -263,11 +291,17 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
                     Some(q) => format!("{q}.{}", ca.name),
                     None => ca.name.clone(),
                 };
-                errors.push(format!(
-                    "[E1001] Undefined name: {full} (in module {mname}) — {}",
-                    ca.reason
+                errors.push(LowerDiag::new(
+                    format!(
+                        "[E1001] Undefined name: {full} (in module {mname}) — {}",
+                        ca.reason
+                    ),
+                    ca.span,
                 ));
             }
+        }
+        for (d, sp) in &resolved.def_spans {
+            def_spans.entry(*d).or_insert(*sp);
         }
         for td in &resolved.top_defs {
             if let Some(body) = resolved.bodies.get(&td.def) {
@@ -661,7 +695,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     let Some(main_def) = main_def else {
         return LowerOutput {
             items: Vec::new(),
-            warnings: vec!["no `main` in entry module".into()],
+            // Whole-program: there is no source node for a missing `main`.
+            warnings: vec![LowerDiag::new("no `main` in entry module", None)],
             errors: Vec::new(),
             entry_ok: false,
             ffi_used: BTreeSet::new(),
@@ -788,6 +823,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             variadic_kernels: &cfg.variadic_kernels,
             cur_module: e.module_name.clone(),
             cur_def: d,
+            def_span: def_spans.get(&d).copied(),
+            cur_span: None,
             tco: None,
             // Only `lower_main` reads this; harmless to carry on every Ctx.
             apply_config: config_go_name.clone(),
@@ -2134,9 +2171,15 @@ struct Ctx<'a> {
     local_counter: u32,
     discovered: Vec<DefId>,
     used_types: HashSet<String>,
-    warnings: Vec<String>,
+    warnings: Vec<LowerDiag>,
     /// Hard lowering errors (see [`LowerOutput::errors`]).
-    errors: Vec<String>,
+    errors: Vec<LowerDiag>,
+    /// The name span of the top-level def being lowered (the fallback location
+    /// of a diagnostic raised outside any expression).
+    def_span: Option<base::Span>,
+    /// The span of the innermost expression `lower_expr` is lowering, so a
+    /// diagnostic raised while lowering it points at it.
+    cur_span: Option<base::Span>,
     /// The pinned FFI surface (read-only) + the modules actually called here.
     ffi: &'a FfiTable,
     ffi_used: BTreeSet<String>,
@@ -2532,7 +2575,7 @@ impl<'a> Ctx<'a> {
                 if !self.expr_is_task(r) {
                     if let Some((m, f)) = self.find_fresh_value_kernel(r) {
                         let short = m.rsplit('.').next().unwrap_or(&m).to_string();
-                        self.warnings.push(format!(
+                        self.warn(format!(
                             "top-level `{name}` runs `{short}.{f}` and is memoised to a SINGLE \
                              value (evaluated once, then cached). If you want a fresh value per \
                              use, make it a function: `{name} () = …` and call `{name} ()`. \
@@ -2563,7 +2606,7 @@ impl<'a> Ctx<'a> {
                                 EffectKind::Fresh => "a clock/entropy read",
                                 EffectKind::StoreRead => "a database read",
                             };
-                            self.warnings.push(format!(
+                            self.warn(format!(
                                 "top-level `{name}` is memoised to a SINGLE value (evaluated \
                                  once, then cached) but forcing it performs {what} through a \
                                  helper — so the result is frozen for the whole process and \
@@ -3058,7 +3101,37 @@ impl<'a> Ctx<'a> {
 
     // ---- expression lowering -------------------------------------------
 
+    /// Lower one expression, with `cur_span` set to its span for the duration,
+    /// so a diagnostic raised while lowering it (or its callee) points at it.
     fn lower_expr(&mut self, e: ExprId, expected: &GoTy) -> GoExpr {
+        let prev = self.cur_span;
+        if let Some(sp) = self.body.expr_span(e) {
+            self.cur_span = Some(sp);
+        }
+        let out = self.lower_expr_at(e, expected);
+        self.cur_span = prev;
+        out
+    }
+
+    /// Where a diagnostic raised now points: the expression being lowered, else
+    /// the top-level definition's name.
+    fn here(&self) -> Option<base::Span> {
+        self.cur_span.or(self.def_span)
+    }
+
+    /// Record a lowering warning at [`Self::here`].
+    fn warn(&mut self, message: String) {
+        let span = self.here();
+        self.warnings.push(LowerDiag::new(message, span));
+    }
+
+    /// Record a hard lowering error at [`Self::here`].
+    fn error(&mut self, message: String) {
+        let span = self.here();
+        self.errors.push(LowerDiag::new(message, span));
+    }
+
+    fn lower_expr_at(&mut self, e: ExprId, expected: &GoTy) -> GoExpr {
         let mut actual = self.expr_ty(e);
         // Transparent control-flow (`if` / `case` / `let … in body`) has no value
         // of its own — its arms/body flow DIRECTLY into the slot the whole
@@ -3568,7 +3641,7 @@ impl<'a> Ctx<'a> {
     /// lowering error, so the build driver aborts before `go build` and the
     /// placeholder below is never compiled.
     fn ice(&mut self, what: String) -> GoExpr {
-        self.errors.push(format!(
+        self.error(format!(
             "internal compiler error: {what} (in module {}). Sky refuses to emit \
              `nil` in its place. Please report this at \
              https://github.com/anzellai/sky/issues with the program that caused it.",
@@ -3790,9 +3863,9 @@ impl<'a> Ctx<'a> {
                         return v;
                     }
                 }
-                self.warnings.push(format!("foreign ref {pkg}.{fun}"));
+                self.warn(format!("foreign ref {pkg}.{fun}"));
                 let msg = self.unresolved_foreign_msg(pkg, fun);
-                self.errors.push(msg);
+                self.error(msg);
                 GoExpr::new(GoExprKind::Nil, GoTy::Any)
             }
             // The resolver reports every `Res::Error` it produces, and the build
@@ -4751,7 +4824,7 @@ impl<'a> Ctx<'a> {
                 if !matches!(actual, GoTy::Any)
                     && !matches!(actual, GoTy::Named(n, _) if n == "rt.SkyResult")
                 {
-                    self.errors.push(format!(
+                    self.error(format!(
                         "[E2001] the Go FFI call `{}.{}` returns `Result Error a`, but its \
                          result is used here as `{}` (in module {}). Handle the Result with \
                          `case`, `Result.withDefault` or `Result.andThen`.",
@@ -4791,7 +4864,7 @@ impl<'a> Ctx<'a> {
             // hole stayed open: only the CALL shape carried the rule, so a value
             // reference through the same unknown module resolved to `nil`.
             let msg = self.unresolved_foreign_msg(pkg, fun);
-            self.errors.push(msg);
+            self.error(msg);
             return GoExpr::new(GoExprKind::Ident("nil".into()), actual.clone());
         }
         // general call: lower callee + args, coercing each arg to the callee's
@@ -6127,7 +6200,7 @@ impl<'a> Ctx<'a> {
         if self.variadic_kernels.contains(sym) {
             return None;
         }
-        self.errors.push(format!(
+        self.error(format!(
             "[E2007] `{sym}` takes {arity} argument(s), but is called with {given} \
              (in module {}). Its result is not a function, so the extra argument(s) \
              have nothing to apply to.",
@@ -8049,8 +8122,7 @@ impl<'a> Ctx<'a> {
                 vec![],
             ),
             Pattern::Float(_) | Pattern::Error => {
-                self.warnings
-                    .push("unsupported pattern in case — treated as wildcard".into());
+                self.warn("unsupported pattern in case — treated as wildcard".into());
                 (None, vec![])
             }
         }

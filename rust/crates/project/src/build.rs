@@ -93,6 +93,10 @@ pub struct BuildReport {
     /// project when it sits under it (`sky-out`), else absolute (the `sky test`
     /// scratch dir). The `file` of each `go`-sourced diagnostic is under it.
     pub go_dir: Option<String>,
+    /// The lowering warnings resolved to a location, keyed by the exact text
+    /// they carry in `warnings`. [`BuildReport::diagnostics`] uses the located
+    /// form of a warning when there is one, the plain text otherwise.
+    pub located_warnings: Vec<(String, diagnostics::Reported)>,
 }
 
 impl BuildReport {
@@ -102,10 +106,16 @@ impl BuildReport {
     /// `--format json` mode prints exactly this list.
     pub fn diagnostics(&self) -> Vec<diagnostics::Reported> {
         use diagnostics::{Origin, Reported, Severity};
+        let mut located: Vec<&(String, Reported)> = self.located_warnings.iter().collect();
         let mut out: Vec<Reported> = self
             .warnings
             .iter()
-            .map(|w| Reported::plain(Severity::Warning, Origin::Sky, w.clone()))
+            .map(|w| match located.iter().position(|(m, _)| m == w) {
+                // Each located form is used once, so two identical warnings
+                // at two sites keep their two locations.
+                Some(i) => located.remove(i).1.clone(),
+                None => Reported::plain(Severity::Warning, Origin::Sky, w.clone()),
+            })
             .collect();
         if let Some(h) = &self.migration_hint {
             out.push(Reported::plain(Severity::Info, Origin::Sky, h.clone()));
@@ -228,6 +238,9 @@ struct Emitted {
     registry: ffi::FfiRegistry,
     ffi_used: std::collections::BTreeSet<String>,
     warnings: Vec<String>,
+    /// The lowering warnings with their resolved locations (see
+    /// [`BuildReport::located_warnings`]).
+    located_warnings: Vec<(String, diagnostics::Reported)>,
     /// The legacy-`sky.toml` → `withX` migration LIST (design §8.2), or `None`
     /// when nothing present has moved. Derived from the project's `sky.toml`
     /// alone — deterministic, no environment read — so `emit_example_source`
@@ -650,13 +663,7 @@ fn assemble_and_emit_with(
             diagnostics: prog
                 .errors
                 .iter()
-                .map(|e| {
-                    diagnostics::Reported::plain(
-                        diagnostics::Severity::Error,
-                        diagnostics::Origin::Sky,
-                        e.clone(),
-                    )
-                })
+                .map(|e| locate_lowering(e, diagnostics::Severity::Error, &sources))
                 .collect(),
         });
     }
@@ -680,7 +687,20 @@ fn assemble_and_emit_with(
     // here rather than silently ignored — the key was decorative before this
     // (nothing read the `DB_DRIVER` it used to emit), so `driver = "postgres"`
     // next to `./app.db` opened SQLite without a word.
-    let mut warnings = prog.warnings.clone();
+    // Lowering warnings carry the span of the node being lowered; resolve them
+    // now, while the sources are at hand. `warnings` keeps the plain messages
+    // (every consumer of `BuildReport::warnings` reads text).
+    let located_warnings: Vec<(String, diagnostics::Reported)> = prog
+        .warnings
+        .iter()
+        .map(|w| {
+            (
+                w.message.clone(),
+                locate_lowering(w, diagnostics::Severity::Warning, &sources),
+            )
+        })
+        .collect();
+    let mut warnings: Vec<String> = prog.warnings.iter().map(|w| w.message.clone()).collect();
     if let Some(w) = db_driver_diag {
         warnings.push(w);
     }
@@ -695,9 +715,57 @@ fn assemble_and_emit_with(
         registry,
         ffi_used: prog.ffi_used.clone(),
         warnings,
+        located_warnings,
         migration_hint,
         console_needed: prog.console_needed,
     })
+}
+
+/// Resolve a lowering diagnostic against the build's sources. A leading
+/// `[E2007]`-style code becomes `code`; the span (the expression being lowered,
+/// else the def's name) becomes `file` + `range` when it falls in an app
+/// module. The human rendering is `path:line:col: message` when located, the
+/// bare message otherwise, so the text mode shows where it happened too.
+fn locate_lowering(
+    d: &lower::LowerDiag,
+    severity: diagnostics::Severity,
+    sources: &dyn diagnostics::SourceProvider,
+) -> diagnostics::Reported {
+    let (code, message) = match d.message.strip_prefix('[').and_then(|r| r.split_once(']')) {
+        Some((c, rest)) if c.starts_with('E') && c[1..].chars().all(|ch| ch.is_ascii_digit()) => {
+            (Some(c.to_string()), rest.trim_start().to_string())
+        }
+        _ => (None, d.message.clone()),
+    };
+    let mut r = diagnostics::Reported::plain(severity, diagnostics::Origin::Sky, message.clone());
+    r.code = code;
+    if let Some(sp) = d.span {
+        if let (Some(path), Some(text)) = (sources.path(sp.file), sources.text(sp.file)) {
+            // An expression node's span can start with the whitespace before
+            // it; the range starts at the expression itself.
+            let mut sp = sp;
+            let bytes = text.as_bytes();
+            while sp.range.0 < sp.range.1
+                && bytes
+                    .get(sp.range.0 as usize)
+                    .is_some_and(|b| b.is_ascii_whitespace())
+            {
+                sp.range.0 += 1;
+            }
+            let range = diagnostics::span_range(text, sp);
+            r.rendered = format!(
+                "{path}:{}:{}: {}",
+                range.start.line + 1,
+                range.start.character + 1,
+                d.message
+            );
+            r.file = Some(path.to_string());
+            r.range = Some(range);
+            return r;
+        }
+    }
+    r.rendered = d.message.clone();
+    r
 }
 
 /// Emit the Go source for an example without writing anything or running
@@ -719,6 +787,22 @@ pub fn emit_example_warnings(repo_root: &Path, example_dir: &Path) -> Result<Vec
     assemble_and_emit(repo_root, example_dir)
         .map(|e| e.warnings)
         .map_err(|f| f.render())
+}
+
+/// The front half of a build (parse → resolve → type → lower → emit), with no
+/// write and no `go build`: the error diagnostics it stops on, in the user's
+/// own source coordinates, or empty when it passes. `sky build` runs it on a
+/// Sky.Spa entry BEFORE the auto-split, so an error in the app is reported
+/// against `src/…` rather than against the generated split projects.
+pub fn front_half_errors(
+    repo_root: &Path,
+    example_dir: &Path,
+    entry_module: Option<&str>,
+) -> Vec<diagnostics::Reported> {
+    match assemble_and_emit_with(repo_root, example_dir, &[], entry_module, false) {
+        Ok(_) => Vec::new(),
+        Err(f) => f.diagnostics,
+    }
 }
 
 /// Build one example directory, returning a structured report (never panics).
@@ -753,6 +837,7 @@ fn build_inner(
     ) {
         Ok(e) => {
             report.warnings = e.warnings;
+            report.located_warnings = e.located_warnings;
             report.migration_hint = e.migration_hint;
             (e.source, e.registry, e.ffi_used, e.console_needed)
         }

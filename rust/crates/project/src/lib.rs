@@ -61,9 +61,9 @@ pub mod timings;
 pub use build::{
     build_example, build_project, configured_bin_name, configured_source_root, db_driver_conflict,
     driver_for_dsn, emit_example_source, emit_example_warnings, enumerate_dependency_files,
-    enumerate_skydep_files, ffi_type_surface, go_diagnostics, load_ffi_surface, migration_hint_for,
-    offline_db_plan, sky_toml_flag, sky_toml_project_key, sky_toml_section_key, BuildOptions,
-    BuildReport, OfflineDbPlan, EMBEDDED_BUNDLE_FILENAME,
+    enumerate_skydep_files, ffi_type_surface, front_half_errors, go_diagnostics, load_ffi_surface,
+    migration_hint_for, offline_db_plan, sky_toml_flag, sky_toml_project_key, sky_toml_section_key,
+    BuildOptions, BuildReport, OfflineDbPlan, EMBEDDED_BUNDLE_FILENAME,
 };
 /// The structured diagnostic types a [`BuildReport`] carries, re-exported so
 /// the CLI and `testrunner` read them without a second dependency edge.
