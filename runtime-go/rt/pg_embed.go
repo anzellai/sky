@@ -848,6 +848,8 @@ var (
 type namedStopper struct {
 	name string
 	fn   func()
+	// id identifies a scoped entry (0 for a process-lifetime one).
+	id uint64
 }
 
 // RegisterAcceptStopper records something that stops accepting new work.
@@ -857,8 +859,26 @@ func RegisterAcceptStopper(name string, fn func()) {
 		return
 	}
 	acceptMu.Lock()
-	acceptStoppers = append(acceptStoppers, namedStopper{name, fn})
+	acceptStoppers = append(acceptStoppers, namedStopper{name: name, fn: fn})
 	acceptMu.Unlock()
+}
+
+// registerAcceptStopperScoped is RegisterAcceptStopper for a listener that can
+// close before the process ends (Live.serve / Live.stop). The returned func
+// removes the entry; it is idempotent.
+func registerAcceptStopperScoped(name string, fn func()) (unregister func()) {
+	if fn == nil {
+		return func() {}
+	}
+	id := registryIDs.Add(1)
+	acceptMu.Lock()
+	acceptStoppers = append(acceptStoppers, namedStopper{name: name, fn: fn, id: id})
+	acceptMu.Unlock()
+	return func() {
+		acceptMu.Lock()
+		defer acceptMu.Unlock()
+		acceptStoppers = removeStopper(acceptStoppers, id)
+	}
 }
 
 func runAcceptStoppers() {

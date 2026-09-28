@@ -77,6 +77,7 @@ fn the_go_runtime_maps_to_go_test_and_the_web_e2e() {
         "scripts/verify-all-web.sh",
         "scripts/live-client-e2e.sh",
         "scripts/islands-e2e.sh",
+        "scripts/header-session-e2e.sh",
         "gofmt",
     ] {
         assert!(p.contains(want), "missing `{want}`:\n{p}");

@@ -165,8 +165,9 @@ func sanitiseBasePathForCookie(basePath string) string {
 // rejected cleanly (Go's ServeMux would panic, but we want a
 // friendly error). Read-locked on lookup; write-locked on register.
 //
-// Lifetime: process-bound. Sub-apps don't deregister — the program
-// exits when its listener returns.
+// Lifetime: process-bound, except the inline console of a Sky.Live app
+// started with Live.serve: Live.stop unmounts it (unmountInProcessSubApp) so
+// the next app can mount its own.
 var (
 	inProcessSubAppsMu sync.RWMutex
 	inProcessSubApps   = map[string]*liveApp{}
@@ -438,7 +439,7 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	// sub-app that sets its own builder win.
 	app.maxBodyBytes = resolveMaxBodyBytes(stringField(cfg, "MaxBodyBytes"), 5<<20)
 	app.inputMode = resolveInputMode(stringField(cfg, "Input"))
-	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
+	app.store, app.storeRelease = chooseStoreScoped(storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	app.topics = app.store.Broker()
 
@@ -454,6 +455,25 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 		gobRegisterAll(model)
 	}()
 	return app
+}
+
+// unmountInProcessSubApp removes a sub-app mounted at prefix from the
+// registry and releases it: its sessions end (their tickers, relays and
+// subscriptions stop) and its session store closes. The routes stay on the
+// parent mux, which belongs to a listener that is closing with it (Live.stop,
+// live_serve.go). A prefix now held by a different app is left alone.
+func unmountInProcessSubApp(prefix string, app *liveApp) {
+	if app == nil {
+		return
+	}
+	prefix = normaliseBasePath(prefix)
+	inProcessSubAppsMu.Lock()
+	if cur, ok := inProcessSubApps[prefix]; ok && cur == app {
+		delete(inProcessSubApps, prefix)
+		rebuildInProcessSubAppRoutes()
+	}
+	inProcessSubAppsMu.Unlock()
+	app.releaseSessionsAndStore()
 }
 
 // defaultSubAppSessionTTL — sub-apps default to the same `defaultSessionTTL`

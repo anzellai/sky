@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -51,7 +52,14 @@ var (
 type shutdownEntry struct {
 	name string
 	fn   ShutdownHook
+	// id identifies the entry for registerShutdownHookScoped's unregister
+	// (0 for an entry registered with RegisterShutdownHook).
+	id uint64
 }
+
+// registryIDs numbers the scoped entries of the shutdown, accept-stopper and
+// resource-closer registries, so the owner can remove exactly its own entry.
+var registryIDs atomic.Uint64
 
 // RegisterShutdownHook adds fn to the LIFO shutdown chain. name is
 // used for watchdog log lines. Safe to call concurrently; safe to
@@ -70,6 +78,33 @@ func RegisterShutdownHook(name string, fn ShutdownHook) {
 		return
 	}
 	shutdownHooks = append(shutdownHooks, shutdownEntry{name: name, fn: fn})
+}
+
+// registerShutdownHookScoped is RegisterShutdownHook for a subsystem that can
+// end before the process does (a Sky.Live app started with Live.serve). The
+// returned func removes the hook again; it is idempotent. Without it, every
+// serve / stop cycle would leave one hook behind that closes a server that is
+// already gone.
+func registerShutdownHookScoped(name string, fn ShutdownHook) (unregister func()) {
+	if fn == nil {
+		return func() {}
+	}
+	id := registryIDs.Add(1)
+	shutdownMu.Lock()
+	if !shutdownRan {
+		shutdownHooks = append(shutdownHooks, shutdownEntry{name: name, fn: fn, id: id})
+	}
+	shutdownMu.Unlock()
+	return func() {
+		shutdownMu.Lock()
+		defer shutdownMu.Unlock()
+		for i, e := range shutdownHooks {
+			if e.id == id {
+				shutdownHooks = append(shutdownHooks[:i:i], shutdownHooks[i+1:]...)
+				return
+			}
+		}
+	}
 }
 
 // RunShutdownHooks executes every registered hook in LIFO order
@@ -199,8 +234,37 @@ func RegisterResourceCloser(name string, fn func()) {
 		return
 	}
 	releaseMu.Lock()
-	resourceClosers = append(resourceClosers, namedStopper{name, fn})
+	resourceClosers = append(resourceClosers, namedStopper{name: name, fn: fn})
 	releaseMu.Unlock()
+}
+
+// registerResourceCloserScoped is RegisterResourceCloser for a resource whose
+// owner may release it before the process ends (the session store of a
+// Sky.Live app stopped with Live.stop). The returned func removes the entry;
+// it is idempotent.
+func registerResourceCloserScoped(name string, fn func()) (unregister func()) {
+	if fn == nil {
+		return func() {}
+	}
+	id := registryIDs.Add(1)
+	releaseMu.Lock()
+	resourceClosers = append(resourceClosers, namedStopper{name: name, fn: fn, id: id})
+	releaseMu.Unlock()
+	return func() {
+		releaseMu.Lock()
+		defer releaseMu.Unlock()
+		resourceClosers = removeStopper(resourceClosers, id)
+	}
+}
+
+// removeStopper returns list without the entry numbered id.
+func removeStopper(list []namedStopper, id uint64) []namedStopper {
+	for i, s := range list {
+		if s.id == id {
+			return append(list[:i:i], list[i+1:]...)
+		}
+	}
+	return list
 }
 
 // runResourceClosers releases every registered resource, LIFO, and drains the

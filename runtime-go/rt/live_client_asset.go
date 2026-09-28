@@ -30,7 +30,11 @@ type liveBootCfg struct {
 	// (see handleInitial). The server stamps it as the origin tab of the
 	// page's own Cmds, so a session-id rotation started there reaches this
 	// tab. Empty on older servers; the client then mints its own.
-	Tab              string `json:"tab,omitempty"`
+	Tab string `json:"tab,omitempty"`
+	// Tok is the session token of the header session transport
+	// (live_session_header.go): the client sends it in X-Sky-Session on
+	// every request. Empty in cookie mode, where the session is a cookie.
+	Tok              string `json:"tok,omitempty"`
 	BannerEnabled    bool   `json:"bannerEnabled"`
 	RetryBaseMs      int    `json:"retryBaseMs"`
 	RetryMaxMs       int    `json:"retryMaxMs"`
@@ -66,9 +70,10 @@ func liveCfgBlock(c liveBootCfg) string {
 // the external client. The config block MUST directly follow </div> of
 // #sky-root: the client's __skyPatch strips a full-page sky-nav response with
 // /<div id="sky-root">(…)<\/div><script type="application\/json" id="sky-live-cfg">/.
-func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view, tab string) string {
+func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view, tab, tok string) string {
 	c := newLiveBootCfg(sid, cfg, csrfToken, basePath, view)
 	c.Tab = tab
+	c.Tok = tok
 	return liveCfgBlock(c) +
 		`<script src="` + basePath + liveClientPath + `"></script>`
 }
@@ -95,6 +100,24 @@ var __skyCfg = (function () {
   }
 })();
 var __skySid = __skyCfg.sid || "";
+// Header session transport (live_session_header.go): the session token the
+// page was given. Non-empty only for an app that opted in; it then rides in
+// the X-Sky-Session header of every request, and there is no session cookie.
+var __skyTok = __skyCfg.tok || "";
+// __skyWithSession adds the X-Sky-Session header to a fetch headers object
+// in header mode (a no-op in cookie mode).
+function __skyWithSession(h) {
+  h = h || {};
+  if (__skyTok) h["X-Sky-Session"] = __skyTok;
+  return h;
+}
+// __skyAdoptToken takes a new session token a response hands this tab (a
+// session-id rotation, live_session_rotation.go).
+function __skyAdoptToken(r) {
+  if (!__skyTok || !r || !r.headers) return;
+  var t = r.headers.get("X-Sky-Session");
+  if (t && /^[0-9a-f]{32}$/.test(t)) __skyTok = t;
+}
 var __skyBase = __skyCfg.base || "";
 var __skyView = __skyCfg.view || "";
 // __skyTabId — a per-PAGE id generated once on load (Phase 1 multi-tab
@@ -965,7 +988,7 @@ function __skyCollectPendingBatch() {
 // final DOM values before dispatching. Silent no-op when there's
 // nothing pending or the browser lacks sendBeacon support.
 function __skyFlushPendingBeacon() {
-  if (!navigator || typeof navigator.sendBeacon !== "function") return;
+  if (!navigator || (typeof navigator.sendBeacon !== "function" && !__skyTok)) return;
   var batch = __skyCollectPendingBatch();
   var snapshot = __skyInputsSnapshot();
   if (!batch && !snapshot) return;
@@ -981,6 +1004,20 @@ function __skyFlushPendingBeacon() {
   // application/json: form/text encodings are CORS-safelisted and would
   // let a cross-origin beacon through without a preflight.
   if (__skyCsrfToken) body.csrf = __skyCsrfToken;
+  if (__skyTok) {
+    // Header mode: a beacon cannot carry X-Sky-Session. A keepalive fetch
+    // survives the unload the same way and can.
+    try {
+      fetch(__skyBase + "/_sky/event", {
+        method: "POST",
+        headers: __skyWithSession({"Content-Type": "application/json"}),
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+        keepalive: true
+      }).catch(function() {});
+    } catch (_) {}
+    return;
+  }
   try {
     var blob = new Blob([JSON.stringify(body)], {type: "application/json"});
     navigator.sendBeacon(__skyBase + "/_sky/event", blob);
@@ -1160,7 +1197,7 @@ function __skyPostEventNow(body) {
   // without a matching X-Sky-Csrf / __sky_csrf cookie pair. Empty
   // token means CSRF is disabled at the runtime level (sky.toml
   // [security] csrf = false) — header omitted, middleware skipped.
-  var headers = {"Content-Type":"application/json"};
+  var headers = __skyWithSession({"Content-Type":"application/json"});
   if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
   return fetch(__skyBase + "/_sky/event", {
     method: "POST",
@@ -1168,6 +1205,7 @@ function __skyPostEventNow(body) {
     body: JSON.stringify(body),
     credentials: "same-origin"
   }).then(function(r){
+    __skyAdoptToken(r);
     if (!r.ok && r.status >= 500) {
       // Server is up but rejecting (502/503/504 from a deploying LB,
       // or 500 from a panic that survived the recover guard). Treat
@@ -2045,8 +2083,9 @@ document.addEventListener("click", function(ev) {
     if (u.origin !== window.location.origin) return;
   } catch (e) { return; }
   ev.preventDefault();
-  fetch(href, { headers: { "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }, credentials: "same-origin" })
+  fetch(href, { headers: __skyWithSession({ "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }), credentials: "same-origin" })
     .then(function(r) {
+      __skyAdoptToken(r);
       var navSid = r.headers.get("X-Sky-Sid");
       if (navSid) __skySid = navSid;
       // r.ok check is load-bearing. Without it, a 404 body like
@@ -2077,8 +2116,9 @@ document.addEventListener("click", function(ev) {
     .catch(function() { window.location.href = href; });
 });
 window.addEventListener("popstate", function() {
-  fetch(window.location.href, { headers: { "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }, credentials: "same-origin" })
+  fetch(window.location.href, { headers: __skyWithSession({ "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }), credentials: "same-origin" })
     .then(function(r) {
+      __skyAdoptToken(r);
       var navSid = r.headers.get("X-Sky-Sid");
       if (navSid) __skySid = navSid;
       // Same r.ok gate as the sky-nav click path. Without it,
@@ -2181,6 +2221,149 @@ function __skyInjectStatusBanner() {
 // watchdog (below) treats absence of either as a wedge and force-
 // reconnects with backoff. See docs/skylive/architecture.md
 // §SSE wedge detection.
+// __skyNewEventSource opens the SSE stream. Cookie mode: a plain
+// EventSource. Header mode (__skyTok set): an EventSource cannot send
+// X-Sky-Session, so the stream is read with fetch() and a ReadableStream
+// (__SkyHdrSource); a browser without streaming fetch gets a one-time ticket
+// from POST /_sky/sse-ticket and an EventSource on ?tk=<ticket>. Both expose
+// the EventSource surface the code below uses: addEventListener, readyState,
+// close().
+function __skyNewEventSource(url) {
+  if (!__skyTok) return new EventSource(url);
+  return new __SkyHdrSource(url);
+}
+function __skySseCanStream() {
+  try {
+    return typeof fetch === "function" && typeof ReadableStream === "function" &&
+      typeof TextDecoder === "function" && typeof AbortController === "function" &&
+      typeof Response === "function" && ("body" in Response.prototype);
+  } catch (_) { return false; }
+}
+function __SkyHdrSource(url) {
+  this.readyState = 0;
+  this._l = {};
+  this._closed = false;
+  this._es = null;
+  this._ac = null;
+  if (__skySseCanStream()) this._stream(url); else this._ticket(url);
+}
+__SkyHdrSource.prototype.addEventListener = function(type, fn) {
+  (this._l[type] = this._l[type] || []).push(fn);
+  if (this._es && type !== "open" && type !== "error") this._es.addEventListener(type, fn);
+};
+__SkyHdrSource.prototype._emit = function(type, ev) {
+  var ls = (this._l[type] || []).slice();
+  for (var i = 0; i < ls.length; i++) {
+    try { ls[i].call(this, ev); } catch (e) { setTimeout(function() { throw e; }, 0); }
+  }
+};
+__SkyHdrSource.prototype.close = function() {
+  this._closed = true;
+  this.readyState = 2;
+  if (this._ac) { try { this._ac.abort(); } catch (_) {} }
+  if (this._es) { try { this._es.close(); } catch (_) {} }
+};
+// _fail ends the stream the way a failed EventSource does (readyState 2 +
+// error), so the reconnect logic below reopens with backoff.
+__SkyHdrSource.prototype._fail = function() {
+  if (this._closed) return;
+  this._closed = true;
+  this.readyState = 2;
+  this._emit("error", {type: "error"});
+};
+__SkyHdrSource.prototype._stream = function(url) {
+  var self = this;
+  self._ac = new AbortController();
+  fetch(url, {
+    headers: __skyWithSession({"Accept": "text/event-stream"}),
+    credentials: "same-origin",
+    cache: "no-store",
+    signal: self._ac.signal
+  }).then(function(r) {
+    if (self._closed) return;
+    __skyAdoptToken(r);
+    var ct = r.headers.get("Content-Type") || "";
+    if (!r.ok || ct.indexOf("text/event-stream") !== 0 || !r.body) { self._fail(); return; }
+    self.readyState = 1;
+    self._emit("open", {type: "open"});
+    var reader = r.body.getReader();
+    var dec = new TextDecoder();
+    var buf = "", evName = "", data = [];
+    var line = function(l) {
+      if (l === "") {
+        if (data.length) {
+          var name = evName || "message";
+          self._emit(name, {type: name, data: data.join("\n")});
+        }
+        evName = "";
+        data = [];
+        return;
+      }
+      if (l.charAt(0) === ":") return;
+      var i = l.indexOf(":");
+      var field = i < 0 ? l : l.slice(0, i);
+      var value = i < 0 ? "" : l.slice(i + 1);
+      if (value.charAt(0) === " ") value = value.slice(1);
+      if (field === "event") evName = value;
+      else if (field === "data") data.push(value);
+    };
+    var pump = function() {
+      return reader.read().then(function(res) {
+        if (self._closed) return;
+        if (res.done) { self._fail(); return; }
+        buf += dec.decode(res.value, {stream: true});
+        var m;
+        while ((m = /\r\n|\r|\n/.exec(buf)) !== null) {
+          var l = buf.slice(0, m.index);
+          buf = buf.slice(m.index + m[0].length);
+          line(l);
+          if (self._closed) return;
+        }
+        return pump();
+      });
+    };
+    return pump();
+  }).catch(function() { self._fail(); });
+};
+__SkyHdrSource.prototype._ticket = function(url) {
+  var self = this;
+  fetch(__skyBase + "/_sky/sse-ticket", {
+    method: "POST",
+    headers: __skyWithSession({"Content-Type": "application/json"}),
+    body: JSON.stringify({tab: __skyTabId}),
+    credentials: "same-origin"
+  }).then(function(r) {
+    if (self._closed) return null;
+    __skyAdoptToken(r);
+    if (r.headers.get("X-Sky-Status") === "session-lost") {
+      self._closed = true;
+      __skyRecoverLostSession("unknown-session");
+      return null;
+    }
+    if (!r.ok) { self._fail(); return null; }
+    return r.json();
+  }).then(function(d) {
+    if (!d || self._closed) return;
+    if (!d.ticket) { self._fail(); return; }
+    var es = new EventSource(url + "&tk=" + encodeURIComponent(d.ticket));
+    self._es = es;
+    // A ticket is single-use: never let this EventSource reconnect with it.
+    // Its error ends the wrapper, and the reconnect logic asks for a new
+    // ticket.
+    es.addEventListener("open", function() {
+      self.readyState = 1;
+      self._emit("open", {type: "open"});
+    });
+    es.addEventListener("error", function() {
+      try { es.close(); } catch (_) {}
+      self._fail();
+    });
+    for (var type in self._l) {
+      if (type === "open" || type === "error") continue;
+      for (var i = 0; i < self._l[type].length; i++) es.addEventListener(type, self._l[type][i]);
+    }
+  }).catch(function() { self._fail(); });
+};
 var __skySSE = null;
 var __skyOpenAt = 0;          // ms timestamp of last EventSource.open
 var __skyLastSseAt = 0;       // ms timestamp of any SSE event
@@ -2217,7 +2400,7 @@ function __skyOpenSSE() {
   // sl=1: this client handles the server's "session-lost" event, so the
   // server may answer a lost session with that event instead of a 404 an
   // EventSource cannot read (live_sse_session_lost.go).
-  __skySSE = new EventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId + "&sl=1" +
+  __skySSE = __skyNewEventSource(__skyBase + "/_sky/sse?tab=" + __skyTabId + "&sl=1" +
       (withPath ? "&path=" + encodeURIComponent(location.pathname) : ""));
   // The server has no session for this page (restart with a memory store,
   // another replica, expiry) or its gate refused the stream. Reconnecting
@@ -2452,7 +2635,7 @@ function __skyOpenSSE() {
 // few times; a refusal needs nothing more: this tab's next event POST also
 // gets the new cookie.
 function __skyRedeemRotation(ticket, attempt) {
-  var headers = {"Content-Type": "application/json"};
+  var headers = __skyWithSession({"Content-Type": "application/json"});
   if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
   fetch(__skyBase + "/_sky/rotate", {
     method: "POST",
@@ -2464,6 +2647,9 @@ function __skyRedeemRotation(ticket, attempt) {
     return r.json();
   }).then(function(d) {
     if (d && d.sid) __skySid = d.sid;
+    // Header mode: the new session token (the old one stops working when
+    // the rotation's grace window ends).
+    if (d && d.token && /^[0-9a-f]{32}$/.test(d.token)) __skyTok = d.token;
   }).catch(function() {
     if (attempt < 3) {
       setTimeout(function() { __skyRedeemRotation(ticket, attempt + 1); }, 500 * (attempt + 1));
@@ -2537,7 +2723,7 @@ var __skyConsecutiveResync = 0; // consecutive X-Sky-Status:desync soft-resyncs;
                                 // escalating to a full reload after a few.
 function __skyProbeSessionLost() {
   if (__skyProbedReload) return;
-  var headers = {"Content-Type": "application/json"};
+  var headers = __skyWithSession({"Content-Type": "application/json"});
   if (__skyCsrfToken) headers["X-Sky-Csrf"] = __skyCsrfToken;
   fetch(__skyBase + "/_sky/event", {
     method: "POST",

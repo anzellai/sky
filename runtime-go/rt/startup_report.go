@@ -164,9 +164,16 @@ func consoleDisplayHost(bindHost string) string {
 // It goes to the same stream as that line (stdout) so the block stays together
 // when a user redirects one or the other.
 func printStartupReport(port int) {
+	printStartupReportConsole(port, InlineConsoleHealthy() || LegacyConsoleHealthy())
+}
+
+// printStartupReportConsole is printStartupReport with the console decided by
+// the caller: a Sky.Live app that does not own the process's one console
+// (live_serve.go) must not print a console URL on its own port.
+func printStartupReportConsole(port int, consoleHere bool) {
 	bindHost, bindSrc := resolveBindHost()
 	consoleURL := ""
-	if InlineConsoleHealthy() || LegacyConsoleHealthy() {
+	if consoleHere {
 		consoleURL = fmt.Sprintf("http://%s:%d/_sky/console", consoleDisplayHost(bindHost), port)
 	}
 	lines := startupReportLines(consoleURL, listenerBind{host: bindHost, source: bindSrc, port: port}, productionFromEnv(), gcStartupDecision, os.Getenv("SKY_GC_QUIET") != "")

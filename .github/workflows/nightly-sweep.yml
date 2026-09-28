@@ -228,6 +228,11 @@ jobs:
       # commands, and remounts on a new id; Sky.Live and Sky.Spa, strict CSP.
       - name: Gate — widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
         run: scripts/islands-e2e.sh
+      # Sky.Live without cookies: the header session transport in a browser
+      # that blocks every cookie — counter, pushes, a dropped stream, a
+      # sign-in rotation and the SSE ticket fallback, strict CSP.
+      - name: Gate — Sky.Live without cookies e2e (header session transport)
+        run: scripts/header-session-e2e.sh
       # Ui.onKeyDown renders + dispatches, typed Ui.onSubmit decodes strictly
       # (a bad field drops the submit with a FormDecode error), and a
       # literal-topic pub/sub delivers — on Sky.Live AND Sky.Spa.

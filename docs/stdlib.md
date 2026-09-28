@@ -1360,6 +1360,22 @@ main =
     -- `|> App.withHead …` / `App.withGuard …` / `App.withConfig …` / `App.withBase …`.
 ```
 
+**Start and stop an app from a Task program (v0.27).**
+`App.serve app : Task Error App.Running` starts the web app embedded (no signal
+handler, no process exit) and succeeds once it is listening;
+`App.address running` is the bound `host:port` (port `0` picks a free one);
+`App.stop running : Task Error ()` stops it gracefully (live streams close,
+in-flight requests get 5 seconds, sessions end, the store closes, the port is
+free). `Live.serve` / `Live.address` / `Live.stop` are the `Std.Live` forms.
+Two apps in one process keep their own sessions and store; see
+[embedded Sky.Live](skylive/embedded.md#several-apps-in-one-process).
+
+**Sessions without cookies (v0.27).** `App.withSessionTransport HeaderToken`
+(`Live.withSessionTransport "header"`, or `SKY_LIVE_SESSION_TRANSPORT=header`)
+carries the session in the `X-Sky-Session` header instead of the `sky_sid`
+cookie, for hosts that cannot keep cookies. Sky.Live only. See
+[the security model](skylive/architecture.md#sessions-without-cookies-the-header-transport).
+
 `App.withNotFound` is mandatory for web (a compile-enforced fallback flag), and
 routes are built with `App.route` / `App.routeParam` / `App.api`. See
 [Sky.Live overview](skylive/overview.md) for the full TEA flow that this target

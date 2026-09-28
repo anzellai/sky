@@ -55,7 +55,7 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:9745 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:9830 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -89,14 +89,14 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:7083 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:7203 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:7168 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:7288 (sky_toml_project_key)"
     ],
     "root": [
       "rust/crates/project/src/build.rs:1677 (sky_toml_project_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:7090 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:7175 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
@@ -212,6 +212,7 @@
     "LIVE_RETRY_MAX_ATTEMPTS",
     "LIVE_RETRY_MAX_MS",
     "LIVE_REVOCATION_CACHE_TTL",
+    "LIVE_SESSION_TRANSPORT",
     "LIVE_SSE_BUFFER",
     "LIVE_STATIC_DIR",
     "LIVE_STORE",
@@ -249,12 +250,12 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 127,
+    "documented_names": 128,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 16,
     "read_without_doc": 25,
     "runtime_read_literal_sky_names": 46,
-    "runtime_read_suffixes": 48,
+    "runtime_read_suffixes": 49,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,
     "unclassified_keys": 0,

@@ -111,7 +111,34 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   rewrite `Host` there. (`runtime-go/rt/host_guard.go`,
   `host_guard_test.go`.)
 
+- **Two Sky.Live apps in one process shared security state.** A second app
+  replaced the first one's console auth callback (its `consoleAuth` /
+  `App.withConsoleAuth` check then decided who opens the first app's
+  console), its sliding-auth config, and its revocation gate (the first app
+  then checked revocations against the second app's database). The
+  revocation verdict cache was keyed by user id alone, so a verdict for user
+  `42` in one database answered for user `42` in another. Now the revocation
+  gate, its cache key (the gate's database plus the user id) and the
+  sliding-auth middleware are per app, the console auth callback belongs to
+  the app that owns the process's one console, and two apps with different
+  sliding-auth configs refuse to share a process (`Auth.setSlidingCookie`
+  has no app in scope). (`runtime-go/rt/live_serve.go`,
+  `live_serve_test.go`.)
+
 ### ⚠ Breaking changes
+
+- **`Std.PubSub.publish` reaches every running Sky.Live app.** It has no
+  update loop, so it cannot name an app; it used to publish to the FIRST app
+  that started in the process only. With `App.serve` a process can run
+  several apps, and a topic is a process-wide name, so the publish now goes
+  to every running app (a stopped app receives nothing). One app per
+  process, the common case, is unchanged.
+- **`WebOpts` has a new field, `sessionTransport`.** Code that builds a
+  `WebOpts` record literally (not through `{ webDefaults | … }`) must add
+  `sessionTransport = CookieSession`.
+- **A web app's `port = 0` now means "a free port".** It used to fall back
+  to `SKY_LIVE_PORT` or 8080. `App.address` (or the start-up line) names the
+  port that was bound. An operator's `SKY_LIVE_PORT` still wins.
 
 - **The Sky.Live session cookie is `__Host-sky_sid` when it is Secure.**
   Over HTTPS, behind a TLS proxy (`X-Forwarded-Proto: https`), in
@@ -256,6 +283,59 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **Start and stop a Sky.Live app from a Task program: `App.serve`,
+  `App.address`, `App.stop`** (and `Live.serve` / `Live.address` /
+  `Live.stop`). `App.serve app : Task Error App.Running` starts the web app
+  embedded (no signal handler, no process exit) and succeeds once the
+  listener is bound; a port in use, a session store that refuses to start
+  and the console boot check are its `Err`. Port `0` picks a free port and
+  `App.address` names it (`host:port`). `App.stop` is graceful and bounded:
+  the listener stops accepting, the app's SSE streams close, in-flight
+  requests get 5 seconds, every session ends (timers, relays and topic
+  subscriptions stop), the store closes, the port is free, and every
+  process-wide registration the app made is removed (its `/_sky/readyz`
+  probe, shutdown hook, accept-stopper, release-phase closer, publish
+  target, and the console if it owned it). Stopping twice is safe. Two apps
+  served in one process keep their own listener, routes, sessions, store,
+  broker, revocation gate and sliding-auth middleware; the Sky Console,
+  process settings, telemetry and CSRF exemptions are one per process
+  (`docs/skylive/embedded.md` has the table). A dispatched `Std.App` build
+  for a target that does not run Sky.Live (`terminal:*`, `web:app`,
+  `mobile:*`, `tablet:<os>`, `desktop:<os>`) refuses an entry whose sources
+  call `App.serve`. (`runtime-go/rt/live_serve.go`, `live_serve_test.go`,
+  `rust/crates/sky/tests/app_serve_flow.rs`.)
+- **Sky.Live sessions without cookies: the header session transport.**
+  `App.withSessionTransport HeaderToken` (`Live.withSessionTransport
+  "header"`, or the operator variable `SKY_LIVE_SESSION_TRANSPORT=header`,
+  which wins) is for hosts that cannot keep cookies: a native shell whose
+  custom-scheme handler drops `Set-Cookie`, some embedded web views. The
+  page carries a session token in its boot config and the `X-Sky-Session`
+  header; the client sends it in `X-Sky-Session` on every event POST,
+  sky-nav fetch and rotation exchange, and reads the live stream with
+  `fetch` (a one-time, 10-second, tab-bound SSE ticket is the fallback where
+  streaming `fetch` is missing). No session cookie is set or read. The store
+  keys the session by a hash of the token, and the runtime never logs it.
+  Session-id rotation works: the new token is derived from the old one
+  (`HMAC(oldToken, salt)`, only the salt is stored), `POST /_sky/rotate`
+  returns it, and the rotating tab's next request with the old token is
+  handed it. The header is the CSRF defence (a cross-site form cannot set
+  it, a cross-origin fetch needs a preflight the runtime never grants), with
+  the Origin / `Sec-Fetch-Site` check kept; no CSRF cookie is issued. A full
+  page reload starts a new session (a navigation cannot carry a header).
+  Nothing changes for an app that does not opt in.
+  (`runtime-go/rt/live_session_header.go`, `live_session_header_test.go`,
+  `live_js_header_session_test.go`, `scripts/header-session-e2e.sh`: Chromium
+  with every cookie blocked, strict CSP.)
+- **Design decisions taken for this release without the user** (the
+  unattended v0.27 mandate): the header transport is opt-in and Sky.Live
+  only; a Sky.Spa build refuses `App.withSessionTransport` and a server with
+  `Server.rpc` routes refuses to start under `SKY_LIVE_SESSION_TRANSPORT=
+  header`, because Sky.Spa authenticates `/_rpc` and `/_sky/sub` with the
+  session cookie; a full reload in header mode starts a new session rather
+  than keeping the token in `sessionStorage`; `App.stop` drains for 5
+  seconds; `Std.PubSub.publish` reaches every running app; the console is one
+  per process, owned by the first app that mounts it.
+
 - **Widget islands: a third-party JS widget inside a view, with typed
   messages both ways.** `Ui.island { name, id, props } attrs` (and
   `Std.Html.island`) marks an element that a JavaScript widget owns (a code
@@ -373,6 +453,20 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+
+- **A second Sky.Live app in the process panicked at start.** The inline
+  console registers at the fixed prefix `/_sky/console`, so a second app (a
+  second embedded `App.run`, or a Live app next to a `Server.listen` with the
+  console on) panicked "sub-app already mounted at /_sky/console". The first
+  listener now owns the console, a second one mounts none and prints no
+  console line, and `App.stop` releases it for the next app.
+- **Per-app registrations were never removed.** A Sky.Live app registered
+  its session store's `/_sky/readyz` probe, a shutdown hook, an
+  accept-stopper and a release-phase closer for the process lifetime; after
+  the app's store closed, `/_sky/readyz` would have reported 503 for a store
+  that was closed on purpose. The registrations are scoped now and
+  `App.stop` removes them; the inline console's own store closer is scoped
+  the same way.
 
 - **Sky.Spa dropped `App.withHead` on the static shell.** A `--target
   web:app` app whose backend has no per-request work (no server branch, no

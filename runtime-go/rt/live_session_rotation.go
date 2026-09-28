@@ -222,6 +222,10 @@ type sessionAlias struct {
 	// GraceUntil (unix ns): until then the old cookie gets
 	// "session-rotating"; afterwards it is dead.
 	GraceUntil int64 `json:"g"`
+	// Salt (header session transport only): New is the id of the token
+	// deriveRotatedToken(oldToken, Salt). Not secret on its own: the old
+	// token is needed to derive the new one (live_session_header.go).
+	Salt string `json:"s,omitempty"`
 }
 
 func (a sessionAlias) inGrace(now time.Time) bool {
@@ -343,6 +347,22 @@ func (app *liveApp) rotateSessionLocked(sess *liveSession, originTab string) str
 	newSid := newLiveSessionID()
 	ticket := newLiveSessionID()
 	now := time.Now()
+	// Header session transport (live_session_header.go): the new id is the id
+	// of a token DERIVED from the token the acting request presented, so that
+	// tab can be handed the new token without the server keeping it. With no
+	// token in scope (a Time.every tick) the random id stands; nobody can
+	// derive its token, and the session ends after the grace window.
+	salt := ""
+	if app.headerSessions {
+		if tok := currentLiveSessionToken(); tok != "" && sessionTokenSID(tok) == old {
+			salt = newLiveSessionID()
+			newTok := deriveRotatedToken(tok, salt)
+			newSid = sessionTokenSID(newTok)
+			// A second rotation started later on this goroutine derives from
+			// the new token.
+			SetGoroutineTraceContext(context.WithValue(CurrentTraceContext(), liveSessionTokenKeyT{}, newTok))
+		}
+	}
 
 	// Re-key the SAME object. storeMu serialises this against every other
 	// store write of the session (persistSession, the idle-evict persist),
@@ -356,6 +376,7 @@ func (app *liveApp) rotateSessionLocked(sess *liveSession, originTab string) str
 		Tab:        originTab,
 		TicketHash: ticketHash(ticket),
 		GraceUntil: now.Add(liveRotateGrace).UnixNano(),
+		Salt:       salt,
 	})
 
 	// Pub/sub subscriptions carry the session id as their no-echo owner;
@@ -476,7 +497,9 @@ func (app *liveApp) resolveBoundSession(r *http.Request, claimed, tab string) bo
 	if app == nil || r == nil || app.store == nil {
 		return boundSession{verdict: sessionLost}
 	}
-	val, _ := readSessionCookie(r, app.cookieNameOrDefault())
+	// The session cookie, or the X-Sky-Session token in header mode
+	// (presentedSID, live_session_header.go).
+	val := app.presentedSID(r)
 	if val == "" {
 		return boundSession{verdict: sessionLost}
 	}
@@ -549,33 +572,73 @@ func writeRotatingPage(w http.ResponseWriter) {
 //   - an ended id → a fresh id;
 //   - any other well-formed id → adopted (a restart of a memory store, or
 //     another replica: the durable snapshot is restored under it).
-func (app *liveApp) pageSessionID(w http.ResponseWriter, r *http.Request) (string, bool) {
+//
+// Header session transport: the same rules over the X-Sky-Session token (a
+// sky-nav fetch carries it; a navigation never can, so a full page load
+// mints a fresh token). token is the token the page hands the client ("" in
+// cookie mode); it is also set in the X-Sky-Session response header.
+func (app *liveApp) pageSessionID(w http.ResponseWriter, r *http.Request) (sid, token string, ok bool) {
+	if app.headerSessions {
+		return app.pageSessionFromToken(w, r)
+	}
 	base := app.cookieNameOrDefault()
 	val, _ := readSessionCookie(r, base)
 	if val != "" && validSessionID(val) && app.store != nil {
 		if _, live := app.store.Get(val); live {
 			writeSessionCookie(r, w, base, val, app.sessionTTL)
-			return val, true
+			return val, "", true
 		}
 		final, hops, ok := app.followAlias(val)
 		if len(hops) == 0 {
 			writeSessionCookie(r, w, base, val, app.sessionTTL)
-			return val, true
+			return val, "", true
 		}
 		now := time.Now()
 		if ok && hops[0].inGrace(now) {
 			if aliasChainAllows(hops, r.Header.Get("X-Sky-Tab"), now) {
 				writeSessionCookie(r, w, base, final, app.sessionTTL)
 				w.Header().Set("X-Sky-Sid", final)
-				return final, true
+				return final, "", true
 			}
 			writeRotatingPage(w)
-			return "", false
+			return "", "", false
 		}
 	}
-	sid := newLiveSessionID()
+	sid = newLiveSessionID()
 	writeSessionCookie(r, w, base, sid, app.sessionTTL)
-	return sid, true
+	return sid, "", true
+}
+
+// pageSessionFromToken is pageSessionID in header mode.
+func (app *liveApp) pageSessionFromToken(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	tok := presentedSessionToken(r)
+	if tok != "" && app.store != nil {
+		sid := sessionTokenSID(tok)
+		if _, live := app.store.Get(sid); live {
+			writeSessionToken(w, tok)
+			return sid, tok, true
+		}
+		final, hops, ok := app.followAlias(sid)
+		if len(hops) == 0 {
+			writeSessionToken(w, tok)
+			return sid, tok, true
+		}
+		now := time.Now()
+		if ok && hops[0].inGrace(now) {
+			if aliasChainAllows(hops, r.Header.Get("X-Sky-Tab"), now) {
+				if nt, derived := tokenThroughHops(tok, hops); derived {
+					writeSessionToken(w, nt)
+					w.Header().Set("X-Sky-Sid", final)
+					return final, nt, true
+				}
+			}
+			writeRotatingPage(w)
+			return "", "", false
+		}
+	}
+	tok = newLiveSessionID()
+	writeSessionToken(w, tok)
+	return sessionTokenSID(tok), tok, true
 }
 
 // ─── /_sky/rotate ───────────────────────────────────────────────────
@@ -601,24 +664,30 @@ func (app *liveApp) handleRotate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	base := app.cookieNameOrDefault()
-	val, _ := readSessionCookie(r, base)
+	val := app.presentedSID(r)
 	if val == "" || app.store == nil {
 		writeSessionLost(w)
 		return
 	}
-	reply := func(sid string, setCookie bool) {
+	// token: header mode hands back the (new) session token in the
+	// X-Sky-Session header and the body; cookie mode sets the cookie.
+	reply := func(sid, token string, setCookie bool) {
 		if setCookie {
-			writeSessionCookie(r, w, base, sid, app.sessionTTL)
+			app.issueSession(w, r, sid)
 		}
 		w.Header().Set("X-Sky-Live", "1")
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		out, _ := json.Marshal(map[string]string{"sid": sid})
+		body := map[string]string{"sid": sid}
+		if token != "" {
+			writeSessionToken(w, token)
+			body["token"] = token
+		}
+		out, _ := json.Marshal(body)
 		_, _ = w.Write(out)
 	}
 	if _, live := app.store.Get(val); live {
-		reply(val, false)
+		reply(val, "", false)
 		return
 	}
 	final, hops, ok := app.followAlias(val)
@@ -642,7 +711,18 @@ func (app *liveApp) handleRotate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rotation refused", http.StatusForbidden)
 		return
 	}
-	reply(final, true)
+	if app.headerSessions {
+		// The new token is derived from the old one the request carries; the
+		// server never stored it.
+		nt, derived := tokenThroughHops(presentedSessionToken(r), hops)
+		if !derived {
+			http.Error(w, "rotation refused", http.StatusForbidden)
+			return
+		}
+		reply(final, nt, false)
+		return
+	}
+	reply(final, "", true)
 }
 
 // ─── kernels ────────────────────────────────────────────────────────

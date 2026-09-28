@@ -2075,6 +2075,78 @@ func registerStoreCloser(store SessionStore) {
 	})
 }
 
+// registerStoreCloserScoped is registerStoreCloser for a store its app may
+// close first (Live.stop): the returned func removes the release entry.
+func registerStoreCloserScoped(store SessionStore) (unregister func()) {
+	return registerResourceCloserScoped("live.sessionStore", func() {
+		if err := store.Close(); err != nil {
+			log.Printf("[sky.live] session store close: %v", err)
+		}
+	})
+}
+
+// chooseStoreScoped is chooseStore with a scoped release entry.
+func chooseStoreScoped(kind, path string, ttl, idleEvict time.Duration) (SessionStore, func()) {
+	store := selectStore(kind, path, ttl, idleEvict, func(format string, args ...any) {
+		storeFatalf(format, args...)
+	})
+	return store, registerStoreCloserScoped(store)
+}
+
+// chooseStoreOrErrScoped is chooseStoreOrErr with a scoped release entry.
+func chooseStoreOrErrScoped(kind, path string, ttl, idleEvict time.Duration) (SessionStore, func(), error) {
+	var refusal error
+	store := selectStore(kind, path, ttl, idleEvict, func(format string, args ...any) {
+		if refusal == nil {
+			refusal = fmt.Errorf(format, args...)
+		}
+	})
+	if refusal != nil {
+		_ = store.Close()
+		return nil, nil, refusal
+	}
+	return store, registerStoreCloserScoped(store), nil
+}
+
+// liveSessionLister is implemented by every session store: the live session
+// objects it holds in this process (the memory map, or a durable store's
+// pointer cache). Live.stop ends each one so its goroutines stop.
+type liveSessionLister interface {
+	liveSessions() []*liveSession
+}
+
+func (s *memoryStore) liveSessions() []*liveSession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*liveSession, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		out = append(out, sess)
+	}
+	return out
+}
+
+func (s *sqliteStore) liveSessions() []*liveSession {
+	return snapshotMemCache(&s.memMu, s.memCache)
+}
+
+func (s *postgresStore) liveSessions() []*liveSession {
+	return snapshotMemCache(&s.memMu, s.memCache)
+}
+
+func (s *redisStore) liveSessions() []*liveSession {
+	return snapshotMemCache(&s.memMu, s.memCache)
+}
+
+func snapshotMemCache(mu *sync.RWMutex, m map[string]*liveSession) []*liveSession {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := make([]*liveSession, 0, len(m))
+	for _, sess := range m {
+		out = append(out, sess)
+	}
+	return out
+}
+
 // selectStore builds the session store from ALREADY-RESOLVED values.
 //
 // It used to resolve two of them itself, with `if kind == "" { kind =

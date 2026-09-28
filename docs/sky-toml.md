@@ -197,6 +197,17 @@ the Sky.Spa auto-split backend, bake it with `sky spa-split --broker <url>`
 (env still overrides). `<PREFIX>_LIVE_BROKER=inprocess` forces the local
 registry back for a single-instance Redis deploy.
 
+**Session transport.** `<PREFIX>_LIVE_SESSION_TRANSPORT` (env only, no
+`sky.toml` key) is `cookie` (the default: the `sky_sid` cookie) or `header`
+(the session token travels in the `X-Sky-Session` header, for hosts that
+cannot keep cookies; see
+[Sessions without cookies](skylive/architecture.md#sessions-without-cookies-the-header-transport)).
+The builders are `App.withSessionTransport HeaderToken` and
+`Live.withSessionTransport "header"`; the operator variable wins over them. An
+unknown value keeps cookies and prints a warning. A server with `Server.rpc`
+routes (a Sky.Spa backend) refuses to start with `header` set, because those
+routes authenticate with the session cookie.
+
 ---
 
 ## Std.Auth configuration (no `[auth]` section)

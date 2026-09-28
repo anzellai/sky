@@ -977,6 +977,74 @@ fn std_app_runner(tgt: target::Target) -> (&'static str, StdAppBuild) {
     }
 }
 
+/// `App.serve` always starts a Sky.Live server. On a target whose runner is not
+/// a Sky.Live one (`terminal:*`, and the Sky.Spa client targets `web:app`,
+/// `mobile:*`, `tablet:<os>`, `desktop:<os>`) an entry that calls it would
+/// build a program that serves a web UI nobody asked that target for, or (on
+/// a client target) fail deep inside the split. Refuse it at the start of the
+/// build with the reason. `sources` are the project's `.sky` files; the
+/// message names the first that calls `serve`.
+fn serve_refused_for_target(tgt: target::Target, sources: &[(PathBuf, String)]) -> Option<String> {
+    let runner = std_app_runner(tgt).0;
+    if runner == "runLive" || runner == "runLiveWindow" {
+        return None;
+    }
+    let (path, _) = sources
+        .iter()
+        .find(|(_, src)| project::app_entry::uses_serve(src))?;
+    Some(format!(
+        "{}: `App.serve` starts a Sky.Live web server, and target '{}' does not run Sky.Live.\n  \
+         Build this entry with `--target web` (or `tablet`, or bare `desktop`), or start the \
+         app with `App.run` instead.",
+        path.display(),
+        tgt.canonical()
+    ))
+}
+
+/// The `.sky` files under `dir` (recursively), with their text. Hidden and
+/// build-output directories are skipped.
+fn project_sky_sources(dir: &Path) -> Vec<(PathBuf, String)> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "sky-out" || name == "node_modules" {
+            continue;
+        }
+        if path.is_dir() {
+            out.extend(project_sky_sources(&path));
+        } else if name.ends_with(".sky") {
+            if let Ok(src) = std::fs::read_to_string(&path) {
+                out.push((path, src));
+            }
+        }
+    }
+    out
+}
+
+/// [`serve_refused_for_target`] over the entry and the source tree it lives in.
+fn refuse_serve_off_live(entry_file: &Path, tgt: target::Target) -> bool {
+    let root = entry_file.parent().unwrap_or(Path::new("."));
+    let mut sources = project_sky_sources(root);
+    if !sources.iter().any(|(p, _)| p == entry_file) {
+        if let Ok(src) = std::fs::read_to_string(entry_file) {
+            sources.insert(0, (entry_file.to_path_buf(), src));
+        }
+    }
+    match serve_refused_for_target(tgt, &sources) {
+        Some(msg) => {
+            eprintln!("sky: {msg}");
+            true
+        }
+        None => false,
+    }
+}
+
 /// How a [`std_app_runner`] is built: `Direct` is a plain (or cgo, auto-detected
 /// for `runWebview`) `go build` of a derived entry; `Spa` routes through the
 /// Sky.Spa auto-split.
@@ -1238,6 +1306,9 @@ fn check_std_app(project_dir: &Path, entry_file: &Path, tgt: target::Target) -> 
             return ExitCode::FAILURE;
         }
     };
+    if refuse_serve_off_live(entry_file, tgt) {
+        return ExitCode::FAILURE;
+    }
     let out_root = project_dir.join(".skyapp").join("check");
     let src_to = match stage_std_app_derived(project_dir, &out_root) {
         Ok(p) => p,
@@ -1522,6 +1593,17 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
                 dropped_builders.push(name.to_string());
             }
             continue;
+        }
+        if name == "withSessionTransport" {
+            // Sky.Spa authenticates `/_rpc/<Msg>` and `/_sky/sub` with the
+            // `sky_sid` session cookie (the `verified<Field>_` helpers); the
+            // header session transport is Sky.Live's (live_session_header.go).
+            return Err(format!(
+                "`{q}.withSessionTransport` is Sky.Live only: a client (Sky.Spa) build \
+                 authenticates its RPC and subscription endpoints with the session cookie, \
+                 so it cannot run without cookies. Build this app for `--target web`, or \
+                 remove the builder for this target"
+            ));
         }
         if !carried(name) {
             return Err(format!(
@@ -2481,6 +2563,9 @@ fn build_std_app(
     };
 
     let (runner, kind) = std_app_runner(tgt);
+    if refuse_serve_off_live(entry_file, tgt) {
+        return ExitCode::FAILURE;
+    }
 
     // Stage `.skyapp/<target>/` = a copy of the user's src + the derived entry.
     let target_dir_name = tgt.canonical().replace(':', "-");
@@ -11275,6 +11360,34 @@ mod tests {
         // Concrete runners (already picked a backend) are NEVER a bare dispatcher.
         assert!(!uses_app_run("main = App.runTui appDef\n"));
         assert!(!uses_app_run("main = App.runLive appDef\n"));
+    }
+
+    #[test]
+    fn app_serve_is_refused_on_a_target_that_does_not_run_sky_live() {
+        let src = "module Main exposing (main)\n\nimport Std.App as App\n\n\nmain =\n    App.serve appDef\n        |> Task.andThen (\\r -> App.stop r)\n".to_string();
+        let sources = vec![(PathBuf::from("src/Main.sky"), src)];
+        for tgt in ["web", "tablet", "desktop"] {
+            let t = target::Target::parse(tgt).unwrap();
+            assert!(
+                serve_refused_for_target(t, &sources).is_none(),
+                "{tgt} must allow App.serve"
+            );
+        }
+        for tgt in ["terminal:tui", "terminal:cli", "web:app", "mobile:ios"] {
+            let t = target::Target::parse(tgt).unwrap();
+            let msg = serve_refused_for_target(t, &sources)
+                .unwrap_or_else(|| panic!("{tgt} must refuse App.serve"));
+            assert!(msg.contains("src/Main.sky") && msg.contains(tgt), "{msg}");
+        }
+        // A comment or a string that names App.serve is not a call.
+        let quiet = vec![(
+            PathBuf::from("src/Main.sky"),
+            "module Main exposing (main)\n\nimport Std.App as App\n\n-- App.serve is for web\nmain =\n    App.run appDef\n".to_string(),
+        )];
+        assert!(
+            serve_refused_for_target(target::Target::parse("terminal:tui").unwrap(), &quiet)
+                .is_none()
+        );
         assert_eq!(
             rewrite_app_run("main = App.runTui appDef\n", "runLive"),
             "main = App.runTui appDef\n"
@@ -11401,6 +11514,25 @@ mod tests {
         );
         let e = synthesize_spa_source(&opaque, true).expect_err("opaque step must fail");
         assert!(e.contains("Security.harden"), "error must name it: {e}");
+    }
+
+    // The header session transport is Sky.Live only: a client (Sky.Spa) build
+    // refuses it by name and says why, instead of the generic unknown-builder
+    // message.
+    #[test]
+    fn std_app_session_transport_is_refused_for_a_client_build() {
+        let src = sa_src(
+            "appDef =\n    App.app { init = init, update = update, view = view, subscriptions = subs }\n        |> App.withNotFound ()\n        |> App.withSessionTransport App.HeaderToken\n\n\n\
+             main =\n    App.run appDef\n",
+        );
+        let e = synthesize_spa_source(&src, true)
+            .expect_err("the header transport must fail on Sky.Spa");
+        assert!(
+            e.contains("withSessionTransport")
+                && e.contains("Sky.Live only")
+                && e.contains("session cookie"),
+            "error must name the builder and the reason: {e}"
+        );
     }
 
     // SA-2: a second `App.app` (a debug variant) must not replace the fields of
