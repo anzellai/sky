@@ -1177,8 +1177,8 @@ runLive (App a) =
 
 
 runLiveBoot_ : App HasFallback () page model msg key -> Task Error ()
-runLiveBoot_ (App a) =
-    case liveConfig_ (App a) of
+runLiveBoot_ appVal =
+    case liveConfig_ appVal of
 
         Just cfg ->
             Live.app cfg
@@ -1386,8 +1386,16 @@ liveConfig_ (App a) =
 -- whose target is not a Sky.Live target (`terminal:*`, `web:app`, `mobile:*`,
 -- `desktop:<os>`) refuses an entry that calls it.
 serve : App HasFallback () page model msg key -> Task Error Running
-serve (App a) =
-    case a.viewImpl of
+serve appVal =
+    case appVal of
+
+        App a ->
+            serveBoot_ appVal a.viewImpl a.base
+
+
+serveBoot_ : App HasFallback () page model msg key -> ViewImpl model msg -> BaseConfig -> Task Error Running
+serveBoot_ appVal viewImpl base =
+    case viewImpl of
 
         ViewString _ ->
             Task.fail
@@ -1395,12 +1403,12 @@ serve (App a) =
                     "App.serve runs a Sky.Live server: this app has a String view (App.cli / App.tui); use App.app or App.web")
 
         _ ->
-            case liveConfig_ (App a) of
+            case liveConfig_ appVal of
 
                 Just cfg ->
                     Task.andThen
                         (\_ -> Live.serve (Live.withEmbedded cfg))
-                        (Config.apply (baseToConfig_ a.base))
+                        (Config.apply (baseToConfig_ base))
 
                 Nothing ->
                     Task.fail

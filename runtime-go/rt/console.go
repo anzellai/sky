@@ -319,6 +319,22 @@ func consoleOwnedBy(owner any) bool {
 	return consoleClaimOwner != nil && consoleClaimOwner == owner
 }
 
+// claimConsoleIfFree takes the console claim for owner when nobody holds it
+// (no inline console was mounted in this process), and runs onClaim: the
+// owner's auth callbacks then gate the legacy console endpoints, until the
+// owner releases the claim.
+func claimConsoleIfFree(owner any, onClaim func()) {
+	consoleClaimMu.Lock()
+	free := consoleClaimOwner == nil
+	if free {
+		consoleClaimOwner = owner
+	}
+	consoleClaimMu.Unlock()
+	if free && onClaim != nil {
+		onClaim()
+	}
+}
+
 // releaseConsole unmounts the console that owner mounted: its sessions end,
 // its store closes, the /_sky/console registry slot frees and the auth
 // callbacks the owner installed are cleared. A no-op for any other owner.
@@ -332,7 +348,9 @@ func releaseConsole(owner any) {
 	consoleClaimOwner = nil
 	consoleClaimApp = nil
 	consoleClaimMu.Unlock()
-	inlineConsoleHealthy.Store(false)
+	if app != nil {
+		inlineConsoleHealthy.Store(false)
+	}
 	SetConsoleAuthCallback(nil)
 	SetConsoleAuthModel(nil)
 	unmountInProcessSubApp("/_sky/console", app)

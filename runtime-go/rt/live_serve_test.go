@@ -328,6 +328,10 @@ func TestLiveServe_StopLeavesNoGoroutineBehind(t *testing.T) {
 
 func TestLiveServe_StopRemovesProcessWideRegistrations(t *testing.T) {
 	serveTestEnv(t)
+	// An earlier test may have run the shutdown chain, which closes the hook
+	// registry for the process; start from an open one.
+	resetShutdownHooksForTesting()
+	t.Cleanup(resetShutdownHooksForTesting)
 	count := func() (probes, hooks, stoppers, closers, brokers int) {
 		probes = len(scopedProbeList())
 		shutdownMu.Lock()

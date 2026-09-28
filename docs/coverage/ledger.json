@@ -697,7 +697,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1998,
+    "stdlib_entries": 2009,
     "stdlib_modules": 102,
     "surfaces_covered": 152,
     "surfaces_covered_pct": 90.5,
@@ -13308,13 +13308,17 @@
           ]
         },
         "Std.Live": {
-          "count": 26,
+          "count": 31,
           "symbols": [
             "AppConfig",
             "Route",
+            "Running",
+            "address",
             "api",
             "endSession",
             "lifecycle",
+            "serve",
+            "stop",
             "withAnalytics",
             "withAnalyticsIdentify",
             "withAuthSliding",
@@ -13330,6 +13334,7 @@
             "withOnNavigate",
             "withPort",
             "withRevocation",
+            "withSessionTransport",
             "withStatic",
             "withStaticUrl",
             "withStatus",
@@ -13635,8 +13640,8 @@
           ]
         }
       },
-      "count": 641,
-      "pct_of_denominator": 32.1
+      "count": 646,
+      "pct_of_denominator": 32.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13999,7 +14004,7 @@
           ]
         },
         "Std.App": {
-          "count": 19,
+          "count": 20,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -14007,6 +14012,7 @@
             "DurableWiring",
             "HasFallback",
             "MobileOpts",
+            "SessionTransport",
             "TabletOpts",
             "TerminalOpts",
             "WebOpts",
@@ -14421,16 +14427,20 @@
           ]
         },
         "Std.Live": {
-          "count": 29,
+          "count": 34,
           "symbols": [
             "AppConfig",
             "Route",
+            "Running",
+            "address",
             "api",
             "app",
             "config",
             "endSession",
             "lifecycle",
             "route",
+            "serve",
+            "stop",
             "withAnalytics",
             "withAnalyticsIdentify",
             "withAuthSliding",
@@ -14446,6 +14456,7 @@
             "withOnNavigate",
             "withPort",
             "withRevocation",
+            "withSessionTransport",
             "withStatic",
             "withStaticUrl",
             "withStatus",
@@ -14753,8 +14764,8 @@
           ]
         }
       },
-      "count": 722,
-      "pct_of_denominator": 36.1
+      "count": 728,
+      "pct_of_denominator": 36.2
     }
   },
   "units": [
@@ -14776,10 +14787,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 49,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 308,
-      "refs_qualified": 292,
+      "refs_generous": 316,
+      "refs_qualified": 299,
       "role": "Layer2",
-      "sky_files": 155,
+      "sky_files": 157,
       "sky_toml_sections": []
     },
     {

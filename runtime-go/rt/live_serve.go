@@ -341,7 +341,7 @@ func buildLiveServer(cfg any, embedded bool) (ls *liveServer, err error) {
 	// One console per process (console.go): the app that mounts it installs
 	// the console auth callbacks (the app's optional consoleAuth /
 	// Std.App.withConsoleAuth check) when it takes the claim.
-	ls.console = mountEmbeddedConsoleFor(mux, ls, func() {
+	installConsoleAuth := func() {
 		SetConsoleAuthCallback(app.consoleAuth)
 		SetConsoleAuthModel(nil)
 		// Std.App.withConsoleAuth: the check also receives the console
@@ -351,7 +351,12 @@ func buildLiveServer(cfg any, embedded bool) (ls *liveServer, err error) {
 			SetConsoleAuthCallback(check)
 			SetConsoleAuthModel(app.consoleModelFor)
 		}
-	})
+	}
+	ls.console = mountEmbeddedConsoleFor(mux, ls, installConsoleAuth)
+	// No inline console mounted (console_app not linked: the legacy shell's
+	// endpoints serve, gated by the same auth callback), and nobody owns the
+	// console: this app's callbacks gate it, as before v0.27.
+	claimConsoleIfFree(ls, installConsoleAuth)
 	ls.addCleanup(func() { releaseConsole(ls) })
 	// If THIS process is a sub-app (env vars from MountSubApp set),
 	// kick the push exporter — Log.* / counter / span writes flow
@@ -472,8 +477,20 @@ func liveAppRun(cfg any) any {
 	// the process; every refusal to start is the Task's Err, and the host owns
 	// shutdown.
 	embedded := AsBoolOrFalse(Field(cfg, "Embedded"))
+	// Shutdown on SIGINT / SIGTERM / SIGHUP (a process-owning app only). The
+	// handler is installed BEFORE the build binds the listener: once the port
+	// accepts a connection, a signal must already be ours. A signal that
+	// arrives during the build waits in the buffered channel.
+	var sigCh chan os.Signal
+	if !embedded {
+		sigCh = make(chan os.Signal, 2)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	}
 	ls, err := buildLiveServer(cfg, embedded)
 	if err != nil {
+		if sigCh != nil {
+			signal.Stop(sigCh)
+		}
 		var inUse errLivePortInUse
 		if errors.As(err, &inUse) {
 			if embedded {
@@ -491,14 +508,11 @@ func liveAppRun(cfg any) any {
 		return Err[any, any](liveStartError(err, embedded))
 	}
 	srv := ls.srv
-	// Shutdown on SIGINT / SIGTERM / SIGHUP (a process-owning app only). SSE
-	// connections are long-lived, so the graceful `srv.Shutdown` would block
-	// on them; `srv.Close` forcibly closes the listener and every active
-	// connection. A second signal forces the exit (liveSignalShutdown).
-	var sigCh chan os.Signal
-	if !embedded {
-		sigCh = make(chan os.Signal, 2)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	// SSE connections are long-lived, so the graceful `srv.Shutdown` would
+	// block on them; `srv.Close` forcibly closes the listener and every
+	// active connection. A second signal forces the exit
+	// (liveSignalShutdown).
+	if sigCh != nil {
 		go liveSignalShutdown(sigCh, srv)
 	}
 	ls.announce()

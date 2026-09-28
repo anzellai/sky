@@ -83,6 +83,10 @@ func TestHeaderSession_PageLoadIssuesATokenAndNoCookie(t *testing.T) {
 	app := newHeaderTestApp(t)
 	token, sid, rr := mintHeaderSession(t, app)
 	noSessionCookie(t, "page GET", rr.Header())
+	// The page carries the token: no shared cache may keep it.
+	if cc := rr.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Fatalf("a header-mode page must be Cache-Control: no-store, got %q", cc)
+	}
 	if !strings.Contains(rr.Body.String(), `"tok":"`+token+`"`) {
 		t.Fatalf("the boot config does not carry the token:\n%s", rr.Body.String())
 	}

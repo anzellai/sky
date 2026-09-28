@@ -151,8 +151,19 @@ a TEA loop, read a `Sky.Core.WebSocket` with `WebSocket.receive` /
 never both). To serve a Sky.Live UI from a program that also does other work,
 mark the app `App.withEmbedded` and `Task.spawn (App.run app)`: it then installs
 no signal handler and never exits the process, and a failure to start is its
-Task's `Err` (`docs/skylive/embedded.md`). A server that needs the frame type
-uses `Ws.withOnFrame` (`Text` / `Binary`) instead of `withOnMessage`.
+Task's `Err` (`docs/skylive/embedded.md`). To also STOP it, use `App.serve app`
+(succeeds once listening, returns an `App.Running`), `App.address running`
+(`host:port`; port `0` picks a free one) and `App.stop running` (graceful,
+bounded, idempotent); two served apps keep their own sessions and store, and the
+Sky Console is one per process. A server that needs the frame type uses
+`Ws.withOnFrame` (`Text` / `Binary`) instead of `withOnMessage`.
+
+**A host that cannot keep cookies** (a native shell whose custom scheme drops
+`Set-Cookie`, some embedded web views) uses `App.withSessionTransport
+HeaderToken` (or `SKY_LIVE_SESSION_TRANSPORT=header`): the Sky.Live session id
+travels in the `X-Sky-Session` header, the server stores only its hash, and the
+header is the CSRF defence. Sky.Live only (a `web:app` build refuses it), and a
+full page reload starts a new session (`docs/skylive/architecture.md`).
 
 ## Writing a Sky app — interview first, then architect
 
