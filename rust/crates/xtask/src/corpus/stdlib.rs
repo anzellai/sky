@@ -348,6 +348,16 @@ pub const SURFACES: &[Surface] = &[
         &["Sky.Core.Secret as Secret", "Sky.Core.Task as Task"],
     ),
     sf("qr", "Std.Qr"),
+    // v0.27.0 streaming child processes and file watching. Both surfaces are
+    // `Task`s bridged with `Task.run`; the expected values are what the
+    // spawned POSIX tools (`sh`, `cat`, `stty`) and the documented coalescing
+    // rules promise, not observations of this runtime.
+    sf2("process", "Sky.Core.Process", &["Sky.Core.Task as Task"]),
+    sf2(
+        "watch",
+        "Std.Watch",
+        &["Sky.Core.Task as Task", "Sky.Core.File as File"],
+    ),
 ];
 
 pub fn surface(slug: &str) -> &'static Surface {
@@ -655,6 +665,9 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Markdown",
     "Std.Money",
     "Std.Qr",
+    // v0.27.0: the streaming process surface and Std.Watch land covered.
+    "Sky.Core.Process",
+    "Std.Watch",
 ];
 
 /// Stdlib modules with NO Family-S assertion at all — item 3's "dark" number.
@@ -740,7 +753,13 @@ pub const ASSERTED_MODULES: &[&str] = &[
 ///     Proven against a REAL cluster by `ai_memory_pg_flow.rs` ("search=a
 ///     hybrid=b"). The whole stack is exercised end-to-end by the
 ///     `examples/66-slack-agent` capstone via `slack_agent_flow.rs`.
-pub const DARK_MODULE_CEILING: usize = 74;
+///
+/// Lowered 74 -> 73 (v0.27.0 phase 5B): `Sky.Core.Process`, dark until now,
+/// gained the `process` surface with the streaming API, and the new
+/// `Std.Watch` landed covered (`watch` surface), so the dark set shrank by one.
+/// A ceiling that stays above the measured number would let a module go dark
+/// again unnoticed.
+pub const DARK_MODULE_CEILING: usize = 73;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
@@ -1231,6 +1250,8 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "noise" => noise_battery(edge),
         "cpace" => cpace_battery(edge),
         "qr" => qr_battery(edge),
+        "process" => process_battery(edge),
+        "watch" => watch_battery(edge),
         other => panic!("no battery for surface {other:?}"),
     }
 }
@@ -3388,6 +3409,113 @@ fn qr_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Sky.Core.Process (streaming) / Std.Watch (v0.27.0) ----------------------
+//
+// Every expected value is what a POSIX tool prints or what the module's
+// documented contract promises: `echo` writes its argument, `cat` echoes its
+// stdin, `stty size` under a PTY prints "rows cols", SIGTERM is signal 15, a
+// 4096-byte ring over 180,000 bytes of output keeps the last 4096. The watch
+// cases assert the coalescing rules the module states (a burst is one
+// `Created`; created-then-removed is not reported; a rename is one `Renamed`).
+
+fn process_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Process.command", "Process.withArgs", "Process.spawn", "Process.readFrom"],
+                "procOut Stdout (Process.command \"echo\" |> Process.withArgs [ \"hello\" ])",
+                "hello",
+            ),
+            s(
+                &["Process.readFrom"],
+                "procOut Stderr (sh \"echo out; echo err 1>&2\")",
+                "err",
+            ),
+            s(
+                &["Process.write", "Process.closeStdin"],
+                "procCat",
+                "ping",
+            ),
+            s(&["Process.wait"], "procStatus (sh \"exit 3\")", "C3"),
+            s(&["Process.kill"], "procKilled", "S15"),
+            s(
+                &["Process.withEnv"],
+                "procOut Stdout (sh \"echo $CORPUS_V\" |> Process.withEnv [ ( \"CORPUS_V\", \"v1\" ) ])",
+                "v1",
+            ),
+            s(
+                &["Process.withCwd"],
+                "procOut Stdout (sh \"pwd\" |> Process.withCwd \"/\")",
+                "/",
+            ),
+            s(
+                &["Process.withPty"],
+                "procOut Stdout (sh \"stty size\" |> Process.withPty { cols = 80, rows = 24 })",
+                "24 80",
+            ),
+        ],
+        "boundary" => vec![
+            // A reader that fell behind the ring is told so, and resumes at
+            // the oldest byte the ring kept.
+            s(
+                &["Process.withBufferSize", "Process.readWithin"],
+                "procDropped",
+                "T|175904|180000",
+            ),
+            // An empty environment plus one variable: only that variable.
+            s(
+                &["Process.withClearEnv"],
+                "procOut Stdout (Process.command \"/usr/bin/env\" |> Process.withClearEnv |> Process.withEnv [ ( \"ONLY\", \"1\" ) ])",
+                "ONLY=1",
+            ),
+        ],
+        "failure" => vec![
+            s(
+                &["Process.spawn"],
+                "procStatus (Process.command \"/definitely/not/a/program\")",
+                "E",
+            ),
+            s(&["Process.resize"], "procResizeNoPty", "E"),
+            s(&["Process.close"], "procReadAfterClose", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
+fn watch_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &[
+                    "Watch.watch",
+                    "Watch.defaultOptions",
+                    "Watch.withDebounce",
+                    "Watch.next",
+                    "Watch.close",
+                ],
+                "watchFirst Watch.defaultOptions writeBurst",
+                "C:f.txt",
+            ),
+            s(&["Watch.watch"], "watchRename", "R:a.txt>b.txt"),
+            s(
+                &["Watch.withIgnore"],
+                "watchFirst (Watch.defaultOptions |> Watch.withIgnore [ \"*.swp\" ]) writeIgnored",
+                "C:real.txt",
+            ),
+            s(
+                &["Watch.withRecursive"],
+                "watchFirst (Watch.defaultOptions |> Watch.withRecursive True) writeNested",
+                "C:sub,C:deep.txt",
+            ),
+        ],
+        "failure" => vec![
+            s(&["Watch.watch"], "watchMissing", "E"),
+            s(&["Watch.close", "Watch.next"], "watchAfterClose", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -4857,6 +4985,247 @@ cpaceAd =
         |> Result.withDefault "E"
 "#
         }
+        "process" => {
+            r#"sh : String -> Process.Command
+sh script =
+    Process.command "/bin/sh" |> Process.withArgs [ "-c", script ]
+
+
+procRead : Process.Process -> Stream -> Int -> String -> Task Error String
+procRead p stream offset acc =
+    Process.readFrom p stream offset
+        |> Task.andThen
+            (\c ->
+                if c.eof then
+                    Task.succeed (acc ++ c.data)
+
+                else
+                    procRead p stream c.next (acc ++ c.data)
+            )
+
+
+orE : Result Error String -> String
+orE r =
+    case r of
+        Ok v ->
+            v
+
+        Err _ ->
+            "E"
+
+
+procOut : Stream -> Process.Command -> String
+procOut stream cmd =
+    Process.spawn cmd
+        |> Task.andThen (\p -> procRead p stream 0 "")
+        |> Task.run
+        |> Result.map String.trim
+        |> orE
+
+
+procStatus : Process.Command -> String
+procStatus cmd =
+    case Task.run (Process.spawn cmd |> Task.andThen Process.wait) of
+        Ok (ExitCode c) ->
+            "C" ++ String.fromInt c
+
+        Ok (Signalled n) ->
+            "S" ++ String.fromInt n
+
+        Err _ ->
+            "E"
+
+
+procKilled : String
+procKilled =
+    case
+        Task.run
+            (Process.spawn (Process.command "sleep" |> Process.withArgs [ "30" ])
+                |> Task.andThen (\p -> Process.kill p Terminate |> Task.andThen (\_ -> Process.wait p))
+            )
+    of
+        Ok (Signalled n) ->
+            "S" ++ String.fromInt n
+
+        Ok (ExitCode c) ->
+            "C" ++ String.fromInt c
+
+        Err _ ->
+            "E"
+
+
+procCat : String
+procCat =
+    Process.spawn (Process.command "cat")
+        |> Task.andThen
+            (\p ->
+                Process.write p "ping"
+                    |> Task.andThen (\_ -> Process.closeStdin p)
+                    |> Task.andThen (\_ -> procRead p Stdout 0 "")
+            )
+        |> Task.run
+        |> orE
+
+
+procDropped : String
+procDropped =
+    Process.spawn
+        (sh "awk 'BEGIN{for(i=0;i<30000;i++) printf \"%05d\\n\", i}'"
+            |> Process.withBufferSize 4096
+        )
+        |> Task.andThen
+            (\p ->
+                Process.wait p
+                    |> Task.andThen (\_ -> procRead p Stdout 0 "")
+                    |> Task.andThen (\_ -> Process.readWithin 1000 p Stdout 0)
+            )
+        |> Task.run
+        |> Result.map
+            (\c ->
+                (if c.dropped then
+                    "T"
+
+                 else
+                    "F"
+                )
+                    ++ "|"
+                    ++ String.fromInt c.from
+                    ++ "|"
+                    ++ String.fromInt c.next
+            )
+        |> orE
+
+
+procResizeNoPty : String
+procResizeNoPty =
+    Process.spawn (Process.command "cat")
+        |> Task.andThen
+            (\p ->
+                Process.resize p { cols = 10, rows = 10 }
+                    |> Task.onError (\e -> Process.close p |> Task.andThen (\_ -> Task.fail e))
+            )
+        |> Task.run
+        |> Result.map (\_ -> "ok")
+        |> orE
+
+
+procReadAfterClose : String
+procReadAfterClose =
+    Process.spawn (Process.command "true")
+        |> Task.andThen (\p -> Process.close p |> Task.andThen (\_ -> Process.readFrom p Stdout 0))
+        |> Task.run
+        |> Result.map (\c -> c.data)
+        |> orE"#
+        }
+        "watch" => {
+            r#"baseName : String -> String
+baseName path =
+    String.split "/" path |> List.reverse |> List.head |> Maybe.withDefault path
+
+
+changeName : Change -> String
+changeName c =
+    case c of
+        Created p ->
+            "C:" ++ baseName p
+
+        Modified p ->
+            "M:" ++ baseName p
+
+        Removed p ->
+            "D:" ++ baseName p
+
+        Renamed a b ->
+            "R:" ++ baseName a ++ ">" ++ baseName b
+
+        Overflow ->
+            "O"
+
+
+orE : Result Error String -> String
+orE r =
+    case r of
+        Ok v ->
+            v
+
+        Err _ ->
+            "E"
+
+
+watchFirst : Watch.Options -> (String -> Task Error ()) -> String
+watchFirst opts act =
+    File.tempDir "sky-corpus-watch"
+        |> Task.andThen
+            (\dir ->
+                Watch.watch [ dir ] (opts |> Watch.withDebounce 30)
+                    |> Task.andThen
+                        (\w ->
+                            act dir
+                                |> Task.andThen (\_ -> Watch.next w)
+                                |> Task.andThen (\cs -> Watch.close w |> Task.map (\_ -> cs))
+                        )
+            )
+        |> Task.run
+        |> Result.map (\cs -> String.join "," (List.map changeName cs))
+        |> orE
+
+
+writeBurst : String -> Task Error ()
+writeBurst dir =
+    File.writeFile (dir ++ "/f.txt") "1"
+        |> Task.andThen (\_ -> File.writeFile (dir ++ "/f.txt") "22")
+        |> Task.andThen (\_ -> File.writeFile (dir ++ "/gone.txt") "x")
+        |> Task.andThen (\_ -> File.remove (dir ++ "/gone.txt"))
+
+
+writeIgnored : String -> Task Error ()
+writeIgnored dir =
+    File.writeFile (dir ++ "/x.swp") "1"
+        |> Task.andThen (\_ -> File.writeFile (dir ++ "/real.txt") "1")
+
+
+writeNested : String -> Task Error ()
+writeNested dir =
+    File.mkdirAll (dir ++ "/sub")
+        |> Task.andThen (\_ -> File.writeFile (dir ++ "/sub/deep.txt") "1")
+
+
+watchRename : String
+watchRename =
+    File.tempDir "sky-corpus-watch"
+        |> Task.andThen
+            (\dir ->
+                File.writeFile (dir ++ "/a.txt") "x"
+                    |> Task.andThen (\_ -> Watch.watch [ dir ] (Watch.defaultOptions |> Watch.withDebounce 30))
+                    |> Task.andThen
+                        (\w ->
+                            File.rename (dir ++ "/a.txt") (dir ++ "/b.txt")
+                                |> Task.andThen (\_ -> Watch.next w)
+                                |> Task.andThen (\cs -> Watch.close w |> Task.map (\_ -> cs))
+                        )
+            )
+        |> Task.run
+        |> Result.map (\cs -> String.join "," (List.map changeName cs))
+        |> orE
+
+
+watchMissing : String
+watchMissing =
+    Watch.watch [ "/definitely/not/here" ] Watch.defaultOptions
+        |> Task.run
+        |> Result.map (\_ -> "ok")
+        |> orE
+
+
+watchAfterClose : String
+watchAfterClose =
+    File.tempDir "sky-corpus-watch"
+        |> Task.andThen (\dir -> Watch.watch [ dir ] Watch.defaultOptions)
+        |> Task.andThen (\w -> Watch.close w |> Task.andThen (\_ -> Watch.next w))
+        |> Task.run
+        |> Result.map (\cs -> String.fromInt (List.length cs))
+        |> orE"#
+        }
         "qr" => {
             r#"tf : Bool -> String
 tf b =
@@ -4947,6 +5316,10 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // asserting a rendered string — which is what makes the `Raw`-node
         // count (the security promise) statable.
         "Std.Ui" => Some("Element(..)"),
+        // The batteries name streams, exit statuses, signals and changes by
+        // their constructors.
+        "Sky.Core.Process" => Some("Stream(..), ExitStatus(..), Signal(..)"),
+        "Std.Watch" => Some("Change(..)"),
         _ => None,
     }
 }

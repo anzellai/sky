@@ -401,7 +401,9 @@ conservative **SERVER** verdict (never client). Since v0.26.2 a third list,
 client, `Sign` only `verify` and public-key import/export, `Kx` only public-key
 import/export; every other member (key derivation, keyed MACs, AEAD, random
 draws, signing, key agreement), and any member added later, is SERVER. `Kdf`,
-`Noise` and `Cpace` are SERVER as a whole. Two enforcement legs:
+`Noise` and `Cpace` are SERVER as a whole, and so (v0.27.0) are `Subprocess`
+(the streaming `Process.spawn` family) and `Watch` (`Std.Watch`): a browser can
+neither spawn a process nor watch a file system. Two enforcement legs:
 
 - **Compile-time completeness test** (`spa_partition::tests::classification_is_exhaustive`):
   enumerates every kernel pseudo-module the compiler knows from the authoritative

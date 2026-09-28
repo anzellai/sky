@@ -186,6 +186,8 @@ pub const SURFACE: Axis = Axis::new(
         "noise",
         "cpace",
         "qr",
+        "process",
+        "watch",
     ],
 );
 

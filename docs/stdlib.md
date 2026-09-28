@@ -934,7 +934,100 @@ result =
         |> Task.andThen (\output -> println output)
 ```
 
-`Process.run` is the entire surface. (`exit`, `getEnv`, `getCwd`, `loadEnv` moved to `System` in v0.10.0.)
+`Process.run` runs a program to completion and returns its stdout. (`exit`,
+`getEnv`, `getCwd`, `loadEnv` moved to `System` in v0.10.0.)
+
+#### Streaming child processes (`Process.spawn`, v0.27.0)
+
+`spawn` starts a long-running child and returns an opaque `Process`. Build the
+command with `command` and the `with*` helpers:
+
+| Builder | Effect |
+|---|---|
+| `command program` | a program path, or a name looked up on `PATH` |
+| `withArgs args` | the arguments |
+| `withEnv pairs` / `withClearEnv` | add variables / start from an empty environment |
+| `withCwd dir` | the working directory |
+| `withPty { cols, rows }` | run on a pseudo-terminal (Linux and macOS) |
+| `withBufferSize bytes` | the output ring size per stream (default 1 MiB) |
+
+Output goes into a bounded ring per stream. Every byte has an absolute offset,
+so a reader keeps its own position and can stop and resume. The child never
+waits for a slow reader: when the ring is full the oldest bytes are
+overwritten, and a reader that asks for them gets `dropped = True`.
+
+```elm
+-- Read stdout to the end: pass each chunk's `next` to the following call.
+readAll : Process -> Int -> String -> Task Error String
+readAll p offset acc =
+    Process.readFrom p Stdout offset
+        |> Task.andThen
+            (\chunk ->
+                if chunk.eof then
+                    Task.succeed (acc ++ chunk.data)
+
+                else
+                    readAll p chunk.next (acc ++ chunk.data)
+            )
+```
+
+| Function | Type |
+|---|---|
+| `spawn` | `Command -> Task Error Process` |
+| `readFrom` | `Process -> Stream -> Int -> Task Error Chunk` (waits for data or end of file) |
+| `readWithin` | `Int -> Process -> Stream -> Int -> Task Error Chunk` (returns an empty chunk after the timeout) |
+| `events` | `Process -> (Event -> msg) -> Sub msg` (`Output Stream Chunk`, then one `Exited ExitStatus`) |
+| `write` / `closeStdin` | `Process -> String -> Task Error ()` / `Process -> Task Error ()` |
+| `resize` | `Process -> { cols : Int, rows : Int } -> Task Error ()` (PTY only; `Err InvalidInput` otherwise) |
+| `kill` | `Process -> Signal -> Task Error ()` (`Interrupt`, `Terminate`, `Kill`, `Hangup`; to the whole process group) |
+| `wait` | `Process -> Task Error ExitStatus` (`ExitCode Int` or `Signalled Int`) |
+| `pid` / `close` | the OS process id / kill if running, release, forget |
+
+`Chunk` is `{ data, from, next, dropped, eof }`. With a PTY all output is one
+merged stream on `Stdout`.
+
+**One consumer mode per process.** Read the output from a Task (`readFrom`,
+`readWithin`) or from a Sub (`events`), not both. The first one used fixes the
+mode: `readFrom` on a process an `events` Sub reads is `Err InvalidInput`, and
+an `events` Sub on a process a Task reads is ignored and logged. `events`
+works in Sky.Live, Sky.Cli, Sky.Tui and Sky.Webview apps; dropping the Sub stops
+delivery, and adding it again continues where it stopped.
+
+**Lifecycle.** The child runs in its own process group; `kill` reaches its
+grandchildren. An exited child is always reaped (no zombies). A child spawned
+from a Sky.Live session is closed when the session ends, and so when its app
+stops (`App.stop`). Every child still running is killed when the program exits.
+A PTY on an OS other than Linux and macOS is `Err Unavailable`.
+
+### `Std.Watch` — file-system change notification (v0.27.0)
+
+```elm
+import Std.Watch as Watch exposing (Change(..))
+
+Watch.watch [ "src" ] (Watch.defaultOptions |> Watch.withRecursive True |> Watch.withIgnore [ ".git", "*.swp" ])
+    |> Task.andThen (\w -> Watch.next w)
+```
+
+| Function | Type |
+|---|---|
+| `watch` | `List String -> Options -> Task Error Watcher` |
+| `next` | `Watcher -> Task Error (List Change)` (waits for the next batch) |
+| `changes` | `Watcher -> (List Change -> msg) -> Sub msg` |
+| `close` | `Watcher -> Task Error ()` |
+
+`Change` is `Created`, `Modified`, `Removed` (a path), `Renamed` (old and new
+path) or `Overflow`. Options: `withRecursive`, `withDebounce ms` (default 50),
+`withIgnore patterns` (a pattern without `/` matches any path component; a
+pattern with `/` matches the path relative to the watched directory).
+
+Changes are coalesced: the runtime waits until the tree is quiet for the
+debounce window and delivers one batch in which each path appears once (a file
+created then written is `Created`; created then deleted is not reported;
+deleted then re-created is `Modified`; a move inside the tree is `Renamed`).
+When the OS queue overflowed, or batches piled up unread, the next batch is
+exactly `[ Overflow ]`: rescan. One consumer mode per watcher, as for
+`Process`. Linux uses inotify and macOS kqueue, both from the Go standard
+library; other systems return `Err Unavailable`.
 
 ### `Db` / `Auth` / `Log`
 
