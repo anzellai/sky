@@ -477,7 +477,7 @@ func TestASecondBootRetunesTheManagedBlock(t *testing.T) {
 	detach := func(sup *pgSupervisor) {
 		sup.stopping.Store(true)
 		if pid, ok := runningPostmaster(sup.cfg.dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 		waitNothingServing(t, sup.cfg.dataDir)
 		_ = os.RemoveAll(sup.cfg.socketDir)

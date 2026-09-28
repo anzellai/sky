@@ -149,7 +149,7 @@ func TestTheSignalHandlerRunsThePhasesInOrder(t *testing.T) {
 	s.installSignalHandler()
 	t.Cleanup(s.detachSignalHandler)
 
-	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+	if err := sysSignalPid(syscall.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatalf("cannot signal this process: %v", err)
 	}
 	select {

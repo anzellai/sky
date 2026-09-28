@@ -1,0 +1,160 @@
+-- | Std.Watch — file-system change notification (Linux and macOS).
+--
+-- Watch files and directories and receive the changes in batches:
+--
+--     Watch.watch [ "src" ] (Watch.defaultOptions |> Watch.withRecursive True)
+--         |> Task.andThen (\w -> Watch.next w)
+--
+-- or, in a TEA app (Sky.Live, Sky.Cli, Sky.Tui, Sky.Webview):
+--
+--     subscriptions model =
+--         case model.watcher of
+--             Just w -> Watch.changes w FilesChanged
+--             Nothing -> Sub.none
+--
+-- Coalescing. Changes arrive in bursts (an editor writes a temp file and
+-- renames it over the original). The runtime waits until the watched tree has
+-- been quiet for the debounce window (50 ms by default) and then delivers one
+-- batch in which each path appears once: a file created and then written is
+-- `Created`; created and then deleted is not reported; deleted and re-created
+-- is `Modified`; moved within the watched tree is `Renamed old new`. A tree
+-- that never goes quiet still gets a batch every ten windows.
+--
+-- Overflow. When the operating system's event queue overflowed, or batches
+-- piled up because nobody read them, some changes were lost. The next batch
+-- is then exactly `[ Overflow ]`: rescan what you watch.
+--
+-- Ignore patterns. A pattern without `/` matches any single path component
+-- (`".git"`, `"*.swp"`, `"node_modules"`); a pattern with `/` matches a path
+-- relative to the watched directory, or a directory above it (`"build/*.o"`).
+-- An ignored directory is not watched at all.
+--
+-- One consumer mode. Read a watcher either with `next` (a Task) or with
+-- `changes` (a Sub). The first one used fixes the mode: `next` on a watcher a
+-- Sub reads returns `Err InvalidInput`, and a `changes` Sub on a watcher a
+-- Task reads is ignored (and logged).
+--
+-- Lifecycle. `close` stops the watcher; a `next` that is waiting then
+-- returns `[]`, and a later `next` returns `Err InvalidInput`.
+-- A watcher started from a Sky.Live session is closed when the session ends.
+-- Other systems than Linux and macOS return `Err Unavailable`.
+module Std.Watch exposing
+    ( Watcher
+    , Change(..)
+    , Options
+    , defaultOptions
+    , withRecursive
+    , withDebounce
+    , withIgnore
+    , watch
+    , next
+    , changes
+    , close
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+
+-- | A running watcher. Opaque.
+type Watcher
+    = Watcher Int
+
+-- | One change. Paths are the watched path joined with the changed entry's
+-- path below it.
+type Change
+    = Created String
+    | Modified String
+    | Removed String
+    | Renamed String String
+    | Overflow
+
+-- | Watch options. Build them from `defaultOptions` with the `with*`
+-- helpers.
+type alias Options =
+    { recursive : Bool
+    , debounceMs : Int
+    , ignore : List String
+    }
+
+
+-- | Not recursive, a 50 ms debounce window, nothing ignored.
+defaultOptions : Options
+defaultOptions =
+    { recursive = False, debounceMs = 50, ignore = [] }
+
+
+-- | Watch every directory below a watched directory, including ones created
+-- later.
+withRecursive : Bool -> Options -> Options
+withRecursive recursive opts =
+    { opts | recursive = recursive }
+
+
+-- | The quiet time in milliseconds before a batch is delivered.
+withDebounce : Int -> Options -> Options
+withDebounce ms opts =
+    { opts | debounceMs = ms }
+
+
+-- | Paths to leave out (see the module notes for the pattern rules).
+withIgnore : List String -> Options -> Options
+withIgnore patterns opts =
+    { opts | ignore = patterns }
+
+
+watchRaw : List String -> Options -> Task Error Int
+watchRaw =
+    Ffi.kernel "Watch_watch"
+
+
+-- | `watch paths options` — start watching. Each path is a directory or a
+-- file. Fails with `NotFound` for a missing path and `Unavailable` on a
+-- system without file watching.
+watch : List String -> Options -> Task Error Watcher
+watch paths opts =
+    Task.map Watcher (watchRaw paths opts)
+
+
+nextRaw : Int -> Task Error (List Change)
+nextRaw =
+    Ffi.kernel "Watch_next"
+
+
+-- | Wait for the next batch of changes. A `next` that is waiting when the
+-- watcher is closed returns `[]`; a `next` after `close` returns
+-- `Err InvalidInput`.
+next : Watcher -> Task Error (List Change)
+next w =
+    case w of
+
+        Watcher raw ->
+            nextRaw raw
+
+
+changesRaw : Int -> (List Change -> msg) -> Sub msg
+changesRaw =
+    Ffi.kernel "Watch_changes"
+
+
+-- | A subscription that delivers each batch as one Msg.
+changes : Watcher -> (List Change -> msg) -> Sub msg
+changes w toMsg =
+    case w of
+
+        Watcher raw ->
+            changesRaw raw toMsg
+
+
+closeRaw : Int -> Task Error ()
+closeRaw =
+    Ffi.kernel "Watch_close"
+
+
+-- | Stop watching. Idempotent.
+close : Watcher -> Task Error ()
+close w =
+    case w of
+
+        Watcher raw ->
+            closeRaw raw

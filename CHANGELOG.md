@@ -313,6 +313,45 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **Streaming child processes: `Process.spawn` (Sky.Core.Process).** Build a
+  command with `Process.command` and `withArgs` / `withEnv` / `withClearEnv` /
+  `withCwd` / `withPty { cols, rows }` / `withBufferSize`, then talk to the
+  child while it runs: `readFrom` / `readWithin` (a Task) or the
+  `Process.events` Sub (a TEA app), `write`, `closeStdin`, `resize` (PTY),
+  `kill` (`Interrupt`, `Terminate`, `Kill`, `Hangup`), `wait`, `pid`,
+  `close`. Output goes into a bounded ring per stream (1 MiB by default)
+  addressed by absolute byte offsets: a slow reader never blocks the child,
+  a reader can resume from any offset, and one that fell behind is told so
+  (`dropped = True`). A process has one output consumer mode (Task or Sub);
+  the second is refused. The child runs in its own process group, so `kill`
+  reaches grandchildren; an exited child is always reaped; a child spawned
+  from a Sky.Live session is closed with the session (and so on `App.stop`),
+  and every child still running is killed when the program exits. A PTY is
+  supported on Linux and macOS; elsewhere `spawn` with a PTY returns
+  `Err Unavailable`. `Process.run` is unchanged.
+- **File watching: `Std.Watch`.** `watch paths options`, then `next` (a
+  Task) or the `changes` Sub, and `close`. Changes are coalesced over a
+  debounce window (50 ms by default) into one batch in which each path
+  appears once (`Created`, `Modified`, `Removed`, `Renamed old new`); an OS
+  queue overflow or an unread backlog gives the batch `[ Overflow ]` (rescan).
+  Options: `withRecursive`, `withDebounce`, `withIgnore`. Linux and macOS;
+  elsewhere `Err Unavailable`.
+- **`Process.events` and `Watch.changes` work in every TEA backend.** A new
+  source subscription leaf runs in Sky.Live and in the single-process loops
+  (Sky.Cli, Sky.Tui, Sky.Webview). When the model stops asking for it the
+  runner stops reading before it releases its source, so no goroutine is
+  left and no Msg arrives after the drop. A Sky.Cli app without input stays
+  alive while such a subscription still runs.
+- **Design decisions (unattended, safest default).** The PTY (posix_openpt,
+  grantpt / unlockpt / ptsname as ioctls) and the watchers (inotify on
+  Linux, kqueue on macOS) use the Go standard library only: `creack/pty` and
+  `fsnotify` would add dependencies for the same system calls, and
+  `fsnotify` is not a dependency of the runtime. Streams are identified by
+  absolute offsets rather than by line so binary and terminal output stay
+  intact. On a PTY, `closeStdin` types Ctrl-D (a terminal has no separate
+  stdin to close). After `close`, a handle is forgotten: later calls on it
+  return `Err InvalidInput`.
+
 - **Crypto primitives: `Std.Crypto.Sign` (Ed25519), `Std.Crypto.Kx`
   (X25519), `Std.Crypto.Kdf` (HKDF-SHA256) and `Crypto.xchachaSeal` /
   `xchachaOpen` (XChaCha20-Poly1305).** Secret keys are opaque
@@ -533,6 +572,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+
+- **A dropped Sky.Live frame from a WebSocket subscription left the page
+  diverged.** When an `onMessage` / `onClose` delivery produced a frame the
+  session's SSE queue could not take, the frame was counted and dropped, but
+  the connections were not marked out of sync, so the browser did not
+  resync (Time.every and Http.Stream deliveries already did). All external
+  subscription deliveries now share one path that marks them.
+- **The runtime did not compile for Windows.** The embedded-PostgreSQL
+  supervisor and the Sky.Tui resize watcher called Unix-only functions
+  (`syscall.Kill`, `Setpgid`, `SIGWINCH`) from shared files, so `sky build`
+  on Windows failed in `go build`. They now go through build-tagged
+  helpers, and a runtime test compiles the package for Windows, wasm, Linux,
+  macOS and FreeBSD.
 
 - **Sky.Spa treated every `Crypto` function as client-safe.** The auto-split
   classified the `Crypto` kernel family as pure as a whole, so key

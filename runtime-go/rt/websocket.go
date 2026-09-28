@@ -1057,34 +1057,9 @@ func (app *liveApp) dispatchOneWsSub(sess *liveSession, reg *wsSubReg, ev wsEven
 		return
 	}
 
-	sess.mu.Lock()
-	prevShipped := sess.lastShippedBody
-	prevTreeBeforeDispatch := sess.prevTree
-	body := app.dispatch(sess, msg)
-	newTreeAfterDispatch := sess.prevTree
-	var snap frameSnapshot
-	var patches []Patch
-	var haveFrame bool
-	if body != "" && body != prevShipped {
-		snap = sess.prepareFrameSnapshot(body)
-		sess.lastShippedBody = body
-		if prevTreeBeforeDispatch != nil && newTreeAfterDispatch != nil {
-			patches = liveDiff(prevTreeBeforeDispatch, newTreeAfterDispatch, nil)
-		}
-		haveFrame = true
-	}
-	sess.mu.Unlock()
-	// L7: persist the model this delivery changed.
-	app.persistSession(sess)
-	if !haveFrame {
-		return
-	}
-	frame := chooseSSEFrame(snap, prevTreeBeforeDispatch, patches)
-	select {
-	case sess.sseCh <- frame:
-	default:
-		recordSseDrop(sess.currentSID())
-	}
+	// Shared dispatch + frame path (live_owned.go): an ingress drop marks
+	// every connection out of sync.
+	app.deliverSubMsg(sess, msg)
 }
 
 // reservedToAvoidUnusedImport — silence the linter for io+strings if

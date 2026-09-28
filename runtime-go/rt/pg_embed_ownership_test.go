@@ -63,7 +63,7 @@ func TestOwnershipAnAdoptedClusterIsNotStopped(t *testing.T) {
 			// Detach before returning: signal.Notify is process-wide, and a
 			// registration left live would also catch the NEXT subtest's signal.
 			defer s.detachSignalHandler()
-			if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+			if err := sysSignalPid(syscall.Getpid(), syscall.SIGTERM); err != nil {
 				t.Fatalf("cannot signal this process: %v", err)
 			}
 			select {
@@ -160,7 +160,7 @@ func TestOwnershipLiveAdoptedClusterSurvivesTheAppThatAdoptedIt(t *testing.T) {
 	t.Cleanup(func() {
 		s.stopPostgres()
 		if pid, ok := runningPostmaster(s.cfg.dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 		_ = os.RemoveAll(s.cfg.socketDir)
 	})
@@ -254,7 +254,7 @@ func TestOwnershipLiveEmbedMigrateAppliesAgainstTheStartedCluster(t *testing.T) 
 	t.Cleanup(func() {
 		s.stopPostgres()
 		if pid, ok := runningPostmaster(s.cfg.dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 		_ = os.RemoveAll(s.cfg.socketDir)
 	})
@@ -352,7 +352,7 @@ func TestOwnershipLiveEmbedMigrateFailureStopsItsClusterToo(t *testing.T) {
 		// Belt and braces: if the property under test is broken, the postmaster
 		// this child left is still running and would outlive the whole suite.
 		if pid, ok := runningPostmaster(dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 	})
 
@@ -428,7 +428,7 @@ func TestOwnershipLiveSystemExitStopsTheEmbeddedCluster(t *testing.T) {
 	out, err := runEmbedChild(t, "sysexit", root, binDir, nil)
 	t.Cleanup(func() {
 		if pid, ok := runningPostmaster(dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 	})
 	if err != nil {

@@ -655,7 +655,7 @@ message).
 | `Char`    | 57    | `isAlpha`/`isDigit`/`isLower`/`isUpper`/`toUpper`/`toLower`/`toCode` (v0.16.7 #419) | Unicode-aware |
 | `Encoding` | 47   | base64/urlEncode/hexEncode + inverses                       | Round-trip pairs |
 | `Path`    | 27    | `base`/`dir`/`ext`/`isAbsolute`                             | OS-aware via filepath |
-| `Process` | 17    | `run` subprocess                                             | Effect; see Task tier |
+| `Process` | 418   | `run`; streaming `spawn` with an output ring, PTY, signals (v0.27.0) | Effect; see Task tier and §2.10a |
 | `Regex`   | 42    | `match`/`find`/`findAll`/`replace`/`split`                  | RE2 backed (Go) — no catastrophic backtracking |
 | `Random`  | 144   | int/float/range/choice/shuffle/weighted; seed variants       | Entropy: crypto/rand for Task tier; splitmix64 for seeded tier |
 | `Uuid`    | 38    | `v4` (random) / `v7` (timestamp-ordered) / `parse`           | RFC 4122 compliant |
@@ -670,6 +670,49 @@ message).
 Algebraic correctness for these is uncontroversial. Effect-tier
 modules inherit Task's contract (failure surfaced; never panics in
 well-typed code).
+
+### 2.10a `Sky.Core.Process` streaming and `Std.Watch` (v0.27.0)
+
+**Invariants**, each with its test (`runtime-go/rt/process_spawn_test.go`,
+`process_live_test.go`, `watch_test.go`; conformance suite `ProcessWatch`;
+corpus Family S surfaces `process`, `watch`; the TEA flow
+`rust/crates/sky/tests/process_watch_tea_flow.rs`):
+
+* **Offsets are absolute and the child never waits for a reader.** Byte `n`
+  of a stream has offset `n` for the life of the process. The ring keeps the
+  last `bufferSize` bytes; a read below the oldest kept byte returns from
+  that byte with `dropped = True`, and `from`/`next` say exactly which bytes
+  were returned. A child that writes past the ring with no reader at all
+  still exits (`TestProcessLargeOutputBeyondTheRingSetsDropped`).
+* **Resumable.** `readFrom p s n` returns the bytes from `n`; a reader that
+  stops and restarts at its `next` loses nothing the ring still holds. An
+  `events` Sub keeps its cursor on the handle, so a dropped and re-added Sub
+  continues rather than replays.
+* **One consumer mode.** Task reads and an `events` Sub never both consume
+  one process (or one watcher); the second mode is `Err InvalidInput` (Task)
+  or refused and logged (Sub).
+* **No zombie, no orphan.** The reaper waits as soon as the child starts
+  (`TestProcessNoZombie`). The child has its own process group and `kill`
+  signals the group (`TestProcessKillReachesGrandchild`). `close`, the end
+  of the owning Sky.Live session (`App.stop` included,
+  `TestAppStopKillsSessionChildrenAndWatchers`) and every runtime exit path
+  (`ExitProcess`, `LogPanicAndExit`, the shutdown drain) kill what still
+  runs.
+* **Subscription teardown: the stream leaves first.** A dropped `events` /
+  `changes` Sub stops reading before it releases its claim; in the
+  single-process loops the manager waits for that before `update` returns
+  (`TestProcessEventsSubTeardownStreamLeavesFirst`), no Msg is sent after
+  the drop, and no goroutine is left (`TestProcessNoGoroutineLeak`,
+  `TestWatchCloseStopsDelivery`).
+* **PTY.** The child sees a terminal of the requested size; `resize`
+  changes what `stty size` reports; `resize` without a PTY is `Err`. Linux
+  and macOS only; elsewhere `Err Unavailable`, never a panic.
+* **Watch coalescing.** Within one debounce window each path appears once:
+  Created+Modified → Created, Created+Removed → nothing, Removed+Created →
+  Modified, a Removed and a Created of one inode (kqueue) or one rename
+  cookie (inotify) → `Renamed` (`TestPendingSetMergeRules`). An OS queue
+  overflow or an unconsumed backlog makes the next batch exactly
+  `[ Overflow ]` (`TestWatchOverflow`).
 
 ---
 

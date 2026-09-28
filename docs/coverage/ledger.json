@@ -264,7 +264,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1271,
+      "expected_assertions": 1295,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -287,7 +287,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 341,
+      "expected_assertions": 364,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -347,7 +347,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 505,
+      "expected_assertions": 510,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -380,7 +380,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 178,
+      "expected_assertions": 179,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -549,7 +549,6 @@
         "[analytics]": "examples/52-blog-analytics"
       },
       "stdlib_modules": {
-        "Sky.Core.Process": "examples/17-skymon",
         "Std.Bundle": "examples/64-app-native"
       }
     },
@@ -589,12 +588,6 @@
         "path": "tests/Core",
         "units": [
           "tests/Core"
-        ]
-      },
-      "Sky.Core.Process": {
-        "path": "examples/17-skymon",
-        "units": [
-          "examples/17-skymon"
         ]
       },
       "Sky.Core.Set": {
@@ -733,13 +726,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2072,
-    "stdlib_modules": 108,
-    "surfaces_covered": 158,
-    "surfaces_covered_pct": 90.8,
-    "surfaces_equal": 21,
-    "surfaces_stronger": 153,
-    "surfaces_total": 174,
+    "stdlib_entries": 2108,
+    "stdlib_modules": 109,
+    "surfaces_covered": 160,
+    "surfaces_covered_pct": 91.4,
+    "surfaces_equal": 20,
+    "surfaces_stronger": 155,
+    "surfaces_total": 175,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -4757,30 +4750,45 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Runs",
+        "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/17-skymon (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 2
+        "strength": 4
       },
       "cover_today": {
-        "class": "Runs",
+        "class": "Asserted",
         "evidence": [
           {
             "by": "examples/17-skymon (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
-        "strength": 2
+        "strength": 3
       },
       "description": "the Sky.Core.Process public API",
       "id": "stdlib.Sky.Core.Process",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "stdlib",
@@ -12665,6 +12673,39 @@
     {
       "category": "stdlib",
       "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Watch public API",
+      "id": "stdlib.Std.Watch",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
         "class": "None",
         "evidence": [],
         "strength": 0
@@ -12885,16 +12926,14 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 8,
+          "count": 6,
           "symbols": [
             "copy",
             "exists",
             "isDir",
             "readDir",
             "readFileBytes",
-            "readFileLimit",
-            "rename",
-            "tempDir"
+            "readFileLimit"
           ]
         },
         "Sky.Core.Http": {
@@ -12956,8 +12995,9 @@
           ]
         },
         "Sky.Core.Process": {
-          "count": 1,
+          "count": 2,
           "symbols": [
+            "pid",
             "run"
           ]
         },
@@ -13896,8 +13936,8 @@
           ]
         }
       },
-      "count": 658,
-      "pct_of_denominator": 31.8
+      "count": 657,
+      "pct_of_denominator": 31.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13963,16 +14003,14 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 8,
+          "count": 6,
           "symbols": [
             "copy",
             "exists",
             "isDir",
             "readDir",
             "readFileBytes",
-            "readFileLimit",
-            "rename",
-            "tempDir"
+            "readFileLimit"
           ]
         },
         "Sky.Core.Http": {
@@ -14041,8 +14079,13 @@
           ]
         },
         "Sky.Core.Process": {
-          "count": 1,
+          "count": 6,
           "symbols": [
+            "Event",
+            "ExitStatus",
+            "Signal",
+            "Stream",
+            "pid",
             "run"
           ]
         },
@@ -15049,6 +15092,12 @@
             "defaultProperty"
           ]
         },
+        "Std.Watch": {
+          "count": 1,
+          "symbols": [
+            "Change"
+          ]
+        },
         "Std.Webview": {
           "count": 7,
           "symbols": [
@@ -15062,8 +15111,8 @@
           ]
         }
       },
-      "count": 740,
-      "pct_of_denominator": 35.7
+      "count": 744,
+      "pct_of_denominator": 35.3
     }
   },
   "units": [
@@ -15083,12 +15132,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 49,
+      "modules_imported": 51,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 316,
-      "refs_qualified": 299,
+      "refs_generous": 331,
+      "refs_qualified": 310,
       "role": "Layer2",
-      "sky_files": 157,
+      "sky_files": 158,
       "sky_toml_sections": []
     },
     {
@@ -16241,12 +16290,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 47,
+      "modules_imported": 49,
       "path": "tests/conformance",
-      "refs_generous": 607,
-      "refs_qualified": 597,
+      "refs_generous": 641,
+      "refs_qualified": 627,
       "role": "Conformance",
-      "sky_files": 37,
+      "sky_files": 38,
       "sky_toml_sections": []
     }
   ]

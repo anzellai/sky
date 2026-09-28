@@ -6,7 +6,16 @@
 // race-with-event-dispatch); the shape here is simpler because there's
 // only one program, one model, one ticker set.
 //
-// Supported leaves: Sub.none, Sub.every, Sub.batch, Sub.subscribeTopic.
+// Supported leaves: Sub.none, Sub.every, Sub.batch, Sub.subscribeTopic, and
+// the source leaves Process.events / Watch.changes (sub_source.go).
+//
+// A source leaf is reconciled by its source key: a leaf still requested
+// keeps its runner (and its position in the stream), with the latest toMsg;
+// a leaf no longer requested is stopped, and the manager WAITS until its
+// runner has stopped reading and released the source before it returns —
+// the stream leaves first, so no runner outlives the Sub and nothing is ever
+// sent to a loop that stopped listening (msgCh is never closed; every send
+// also selects on the runner's stop).
 //
 // Sub.every is RECONCILED, not rebuilt. The identity of a timer is its
 // interval in milliseconds. After every update the manager diffs the
@@ -30,9 +39,15 @@
 package rt
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
+
+// sourceStopWait bounds how long the manager waits for a dropped source
+// runner to stop reading. A runner only blocks on channels that also select
+// on its stop, so this is a backstop, not a normal wait.
+const sourceStopWait = 5 * time.Second
 
 // everyTimer is one running Sub.every ticker. toMsgs holds every Msg (or
 // Msg constructor) currently subscribed on this interval; it is replaced
@@ -57,14 +72,19 @@ func (t *everyTimer) msgs() []any {
 }
 
 type subManager struct {
-	msgCh  chan<- any
-	mu     sync.Mutex
-	timers map[int]*everyTimer
-	topics map[string]any
+	msgCh   chan<- any
+	mu      sync.Mutex
+	timers  map[int]*everyTimer
+	topics  map[string]any
+	sources map[string]*sourceRunner
+	// wake (may be nil) is signalled when a source runner ends on its own,
+	// so a Sky.Cli loop waiting to exit re-checks whether anything is left.
+	wake chan struct{}
 }
 
 func newSubManager(msgCh chan<- any) *subManager {
-	return &subManager{msgCh: msgCh, timers: map[int]*everyTimer{}, topics: map[string]any{}}
+	return &subManager{msgCh: msgCh, timers: map[int]*everyTimer{}, topics: map[string]any{},
+		sources: map[string]*sourceRunner{}}
 }
 
 // update evaluates subscriptions(model) and reconciles the running
@@ -72,11 +92,13 @@ func newSubManager(msgCh chan<- any) *subManager {
 func (m *subManager) update(subsFn, model any) {
 	desiredEvery := map[int][]any{}
 	desiredTopics := map[string]any{}
+	desiredSources := map[string]subT{}
 	if subsFn != nil {
-		collectTeaSubs(SkyCall(subsFn, model), desiredEvery, desiredTopics)
+		collectTeaSubs(SkyCall(subsFn, model), desiredEvery, desiredTopics, desiredSources)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.reconcileSourcesLocked(desiredSources)
 	for ms, t := range m.timers {
 		if _, keep := desiredEvery[ms]; !keep {
 			close(t.cancel)
@@ -98,7 +120,7 @@ func (m *subManager) update(subsFn, model any) {
 // collectTeaSubs flattens a Sub tree into the interval -> Msgs map and the
 // topic -> toMsg map. A repeated topic is last-write-wins (a single
 // decoder per topic, matching Sky.Live).
-func collectTeaSubs(sub any, every map[int][]any, topics map[string]any) {
+func collectTeaSubs(sub any, every map[int][]any, topics map[string]any, sources map[string]subT) {
 	s, ok := sub.(subT)
 	if !ok {
 		return
@@ -112,22 +134,99 @@ func collectTeaSubs(sub any, every map[int][]any, topics map[string]any) {
 		if s.topic != "" {
 			topics[s.topic] = s.toMsg
 		}
+	case "subscribeSource":
+		if s.sourceKey != "" {
+			sources[s.sourceKey] = s
+		}
 	case "batch":
 		for _, item := range s.batch {
-			collectTeaSubs(item, every, topics)
+			collectTeaSubs(item, every, topics, sources)
 		}
 	}
 }
 
-// hasTimers reports whether any Sub.every is currently running. A Sky.Cli
-// program with no input handler stays alive while a timer is requested.
+// reconcileSourcesLocked diffs the running source runners against the
+// desired leaves. Caller holds m.mu. Stopping waits for the runner (it never
+// needs m.mu, so holding the lock here cannot deadlock).
+func (m *subManager) reconcileSourcesLocked(desired map[string]subT) {
+	for key, r := range m.sources {
+		leaf, keep := desired[key]
+		if keep {
+			select {
+			case <-r.done:
+				// Ended on its own; restarted below if still requested.
+				delete(m.sources, key)
+				continue
+			default:
+			}
+			if src, ok := subSourceOf(leaf); ok && src == r.src {
+				r.setToMsg(leaf.toMsg)
+				continue
+			}
+		}
+		r.cancelAndWait(sourceStopWait)
+		delete(m.sources, key)
+	}
+	for key, leaf := range desired {
+		if _, running := m.sources[key]; running {
+			continue
+		}
+		src, ok := subSourceOf(leaf)
+		if !ok {
+			continue
+		}
+		msgCh := m.msgCh
+		wake := m.wake
+		r, err := startSourceRunner(key, src, leaf.toMsg,
+			func(msg any, stop <-chan struct{}) bool {
+				select {
+				case msgCh <- msg:
+					return true
+				case <-stop:
+					return false
+				}
+			},
+			func() {
+				if wake != nil {
+					select {
+					case wake <- struct{}{}:
+					default:
+					}
+				}
+			})
+		if err != nil {
+			k := key
+			logOnce("tea-source-sub-refused-"+k, func() {
+				fmt.Printf("[sky.sub] subscription %s ignored: %v\n", k, err)
+			})
+			continue
+		}
+		m.sources[key] = r
+	}
+}
+
+// hasTimers reports whether any Sub.every, or any source subscription that
+// has not ended (a process still running, a watcher still open), is active.
+// A Sky.Cli program with no input handler stays alive while one is.
 func (m *subManager) hasTimers() bool {
 	if m == nil {
 		return false
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.timers) > 0
+	if len(m.timers) > 0 {
+		return true
+	}
+	for _, r := range m.sources {
+		if !r.isFinished() {
+			select {
+			case <-r.done:
+			default:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // topicHandler returns the toMsg subscribed on topic, or nil.
@@ -151,6 +250,10 @@ func (m *subManager) stopAll() {
 		delete(m.timers, ms)
 	}
 	m.topics = map[string]any{}
+	for key, r := range m.sources {
+		r.cancelAndWait(sourceStopWait)
+		delete(m.sources, key)
+	}
 }
 
 func (m *subManager) spawnEvery(ms int, t *everyTimer) {

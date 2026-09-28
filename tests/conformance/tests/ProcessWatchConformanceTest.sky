@@ -1,0 +1,431 @@
+module ProcessWatchConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the streaming Sky.Core.Process surface (spawn,
+-- the offset-addressed output ring, stdin, PTY, signals, exit status) and for
+-- Std.Watch (create / modify / rename / coalescing / ignore / close), through
+-- the compiled Sky surface. The Go runtime tests (runtime-go/rt
+-- process_spawn_test.go, watch_test.go) cover the lifecycle cases a Sky test
+-- cannot observe: no zombie, the kill reaching a grandchild, no goroutine left
+-- after close, and the Sub teardown order.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error
+import Sky.Core.File as File
+import Sky.Core.List as List
+import Sky.Core.Process as Process exposing (ExitStatus(..), Signal(..), Stream(..))
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Watch as Watch exposing (Change(..))
+import Sky.Test as Test exposing (Test)
+
+
+-- ─── Process helpers ───────────────────────────────────────────────
+shell : String -> Process.Command
+shell script =
+    Process.command "/bin/sh" |> Process.withArgs [ "-c", script ]
+
+
+-- Read a stream from `offset` to end of file.
+readAll : Process.Process -> Stream -> Int -> String -> Task Error String
+readAll p stream offset acc =
+    Process.readFrom p stream offset
+        |> Task.andThen
+               (\chunk ->
+                   if chunk.eof then
+                       Task.succeed (acc ++ chunk.data)
+
+                   else
+                       readAll p stream chunk.next (acc ++ chunk.data))
+
+
+-- Spawn, read one stream to the end, close.
+outputOf : Stream -> Process.Command -> Result Error String
+outputOf stream cmd =
+    Task.run
+        (Process.spawn cmd
+            |> Task.andThen
+                   (\p ->
+                       readAll p stream 0 ""
+                           |> Task.andThen
+                                  (\out ->
+                                      Process.close p |> Task.map (\_ -> out))))
+
+
+exitOf : Process.Command -> Result Error ExitStatus
+exitOf cmd =
+    Task.run (Process.spawn cmd |> Task.andThen Process.wait)
+
+
+catRoundTrip : Result Error String
+catRoundTrip =
+    Task.run
+        (Process.spawn (Process.command "cat")
+            |> Task.andThen
+                   (\p ->
+                       Process.write p "hello\n"
+                           |> Task.andThen (\_ -> Process.write p "world\n")
+                           |> Task.andThen (\_ -> Process.closeStdin p)
+                           |> Task.andThen (\_ -> readAll p Stdout 0 "")))
+
+
+writeAfterClose : Result Error ()
+writeAfterClose =
+    Task.run
+        (Process.spawn (Process.command "cat")
+            |> Task.andThen
+                   (\p ->
+                       Process.closeStdin p
+                           |> Task.andThen (\_ -> Process.write p "late")))
+
+
+killed : Result Error ExitStatus
+killed =
+    Task.run
+        (Process.spawn (Process.command "sleep" |> Process.withArgs [ "30" ])
+            |> Task.andThen
+                   (\p ->
+                       Process.kill p Terminate
+                           |> Task.andThen (\_ -> Process.wait p)))
+
+
+-- 30,000 lines of 6 bytes into a 4 KiB ring: reading offset 0 after the
+-- child exited reports the loss and starts at the oldest byte kept.
+overflowed : Result Error ( Bool, Int, Int )
+overflowed =
+    Task.run
+        (Process.spawn
+            (shell "awk 'BEGIN{for(i=0;i<30000;i++) printf \"%05d\\n\", i}'"
+                |> Process.withBufferSize 4096)
+            |> Task.andThen
+                   (\p ->
+                       Process.wait p
+                           |> Task.andThen
+                                  (\_ ->
+                                      readAll p Stdout 0 ""
+                                          |> Task.map (\_ -> ()))
+                           |> Task.andThen
+                                  (\_ -> Process.readWithin 1000 p Stdout 0)
+                           |> Task.map (\c -> ( c.dropped, c.from, c.next ))))
+
+
+resumeAt : Int -> Result Error String
+resumeAt offset =
+    Task.run
+        (Process.spawn (shell "printf 0123456789")
+            |> Task.andThen
+                   (\p ->
+                       Process.wait p
+                           |> Task.andThen (\_ -> readAll p Stdout offset "")))
+
+
+-- A quiet process: readWithin returns an empty chunk that stays at the offset.
+quietRead : Result Error ( String, Int, Bool )
+quietRead =
+    Task.run
+        (Process.spawn (Process.command "sleep" |> Process.withArgs [ "30" ])
+            |> Task.andThen
+                   (\p ->
+                       Process.readWithin 50 p Stdout 0
+                           |> Task.andThen
+                                  (\c ->
+                                      Process.close p
+                                          |> Task.map
+                                                 (\_ -> ( c.data, c.next, c.eof )))))
+
+
+readAfterClose : Result Error Process.Chunk
+readAfterClose =
+    Task.run
+        (Process.spawn (Process.command "true")
+            |> Task.andThen
+                   (\p ->
+                       Process.close p
+                           |> Task.andThen (\_ -> Process.readFrom p Stdout 0)))
+
+
+resizeWithoutPty : Result Error ()
+resizeWithoutPty =
+    Task.run
+        (Process.spawn (Process.command "cat")
+            |> Task.andThen
+                   (\p ->
+                       Process.resize p { cols = 10, rows = 10 }
+                           |> Task.onError
+                                  (\e ->
+                                      Process.close p
+                                          |> Task.andThen (\_ -> Task.fail e))))
+
+
+ptyResized : Result Error String
+ptyResized =
+    Task.run
+        (Process.spawn
+            (shell "read x; stty size"
+                |> Process.withPty { cols = 80, rows = 24 })
+            |> Task.andThen
+                   (\p ->
+                       Process.resize p { cols = 100, rows = 40 }
+                           |> Task.andThen (\_ -> Process.write p "go\n")
+                           |> Task.andThen (\_ -> readAll p Stdout 0 "")))
+
+
+contains : String -> Result Error String -> Bool
+contains needle result =
+    case result of
+
+        Ok s ->
+            String.contains needle s
+
+        Err _ ->
+            False
+
+
+-- ─── Watch helpers ─────────────────────────────────────────────────
+fastOptions : Watch.Options
+fastOptions =
+    Watch.defaultOptions |> Watch.withDebounce 30
+
+
+changeText : Change -> String
+changeText c =
+    case c of
+
+        Created p ->
+            "Created " ++ baseName p
+
+        Modified p ->
+            "Modified " ++ baseName p
+
+        Removed p ->
+            "Removed " ++ baseName p
+
+        Renamed a b ->
+            "Renamed " ++ baseName a ++ " " ++ baseName b
+
+        Overflow ->
+            "Overflow"
+
+
+baseName : String -> String
+baseName path =
+    String.split "/" path |> List.reverse |> List.head |> Maybe.withDefault path
+
+
+-- Start a watcher on a fresh temp dir, run `act dir`, return the first batch.
+firstBatch : Watch.Options -> (String -> Task Error ()) -> Result Error (List String)
+firstBatch opts act =
+    Task.run
+        (File.tempDir "sky-watch-conf"
+            |> Task.andThen
+                   (\dir ->
+                       Watch.watch [ dir ] opts
+                           |> Task.andThen
+                                  (\w ->
+                                      act dir
+                                          |> Task.andThen (\_ -> Watch.next w)
+                                          |> Task.andThen
+                                                 (\cs ->
+                                                     Watch.close w
+                                                         |> Task.map
+                                                                (\_ ->
+                                                                    List.map
+                                                                        changeText
+                                                                        cs)))))
+
+
+renamed : Result Error (List String)
+renamed =
+    Task.run
+        (File.tempDir "sky-watch-conf"
+            |> Task.andThen
+                   (\dir ->
+                       File.writeFile (dir ++ "/a.txt") "x"
+                           |> Task.andThen
+                                  (\_ -> Watch.watch [ dir ] fastOptions)
+                           |> Task.andThen
+                                  (\w ->
+                                      File.rename
+                                          (dir ++ "/a.txt")
+                                          (dir ++ "/b.txt")
+                                          |> Task.andThen (\_ -> Watch.next w)
+                                          |> Task.andThen
+                                                 (\cs ->
+                                                     Watch.close w
+                                                         |> Task.map
+                                                                (\_ ->
+                                                                    List.map
+                                                                        changeText
+                                                                        cs)))))
+
+
+nextAfterClose : Result Error (List Change)
+nextAfterClose =
+    Task.run
+        (File.tempDir "sky-watch-conf"
+            |> Task.andThen (\dir -> Watch.watch [ dir ] fastOptions)
+            |> Task.andThen
+                   (\w -> Watch.close w |> Task.andThen (\_ -> Watch.next w)))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "process: write, closeStdin and read back through cat"
+          (\_ -> Test.equal (Ok "hello\nworld\n") catRoundTrip)
+    , Test.test
+          "process: stdout and stderr are separate streams"
+          (\_ ->
+              Test.equal
+                  (Ok ( "out\n", "err\n" ))
+                  (Result.map2
+                      (\a b -> ( a, b ))
+                      (outputOf Stdout (shell "echo out; echo err 1>&2"))
+                      (outputOf Stderr (shell "echo out; echo err 1>&2"))))
+    , Test.test
+          "process: the exit code is reported"
+          (\_ -> Test.equal (Ok (ExitCode 3)) (exitOf (shell "exit 3")))
+    , Test.test
+          "process: kill Terminate ends the child with SIGTERM"
+          (\_ -> Test.equal (Ok (Signalled 15)) killed)
+    , Test.test
+          "process: output beyond the ring sets dropped and starts at the oldest byte kept"
+          (\_ -> Test.equal (Ok ( True, 180000 - 4096, 180000 )) overflowed)
+    , Test.test
+          "process: a reader resumes from any offset"
+          (\_ -> Test.equal (Ok "56789") (resumeAt 5))
+    , Test.test
+          "process: readWithin on a quiet child returns an empty chunk at the same offset"
+          (\_ -> Test.equal (Ok ( "", 0, False )) quietRead)
+    , Test.test
+          "process: withEnv adds a variable"
+          (\_ ->
+              Test.equal
+                  (Ok "bar\n")
+                  (outputOf
+                      Stdout
+                      (shell "echo $SKY_CONF_VAR"
+                          |> Process.withEnv [ ( "SKY_CONF_VAR", "bar" ) ])))
+    , Test.test
+          "process: withClearEnv leaves only the added variables"
+          (\_ ->
+              Test.equal
+                  (Ok "ONLY=1\n")
+                  (outputOf
+                      Stdout
+                      (Process.command "/usr/bin/env" |> Process.withClearEnv
+                          |> Process.withEnv [ ( "ONLY", "1" ) ])))
+    , Test.test
+          "process: withCwd sets the working directory"
+          (\_ ->
+              Test.equal
+                  (Ok "/\n")
+                  (outputOf Stdout (shell "pwd" |> Process.withCwd "/")))
+    , Test.test
+          "process: a missing program is Err NotFound"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.NotFound
+                  (exitOf (Process.command "/definitely/not/a/program")))
+    , Test.test
+          "process: write after closeStdin is Err InvalidInput"
+          (\_ -> Test.expectErrorKind Error.InvalidInput writeAfterClose)
+    , Test.test
+          "process: a closed handle is forgotten (Err InvalidInput)"
+          (\_ -> Test.expectErrorKind Error.InvalidInput readAfterClose)
+    , Test.test
+          "process: resize without a PTY is Err InvalidInput"
+          (\_ -> Test.expectErrorKind Error.InvalidInput resizeWithoutPty)
+    , Test.test
+          "process: a PTY child sees a terminal of the given size"
+          (\_ ->
+              Test.isTrue
+                  (contains
+                      "30 90"
+                      (outputOf
+                          Stdout
+                          (shell "stty size"
+                              |> Process.withPty { cols = 90, rows = 30 }))))
+    , Test.test
+          "process: a PTY child is on a tty"
+          (\_ ->
+              Test.isTrue
+                  (contains
+                      "/dev/"
+                      (outputOf
+                          Stdout
+                          (Process.command "tty"
+                              |> Process.withPty { cols = 80, rows = 24 }))))
+    , Test.test
+          "process: resize changes the PTY size the child sees"
+          (\_ -> Test.isTrue (contains "40 100" ptyResized))
+    , Test.test
+          "watch: a missing path is Err NotFound"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.NotFound
+                  (Task.run (Watch.watch [ "/definitely/not/here" ] fastOptions)))
+    , Test.test
+          "watch: a new file is Created, once, after a burst of writes"
+          (\_ ->
+              Test.equal
+                  (Ok [ "Created f.txt" ])
+                  (firstBatch
+                      fastOptions
+                      (\dir ->
+                          File.writeFile (dir ++ "/f.txt") "1"
+                              |> Task.andThen
+                                     (\_ -> File.writeFile (dir ++ "/f.txt") "22")
+                              |> Task.andThen
+                                     (\_ ->
+                                         File.writeFile (dir ++ "/f.txt") "333"))))
+    , Test.test
+          "watch: a file created and removed inside the window is not reported"
+          (\_ ->
+              Test.equal
+                  (Ok [ "Created keep.txt" ])
+                  (firstBatch
+                      fastOptions
+                      (\dir ->
+                          File.writeFile (dir ++ "/gone.txt") "1"
+                              |> Task.andThen
+                                     (\_ -> File.remove (dir ++ "/gone.txt"))
+                              |> Task.andThen
+                                     (\_ ->
+                                         File.writeFile (dir ++ "/keep.txt") "1"))))
+    , Test.test
+          "watch: an ignored pattern is left out"
+          (\_ ->
+              Test.equal
+                  (Ok [ "Created real.txt" ])
+                  (firstBatch
+                      (fastOptions |> Watch.withIgnore [ "*.swp" ])
+                      (\dir ->
+                          File.writeFile (dir ++ "/x.swp") "1"
+                              |> Task.andThen
+                                     (\_ ->
+                                         File.writeFile (dir ++ "/real.txt") "1"))))
+    , Test.test
+          "watch: recursive reports a file in a new subdirectory"
+          (\_ ->
+              Test.equal
+                  (Ok [ "Created sub", "Created deep.txt" ])
+                  (firstBatch
+                      (fastOptions |> Watch.withRecursive True)
+                      (\dir ->
+                          File.mkdirAll (dir ++ "/sub")
+                              |> Task.andThen
+                                     (\_ ->
+                                         File.writeFile
+                                             (dir ++ "/sub/deep.txt")
+                                             "1"))))
+    , Test.test
+          "watch: a rename inside the tree is one Renamed"
+          (\_ -> Test.equal (Ok [ "Renamed a.txt b.txt" ]) renamed)
+    , Test.test
+          "watch: next after close is Err InvalidInput"
+          (\_ -> Test.expectErrorKind Error.InvalidInput nextAfterClose)
+    ]
+
+
+main =
+    Test.runMain tests

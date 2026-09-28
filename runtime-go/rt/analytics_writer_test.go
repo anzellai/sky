@@ -261,7 +261,7 @@ func liveAnalyticsCluster(t *testing.T, name string) string {
 		// to exit the process, which would take the test binary with it.
 		s.stopping.Store(true)
 		if pid, ok := runningPostmaster(s.cfg.dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 		_ = os.RemoveAll(s.cfg.socketDir)
 	})

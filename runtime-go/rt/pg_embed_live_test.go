@@ -139,7 +139,7 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 	defer func() {
 		detach(s)
 		if pid, ok := runningPostmaster(s.cfg.dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 	}()
 
@@ -160,9 +160,9 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 
 	// The postmaster must be in its own process group, so a Ctrl-C delivered to
 	// the app's group does not reach it.
-	if pgid, err := syscall.Getpgid(pid); err != nil {
+	if pgid, err := testGetpgid(pid); err != nil {
 		t.Errorf("cannot read the postmaster's process group: %v", err)
-	} else if pgid == syscall.Getpgrp() {
+	} else if pgid == testGetpgrp() {
 		t.Error("the postmaster shares the app's process group")
 	}
 
@@ -228,7 +228,7 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 	// SIGKILL the whole group, exactly as a `kill -9` on the tree would.
 	detach(s)
 	detach(second)
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+	if err := sysSignalPid(-pid, syscall.SIGKILL); err != nil {
 		t.Fatalf("cannot kill the cluster: %v", err)
 	}
 	waitGone(t, pid)
@@ -300,7 +300,7 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 	third.exitFn = func(code int) { exited <- code }
 	third.installSignalHandler()
 	defer third.detachSignalHandler()
-	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+	if err := sysSignalPid(syscall.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatalf("cannot signal this process: %v", err)
 	}
 	select {
@@ -351,7 +351,7 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 		detach(fourth)
 		fourth.stopPostgres()
 		if pid, ok := runningPostmaster(fourth.cfg.dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 	})
 	logAfter, err := os.ReadFile(fourth.cfg.logPath)
@@ -405,7 +405,7 @@ func TestLiveABootThatFailsAfterTheSpawnStopsWhatItStarted(t *testing.T) {
 	t.Cleanup(func() {
 		s.stopping.Store(true)
 		if pid, ok := runningPostmaster(s.cfg.dataDir); ok {
-			_ = syscall.Kill(pid, syscall.SIGQUIT)
+			_ = sysSignalPid(pid, syscall.SIGQUIT)
 		}
 		_ = os.RemoveAll(s.cfg.socketDir)
 	})
@@ -593,7 +593,7 @@ func TestDeadPostmasterExitsTheAppNonZero(t *testing.T) {
 
 func childFakeDeadPostmaster() {
 	cmd := exec.Command("/bin/sh", "-c", "exit 7")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = procSysAttr(false) // own process group
 	if err := cmd.Start(); err != nil {
 		os.Stderr.WriteString("child: cannot start the stand-in: " + err.Error() + "\n")
 		os.Exit(9)
@@ -646,7 +646,7 @@ func childLiveDeadPostmaster() {
 	}
 	// The disk fails, the OOM killer arrives, the cluster is corrupt: the
 	// postmaster goes away and the app did not ask it to.
-	_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
+	_ = sysSignalPid(-s.cmd.Process.Pid, syscall.SIGKILL)
 	time.Sleep(30 * time.Second) // watchChild should exit(1) long before this
 	os.Stderr.WriteString("child: still serving 30s after the database died\n")
 	os.Exit(9)

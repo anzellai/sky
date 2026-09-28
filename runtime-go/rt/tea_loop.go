@@ -46,7 +46,7 @@ type teaLoop struct {
 }
 
 func newTeaLoop(msgCh chan any, updateFn, guardFn any, dur *durableCtx) *teaLoop {
-	return &teaLoop{
+	l := &teaLoop{
 		msgCh:    msgCh,
 		subs:     newSubManager(msgCh),
 		updateFn: updateFn,
@@ -54,6 +54,8 @@ func newTeaLoop(msgCh chan any, updateFn, guardFn any, dur *durableCtx) *teaLoop
 		dur:      dur,
 		wake:     make(chan struct{}, 1),
 	}
+	l.subs.wake = l.wake
+	return l
 }
 
 func (l *teaLoop) effectDone() {

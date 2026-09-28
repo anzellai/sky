@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 174 |
-| covered by the new corpus (>= Asserted) | 158 |
-| verdict `stronger` | 153 |
-| verdict `equal` | 21 |
+| surfaces | 175 |
+| covered by the new corpus (>= Asserted) | 160 |
+| verdict `stronger` | 155 |
+| verdict `equal` | 20 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
-| stdlib modules (denominator) | 108 |
-| stdlib entries (denominator) | 2072 |
+| stdlib modules (denominator) | 109 |
+| stdlib entries (denominator) | 2108 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 8.3% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 740 | 35.7% |
-| symbols unreferenced under the generous rule | 658 | 31.8% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 744 | 35.3% |
+| symbols unreferenced under the generous rule | 657 | 31.2% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -61,16 +61,15 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 23 |
-| stdlib modules owned by exactly one unit of any role | 24 |
+| stdlib modules owned by exactly one unit of any role | 23 |
 | sky.toml sections owned by exactly one unit | 2 |
-| **lost if `examples/` retired** — modules | **2** |
+| **lost if `examples/` retired** — modules | **1** |
 | **lost if `examples/` retired** — config sections | **1** |
 
 ### Modules lost if `examples/` is retired
 
 | module | sole owner |
 |---|---|
-| `Sky.Core.Process` | `examples/17-skymon` |
 | `Std.Bundle` | `examples/64-app-native` |
 
 ### Config sections lost if `examples/` is retired
@@ -174,7 +173,7 @@ None.
 | `stdlib.Sky.Core.Math` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Maybe` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Path` | stdlib | None | Falsified | stronger |
-| `stdlib.Sky.Core.Process` | stdlib | Runs | Runs | equal |
+| `stdlib.Sky.Core.Process` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Pure` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Random` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Regex` | stdlib | Asserted | Falsified | stronger |
@@ -261,6 +260,7 @@ None.
 | `stdlib.Std.Ui.Responsive` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ui.Transform` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ui.Transition` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Watch` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Webview` | stdlib | None | None | equal |
 | `ui.cross-backend` | ui | Asserted | Falsified | stronger |
 | `ui.tui` | ui | Runs | Falsified | stronger |

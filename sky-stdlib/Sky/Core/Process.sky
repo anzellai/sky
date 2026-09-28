@@ -1,11 +1,77 @@
 -- | Sky.Core.Process — subprocess execution (Layer 3 Sky source).
 --
--- v0.10.0 shrunk the Process surface to just subprocess execution —
--- env / cwd / args / exit moved to `Sky.Core.System`.
-module Sky.Core.Process exposing (run)
+-- Two ways to run a program:
+--
+--   * `run program args` — run to completion and return stdout. The simple
+--     case: a short command whose whole output you want.
+--   * `spawn command` — start a long-running child and talk to it while it
+--     runs: stream its output, write to its stdin, resize its terminal,
+--     signal it, wait for it.
+--
+-- Streaming output. Each output stream (stdout, stderr) is kept in a bounded
+-- ring (1 MiB by default, `withBufferSize`). Every byte has an absolute
+-- offset: the first byte is 0. A reader asks for the bytes from an offset
+-- and gets a `Chunk` with the data, the offset to ask for next, and
+-- `dropped = True` when it fell so far behind that the ring overwrote bytes
+-- it had not read. The child never waits for a slow reader.
+--
+-- One consumer mode per process. Read the output either from a Task
+-- (`readFrom` / `readWithin`) or from a TEA subscription (`events`), not
+-- both: the first one used fixes the mode for the life of the process.
+-- `readFrom` on a process an `events` Sub reads returns `Err InvalidInput`;
+-- an `events` Sub on a process a Task reads is ignored (and logged). `wait`
+-- is not a consumer and works in either mode.
+--
+-- PTY (Linux and macOS): `withPty { cols, rows }` runs the child on a
+-- pseudo-terminal, so it sees a TTY (colours, line editing, full-screen
+-- programs). Its output then arrives as one merged stream on `Stdout`;
+-- `Stderr` is empty. `resize` changes the terminal size. On other systems a
+-- PTY spawn returns `Err Unavailable`.
+--
+-- Lifecycle. The child runs in its own process group, and `kill` signals the
+-- whole group, so grandchildren stop too. An exited child is always reaped
+-- (no zombies). `close` kills a running child and forgets the handle. A
+-- child spawned from a Sky.Live session is closed when the session ends
+-- (and so when its app stops); every child still running is killed when the
+-- program exits.
+--
+--     Process.command "make"
+--         |> Process.withArgs [ "test" ]
+--         |> Process.withCwd "/srv/app"
+--         |> Process.spawn
+--         |> Task.andThen (\p -> Process.wait p)
+module Sky.Core.Process exposing
+    ( run
+    , Process
+    , Command
+    , Stream(..)
+    , Chunk
+    , Event(..)
+    , ExitStatus(..)
+    , Signal(..)
+    , command
+    , withArgs
+    , withEnv
+    , withClearEnv
+    , withCwd
+    , withPty
+    , withBufferSize
+    , spawn
+    , readFrom
+    , readWithin
+    , events
+    , write
+    , closeStdin
+    , resize
+    , kill
+    , wait
+    , pid
+    , close
+    )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
 
 
 -- | `run command args` — execute a subprocess, return its stdout.
@@ -13,3 +79,340 @@ import Sky.Core.Error exposing (Error)
 run : String -> List String -> Task Error String
 run =
     Ffi.kernel "Process_run"
+
+-- | A running (or finished) child process. Opaque.
+type Process
+    = Process Int
+
+-- | What to run. Build it with `command` and the `with*` helpers.
+type Command
+    = Command CommandSpec
+
+type alias CommandSpec =
+    { program : String
+    , args : List String
+    , env : List ( String, String )
+    , clearEnv : Bool
+    , cwd : String
+    , pty : Bool
+    , ptyCols : Int
+    , ptyRows : Int
+    , bufferSize : Int
+    }
+
+-- | An output stream. With a PTY all output is on `Stdout`.
+type Stream
+    = Stdout
+    | Stderr
+
+-- | Output read from one stream.
+--
+--   * `data` — the bytes, in order (at most 64 KiB per chunk).
+--   * `from` — the offset of the first byte of `data`. It is later than the
+--     offset you asked for only when `dropped` is `True`.
+--   * `next` — the offset to ask for next.
+--   * `dropped` — bytes between the offset you asked for and `from` were
+--     overwritten before you read them (the reader fell behind the ring).
+--   * `eof` — the stream has ended and `next` is its final offset.
+type alias Chunk =
+    { data : String
+    , from : Int
+    , next : Int
+    , dropped : Bool
+    , eof : Bool
+    }
+
+-- | What an `events` subscription delivers: output in order, then one
+-- `Exited` after the child exited and its output was delivered.
+type Event
+    = Output Stream Chunk
+    | Exited ExitStatus
+
+-- | How the child ended: its exit code, or the number of the signal that
+-- terminated it.
+type ExitStatus
+    = ExitCode Int
+    | Signalled Int
+
+-- | A signal for `kill`. `Kill` cannot be caught; `Terminate` asks the child
+-- to exit; `Interrupt` is Ctrl-C; `Hangup` is a closed terminal. On Windows
+-- only `Kill` is delivered; the others return `Err`.
+type Signal
+    = Interrupt
+    | Terminate
+    | Kill
+    | Hangup
+
+
+-- | `command program` — run `program` (a path, or a name looked up on
+-- `PATH`) with no arguments, the parent's environment and working
+-- directory, plain pipes, and a 1 MiB output ring per stream.
+command : String -> Command
+command program =
+    Command
+        { program = program
+        , args = []
+        , env = []
+        , clearEnv = False
+        , cwd = ""
+        , pty = False
+        , ptyCols = 0
+        , ptyRows = 0
+        , bufferSize = 0
+        }
+
+
+-- | Set the arguments (replaces any set before).
+withArgs : List String -> Command -> Command
+withArgs args cmd =
+    case cmd of
+
+        Command spec ->
+            Command { spec | args = args }
+
+
+-- | Add environment variables. A name that is already set is replaced.
+withEnv : List ( String, String ) -> Command -> Command
+withEnv pairs cmd =
+    case cmd of
+
+        Command spec ->
+            Command { spec | env = spec.env ++ pairs }
+
+
+-- | Start from an empty environment instead of the parent's: the child sees
+-- only the variables added with `withEnv`.
+withClearEnv : Command -> Command
+withClearEnv cmd =
+    case cmd of
+
+        Command spec ->
+            Command { spec | clearEnv = True }
+
+
+-- | Run the child in this working directory.
+withCwd : String -> Command -> Command
+withCwd dir cmd =
+    case cmd of
+
+        Command spec ->
+            Command { spec | cwd = dir }
+
+
+-- | Run the child on a pseudo-terminal of this size (Linux and macOS).
+withPty : { cols : Int
+, rows : Int
+} -> Command -> Command
+withPty size cmd =
+    case cmd of
+
+        Command spec ->
+            Command
+                { spec | pty = True, ptyCols = size.cols, ptyRows = size.rows }
+
+
+-- | Keep this many bytes of each output stream (default 1 MiB).
+withBufferSize : Int -> Command -> Command
+withBufferSize bytes cmd =
+    case cmd of
+
+        Command spec ->
+            Command { spec | bufferSize = bytes }
+
+
+spawnRaw : CommandSpec -> Task Error Int
+spawnRaw =
+    Ffi.kernel "Subprocess_spawn"
+
+
+-- | `spawn command` — start the child. Fails with `NotFound` when the
+-- program does not exist, `InvalidInput` for an empty program name or a
+-- PTY without a size, and `Unavailable` when a PTY is not supported here.
+spawn : Command -> Task Error Process
+spawn cmd =
+    case cmd of
+
+        Command spec ->
+            Task.map Process (spawnRaw spec)
+
+
+streamToInt : Stream -> Int
+streamToInt stream =
+    case stream of
+
+        Stdout ->
+            0
+
+        Stderr ->
+            1
+
+
+readFromRaw : Int -> Int -> Int -> Task Error Chunk
+readFromRaw =
+    Ffi.kernel "Subprocess_readFrom"
+
+
+-- | `readFrom process stream offset` — the output of `stream` from `offset`
+-- on. Waits until there is at least one byte to return or the stream ends.
+-- Start at 0 and pass each chunk's `next` to the following call; stop when
+-- `eof` is `True`. A negative offset reads from the oldest byte the ring
+-- still holds. `Err InvalidInput` when an `events` Sub reads this process.
+readFrom : Process -> Stream -> Int -> Task Error Chunk
+readFrom proc stream offset =
+    case proc of
+
+        Process raw ->
+            readFromRaw raw (streamToInt stream) offset
+
+
+readWithinRaw : Int -> Int -> Int -> Int -> Task Error Chunk
+readWithinRaw =
+    Ffi.kernel "Subprocess_readWithin"
+
+
+-- | `readWithin ms process stream offset` — `readFrom`, but return after
+-- `ms` milliseconds even when nothing arrived (an empty chunk whose `next`
+-- is the offset you passed).
+readWithin : Int -> Process -> Stream -> Int -> Task Error Chunk
+readWithin ms proc stream offset =
+    case proc of
+
+        Process raw ->
+            readWithinRaw ms raw (streamToInt stream) offset
+
+
+eventsRaw : Int -> (Event -> msg) -> Sub msg
+eventsRaw =
+    Ffi.kernel "Subprocess_events"
+
+
+-- | `events process toMsg` — a subscription that delivers the output as it
+-- arrives (`Output`), then `Exited` once. Dropping the subscription stops
+-- delivery; adding it again continues where it stopped (nothing is
+-- replayed). Works in Sky.Live, Sky.Cli, Sky.Tui and Sky.Webview apps.
+events : Process -> (Event -> msg) -> Sub msg
+events proc toMsg =
+    case proc of
+
+        Process raw ->
+            eventsRaw raw toMsg
+
+
+writeRaw : Int -> String -> Task Error ()
+writeRaw =
+    Ffi.kernel "Subprocess_write"
+
+
+-- | Write to the child's stdin (with a PTY: type into its terminal).
+write : Process -> String -> Task Error ()
+write proc data =
+    case proc of
+
+        Process raw ->
+            writeRaw raw data
+
+
+closeStdinRaw : Int -> Task Error ()
+closeStdinRaw =
+    Ffi.kernel "Subprocess_closeStdin"
+
+
+-- | Close the child's stdin, so it reads end of file. With a PTY this types
+-- the terminal's end-of-file character (Ctrl-D).
+closeStdin : Process -> Task Error ()
+closeStdin proc =
+    case proc of
+
+        Process raw ->
+            closeStdinRaw raw
+
+
+resizeRaw : Int -> Int -> Int -> Task Error ()
+resizeRaw =
+    Ffi.kernel "Subprocess_resize"
+
+
+-- | Change the PTY size. `Err InvalidInput` without a PTY.
+resize : Process -> { cols : Int
+, rows : Int
+} -> Task Error ()
+resize proc size =
+    case proc of
+
+        Process raw ->
+            resizeRaw raw size.cols size.rows
+
+
+killRaw : Int -> Int -> Task Error ()
+killRaw =
+    Ffi.kernel "Subprocess_kill"
+
+
+signalToInt : Signal -> Int
+signalToInt sig =
+    case sig of
+
+        Interrupt ->
+            0
+
+        Terminate ->
+            1
+
+        Kill ->
+            2
+
+        Hangup ->
+            3
+
+
+-- | Send a signal to the child and every process in its group. Signalling a
+-- child that has already exited is `Ok`.
+kill : Process -> Signal -> Task Error ()
+kill proc sig =
+    case proc of
+
+        Process raw ->
+            killRaw raw (signalToInt sig)
+
+
+waitRaw : Int -> Task Error ExitStatus
+waitRaw =
+    Ffi.kernel "Subprocess_wait"
+
+
+-- | Wait until the child exits and return how it ended.
+wait : Process -> Task Error ExitStatus
+wait proc =
+    case proc of
+
+        Process raw ->
+            waitRaw raw
+
+
+pidRaw : Int -> Task Error Int
+pidRaw =
+    Ffi.kernel "Subprocess_pid"
+
+
+-- | The child's operating-system process id.
+pid : Process -> Task Error Int
+pid proc =
+    case proc of
+
+        Process raw ->
+            pidRaw raw
+
+
+closeRaw : Int -> Task Error ()
+closeRaw =
+    Ffi.kernel "Subprocess_close"
+
+
+-- | Kill the child if it still runs, wait for it, release its pipes and
+-- forget the handle. Idempotent. Output not read before `close` is lost.
+close : Process -> Task Error ()
+close proc =
+    case proc of
+
+        Process raw ->
+            closeRaw raw

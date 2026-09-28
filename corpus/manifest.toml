@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 505
+n_min = 510
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 504
+class_v = 509
 class_d = 1
-family_S = 154
+family_S = 159
 family_L = 206
 family_E = 10
 family_R = 135
@@ -4332,6 +4332,71 @@ axes       = { edge = "failure", surface = "qr" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "E|E|F"
+
+[[case]]
+id         = "stdlib_edge/nominal-process"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "process" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "hello|err|ping|C3|S15|v1|/|24 80"
+
+[[case]]
+id         = "stdlib_edge/boundary-process"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "process" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T:175904:180000|ONLY=1"
+
+[[case]]
+id         = "stdlib_edge/failure-process"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "process" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-watch"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "watch" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "C:f.txt|R:a.txt>b.txt|C:real.txt|C:sub,C:deep.txt"
+
+[[case]]
+id         = "stdlib_edge/failure-watch"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "watch" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E"
 
 [[case]]
 id         = "stdlib_import/plain-none"

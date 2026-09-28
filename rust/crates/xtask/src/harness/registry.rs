@@ -425,9 +425,10 @@ pub static GATES: &[Gate] = &[
                 // the Std.Image Family-S surface (+2 cases, 483 → 485), and
                 // the Sky.Core.Tuple Family-S surface (+2 cases, 485 → 487),
                 // and the v0.27.0 crypto/QR surfaces sign, kx, kdf, noise,
-                // cpace and qr (+18 cases, 487 → 505).
-                from: "n_min = 505",
-                to: "n_min = 506",
+                // cpace and qr (+18 cases, 487 → 505), and the v0.27.0
+                // process and watch surfaces (+5 cases, 505 → 510).
+                from: "n_min = 510",
+                to: "n_min = 511",
             },
         }]),
         body: bodies::corpus_manifest,

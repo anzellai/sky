@@ -46,6 +46,10 @@ import (
 // Nothing escaped → no-op, normal main exit path runs (return code 0).
 func LogPanicAndExit() {
 	r := recover()
+	// Sky.Core.Process children run in process groups of their own and
+	// would outlive main; every way out of main ends them (no-op when none
+	// was spawned).
+	killAllChildProcesses()
 	if r == nil {
 		// Normal main return. Flush profiles if `sky run --profile` armed them
 		// (no-op otherwise) — folded here so no extra line is emitted into main.
