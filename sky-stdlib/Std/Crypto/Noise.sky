@@ -1,0 +1,159 @@
+-- | Std.Crypto.Noise — the Noise_IK_25519_ChaChaPoly_SHA256 handshake
+-- (The Noise Protocol Framework, revision 34).
+--
+-- Noise IK sets up an encrypted, mutually authenticated channel in two
+-- messages, when the initiator already knows the responder's static public
+-- key (for example a server key pinned in a client, or a key shown as a QR
+-- code during pairing):
+--
+--     initiator                               responder
+--     ─────────                               ─────────
+--     initiator myKey serverPub prologue       responder serverKey prologue
+--     writeMessage payload        ── msg 1 ──▶  readMessage msg
+--                                              peer hs  -- who is this? decide
+--     readMessage msg             ◀── msg 2 ──  writeMessage payload
+--     transport hs                             transport hs
+--     encrypt / decrypt           ◀─────────▶  encrypt / decrypt
+--
+-- The responder learns the initiator's static key from message 1 (`peer`)
+-- and should check it against the keys it trusts before it replies. Both
+-- sides must pass the same `prologue` (for example a protocol version);
+-- different prologues fail the handshake.
+--
+-- **Every state value is single-use.** Each step returns the next
+-- `Handshake` or `Transport`; always continue from the value the last step
+-- returned. Using an older value again returns an `Err` — reusing one would
+-- reuse a ChaCha20-Poly1305 nonce, which breaks the encryption. A failed
+-- handshake step ends the session: start a new one.
+--
+-- **Effects.** `initiator` and `responder` draw the ephemeral key, so they
+-- are `Task`s. Every later step is a pure `Result`.
+--
+-- The state values hold secret keys: they redact themselves in every print,
+-- log and JSON path and are never saved to a session store. Transport
+-- messages are at most 65535 bytes (payload + 16-byte tag).
+module Std.Crypto.Noise exposing
+    ( Handshake
+    , Transport
+    , initiator
+    , responder
+    , writeMessage
+    , readMessage
+    , isComplete
+    , peer
+    , transport
+    , transportPeer
+    , handshakeHash
+    , encrypt
+    , decrypt
+    , rekeySend
+    , rekeyReceive
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Error exposing (Error)
+import Std.Crypto.Kx as Kx
+
+-- | A handshake in progress. Opaque, self-redacting, single-use.
+type Handshake
+    = Handshake_OPAQUE
+
+-- | An established session: a send and a receive cipher, each with its own
+-- nonce counter. Opaque, self-redacting, single-use.
+type Transport
+    = Transport_OPAQUE
+
+
+-- | `initiator myStaticKey responderPublicKey prologue` — start a handshake
+-- as the side that sends the first message.
+initiator : Kx.SecretKey -> Kx.PublicKey -> String -> Task Error Handshake
+initiator =
+    Ffi.kernel "Noise_initiator"
+
+
+-- | `responder myStaticKey prologue` — start a handshake as the side that
+-- waits for the first message.
+responder : Kx.SecretKey -> String -> Task Error Handshake
+responder =
+    Ffi.kernel "Noise_responder"
+
+
+-- | `writeMessage payload handshake` — the next handshake message to send
+-- (the payload travels encrypted inside it), and the next state. `Err` when
+-- it is not this side's turn or the value was already used.
+writeMessage : String -> Handshake -> Result Error ( Handshake, String )
+writeMessage =
+    Ffi.kernel "Noise_writeMessage"
+
+
+-- | `readMessage message handshake` — process the peer's handshake message:
+-- its payload, and the next state. `Err` on a tampered message, a wrong key,
+-- a different prologue or a low-order ephemeral key.
+readMessage : String -> Handshake -> Result Error ( Handshake, String )
+readMessage =
+    Ffi.kernel "Noise_readMessage"
+
+
+-- | Have both handshake messages been processed?
+isComplete : Handshake -> Bool
+isComplete =
+    Ffi.kernel "Noise_isComplete"
+
+
+-- | The peer's static public key, once known: from the start for the
+-- initiator, after `readMessage` of message 1 for the responder.
+peer : Handshake -> Maybe Kx.PublicKey
+peer =
+    Ffi.kernel "Noise_peer"
+
+
+-- | Turn a complete handshake into a `Transport`. `Err` before both messages
+-- are processed, or when this handshake was already turned into one.
+transport : Handshake -> Result Error Transport
+transport =
+    Ffi.kernel "Noise_transport"
+
+
+-- | The peer's static public key on an established session.
+transportPeer : Transport -> Kx.PublicKey
+transportPeer =
+    Ffi.kernel "Noise_transportPeer"
+
+
+-- | The 32-byte handshake hash — the same on both sides, and unique to the
+-- session. Use it for channel binding (for example sign it, or show a short
+-- form of it to both users to compare).
+handshakeHash : Transport -> String
+handshakeHash =
+    Ffi.kernel "Noise_handshakeHash"
+
+
+-- | `encrypt plaintext transport` — the ciphertext to send, and the next
+-- state. `Err` when the value was already used or the message is too long.
+encrypt : String -> Transport -> Result Error ( Transport, String )
+encrypt =
+    Ffi.kernel "Noise_encrypt"
+
+
+-- | `decrypt ciphertext transport` — the plaintext, and the next state.
+-- Messages must be decrypted in the order they were sent. A message that
+-- fails to decrypt does not advance the state, so the same value can try
+-- the next message.
+decrypt : String -> Transport -> Result Error ( Transport, String )
+decrypt =
+    Ffi.kernel "Noise_decrypt"
+
+
+-- | Replace the sending key with a new one derived from it (Noise §11.3).
+-- The peer must call `rekeyReceive` at the same point in the stream.
+rekeySend : Transport -> Result Error Transport
+rekeySend =
+    Ffi.kernel "Noise_rekeySend"
+
+
+-- | Replace the receiving key; pairs with the peer's `rekeySend`.
+rekeyReceive : Transport -> Result Error Transport
+rekeyReceive =
+    Ffi.kernel "Noise_rekeyReceive"

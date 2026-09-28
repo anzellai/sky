@@ -1,0 +1,76 @@
+-- | Std.Crypto.Cpace — CPace, a password-authenticated key exchange (PAKE),
+-- cipher suite CPACE-X25519-SHA512 (draft-irtf-cfrg-cpace-21).
+--
+-- **Status: awaiting external review.** This is an implementation of an
+-- Internet-Draft, not yet an RFC, and it has not had an independent security
+-- review. It passes the draft's published test vectors. Use it where a
+-- short shared code is the only thing two parties have in common (pairing a
+-- device by a code shown on a screen), and prefer a reviewed protocol
+-- (`Std.Crypto.Noise` with pinned keys) wherever keys can be exchanged.
+--
+-- Two parties who share a low-entropy password (a six-digit pairing code)
+-- derive the same strong 64-byte key, and an eavesdropper — or an attacker
+-- who talks to one side — gets one password guess per exchange, never an
+-- offline dictionary attack:
+--
+--     initiator (A)                             responder (B)
+--     start code channel sid "A"   ── msgA ──▶  respond code channel sid "B" msgA
+--                                  ◀── msgB ──  -- B now has the key
+--     finish pending msgB                        -- A now has the key
+--
+-- A wrong password is not an error: the two sides just get different keys.
+-- So confirm the key before you trust it — for example open a
+-- `Std.Crypto.Noise` session keyed from it, or exchange MACs of a fixed
+-- string with `Crypto.hmacSha256`, and abort on a mismatch.
+--
+-- Inputs: `channelId` binds the key to the connection (both sides must pass
+-- the same value; it is not sent). `sessionId` should be a fresh value both
+-- sides share (it is recommended, not required; pass `""` when there is
+-- none). The associated data (`ad`) of each side travels in clear and is
+-- authenticated; `messageData` reads it, so a responder can choose the
+-- password by the identity the initiator names.
+--
+-- **Effects.** `start` and `respond` draw a random scalar, so they are
+-- `Task`s; `finish` and `messageData` are pure. The key is a `Secret`; run
+-- it through `Std.Crypto.Kdf` before you use it (the draft recommends it).
+-- The `Pending` value holds the secret scalar: it redacts itself, is never
+-- saved to a session store, and can be finished once.
+module Std.Crypto.Cpace exposing (Pending, start, respond, finish, messageData)
+
+import Sky.Ffi as Ffi
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Secret exposing (Secret)
+
+-- | The initiator's half-finished exchange. Opaque, self-redacting,
+-- single-use.
+type Pending
+    = Pending_OPAQUE
+
+
+-- | `start password channelId sessionId ad` — the initiator's first step:
+-- the pending state, and the message to send to the responder.
+start : Secret -> String -> String -> String -> Task Error ( Pending, String )
+start =
+    Ffi.kernel "Cpace_start"
+
+
+-- | `respond password channelId sessionId ad messageFromInitiator` — the
+-- responder's only step: the shared key, and the reply to send back. `Err`
+-- on a malformed message or a low-order share (an attack; abort).
+respond : Secret -> String -> String -> String -> String -> Task Error ( Secret, String )
+respond =
+    Ffi.kernel "Cpace_respond"
+
+
+-- | `finish pending replyFromResponder` — the initiator's shared key. `Err`
+-- on a malformed reply, a low-order share, or a `Pending` already finished.
+finish : Pending -> String -> Result Error Secret
+finish =
+    Ffi.kernel "Cpace_finish"
+
+
+-- | The associated data a CPace message carries in clear.
+messageData : String -> Result Error String
+messageData =
+    Ffi.kernel "Cpace_messageData"

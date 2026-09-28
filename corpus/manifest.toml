@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 487
+n_min = 505
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 486
+class_v = 504
 class_d = 1
-family_S = 136
+family_S = 154
 family_L = 206
 family_E = 10
 family_R = 135
@@ -3161,7 +3161,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "crypto" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|900150983cd24fb0d6963f7d28e17f72|64|128|40|32|64|128|T|T|secret-payload|secret-payload"
+stdout     = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|900150983cd24fb0d6963f7d28e17f72|64|128|40|32|64|128|T|T|secret-payload|secret-payload|secret-payload|secret-payload"
 
 [[case]]
 id         = "stdlib_edge/empty-crypto"
@@ -3200,7 +3200,7 @@ witness    = "value"
 axes       = { edge = "failure", surface = "crypto" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "F|F|E|E|E|F"
+stdout     = "F|F|E|E|E|E|E|F"
 
 [[case]]
 id         = "stdlib_edge/nominal-math"
@@ -4098,6 +4098,240 @@ axes       = { edge = "boundary", surface = "tuple" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "0"
+
+[[case]]
+id         = "stdlib_edge/nominal-sign"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "sign" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a|e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b|T|9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60|d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a|d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a|T"
+
+[[case]]
+id         = "stdlib_edge/unicode-sign"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "sign" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T|64"
+
+[[case]]
+id         = "stdlib_edge/failure-sign"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "sign" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E|F|F"
+
+[[case]]
+id         = "stdlib_edge/nominal-kx"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "kx" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a|4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742|4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742|8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a|77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a|8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a|T"
+
+[[case]]
+id         = "stdlib_edge/failure-kx"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "kx" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E|E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-kdf"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "kdf" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5|3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865|3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
+
+[[case]]
+id         = "stdlib_edge/empty-kdf"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "kdf" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8"
+
+[[case]]
+id         = "stdlib_edge/boundary-kdf"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "kdf" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "8160|1"
+
+[[case]]
+id         = "stdlib_edge/failure-kdf"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "kdf" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-noise"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "noise" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "hello/welcome/ping/pong|T"
+
+[[case]]
+id         = "stdlib_edge/failure-noise"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "noise" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|T"
+
+[[case]]
+id         = "stdlib_edge/nominal-cpace"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "cpace" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T|phone"
+
+[[case]]
+id         = "stdlib_edge/failure-cpace"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "cpace" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "F|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-qr"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "qr" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "21|33|25|T|21|<svg|13"
+
+[[case]]
+id         = "stdlib_edge/empty-qr"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "empty", surface = "qr" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "21"
+
+[[case]]
+id         = "stdlib_edge/boundary-qr"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "boundary", surface = "qr" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "177|177"
+
+[[case]]
+id         = "stdlib_edge/unicode-qr"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "unicode", surface = "qr" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "21"
+
+[[case]]
+id         = "stdlib_edge/failure-qr"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "qr" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "E|E|F"
 
 [[case]]
 id         = "stdlib_import/plain-none"

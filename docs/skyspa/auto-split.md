@@ -393,9 +393,15 @@ It now classifies against two explicit, exhaustive lists in `spa_partition` —
 `EFFECT_KERNELS` (all → server, incl. `Log`/`Live`/`Jobs`/`Cli`/`Tui`/`Webview`/
 `Context`/`Ffi` alongside the physically-server and client-capable families) and
 `KNOWN_PURE_KERNELS` (`Basics`/`String`/`List`/`Dict`/`Set`/`Maybe`/`Result`/
-`Task`/`Math`/`Regex`/`Crypto`/`Encoding`/`Char`/`Path`/`Cmd`/`Sub`/`JsonEnc`/
-`JsonDec`/`JsonDecP`/`Fmt`) — and a family in **neither** falls through to a
-conservative **SERVER** verdict (never client). Two enforcement legs:
+`Task`/`Math`/`Regex`/`Encoding`/`Char`/`Path`/`Cmd`/`Sub`/`JsonEnc`/
+`JsonDec`/`JsonDecP`/`Fmt`/`Qr`) — and a family in **neither** falls through to a
+conservative **SERVER** verdict (never client). Since v0.26.2 a third list,
+`MIXED_KERNELS`, classifies a family **per function**: `Crypto` keeps only
+`sha256`/`sha512`/`sha1`/`md5`/`constantTimeEqual`/`rsaSha256Verify` on the
+client, `Sign` only `verify` and public-key import/export, `Kx` only public-key
+import/export; every other member (key derivation, keyed MACs, AEAD, random
+draws, signing, key agreement), and any member added later, is SERVER. `Kdf`,
+`Noise` and `Cpace` are SERVER as a whole. Two enforcement legs:
 
 - **Compile-time completeness test** (`spa_partition::tests::classification_is_exhaustive`):
   enumerates every kernel pseudo-module the compiler knows from the authoritative

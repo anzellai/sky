@@ -423,9 +423,11 @@ pub static GATES: &[Gate] = &[
                 // shape close (+40 cases, 441 → 481) after it, and the
                 // Sky.Core.Secret Family-S surface (+2 cases, 481 → 483), and
                 // the Std.Image Family-S surface (+2 cases, 483 → 485), and
-                // the Sky.Core.Tuple Family-S surface (+2 cases, 485 → 487).
-                from: "n_min = 487",
-                to: "n_min = 488",
+                // the Sky.Core.Tuple Family-S surface (+2 cases, 485 → 487),
+                // and the v0.27.0 crypto/QR surfaces sign, kx, kdf, noise,
+                // cpace and qr (+18 cases, 487 → 505).
+                from: "n_min = 505",
+                to: "n_min = 506",
             },
         }]),
         body: bodies::corpus_manifest,

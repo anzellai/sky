@@ -264,7 +264,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1213,
+      "expected_assertions": 1271,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -347,7 +347,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 487,
+      "expected_assertions": 505,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -380,7 +380,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 172,
+      "expected_assertions": 178,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -657,6 +657,36 @@
           "apps:relay"
         ]
       },
+      "Std.Crypto.Cpace": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Crypto.Kdf": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Crypto.Kx": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Crypto.Noise": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
+      "Std.Crypto.Sign": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
       "Std.Jobs": {
         "path": "apps/dispatch",
         "units": [
@@ -673,6 +703,12 @@
         "path": "apps/dispatch",
         "units": [
           "apps:dispatch"
+        ]
+      },
+      "Std.Qr": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
         ]
       },
       "Std.Spa": {
@@ -697,13 +733,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2009,
-    "stdlib_modules": 102,
-    "surfaces_covered": 152,
-    "surfaces_covered_pct": 90.5,
+    "stdlib_entries": 2072,
+    "stdlib_modules": 108,
+    "surfaces_covered": 158,
+    "surfaces_covered_pct": 90.8,
     "surfaces_equal": 21,
-    "surfaces_stronger": 147,
-    "surfaces_total": 168,
+    "surfaces_stronger": 153,
+    "surfaces_total": 174,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -4604,6 +4640,11 @@
             "strength": 4
           },
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "gate `corpus`",
             "class": "Falsified",
             "strength": 4
@@ -4678,6 +4719,11 @@
             "by": "tests/Sky — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
+          },
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -8438,6 +8484,146 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Crypto.Cpace public API",
+      "id": "stdlib.Std.Crypto.Cpace",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Crypto.Kdf public API",
+      "id": "stdlib.Std.Crypto.Kdf",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Crypto.Kx public API",
+      "id": "stdlib.Std.Crypto.Kx",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Crypto.Noise public API",
+      "id": "stdlib.Std.Crypto.Noise",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Crypto.Sign public API",
+      "id": "stdlib.Std.Crypto.Sign",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
@@ -10598,6 +10784,34 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Qr public API",
+      "id": "stdlib.Std.Qr",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
@@ -12584,7 +12798,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 8.8
+      "pct_of_denominator": 8.3
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12801,13 +13015,12 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 11,
+          "count": 10,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
             "andMap",
             "lazy",
-            "map2",
             "map3",
             "map4",
             "map5",
@@ -13015,6 +13228,43 @@
             "maybe",
             "shape",
             "var3"
+          ]
+        },
+        "Std.Crypto.Cpace": {
+          "count": 1,
+          "symbols": [
+            "Pending"
+          ]
+        },
+        "Std.Crypto.Kdf": {
+          "count": 1,
+          "symbols": [
+            "expand"
+          ]
+        },
+        "Std.Crypto.Kx": {
+          "count": 6,
+          "symbols": [
+            "PublicKey",
+            "publicKeyFromBase64",
+            "publicKeyToBase64",
+            "secretKeyFromBase64",
+            "secretKeyToBase64",
+            "secretKeyToBytes"
+          ]
+        },
+        "Std.Crypto.Noise": {
+          "count": 1,
+          "symbols": [
+            "transportPeer"
+          ]
+        },
+        "Std.Crypto.Sign": {
+          "count": 3,
+          "symbols": [
+            "PublicKey",
+            "publicKeyFromBytes",
+            "secretKeyToBytes"
           ]
         },
         "Std.Css": {
@@ -13392,6 +13642,12 @@
             "ShareContent"
           ]
         },
+        "Std.Qr": {
+          "count": 1,
+          "symbols": [
+            "view"
+          ]
+        },
         "Std.Spa": {
           "count": 18,
           "symbols": [
@@ -13640,8 +13896,8 @@
           ]
         }
       },
-      "count": 646,
-      "pct_of_denominator": 32.2
+      "count": 658,
+      "pct_of_denominator": 31.8
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13850,14 +14106,13 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 12,
+          "count": 11,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
             "Step",
             "andMap",
             "lazy",
-            "map2",
             "map3",
             "map4",
             "map5",
@@ -14077,6 +14332,43 @@
             "maybe",
             "shape",
             "var3"
+          ]
+        },
+        "Std.Crypto.Cpace": {
+          "count": 1,
+          "symbols": [
+            "Pending"
+          ]
+        },
+        "Std.Crypto.Kdf": {
+          "count": 1,
+          "symbols": [
+            "expand"
+          ]
+        },
+        "Std.Crypto.Kx": {
+          "count": 6,
+          "symbols": [
+            "PublicKey",
+            "publicKeyFromBase64",
+            "publicKeyToBase64",
+            "secretKeyFromBase64",
+            "secretKeyToBase64",
+            "secretKeyToBytes"
+          ]
+        },
+        "Std.Crypto.Noise": {
+          "count": 1,
+          "symbols": [
+            "transportPeer"
+          ]
+        },
+        "Std.Crypto.Sign": {
+          "count": 3,
+          "symbols": [
+            "PublicKey",
+            "publicKeyFromBytes",
+            "secretKeyToBytes"
           ]
         },
         "Std.Css": {
@@ -14515,6 +14807,12 @@
             "ShareContent"
           ]
         },
+        "Std.Qr": {
+          "count": 1,
+          "symbols": [
+            "view"
+          ]
+        },
         "Std.Spa": {
           "count": 18,
           "symbols": [
@@ -14764,8 +15062,8 @@
           ]
         }
       },
-      "count": 728,
-      "pct_of_denominator": 36.2
+      "count": 740,
+      "pct_of_denominator": 35.7
     }
   },
   "units": [
@@ -14906,8 +15204,8 @@
       "id": "examples/00-standard-libs",
       "modules_imported": 19,
       "path": "examples/00-standard-libs",
-      "refs_generous": 151,
-      "refs_qualified": 146,
+      "refs_generous": 152,
+      "refs_qualified": 147,
       "role": "Example",
       "sky_files": 2,
       "sky_toml_sections": [
@@ -15943,12 +16241,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 40,
+      "modules_imported": 47,
       "path": "tests/conformance",
-      "refs_generous": 548,
-      "refs_qualified": 538,
+      "refs_generous": 607,
+      "refs_qualified": 597,
       "role": "Conformance",
-      "sky_files": 33,
+      "sky_files": 37,
       "sky_toml_sections": []
     }
   ]

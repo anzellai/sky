@@ -1,0 +1,133 @@
+module QrConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for Std.Qr through the compiled Sky surface: symbol
+-- sizes by version and level, the finder patterns, the capacity limits, and
+-- the three renderers. The module-by-module comparison against an independent
+-- encoder is in the Go runtime (runtime-go/rt/qr_test.go, reference matrices
+-- from rsc.io/qr).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Result as Result
+import Std.Qr as Qr
+import Sky.Test as Test exposing (Test)
+
+
+sizeOf : Qr.ErrorCorrection -> String -> Result Error Int
+sizeOf level text =
+    Qr.encode level text |> Result.map Qr.size
+
+
+hello : Result Error Qr.QrCode
+hello =
+    Qr.encode Qr.Medium "HELLO WORLD"
+
+
+-- A 7×7 finder pattern: dark border, light ring, dark 3×3 centre.
+finderAt : Int -> Int -> Qr.QrCode -> Bool
+finderAt x0 y0 code =
+    Qr.isDark x0 y0 code && Qr.isDark (x0 + 6) (y0 + 6) code
+        && not (Qr.isDark (x0 + 1) (y0 + 1) code)
+        && Qr.isDark (x0 + 3) (y0 + 3) code
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a short text at Medium is a version-1 symbol (21 modules)"
+          (\_ -> Test.equal (Ok 21) (sizeOf Qr.Medium "HELLO WORLD"))
+    , Test.test
+          "the empty text encodes"
+          (\_ -> Test.equal (Ok 21) (sizeOf Qr.High ""))
+    , Test.test
+          "higher error correction needs a larger symbol for the same text"
+          (\_ ->
+              Test.equal
+                  (Ok ( 25, 33 ))
+                  (Result.map2
+                      (\a b -> ( a, b ))
+                      (sizeOf Qr.Low (String.repeat 30 "a"))
+                      (sizeOf Qr.High (String.repeat 30 "a"))))
+    , Test.test
+          "the three finder patterns are in place"
+          (\_ ->
+              Test.equal
+                  (Ok True)
+                  (hello
+                      |> Result.map
+                             (\c ->
+                                 finderAt 0 0 c && finderAt 14 0 c
+                                     && finderAt 0 14 c)))
+    , Test.test
+          "isDark is False outside the symbol"
+          (\_ ->
+              Test.equal
+                  (Ok False)
+                  (hello
+                      |> Result.map
+                             (\c ->
+                                 Qr.isDark (-1) 0 c || Qr.isDark 0 21 c
+                                     || Qr.isDark 500 500 c)))
+    , Test.test
+          "rows is a size × size matrix"
+          (\_ ->
+              Test.equal
+                  (Ok ( 21, True ))
+                  (hello
+                      |> Result.map
+                             (\c ->
+                                 ( List.length (Qr.rows c)
+                                 , List.all
+                                       (\r -> List.length r == 21)
+                                       (Qr.rows c)
+                                 ))))
+    , Test.test
+          "Low holds 2953 bytes and refuses 2954"
+          (\_ ->
+              Test.equal
+                  ( Ok 177, True )
+                  ( sizeOf Qr.Low (String.repeat 2953 "z")
+                  , Result.toMaybe (Qr.encode Qr.Low (String.repeat 2954 "z"))
+                        == Nothing
+                  ))
+    , Test.test
+          "High refuses 1274 bytes"
+          (\_ -> Test.err (Qr.encode Qr.High (String.repeat 1274 "z")))
+    , Test.test
+          "multi-byte UTF-8 text encodes by bytes"
+          (\_ -> Test.equal (Ok 21) (sizeOf Qr.Low "héllo ✓"))
+    , Test.test
+          "toSvg is a standalone SVG with the quiet zone in its view box"
+          (\_ ->
+              Test.equal
+                  (Ok ( True, True, True ))
+                  (hello |> Result.map (Qr.toSvg 4)
+                      |> Result.map
+                             (\svg ->
+                                 ( String.startsWith "<svg" svg
+                                 , String.contains "viewBox=\"0 0 29 29\"" svg
+                                 , String.contains "width=\"116\"" svg
+                                 ))))
+    , Test.test
+          "toTerminal draws two module rows per line with a 2-module margin"
+          (\_ ->
+              Test.equal
+                  (Ok 13)
+                  (hello
+                      |> Result.map
+                             (\c ->
+                                 Qr.toTerminal c |> String.lines
+                                     |> List.filter (\l -> l /= "")
+                                     |> List.length)))
+    , Test.test
+          "encoding is deterministic"
+          (\_ ->
+              Test.equal
+                  (Result.map Qr.rows hello)
+                  (Result.map Qr.rows (Qr.encode Qr.Medium "HELLO WORLD")))
+    ]
+
+
+main =
+    Test.runMain tests

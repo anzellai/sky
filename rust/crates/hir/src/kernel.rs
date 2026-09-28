@@ -681,6 +681,10 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "chachaKeyFromPassword",
             "rsaSha256Sign",
             "rsaSha256Verify",
+            "xchachaSeal",
+            "xchachaSealWith",
+            "xchachaOpen",
+            "xchachaOpenWith",
         ],
     ),
     (

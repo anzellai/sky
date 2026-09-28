@@ -537,7 +537,7 @@ cryptoSuite =
                               (Secret.unsafeFromString "p")
                               "salt"
                   in
-                      case Crypto.aesGcmEncrypt key "x" of
+                      case Task.run (Crypto.aesGcmEncrypt key "x") of
 
                           Ok _ ->
                               Test.isTrue True
@@ -553,7 +553,7 @@ cryptoSuite =
                               (Secret.unsafeFromString "hunter2")
                               "salt"
                   in
-                      case Crypto.aesGcmEncrypt key "hello world" of
+                      case Task.run (Crypto.aesGcmEncrypt key "hello world") of
 
                           Ok ct ->
                               case Crypto.aesGcmDecrypt key ct of
@@ -592,7 +592,8 @@ cryptoSuite =
                               (Secret.unsafeFromString "pw")
                               "saltsalt"
                   in
-                      case Crypto.chacha20Encrypt key "another payload" of
+                      case Task.run
+                               (Crypto.chacha20Encrypt key "another payload") of
 
                           Ok ct ->
                               case Crypto.chacha20Decrypt key ct of
@@ -608,9 +609,10 @@ cryptoSuite =
         , Test.test
               "aesGcm short-key rejected"
               (\_ ->
-                  case Crypto.aesGcmEncrypt
-                           (Secret.unsafeFromString "short")
-                           "x" of
+                  case Task.run
+                           (Crypto.aesGcmEncrypt
+                               (Secret.unsafeFromString "short")
+                               "x") of
 
                       Err _ ->
                           Test.isTrue True

@@ -202,7 +202,37 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `[E1011]`; call the `sky add` binding directly. `Ffi.kernel` is
   unchanged.
 
+- **`Crypto.aesGcmEncrypt` and `Crypto.chacha20Encrypt` return
+  `Task Error String`, not `Result Error String`.** Each draws a random
+  nonce, which is an effect, so it now sits inside the effect system like
+  `randomBytes`: building the value no longer encrypts, and running the Task
+  twice gives two ciphertexts. Decrypt stays a pure `Result`. The new
+  `Crypto.xchachaSeal` follows the same rule. See Migration below.
+
 ### Migration
+
+- **AEAD encrypt is a Task.** In a `Task` chain, use the function directly.
+  Where you need a `Result` (a pure helper, a test), run it:
+
+  ```elm
+  -- before
+  case Crypto.aesGcmEncrypt key "payload" of
+      Ok sealed -> …
+
+  -- after (in a Task chain)
+  Crypto.aesGcmEncrypt key "payload"
+      |> Task.andThen (\sealed -> …)
+
+  -- after (where a Result is needed)
+  case Task.run (Crypto.aesGcmEncrypt key "payload") of
+      Ok sealed -> …
+  ```
+
+  For new code prefer `Crypto.xchachaSeal key plaintext` (XChaCha20-Poly1305,
+  24-byte random nonce) and `Crypto.xchachaOpen key sealed`. The output format
+  of all three is the same shape, `base64(nonce || ciphertext || tag)`, but the
+  ciphers are not interchangeable: open a value with the function that sealed
+  it.
 
 - **A Go FFI call used as its payload:** handle the `Result` where you call
   it. Before:
@@ -282,6 +312,56 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   production has always required.
 
 ### Added
+
+- **Crypto primitives: `Std.Crypto.Sign` (Ed25519), `Std.Crypto.Kx`
+  (X25519), `Std.Crypto.Kdf` (HKDF-SHA256) and `Crypto.xchachaSeal` /
+  `xchachaOpen` (XChaCha20-Poly1305).** Secret keys are opaque
+  (`Sign.SecretKey`, `Kx.SecretKey`): they print `[REDACTED]` in every
+  `toString`, log and JSON path, a session store refuses to save them, and
+  their bytes leave only as a `Secret` (`secretKeyToBytes` /
+  `secretKeyToBase64`), so the one step to a `String` is still
+  `Secret.reveal`. Key import is `Result` (Err on a wrong length; an Ed25519
+  public key must be a curve point). `Kx.sharedSecret` refuses a low-order
+  peer key (the all-zero result) with an `Err`. `Kdf.expand` refuses a
+  length outside 1..8160. Key generation and every seal are `Task`s; sign,
+  verify, key agreement and HKDF are pure. `xchachaSeal` (24-byte random
+  nonce) is now the recommended AEAD in the docs. Tested against RFC 8032,
+  RFC 7748, RFC 5869 and draft-irtf-cfrg-xchacha vectors, with tampered,
+  wrong-key, wrong-AD, bad-length and low-order cases
+  (`runtime-go/rt/crypto_sign_kx.go`, `crypto_sign_kx_test.go`,
+  `tests/conformance/tests/CryptoPrimitivesConformanceTest.sky`).
+- **`Std.Qr`: a pure QR Code encoder.** `Qr.encode level text` (byte mode,
+  levels `Low` / `Medium` / `Quartile` / `High`, versions 1 to 40, mask by
+  the standard's penalty rules), `size`, `isDark`, `rows`, and renderers
+  `Qr.view` (an `Std.Ui` element), `Qr.toSvg` and `Qr.toTerminal`
+  (half blocks in explicit black on white). Plain Go with no cgo, no
+  reflection and no fmt: it builds for wasm and under TinyGo. Tested module
+  by module against reference matrices from an independent encoder
+  (rsc.io/qr v0.2.0, all eight masks, versions 1 to 40; the reference is a
+  test fixture, not a dependency) (`runtime-go/rt/qr.go`, `qr_test.go`).
+- **`Std.Crypto.Noise`: Noise_IK_25519_ChaChaPoly_SHA256.** An explicit
+  `Handshake` value (`initiator` / `responder`, `writeMessage` /
+  `readMessage`, `peer`, `isComplete`), then a `Transport` with a counter
+  nonce per direction (`encrypt`, `decrypt`, `rekeySend`, `rekeyReceive`,
+  `handshakeHash`, `transportPeer`). Decision recorded: **state values are
+  single-use.** Sky values are immutable, so each step returns the next
+  state; reusing an older value would reuse a ChaCha20-Poly1305 nonce, so it
+  returns an `Err` instead (a shared guard updated by compare-and-swap).
+  Consequence: do not keep a `Transport` in a top-level (memoised) binding
+  that more than one code path uses. Passes the four IK vectors of the
+  cacophony set (`runtime-go/rt/noise.go`, `noise_test.go`).
+- **`Std.Crypto.Cpace`: the CPace PAKE, CPACE-X25519-SHA512
+  (draft-irtf-cfrg-cpace-21), initiator-responder.** `start`, `respond`,
+  `finish`, `messageData`. A short shared code gives both sides the same
+  64-byte key without an offline dictionary attack. It passes the draft's
+  Appendix B.1 vectors (generator, shares, K, ISK, and every low-order and
+  non-canonical point of B.1.10). **It has not had an external security
+  review; the module docs say so.** The Elligator 2 map uses constant-time
+  field arithmetic vendored from the Go standard library
+  (`crypto/internal/fips140/edwards25519/field`, BSD licence, in
+  `runtime-go/rt/cpace_field.go`), because the generator is derived from the
+  password. No new third-party Go module: everything is the standard library
+  and `golang.org/x/crypto`.
 
 - **Start and stop a Sky.Live app from a Task program: `App.serve`,
   `App.address`, `App.stop`** (and `Live.serve` / `Live.address` /
@@ -453,6 +533,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+
+- **Sky.Spa treated every `Crypto` function as client-safe.** The auto-split
+  classified the `Crypto` kernel family as pure as a whole, so key
+  derivation (`aesKeyFromPassword`), keyed MACs (`hmacSha256`/`512`),
+  `rsaSha256Sign`, the AEAD ciphers and `randomBytes` / `randomToken` could
+  be placed in the wasm frontend, where the key or the secret is readable.
+  `Crypto` is now classified per function: only hashing, `constantTimeEqual`
+  and `rsaSha256Verify` stay on the client; every other member, and any
+  member added later, runs on the server. The new modules follow the same
+  rule (`Sign.verify` and public-key import/export are client-safe;
+  generation, signing, key agreement, HKDF, Noise and CPace are server), and
+  `Std.Qr` is client-safe. A Sky.Spa model field holding a `SecretKey`,
+  `Noise.Handshake`, `Noise.Transport` or `Cpace.Pending` gets the same
+  warning as a `Secret`. (`rust/crates/project/src/spa_partition.rs`
+  `MIXED_KERNELS`, `spa_split.rs`.)
+- **The docs said `Crypto.randomBytes` returns raw bytes.** It returns them
+  hex-encoded (`2 × n` characters), and always has; `docs/stdlib.md` and the
+  `Crypto.sky` doc comment now say so.
 
 - **A second Sky.Live app in the process panicked at start.** The inline
   console registers at the fixed prefix `/_sky/console`, so a second app (a

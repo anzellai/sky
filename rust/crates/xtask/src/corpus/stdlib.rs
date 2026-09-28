@@ -310,7 +310,44 @@ pub const SURFACES: &[Surface] = &[
         "image",
         "Std.Image",
         &["Sky.Core.Task as Task", "Sky.Core.Encoding as Encoding"],
+    ), // v0.26.2 crypto and QR modules. Sign / Kx / Kdf / Qr are pure and
+    // byte-assertable against published vectors; Noise / CPace and key
+    // generation are `Task`s bridged with `Task.run`, asserted by the
+    // property the protocol promises (see the batteries).
+    sf2(
+        "sign",
+        "Std.Crypto.Sign",
+        &[
+            "Sky.Core.Secret as Secret",
+            "Sky.Core.Bytes as Bytes",
+            "Sky.Core.Task as Task",
+        ],
     ),
+    sf2(
+        "kx",
+        "Std.Crypto.Kx",
+        &[
+            "Sky.Core.Secret as Secret",
+            "Sky.Core.Bytes as Bytes",
+            "Sky.Core.Task as Task",
+        ],
+    ),
+    sf2(
+        "kdf",
+        "Std.Crypto.Kdf",
+        &["Sky.Core.Secret as Secret", "Sky.Core.Bytes as Bytes"],
+    ),
+    sf2(
+        "noise",
+        "Std.Crypto.Noise",
+        &["Std.Crypto.Kx as Kx", "Sky.Core.Task as Task"],
+    ),
+    sf2(
+        "cpace",
+        "Std.Crypto.Cpace",
+        &["Sky.Core.Secret as Secret", "Sky.Core.Task as Task"],
+    ),
+    sf("qr", "Std.Qr"),
 ];
 
 pub fn surface(slug: &str) -> &'static Surface {
@@ -606,11 +643,18 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Sky.Core.Tuple",
     "Std.Codec",
     "Std.Compression",
+    // v0.26.2: the crypto and QR modules land covered, not dark.
+    "Std.Crypto.Cpace",
+    "Std.Crypto.Kdf",
+    "Std.Crypto.Kx",
+    "Std.Crypto.Noise",
+    "Std.Crypto.Sign",
     "Std.Csv",
     "Std.Decimal",
     "Std.Image",
     "Std.Markdown",
     "Std.Money",
+    "Std.Qr",
 ];
 
 /// Stdlib modules with NO Family-S assertion at all — item 3's "dark" number.
@@ -1181,6 +1225,12 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "markdown" => markdown_battery(edge),
         "compression" => compression_battery(edge),
         "image" => image_battery(edge),
+        "sign" => sign_battery(edge),
+        "kx" => kx_battery(edge),
+        "kdf" => kdf_battery(edge),
+        "noise" => noise_battery(edge),
+        "cpace" => cpace_battery(edge),
+        "qr" => qr_battery(edge),
         other => panic!("no battery for surface {other:?}"),
     }
 }
@@ -2882,12 +2932,22 @@ fn crypto_battery(edge: &str) -> Vec<Check> {
             // key derivation breaks it.
             rs(
                 &["Crypto.aesGcmEncrypt", "Crypto.aesGcmDecrypt", "Crypto.aesKeyFromPassword"],
-                "Result.andThen (\\ct -> Crypto.aesGcmDecrypt aesKey ct) (Crypto.aesGcmEncrypt aesKey \"secret-payload\")",
+                "Result.andThen (\\ct -> Crypto.aesGcmDecrypt aesKey ct) (Task.run (Crypto.aesGcmEncrypt aesKey \"secret-payload\"))",
+                Some("secret-payload"),
+            ),
+            rs(
+                &["Crypto.xchachaSeal", "Crypto.xchachaOpen"],
+                "Result.andThen (\\ct -> Crypto.xchachaOpen aesKey ct) (Task.run (Crypto.xchachaSeal aesKey \"secret-payload\"))",
+                Some("secret-payload"),
+            ),
+            rs(
+                &["Crypto.xchachaSealWith", "Crypto.xchachaOpenWith"],
+                "Result.andThen (\\ct -> Crypto.xchachaOpenWith aesKey \"ad\" ct) (Task.run (Crypto.xchachaSealWith aesKey \"ad\" \"secret-payload\"))",
                 Some("secret-payload"),
             ),
             rs(
                 &["Crypto.chacha20Encrypt", "Crypto.chacha20Decrypt", "Crypto.chachaKeyFromPassword"],
-                "Result.andThen (\\ct -> Crypto.chacha20Decrypt chachaKey ct) (Crypto.chacha20Encrypt chachaKey \"secret-payload\")",
+                "Result.andThen (\\ct -> Crypto.chacha20Decrypt chachaKey ct) (Task.run (Crypto.chacha20Encrypt chachaKey \"secret-payload\"))",
                 Some("secret-payload"),
             ),
         ],
@@ -2934,6 +2994,17 @@ fn crypto_battery(edge: &str) -> Vec<Check> {
                 "Crypto.chacha20Decrypt chachaKey \"not-a-valid-ciphertext\"",
                 None,
             ),
+            rs(
+                &["Crypto.xchachaOpen"],
+                "Crypto.xchachaOpen aesKey \"not-a-valid-ciphertext\"",
+                None,
+            ),
+            // Sealed with associated data, opened with different data: refused.
+            rs(
+                &["Crypto.xchachaOpenWith"],
+                "Result.andThen (\\ct -> Crypto.xchachaOpenWith aesKey \"other\" ct) (Task.run (Crypto.xchachaSealWith aesKey \"ad\" \"x\"))",
+                None,
+            ),
             // An unparseable PEM is an Err, not a panic.
             rs(
                 &["Crypto.rsaSha256Sign"],
@@ -2944,6 +3015,373 @@ fn crypto_battery(edge: &str) -> Vec<Check> {
                 &["Crypto.rsaSha256Verify"],
                 "Crypto.rsaSha256Verify \"not-a-pem\" \"msg\" \"sig\"",
                 false,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Crypto.Sign / Kx / Kdf / Noise / Cpace, Std.Qr (v0.26.2) ------------
+//
+// Every expected byte string below is a PUBLISHED constant, not an
+// observation: RFC 8032 §7.1 TEST 1 (Ed25519), RFC 7748 §6.1 (X25519 Alice and
+// Bob) and its low-order points, RFC 5869 A.1 / A.3 (HKDF-SHA256), and the QR
+// symbol sizes of ISO/IEC 18004 (version v is 4v + 17 modules; byte-mode
+// capacity 2953 bytes at L and 1273 at H for version 40). Key generation and
+// the protocol modules (Noise, CPace) draw randomness, so for them the case
+// asserts the PROPERTY the protocol promises — both sides agree, a wrong input
+// disagrees, a reused state is refused — through `Task.run`, not a byte string.
+
+fn sign_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Sign.secretKeyFromBytes", "Sign.publicKey", "Sign.publicKeyToBytes"],
+                "pubHex key1",
+                "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+            ),
+            s(
+                &["Sign.sign"],
+                "sigHex key1 \"\"",
+                "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+            ),
+            s(&["Sign.verify"], "verifies key1 \"invoice 42\"", "T"),
+            s(
+                &["Sign.secretKeyToBytes"],
+                "keyOr key1 (\\k -> Bytes.toHex (Secret.reveal (Sign.secretKeyToBytes k)))",
+                "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+            ),
+            s(
+                &["Sign.secretKeyToBase64", "Sign.secretKeyFromBase64"],
+                "pubHex (Result.andThen (\\k -> Sign.secretKeyFromBase64 (Sign.secretKeyToBase64 k)) key1)",
+                "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+            ),
+            s(
+                &["Sign.publicKeyToBase64", "Sign.publicKeyFromBase64"],
+                "keyOr key1 (\\k -> Sign.publicKeyToBase64 (Sign.publicKey k) |> Sign.publicKeyFromBase64 |> Result.map (\\p -> Bytes.toHex (Sign.publicKeyToBytes p)) |> Result.withDefault \"E\")",
+                "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+            ),
+            s(&["Sign.generate"], "verifies (Task.run Sign.generate) \"m\"", "T"),
+        ],
+        "unicode" => vec![
+            s(&["Sign.sign", "Sign.verify"], "verifies key1 \"世界🎉\"", "T"),
+            s(
+                &["Sign.sign"],
+                "keyOr key1 (\\k -> String.fromInt (Bytes.length (Sign.sign k \"世界\")))",
+                "64",
+            ),
+        ],
+        "failure" => vec![
+            rs(
+                &["Sign.secretKeyFromBytes"],
+                "Sign.secretKeyFromBytes (Secret.unsafeFromString \"short\") |> Result.map (\\_ -> \"ok\")",
+                None,
+            ),
+            rs(
+                &["Sign.secretKeyFromBase64"],
+                "Sign.secretKeyFromBase64 (Secret.unsafeFromString \"!!\") |> Result.map (\\_ -> \"ok\")",
+                None,
+            ),
+            rs(
+                &["Sign.publicKeyFromBytes"],
+                "Sign.publicKeyFromBytes \"short\" |> Result.map (\\_ -> \"ok\")",
+                None,
+            ),
+            rs(
+                &["Sign.publicKeyFromBase64"],
+                "Sign.publicKeyFromBase64 \"!!\" |> Result.map (\\_ -> \"ok\")",
+                None,
+            ),
+            // A signature of another message, and a truncated signature.
+            s(
+                &["Sign.verify"],
+                "keyOr key1 (\\k -> tf (Sign.verify (Sign.publicKey k) \"b\" (Sign.sign k \"a\")))",
+                "F",
+            ),
+            s(
+                &["Sign.verify"],
+                "keyOr key1 (\\k -> tf (Sign.verify (Sign.publicKey k) \"a\" \"short\"))",
+                "F",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+fn kx_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Kx.secretKeyFromBytes", "Kx.publicKey", "Kx.publicKeyToBytes"],
+                "kxPubHex alice",
+                "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+            ),
+            s(
+                &["Kx.sharedSecret"],
+                "shared alice bob",
+                "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+            ),
+            s(
+                &["Kx.sharedSecret"],
+                "shared bob alice",
+                "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+            ),
+            s(
+                &["Kx.secretKeyToBase64", "Kx.secretKeyFromBase64"],
+                "kxPubHex (Result.andThen (\\k -> Kx.secretKeyFromBase64 (Kx.secretKeyToBase64 k)) alice)",
+                "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+            ),
+            s(
+                &["Kx.secretKeyToBytes"],
+                "kxOr alice (\\k -> Bytes.toHex (Secret.reveal (Kx.secretKeyToBytes k)))",
+                "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+            ),
+            s(
+                &["Kx.publicKeyToBase64", "Kx.publicKeyFromBase64"],
+                "kxOr alice (\\k -> Kx.publicKeyToBase64 (Kx.publicKey k) |> Kx.publicKeyFromBase64 |> Result.map (\\p -> Bytes.toHex (Kx.publicKeyToBytes p)) |> Result.withDefault \"E\")",
+                "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+            ),
+            s(&["Kx.generate"], "kxGenerated", "T"),
+        ],
+        // RFC 7748 §6.1: the all-zero output a low-order peer key forces must be
+        // refused, never used as key material.
+        "failure" => vec![
+            s(
+                &["Kx.sharedSecret"],
+                "withPeer \"0000000000000000000000000000000000000000000000000000000000000000\"",
+                "E",
+            ),
+            s(
+                &["Kx.sharedSecret"],
+                "withPeer \"e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800\"",
+                "E",
+            ),
+            s(
+                &["Kx.sharedSecret"],
+                "withPeer \"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f\"",
+                "E",
+            ),
+            rs(
+                &["Kx.publicKeyFromBytes"],
+                "Kx.publicKeyFromBytes \"short\" |> Result.map (\\_ -> \"ok\")",
+                None,
+            ),
+            rs(
+                &["Kx.secretKeyFromBytes"],
+                "Kx.secretKeyFromBytes (Secret.unsafeFromString \"short\") |> Result.map (\\_ -> \"ok\")",
+                None,
+            ),
+            rs(
+                &["Kx.publicKeyFromBase64"],
+                "Kx.publicKeyFromBase64 \"!!\" |> Result.map (\\_ -> \"ok\")",
+                None,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+fn kdf_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Kdf.extract"],
+                "Bytes.toHex (Secret.reveal (Kdf.extract (hexOf \"000102030405060708090a0b0c\") ikm1))",
+                "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5",
+            ),
+            rs(
+                &["Kdf.expand"],
+                "Kdf.expand (Kdf.extract (hexOf \"000102030405060708090a0b0c\") ikm1) (hexOf \"f0f1f2f3f4f5f6f7f8f9\") 42 |> Result.map revealHex",
+                Some("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"),
+            ),
+            rs(
+                &["Kdf.derive"],
+                "Kdf.derive (hexOf \"000102030405060708090a0b0c\") (hexOf \"f0f1f2f3f4f5f6f7f8f9\") 42 ikm1 |> Result.map revealHex",
+                Some("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"),
+            ),
+        ],
+        // RFC 5869 A.3: zero-length salt and info.
+        "empty" => vec![rs(
+            &["Kdf.derive"],
+            "Kdf.derive \"\" \"\" 42 ikm1 |> Result.map revealHex",
+            Some("8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8"),
+        )],
+        // 255 × HashLen is the most HKDF-Expand can produce (RFC 5869 §2.3).
+        "boundary" => vec![
+            ri(
+                &["Kdf.derive"],
+                "Kdf.derive \"\" \"\" 8160 ikm1 |> Result.map (\\k -> Bytes.length (Secret.reveal k))",
+                Some(8160),
+            ),
+            ri(
+                &["Kdf.derive"],
+                "Kdf.derive \"\" \"\" 1 ikm1 |> Result.map (\\k -> Bytes.length (Secret.reveal k))",
+                Some(1),
+            ),
+        ],
+        "failure" => vec![
+            rs(
+                &["Kdf.derive"],
+                "Kdf.derive \"\" \"\" 8161 ikm1 |> Result.map revealHex",
+                None,
+            ),
+            rs(&["Kdf.derive"], "Kdf.derive \"\" \"\" 0 ikm1 |> Result.map revealHex", None),
+            // A pseudorandom key shorter than HashLen is not the output of extract.
+            rs(
+                &["Kdf.expand"],
+                "Kdf.expand (Secret.unsafeFromString \"short\") \"\" 32 |> Result.map revealHex",
+                None,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+fn noise_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &[
+                    "Noise.initiator",
+                    "Noise.responder",
+                    "Noise.writeMessage",
+                    "Noise.readMessage",
+                    "Noise.transport",
+                    "Noise.encrypt",
+                    "Noise.decrypt",
+                ],
+                "noiseRun \"v1\" \"v1\"",
+                "hello/welcome/ping/pong",
+            ),
+            s(
+                &[
+                    "Noise.peer",
+                    "Noise.isComplete",
+                    "Noise.transportPeer",
+                    "Noise.handshakeHash",
+                ],
+                "noiseFacts",
+                "T",
+            ),
+        ],
+        "failure" => vec![
+            // A different prologue on each side must fail the handshake.
+            s(&["Noise.readMessage"], "noiseRun \"v1\" \"v2\"", "E"),
+            // A used transport value would reuse a nonce: refused. Rekey on a
+            // fresh value is accepted.
+            s(
+                &["Noise.encrypt", "Noise.rekeySend", "Noise.rekeyReceive"],
+                "noiseStale",
+                "T",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+fn cpace_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Cpace.start", "Cpace.respond", "Cpace.finish"],
+                "cpaceAgree \"482916\" \"482916\"",
+                "T",
+            ),
+            s(&["Cpace.messageData"], "cpaceAd", "phone"),
+        ],
+        "failure" => vec![
+            // A wrong password is not an error: the keys simply differ.
+            s(
+                &["Cpace.start", "Cpace.respond", "Cpace.finish"],
+                "cpaceAgree \"482916\" \"482917\"",
+                "F",
+            ),
+            rs(
+                &["Cpace.messageData"],
+                "Cpace.messageData \"not a message\"",
+                None,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+fn qr_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            ri(
+                &["Qr.encode", "Qr.size"],
+                "Qr.encode Qr.Medium \"HELLO WORLD\" |> Result.map Qr.size",
+                Some(21),
+            ),
+            // 30 bytes: version 4 (33 modules) at H, version 2 (25) at L.
+            ri(
+                &["Qr.encode"],
+                "Qr.encode Qr.High (String.repeat 30 \"a\") |> Result.map Qr.size",
+                Some(33),
+            ),
+            ri(
+                &["Qr.encode"],
+                "Qr.encode Qr.Low (String.repeat 30 \"a\") |> Result.map Qr.size",
+                Some(25),
+            ),
+            // The top-left finder pattern: dark corner, light ring, dark centre.
+            s(&["Qr.isDark"], "qrFinder", "T"),
+            ri(
+                &["Qr.rows"],
+                "Qr.encode Qr.Quartile \"x\" |> Result.map (\\c -> List.length (Qr.rows c))",
+                Some(21),
+            ),
+            s(
+                &["Qr.toSvg"],
+                "Qr.encode Qr.Medium \"HELLO WORLD\" |> Result.map (\\c -> String.left 4 (Qr.toSvg 4 c)) |> Result.withDefault \"E\"",
+                "<svg",
+            ),
+            ri(
+                &["Qr.toTerminal"],
+                "Qr.encode Qr.Medium \"HELLO WORLD\" |> Result.map (\\c -> List.length (List.filter (\\l -> l /= \"\") (String.lines (Qr.toTerminal c))))",
+                Some(13),
+            ),
+        ],
+        "empty" => vec![ri(
+            &["Qr.encode"],
+            "Qr.encode Qr.High \"\" |> Result.map Qr.size",
+            Some(21),
+        )],
+        "boundary" => vec![
+            ri(
+                &["Qr.encode"],
+                "Qr.encode Qr.Low (String.repeat 2953 \"z\") |> Result.map Qr.size",
+                Some(177),
+            ),
+            ri(
+                &["Qr.encode"],
+                "Qr.encode Qr.High (String.repeat 1273 \"z\") |> Result.map Qr.size",
+                Some(177),
+            ),
+        ],
+        // Byte mode counts UTF-8 BYTES: "héllo ✓" is 10 bytes, one version-1
+        // symbol at L.
+        "unicode" => vec![ri(
+            &["Qr.encode"],
+            "Qr.encode Qr.Low \"héllo ✓\" |> Result.map Qr.size",
+            Some(21),
+        )],
+        "failure" => vec![
+            ri(
+                &["Qr.encode"],
+                "Qr.encode Qr.Low (String.repeat 2954 \"z\") |> Result.map Qr.size",
+                None,
+            ),
+            ri(
+                &["Qr.encode"],
+                "Qr.encode Qr.High (String.repeat 1274 \"z\") |> Result.map Qr.size",
+                None,
+            ),
+            s(
+                &["Qr.isDark"],
+                "Qr.encode Qr.Low \"x\" |> Result.map (\\c -> tf (Qr.isDark -1 0 c)) |> Result.withDefault \"E\"",
+                "F",
             ),
         ],
         _ => vec![],
@@ -4124,6 +4562,318 @@ fn fixtures(slug: &str) -> &'static str {
              dimsOf : Task Error String -> String\ndimsOf tk =\n    case Task.run tk of\n\
              \x20       Ok v ->\n            dimsRes v\n\n        Err _ ->\n            \"E\"\n"
         }
+        // Ed25519 against RFC 8032 §7.1 TEST 1. `keyOr` keeps a failed key
+        // import visible as "E" instead of hiding it behind a default key.
+        "sign" => {
+            r#"hexOf : String -> String
+hexOf h =
+    Maybe.withDefault "" (Bytes.fromHex h)
+
+
+tf : Bool -> String
+tf b =
+    if b then
+        "T"
+
+    else
+        "F"
+
+
+key1 : Result Error Sign.SecretKey
+key1 =
+    Sign.secretKeyFromBytes (Secret.unsafeFromString (hexOf "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"))
+
+
+keyOr : Result Error Sign.SecretKey -> (Sign.SecretKey -> String) -> String
+keyOr r f =
+    case r of
+        Ok k ->
+            f k
+
+        Err _ ->
+            "E"
+
+
+pubHex : Result Error Sign.SecretKey -> String
+pubHex r =
+    keyOr r (\k -> Bytes.toHex (Sign.publicKeyToBytes (Sign.publicKey k)))
+
+
+sigHex : Result Error Sign.SecretKey -> String -> String
+sigHex r m =
+    keyOr r (\k -> Bytes.toHex (Sign.sign k m))
+
+
+verifies : Result Error Sign.SecretKey -> String -> String
+verifies r m =
+    keyOr r (\k -> tf (Sign.verify (Sign.publicKey k) m (Sign.sign k m)))
+"#
+        }
+        // X25519 against RFC 7748 §6.1 (Alice and Bob).
+        "kx" => {
+            r#"hexOf : String -> String
+hexOf h =
+    Maybe.withDefault "" (Bytes.fromHex h)
+
+
+tf : Bool -> String
+tf b =
+    if b then
+        "T"
+
+    else
+        "F"
+
+
+alice : Result Error Kx.SecretKey
+alice =
+    Kx.secretKeyFromBytes (Secret.unsafeFromString (hexOf "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"))
+
+
+bob : Result Error Kx.SecretKey
+bob =
+    Kx.secretKeyFromBytes (Secret.unsafeFromString (hexOf "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb"))
+
+
+kxOr : Result Error Kx.SecretKey -> (Kx.SecretKey -> String) -> String
+kxOr r f =
+    case r of
+        Ok k ->
+            f k
+
+        Err _ ->
+            "E"
+
+
+kxPubHex : Result Error Kx.SecretKey -> String
+kxPubHex r =
+    kxOr r (\k -> Bytes.toHex (Kx.publicKeyToBytes (Kx.publicKey k)))
+
+
+sharedWith : Kx.SecretKey -> Kx.PublicKey -> String
+sharedWith k p =
+    case Kx.sharedSecret k p of
+        Ok s ->
+            Bytes.toHex (Secret.reveal s)
+
+        Err _ ->
+            "E"
+
+
+shared : Result Error Kx.SecretKey -> Result Error Kx.SecretKey -> String
+shared mine theirs =
+    case theirs of
+        Ok t ->
+            kxOr mine (\m -> sharedWith m (Kx.publicKey t))
+
+        Err _ ->
+            "E"
+
+
+withPeer : String -> String
+withPeer h =
+    case Kx.publicKeyFromBytes (hexOf h) of
+        Ok p ->
+            kxOr alice (\a -> sharedWith a p)
+
+        Err _ ->
+            "SETUP"
+
+
+kxGenerated : String
+kxGenerated =
+    case Task.run (Kx.generate |> Task.andThen (\a -> Task.map (\b -> ( a, b )) Kx.generate)) of
+        Ok ( a, b ) ->
+            tf (sharedWith a (Kx.publicKey b) == sharedWith b (Kx.publicKey a) && sharedWith a (Kx.publicKey b) /= "E")
+
+        Err _ ->
+            "E"
+"#
+        }
+        // HKDF-SHA256 against RFC 5869 A.1 / A.3.
+        "kdf" => {
+            r#"hexOf : String -> String
+hexOf h =
+    Maybe.withDefault "" (Bytes.fromHex h)
+
+
+ikm1 : Secret
+ikm1 =
+    Secret.unsafeFromString (hexOf "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
+
+
+revealHex : Secret -> String
+revealHex k =
+    Bytes.toHex (Secret.reveal k)
+"#
+        }
+        // A full IK handshake with fresh keys, then one transport message each
+        // way. Every step continues from the value the previous step returned;
+        // `noiseStale` proves an OLD value is refused.
+        "noise" => {
+            r#"tf : Bool -> String
+tf b =
+    if b then
+        "T"
+
+    else
+        "F"
+
+
+type alias Pair =
+    { i : Noise.Handshake, r : Noise.Handshake, iPub : Kx.PublicKey }
+
+
+type alias Done =
+    { it : Noise.Transport, rt : Noise.Transport, said : String, peerOk : Bool }
+
+
+noisePair : String -> String -> Result Error Pair
+noisePair pi pr =
+    Task.run
+        (Kx.generate
+            |> Task.andThen
+                (\iKey ->
+                    Kx.generate
+                        |> Task.andThen
+                            (\rKey ->
+                                Noise.initiator iKey (Kx.publicKey rKey) pi
+                                    |> Task.andThen (\i -> Noise.responder rKey pr |> Task.map (\r -> { i = i, r = r, iPub = Kx.publicKey iKey }))
+                            )
+                )
+        )
+
+
+samePeer : Kx.PublicKey -> Noise.Handshake -> Bool
+samePeer want hs =
+    case Noise.peer hs of
+        Just p ->
+            Kx.publicKeyToBytes p == Kx.publicKeyToBytes want
+
+        Nothing ->
+            False
+
+
+finishBoth : Pair -> Noise.Handshake -> Noise.Handshake -> String -> String -> Result Error Done
+finishBoth pair i2 r2 p0 p1 =
+    Result.map2
+        (\it rt -> { it = it, rt = rt, said = p0 ++ "/" ++ p1, peerOk = samePeer pair.iPub r2 && Noise.isComplete i2 && Noise.isComplete r2 })
+        (Noise.transport i2)
+        (Noise.transport r2)
+
+
+secondMessage : Pair -> Noise.Handshake -> Noise.Handshake -> String -> Result Error Done
+secondMessage pair i1 r1 p0 =
+    Noise.writeMessage "welcome" r1
+        |> Result.andThen (\( r2, m1 ) -> Noise.readMessage m1 i1 |> Result.andThen (\( i2, p1 ) -> finishBoth pair i2 r2 p0 p1))
+
+
+handshake : Pair -> Result Error Done
+handshake pair =
+    Noise.writeMessage "hello" pair.i
+        |> Result.andThen (\( i1, m0 ) -> Noise.readMessage m0 pair.r |> Result.andThen (\( r1, p0 ) -> secondMessage pair i1 r1 p0))
+
+
+pingPong : Done -> Result Error String
+pingPong d =
+    Noise.encrypt "ping" d.it
+        |> Result.andThen (\( _, c1 ) -> Noise.decrypt c1 d.rt)
+        |> Result.andThen (\( rt2, p2 ) -> Noise.encrypt "pong" rt2 |> Result.map (\( _, c2 ) -> ( p2, c2 )))
+        |> Result.andThen (\( p2, c2 ) -> Noise.decrypt c2 d.it |> Result.map (\( _, p3 ) -> d.said ++ "/" ++ p2 ++ "/" ++ p3))
+
+
+noiseRun : String -> String -> String
+noiseRun pi pr =
+    noisePair pi pr
+        |> Result.andThen handshake
+        |> Result.andThen pingPong
+        |> Result.withDefault "E"
+
+
+noiseFacts : String
+noiseFacts =
+    noisePair "" ""
+        |> Result.andThen handshake
+        |> Result.map (\d -> tf (d.peerOk && Noise.handshakeHash d.it == Noise.handshakeHash d.rt && Kx.publicKeyToBytes (Noise.transportPeer d.it) /= Kx.publicKeyToBytes (Noise.transportPeer d.rt)))
+        |> Result.withDefault "E"
+
+
+staleCheck : Done -> String
+staleCheck d =
+    case Noise.encrypt "one" d.it of
+        Ok ( it2, _ ) ->
+            case ( Noise.encrypt "two" d.it, Noise.rekeySend it2, Noise.rekeyReceive d.rt ) of
+                ( Err _, Ok _, Ok _ ) ->
+                    "T"
+
+                _ ->
+                    "F"
+
+        Err _ ->
+            "E"
+
+
+noiseStale : String
+noiseStale =
+    noisePair "" ""
+        |> Result.andThen handshake
+        |> Result.map staleCheck
+        |> Result.withDefault "E"
+"#
+        }
+        // Two CPace parties over one exchange. `cpaceAgree` compares the two
+        // derived keys; a wrong password must make them differ.
+        "cpace" => {
+            r#"tf : Bool -> String
+tf b =
+    if b then
+        "T"
+
+    else
+        "F"
+
+
+keysOf : Secret -> Secret -> Result Error ( String, String )
+keysOf pwA pwB =
+    Task.run (Cpace.start pwA "pairing" "sid-1" "phone")
+        |> Result.andThen
+            (\( pending, msgA ) ->
+                Task.run (Cpace.respond pwB "pairing" "sid-1" "laptop" msgA)
+                    |> Result.andThen (\( kb, msgB ) -> Cpace.finish pending msgB |> Result.map (\ka -> ( Secret.reveal ka, Secret.reveal kb )))
+            )
+
+
+cpaceAgree : String -> String -> String
+cpaceAgree a b =
+    keysOf (Secret.unsafeFromString a) (Secret.unsafeFromString b)
+        |> Result.map (\( x, y ) -> tf (x == y && String.length x > 0))
+        |> Result.withDefault "E"
+
+
+cpaceAd : String
+cpaceAd =
+    Task.run (Cpace.start (Secret.unsafeFromString "1") "" "" "phone")
+        |> Result.andThen (\( _, msg ) -> Cpace.messageData msg)
+        |> Result.withDefault "E"
+"#
+        }
+        "qr" => {
+            r#"tf : Bool -> String
+tf b =
+    if b then
+        "T"
+
+    else
+        "F"
+
+
+qrFinder : String
+qrFinder =
+    Qr.encode Qr.Medium "HELLO WORLD"
+        |> Result.map (\c -> tf (Qr.isDark 0 0 c && Qr.isDark 6 6 c && not (Qr.isDark 1 1 c) && Qr.isDark 3 3 c))
+        |> Result.withDefault "E"
+"#
+        }
         _ => "",
     }
 }
@@ -4137,8 +4887,10 @@ fn extra_imports(slug: &str) -> &'static [&'static str] {
         // is built with `Error.io`.
         "result" => &["Sky.Core.Error as Error"],
         // The AEAD keys are `Sky.Core.Secret` since the Secret migration; the
-        // battery builds them with `Secret.unsafeFromString`.
-        "crypto" => &["Sky.Core.Secret as Secret"],
+        // battery builds them with `Secret.unsafeFromString`. Every encrypt /
+        // seal is a `Task` since v0.26.2 (it draws a random nonce), bridged
+        // with `Task.run`.
+        "crypto" => &["Sky.Core.Secret as Secret", "Sky.Core.Task as Task"],
         // `Jwt.hs256` takes a `Secret` signing key (Secret migration); the
         // battery wraps the literal key with `Secret.unsafeFromString`.
         "jwt" => &["Sky.Core.Secret as Secret"],

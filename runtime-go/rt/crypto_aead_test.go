@@ -9,7 +9,7 @@ import (
 // AES-256-GCM round-trip + key length validation + tamper detection.
 func TestCryptoAesGcmRoundTrip(t *testing.T) {
 	// Wrong-length key → Err with helpful message.
-	res := Crypto_aesGcmEncrypt("short-key", "msg").(SkyResult[any, any])
+	res := runCryptoTask(t, Crypto_aesGcmEncrypt("short-key", "msg"))
 	if res.Tag != 1 {
 		t.Fatalf("aesGcmEncrypt accepted a wrong-length key")
 	}
@@ -26,7 +26,7 @@ func TestCryptoAesGcmRoundTrip(t *testing.T) {
 	}
 
 	// Round-trip succeeds.
-	enc := Crypto_aesGcmEncrypt(key, "a secret message").(SkyResult[any, any])
+	enc := runCryptoTask(t, Crypto_aesGcmEncrypt(key, "a secret message"))
 	if enc.Tag != 0 {
 		t.Fatalf("aesGcmEncrypt returned Err: %v", enc.ErrValue)
 	}
@@ -44,7 +44,7 @@ func TestCryptoAesGcmRoundTrip(t *testing.T) {
 	}
 
 	// Two encryptions of the same message yield distinct ciphertexts.
-	enc2 := Crypto_aesGcmEncrypt(key, "a secret message").(SkyResult[any, any])
+	enc2 := runCryptoTask(t, Crypto_aesGcmEncrypt(key, "a secret message"))
 	if enc2.OkValue.(string) == encoded {
 		t.Fatalf("aesGcmEncrypt is deterministic — nonce reuse is a serious bug")
 	}
@@ -71,7 +71,7 @@ func TestCryptoChaCha20RoundTrip(t *testing.T) {
 		t.Fatalf("chachaKeyFromPassword should derive 32 bytes, got %d", len(secretReveal(key)))
 	}
 
-	enc := Crypto_chacha20Encrypt(key, "another secret").(SkyResult[any, any])
+	enc := runCryptoTask(t, Crypto_chacha20Encrypt(key, "another secret"))
 	if enc.Tag != 0 {
 		t.Fatalf("chacha20Encrypt returned Err: %v", enc.ErrValue)
 	}
@@ -101,7 +101,7 @@ func TestCryptoKeyDerivationDeterministic(t *testing.T) {
 
 // Wrong-length key surfaces a helpful error mentioning aesKeyFromPassword.
 func TestCryptoAesGcmKeyLengthError(t *testing.T) {
-	res := Crypto_aesGcmEncrypt("abc", "x").(SkyResult[any, any])
+	res := runCryptoTask(t, Crypto_aesGcmEncrypt("abc", "x"))
 	if res.Tag != 1 {
 		t.Fatalf("expected Err on short key")
 	}
@@ -148,5 +148,44 @@ func TestBytesToStringUTF8(t *testing.T) {
 	bad, _ := Bytes_toString("\xff\xfe\xfd").(SkyMaybe[any])
 	if bad.Tag != 1 {
 		t.Errorf("toString accepted invalid UTF-8")
+	}
+}
+
+// runCryptoTask forces a Task-typed crypto kernel (an encrypt that draws a
+// random nonce is an effect, so it is a Task: a `func() any`) and returns its
+// Result. A kernel that returns anything but a Task fails the test: before
+// v0.26.2 the encrypt kernels returned a bare Result, so the nonce draw ran at
+// evaluation time, outside the effect system.
+func runCryptoTask(t *testing.T, v any) SkyResult[any, any] {
+	t.Helper()
+	task, ok := v.(func() any)
+	if !ok {
+		t.Fatalf("expected a Task (func() any), got %T", v)
+	}
+	r, ok := task().(SkyResult[any, any])
+	if !ok {
+		t.Fatalf("Task did not return a Result")
+	}
+	return r
+}
+
+// Every AEAD encrypt draws a random nonce, so each is a Task: building the
+// value must not encrypt, and running it twice must give two ciphertexts.
+func TestCryptoAeadEncryptIsATask(t *testing.T) {
+	key := Crypto_aesKeyFromPassword("hunter2", "salt")
+	for name, enc := range map[string]func(any, any) any{
+		"aesGcmEncrypt":   Crypto_aesGcmEncrypt,
+		"chacha20Encrypt": Crypto_chacha20Encrypt,
+		"xchachaSeal":     Crypto_xchachaSeal,
+	} {
+		task := enc(key, "same message")
+		a := runCryptoTask(t, task)
+		b := runCryptoTask(t, task)
+		if a.Tag != 0 || b.Tag != 0 {
+			t.Fatalf("%s: Err on a valid key: %v %v", name, a.ErrValue, b.ErrValue)
+		}
+		if a.OkValue.(string) == b.OkValue.(string) {
+			t.Fatalf("%s: running the same Task twice reused the nonce", name)
+		}
 	}
 }

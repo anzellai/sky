@@ -202,14 +202,117 @@ hmac   = Crypto.hmacSha256 "secret" "message"
 | `Crypto.rsaSha256Sign` | `String -> String -> Result Error String` | RSASSA-PKCS1-v1_5 over SHA-256 ("RS256"); (PEM private key, message) → standard-base64 signature |
 | `Crypto.rsaSha256Verify` | `String -> String -> String -> Bool` | (PEM public key, message, base64 signature) → valid? |
 | `Crypto.constantTimeEqual` | `String -> String -> Bool` | Side-channel safe comparison |
-| `Crypto.randomBytes` | `Int -> Task Error String` | OS entropy → raw bytes (as a Sky String) |
+| `Crypto.randomBytes` | `Int -> Task Error String` | OS entropy: `n` bytes (1..1024), returned **hex-encoded** (`2 × n` characters) |
 | `Crypto.randomToken` | `Int -> Task Error String` | OS entropy → URL-safe-base64 string of given byte length |
-| `Crypto.aesGcmEncrypt` | `String -> String -> Result Error String` | AES-256-GCM AEAD; output is `base64(nonce \|\| ct \|\| tag)`. Pair with `aesKeyFromPassword` |
-| `Crypto.aesGcmDecrypt` | `String -> String -> Result Error String` | Inverse of `aesGcmEncrypt`. Err on tag/key mismatch |
-| `Crypto.chacha20Encrypt` | `String -> String -> Result Error String` | ChaCha20-Poly1305 AEAD — preferred on ARM / mobile (no AES-NI) |
-| `Crypto.chacha20Decrypt` | `String -> String -> Result Error String` | Inverse of `chacha20Encrypt` |
-| `Crypto.aesKeyFromPassword` | `String -> String -> String` | PBKDF2-HMAC-SHA256 100k iter → 32-byte key for `aesGcmEncrypt` |
-| `Crypto.chachaKeyFromPassword` | `String -> String -> String` | Same shape — derive a key for ChaCha |
+| `Crypto.xchachaSeal` | `Secret -> String -> Task Error String` | **The recommended AEAD.** XChaCha20-Poly1305 with a random 24-byte nonce; output `base64(nonce \|\| ct \|\| tag)` |
+| `Crypto.xchachaSealWith` | `Secret -> String -> String -> Task Error String` | As `xchachaSeal`, and authenticates associated data (key, AD, plaintext) |
+| `Crypto.xchachaOpen` | `Secret -> String -> Result Error String` | Inverse of `xchachaSeal`. Err on a wrong key or a tampered value |
+| `Crypto.xchachaOpenWith` | `Secret -> String -> String -> Result Error String` | Inverse of `xchachaSealWith`. Err when the associated data differs |
+| `Crypto.aesGcmEncrypt` | `Secret -> String -> Task Error String` | AES-256-GCM AEAD, random 12-byte nonce; output `base64(nonce \|\| ct \|\| tag)`. A `Task` since v0.26.2 |
+| `Crypto.aesGcmDecrypt` | `Secret -> String -> Result Error String` | Inverse of `aesGcmEncrypt`. Err on tag/key mismatch |
+| `Crypto.chacha20Encrypt` | `Secret -> String -> Task Error String` | ChaCha20-Poly1305 AEAD, random 12-byte nonce. A `Task` since v0.26.2 |
+| `Crypto.chacha20Decrypt` | `Secret -> String -> Result Error String` | Inverse of `chacha20Encrypt` |
+| `Crypto.aesKeyFromPassword` | `Secret -> String -> Secret` | PBKDF2-HMAC-SHA256 100k iter → 32-byte key (a `Secret`) for any AEAD above |
+| `Crypto.chachaKeyFromPassword` | `Secret -> String -> Secret` | Same derivation, named for ChaCha |
+
+#### Which AEAD, which key, which effect
+
+- **Use `xchachaSeal` / `xchachaOpen`.** Its 24-byte random nonce never
+  repeats in practice, so one key can seal any number of messages.
+  `aesGcmEncrypt` and `chacha20Encrypt` use a 12-byte random nonce: keep them
+  for interoperability and rotate the key well before 2^32 messages.
+- **Keys are `Secret`s, 32 bytes.** From a password: `Crypto.aesKeyFromPassword`
+  (PBKDF2). From key material (an X25519 shared secret, a master key):
+  `Kdf.derive` (HKDF). From configuration: `Secret.fromEnv`.
+- **Effects.** Anything that draws randomness is a `Task`: every seal and
+  encrypt, `randomBytes`, `randomToken`, and key generation. Open, decrypt,
+  hashing, MACs, key derivation, signing and verification are pure.
+- **v0.26.2 migration.** `aesGcmEncrypt` and `chacha20Encrypt` became
+  `Task Error String` (they draw a nonce). In a `Task` chain use them
+  directly; where a `Result` is needed, `Task.run (Crypto.aesGcmEncrypt key pt)`.
+
+### `Std.Crypto.Sign`, `Std.Crypto.Kx`, `Std.Crypto.Kdf` — signatures, key agreement, key derivation
+
+```elm
+import Std.Crypto.Sign as Sign
+import Std.Crypto.Kx as Kx
+import Std.Crypto.Kdf as Kdf
+
+-- Ed25519: generate once, keep the key in an environment variable.
+signingKey = Sign.secretKeyFromBase64 (Secret.fromEnv "SIGNING_KEY")   -- Result Error Sign.SecretKey
+signature  = Sign.sign secretKey "invoice #42"                         -- 64 raw bytes
+valid      = Sign.verify publicKey "invoice #42" signature             -- Bool
+
+-- X25519 then HKDF: a shared key for xchachaSeal.
+sessionKey =
+    Kx.sharedSecret mySecret theirPublic
+        |> Result.andThen (Kdf.derive salt "my-app v1 session" 32)
+```
+
+| Function | Type | Notes |
+|---|---|---|
+| `Sign.generate` | `Task Error Sign.SecretKey` | Fresh Ed25519 key |
+| `Sign.publicKey` | `Sign.SecretKey -> Sign.PublicKey` | |
+| `Sign.sign` | `Sign.SecretKey -> String -> String` | RFC 8032 Ed25519, 64-byte signature (pure: Ed25519 is deterministic) |
+| `Sign.verify` | `Sign.PublicKey -> String -> String -> Bool` | `False` on any failure, including a wrong-length signature |
+| `Sign.secretKeyFromBytes` / `secretKeyFromBase64` | `Secret -> Result Error Sign.SecretKey` | 32-byte seed (raw / standard base64); Err on a wrong length |
+| `Sign.secretKeyToBytes` / `secretKeyToBase64` | `Sign.SecretKey -> Secret` | Export; still a `Secret` |
+| `Sign.publicKeyFromBytes` / `publicKeyFromBase64` | `String -> Result Error Sign.PublicKey` | Err on a wrong length or a non-curve point |
+| `Sign.publicKeyToBytes` / `publicKeyToBase64` | `Sign.PublicKey -> String` | |
+| `Kx.generate` | `Task Error Kx.SecretKey` | Fresh X25519 key |
+| `Kx.publicKey` | `Kx.SecretKey -> Kx.PublicKey` | |
+| `Kx.sharedSecret` | `Kx.SecretKey -> Kx.PublicKey -> Result Error Secret` | RFC 7748; **Err on a low-order peer key** (all-zero result) |
+| `Kx.secretKeyFrom…` / `secretKeyTo…` / `publicKeyFrom…` / `publicKeyTo…` | as `Sign` | Same import / export shapes |
+| `Kdf.extract` | `String -> Secret -> Secret` | HKDF-Extract (salt, input key material) |
+| `Kdf.expand` | `Secret -> String -> Int -> Result Error Secret` | HKDF-Expand (key, info, length); Err unless `1 ≤ length ≤ 8160` |
+| `Kdf.derive` | `String -> String -> Int -> Secret -> Result Error Secret` | Extract then expand |
+
+`Sign.SecretKey` and `Kx.SecretKey` are opaque: they print as
+`[REDACTED]` in every `toString`, log and JSON path, a Sky.Live session store
+refuses to save them, and the raw bytes leave only as a `Secret`
+(`secretKeyToBytes`), so reading them still needs the greppable
+`Secret.reveal`. Public keys print as base64.
+
+### `Std.Crypto.Noise` — authenticated encrypted sessions
+
+`Noise_IK_25519_ChaChaPoly_SHA256`: two messages set up a mutually
+authenticated channel when the initiator already knows the responder's static
+public key. `Noise.initiator` / `Noise.responder` (Tasks: they draw the
+ephemeral key) give a `Handshake`; `writeMessage` / `readMessage` step it;
+`peer` shows the initiator's static key to the responder after message 1;
+`transport` turns a complete handshake into a `Transport` with `encrypt`,
+`decrypt`, `rekeySend`, `rekeyReceive` and `handshakeHash`. Every step returns
+the next state as `Result Error ( state, bytes )`. **Each state value is
+single-use**: reusing an older one returns an `Err`, because it would reuse a
+nonce. Tested against the cacophony IK vectors. See `sky doc Std.Crypto.Noise`.
+
+### `Std.Crypto.Cpace` — password-authenticated key exchange (awaiting external review)
+
+CPace (draft-irtf-cfrg-cpace-21, CPACE-X25519-SHA512) derives a strong 64-byte
+key from a short shared code — a pairing code on a screen — without exposing
+the code to an offline dictionary attack. `Cpace.start` (initiator) →
+`Cpace.respond` (responder, returns its key) → `Cpace.finish` (initiator). A
+wrong code is not an error: the keys differ, so confirm the key before you trust
+it. **This module implements an Internet-Draft and has not had an independent
+security review**; it passes the draft's test vectors. See `sky doc
+Std.Crypto.Cpace`.
+
+### `Std.Qr` — QR codes
+
+```elm
+import Std.Qr as Qr
+
+case Qr.encode Qr.Medium "https://example.org/pair?code=482916" of
+    Ok code -> Qr.view 4 code            -- Std.Ui element (inline SVG)
+    Err e   -> Ui.text (errorToString e)
+```
+
+`Qr.encode : Qr.ErrorCorrection -> String -> Result Error Qr.QrCode` (levels
+`Low`, `Medium`, `Quartile`, `High`; Err when the text is too long — 2953 bytes
+at `Low`, 1273 at `High`), `Qr.size`, `Qr.isDark column row`, `Qr.rows`, and
+the renderers `Qr.view` (`Std.Ui` element), `Qr.toSvg` (SVG document string)
+and `Qr.toTerminal` (half-block characters in explicit black on white). Pure,
+no cgo; it also runs in the Sky.Spa wasm client.
 
 ### `Bytes` — byte-buffer helpers (Sky.Core.Bytes)
 

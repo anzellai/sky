@@ -1,0 +1,133 @@
+-- | Std.Crypto.Kx — X25519 Diffie-Hellman key agreement (RFC 7748).
+--
+-- Two parties each hold a `SecretKey` and exchange `PublicKey`s. Each side
+-- computes the same shared secret from its own secret key and the other
+-- side's public key; nobody who saw only the public keys can.
+--
+--     Kx.sharedSecret mySecret theirPublic      -- Result Error Secret
+--         |> Result.andThen (Kdf.derive salt "my-app v1 session" 32)
+--
+-- Never use the shared secret directly as a key: run it through
+-- `Std.Crypto.Kdf` with a context string, as above.
+--
+-- **Low-order points.** A malicious peer can send a public key that forces
+-- the shared secret to all zeros, a value an attacker can predict.
+-- `sharedSecret` refuses it with an `Err` (RFC 7748 §6.1).
+--
+-- **Key types and effects** follow `Std.Crypto.Sign`: `SecretKey` is opaque
+-- and self-redacting, exports return a `Secret`, and `generate` is the only
+-- `Task`.
+module Std.Crypto.Kx exposing
+    ( SecretKey
+    , PublicKey
+    , generate
+    , publicKey
+    , sharedSecret
+    , secretKeyFromBytes
+    , secretKeyFromBase64
+    , secretKeyToBytes
+    , secretKeyToBase64
+    , publicKeyFromBytes
+    , publicKeyToBytes
+    , publicKeyFromBase64
+    , publicKeyToBase64
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Secret exposing (Secret)
+import Sky.Core.Bytes as Bytes
+
+-- | An X25519 secret key (a 32-byte scalar). Opaque and self-redacting.
+type SecretKey
+    = SecretKey_OPAQUE
+
+-- | An X25519 public key (a 32-byte u-coordinate).
+type PublicKey
+    = PublicKey_OPAQUE
+
+
+-- | A fresh random secret key. A `Task`: it reads the operating system's
+-- random source.
+generate : Task Error SecretKey
+generate =
+    generateWith ()
+
+
+generateWith : () -> Task Error SecretKey
+generateWith =
+    Ffi.kernel "Kx_generate"
+
+
+-- | The public key of a secret key — the half you send to the peer.
+publicKey : SecretKey -> PublicKey
+publicKey =
+    Ffi.kernel "Kx_publicKey"
+
+
+-- | `sharedSecret mySecret theirPublic` — the 32-byte X25519 shared secret,
+-- wrapped in a `Secret`. `Err` when `theirPublic` is a low-order point (the
+-- result would be all zeros).
+sharedSecret : SecretKey -> PublicKey -> Result Error Secret
+sharedSecret =
+    Ffi.kernel "Kx_sharedSecret"
+
+
+-- | Load a secret key from its 32 bytes. `Err` when the length is not 32.
+secretKeyFromBytes : Secret -> Result Error SecretKey
+secretKeyFromBytes =
+    Ffi.kernel "Kx_secretKeyFromBytes"
+
+
+-- | Load a secret key from the standard base64 of its 32 bytes.
+secretKeyFromBase64 : Secret -> Result Error SecretKey
+secretKeyFromBase64 =
+    Ffi.kernel "Kx_secretKeyFromBase64"
+
+
+-- | The 32 bytes of a secret key, still wrapped in a `Secret`.
+secretKeyToBytes : SecretKey -> Secret
+secretKeyToBytes =
+    Ffi.kernel "Kx_secretKeyToBytes"
+
+
+-- | The standard base64 of a secret key, still wrapped in a `Secret`.
+secretKeyToBase64 : SecretKey -> Secret
+secretKeyToBase64 =
+    Ffi.kernel "Kx_secretKeyToBase64"
+
+
+-- | Load a public key from its 32 bytes. `Err` on a wrong length. (Any 32
+-- bytes are a valid X25519 input; a low-order point is refused later, by
+-- `sharedSecret`.)
+publicKeyFromBytes : String -> Result Error PublicKey
+publicKeyFromBytes =
+    Ffi.kernel "Kx_publicKeyFromBytes"
+
+
+-- | The 32 bytes of a public key.
+publicKeyToBytes : PublicKey -> String
+publicKeyToBytes =
+    Ffi.kernel "Kx_publicKeyToBytes"
+
+
+-- | Load a public key from standard base64.
+publicKeyFromBase64 : String -> Result Error PublicKey
+publicKeyFromBase64 text =
+    case Bytes.fromBase64 text of
+
+        Just raw ->
+            publicKeyFromBytes raw
+
+        Nothing ->
+            Err
+                (Error.invalidInput
+                    "Kx.publicKeyFromBase64: the key is not valid standard base64")
+
+
+-- | The standard base64 of a public key.
+publicKeyToBase64 : PublicKey -> String
+publicKeyToBase64 key =
+    Bytes.toBase64 (publicKeyToBytes key)

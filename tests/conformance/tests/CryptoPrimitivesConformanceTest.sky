@@ -1,0 +1,422 @@
+module CryptoPrimitivesConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the v0.26.2 crypto primitives, driven through
+-- the compiled Sky surface:
+--
+--   * Std.Crypto.Sign  — Ed25519, RFC 8032 §7.1 TEST 1 and TEST 2
+--   * Std.Crypto.Kx    — X25519, RFC 7748 §6.1 (Alice and Bob)
+--   * Std.Crypto.Kdf   — HKDF-SHA256, RFC 5869 A.1 and A.3
+--   * Sky.Core.Crypto  — xchachaSeal / xchachaOpen, and the AEAD encrypt
+--                        functions, which are Tasks since v0.26.2
+--
+-- plus the negative cases: tampered ciphertext, wrong key, wrong associated
+-- data, bad lengths, a low-order public key, and the redaction of secret keys.
+-- The byte-exact vector tests of every primitive are in the Go runtime
+-- (runtime-go/rt/crypto_sign_kx_test.go); these prove the Sky types, the
+-- kernel wiring and the effect boundary.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Bytes as Bytes
+import Sky.Core.Error as Error
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Secret as Secret exposing (Secret)
+import Std.Crypto.Sign as Sign
+import Std.Crypto.Kx as Kx
+import Std.Crypto.Kdf as Kdf
+import Sky.Test as Test exposing (Test)
+
+
+hex : String -> String
+hex s =
+    Maybe.withDefault "" (Bytes.fromHex s)
+
+
+secretHex : String -> Secret
+secretHex s =
+    Secret.unsafeFromString (hex s)
+
+
+revealHex : Secret -> String
+revealHex s =
+    Bytes.toHex (Secret.reveal s)
+
+
+-- ─── Ed25519 (RFC 8032 §7.1) ───────────────────────────────────────
+test1Key : Result Error Sign.SecretKey
+test1Key =
+    Sign.secretKeyFromBytes
+        (secretHex
+            "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+
+
+test2Key : Result Error Sign.SecretKey
+test2Key =
+    Sign.secretKeyFromBytes
+        (secretHex
+            "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
+
+
+signHex : Result Error Sign.SecretKey -> String -> String
+signHex key msg =
+    case key of
+
+        Ok k ->
+            Bytes.toHex (Sign.sign k (hex msg))
+
+        Err _ ->
+            "no key"
+
+
+publicHex : Result Error Sign.SecretKey -> String
+publicHex key =
+    case key of
+
+        Ok k ->
+            Bytes.toHex (Sign.publicKeyToBytes (Sign.publicKey k))
+
+        Err _ ->
+            "no key"
+
+
+verifyWith : Result Error Sign.SecretKey -> String -> String -> Bool
+verifyWith key msg sig =
+    case key of
+
+        Ok k ->
+            Sign.verify (Sign.publicKey k) msg sig
+
+        Err _ ->
+            False
+
+
+-- ─── X25519 (RFC 7748 §6.1) ────────────────────────────────────────
+alice : Result Error Kx.SecretKey
+alice =
+    Kx.secretKeyFromBytes
+        (secretHex
+            "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
+
+
+bob : Result Error Kx.SecretKey
+bob =
+    Kx.secretKeyFromBytes
+        (secretHex
+            "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb")
+
+
+sharedHex : Result Error Kx.SecretKey -> Result Error Kx.SecretKey -> String
+sharedHex mine theirs =
+    case ( mine, theirs ) of
+
+        ( Ok m, Ok t ) ->
+            case Kx.sharedSecret m (Kx.publicKey t) of
+
+                Ok s ->
+                    revealHex s
+
+                Err _ ->
+                    "err"
+
+        _ ->
+            "no key"
+
+
+sharedWithRaw : String -> Result Error Secret
+sharedWithRaw publicHexValue =
+    case ( alice, Kx.publicKeyFromBytes (hex publicHexValue) ) of
+
+        ( Ok a, Ok p ) ->
+            Kx.sharedSecret a p
+
+        _ ->
+            Err (Error.invalidInput "setup failed")
+
+
+-- ─── AEAD ──────────────────────────────────────────────────────────
+aeadKey : Secret
+aeadKey =
+    Crypto.aesKeyFromPassword
+        (Secret.unsafeFromString "conformance")
+        "salt-0123456789"
+
+
+otherKey : Secret
+otherKey =
+    Crypto.aesKeyFromPassword
+        (Secret.unsafeFromString "different")
+        "salt-0123456789"
+
+
+sealed : Result Error String
+sealed =
+    Task.run (Crypto.xchachaSeal aeadKey "attack at dawn")
+
+
+flipFirst : String -> String
+flipFirst b64 =
+    case Bytes.fromBase64 b64 of
+
+        Just raw ->
+            Bytes.toBase64
+                (flipByte (Bytes.slice 0 1 raw)
+                    ++ Bytes.slice 1 (Bytes.length raw) raw)
+
+        Nothing ->
+            b64
+
+
+flipByte : String -> String
+flipByte one =
+    if Bytes.toHex one == "00" then
+        hex "01"
+
+    else
+        hex "00"
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "Ed25519 RFC 8032 TEST 1: public key"
+          (\_ ->
+              Test.equal
+                  "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+                  (publicHex test1Key))
+    , Test.test
+          "Ed25519 RFC 8032 TEST 1: signature of the empty message"
+          (\_ ->
+              Test.equal
+                  "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+                  (signHex test1Key ""))
+    , Test.test
+          "Ed25519 RFC 8032 TEST 2: signature of 0x72"
+          (\_ ->
+              Test.equal
+                  "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"
+                  (signHex test2Key "72"))
+    , Test.test
+          "Ed25519 verify accepts the RFC signature"
+          (\_ ->
+              Test.isTrue
+                  (verifyWith test2Key (hex "72") (hex (signHex test2Key "72"))))
+    , Test.test
+          "Ed25519 verify rejects a changed message, a wrong key and a short signature"
+          (\_ ->
+              Test.equal
+                  ( False, False, False )
+                  ( verifyWith test2Key (hex "73") (hex (signHex test2Key "72"))
+                  , verifyWith test1Key (hex "72") (hex (signHex test2Key "72"))
+                  , verifyWith test2Key (hex "72") "short"
+                  ))
+    , Test.test
+          "Ed25519 generate is a Task that signs and verifies"
+          (\_ ->
+              case Task.run Sign.generate of
+
+                  Ok k ->
+                      Test.isTrue
+                          (Sign.verify
+                              (Sign.publicKey k)
+                              "hello"
+                              (Sign.sign k "hello"))
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "Ed25519 key import rejects a wrong length, and base64 round-trips"
+          (\_ ->
+              case test1Key of
+
+                  Ok k ->
+                      Test.equal
+                          ( True
+                          , True
+                          , "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+                          )
+                          ( Result.toMaybe
+                                (Sign.secretKeyFromBytes
+                                    (Secret.unsafeFromString "short"))
+                                == Nothing
+                          , Result.toMaybe (Sign.publicKeyFromBase64 "!!")
+                                == Nothing
+                          , Sign.secretKeyFromBase64 (Sign.secretKeyToBase64 k)
+                                |> Result.map
+                                       (\k2 ->
+                                           Bytes.toHex
+                                               (Sign.publicKeyToBytes
+                                                   (Sign.publicKey k2)))
+                                |> Result.withDefault "bad"
+                          )
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "Ed25519 public key base64 round-trips"
+          (\_ ->
+              case test1Key of
+
+                  Ok k ->
+                      Test.equal
+                          (Ok (Sign.publicKeyToBytes (Sign.publicKey k)))
+                          (Sign.publicKeyFromBase64
+                              (Sign.publicKeyToBase64 (Sign.publicKey k))
+                              |> Result.map Sign.publicKeyToBytes)
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "A secret key prints as [REDACTED]"
+          (\_ ->
+              case test1Key of
+
+                  Ok k ->
+                      Test.isTrue
+                          (String.contains "REDACTED" (toString k)
+                              && not (String.contains "9d61" (toString k)))
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "X25519 RFC 7748 §6.1: Alice and Bob agree on K"
+          (\_ ->
+              Test.equal
+                  ( "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+                  , "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+                  )
+                  ( sharedHex alice bob, sharedHex bob alice ))
+    , Test.test
+          "X25519 refuses an all-zero public key (low-order point)"
+          (\_ ->
+              Test.err
+                  (sharedWithRaw
+                      "0000000000000000000000000000000000000000000000000000000000000000"))
+    , Test.test
+          "X25519 refuses the order-8 point e0eb7a7c… (low-order point)"
+          (\_ ->
+              Test.err
+                  (sharedWithRaw
+                      "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"))
+    , Test.test
+          "X25519 rejects a 31-byte public key"
+          (\_ -> Test.err (Kx.publicKeyFromBytes (String.repeat 31 "a")))
+    , Test.test
+          "HKDF-SHA256 RFC 5869 A.1"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
+                  (Kdf.derive
+                      (hex "000102030405060708090a0b0c")
+                      (hex "f0f1f2f3f4f5f6f7f8f9")
+                      42
+                      (secretHex "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
+                      |> Result.map revealHex))
+    , Test.test
+          "HKDF-SHA256 RFC 5869 A.3 (empty salt and info)"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8")
+                  (Kdf.derive
+                      ""
+                      ""
+                      42
+                      (secretHex "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b")
+                      |> Result.map revealHex))
+    , Test.test
+          "HKDF extract gives the RFC 5869 A.1 PRK"
+          (\_ ->
+              Test.equal
+                  "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"
+                  (revealHex
+                      (Kdf.extract
+                          (hex "000102030405060708090a0b0c")
+                          (secretHex
+                              "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"))))
+    , Test.test
+          "HKDF expand refuses a length over 255 × 32"
+          (\_ -> Test.err (Kdf.derive "" "" 8161 (Secret.unsafeFromString "ikm")))
+    , Test.test
+          "xchachaSeal then xchachaOpen round-trips"
+          (\_ ->
+              Test.equal
+                  (Ok "attack at dawn")
+                  (sealed |> Result.andThen (Crypto.xchachaOpen aeadKey)))
+    , Test.test
+          "xchachaSeal output is nonce(24) + ciphertext + tag(16), base64"
+          (\_ ->
+              Test.equal
+                  (Ok (24 + 14 + 16))
+                  (sealed
+                      |> Result.map
+                             (\s ->
+                                 Maybe.withDefault "" (Bytes.fromBase64 s)
+                                     |> Bytes.length)))
+    , Test.test
+          "xchachaSeal draws a fresh nonce every run"
+          (\_ ->
+              Test.notEqual
+                  sealed
+                  (Task.run (Crypto.xchachaSeal aeadKey "attack at dawn")))
+    , Test.test
+          "xchachaOpen refuses a tampered value and a wrong key"
+          (\_ ->
+              case sealed of
+
+                  Ok s ->
+                      Test.equal
+                          ( True, True )
+                          ( Result.toMaybe
+                                (Crypto.xchachaOpen aeadKey (flipFirst s))
+                                == Nothing
+                          , Result.toMaybe (Crypto.xchachaOpen otherKey s)
+                                == Nothing
+                          )
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "xchachaSealWith binds the associated data"
+          (\_ ->
+              case Task.run (Crypto.xchachaSealWith aeadKey "order-42" "paid") of
+
+                  Ok s ->
+                      Test.equal
+                          ( Ok "paid", True )
+                          ( Crypto.xchachaOpenWith aeadKey "order-42" s
+                          , Result.toMaybe
+                                (Crypto.xchachaOpenWith aeadKey "order-43" s)
+                                == Nothing
+                          )
+
+                  Err e ->
+                      Test.fail (errorToString e))
+    , Test.test
+          "xchachaSeal refuses a key that is not 32 bytes"
+          (\_ ->
+              Test.err
+                  (Task.run
+                      (Crypto.xchachaSeal (Secret.unsafeFromString "short") "x")))
+    , Test.test
+          "aesGcmEncrypt is a Task and round-trips"
+          (\_ ->
+              Test.equal
+                  (Ok "payload")
+                  (Task.run (Crypto.aesGcmEncrypt aeadKey "payload")
+                      |> Result.andThen (Crypto.aesGcmDecrypt aeadKey)))
+    , Test.test
+          "chacha20Encrypt is a Task and round-trips"
+          (\_ ->
+              Test.equal
+                  (Ok "payload")
+                  (Task.run (Crypto.chacha20Encrypt aeadKey "payload")
+                      |> Result.andThen (Crypto.chacha20Decrypt aeadKey)))
+    ]
+
+
+main =
+    Test.runMain tests
