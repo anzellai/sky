@@ -251,7 +251,7 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
         "backend must keep the server effect saveN"
     );
     assert!(
-        back.contains("Server.api \"POST /_rpc/Persist\""),
+        back.contains("Server.rpc \"POST /_rpc/Persist\""),
         "backend must expose the generated RPC endpoint"
     );
     // The frontend must reach the effect through the typed RPC boundary instead.
@@ -5119,7 +5119,7 @@ fn sibling_module_update_regenerates_in_its_own_frontend_copy() {
     );
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
     assert!(
-        back.contains("Server.api \"POST /_rpc/Save\""),
+        back.contains("Server.rpc \"POST /_rpc/Save\""),
         "backend must expose the generated RPC endpoint for `Save`:\n{back}"
     );
 

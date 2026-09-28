@@ -3249,7 +3249,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// instead by the Layer-2 integration tests `rust/crates/sky/tests/*_flow.rs`
 /// (durable / durable_agent / durable_agent_tools / ai_policy_router / ai_trace /
 /// ai_memory_pg / slack_agent) and the `examples/66-slack-agent` capstone.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 171;
+///
+/// 171 -> 172: v0.27.0 adds the `stdlib.Sky.Core.Tuple` module, one new surface
+/// (`surfaces_total` 167 -> 168). It is covered by the conformance suite
+/// `CoreHelpersConformanceTest.sky` and the Family-S corpus cases.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 172;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
