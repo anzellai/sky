@@ -417,6 +417,42 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **`Json.Decode.decodeValue : Decoder a -> Value -> Result Error a`.** Runs
+  a decoder on a `Value` already in memory (a `Decode.value` sub-document, a
+  `Json.Encode` tree, an `Encode.raw` document) without writing text. Pure.
+  It gives the same answer as `decodeString d (Encode.encode 0 v)`: an
+  `Encode.int` is a number `int` accepts, a key an `Encode.object` gives
+  twice keeps its last value. (`runtime-go/rt/stdlib_extra.go`
+  `JsonDec_decodeValue`, `json_decode_value_test.go`, Json conformance.)
+- **Decision: `Json.Decode.value` does not keep object key order, and this is
+  now documented.** A decoded object is a Go map, and `Encode.encode` writes
+  its keys sorted byte-wise at every depth (`{"b":1,"a":2}` comes back as
+  `{"a":2,"b":1}`); whitespace is not kept either. Keeping the source order
+  needs an order-carrying object node from the parser, which every decoder
+  then reads. Measured against the current parse with a token-driven parser
+  (the way `encoding/json` reports key order): 3.4x the time and 2.5x the
+  bytes on a 5-record document, 5.7x the time and 2.3x the bytes on 5,000
+  records, on every `decodeString` (every JSON request body), to serve only
+  the value-to-encode round trip. `Json.Encode.raw` keeps a document
+  byte-for-byte and is the path for text whose exact bytes matter (a signed
+  payload). `Encode.object` keeps the order given, as before.
+- **Base32 in `Sky.Core.Encoding` (RFC 4648).** `base32Encode` /
+  `base32Decode` (standard alphabet, padded), `base32EncodeNoPad` /
+  `base32DecodeNoPad` (no `=`, the TOTP-secret form) and `base32HexEncode` /
+  `base32HexDecode` (the extended-hex alphabet). The decoders accept only the
+  canonical text of some bytes: lower case, a line break, the wrong padding
+  or non-zero unused bits in the last symbol are an `Err` (Go's
+  `encoding/base32` alone skips line breaks and ignores those bits, so two
+  texts decoded to the same bytes). Tested with the RFC 4648 §10 vectors of
+  both alphabets. (`runtime-go/rt/encoding_base32.go`,
+  `encoding_base32_test.go`, Encoding conformance.)
+- **`Std.Crypto.Noise`: the `Noise_IK_25519_ChaChaPoly_BLAKE2s` suite.**
+  `Noise.initiatorWith` / `Noise.responderWith` take a typed
+  `Suite` (`Sha256` | `Blake2s`); `initiator` / `responder` stay SHA256.
+  `Noise.protocolName` names a suite. Tested against the four cacophony IK
+  BLAKE2s vectors (the same `flynn/noise` v1.1.0 `vectors.txt` as the SHA256
+  ones), a kernel round trip, and a SHA256/BLAKE2s mismatch that fails the
+  handshake. (`runtime-go/rt/noise.go`, `noise_test.go`, Noise conformance.)
 - **`Std.Ui.Canvas`: typed 2D scenes.** `Canvas.scene { width, height, label }
   shapes` draws rectangles, circles, ellipses, lines, polylines, polygons,
   paths from typed commands (`MoveTo`, `LineTo`, `QuadTo`, `CubicTo`,
@@ -876,6 +912,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`Json.Decode.decodeString` accepted text after the JSON value.** It read
+  the first value and ignored the rest, so `decodeString int "3 x"` was
+  `Ok 3` and two concatenated documents decoded as the first. The string
+  must now be one JSON document; trailing whitespace is accepted, other text
+  is an `Err`. (`runtime-go/rt/stdlib_extra.go` `jsonParseDocument`.)
 - **`Std.App` web: `[live] port` in `sky.toml` had no effect, and
   `WebOpts.csrf` did nothing.** `Std.App` passed `WebOpts.port` (default
   8080) to `Live.withPort` on every build, so the default counted as an

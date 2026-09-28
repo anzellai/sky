@@ -1,5 +1,11 @@
--- | Std.Crypto.Noise — the Noise_IK_25519_ChaChaPoly_SHA256 handshake
--- (The Noise Protocol Framework, revision 34).
+-- | Std.Crypto.Noise — the Noise_IK_25519_ChaChaPoly_SHA256 and
+-- Noise_IK_25519_ChaChaPoly_BLAKE2s handshakes (The Noise Protocol Framework,
+-- revision 34).
+--
+-- `initiator` / `responder` use SHA256. `initiatorWith` / `responderWith`
+-- take a [`Suite`]: pick `Blake2s` to talk to a peer that speaks
+-- `Noise_IK_25519_ChaChaPoly_BLAKE2s` (the WireGuard family). Both sides must
+-- use the same suite; a different suite fails the first `readMessage`.
 --
 -- Noise IK sets up an encrypted, mutually authenticated channel in two
 -- messages, when the initiator already knows the responder's static public
@@ -35,8 +41,12 @@
 module Std.Crypto.Noise exposing
     ( Handshake
     , Transport
+    , Suite(..)
     , initiator
     , responder
+    , initiatorWith
+    , responderWith
+    , protocolName
     , writeMessage
     , readMessage
     , isComplete
@@ -65,6 +75,25 @@ type Handshake
 type Transport
     = Transport_OPAQUE
 
+-- | The hash function of the handshake. The Diffie-Hellman function (X25519)
+-- and the cipher (ChaCha20-Poly1305) are the same in both.
+type Suite
+    = Sha256
+    | Blake2s
+
+
+-- | The Noise protocol name of a suite, for logs and for checking a peer's
+-- configuration: `protocolName Blake2s == "Noise_IK_25519_ChaChaPoly_BLAKE2s"`.
+protocolName : Suite -> String
+protocolName suite =
+    case suite of
+
+        Sha256 ->
+            "Noise_IK_25519_ChaChaPoly_SHA256"
+
+        Blake2s ->
+            "Noise_IK_25519_ChaChaPoly_BLAKE2s"
+
 
 -- | `initiator myStaticKey responderPublicKey prologue` — start a handshake
 -- as the side that sends the first message.
@@ -78,6 +107,43 @@ initiator =
 responder : Kx.SecretKey -> String -> Task Error Handshake
 responder =
     Ffi.kernel "Noise_responder"
+
+
+-- | `initiatorWith suite myStaticKey responderPublicKey prologue` —
+-- [`initiator`] with a chosen [`Suite`].
+initiatorWith : Suite -> Kx.SecretKey -> Kx.PublicKey -> String -> Task Error Handshake
+initiatorWith suite =
+    initiatorSuite_ (suiteName_ suite)
+
+
+-- | `responderWith suite myStaticKey prologue` — [`responder`] with a chosen
+-- [`Suite`].
+responderWith : Suite -> Kx.SecretKey -> String -> Task Error Handshake
+responderWith suite =
+    responderSuite_ (suiteName_ suite)
+
+
+-- The suite crosses into the runtime as its name, so the runtime never reads
+-- a constructor tag. Private.
+suiteName_ : Suite -> String
+suiteName_ suite =
+    case suite of
+
+        Sha256 ->
+            "SHA256"
+
+        Blake2s ->
+            "BLAKE2s"
+
+
+initiatorSuite_ : String -> Kx.SecretKey -> Kx.PublicKey -> String -> Task Error Handshake
+initiatorSuite_ =
+    Ffi.kernel "Noise_initiatorSuite"
+
+
+responderSuite_ : String -> Kx.SecretKey -> String -> Task Error Handshake
+responderSuite_ =
+    Ffi.kernel "Noise_responderSuite"
 
 
 -- | `writeMessage payload handshake` — the next handshake message to send

@@ -12,6 +12,7 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/url"
 	"path/filepath"
@@ -640,10 +641,8 @@ func JsonDec_decodeString(decoder any, input any) any {
 	// Linux-failing conformance suite). The int/float decoders below read the
 	// exact text, so the full int64 range round-trips losslessly on every
 	// platform.
-	dec := json.NewDecoder(strings.NewReader(s))
-	dec.UseNumber()
-	var raw any
-	if err := dec.Decode(&raw); err != nil {
+	raw, err := jsonParseDocument(s)
+	if err != nil {
 		return Err[any, any](ErrDecode("JSON parse error: " + err.Error()))
 	}
 	d, ok := decoder.(JsonDecoder)
@@ -651,6 +650,102 @@ func JsonDec_decodeString(decoder any, input any) any {
 		return Ok[any, any](raw)
 	}
 	return d.run(raw)
+}
+
+// jsonParseDocument parses ONE complete JSON document into the tree every
+// decoder reads (map[string]any / []any / string / bool / nil, numbers as
+// json.Number). Only whitespace may follow the value: `"3 x"` and `"1 2"` are
+// errors. json.Decoder.Decode reads the first value and stops, so the text
+// after it used to be ignored and `decodeString int "3 x"` was `Ok 3` — a
+// document Elm's decoder, and every JSON parser that reads a whole input,
+// rejects.
+func jsonParseDocument(s string) (any, error) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	var raw any
+	if err := dec.Decode(&raw); err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, fmt.Errorf("unexpected text after the JSON value at offset %d", dec.InputOffset())
+	}
+	return raw, nil
+}
+
+// JsonDec_decodeValue : Decoder a -> Value -> Result Error a — run a decoder
+// on a Value that is already in memory (a `Json.Decode.value` sub-document, a
+// `Json.Encode` tree, an `Encode.raw` document) without writing it out as
+// text first. The Value is read exactly as `decodeString` would read the text
+// `Encode.encode 0` writes for it: an `Encode.object` is an object (a
+// duplicate key keeps its last value, as in the parser), an `Encode.int` is a
+// number `int` accepts, an `Encode.raw` document is parsed. So
+// `decodeValue d v == decodeString d (Encode.encode 0 v)` for every Value
+// `encode` can write. A NaN or infinite Float, which `encode` cannot write,
+// reaches `float` as it is instead of failing.
+func JsonDec_decodeValue(decoder any, value any) any {
+	tree, err := jsonDecodeTreeOf(value)
+	if err != nil {
+		return Err[any, any](ErrDecode("Json.Decode.decodeValue: " + err.Error()))
+	}
+	d, ok := decoder.(JsonDecoder)
+	if !ok {
+		return Err[any, any](ErrDecode("Json.Decode.decodeValue: expected a decoder"))
+	}
+	return d.run(tree)
+}
+
+// jsonDecodeTreeOf converts a Json.Value tree to the tree jsonParseDocument
+// produces, so every decoder sees one shape whichever way the value was made.
+func jsonDecodeTreeOf(v any) (any, error) {
+	switch x := v.(type) {
+	case JsonValue:
+		return jsonDecodeTreeOf(x.raw)
+	case nil, string, bool, float64, json.Number:
+		return x, nil
+	case int:
+		return json.Number(strconv.Itoa(x)), nil
+	case int64:
+		return json.Number(strconv.FormatInt(x, 10)), nil
+	case json.RawMessage:
+		return jsonParseDocument(string(x))
+	case []any:
+		out := make([]any, len(x))
+		for i, it := range x {
+			t, err := jsonDecodeTreeOf(it)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = t
+		}
+		return out, nil
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, it := range x {
+			t, err := jsonDecodeTreeOf(it)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = t
+		}
+		return out, nil
+	case jsonOrderedObject:
+		out := make(map[string]any, len(x.keys))
+		for i, k := range x.keys {
+			t, err := jsonDecodeTreeOf(x.vals[i])
+			if err != nil {
+				return nil, err
+			}
+			out[k] = t // a later duplicate wins, as when the text is parsed
+		}
+		return out, nil
+	}
+	// Any other leaf (a value a Codec or FFI put in the tree): read it as the
+	// JSON text it encodes to.
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("a %T in the Value has no JSON form: %v", v, err)
+	}
+	return jsonParseDocument(string(b))
 }
 
 // jsonDecodeInt extracts an exact int64 from a decoded JSON number, accepting
@@ -722,8 +817,19 @@ func JsonDec_string() any {
 // the Json.Encode side accepts (the same `Value` type). Nothing is converted:
 // the parse uses UseNumber (JsonDec_decodeString), so numbers stay
 // json.Number and keep their exact source text through a later `encode` — a
-// 2^53+ integer or a long decimal is not rounded through float64. Object keys
-// come back in sorted order when re-encoded (the parsed tree is a Go map).
+// 2^53+ integer or a long decimal is not rounded through float64.
+//
+// Object KEY ORDER is not kept: the parsed tree is a Go map, and `encode`
+// writes a map's keys sorted byte-wise (encoding/json), at every depth, so
+// `{"b":1,"a":{"d":1,"c":2}}` re-encodes as `{"a":{"c":2,"d":1},"b":1}`.
+// Keeping the source order would need an order-carrying object node from the
+// parser, which every decoder then reads. Measured with a token-driven
+// parser (the way encoding/json can report key order) against the current
+// Decode: 3.4x the time and 2.5x the bytes on a 5-record document, 5.7x the
+// time and 2.3x the bytes on 5,000 records, on every `decodeString` (every
+// JSON request body), to serve only the value -> encode round trip.
+// `Json.Encode.raw` keeps a document byte-for-byte and is the path for text
+// whose key order matters (a signed payload).
 func JsonDec_value() any {
 	return JsonDecoder{run: func(v any) any {
 		return Ok[any, any](JsonValue{raw: v})

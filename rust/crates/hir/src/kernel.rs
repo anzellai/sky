@@ -696,6 +696,12 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
         &[
             "base64Encode",
             "base64Decode",
+            "base32Encode",
+            "base32Decode",
+            "base32EncodeNoPad",
+            "base32DecodeNoPad",
+            "base32HexEncode",
+            "base32HexDecode",
             "urlEncode",
             "urlDecode",
             "hexEncode",
@@ -759,6 +765,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
         "JsonDec",
         &[
             "decodeString",
+            "decodeValue",
             "string",
             "int",
             "float",

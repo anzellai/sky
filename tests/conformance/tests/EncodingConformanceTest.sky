@@ -131,6 +131,82 @@ tests =
     , Test.test "hex decode rejects non-hex 'gg' -> Err"
         (\_ -> Test.err (Encoding.hexDecode "gg"))
 
+      -- ══════════════════════ Base32 (RFC 4648 §10 vectors) ══════════════════════
+    , Test.test "base32 vector: encode \"\" -> "
+        (\_ -> Test.equal "" (Encoding.base32Encode ""))
+    , Test.test "base32 vector: decode  -> \"\""
+        (\_ -> Test.equal (Ok "") (Encoding.base32Decode ""))
+    , Test.test "base32 unpadded vector: \"\" <-> "
+        (\_ -> Test.equal ( "", Ok "" ) ( Encoding.base32EncodeNoPad "", Encoding.base32DecodeNoPad "" ))
+    , Test.test "base32hex vector: \"\" <-> "
+        (\_ -> Test.equal ( "", Ok "" ) ( Encoding.base32HexEncode "", Encoding.base32HexDecode "" ))
+    , Test.test "base32 vector: encode \"f\" -> MY======"
+        (\_ -> Test.equal "MY======" (Encoding.base32Encode "f"))
+    , Test.test "base32 vector: decode MY====== -> \"f\""
+        (\_ -> Test.equal (Ok "f") (Encoding.base32Decode "MY======"))
+    , Test.test "base32 unpadded vector: \"f\" <-> MY"
+        (\_ -> Test.equal ( "MY", Ok "f" ) ( Encoding.base32EncodeNoPad "f", Encoding.base32DecodeNoPad "MY" ))
+    , Test.test "base32hex vector: \"f\" <-> CO======"
+        (\_ -> Test.equal ( "CO======", Ok "f" ) ( Encoding.base32HexEncode "f", Encoding.base32HexDecode "CO======" ))
+    , Test.test "base32 vector: encode \"fo\" -> MZXQ===="
+        (\_ -> Test.equal "MZXQ====" (Encoding.base32Encode "fo"))
+    , Test.test "base32 vector: decode MZXQ==== -> \"fo\""
+        (\_ -> Test.equal (Ok "fo") (Encoding.base32Decode "MZXQ===="))
+    , Test.test "base32 unpadded vector: \"fo\" <-> MZXQ"
+        (\_ -> Test.equal ( "MZXQ", Ok "fo" ) ( Encoding.base32EncodeNoPad "fo", Encoding.base32DecodeNoPad "MZXQ" ))
+    , Test.test "base32hex vector: \"fo\" <-> CPNG===="
+        (\_ -> Test.equal ( "CPNG====", Ok "fo" ) ( Encoding.base32HexEncode "fo", Encoding.base32HexDecode "CPNG====" ))
+    , Test.test "base32 vector: encode \"foo\" -> MZXW6==="
+        (\_ -> Test.equal "MZXW6===" (Encoding.base32Encode "foo"))
+    , Test.test "base32 vector: decode MZXW6=== -> \"foo\""
+        (\_ -> Test.equal (Ok "foo") (Encoding.base32Decode "MZXW6==="))
+    , Test.test "base32 unpadded vector: \"foo\" <-> MZXW6"
+        (\_ -> Test.equal ( "MZXW6", Ok "foo" ) ( Encoding.base32EncodeNoPad "foo", Encoding.base32DecodeNoPad "MZXW6" ))
+    , Test.test "base32hex vector: \"foo\" <-> CPNMU==="
+        (\_ -> Test.equal ( "CPNMU===", Ok "foo" ) ( Encoding.base32HexEncode "foo", Encoding.base32HexDecode "CPNMU===" ))
+    , Test.test "base32 vector: encode \"foob\" -> MZXW6YQ="
+        (\_ -> Test.equal "MZXW6YQ=" (Encoding.base32Encode "foob"))
+    , Test.test "base32 vector: decode MZXW6YQ= -> \"foob\""
+        (\_ -> Test.equal (Ok "foob") (Encoding.base32Decode "MZXW6YQ="))
+    , Test.test "base32 unpadded vector: \"foob\" <-> MZXW6YQ"
+        (\_ -> Test.equal ( "MZXW6YQ", Ok "foob" ) ( Encoding.base32EncodeNoPad "foob", Encoding.base32DecodeNoPad "MZXW6YQ" ))
+    , Test.test "base32hex vector: \"foob\" <-> CPNMUOG="
+        (\_ -> Test.equal ( "CPNMUOG=", Ok "foob" ) ( Encoding.base32HexEncode "foob", Encoding.base32HexDecode "CPNMUOG=" ))
+    , Test.test "base32 vector: encode \"fooba\" -> MZXW6YTB"
+        (\_ -> Test.equal "MZXW6YTB" (Encoding.base32Encode "fooba"))
+    , Test.test "base32 vector: decode MZXW6YTB -> \"fooba\""
+        (\_ -> Test.equal (Ok "fooba") (Encoding.base32Decode "MZXW6YTB"))
+    , Test.test "base32 unpadded vector: \"fooba\" <-> MZXW6YTB"
+        (\_ -> Test.equal ( "MZXW6YTB", Ok "fooba" ) ( Encoding.base32EncodeNoPad "fooba", Encoding.base32DecodeNoPad "MZXW6YTB" ))
+    , Test.test "base32hex vector: \"fooba\" <-> CPNMUOJ1"
+        (\_ -> Test.equal ( "CPNMUOJ1", Ok "fooba" ) ( Encoding.base32HexEncode "fooba", Encoding.base32HexDecode "CPNMUOJ1" ))
+    , Test.test "base32 vector: encode \"foobar\" -> MZXW6YTBOI======"
+        (\_ -> Test.equal "MZXW6YTBOI======" (Encoding.base32Encode "foobar"))
+    , Test.test "base32 vector: decode MZXW6YTBOI====== -> \"foobar\""
+        (\_ -> Test.equal (Ok "foobar") (Encoding.base32Decode "MZXW6YTBOI======"))
+    , Test.test "base32 unpadded vector: \"foobar\" <-> MZXW6YTBOI"
+        (\_ -> Test.equal ( "MZXW6YTBOI", Ok "foobar" ) ( Encoding.base32EncodeNoPad "foobar", Encoding.base32DecodeNoPad "MZXW6YTBOI" ))
+    , Test.test "base32hex vector: \"foobar\" <-> CPNMUOJ1E8======"
+        (\_ -> Test.equal ( "CPNMUOJ1E8======", Ok "foobar" ) ( Encoding.base32HexEncode "foobar", Encoding.base32HexDecode "CPNMUOJ1E8======" ))
+    , Test.test "base32 round-trip: unicode + emoji"
+        (\_ -> Test.equal (Ok unicode) (Encoding.base32Decode (Encoding.base32Encode unicode)))
+    , Test.test "base32 decode rejects lower case"
+        (\_ -> Test.err (Encoding.base32Decode "mzxw6==="))
+    , Test.test "base32 decode rejects short padding"
+        (\_ -> Test.err (Encoding.base32Decode "MZXW6=="))
+    , Test.test "base32 decode rejects unpadded input"
+        (\_ -> Test.err (Encoding.base32Decode "MZXW6"))
+    , Test.test "base32 decode rejects a symbol outside the alphabet"
+        (\_ -> Test.err (Encoding.base32Decode "MZ1W6==="))
+    , Test.test "base32 decode rejects non-zero unused bits (MZ====== is not f)"
+        (\_ -> Test.err (Encoding.base32Decode "MZ======"))
+    , Test.test "base32 decode rejects a line break"
+        (\_ -> Test.err (Encoding.base32Decode "MZXW\n6==="))
+    , Test.test "base32 unpadded decode rejects padded input"
+        (\_ -> Test.err (Encoding.base32DecodeNoPad "MZXW6==="))
+    , Test.test "base32hex decode rejects the standard alphabet"
+        (\_ -> Test.err (Encoding.base32HexDecode "MZXW6==="))
+
       -- ══════════════════════ Bytes: hex ══════════════════════
     , Test.test "Bytes.toHex known vector: ABC -> 414243"
         (\_ -> Test.equal "414243" (Bytes.toHex "ABC"))

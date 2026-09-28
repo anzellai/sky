@@ -10,6 +10,7 @@ module Sky.Core.Json.Decode exposing
     , bool
     , value
     , decodeString
+    , decodeValue
     , field
     , at
     , index
@@ -57,8 +58,14 @@ bool =
 -- extension field) and pass it on.
 --
 -- Numbers keep their exact text: an integer past 2^53 or a long decimal is
--- not rounded on the way through. Object keys are written back in sorted
--- order.
+-- not rounded on the way through.
+--
+-- Object key order is NOT kept. `Encode.encode` writes the keys of a decoded
+-- object sorted byte-wise (`"B"` before `"a"`), at every depth:
+-- `{"b":1,"a":{"d":1,"c":2}}` comes back as `{"a":{"c":2,"d":1},"b":1}`.
+-- Whitespace is not kept either. When the exact text matters (a signed
+-- payload, a document you pass on unchanged), keep it with `Encode.raw`,
+-- which writes the text back as it came.
 --
 --     Decode.decodeString (Decode.field "meta" Decode.value) input
 --         |> Result.map (Encode.encode 0)
@@ -68,10 +75,30 @@ value =
 
 
 -- ─── Entry point ───────────────────────────────────────────────────
--- | Run a decoder against a JSON string.
+-- | Run a decoder against a JSON string. The string must hold ONE JSON
+-- document: whitespace may follow it, other text is an `Err`
+-- (`decodeString int "3 x"` is an `Err`, not `Ok 3`).
 decodeString : Decoder a -> String -> Result Error a
 decodeString =
     Ffi.kernel "JsonDec_decodeString"
+
+
+-- | Run a decoder against a `Value` that is already in memory: a sub-document
+-- kept with [`value`], a tree built with `Json.Encode`, an `Encode.raw`
+-- document. Pure, and no text is written or parsed on the way (except for an
+-- `Encode.raw` document, which is parsed once).
+--
+-- The `Value` is read exactly as `decodeString` reads the text
+-- `Encode.encode 0` writes for it, so
+-- `decodeValue d v == decodeString d (Encode.encode 0 v)`: an `Encode.int` is a
+-- number `int` accepts, and a key an `Encode.object` gives twice keeps its
+-- last value.
+--
+--     Decode.decodeString (Decode.field "meta" Decode.value) input
+--         |> Result.andThen (Decode.decodeValue (Decode.field "id" Decode.int))
+decodeValue : Decoder a -> Value -> Result Error a
+decodeValue =
+    Ffi.kernel "JsonDec_decodeValue"
 
 
 -- ─── Field accessors ───────────────────────────────────────────────

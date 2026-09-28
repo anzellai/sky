@@ -302,6 +302,11 @@ the next state as `Result Error ( state, bytes )`. **Each state value is
 single-use**: reusing an older one returns an `Err`, because it would reuse a
 nonce. Tested against the cacophony IK vectors. See `sky doc Std.Crypto.Noise`.
 
+`Noise.initiatorWith` / `Noise.responderWith` take a typed `Suite` (`Sha256` or
+`Blake2s`) and speak `Noise_IK_25519_ChaChaPoly_BLAKE2s` with `Blake2s` (the
+hash WireGuard-family peers use). `Noise.protocolName` gives the protocol name
+of a suite. Both sides must use the same suite.
+
 ### `Std.Crypto.Cpace` — password-authenticated key exchange (awaiting external review)
 
 CPace (draft-irtf-cfrg-cpace-21, CPACE-X25519-SHA512) derives a strong 64-byte
@@ -386,7 +391,7 @@ with `Sky.Core.Json.Decode`.
 | `Jwt.encode` | `Algorithm -> Claims -> Result Error String` | Sign a token |
 | `Jwt.decode` | `Algorithm -> Int -> String -> Result Error String` | Verify signature + `exp`/`nbf`; → payload JSON |
 
-### `Encoding` — base64, URL, hex
+### `Encoding` — base64, base32, URL, hex
 
 ```elm
 import Sky.Core.Encoding as Encoding
@@ -396,7 +401,14 @@ decoded = Encoding.base64Decode encoded            -- Result Error String
 urlSafe = Encoding.urlEncode "https://example.com/?q=hello world"
 ```
 
-`base64Encode`, `base64Decode`, `urlEncode`, `urlDecode`, `hexEncode`, `hexDecode`. Encode functions return bare strings; decode functions return `Result Error String`.
+`base64Encode`, `base64Decode`, `base32Encode`, `base32Decode`, `base32EncodeNoPad`, `base32DecodeNoPad`, `base32HexEncode`, `base32HexDecode`, `urlEncode`, `urlDecode`, `hexEncode`, `hexDecode`. Encode functions return bare strings; decode functions return `Result Error String`.
+
+The base32 functions follow RFC 4648: `base32*` is the standard alphabet
+(`A`–`Z`, `2`–`7`), `base32Hex*` the extended-hex alphabet (`0`–`9`, `A`–`V`),
+and the `NoPad` pair drops the `=` padding (the TOTP-secret form). The base32
+decoders accept only the canonical text of some bytes: lower case, a line
+break, the wrong padding or non-zero unused bits in the last symbol are an
+`Err`, so one byte string has exactly one accepted text.
 
 ### `Json.Encode` / `Json.Decode` — JSON
 
@@ -433,7 +445,8 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 
 | Decoder | Type |
 |---|---|
-| `Dec.decodeString` | `Decoder a -> String -> Result Error a` |
+| `Dec.decodeString` | `Decoder a -> String -> Result Error a` — the string must be ONE JSON document; text after it is an `Err` |
+| `Dec.decodeValue` | `Decoder a -> Value -> Result Error a` — run a decoder on a `Value` in memory; the same answer as `decodeString d (Enc.encode 0 v)` |
 | `Dec.string`, `Dec.int`, `Dec.float`, `Dec.bool` | primitive decoders |
 | `Dec.value` | `Decoder Value` — the JSON at this point, unchanged, as the `Value` type `Enc` uses (numbers keep their exact text) |
 | `Dec.field` | `String -> Decoder a -> Decoder a` |
@@ -446,6 +459,12 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 | `Dec.at` | `List String -> Decoder a -> Decoder a` (path traversal) |
 
 `Value` is one type shared by both modules: a `Dec.value` result nests in `Enc.object` / `Enc.list` and writes back with `Enc.encode`. `Enc.encode` has no error result, so the one `Value` JSON cannot hold — a NaN or infinite `Float` (`Math.nan`, `Math.inf`, a Float overflow) — raises the classified `JsonEncodeFailure` panic (a 500 for that request in a server, exit 1 in a CLI). It never returns an empty string. Check a Float you do not control with `Math.isNaN` first.
+
+**Key order.** `Enc.object` writes its keys in the order given, and `Enc.raw`
+writes its text as it came. A `Dec.value` result does NOT keep the key order of
+its source: its objects are written back with their keys sorted byte-wise at
+every depth (`{"b":1,"a":2}` becomes `{"a":2,"b":1}`), and whitespace is not
+kept. Keep text whose exact bytes matter (a signed payload) with `Enc.raw`.
 
 For long records use the pipeline form:
 
