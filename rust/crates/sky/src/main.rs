@@ -6885,6 +6885,8 @@ const WASM_INDEX_HTML: &str = r#"<!doctype html>
 /// The Go runtime sources the Sky.Spa boot loader is read from, at compile time.
 const ISLAND_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/island_client.go");
 const SPA_BOOT_GO: &str = include_str!("../../../../runtime-go/rt/spa_boot.go");
+const SCENE_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/scene_client.go");
+const TERMINAL_WIDGET_GO: &str = include_str!("../../../../runtime-go/rt/island_terminal.go");
 
 /// The body of the Go raw-string constant `name` (a `const name = ` line
 /// followed by a backquoted literal) in `src`.
@@ -6898,8 +6900,10 @@ fn go_raw_const<'a>(src: &'a str, name: &str) -> Option<&'a str> {
 /// The Sky.Spa wasm boot loader, written to `dist/spa-boot.<hash>.js` by
 /// [`stage_web_bundle`]. It is `SpaBootJS` in `runtime-go/rt/spa_boot.go`,
 /// byte for byte: the widget-island runtime (`islandClientJS`,
-/// `island_client.go`) followed by the loader (`spaBootLoaderJS`). Both are
-/// read out of the Go sources, so there is one copy; the SSR page the backend
+/// `island_client.go`), the Std.Ui.Canvas pointer runtime (`sceneClientJS`,
+/// `scene_client.go`), the built-in terminal widget (`terminalWidgetJS`,
+/// `island_terminal.go`), then the loader (`spaBootLoaderJS`). All are read
+/// out of the Go sources, so there is one copy; the SSR page the backend
 /// renders references `/spa-boot.<sha256[:12]>.js` computed from the Go
 /// constant, and a drift would point every SSR page at a file the build never
 /// wrote (`spa_boot_js_matches_the_runtime` checks the extraction). An
@@ -6910,9 +6914,13 @@ fn spa_boot_js() -> &'static str {
     JS.get_or_init(|| {
         let island = go_raw_const(ISLAND_CLIENT_GO, "islandClientJS")
             .expect("runtime-go/rt/island_client.go defines islandClientJS as a raw string");
+        let scene = go_raw_const(SCENE_CLIENT_GO, "sceneClientJS")
+            .expect("runtime-go/rt/scene_client.go defines sceneClientJS as a raw string");
+        let terminal = go_raw_const(TERMINAL_WIDGET_GO, "terminalWidgetJS")
+            .expect("runtime-go/rt/island_terminal.go defines terminalWidgetJS as a raw string");
         let loader = go_raw_const(SPA_BOOT_GO, "spaBootLoaderJS")
             .expect("runtime-go/rt/spa_boot.go defines spaBootLoaderJS as a raw string");
-        format!("{island}{loader}")
+        format!("{island}{scene}{terminal}{loader}")
     })
 }
 
@@ -13850,11 +13858,14 @@ mod tests {
     /// the SSR page names `/spa-boot.<hash>.js` from the Go copy.
     #[test]
     fn spa_boot_js_matches_the_runtime() {
-        // SpaBootJS is `islandClientJS + spaBootLoaderJS` in Go; the Rust copy
-        // must be exactly that concatenation.
+        // SpaBootJS is `islandClientJS + sceneClientJS + terminalWidgetJS +
+        // spaBootLoaderJS` in Go; the Rust copy must be exactly that
+        // concatenation.
         let go = include_str!("../../../../runtime-go/rt/spa_boot.go");
         assert!(
-            go.contains("const SpaBootJS = islandClientJS + spaBootLoaderJS"),
+            go.contains(
+                "const SpaBootJS = islandClientJS + sceneClientJS + terminalWidgetJS + spaBootLoaderJS"
+            ),
             "runtime-go/rt/spa_boot.go no longer builds SpaBootJS from the two literals \
              spa_boot_js reads; update spa_boot_js with it"
         );
@@ -13866,6 +13877,10 @@ mod tests {
         assert!(
             js.contains("window.Sky.island"),
             "the island runtime is present"
+        );
+        assert!(
+            js.contains("// Sky scene pointer events") && js.contains("\"sky-terminal\""),
+            "the scene runtime and the terminal widget follow the island runtime"
         );
         assert!(
             js.contains("// Sky.Spa boot loader")

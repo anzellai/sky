@@ -27,6 +27,7 @@ module Std.Ui exposing
     , AnimationEntry(..)
     , none
     , text
+    , textNoWrap
     , el
     , row
     , column
@@ -374,9 +375,24 @@ none =
     Empty
 
 
+-- | `text s` — a run of text. Inside a `paragraph` it is inline and flows
+-- with its siblings. Anywhere else it is its own box (a `<span>` on the web)
+-- that wraps at word boundaries within the width it is given, and a word
+-- longer than the line breaks rather than overflowing; the terminal renderer
+-- wraps it at the cell width. Two texts in a `column` are two lines. Use
+-- `textNoWrap` to keep a text on one line.
 text : String -> Element msg
 text s =
     Text s
+
+
+-- | `textNoWrap s` — a run of text that never wraps: one line, clipped or
+-- overflowing like `white-space: nowrap` when it does not fit (on a terminal,
+-- cut at the cell width). This is how `Ui.text` laid out before v0.27.0 in
+-- the terminal renderer; use it for a label that must stay on one line.
+textNoWrap : String -> Element msg
+textNoWrap s =
+    Raw (Html.span [ Attr.style "white-space: nowrap;" ] [ Html.text s ])
 
 
 el : List (Attribute msg) -> Element msg -> Element msg
@@ -2053,7 +2069,7 @@ renderElementIn nest ctx extraAttrs elem =
             Html.text ""
 
         Text s ->
-            Html.text s
+            renderText nest ctx s
 
         Node desc attrs children ->
             -- Pick a semantic HTML tag from the Description (see
@@ -2076,6 +2092,43 @@ renderElementIn nest ctx extraAttrs elem =
             -- escape hatch and the user is responsible for whatever
             -- attributes they want on the wrapped node.
             node
+
+
+-- How a `Ui.text` renders where it sits (v0.27.0).
+--
+-- Inside a paragraph (the `<p>` itself, or anything inline within it) the
+-- text is a bare text node: it is part of the paragraph's one inline run and
+-- flows with its siblings, which is what a paragraph is for.
+--
+-- Everywhere else it is its own `<span>`. A bare text node there was a bug:
+-- two adjacent text nodes are ONE run to the browser, so in a `Ui.column`
+-- `[ Ui.text "a", Ui.text "b" ]` showed "ab" on one line (the flex container
+-- wraps the joined run in a single anonymous item). A span is an element, so
+-- a flex container makes each text its own item, and the text wraps at word
+-- boundaries within the width it gets; `overflow-wrap: anywhere` breaks a
+-- word longer than the line instead of letting it overflow the box. The
+-- terminal renderer (tui_ui.go) wraps the same text at the cell width.
+--
+-- An empty text renders nothing: a bare empty text node is no layout item,
+-- and an empty span would be one (it would take a `spacing` gap).
+renderText : Nesting -> LayoutContext -> String -> any
+renderText nest ctx s =
+    if s == "" || nest.phrasing || isParagraphContext ctx then
+        Html.text s
+
+    else
+        Html.span [ Attr.style "overflow-wrap: anywhere;" ] [ Html.text s ]
+
+
+isParagraphContext : LayoutContext -> Bool
+isParagraphContext ctx =
+    case ctx of
+
+        AsParagraph ->
+            True
+
+        _ ->
+            False
 
 
 -- Resolve the HTML tag for a generic Node by inspecting its attribute

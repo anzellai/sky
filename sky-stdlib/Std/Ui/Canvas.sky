@@ -1,0 +1,670 @@
+-- | Std.Ui.Canvas — a typed 2D scene for `Std.Ui` (v0.27.0).
+--
+-- A scene is a fixed coordinate space (`width` × `height` scene units) and a
+-- list of shapes drawn in order: rectangles, circles, ellipses, lines,
+-- polylines, polygons, paths built from typed commands, and text. Each shape
+-- takes a list of attributes: fill, stroke, stroke width, opacity, font size,
+-- transforms (translate, rotate, scale, applied in the order given) and
+-- pointer events. `group` applies attributes to several shapes at once.
+--
+--     import Std.Ui.Canvas as Canvas exposing (PathCommand(..))
+--
+--     board : Model -> Element Msg
+--     board model =
+--         Canvas.sceneWith [ Canvas.onPointerMove Moved ]
+--             { width = 200, height = 120, label = "Score board" }
+--             [ Canvas.rect { x = 0.0, y = 0.0, width = 200.0, height = 120.0 }
+--                 [ Canvas.fill (Ui.rgb 240 240 250) ]
+--             , Canvas.circle { x = model.x, y = 60.0, radius = 10.0 }
+--                 [ Canvas.fill (Ui.rgb 200 40 40), Canvas.onClick Hit ]
+--             , Canvas.path [ MoveTo 10.0 110.0, LineTo 190.0 110.0 ]
+--                 [ Canvas.stroke (Ui.rgb 0 0 0), Canvas.strokeWidth 2.0 ]
+--             ]
+--
+-- Rendering. Every web backend (Sky.Live, Sky.Spa, the desktop window) draws
+-- the scene as inline SVG, diffed like any other element: a changed shape is
+-- one attribute patch. A terminal (Sky.Tui) rasterises it into Braille cells
+-- (2×4 dots per cell), with text on the cell grid.
+--
+-- Pointer events carry scene coordinates. `onPointerMove`, `onPointerDown`
+-- and `onPointerUp` give a `Point` in the scene's own units, whatever size the
+-- scene is drawn at (it scales down to fit a narrow parent). Moves are
+-- coalesced to one per animation frame. `onClick` gives the message alone.
+--
+-- Accessibility. `label` is required: it is the scene's accessible name
+-- (`role="img"` with `aria-label`, and a `<title>`), so a screen reader
+-- announces what the picture shows.
+module Std.Ui.Canvas exposing
+    ( Shape
+    , Attr
+    , Point
+    , PathCommand(..)
+    , scene
+    , sceneWith
+    , rect
+    , circle
+    , ellipse
+    , line
+    , polyline
+    , polygon
+    , path
+    , text
+    , group
+    , fill
+    , noFill
+    , stroke
+    , strokeWidth
+    , opacity
+    , fontSize
+    , anchorStart
+    , anchorMiddle
+    , anchorEnd
+    , translate
+    , rotate
+    , scale
+    , onClick
+    , onPointerDown
+    , onPointerMove
+    , onPointerUp
+    , toSvg
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Sky.Core.Json.Decode as Decode exposing (Decoder)
+import Std.Html as Html exposing (Html)
+import Std.Html.Attributes as HAttr
+import Std.Html.Events as Event
+import Std.Ui as Ui exposing (Element, Color)
+
+-- | A position in scene units: `x` to the right, `y` down, from the top left.
+type alias Point =
+    { x : Float
+    , y : Float
+    }
+
+-- | One step of a `path`. Coordinates are absolute scene units.
+--
+--   * `MoveTo x y` starts a new sub-path.
+--   * `LineTo x y` draws a straight line.
+--   * `QuadTo cx cy x y` draws a quadratic Bézier curve with control point
+--     (cx, cy).
+--   * `CubicTo c1x c1y c2x c2y x y` draws a cubic Bézier curve.
+--   * `ArcTo rx ry rotation largeArc sweep x y` draws an elliptical arc (the
+--     SVG `A` command): radii, x-axis rotation in degrees, the large-arc and
+--     sweep flags, and the end point.
+--   * `Close` closes the sub-path.
+type PathCommand
+    = MoveTo Float Float
+    | LineTo Float Float
+    | QuadTo Float Float Float Float
+    | CubicTo Float Float Float Float Float Float
+    | ArcTo Float Float Float Bool Bool Float Float
+    | Close
+
+-- | A shape in a scene. Build one with `rect`, `circle`, `ellipse`, `line`,
+-- `polyline`, `polygon`, `path`, `text` or `group`.
+type Shape msg
+    = Shape String (List ( String, String )) (List (Attr msg)) (List (Shape msg)) String
+
+-- | An attribute of a shape or group.
+type Attr msg
+    = Fill Color
+    | NoFill
+    | Stroke Color
+    | StrokeWidth Float
+    | Opacity Float
+    | FontSize Int
+    | Anchor String
+    | Translate Float Float
+    | Rotate Float
+    | Scale Float Float
+    | OnClick msg
+    | OnPointer String (Point -> msg)
+
+
+-- ─── Shapes ──────────────────────────────────────────────────────
+-- | A rectangle with its top-left corner at (`x`, `y`).
+rect : { x : Float
+, y : Float
+, width : Float
+, height : Float
+} -> List (Attr msg) -> Shape msg
+rect r attrs =
+    Shape
+        "rect"
+        [ ( "x", num r.x )
+        , ( "y", num r.y )
+        , ( "width", num r.width )
+        , ( "height", num r.height )
+        ]
+        attrs
+        []
+        ""
+
+
+-- | A circle centred on (`x`, `y`).
+circle : { x : Float
+, y : Float
+, radius : Float
+} -> List (Attr msg) -> Shape msg
+circle c attrs =
+    Shape
+        "circle"
+        [ ( "cx", num c.x ), ( "cy", num c.y ), ( "r", num c.radius ) ]
+        attrs
+        []
+        ""
+
+
+-- | An ellipse centred on (`x`, `y`) with radii `rx` and `ry`.
+ellipse : { x : Float
+, y : Float
+, rx : Float
+, ry : Float
+} -> List (Attr msg) -> Shape msg
+ellipse e attrs =
+    Shape
+        "ellipse"
+        [ ( "cx", num e.x )
+        , ( "cy", num e.y )
+        , ( "rx", num e.rx )
+        , ( "ry", num e.ry )
+        ]
+        attrs
+        []
+        ""
+
+
+-- | A straight line from one point to another. A line has no area, so it is
+-- drawn with its stroke; it has a 1-unit current-colour stroke until you set
+-- one.
+line : Point -> Point -> List (Attr msg) -> Shape msg
+line a b attrs =
+    Shape
+        "line"
+        [ ( "x1", num a.x )
+        , ( "y1", num a.y )
+        , ( "x2", num b.x )
+        , ( "y2", num b.y )
+        ]
+        attrs
+        []
+        ""
+
+
+-- | Connected straight lines through the points, not closed. Like `line`, it
+-- has a current-colour stroke and no fill until you set them.
+polyline : List Point -> List (Attr msg) -> Shape msg
+polyline pts attrs =
+    Shape "polyline" [ ( "points", pointsAttr pts ) ] attrs [] ""
+
+
+-- | A closed shape through the points.
+polygon : List Point -> List (Attr msg) -> Shape msg
+polygon pts attrs =
+    Shape "polygon" [ ( "points", pointsAttr pts ) ] attrs [] ""
+
+
+-- | A path built from typed commands.
+path : List PathCommand -> List (Attr msg) -> Shape msg
+path cmds attrs =
+    Shape
+        "path"
+        [ ( "d", String.join " " (List.map commandString cmds) ) ]
+        attrs
+        []
+        ""
+
+
+-- | Text whose baseline starts at the point (see `anchorMiddle` and
+-- `anchorEnd` to centre or right-align it on the point).
+text : Point -> String -> List (Attr msg) -> Shape msg
+text p content attrs =
+    Shape "text" [ ( "x", num p.x ), ( "y", num p.y ) ] attrs [] content
+
+
+-- | Shapes that share attributes: a transform, a fill, an opacity or an
+-- event on the group applies to every shape in it.
+group : List (Attr msg) -> List (Shape msg) -> Shape msg
+group attrs shapes =
+    Shape "g" [] attrs shapes ""
+
+
+-- ─── Attributes ──────────────────────────────────────────────────
+-- | Fill the shape's area with a colour.
+fill : Color -> Attr msg
+fill c =
+    Fill c
+
+
+-- | Do not fill the shape (only its stroke shows).
+noFill : Attr msg
+noFill =
+    NoFill
+
+
+-- | Draw the shape's outline in a colour.
+stroke : Color -> Attr msg
+stroke c =
+    Stroke c
+
+
+-- | The outline width, in scene units.
+strokeWidth : Float -> Attr msg
+strokeWidth w =
+    StrokeWidth w
+
+
+-- | Opacity from 0 (invisible) to 1 (opaque).
+opacity : Float -> Attr msg
+opacity o =
+    Opacity o
+
+
+-- | The font size of `text`, in scene units.
+fontSize : Int -> Attr msg
+fontSize n =
+    FontSize n
+
+
+-- | `text` starts at its point (the default).
+anchorStart : Attr msg
+anchorStart =
+    Anchor "start"
+
+
+-- | `text` is centred on its point.
+anchorMiddle : Attr msg
+anchorMiddle =
+    Anchor "middle"
+
+
+-- | `text` ends at its point.
+anchorEnd : Attr msg
+anchorEnd =
+    Anchor "end"
+
+
+-- | Move the shape by (dx, dy). Transforms apply in the order given.
+translate : Float -> Float -> Attr msg
+translate dx dy =
+    Translate dx dy
+
+
+-- | Rotate the shape by an angle in degrees, clockwise, about the scene
+-- origin (translate first to rotate about another point).
+rotate : Float -> Attr msg
+rotate deg =
+    Rotate deg
+
+
+-- | Scale the shape by (sx, sy) about the scene origin.
+scale : Float -> Float -> Attr msg
+scale sx sy =
+    Scale sx sy
+
+
+-- | A message when the shape is clicked (or tapped).
+onClick : msg -> Attr msg
+onClick msg =
+    OnClick msg
+
+
+-- | A message when a pointer (mouse, pen or touch) goes down on the shape,
+-- with the position in scene units.
+onPointerDown : (Point -> msg) -> Attr msg
+onPointerDown toMsg =
+    OnPointer "pointerdown" toMsg
+
+
+-- | A message when a pointer moves over the shape, with the position in
+-- scene units. Coalesced to at most one per animation frame.
+onPointerMove : (Point -> msg) -> Attr msg
+onPointerMove toMsg =
+    OnPointer "pointermove" toMsg
+
+
+-- | A message when a pointer goes up on the shape, with the position in
+-- scene units.
+onPointerUp : (Point -> msg) -> Attr msg
+onPointerUp toMsg =
+    OnPointer "pointerup" toMsg
+
+
+-- ─── The scene ───────────────────────────────────────────────────
+-- | A scene `width` × `height` scene units, drawn at that many CSS pixels and
+-- scaled down (keeping its aspect ratio) when its parent is narrower. `label`
+-- is the scene's accessible name.
+scene : { width : Int
+, height : Int
+, label : String
+} -> List (Shape msg) -> Element msg
+scene cfg shapes =
+    Ui.html (toSvg cfg [] shapes)
+
+
+-- | `sceneWith attrs cfg shapes` is `scene` with attributes on the scene as a
+-- whole: pointer events on it report positions anywhere in the scene (over
+-- a shape or not), and a transform moves every shape.
+sceneWith : List (Attr msg) -> { width : Int
+, height : Int
+, label : String
+} -> List (Shape msg) -> Element msg
+sceneWith attrs cfg shapes =
+    Ui.html (toSvg cfg attrs shapes)
+
+
+-- | The scene as a `Std.Html` `<svg>` node (for a `Std.Html` view), with
+-- attributes (events, transforms) on the scene as a whole.
+toSvg : { width : Int
+, height : Int
+, label : String
+} -> List (Attr msg) -> List (Shape msg) -> Html msg
+toSvg cfg attrs shapes =
+    let
+        w = String.fromInt cfg.width
+        h = String.fromInt cfg.height
+        interactive =
+            List.any attrIsPointer attrs || List.any shapeHasPointer shapes
+        touch =
+            if interactive then
+                " touch-action: none;"
+
+            else
+                ""
+        rootAttrs =
+            [ HAttr.attribute "data-sky-scene" "1"
+            , HAttr.attribute "xmlns" "http://www.w3.org/2000/svg"
+            , HAttr.attribute "viewBox" ("0 0 " ++ w ++ " " ++ h)
+            , HAttr.attribute "width" w
+            , HAttr.attribute "height" h
+            , HAttr.attribute "role" "img"
+            , HAttr.attribute "aria-label" cfg.label
+            , HAttr.style
+                  ("display: block; max-width: 100%; height: auto;" ++ touch)
+            ]
+        -- A transparent backdrop takes the scene-level events, so a pointer
+        -- over an empty part of the scene still reports its position.
+        backdrop =
+            if List.isEmpty attrs then
+                []
+
+            else
+                [ Html.node
+                      "rect"
+                      ([ HAttr.attribute "x" "0"
+                      , HAttr.attribute "y" "0"
+                      , HAttr.attribute "width" w
+                      , HAttr.attribute "height" h
+                      , HAttr.attribute "fill" "transparent"
+                      ]
+                          ++ attrsToHtml "rect" attrs)
+                      []
+                ]
+    in
+        Html.node
+            "svg"
+            rootAttrs
+            (Html.node "title" [] [ Html.text cfg.label ]
+                :: (backdrop ++ List.map renderShape shapes))
+
+
+renderShape : Shape msg -> Html msg
+renderShape shape =
+    case shape of
+
+        Shape tag geometry attrs children content ->
+            let
+                geo = List.map (\( k, v ) -> HAttr.attribute k v) geometry
+                own = attrsToHtml tag attrs
+                kids =
+                    if tag == "text" then
+                        [ Html.text content ]
+
+                    else
+                        List.map renderShape children
+            in
+                Html.node tag (geo ++ own) kids
+
+
+-- The shape's attributes as SVG attributes. Later attributes of the same
+-- kind win (a `fill` after a `fill`); transforms accumulate in order.
+attrsToHtml : String -> List (Attr msg) -> List (HAttr.Attribute msg)
+attrsToHtml tag attrs =
+    let
+        st = List.foldl styleStep (defaultStyle tag) attrs
+        transformAttr =
+            if List.isEmpty st.transform then
+                []
+
+            else
+                [ HAttr.attribute
+                      "transform"
+                      (String.join " " (List.reverse st.transform))
+                ]
+        paint =
+            optional "fill" st.fill ++ optional "stroke" st.stroke
+                ++ optional "stroke-width" (Maybe.map num st.strokeWidth)
+                ++ optional "opacity" (Maybe.map num st.opacity)
+                ++ optional "font-size" (Maybe.map String.fromInt st.fontSize)
+                ++ optional "text-anchor" st.anchor
+        events = List.filterMap eventAttr attrs
+        pointerKinds = List.filterMap pointerKind attrs
+        -- The scene runtime reads this to know which shapes want which
+        -- pointer events (it cannot see the handlers on Sky.Spa).
+        marker =
+            if List.isEmpty pointerKinds then
+                []
+
+            else
+                [ HAttr.attribute
+                      "data-sky-scene-ev"
+                      (String.join " " pointerKinds)
+                ]
+    in
+        transformAttr ++ paint ++ marker ++ events
+
+
+pointerKind : Attr msg -> Maybe String
+pointerKind a =
+    case a of
+
+        OnPointer kind _ ->
+            Just kind
+
+        _ ->
+            Nothing
+
+type alias Style =
+    { fill : Maybe String
+    , stroke : Maybe String
+    , strokeWidth : Maybe Float
+    , opacity : Maybe Float
+    , fontSize : Maybe Int
+    , anchor : Maybe String
+    , transform : List String
+    }
+
+
+-- A line and a polyline have no area: they start with a current-colour
+-- stroke (and a polyline with no fill), so a bare `line a b []` shows.
+defaultStyle : String -> Style
+defaultStyle tag =
+    let
+        base =
+            { fill = Nothing
+            , stroke = Nothing
+            , strokeWidth = Nothing
+            , opacity = Nothing
+            , fontSize = Nothing
+            , anchor = Nothing
+            , transform = []
+            }
+    in
+        if tag == "line" then
+            { base | stroke = Just "currentColor" }
+
+        else if tag == "polyline" then
+            { base | stroke = Just "currentColor", fill = Just "none" }
+
+        else
+            base
+
+
+styleStep : Attr msg -> Style -> Style
+styleStep a st =
+    case a of
+
+        Fill c ->
+            { st | fill = Just (Ui.colorCss c) }
+
+        NoFill ->
+            { st | fill = Just "none" }
+
+        Stroke c ->
+            { st | stroke = Just (Ui.colorCss c) }
+
+        StrokeWidth w ->
+            { st | strokeWidth = Just w }
+
+        Opacity o ->
+            { st | opacity = Just o }
+
+        FontSize n ->
+            { st | fontSize = Just n }
+
+        Anchor s ->
+            { st | anchor = Just s }
+
+        Translate dx dy ->
+            { st | transform =
+                ("translate(" ++ num dx ++ " " ++ num dy ++ ")") :: st.transform
+            }
+
+        Rotate deg ->
+            { st | transform = ("rotate(" ++ num deg ++ ")") :: st.transform }
+
+        Scale sx sy ->
+            { st | transform =
+                ("scale(" ++ num sx ++ " " ++ num sy ++ ")") :: st.transform
+            }
+
+        OnClick _ ->
+            st
+
+        OnPointer _ _ ->
+            st
+
+
+optional : String -> Maybe String -> List (HAttr.Attribute msg)
+optional k m =
+    case m of
+
+        Just v ->
+            [ HAttr.attribute k v ]
+
+        Nothing ->
+            []
+
+
+-- A click is the ordinary DOM click. A pointer event goes through the scene
+-- runtime (island_client.go): it maps the pointer to scene units with the
+-- scene's screen transform and re-sends it as the event "skyisland-scene-
+-- <type>" with detail { x, y }, which the typed island-event path decodes on
+-- Sky.Live and Sky.Spa alike (a payload that does not decode is dropped).
+eventAttr : Attr msg -> Maybe (HAttr.Attribute msg)
+eventAttr a =
+    case a of
+
+        OnClick msg ->
+            Just (Event.onClick msg)
+
+        OnPointer kind toMsg ->
+            Just (Event.onIslandEvent ("scene-" ++ kind) pointDecoder toMsg)
+
+        _ ->
+            Nothing
+
+
+pointDecoder : Decoder Point
+pointDecoder =
+    Decode.map2
+        (\x y -> { x = x, y = y })
+        (Decode.field "x" Decode.float)
+        (Decode.field "y" Decode.float)
+
+
+attrIsPointer : Attr msg -> Bool
+attrIsPointer a =
+    case a of
+
+        OnPointer _ _ ->
+            True
+
+        _ ->
+            False
+
+
+shapeHasPointer : Shape msg -> Bool
+shapeHasPointer shape =
+    case shape of
+
+        Shape _ _ attrs children _ ->
+            List.any attrIsPointer attrs || List.any shapeHasPointer children
+
+
+pointsAttr : List Point -> String
+pointsAttr pts =
+    String.join " " (List.map (\p -> num p.x ++ "," ++ num p.y) pts)
+
+
+commandString : PathCommand -> String
+commandString c =
+    case c of
+
+        MoveTo x y ->
+            "M " ++ num x ++ " " ++ num y
+
+        LineTo x y ->
+            "L " ++ num x ++ " " ++ num y
+
+        QuadTo cx cy x y ->
+            "Q " ++ num cx ++ " " ++ num cy ++ " " ++ num x ++ " " ++ num y
+
+        CubicTo c1x c1y c2x c2y x y ->
+            "C " ++ num c1x ++ " " ++ num c1y ++ " " ++ num c2x ++ " "
+                ++ num c2y
+                ++ " "
+                ++ num x
+                ++ " "
+                ++ num y
+
+        ArcTo rx ry rot large sweep x y ->
+            "A " ++ num rx ++ " " ++ num ry ++ " " ++ num rot ++ " "
+                ++ flag large
+                ++ " "
+                ++ flag sweep
+                ++ " "
+                ++ num x
+                ++ " "
+                ++ num y
+
+        Close ->
+            "Z"
+
+
+flag : Bool -> String
+flag b =
+    if b then
+        "1"
+
+    else
+        "0"
+
+
+num : Float -> String
+num f =
+    String.fromFloat f

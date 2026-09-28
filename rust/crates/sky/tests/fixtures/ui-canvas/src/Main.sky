@@ -1,0 +1,128 @@
+module Main exposing (main)
+
+{-| Std.Ui.Canvas and Ui.text e2e fixture, driven by
+scripts/ui-canvas-terminal-verify.mjs (see scripts/ui-canvas-terminal-e2e.sh)
+under a strict Content-Security-Policy, as a Sky.Live app (--target web) and
+as a Sky.Spa app (--target web:app).
+
+  - The scene is 400 x 200 scene units. Its backdrop reports pointer moves in
+    scene units (`moved=x,y`); a pointer down on the backdrop adds a dot there
+    (a NEW shape patched into the live scene, which the Sky.Spa client must
+    create in the SVG namespace); a click on the red square counts.
+  - Two texts in a column must be two lines (`#two-texts`), and a long text
+    in a narrow box must wrap inside it (`#narrow`).
+
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Math as Math
+import Sky.Core.String as String
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Sub as Sub exposing (Sub)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Canvas as Canvas exposing (PathCommand(..), Point)
+
+type alias Model =
+    { moved : String
+    , dots : List Point
+    , clicks : Int
+    }
+
+type Msg
+    = Moved Point
+    | Down Point
+    | Square
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { moved = "none", dots = [], clicks = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Moved p ->
+            ( { model | moved =
+                  String.fromInt (Math.round p.x) ++ ","
+                      ++ String.fromInt (Math.round p.y)
+              }
+            , Cmd.none
+            )
+
+        Down p ->
+            ( { model | dots = model.dots ++ [ p ] }, Cmd.none )
+
+        Square ->
+            ( { model | clicks = model.clicks + 1 }, Cmd.none )
+
+
+dot : Point -> Canvas.Shape Msg
+dot p =
+    Canvas.circle
+        { x = p.x, y = p.y, radius = 6.0 }
+        [ Canvas.fill (Ui.rgb 20 90 200) ]
+
+
+scene : Model -> Element Msg
+scene model =
+    Canvas.sceneWith
+        [ Canvas.onPointerMove Moved, Canvas.onPointerDown Down ]
+        { width = 400, height = 200, label = "Test scene" }
+        ([ Canvas.rect
+              { x = 300.0, y = 20.0, width = 60.0, height = 60.0 }
+              [ Canvas.fill (Ui.rgb 220 30 30), Canvas.onClick Square ]
+        , Canvas.path
+              [ MoveTo 10.0 190.0, LineTo 390.0 190.0 ]
+              [ Canvas.stroke (Ui.rgb 0 0 0), Canvas.strokeWidth 2.0 ]
+        , Canvas.text { x = 10.0, y = 20.0 } "scene" [ Canvas.fontSize 14 ]
+        ]
+            ++ List.map dot model.dots)
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8, Ui.padding 8 ]
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "moved" ]
+              (Ui.text ("moved=" ++ model.moved))
+        , Ui.el
+              [ Ui.htmlAttribute "id" "dots" ]
+              (Ui.text ("dots=" ++ String.fromInt (List.length model.dots)))
+        , Ui.el
+              [ Ui.htmlAttribute "id" "clicks" ]
+              (Ui.text ("clicks=" ++ String.fromInt model.clicks))
+        , Ui.el
+              [ Ui.htmlAttribute "id" "scene-box", Ui.width (Ui.px 400) ]
+              (scene model)
+        , Ui.column
+              [ Ui.htmlAttribute "id" "two-texts" ]
+              [ Ui.text "first line", Ui.text "second line" ]
+        , Ui.el
+              [ Ui.htmlAttribute "id" "narrow", Ui.width (Ui.px 120) ]
+              (Ui.text
+                  "a long run of words that cannot fit on one line of this narrow box")
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app

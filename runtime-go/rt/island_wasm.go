@@ -241,3 +241,17 @@ func spaIslandFlush() {
 		sky.Call("__islandCommand", ic.ID, ic.Name, payload)
 	}
 }
+
+// spaIslandHostReady tells the island runtime that the client has bound its
+// event listeners, so a widget event held since the page loaded (an SSR page
+// mounts its widgets before the wasm hydrates) is dispatched now
+// (island_client.go, hostReady).
+func spaIslandHostReady() {
+	sky := js.Global().Get("Sky")
+	if sky.Type() != js.TypeObject {
+		return
+	}
+	if f := sky.Get("__islandHostReady"); f.Type() == js.TypeFunction {
+		f.Invoke()
+	}
+}

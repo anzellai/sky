@@ -1,0 +1,154 @@
+module UiTextWrapConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for `Std.Ui.text` outside a paragraph (v0.27.0).
+
+THE BUG. `Ui.text` rendered a bare HTML text node wherever it sat. Two
+adjacent text nodes are one run of text to the browser: in a `Ui.column`,
+`[ Ui.text "first", Ui.text "second" ]` showed "firstsecond" on ONE line,
+because the flex container wraps the joined run in a single anonymous item.
+The column had two children in the source and one on screen.
+
+THE FIX. Outside a paragraph, `Ui.text` renders as its own `<span>`: a flex
+container makes each span a separate item (so a column stacks them), and the
+span wraps at word boundaries within the width it is given
+(`overflow-wrap: anywhere` also breaks a word that is longer than the line,
+rather than letting it overflow). Inside a paragraph nothing changes: the
+text stays inline and flows with its siblings, which is what a paragraph is
+for. `Ui.textNoWrap` keeps a text on one line.
+
+The markup is asserted because only the emitted bytes tell the two
+renderings apart; both compile, type-check and run.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html as Html
+import Std.Ui as Ui
+import Std.Ui.Font as Font
+import Sky.Test as Test exposing (Test)
+
+
+render : Ui.Element msg -> String
+render elem =
+    Html.render (Ui.layout [] elem)
+
+
+span : String -> String
+span s =
+    "<span style=\"overflow-wrap: anywhere;\">" ++ s ++ "</span>"
+
+
+twoTextsInColumn : Ui.Element msg
+twoTextsInColumn =
+    Ui.column [] [ Ui.text "first", Ui.text "second" ]
+
+
+twoTextsInRow : Ui.Element msg
+twoTextsInRow =
+    Ui.row [] [ Ui.text "left", Ui.text "right" ]
+
+
+textInParagraph : Ui.Element msg
+textInParagraph =
+    Ui.paragraph [] [ Ui.text "one ", Ui.text "run" ]
+
+
+boldInParagraph : Ui.Element msg
+boldInParagraph =
+    Ui.paragraph [] [ Ui.el [ Font.bold ] (Ui.text "Sky"), Ui.text " tail" ]
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui — text outside a paragraph is its own wrapping span"
+          [ Test.test
+                "two texts in a column are two spans, not one joined run"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            (span "first" ++ span "second")
+                            (render twoTextsInColumn)))
+          , Test.test
+                "two texts in a row are two spans"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            (span "left" ++ span "right")
+                            (render twoTextsInRow)))
+          , Test.test
+                "the joined run never appears in a column"
+                (\_ ->
+                    Test.isFalse
+                        (String.contains "firstsecond" (render twoTextsInColumn)))
+          , Test.test
+                "text inside an el is a span"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            (span "label")
+                            (render (Ui.el [] (Ui.text "label")))))
+          , Test.test
+                "a button label is a span inside the button"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            (span "Go" ++ "</button>")
+                            (render
+                                (Ui.button
+                                    []
+                                    { onPress = Nothing, label = Ui.text "Go" }))))
+          , Test.test
+                "an empty text renders no span (it is no layout item)"
+                (\_ ->
+                    Test.isFalse
+                        (String.contains
+                            "<span"
+                            (render (Ui.column [] [ Ui.text "" ]))))
+          , Test.test
+                "texts in a paragraph stay one inline run"
+                (\_ ->
+                    -- ── Inside a paragraph nothing changes ──────────────────
+                    Test.isTrue
+                        (String.contains ">one run</p>" (render textInParagraph)))
+          , Test.test
+                "text in a paragraph gets no wrapping span"
+                (\_ ->
+                    Test.isFalse
+                        (String.contains "overflow-wrap" (render textInParagraph)))
+          , Test.test
+                "text in an el inside a paragraph stays bare"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "font-weight: 700;\">Sky</span> tail</p>"
+                            (render boldInParagraph)))
+          , Test.test
+                "textNoWrap is one span with white-space: nowrap"
+                (\_ ->
+                    -- ── The no-wrap variant ─────────────────────────────────
+                    Test.isTrue
+                        (String.contains
+                            "<span style=\"white-space: nowrap;\">a b c</span>"
+                            (render (Ui.column [] [ Ui.textNoWrap "a b c" ]))))
+          , Test.test
+                "textNoWrap in a paragraph is still one nowrap span"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<span style=\"white-space: nowrap;\">a b</span>"
+                            (render (Ui.paragraph [] [ Ui.textNoWrap "a b" ]))))
+          , Test.test
+                "text is HTML-escaped inside its span"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            (span "a &lt;b&gt;")
+                            (render (Ui.el [] (Ui.text "a <b>")))))
+          ]
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

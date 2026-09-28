@@ -78,10 +78,41 @@ const islandClientJS = `// Sky widget islands (runtime-go/rt/island_client.go): 
         return false;
       }
       if (!el.isConnected || !el.__skyIsland) return false;
-      var ev;
-      try { ev = new w.CustomEvent(PREFIX + t, { detail: detail }); } catch (_) { return false; }
-      return el.dispatchEvent(ev);
+      if (!hostReady) {
+        // The page's client has not bound its listeners yet (see hostReady):
+        // hold the event and dispatch it once it has.
+        if (held.length >= HMAX) {
+          held.shift();
+          warn("the page's client is not ready and", HMAX, "widget events are waiting; the oldest was dropped");
+        }
+        held.push([el, t, detail]);
+        return true;
+      }
+      return fire(el, t, detail);
     };
+  }
+  function fire(el, t, detail) {
+    var ev;
+    try { ev = new w.CustomEvent(PREFIX + t, { detail: detail }); } catch (_) { return false; }
+    return el.dispatchEvent(ev);
+  }
+  // hostReady: the page's client (the Sky.Live client, or the Sky.Spa wasm
+  // client) has bound its event listeners and calls Sky.__islandHostReady.
+  // Until then a widget's send() is held: this runtime runs first, so a
+  // widget that registers while the page is still loading mounts, and sends
+  // from mount(), before the client binds the element's listener at
+  // DOMContentLoaded (or, on Sky.Spa, when the wasm hydrates); such an
+  // event reached no listener and was lost. A terminal widget's "ready" (the
+  // request to repaint its scrollback) was the first to need it.
+  var hostReady = false, held = [], HMAX = 1024;
+  function markHostReady() {
+    if (hostReady) return;
+    hostReady = true;
+    var h = held;
+    held = [];
+    for (var i = 0; i < h.length; i++) {
+      if (h[i][0].isConnected && h[i][0].__skyIsland) fire(h[i][0], h[i][1], h[i][2]);
+    }
   }
   function deliver(el, name, payload) {
     call(el.__skyIsland.inst, "command", [name, payload], "command " + name);
@@ -256,6 +287,7 @@ const islandClientJS = `// Sky widget islands (runtime-go/rt/island_client.go): 
     if (w.document) scan(w.document);
   };
   Sky.__islandCommand = command;
+  Sky.__islandHostReady = markHostReady;
   Sky.__islands = {
     prefix: PREFIX, scan: scan, sweep: sweep, update: update, command: command,
     pool: pool, adopt: adopt, saveFocus: saveFocus, restoreFocus: restoreFocus

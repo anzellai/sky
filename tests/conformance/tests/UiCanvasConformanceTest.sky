@@ -1,0 +1,298 @@
+module UiCanvasConformanceTest exposing (main, tests)
+
+{-| Behavioral conformance for `Std.Ui.Canvas` (v0.27.0) and the terminal
+widget payloads of `Std.Ui.Terminal`.
+
+The scene is asserted as the exact SVG it renders (the SVG golden): every web
+backend (Sky.Live, Sky.Spa, the desktop window) draws that markup, so the bytes
+are the contract. The pointer-event wiring is asserted by its markers: the
+`data-sky-scene-ev` list the scene runtime reads and the island-event
+attribute the typed decoder hangs on.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Json.Encode as Encode
+import Std.Html as Html
+import Std.Ui as Ui
+import Std.Ui.Canvas as Canvas exposing (PathCommand(..))
+import Std.Ui.Terminal as Terminal
+import Sky.Core.Process exposing (ExitStatus(..))
+import Sky.Test as Test exposing (Test)
+
+type Msg
+    = Moved Canvas.Point
+    | Clicked
+
+
+cfg : { width : Int
+, height : Int
+, label : String
+}
+cfg =
+    { width = 100, height = 50, label = "Plot" }
+
+
+render : List (Canvas.Attr Msg) -> List (Canvas.Shape Msg) -> String
+render attrs shapes =
+    Html.render (Canvas.toSvg cfg attrs shapes)
+
+
+rootOpen : String
+rootOpen =
+    -- The renderer writes attributes in name order.
+    "<svg aria-label=\"Plot\" data-sky-scene=\"1\" height=\"50\" role=\"img\" style=\"display: block; max-width: 100%; height: auto;\" viewBox=\"0 0 100 50\" width=\"100\" xmlns=\"http://www.w3.org/2000/svg\"><title>Plot</title>"
+
+
+red : Ui.Color
+red =
+    Ui.rgb 255 0 0
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ui.Canvas — the SVG a scene renders"
+          [ Test.test
+                "an empty scene is the labelled svg root"
+                (\_ -> Test.equal (rootOpen ++ "</svg>") (render [] []))
+          , Test.test
+                "a filled rect"
+                (\_ ->
+                    Test.equal
+                        (rootOpen
+                            ++ "<rect fill=\"rgba(255, 0, 0, 1)\" height=\"4\" width=\"3\" x=\"1\" y=\"2\"></rect></svg>")
+                        (render
+                            []
+                            [ Canvas.rect
+                                  { x = 1.0
+                                  , y = 2.0
+                                  , width = 3.0
+                                  , height = 4.0
+                                  }
+                                  [ Canvas.fill red ]
+                            ]))
+          , Test.test
+                "a later fill wins, a stroke and its width, opacity"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<circle cx=\"5\" cy=\"6\" fill=\"none\" opacity=\"0.5\" r=\"7\" stroke=\"rgba(255, 0, 0, 1)\" stroke-width=\"2.5\"></circle>"
+                            (render
+                                []
+                                [ Canvas.circle
+                                      { x = 5.0, y = 6.0, radius = 7.0 }
+                                      [ Canvas.fill red
+                                      , Canvas.noFill
+                                      , Canvas.stroke red
+                                      , Canvas.strokeWidth 2.5
+                                      , Canvas.opacity 0.5
+                                      ]
+                                ])))
+          , Test.test
+                "a bare line has a current-colour stroke"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<line stroke=\"currentColor\" x1=\"0\" x2=\"10\" y1=\"0\" y2=\"5\"></line>"
+                            (render
+                                []
+                                [ Canvas.line
+                                      { x = 0.0, y = 0.0 }
+                                      { x = 10.0, y = 5.0 }
+                                      []
+                                ])))
+          , Test.test
+                "a polyline has a stroke and no fill; a polygon keeps the default fill"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<polyline fill=\"none\" points=\"0,0 1,2\" stroke=\"currentColor\"></polyline><polygon points=\"3,4 5,6 7,8\"></polygon>"
+                            (render
+                                []
+                                [ Canvas.polyline
+                                      [ { x = 0.0, y = 0.0 }
+                                      , { x = 1.0, y = 2.0 }
+                                      ]
+                                      []
+                                , Canvas.polygon
+                                      [ { x = 3.0, y = 4.0 }
+                                      , { x = 5.0, y = 6.0 }
+                                      , { x = 7.0, y = 8.0 }
+                                      ]
+                                      []
+                                ])))
+          , Test.test
+                "a path from typed commands"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<path d=\"M 0 0 L 10 0 Q 1 2 3 4 C 1 2 3 4 5 6 A 5 5 0 0 1 20 20 Z\"></path>"
+                            (render
+                                []
+                                [ Canvas.path
+                                      [ MoveTo 0.0 0.0
+                                      , LineTo 10.0 0.0
+                                      , QuadTo 1.0 2.0 3.0 4.0
+                                      , CubicTo 1.0 2.0 3.0 4.0 5.0 6.0
+                                      , ArcTo 5.0 5.0 0.0 False True 20.0 20.0
+                                      , Close
+                                      ]
+                                      []
+                                ])))
+          , Test.test
+                "transforms apply in the order given"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "transform=\"translate(10 20) rotate(45) scale(2 3)\""
+                            (render
+                                []
+                                [ Canvas.group
+                                      [ Canvas.translate 10.0 20.0
+                                      , Canvas.rotate 45.0
+                                      , Canvas.scale 2.0 3.0
+                                      ]
+                                      [ Canvas.rect
+                                            { x = 0.0
+                                            , y = 0.0
+                                            , width = 1.0
+                                            , height = 1.0
+                                            }
+                                            []
+                                      ]
+                                ])))
+          , Test.test
+                "text is escaped, sized and anchored"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<text font-size=\"12\" text-anchor=\"middle\" x=\"50\" y=\"25\">a &lt;b&gt;</text>"
+                            (render
+                                []
+                                [ Canvas.text
+                                      { x = 50.0, y = 25.0 }
+                                      "a <b>"
+                                      [ Canvas.fontSize 12
+                                      , Canvas.anchorMiddle
+                                      ]
+                                ])))
+          , Test.test
+                "the label is escaped in the accessible name and the title"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "aria-label=\"a &amp; b\""
+                            (Html.render
+                                (Canvas.toSvg
+                                    { width = 1, height = 1, label = "a & b" }
+                                    []
+                                    []))))
+          ]
+    , Test.suite
+          "Std.Ui.Canvas — pointer events"
+          [ Test.test
+                "a pointer handler marks the shape and binds the scene event"
+                (\_ ->
+                    let
+                        out =
+                            render
+                                []
+                                [ Canvas.rect
+                                      { x = 0.0
+                                      , y = 0.0
+                                      , width = 1.0
+                                      , height = 1.0
+                                      }
+                                      [ Canvas.onPointerMove Moved
+                                      , Canvas.onPointerDown Moved
+                                      ]
+                                ]
+                    in
+                        Test.isTrue
+                            (String.contains
+                                "data-sky-scene-ev=\"pointermove pointerdown\""
+                                out
+                                && String.contains
+                                       "sky-skyisland-scene-pointermove"
+                                       out))
+          , Test.test
+                "an interactive scene stops touch scrolling over it"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "touch-action: none;"
+                            (render [ Canvas.onPointerMove Moved ] [])))
+          , Test.test
+                "a static scene lets touch scroll"
+                (\_ ->
+                    Test.isFalse (String.contains "touch-action" (render [] [])))
+          , Test.test
+                "scene-level events sit on a transparent backdrop"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "<rect data-sky-scene-ev=\"pointermove\" fill=\"transparent\" height=\"50\""
+                            (render [ Canvas.onPointerMove Moved ] [])))
+          , Test.test
+                "a click is the plain click event"
+                (\_ ->
+                    Test.isTrue
+                        (String.contains
+                            "sky-click"
+                            (render
+                                []
+                                [ Canvas.circle
+                                      { x = 1.0, y = 1.0, radius = 1.0 }
+                                      [ Canvas.onClick Clicked ]
+                                ])))
+          ]
+    , Test.suite
+          "Std.Ui.Terminal — widget command payloads"
+          [ Test.test
+                "output carries the bytes as base64 with their offsets"
+                (\_ ->
+                    Test.equal
+                        "{\"data\":\"aGkNCg==\",\"from\":7,\"next\":11}"
+                        (Encode.encode
+                            0
+                            (Terminal.encodeOutput
+                                { data = "hi\r\n"
+                                , from = 7
+                                , next = 11
+                                , dropped = False
+                                , eof = False
+                                })))
+          , Test.test
+                "output keeps a UTF-8 character split across chunks as raw bytes"
+                (\_ ->
+                    Test.equal
+                        "{\"data\":\"w6k=\",\"from\":0,\"next\":2}"
+                        (Encode.encode
+                            0
+                            (Terminal.encodeOutput
+                                { data = "é"
+                                , from = 0
+                                , next = 2
+                                , dropped = False
+                                , eof = False
+                                })))
+          , Test.test
+                "exit with a code"
+                (\_ ->
+                    Test.equal
+                        "{\"code\":3,\"signal\":null}"
+                        (Encode.encode 0 (Terminal.encodeExit (ExitCode 3))))
+          , Test.test
+                "exit by a signal"
+                (\_ ->
+                    Test.equal
+                        "{\"code\":null,\"signal\":9}"
+                        (Encode.encode 0 (Terminal.encodeExit (Signalled 9))))
+          ]
+    ]
+
+
+main : Program
+main =
+    Test.runMain tests

@@ -310,6 +310,15 @@ type liveSession struct {
 	sseConnMu  sync.Mutex
 	sseConnSeq uint64
 	sseRelay   sync.Once
+	// islandPending holds Cmd.toIsland frames pushed while the session had
+	// NO live SSE connection (guarded by sseConnMu). A patch frame lost that
+	// way is harmless, because a connecting tab gets a full-body resync; a
+	// widget command is not in the body, so it was lost for good. The
+	// common case is a page load or reload: the widget mounts and sends an
+	// event before the page's SSE connection is up, and the reply command
+	// (a Std.Ui.Terminal replay) went to nobody. The next connection to
+	// register receives them, in order (bounded by islandPendingMax).
+	islandPending []sseFrame
 	// Cancel function for any active subscription ticker. Re-created
 	// by setupSubscriptions on every dispatch (the old one is closed
 	// first); see also the session-wide `done` field which signals
@@ -5461,8 +5470,20 @@ func (s *liveSession) registerSSEConn(tab string) (uint64, chan sseFrame, chan s
 	ch := make(chan sseFrame, sseChanBuffer)
 	resync := make(chan struct{}, 1)
 	s.sseConns[id] = &sseConn{ch: ch, tab: tab, resync: resync, kick: make(chan struct{})}
+	// Widget commands pushed while no tab was connected go to this one.
+	for _, fr := range s.islandPending {
+		select {
+		case ch <- fr:
+		default:
+		}
+	}
+	s.islandPending = nil
 	return id, ch, resync
 }
+
+// islandPendingMax bounds the widget commands kept for a session with no
+// live connection, the same bound the client keeps per island.
+const islandPendingMax = 256
 
 // signalResync wakes a connection's handleSSE loop to ship a full-body resync.
 // Non-blocking + cap-1, so a burst of drops coalesces into one resync.
@@ -5525,6 +5546,15 @@ func (s *liveSession) unregisterSSEConn(id uint64) {
 // to outside it so no send happens while sseConnMu is held.
 func (s *liveSession) fanOutFrame(fr sseFrame, exceptTab string) {
 	s.sseConnMu.Lock()
+	if len(s.sseConns) == 0 && fr.event == "island" {
+		// No tab is connected: keep the widget command for the next one.
+		if len(s.islandPending) >= islandPendingMax {
+			s.islandPending = s.islandPending[1:]
+		}
+		s.islandPending = append(s.islandPending, fr)
+		s.sseConnMu.Unlock()
+		return
+	}
 	conns := make([]*sseConn, 0, len(s.sseConns))
 	for _, c := range s.sseConns {
 		if exceptTab != "" && c.tab == exceptTab {

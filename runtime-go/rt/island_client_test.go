@@ -22,6 +22,9 @@ import (
 //  3. pool / adopt keep the SAME element across an HTML swap, carrying the
 //     fresh attributes; a changed identity is not adopted.
 //  4. The SSE "island" frame reaches the widget's command handler.
+//  5. A widget's send() before the page's client has bound its listeners
+//     is held and dispatched when __skyInit runs (it used to reach no
+//     listener and was lost).
 //
 // Skips when node is absent, like TestLiveJSSyntaxValid.
 func TestIslandJS_ClientRuntime(t *testing.T) {
@@ -107,6 +110,13 @@ I.scan(root);
 island.setAttribute("data-sky-props", "{\"start\":6}");
 I.update(island);
 I.update(island);
+// A send before the page's client has bound its listeners is held (the
+// widget mounted while the page was loading), then dispatched by __skyInit.
+out.heldSend = sendFn("Early", { v: 0 });
+out.heldBeforeInit = island.events.length;
+g("__skyInit()");
+out.flushedOnInit = island.events.length === 1 ? island.events[0].type : null;
+island.events.length = 0;
 out.sent = sendFn("TextChanged", { v: 1 });
 out.sentEvent = { type: island.events[0].type, detail: island.events[0].detail, isCustom: island.events[0] instanceof CustomEvent };
 out.badSend = sendFn("x", { self: null, get loop() { throw new Error("no"); } });
@@ -152,6 +162,9 @@ process.stdout.write(JSON.stringify(out));
 		`"islandNullArgs":["null"]`,
 		`"customArgs":["red"]`,
 		`"plainArgs":[]`,
+		`"heldSend":true`,
+		`"heldBeforeInit":0`,
+		`"flushedOnInit":"skyisland-early"`,
 		`"sent":true`,
 		`"sentEvent":{"type":"skyisland-textchanged","detail":{"v":1},"isCustom":true}`,
 		`"badSend":false`,
