@@ -6814,11 +6814,23 @@ func Task_parallel(tasks any) any {
 // policy). It used to be recovered by a bare `recover()` and dropped, so a
 // background server loop could die without a trace.
 func Task_spawn(t any) any {
+	return taskSpawnWith(t, nil)
+}
+
+// taskSpawnWith is Task_spawn with a completion callback. `finished`, when
+// non-nil, runs on the spawned goroutine after the task has returned AND after
+// any panic has been recovered and logged. Only tests pass it: a test that
+// returns as soon as the task body ends races the panic log that is still
+// being written on the spawned goroutine.
+func taskSpawnWith(t any, finished func()) any {
 	return func() any {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
 					logClassifiedPanic("sky.task", "Task.spawn", r)
+				}
+				if finished != nil {
+					finished()
 				}
 			}()
 			_ = SkyCall(t)
