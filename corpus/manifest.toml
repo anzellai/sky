@@ -4357,7 +4357,7 @@ witness    = "value"
 axes       = { edge = "boundary", surface = "process" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "T|175904|180000|ONLY=1"
+stdout     = "T:175904:180000|ONLY=1"
 
 [[case]]
 id         = "stdlib_edge/failure-process"

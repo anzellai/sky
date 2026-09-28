@@ -3460,7 +3460,7 @@ fn process_battery(edge: &str) -> Vec<Check> {
             s(
                 &["Process.withBufferSize", "Process.readWithin"],
                 "procDropped",
-                "T|175904|180000",
+                "T:175904:180000",
             ),
             // An empty environment plus one variable: only that variable.
             s(
@@ -5088,9 +5088,9 @@ procDropped =
                  else
                     "F"
                 )
-                    ++ "|"
+                    ++ ":"
                     ++ String.fromInt c.from
-                    ++ "|"
+                    ++ ":"
                     ++ String.fromInt c.next
             )
         |> orE
