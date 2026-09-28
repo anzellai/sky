@@ -184,13 +184,12 @@ type Step state a
 -- returns in `Loop`, until it returns `Done a`; the loop then succeeds with
 -- `a`. An `Err` from any step ends the loop with that error.
 --
--- Use this for every Task loop that can run for many iterations: a poller, a
--- paginated fetch, a read-until-end loop. A loop written as plain recursion
--- through `andThen` (`step n = work |> Task.andThen (\\_ -> step (n + 1))`)
--- grows the Go stack by a few frames per iteration and, by two million
--- iterations, kills the process with a fatal stack overflow that no
--- error handler sees. `loop` runs each step to completion before the next,
--- so its stack does not grow.
+-- The clearest form for a Task loop with explicit state: a poller, a
+-- paginated fetch, a read-until-end loop. Plain recursion through `andThen`
+-- (`step n = work |> Task.andThen (\\_ -> step (n + 1))`) is stack-safe too
+-- (v0.27.0: the Task interpreter pops a bind before it runs the task the
+-- continuation returns). `loop` runs each step to completion before the
+-- next, so its stack does not grow either.
 --
 --     countTo : Int -> Task Error Int
 --     countTo limit =

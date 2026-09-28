@@ -1,21 +1,23 @@
-// task_loop.go — stack-safe Task loops: Task.loop and Task.forever.
+// task_loop.go — Task.loop and Task.forever.
 //
-// Every `Task.andThen` step nests Go frames: `AnyTaskAndThen` forces the
-// outer task, then forces the continuation's task INSIDE the same Go call.
-// A Sky loop written as plain recursion —
+// Plain recursion through `Task.andThen` runs in constant stack since the
+// Task trampoline (task_trampoline.go): the interpreter pops a bind's frame
+// before it runs the task the continuation returns. `Task.loop` remains the
+// clearer way to write a loop whose state is explicit, and `Task.forever` the
+// way to write a service loop:
 //
 //	count n =
 //	    if n == 0 then Task.succeed 0
 //	    else Task.succeed n |> Task.andThen (\_ -> count (n - 1))
 //
-// — therefore grows the goroutine stack by a few frames per step, and a
-// long enough loop (two million steps) dies with Go's fatal "goroutine stack
-// exceeds limit". That is not a recoverable panic: no recover site sees it and
-// the process exits.
+// and
 //
-// `Task.loop` runs each step to completion in a Go `for` loop, so the stack
-// depth is the depth of ONE step, whatever the number of steps. The step
-// function returns a `Step state a` value:
+//	Task.loop (\n -> Task.succeed (if n == 0 then Done 0 else Loop (n - 1))) n
+//
+// both finish two million steps at a 1 MB stack.
+//
+// `Task.loop` runs each step to completion (one interpreter run per step) in
+// a Go `for` loop. The step function returns a `Step state a` value:
 //
 //	type Step state a = Loop state | Done a
 //
@@ -28,7 +30,7 @@ import "fmt"
 
 // Task.loop : (state -> Task e (Step state a)) -> state -> Task e a
 func Task_loop(step any, initial any) any {
-	return SkyTask[any, any](func() SkyResult[any, any] {
+	return mkTask(taskLeaf, func() SkyResult[any, any] {
 		state := initial
 		for {
 			r := anyTaskInvoke(SkyCall(step, state))
@@ -45,7 +47,7 @@ func Task_loop(step any, initial any) any {
 				panic(fmt.Sprintf("rt.Coerce: expected a Task.Step value (Loop or Done) from the Task.loop step function, got %T", r.OkValue))
 			}
 		}
-	})
+	}, nil, nil)
 }
 
 // Task.forever : Task e a -> Task e b
@@ -54,14 +56,14 @@ func Task_loop(step any, initial any) any {
 // error, so the success type is free (`b`): a forever task never produces a
 // value. Constant stack for the same reason as Task_loop.
 func Task_forever(task any) any {
-	return SkyTask[any, any](func() SkyResult[any, any] {
+	return mkTask(taskLeaf, func() SkyResult[any, any] {
 		for {
 			r := anyTaskInvoke(task)
 			if r.Tag != 0 {
 				return Err[any, any](r.ErrValue)
 			}
 		}
-	})
+	}, nil, nil)
 }
 
 // readStep reads the constructor NAME and the single payload off a

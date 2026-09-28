@@ -3062,6 +3062,9 @@ func coerceReflectArg(av reflect.Value, want reflect.Type) reflect.Value {
 	if av.Type().AssignableTo(want) {
 		return av
 	}
+	if isSkyTaskType(want) && av.CanInterface() {
+		return taskReflectValue(av.Interface(), want)
+	}
 	if av.Type().ConvertibleTo(want) {
 		return av.Convert(want)
 	}
@@ -3185,6 +3188,12 @@ func sky_call(f any, arg any) any {
 	}
 	if g, ok := f.(func() any); ok {
 		return g()
+	}
+	// A Task is forced, as its thunk form was (`sky_call(task, nil)` is how
+	// Cmd.perform, durable TEA and the Spa perform paths run one). The arg is
+	// ignored, exactly as the `func() any` fast path above ignores it.
+	if _, ok := taskNodeOf(f); ok {
+		return forceTask(f)
 	}
 	rv := reflect.ValueOf(f)
 	if rv.Kind() != reflect.Func {

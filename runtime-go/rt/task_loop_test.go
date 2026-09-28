@@ -201,13 +201,17 @@ func TestTaskForever_StopsOnErr(t *testing.T) {
 	}
 }
 
-// TestRecursiveAndThen_OverflowsTheSameCap is the control for the constant-
-// stack tests above: it proves the 1 MB cap they run under is tight enough to
-// catch the defect. The same countdown written as plain `andThen` recursion
-// (the shape Task.loop replaces) is run in a child process — a Go stack
-// overflow is fatal, so it cannot run in this one — and must die with Go's
-// "stack exceeds" error.
-func TestRecursiveAndThen_OverflowsTheSameCap(t *testing.T) {
+// TestNestedForce_OverflowsTheSameCap is the control for the constant-stack
+// tests (here and in task_trampoline_test.go): it proves the 1 MB cap they run
+// under is tight enough to catch a Task that grows the Go stack per step.
+//
+// Plain `andThen` recursion no longer does (the trampoline pops the bind
+// before running the continuation's task), so the control uses the shape
+// that still must: a leaf thunk that forces the NEXT step from inside itself —
+// one nested interpreter per step, the way every `andThen` step nested before
+// v0.27.0. It runs in a child process (a Go stack overflow is fatal) and must
+// die with Go's "stack exceeds" error.
+func TestNestedForce_OverflowsTheSameCap(t *testing.T) {
 	if os.Getenv("SKY_TASK_LOOP_CONTROL") == "1" {
 		debug.SetMaxStack(1 << 20)
 		var count func(n int) any
@@ -215,16 +219,16 @@ func TestRecursiveAndThen_OverflowsTheSameCap(t *testing.T) {
 			if n == 0 {
 				return AnyTaskSucceed(0)
 			}
-			return AnyTaskAndThen(func(_ any) any { return count(n - 1) }, AnyTaskSucceed(n))
+			return func() any { return anyTaskInvoke(count(n - 1)) }
 		}
 		anyTaskInvoke(count(2_000_000))
 		os.Exit(0)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestRecursiveAndThen_OverflowsTheSameCap$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNestedForce_OverflowsTheSameCap$")
 	cmd.Env = append(os.Environ(), "SKY_TASK_LOOP_CONTROL=1")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("recursive andThen over 2,000,000 steps finished under a 1 MB stack; the control no longer proves anything:\n%s", out)
+		t.Fatalf("a nested force over 2,000,000 steps finished under a 1 MB stack; the control no longer proves anything:\n%s", out)
 	}
 	if !strings.Contains(string(out), "stack exceeds") {
 		t.Fatalf("child failed, but not with a stack overflow: %v\n%.2000s", err, out)

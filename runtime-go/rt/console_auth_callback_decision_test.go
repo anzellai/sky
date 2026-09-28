@@ -27,7 +27,7 @@ func anyConsoleCallback(result SkyResult[any, any]) any {
 // produces: a named SkyTask[E, A].
 func typedConsoleCallback[E any, A any](result SkyResult[E, A]) any {
 	return func(_ any) any {
-		return SkyTask[E, A](func() SkyResult[E, A] { return result })
+		return typedLeaf(func() SkyResult[E, A] { return result })
 	}
 }
 

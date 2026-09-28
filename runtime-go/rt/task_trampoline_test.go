@@ -1,8 +1,10 @@
 package rt
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -266,4 +268,251 @@ func TestTaskRecursiveForever_ConstantHeap(t *testing.T) {
 		t.Fatalf("got %+v, want Err stop", r)
 	}
 	assertNoHeapGrowth(t, "recursive andThen loop", samples, iterations)
+}
+
+// TestTaskCoerceT_IsFree: converting between SkyTask instantiations — what
+// the compiler emits at every typed Task boundary — allocates nothing. A
+// wrapper per conversion would make a long-running loop allocate per step.
+func TestTaskCoerceT_IsFree(t *testing.T) {
+	base := AnyTaskSucceed(1)
+	typed := TaskCoerceT[any, int](base)
+	var sink any
+	allocs := testing.AllocsPerRun(1000, func() {
+		a := TaskCoerceT[SkyADT, int](base)
+		b := TaskCoerceT[any, int](any(a))
+		sink = any(TaskCoerceT[string, any](any(b)))
+	})
+	if allocs != 0 {
+		t.Fatalf("TaskCoerceT allocated %.1f times per conversion chain, want 0", allocs)
+	}
+	if n, _ := taskNodeOf(sink); n != typed.n {
+		t.Fatalf("TaskCoerceT must keep the node: got %p, want %p", n, typed.n)
+	}
+	if r := anyTaskInvoke(sink); r.Tag != 0 || r.OkValue != 1 {
+		t.Fatalf("converted task ran to %+v", r)
+	}
+}
+
+// expectCoercePanic runs f and requires a panic whose message classifies as
+// CoerceFailure — the loud, classified failure a site must give instead of
+// passing an unforced Task on as a value.
+func expectCoercePanic(t *testing.T, what string, f func()) {
+	t.Helper()
+	defer func() {
+		t.Helper()
+		r := recover()
+		if r == nil {
+			t.Fatalf("%s: want a classified panic, got none", what)
+		}
+		msg := fmt.Sprint(r)
+		if kind, _ := classifyPanic(msg); kind != "CoerceFailure" {
+			t.Fatalf("%s: panic %q classifies as %s, want CoerceFailure", what, msg, kind)
+		}
+	}()
+	f()
+}
+
+type taskHolder struct {
+	Run SkyTask[SkyADT, int]
+}
+
+// TestTaskLike_EveryForceSiteRecognisesASkyTask: each site that forces or
+// converts a value that may be a Task sees the SkyTask node, never takes the
+// "not a function, return it as a value" branch.
+func TestTaskLike_EveryForceSiteRecognisesASkyTask(t *testing.T) {
+	ran := 0
+	mk := func() any {
+		return AnyTaskAndThen(func(v any) any { ran++; return AnyTaskSucceed(v.(int) + 1) }, AnyTaskSucceed(41))
+	}
+	check := func(site string, got any) {
+		t.Helper()
+		tag, ok, _ := anyResultView(got)
+		if tag != 0 || ok != 42 {
+			t.Fatalf("%s: got %#v, want Ok 42", site, got)
+		}
+	}
+	check("AnyTaskRun", AnyTaskRun(mk()))
+	check("anyTaskInvoke", anyTaskInvoke(mk()))
+	check("SkyCall (zero args)", SkyCall(mk()))
+	check("sky_call (Cmd.perform shape)", sky_call(mk(), nil))
+	check("RunAny", TaskCoerceT[SkyADT, int](mk()).RunAny())
+	check("Task_run (typed)", any(Task_run(TaskCoerceT[SkyADT, int](mk()))))
+	if ran != 6 {
+		t.Fatalf("continuation ran %d times, want 6 (once per force)", ran)
+	}
+
+	// Conversions INTO a typed Task slot keep the node or wrap a thunk as
+	// a leaf; none zeroes the slot.
+	thunk := func() any { return Ok[any, any](42) }
+	for name, v := range map[string]any{"node": AnyTaskSucceed(42), "thunk": thunk} {
+		check("Coerce/"+name, AnyTaskRun(Coerce[SkyTask[SkyADT, int]](v)))
+		nv := narrowReflectValue(reflect.ValueOf(v), reflect.TypeOf(SkyTask[SkyADT, int]{}))
+		check("narrowReflectValue/"+name, AnyTaskRun(nv.Interface()))
+		cv := coerceReflectArg(reflect.ValueOf(v), reflect.TypeOf(SkyTask[SkyADT, int]{}))
+		check("coerceReflectArg/"+name, AnyTaskRun(cv.Interface()))
+		sv := skyValueAsType(v, reflect.TypeOf(SkyTask[SkyADT, int]{}))
+		check("skyValueAsType/"+name, AnyTaskRun(sv.Interface()))
+		check("coerceInner/"+name, AnyTaskRun(coerceInner[SkyTask[SkyADT, int]](v)))
+		rec := narrowReflectValue(reflect.ValueOf(map[string]any{"run": v}), reflect.TypeOf(taskHolder{}))
+		check("record field/"+name, AnyTaskRun(rec.Interface().(taskHolder).Run))
+		// A typed Go function taking a Task parameter, called through the
+		// reflect dispatcher.
+		takes := func(tk SkyTask[SkyADT, int]) any { return AnyTaskRun(tk) }
+		check("skyCallDirect/"+name, SkyCall(takes, v))
+	}
+
+	// A Task inside a Sky.Live model is rejected, as a func was.
+	if err := validateSessionValue(taskHolder{Run: TaskCoerceT[SkyADT, int](AnyTaskSucceed(1))}, "model"); err == nil ||
+		!strings.Contains(err.Error(), "Task") {
+		t.Fatalf("validateSessionValue must reject a Task field, got %v", err)
+	}
+}
+
+// TestTaskLike_FallbacksPanicClassified: every place that cannot force what
+// it was handed fails loudly, never returning the unforced value.
+func TestTaskLike_FallbacksPanicClassified(t *testing.T) {
+	expectCoercePanic(t, "zero SkyTask", func() { anyTaskInvoke(SkyTask[any, int]{}) })
+	expectCoercePanic(t, "func with a parameter forced as a Task", func() {
+		anyTaskInvoke(func(x any) any { return x })
+	})
+	expectCoercePanic(t, "AnyTaskRun of a func with a parameter", func() {
+		AnyTaskRun(func(x any) any { return x })
+	})
+	expectCoercePanic(t, "Task applied to an argument (SkyCall)", func() { SkyCall(AnyTaskSucceed(1), 2) })
+	expectCoercePanic(t, "Task applied to an argument (curried walk)", func() { skyCallOne(AnyTaskSucceed(1), 2) })
+	expectCoercePanic(t, "Task handed to Task.lazy as its thunk", func() {
+		anyTaskInvoke(Task_lazy(AnyTaskSucceed(1)))
+	})
+	expectCoercePanic(t, "andThen continuation returning a non-thunk func", func() {
+		anyTaskInvoke(AnyTaskAndThen(func(_ any) any { return func(a, b any) any { return a } }, AnyTaskSucceed(1)))
+	})
+}
+
+// TestTaskSemantics_Preserved pins the observable contract of every
+// combinator the interpreter folds: effect order, short-circuit, error
+// mapping, recovery, sequence order and first-error stop, lazy re-run.
+func TestTaskSemantics_Preserved(t *testing.T) {
+	var log []string
+	step := func(name string, v any) any {
+		return mkTask(taskLeaf, func() any { log = append(log, name); return Ok[any, any](v) }, nil, nil)
+	}
+	fail := func(name string, e any) any {
+		return mkTask(taskLeaf, func() any { log = append(log, name); return Err[any, any](e) }, nil, nil)
+	}
+
+	// andThen order + map + mapError identity on Ok.
+	log = nil
+	r := anyTaskInvoke(Task_mapError(func(e any) any { return "mapped " + e.(string) },
+		Task_map(func(v any) any { return v.(int) * 10 },
+			AnyTaskAndThen(func(v any) any { return step("b", v.(int)+1) }, step("a", 1)))))
+	if r.Tag != 0 || r.OkValue != 20 || strings.Join(log, ",") != "a,b" {
+		t.Fatalf("andThen/map: %+v log %v", r, log)
+	}
+
+	// Short-circuit: nothing after an Err runs; mapError maps it; onError
+	// recovers it.
+	log = nil
+	r = anyTaskInvoke(Task_mapError(func(e any) any { return "mapped " + e.(string) },
+		AnyTaskAndThen(func(v any) any { return step("never", v) }, fail("x", "boom"))))
+	if r.Tag != 1 || r.ErrValue != "mapped boom" || strings.Join(log, ",") != "x" {
+		t.Fatalf("short-circuit/mapError: %+v log %v", r, log)
+	}
+	r = anyTaskInvoke(Task_onError(func(e any) any { return AnyTaskSucceed("recovered " + e.(string)) }, fail("y", "e1")))
+	if r.Tag != 0 || r.OkValue != "recovered e1" {
+		t.Fatalf("onError: %+v", r)
+	}
+	r = anyTaskInvoke(Task_onError(func(e any) any { return AnyTaskSucceed("unused") }, AnyTaskSucceed(7)))
+	if r.Tag != 0 || r.OkValue != 7 {
+		t.Fatalf("onError on Ok: %+v", r)
+	}
+
+	// sequence: in order, first error stops the rest.
+	log = nil
+	r = anyTaskInvoke(Task_sequence([]any{step("1", 1), step("2", 2), step("3", 3)}))
+	if r.Tag != 0 || fmt.Sprint(r.OkValue) != "[1 2 3]" || strings.Join(log, ",") != "1,2,3" {
+		t.Fatalf("sequence: %+v log %v", r, log)
+	}
+	log = nil
+	r = anyTaskInvoke(Task_sequence([]any{step("1", 1), fail("2", "stop"), step("3", 3)}))
+	if r.Tag != 1 || r.ErrValue != "stop" || strings.Join(log, ",") != "1,2" {
+		t.Fatalf("sequence first error: %+v log %v", r, log)
+	}
+	r = anyTaskInvoke(Task_sequence([]any{}))
+	if r.Tag != 0 || len(r.OkValue.([]any)) != 0 {
+		t.Fatalf("empty sequence: %+v", r)
+	}
+	// A sequence nested in a sequence, and a sequence run twice (per-run
+	// state must not leak between runs).
+	inner := Task_sequence([]any{AnyTaskSucceed("a"), AnyTaskSucceed("b")})
+	outer := Task_sequence([]any{inner, inner})
+	for i := 0; i < 2; i++ {
+		r = anyTaskInvoke(outer)
+		if r.Tag != 0 || fmt.Sprint(r.OkValue) != "[[a b] [a b]]" {
+			t.Fatalf("nested sequence run %d: %+v", i, r)
+		}
+	}
+
+	// lazy re-runs its thunk on every force.
+	calls := 0
+	lz := Task_lazy(func(_ any) any { calls++; return calls })
+	anyTaskInvoke(lz)
+	r = anyTaskInvoke(lz)
+	if r.OkValue != 2 || calls != 2 {
+		t.Fatalf("lazy: %+v calls %d", r, calls)
+	}
+
+	// fromResult / andThenResult / Result.andThenTask.
+	if r = anyTaskInvoke(Task_fromResult(Err[any, any]("e"))); r.Tag != 1 || r.ErrValue != "e" {
+		t.Fatalf("fromResult Err: %+v", r)
+	}
+	if r = anyTaskInvoke(Task_fromResult(Ok[any, int](3))); r.Tag != 0 || r.OkValue != 3 {
+		t.Fatalf("fromResult typed Ok: %+v", r)
+	}
+	if r = anyTaskInvoke(Task_andThenResult(func(v any) any { return Ok[any, any](v.(int) + 1) }, AnyTaskSucceed(1))); r.OkValue != 2 {
+		t.Fatalf("andThenResult: %+v", r)
+	}
+	if r = anyTaskInvoke(Result_andThenTask(func(v any) any { return AnyTaskSucceed(v.(int) * 2) }, Ok[any, any](4))); r.OkValue != 8 {
+		t.Fatalf("Result.andThenTask: %+v", r)
+	}
+
+	// A kernel thunk returning a Result of another instantiation is that
+	// Result, not an Ok wrapping it.
+	if r = anyTaskInvoke(func() any { return Err[string, int]("typed err") }); r.Tag != 1 || r.ErrValue != "typed err" {
+		t.Fatalf("typed Result from a thunk: %+v", r)
+	}
+	// A bare value is Ok value (the documented kernel trust boundary).
+	if r = anyTaskInvoke(5); r.Tag != 0 || r.OkValue != 5 {
+		t.Fatalf("bare value: %+v", r)
+	}
+
+	// Typed companions.
+	tt := Task_andThen(func(a int) SkyTask[string, int] { return Task_succeed[string, int](a + 1) }, Task_succeed[string, int](1))
+	if tr := Task_run(Task_mapT(func(a int) int { return a * 3 }, tt)); tr.Tag != 0 || tr.OkValue != 6 {
+		t.Fatalf("typed andThen/mapT: %+v", tr)
+	}
+	if tr := Task_run(Task_sequenceT([]SkyTask[string, int]{Task_succeed[string, int](1), Task_succeed[string, int](2)})); tr.Tag != 0 || fmt.Sprint(tr.OkValue) != "[1 2]" {
+		t.Fatalf("typed sequenceT: %+v", tr)
+	}
+}
+
+// TestTaskConcurrentRuns: one task value run from many goroutines at once.
+// Nodes are immutable; per-run state (frames, sequence accumulators) is
+// local to each run. Run under -race.
+func TestTaskConcurrentRuns(t *testing.T) {
+	task := Task_sequence([]any{
+		Task_map(func(v any) any { return v.(int) + 1 }, AnyTaskSucceed(1)),
+		AnyTaskAndThen(func(v any) any { return AnyTaskSucceed(v.(int) * 2) }, AnyTaskSucceed(3)),
+	})
+	done := make(chan string, 16)
+	for i := 0; i < 16; i++ {
+		go func() {
+			r := anyTaskInvoke(task)
+			done <- fmt.Sprint(r.Tag, r.OkValue)
+		}()
+	}
+	for i := 0; i < 16; i++ {
+		if got := <-done; got != "0 [2 6]" {
+			t.Fatalf("concurrent run: %s", got)
+		}
+	}
 }

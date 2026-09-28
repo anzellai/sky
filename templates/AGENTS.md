@@ -385,15 +385,18 @@ The levers, in order of reach:
      `Task.when`), so a guarded effect reads as `unless liteMemory (embed note)`
      instead of an inline `if liteMemory then Task.succeed () else …`.
 
-7. **`Task.loop` for a loop that can run many times.** Never recurse through
-   `andThen` for a poller, a paginated fetch or a read-until-end loop: each
-   `andThen` step nests Go frames, and by two million iterations the
-   process dies with a fatal Go stack overflow that no error handler sees.
-   `Task.loop step initial` keeps the stack flat — `step` returns
+7. **`Task.loop` for a loop that can run many times.** Recursion through
+   `andThen` is stack-safe (v0.27.0: a Task is run by one interpreter that
+   pops an `andThen` before it runs the task its continuation returns, so
+   two million iterations finish). `Task.loop` is still the clearer form for
+   a poller, a paginated fetch or a read-until-end loop, because its state is
+   explicit: `Task.loop step initial` — `step` returns
    `Task.succeed (Loop next)` to go again or `Task.succeed (Done result)` to
    stop, and an `Err` stops the loop with that error. `Task.forever task`
    re-runs a task until it fails. Import the constructors with
-   `import Sky.Core.Task as Task exposing (Step(..))`.
+   `import Sky.Core.Task as Task exposing (Step(..))`. A recursive call that
+   is not behind a continuation (`step (n - 1) |> Task.map f`) runs while the
+   task is built, and grows the stack like any strict recursion.
 
    ```elm
    type alias Pager =
@@ -726,7 +729,7 @@ sign-in) if you run more than one replica. Key per-session data by
 
 - **Types over strings for errors** — `Result Error a` / `Task Error a`, never `Result String a`.
 - **DB defaults to `Std.Db.Store` + `Std.Codec`** — one codec per record table drives the schema, the writes, and the TYPED reads. Drop to raw `Std.Db` (`query`/`exec`) ONLY for what a `Store` cannot express (joins, aggregates, CTEs, a query no typed `Cond` states); keep those in a clearly separated section. Never hand-write a row mapper for a plain record table.
-- **Effect chains stay flat + named** — top-to-bottom `andThen`/`map` pipelines, named step functions over long inline lambdas, `sequence`/`map2` over nested `andThen`, a local `bestEffort`/`unless` over a repeated `onError`/`if`. A loop that can run many times is `Task.loop`, never `andThen` recursion (which overflows the Go stack). `let … in` names PURE sub-expressions only (it does not bind a `Task` result). See **Effect and control-flow style**.
+- **Effect chains stay flat + named** — top-to-bottom `andThen`/`map` pipelines, named step functions over long inline lambdas, `sequence`/`map2` over nested `andThen`, a local `bestEffort`/`unless` over a repeated `onError`/`if`. A loop that can run many times reads best as `Task.loop`; `andThen` recursion is also stack-safe (v0.27.0). `let … in` names PURE sub-expressions only (it does not bind a `Task` result). See **Effect and control-flow style**.
 - **No raw HTML/JS** — `Std.Ui` escapes everything. `data-sky-eval` is gone (no runtime path evaluates a string); use `data-sky-path` for URL sync.
 - **Secrets are typed** — secret-bearing args are the opaque `Sky.Core.Secret.Secret` (redacts itself in every log/JSON path): `Auth.signToken`/`verifyToken`, `Jwt.hs256`/`rs256`, the `Crypto` AEAD keys, `Http.withBearer`/`withApiKey`; `Cli.readPassword` returns one. The `Std.Crypto` key types (`Sign.SecretKey`, `Kx.SecretKey`) are opaque the same way and export only to a `Secret`. Wrap with `Secret.fromEnv "VAR"`, unwrap only via `Secret.reveal`. Never `fmt.Sprintf("%v", secret)`.
 - **AEAD encrypt is a `Task`** (it draws a random nonce): `Crypto.xchachaSeal key pt |> Task.andThen …`, or `Task.run` where a `Result` is needed. Prefer `xchachaSeal` over `aesGcmEncrypt`.

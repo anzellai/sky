@@ -420,6 +420,10 @@ func coerceInner[T any](v any) T {
 	if cast, ok := v.(T); ok {
 		return cast
 	}
+	var zeroT T
+	if tv, ok := any(zeroT).(skyTaskValue); ok {
+		return tv.skyTaskWith(taskNodeFor(v)).(T)
+	}
 	// Belt-and-suspenders (conformance finding C1): a bare string can
 	// never soundly narrow to an ADT. This arises when a decode path
 	// yields an Err carrying a raw string (rather than a proper Error
@@ -772,6 +776,12 @@ func narrowReflectValue(src reflect.Value, target reflect.Type) reflect.Value {
 	if src.Type().AssignableTo(target) {
 		return src
 	}
+	// A Task slot (record field, list element, callback result, …): one
+	// conversion rule for every source — a SkyTask of another
+	// instantiation keeps its node, a kernel thunk becomes a leaf.
+	if isSkyTaskType(target) && src.CanInterface() {
+		return taskReflectValue(src.Interface(), target)
+	}
 	if src.Type().ConvertibleTo(target) && safeReflectConvert(src.Kind(), target.Kind()) {
 		return src.Convert(target)
 	}
@@ -1003,6 +1013,9 @@ func narrowTupleStruct(src reflect.Value, target reflect.Type) (reflect.Value, b
 // remaining fields match a known Sky container shape. Non-Sky structs
 // fall through to the generic fail path.
 func narrowSkyContainer(src reflect.Value, target reflect.Type) (reflect.Value, bool) {
+	if isSkyTaskType(target) && src.CanInterface() {
+		return taskReflectValue(src.Interface(), target), true
+	}
 	tagF := src.FieldByName("Tag")
 	if !tagF.IsValid() {
 		return reflect.Value{}, false
@@ -1123,46 +1136,30 @@ func coerceSliceValue(src reflect.Value, target reflect.Type) reflect.Value {
 // Task
 // ═══════════════════════════════════════════════════════════
 
-type SkyTask[E any, A any] func() SkyResult[E, A]
-
-// RunAny forces the task and value-erases its result to SkyResult[any, any]. It
-// exists so anyTaskInvoke can invoke a CONCRETE-generic SkyTask[E, A] (E/A that
-// a plain type switch cannot case on) through an interface assertion instead of
-// reflect — the reflect route panics under TinyGo (reflect.Type.NumIn is
-// unimplemented), which the Sky.Spa client build hits at its `main` entry
-// (`AnyTaskRun(TaskCoerceT[Error, ()](...))`). The E→any / A→any conversion is
-// exactly what anyTaskInvoke's reflect fallback did via Tag/OkValue/ErrValue
-// field extraction, so this is a reflect-free equivalent — faster on the server
-// too, identical result.
-func (t SkyTask[E, A]) RunAny() SkyResult[any, any] {
-	r := t()
-	return SkyResult[any, any]{Tag: r.Tag, OkValue: r.OkValue, ErrValue: r.ErrValue}
-}
+// The SkyTask type, its interpreter (forceTask) and TaskCoerce/TaskCoerceT live
+// in task_trampoline.go. The typed companions below build task nodes; a typed
+// run reads the value-erased result back through ResultCoerce.
 
 func Task_succeed[E any, A any](v A) SkyTask[E, A] {
-	return func() SkyResult[E, A] { return Ok[E, A](v) }
+	return SkyTask[E, A]{n: &taskNode{kind: taskPure, val: v}}
 }
 
 func Task_fail[E any, A any](e E) SkyTask[E, A] {
-	return func() SkyResult[E, A] { return Err[E, A](e) }
+	return SkyTask[E, A]{n: &taskNode{kind: taskFail, val: e}}
 }
 
 func Task_andThen[E any, A any, B any](fn func(A) SkyTask[E, B], task SkyTask[E, A]) SkyTask[E, B] {
-	return func() SkyResult[E, B] {
-		r := task()
-		if r.Tag == 0 {
-			return fn(r.OkValue)()
-		}
-		return Err[E, B](r.ErrValue)
-	}
+	return SkyTask[E, B]{n: &taskNode{kind: taskBind, src: task, fn: func(a any) any {
+		return fn(coerceInner[A](a))
+	}}}
 }
 
 func Task_run[E any, A any](task SkyTask[E, A]) SkyResult[E, A] {
-	return task()
+	return ResultCoerce[E, A](forceTask(task))
 }
 
 func RunMainTask[E any, A any](task SkyTask[E, A]) {
-	r := task()
+	r := forceTask(task)
 	if r.Tag == 1 {
 		fmt.Println("Error:", r.ErrValue)
 	}
@@ -6055,45 +6052,15 @@ func Field(record any, field string) any {
 // Any-typed Task wrappers (until type checker provides types)
 // ═══════════════════════════════════════════════════════════
 
-// Returns an any-typed Task thunk. Shape: `func() any` that returns
-// SkyResult[any, any]. Callers invoke via anyTaskInvoke so downstream
-// paths don't care whether they got a raw `func() any` or the typed
-// SkyTask[any, any] form.
+// AnyTaskSucceed / AnyTaskFail build the any-typed `Task.succeed` /
+// `Task.fail` nodes (task_trampoline.go). TaskCoerce / TaskCoerceT live there
+// too.
 func AnyTaskSucceed(v any) any {
-	return func() any { return Ok[any, any](v) }
+	return mkTask(taskPure, v, nil, nil)
 }
 
 func AnyTaskFail(e any) any {
-	return func() any { return Err[any, any](e) }
-}
-
-// TaskCoerce converts any Task-shaped value (`func() any`, the typed
-// `SkyTask[any, any]`, or already-resolved SkyResult) into the typed
-// `SkyTask[any, any]` form that typed-codegen call sites expect.
-// The compiler inserts this at every typed-return boundary where the
-// inner value came from the any-typed Task builders (AnyTaskSucceed /
-// AnyTaskAndThen / …) but the outer signature declares
-// `rt.SkyTask[any, any]`. Without it, the previous direct
-// `.(rt.SkyTask[any, any])` assertion panicked on `func() any`.
-func TaskCoerce(v any) SkyTask[any, any] {
-	if t, ok := v.(SkyTask[any, any]); ok {
-		return t
-	}
-	return SkyTask[any, any](func() SkyResult[any, any] {
-		return anyTaskInvoke(v)
-	})
-}
-
-// TaskCoerceT returns a typed SkyTask[E, A] from any task-shaped value.
-// Used when function signatures declare concrete Task return types.
-func TaskCoerceT[E any, A any](v any) SkyTask[E, A] {
-	if t, ok := v.(SkyTask[E, A]); ok {
-		return t
-	}
-	return SkyTask[E, A](func() SkyResult[E, A] {
-		raw := anyTaskInvoke(v)
-		return ResultCoerce[E, A](any(raw))
-	})
+	return mkTask(taskFail, e, nil, nil)
 }
 
 // Coerce — audit P0-3. Replaces raw `any(body).(T)` assertions that
@@ -6116,6 +6083,12 @@ func TaskCoerceT[E any, A any](v any) SkyTask[E, A] {
 func Coerce[T any](v any) T {
 	if t, ok := v.(T); ok {
 		return t
+	}
+	// A Task target: the same conversion TaskCoerceT makes — a SkyTask of
+	// another instantiation keeps its node (free), anything else is a leaf.
+	var taskZero T
+	if tv, ok := any(taskZero).(skyTaskValue); ok {
+		return tv.skyTaskWith(taskNodeFor(v)).(T)
 	}
 	// Unit (`struct{}`) is the zero-information type — coercing ANY value to it
 	// is trivially valid, there is nothing to narrow. In particular a
@@ -6526,115 +6499,35 @@ func Unreachable(site string) any {
 	panic(fmt.Sprintf("sky.Unreachable(%s): %s", site, msg))
 }
 
-// Run a task thunk regardless of whether it was built via
-// AnyTaskSucceed (now typed as SkyTask[any, any]) or via an older
-// `func() any` form. Returns SkyResult[any, any].
+// anyTaskInvoke forces any Task-shaped value — a SkyTask node, a kernel
+// thunk (`func() any` / `func() SkyResult[any, any]`), an already-resolved
+// Result, or a bare value (read as `Ok value`) — through the one interpreter,
+// forceTask (task_trampoline.go).
 func anyTaskInvoke(task any) SkyResult[any, any] {
-	switch t := task.(type) {
-	case SkyTask[any, any]:
-		return t()
-	case func() SkyResult[any, any]:
-		return t()
-	case func() any:
-		r := t()
-		if res, ok := r.(SkyResult[any, any]); ok {
-			return res
-		}
-		return Ok[any, any](r)
-	}
-	// Typed codegen may produce `SkyTask[E, A]` with concrete E/A that
-	// Go's type switch can't case on generically. Its RunAny method
-	// (bound by the receiver's E/A) value-erases the result reflect-free
-	// — required for the Sky.Spa/TinyGo client, whose reflect fallback
-	// below panics (reflect.Type.NumIn unimplemented). Faster than reflect
-	// on the server too, identical result.
-	if rt, ok := task.(interface{ RunAny() SkyResult[any, any] }); ok {
-		return rt.RunAny()
-	}
-	// Fallback for a bare `func() SkyResult[E, A]` (unnamed, no RunAny
-	// method): reflect into the task. Unreachable under TinyGo, which does
-	// not compile a reflect.Value.Call path — but the typed tasks codegen
-	// emits are all named SkyTask (caught above), so the client never
-	// reaches here.
-	rv := reflect.ValueOf(task)
-	if rv.IsValid() && rv.Kind() == reflect.Func && rv.Type().NumIn() == 0 && rv.Type().NumOut() == 1 {
-		out := rv.Call(nil)
-		if len(out) == 1 {
-			resv := out[0]
-			if resv.Kind() == reflect.Struct {
-				tagF := resv.FieldByName("Tag")
-				okF := resv.FieldByName("OkValue")
-				errF := resv.FieldByName("ErrValue")
-				if tagF.IsValid() && okF.IsValid() && errF.IsValid() {
-					return SkyResult[any, any]{
-						Tag:      int(tagF.Int()),
-						OkValue:  okF.Interface(),
-						ErrValue: errF.Interface(),
-					}
-				}
-			}
-			if res, ok := resv.Interface().(SkyResult[any, any]); ok {
-				return res
-			}
-			return Ok[any, any](resv.Interface())
-		}
-	}
-	// Already-resolved value (rare): treat as Ok.
-	if res, ok := task.(SkyResult[any, any]); ok {
-		return res
-	}
-	return Ok[any, any](task)
+	return forceTask(task)
 }
 
+// AnyTaskAndThen is `Task.andThen`: a bind node. The interpreter pops the
+// bind's frame BEFORE it runs the task the continuation returns, which is why
+// recursion through `andThen` runs in constant stack.
 func AnyTaskAndThen(fn any, task any) any {
-	return SkyTask[any, any](func() SkyResult[any, any] {
-		r := anyTaskInvoke(task)
-		if r.Tag == 0 {
-			return anyTaskInvoke(SkyCall(fn, r.OkValue))
-		}
-		return Err[any, any](r.ErrValue)
-	})
+	return mkTask(taskBind, nil, task, fn)
 }
 
 // Task_fromResult lifts a Result into a Task. The pure-bridge case of
 // the FFI flattening story: every FFI call returns Result, but a
 // downstream pipeline may want Task semantics so the value can be
 // composed with effectful steps via Task.andThen / Cmd.perform / a
-// Sky.Http handler return. Bare values fall through as Ok defensively
-// (matches Result_andThen's tag<0 branch — should not arise once typed
-// codegen is in place but worth tolerating).
+// Sky.Http handler return. A bare (non-Result) value is read as Ok.
 func Task_fromResult(result any) any {
-	return SkyTask[any, any](func() SkyResult[any, any] {
-		tag, okV, errV := anyResultView(result)
-		if tag < 0 {
-			return Ok[any, any](result)
-		}
-		if tag == 0 {
-			return Ok[any, any](okV)
-		}
-		return Err[any, any](errV)
-	})
+	return mkTask(taskFromResult, result, nil, nil)
 }
 
 // Task_andThenResult chains a Result-returning step after a Task. The
-// fn returns a Result; we normalise its shape so downstream Task code
-// always sees Tag/OkValue/ErrValue without a tag<0 escape hatch.
+// fn returns a Result; its shape is normalised so downstream Task code
+// always sees Tag/OkValue/ErrValue (a bare value is read as Ok).
 func Task_andThenResult(fn any, task any) any {
-	return SkyTask[any, any](func() SkyResult[any, any] {
-		r := anyTaskInvoke(task)
-		if r.Tag != 0 {
-			return Err[any, any](r.ErrValue)
-		}
-		res := SkyCall(fn, r.OkValue)
-		tag, okV, errV := anyResultView(res)
-		if tag < 0 {
-			return Ok[any, any](res)
-		}
-		if tag == 0 {
-			return Ok[any, any](okV)
-		}
-		return Err[any, any](errV)
-	})
+	return mkTask(taskBindResult, nil, task, fn)
 }
 
 // Task_mapError transforms a Task's error value without changing the
@@ -6642,45 +6535,25 @@ func Task_andThenResult(fn any, task any) any {
 // pipeline expects a different error type, or when adding context to
 // an error before it propagates.
 func Task_mapError(fn any, task any) any {
-	return SkyTask[any, any](func() SkyResult[any, any] {
-		r := anyTaskInvoke(task)
-		if r.Tag == 0 {
-			return Ok[any, any](r.OkValue)
-		}
-		return Err[any, any](SkyCall(fn, r.ErrValue))
-	})
+	return mkTask(taskMapErr, nil, task, fn)
 }
 
 // Task_onError recovers from a Task error by producing a new Task. The
 // fn is invoked only on Err — Ok values pass through unchanged. Lets
 // HTTP handlers convert DB / parse errors into 4xx/5xx Response Tasks
 // at the handler boundary, and lets Sky.Live update branches recover
-// to a "show error message" Msg without aborting the chain.
+// to a "show error message" Msg without aborting the chain. Recursion
+// through the recovery continuation is stack-safe, like andThen.
 func Task_onError(fn any, task any) any {
-	return SkyTask[any, any](func() SkyResult[any, any] {
-		r := anyTaskInvoke(task)
-		if r.Tag == 0 {
-			return r
-		}
-		return anyTaskInvoke(SkyCall(fn, r.ErrValue))
-	})
+	return mkTask(taskCatch, nil, task, fn)
 }
 
 // Result_andThenTask chains a Task-returning step after a Result. The
-// fn is invoked lazily — wrapping the dispatch in a SkyTask thunk
-// preserves Task's deferred-effect semantics so the chained Task only
-// runs when the outer Task is forced (Cmd.perform, main, handler boundary).
+// step runs only when the Task is forced (Cmd.perform, main, handler
+// boundary), preserving Task's deferred-effect semantics. A bare
+// (non-Result) value is passed to fn whole, as before.
 func Result_andThenTask(fn any, result any) any {
-	return SkyTask[any, any](func() SkyResult[any, any] {
-		tag, okV, errV := anyResultView(result)
-		if tag < 0 {
-			return anyTaskInvoke(SkyCall(fn, result))
-		}
-		if tag == 0 {
-			return anyTaskInvoke(SkyCall(fn, okV))
-		}
-		return Err[any, any](errV)
-	})
+	return mkTask(taskBind, nil, mkTask(taskFromResult, result, nil, nil), fn)
 }
 
 // Result_toMaybe : Result e a -> Maybe a — `Ok a` becomes `Just a`, `Err _`
@@ -6701,25 +6574,11 @@ func Result_toMaybe(result any) any {
 }
 
 // Task_sequence: run tasks in order, collect results as a list.
-// First error short-circuits.
-//
-// Uses anyResultView to accept both `SkyResult[any, any]` and any
-// concretely-parameterised `SkyResult[E, A]` — typed codegen emits the
-// latter (e.g. `SkyResult[any, int]` for `Task.succeed (n*n)`) and the
-// old `.(SkyResult[any, any])` assertion panicked at every call site.
+// First error short-circuits. A sequence node: the interpreter runs each
+// element inside its own loop (a node fold), so neither a long list nor a
+// recursive element grows the Go stack.
 func Task_sequence(tasks any) any {
-	return func() any {
-		xs := AsList(tasks)
-		out := make([]any, 0, len(xs))
-		for _, t := range xs {
-			tag, okV, errV := anyResultView(SkyCall(t))
-			if tag != 0 {
-				return Err[any, any](errV)
-			}
-			out = append(out, okV)
-		}
-		return Ok[any, any](out)
-	}
+	return mkTask(taskSeq, tasks, nil, nil)
 }
 
 // Task_parallel: goroutine-backed fan-out; preserves input order;
@@ -6763,7 +6622,8 @@ func Task_parallel(tasks any) any {
 		defer cancel()
 		for i, t := range xs {
 			go func(i int, t any) {
-				tag, okV, errV := anyResultView(SkyCall(t))
+				r := forceTask(t)
+				tag, okV, errV := r.Tag, r.OkValue, r.ErrValue
 				// Non-blocking send: if ctx is already cancelled
 				// (someone else won the race), discard so the
 				// goroutine exits cleanly without leaking.
@@ -6833,7 +6693,7 @@ func taskSpawnWith(t any, finished func()) any {
 					finished()
 				}
 			}()
-			_ = SkyCall(t)
+			_ = forceTask(t)
 		}()
 		return Ok[any, any](struct{}{})
 	}
@@ -6886,7 +6746,8 @@ func Task_parallelN(limit any, tasks any) any {
 				}
 				go func(i int, t any) {
 					defer func() { <-sem }()
-					tag, okV, errV := anyResultView(SkyCall(t))
+					r := forceTask(t)
+					tag, okV, errV := r.Tag, r.OkValue, r.ErrValue
 					select {
 					case ch <- item{idx: i, tag: tag, ok: okV, err: errV}:
 					case <-ctx.Done():
@@ -6917,35 +6778,23 @@ func Task_parallelN(limit any, tasks any) any {
 // lowered it to `rt.Task_lazy` — the Go symbol was simply missing, so the
 // function type-checked and then failed the ABI guard with [E4005].
 //
-// The thunk is invoked through the same reflect path as every other Sky
-// callback. `() -> a` reaches Go either as a zero-argument func or as a
-// one-argument func taking unit, depending on how the caller wrote it, so both
-// are forced. A non-func value is passed through — `Task.lazy` on an already
-// evaluated value is a `Task.succeed`.
+// The thunk is called by forceLazy (task_trampoline.go). `() -> a` reaches Go
+// either as a zero-argument func or as a one-argument func taking unit,
+// depending on how the caller wrote it, so both are forced. A non-func value
+// is passed through — `Task.lazy` on an already evaluated value is a
+// `Task.succeed`. A Task handed over as the thunk is a compiler bug and panics
+// classified.
 //
 // Deferral only: the thunk re-runs on every run of the Task. Memoisation is
 // the CAF story (a zero-arg top-level binding), deliberately not this.
 func Task_lazy(thunk any) any {
-	return func() any {
-		rv := reflect.ValueOf(thunk)
-		if rv.Kind() != reflect.Func {
-			return Ok[any, any](thunk)
-		}
-		if rv.Type().NumIn() == 0 {
-			return Ok[any, any](SkyCall(thunk))
-		}
-		return Ok[any, any](SkyCall(thunk, struct{}{}))
-	}
+	return mkTask(taskLazy, thunk, nil, nil)
 }
 
+// Task_map is `Task.map`: a map node, folded by the interpreter (no nested
+// closure per map).
 func Task_map(fn any, task any) any {
-	return func() any {
-		tag, okV, errV := anyResultView(SkyCall(task))
-		if tag != 0 {
-			return Err[any, any](errV)
-		}
-		return Ok[any, any](SkyCall(fn, okV))
-	}
+	return mkTask(taskMap, nil, task, fn)
 }
 
 // Task_map2 … Task_map5 / Task_andMap — the applicative combinators.
@@ -6999,41 +6848,42 @@ func Task_andMap(ta, tfn any) any {
 	return AnyTaskAndThen(func(fn any) any { return Task_map(fn, ta) }, tfn)
 }
 
-// P8/Task typed companions — SkyTask is `func() SkyResult[E, A]`.
+// P8/Task typed companions — nodes, like the any-typed combinators.
 func Task_mapT[E, A, B any](fn func(A) B, t SkyTask[E, A]) SkyTask[E, B] {
-	return func() SkyResult[E, B] {
-		r := t()
-		if r.Tag != 0 {
-			return Err[E, B](r.ErrValue)
-		}
-		return Ok[E, B](fn(r.OkValue))
-	}
+	return SkyTask[E, B]{n: &taskNode{kind: taskMap, src: t, fn: func(a any) any {
+		return fn(coerceInner[A](a))
+	}}}
 }
 
 func Task_sequenceT[E, A any](ts []SkyTask[E, A]) SkyTask[E, []A] {
-	return func() SkyResult[E, []A] {
-		out := make([]A, 0, len(ts))
-		for _, t := range ts {
-			r := t()
-			if r.Tag != 0 {
-				return Err[E, []A](r.ErrValue)
-			}
-			out = append(out, r.OkValue)
-		}
-		return Ok[E, []A](out)
+	xs := make([]any, len(ts))
+	for i, t := range ts {
+		xs[i] = t
 	}
+	seq := &taskNode{kind: taskSeq, val: xs}
+	return SkyTask[E, []A]{n: &taskNode{kind: taskMap, src: SkyTask[E, []any]{n: seq}, fn: func(v any) any {
+		vs := v.([]any)
+		out := make([]A, len(vs))
+		for i, x := range vs {
+			out[i] = coerceInner[A](x)
+		}
+		return out
+	}}}
 }
 
 // AnyTaskRun returns a `SkyResult[any, any]` regardless of what shape
 // the caller provided. Accepts:
-//   - Task thunk (`SkyTask[any,any]` / `func() SkyResult[any,any]` /
-//     `func() any`) — invoked and the result normalised via
-//     `anyTaskInvoke` so a `func() any` returning a bare value gets
-//     wrapped in Ok (Sky's FFI trust boundary).
+//   - a Task — a SkyTask node or a kernel thunk (`func() any` /
+//     `func() SkyResult[any,any]`) — run by the interpreter (forceTask), so
+//     a `func() any` returning a bare value gets wrapped in Ok (Sky's FFI
+//     trust boundary).
 //   - Already-resolved SkyResult — returned as-is (Sky.Http.Server's
 //     `listen` returns `Ok ()` / `Err msg` directly rather than a
 //     deferred thunk).
 //   - Bare value — wrapped in Ok defensively.
+//
+// A func that is not a zero-argument thunk is not a Task: it panics
+// classified (CoerceFailure) rather than being returned as an Ok value.
 //
 // The unified shape means every caller of AnyTaskRun sees the same
 // `SkyResult[any, any]` contract and can case on Tag without a
@@ -7042,9 +6892,12 @@ func AnyTaskRun(task any) any {
 	if r, ok := task.(SkyResult[any, any]); ok {
 		return r
 	}
+	if _, ok := taskNodeOf(task); ok {
+		return forceTask(task)
+	}
 	rv := reflect.ValueOf(task)
 	if rv.IsValid() && rv.Kind() == reflect.Func {
-		return anyTaskInvoke(task)
+		return forceTask(task)
 	}
 	// Non-task, non-Result input (rare, shouldn't happen from typed
 	// Sky code): if it already looks like a SkyResult shape, pass it
@@ -7093,17 +6946,17 @@ func Time_timeString(ms any) any {
 // typed-codegen path can dispatch directly. Time_timeStringT is
 // pure, returns bare string.
 func Time_nowT(_ struct{}) SkyTask[any, int] {
-	return func() SkyResult[any, int] {
+	return typedLeaf(func() SkyResult[any, int] {
 		return Ok[any, int](int(time.Now().UnixMilli()))
-	}
+	})
 }
 func Time_timeStringT(ms int) string {
 	return time.Unix(int64(ms)/1000, 0).Format("15:04:05")
 }
 func Time_unixMillisT(_ struct{}) SkyTask[any, int] {
-	return func() SkyResult[any, int] {
+	return typedLeaf(func() SkyResult[any, int] {
 		return Ok[any, int](int(time.Now().UnixMilli()))
-	}
+	})
 }
 
 // Sha256.* / Hex.* dropped in v0.10.0 — Sha256.sum256(String.toBytes s)
@@ -7513,36 +7366,36 @@ func Random_shuffle(list any) any {
 // pattern). Err arms use ErrInvalidInput / ErrFfi typed builders for
 // consistency with the rest of the runtime.
 func Random_intT(lo, hi int) SkyTask[any, int] {
-	return func() SkyResult[any, int] {
+	return typedLeaf(func() SkyResult[any, int] {
 		if hi <= lo {
 			return Ok[any, int](lo)
 		}
 		return Ok[any, int](lo + mrand.Intn(hi-lo+1))
-	}
+	})
 }
 
 func Random_floatT(lo, hi float64) SkyTask[any, float64] {
-	return func() SkyResult[any, float64] {
+	return typedLeaf(func() SkyResult[any, float64] {
 		return Ok[any, float64](lo + mrand.Float64()*(hi-lo))
-	}
+	})
 }
 
 func Random_choiceT[A any](xs []A) SkyTask[any, A] {
-	return func() SkyResult[any, A] {
+	return typedLeaf(func() SkyResult[any, A] {
 		if len(xs) == 0 {
 			return Err[any, A](ErrInvalidInput("empty list"))
 		}
 		return Ok[any, A](xs[mrand.Intn(len(xs))])
-	}
+	})
 }
 
 func Random_shuffleT[A any](xs []A) SkyTask[any, []A] {
-	return func() SkyResult[any, []A] {
+	return typedLeaf(func() SkyResult[any, []A] {
 		out := make([]A, len(xs))
 		copy(out, xs)
 		mrand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 		return Ok[any, []A](out)
-	}
+	})
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -10487,6 +10340,14 @@ func SkyCall(f any, args ...any) any {
 			return g()
 		}
 	}
+	// A Task is forced by a zero-argument call, like the thunk it used to
+	// be; applying one to arguments is a compiler bug and fails loudly.
+	if _, ok := taskNodeOf(f); ok {
+		if len(args) == 0 {
+			return forceTask(f)
+		}
+		panic(fmt.Sprintf("rt.Coerce: expected a function, got a Task applied to %d argument(s)", len(args)))
+	}
 	rv := reflect.ValueOf(f)
 	if rv.Kind() != reflect.Func {
 		if len(args) == 0 {
@@ -10563,6 +10424,10 @@ func skyCallDirect(rv reflect.Value, args []any) any {
 			// to avoid Go's surprise int→string ASCII reinterpret etc.
 			// (See rt.Coerce for the same rule.)
 			vals[i] = av.Convert(pt)
+		case isSkyTaskType(pt):
+			// A typed Task parameter: a kernel thunk (or a SkyTask of
+			// another instantiation) converts by the one Task rule.
+			vals[i] = taskReflectValue(a, pt)
 		default:
 			// Structural narrowing ONLY: the typed codegen inserts
 			// rt.AsListT / rt.AsMapT coercions at direct call sites, but
@@ -10681,6 +10546,9 @@ func skyValueAsType(v any, t reflect.Type) reflect.Value {
 	if v == nil {
 		return reflect.Zero(t)
 	}
+	if isSkyTaskType(t) {
+		return taskReflectValue(v, t)
+	}
 	rv := reflect.ValueOf(v)
 	switch {
 	case rv.Type() == t:
@@ -10703,6 +10571,9 @@ func skyValueAsType(v any, t reflect.Type) reflect.Value {
 func skyCallOne(f any, arg any) any {
 	if f == nil {
 		return nil
+	}
+	if _, ok := taskNodeOf(f); ok {
+		panic("rt.Coerce: expected a function, got a Task applied to an argument")
 	}
 	rv := reflect.ValueOf(f)
 	if rv.Kind() != reflect.Func {

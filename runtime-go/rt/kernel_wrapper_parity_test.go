@@ -57,12 +57,7 @@ func isTaskShape(v any) bool {
 	if v == nil {
 		return false
 	}
-	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Func {
-		return false
-	}
-	t := rv.Type()
-	return t.NumIn() == 0 && t.NumOut() == 1
+	return isTaskValue(v)
 }
 
 // ── Maybe-returning kernels ──────────────────────────────────────────

@@ -728,12 +728,10 @@ func spaApplyToMsg(toMsg any, result SkyResult[SkyADT, any]) any {
 // the standard shapes (see performTask).
 func spaRunTask(task any) SkyResult[SkyADT, any] {
 	switch t := task.(type) {
-	case SkyTask[SkyADT, any]:
-		return t()
 	case func() SkyResult[SkyADT, any]:
 		return t()
 	default:
-		r := anyTaskInvoke(task) // reflection-free (RunAny); erases E to any
+		r := anyTaskInvoke(task) // reflection-free for SkyTask nodes; erases E to any
 		ev, _ := r.ErrValue.(SkyADT)
 		return SkyResult[SkyADT, any]{Tag: r.Tag, OkValue: r.OkValue, ErrValue: ev}
 	}

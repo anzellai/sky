@@ -1818,6 +1818,9 @@ func walkValidateGob(v reflect.Value, path string, seen map[uintptr]bool) error 
 	if !v.IsValid() {
 		return nil
 	}
+	if isSkyTaskType(v.Type()) {
+		return fmt.Errorf("session value at %s is a Task — not session-safe (a Task is a computation, not data)", path)
+	}
 	switch v.Kind() {
 	case reflect.Func:
 		return fmt.Errorf("session value at %s is a func — not session-safe (closures can't round-trip)", path)
