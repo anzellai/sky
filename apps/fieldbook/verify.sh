@@ -49,6 +49,10 @@ PORT=8433
 rm -f dumps/live-server.log
 PORT=$PORT nohup "$APP" > dumps/live-server.log 2>&1 &
 SRV=$!
+# Stop the server on every exit path (Ctrl-C, a CI cancel), by its PID.
+trap 'kill $SRV 2>/dev/null' EXIT
+trap 'kill $SRV 2>/dev/null; exit 130' INT
+trap 'kill $SRV 2>/dev/null; exit 143' TERM
 i=0
 while [ $i -lt 40 ]; do
     grep -q "Sky.Live listening on :$PORT" dumps/live-server.log 2>/dev/null && break
@@ -67,6 +71,7 @@ for tag in "<main" "<nav" "<h1" "<aside" "<footer" "<form" "<svg" "sky-key"; do
 done
 kill $SRV 2>/dev/null
 wait $SRV 2>/dev/null
+trap - EXIT INT TERM
 
 printf '\n'
 [ $FAIL -eq 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"

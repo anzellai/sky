@@ -22,6 +22,7 @@
 
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
+import { guardChild } from "./lib/child-guard.mjs";
 import { mkdir, writeFile, rm, access, rename, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
@@ -282,10 +283,10 @@ async function exists(p) {
 
 async function buildExample(dir) {
     return new Promise((resolveProc, rejectProc) => {
-        const ps = spawn(SKY, ['build', 'src/Main.sky'], {
+        const ps = guardChild(spawn(SKY, ['build', 'src/Main.sky'], {
             cwd: dir,
             env: { ...process.env, PATH: process.env.PATH },
-        });
+        }));
         let out = '';
         ps.stdout.on('data', c => { out += c.toString(); });
         ps.stderr.on('data', c => { out += c.toString(); });
@@ -318,7 +319,7 @@ async function waitForPort(port, timeoutMs = 15000) {
 // exit code + optional stdout substring. No browser; no port wait.
 async function verifyCli(name, cfg, dir, bin, out) {
     return new Promise((resolveCli) => {
-        const ps = spawn(bin, cfg.args ?? [], { cwd: dir });
+        const ps = guardChild(spawn(bin, cfg.args ?? [], { cwd: dir }));
         let buf = '';
         ps.stdout.on('data', c => { buf += c.toString(); });
         ps.stderr.on('data', c => { buf += c.toString(); });
@@ -399,10 +400,10 @@ async function verify(name, cfg, browser) {
     if (cfg.cli) {
         return verifyCli(name, cfg, dir, bin, out);
     }
-    const child = spawn(bin, [], {
+    const child = guardChild(spawn(bin, [], {
         cwd: dir,
         env: { ...process.env, SKY_LIVE_PORT: String(cfg.port) },
-    });
+    }));
     let appLog = '';
     child.stdout.on('data', c => { appLog += c.toString(); });
     child.stderr.on('data', c => { appLog += c.toString(); });

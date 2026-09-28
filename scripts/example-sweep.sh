@@ -474,18 +474,13 @@ run_example() {
             # sitting on the port. Any answer we then got would be attributed
             # to this example. So: assert the port is silent before we start.
             # `curl` exit 0 here means SOMETHING responded — connection refused
-            # is the state we require. Reclaim a stale listener if we can, then
-            # insist; a port we cannot own is a hard failure, not a pass.
+            # is the state we require. A listener we did not start is not ours
+            # to kill (it may be another agent's server): a port we cannot own
+            # is a hard failure, not a pass.
             if curl -s -o /dev/null --max-time 1 "$url" 2>/dev/null; then
-                if command -v lsof >/dev/null 2>&1; then
-                    kill -9 $(lsof -ti ":$port" 2>/dev/null) 2>/dev/null
-                    sleep 0.5
-                fi
-                if curl -s -o /dev/null --max-time 1 "$url" 2>/dev/null; then
-                    printf 'FAIL port %s already served by a foreign listener — cannot attribute a response to this example\n' \
-                        "$port" > "$result_file"
-                    rmdir "$lock" 2>/dev/null; rm -f "$log"; return
-                fi
+                printf 'FAIL port %s already served by a foreign listener — cannot attribute a response to this example\n' \
+                    "$port" > "$result_file"
+                rmdir "$lock" 2>/dev/null; rm -f "$log"; return
             fi
 
             # `exec` so $! is the APP, not the subshell wrapping it. Without it
@@ -495,6 +490,11 @@ run_example() {
             # next sweep. Demonstrated: the child outlives the kill.
             (cd "$dir" && exec "$bin" >"$log" 2>&1) &
             pid=$!
+            # This worker stops the server it started on every exit path (a
+            # signal from xargs or the timeout shim included), by its PID.
+            trap 'kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null' EXIT
+            trap 'kill -9 "$pid" 2>/dev/null; exit 130' INT
+            trap 'kill -9 "$pid" 2>/dev/null; exit 143' TERM
             local ok=0 tries=0 died=0
             while [[ $tries -lt 30 ]]; do
                 if curl -s -o /dev/null -w '%{http_code}' --max-time 1 "$url" 2>/dev/null | grep -qE '^(2|3)[0-9][0-9]$'; then
@@ -509,6 +509,7 @@ run_example() {
             done
             kill -9 "$pid" 2>/dev/null
             wait "$pid" 2>/dev/null
+            trap - EXIT INT TERM
             rmdir "$lock" 2>/dev/null
             if [[ $ok -eq 1 ]]; then
                 printf 'OK\n' > "$result_file"

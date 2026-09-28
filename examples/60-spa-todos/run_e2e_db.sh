@@ -42,6 +42,8 @@ SERVER_PID=""
 start() { ( cd server && SKY_DB_PATH="$DB" ./sky-out/app ) >/tmp/spa-e2e-db-$PORT.log 2>&1 & SERVER_PID=$!; sleep 2; }
 stop()  { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; wait "$SERVER_PID" 2>/dev/null; SERVER_PID=""; }
 trap 'stop' EXIT
+trap 'stop; exit 130' INT
+trap 'stop; exit 143' TERM
 
 echo "==> clean DB + start backend on :$PORT"
 rm -f server/"$DB" server/"$DB"-* 2>/dev/null

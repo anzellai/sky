@@ -40,6 +40,7 @@
 // Exits 0 on success, non-zero on first assertion failure.
 
 import { spawn } from 'child_process';
+import { guardChild } from "./lib/child-guard.mjs";
 import { chromium } from 'playwright';
 import { mkdirSync, readFileSync, createWriteStream } from 'fs';
 import { fileURLToPath } from 'url';
@@ -105,12 +106,12 @@ const serverLog   = path.join(ARTEFACT_DIR, 'parent-server.log');
 const serverLogFh = createWriteStream(serverLog);
 
 console.error(`[e2e] spawning ${parentBin} on :${PARENT_PORT}`);
-const parent = spawn(parentBin, [], {
+const parent = guardChild(spawn(parentBin, [], {
     env: { ...process.env,
            SKY_LIVE_PORT: String(PARENT_PORT),
            SKY_SUBAPP_VERBOSE: '1' },
     cwd: parentDir,
-});
+}));
 parent.stdout.pipe(serverLogFh);
 parent.stderr.pipe(serverLogFh);
 

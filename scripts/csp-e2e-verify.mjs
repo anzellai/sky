@@ -65,6 +65,7 @@
 import pw from "playwright";
 const { chromium } = pw;
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import http from "node:http";
 import { dirname, join, basename } from "node:path";
 import { mkdtempSync, mkdirSync, copyFileSync, chmodSync, readFileSync, existsSync, writeFileSync } from "node:fs";
@@ -168,7 +169,7 @@ const env = {
 if (VIA === "strict") env.SKY_CSP = "strict";
 else delete env.SKY_CSP;
 
-const proc = spawn(RUN_APP, [], { cwd: CWD, env });
+const proc = guardChild(spawn(RUN_APP, [], { cwd: CWD, env }));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));
@@ -244,9 +245,9 @@ if (CADDY_MODE) {
   const dir = mkdtempSync(join(tmpdir(), "sky-csp-caddy-"));
   const file = join(dir, "Caddyfile");
   writeFileSync(file, caddyfile());
-  caddy = spawn(process.env.CADDY || "caddy", ["run", "--config", file, "--adapter", "caddyfile"], {
+  caddy = guardChild(spawn(process.env.CADDY || "caddy", ["run", "--config", file, "--adapter", "caddyfile"], {
     env: { ...process.env, XDG_DATA_HOME: dir, XDG_CONFIG_HOME: dir, HOME: process.env.HOME || dir },
-  });
+  }));
   caddy.stdout.on("data", (d) => (caddyLog += d));
   caddy.stderr.on("data", (d) => (caddyLog += d));
   caddy.on("error", (e) => (caddyLog += `spawn error: ${e.message}\n`));

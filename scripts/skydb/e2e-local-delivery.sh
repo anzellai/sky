@@ -83,6 +83,8 @@ cleanup() {
   [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 # ── 1. Simulate the release directory exactly as CI publishes it ──────────
 RELEASE="${WORKDIR}/release"

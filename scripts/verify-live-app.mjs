@@ -21,6 +21,7 @@
 
 import { chromium } from 'playwright';
 import { spawn } from 'child_process';
+import { guardChild } from "./lib/child-guard.mjs";
 import fs from 'fs';
 import path from 'path';
 import net from 'net';
@@ -75,7 +76,7 @@ async function main() {
     const env = { ...process.env, PORT: String(port), SKY_LIVE_PORT: String(port) };
     const serverLogPath = path.join(artefactDir, 'server.log');
     const serverLog = fs.createWriteStream(serverLogPath);
-    const child = spawn(binary, [], { env, cwd: exampleDir });
+    const child = guardChild(spawn(binary, [], { env, cwd: exampleDir }));
     child.stdout.pipe(serverLog);
     child.stderr.pipe(serverLog);
 

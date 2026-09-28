@@ -26,6 +26,7 @@
 import pw from "playwright";
 const { chromium } = pw;
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { dirname, join } from "node:path";
 import { writeFileSync } from "node:fs";
 
@@ -50,7 +51,7 @@ try {
 
 writeFileSync(join(BACKEND_DIR, "data", "config.txt"), "v1\n");
 
-const proc = spawn(BACKEND, [], { cwd: BACKEND_DIR, env: { ...process.env, PORT: String(PORT) } });
+const proc = guardChild(spawn(BACKEND, [], { cwd: BACKEND_DIR, env: { ...process.env, PORT: String(PORT) } }));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));

@@ -48,12 +48,11 @@ PIDS=()
 cleanup() {
     echo ""
     echo "==> shutting down..."
+    # Only the exact PIDs this script started: a port or name match could
+    # reach a server that is not ours. The apps are started with `exec`, so
+    # each PID is the server itself, not a subshell around it.
     for pid in "${PIDS[@]:-}"; do
-        kill "$pid" 2>/dev/null || true
-    done
-    # belt-and-braces: hard-kill any lingering child by port
-    for port in 8025 8039 8040; do
-        lsof -ti tcp:"$port" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
     done
 }
 trap cleanup EXIT INT TERM
@@ -76,14 +75,14 @@ sleep 2
 echo "==> building billing-app..."
 ( cd billing-app && rm -rf sky-out .skycache .skydeps && "$SKY" build src/Main.sky >/tmp/sky-billing-build.log 2>&1 )
 echo "==> starting billing-app on :8039"
-( cd billing-app && SKY_LIVE_PORT=8039 ./sky-out/app >/tmp/sky-billing.log 2>&1 ) &
+( cd billing-app && SKY_LIVE_PORT=8039 exec ./sky-out/app >/tmp/sky-billing.log 2>&1 ) &
 PIDS+=($!)
 
 # 3) Build + start frontend-app (port 8040).
 echo "==> building frontend-app..."
 ( cd frontend-app && rm -rf sky-out .skycache .skydeps && "$SKY" build src/Main.sky >/tmp/sky-frontend-build.log 2>&1 )
 echo "==> starting frontend-app on :8040"
-( cd frontend-app && SKY_LIVE_PORT=8040 ./sky-out/app >/tmp/sky-frontend.log 2>&1 ) &
+( cd frontend-app && SKY_LIVE_PORT=8040 exec ./sky-out/app >/tmp/sky-frontend.log 2>&1 ) &
 PIDS+=($!)
 
 sleep 2

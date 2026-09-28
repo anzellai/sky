@@ -20,6 +20,7 @@
 import pw from "playwright";
 const { chromium } = pw;
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { dirname } from "node:path";
 
 function arg(name, def) {
@@ -34,7 +35,7 @@ if (!BACKEND) {
 const PORT = Number(arg("--port", "9011"));
 const BACKEND_DIR = dirname(dirname(BACKEND));
 
-const proc = spawn(BACKEND, [], { cwd: BACKEND_DIR, env: { ...process.env, PORT: String(PORT) } });
+const proc = guardChild(spawn(BACKEND, [], { cwd: BACKEND_DIR, env: { ...process.env, PORT: String(PORT) } }));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));

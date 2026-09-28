@@ -50,6 +50,7 @@
 
 import pw from "playwright";
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -121,7 +122,7 @@ function startApp() {
   if (APP_AUTH) delete env.SKY_CONSOLE_TOKEN;
   if (CADDY) delete env.SKY_CSP;
   else env.SKY_CSP = "strict";
-  appProc = spawn(APP, [], { cwd: CWD, env, stdio: ["ignore", "pipe", "pipe"] });
+  appProc = guardChild(spawn(APP, [], { cwd: CWD, env, stdio: ["ignore", "pipe", "pipe"] }));
   const out = [];
   appProc.stdout.on("data", (d) => out.push(String(d)));
   appProc.stderr.on("data", (d) => out.push(String(d)));
@@ -168,11 +169,11 @@ localhost:${CADDY_PORT} {
 }
 `;
   writeFileSync(join(dir, "Caddyfile"), cfg);
-  caddyProc = spawn(CADDY, ["run", "--config", join(dir, "Caddyfile"), "--adapter", "caddyfile"], {
+  caddyProc = guardChild(spawn(CADDY, ["run", "--config", join(dir, "Caddyfile"), "--adapter", "caddyfile"], {
     cwd: dir,
     env: { ...process.env, HOME: dir, XDG_DATA_HOME: join(dir, "xdg-data"), XDG_CONFIG_HOME: join(dir, "xdg-config") },
     stdio: ["ignore", "pipe", "pipe"],
-  });
+  }));
   const out = [];
   caddyProc.stdout.on("data", (d) => out.push(String(d)));
   caddyProc.stderr.on("data", (d) => out.push(String(d)));

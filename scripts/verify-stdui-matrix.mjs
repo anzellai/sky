@@ -43,6 +43,7 @@
 
 import { chromium } from "playwright";
 import { spawn, spawnSync } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { existsSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
@@ -2051,11 +2052,11 @@ try {
                 failures.push(`${fx.id}: build failed`);
                 continue;
             }
-            const child = spawn(bin, [], {
+            const child = guardChild(spawn(bin, [], {
                 cwd: dirname(dirname(bin)),
                 stdio: ["ignore", "pipe", "pipe"],
                 env: { ...process.env, SKY_LIVE_PORT: String(fx.port), SKY_DEV_BANNER: "off" },
-            });
+            }));
             let serverLog = "";
             child.stdout.on("data", (d) => { serverLog += d.toString(); });
             child.stderr.on("data", (d) => { serverLog += d.toString(); });

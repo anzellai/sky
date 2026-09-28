@@ -6,6 +6,7 @@
 
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { writeFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,11 +39,11 @@ async function bootApp(name, port) {
             execSync(`find ${dir} -maxdepth 1 -name "*${fn}" -delete 2>/dev/null`, { stdio: "ignore" });
         } catch {}
     }
-    const proc = spawn("./sky-out/app", [], {
+    const proc = guardChild(spawn("./sky-out/app", [], {
         cwd: dir,
         env: { ...process.env, SKY_LIVE_PORT: String(port), PORT: String(port) },
         stdio: ["ignore", "pipe", "pipe"],
-    });
+    }));
     let out = "", err = "";
     proc.stdout.on("data", (b) => out += b.toString());
     proc.stderr.on("data", (b) => err += b.toString());

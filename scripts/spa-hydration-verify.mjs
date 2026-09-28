@@ -29,6 +29,7 @@
 import pw from "playwright";
 const { chromium } = pw;
 import { spawn, spawnSync } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { dirname } from "node:path";
 
 function arg(name, def) {
@@ -82,10 +83,10 @@ function waitListening(proc) {
   });
 }
 
-const proc = spawn(BACKEND, [], {
+const proc = guardChild(spawn(BACKEND, [], {
   cwd: BACKEND_DIR,
   env: { ...process.env, PORT: String(PORT), SSR_DB_PATH: "app.db" },
-});
+}));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));

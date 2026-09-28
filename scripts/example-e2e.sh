@@ -35,6 +35,24 @@ fail=0
 declare -a fails=()
 declare -a skips=()
 
+# Every server this script starts, by PID. The EXIT/INT/TERM trap stops each
+# one, so a failed step, a Ctrl-C or a CI cancel never leaves an app holding
+# its port. Only these exact PIDs are touched: never a port or a name pattern,
+# which would reach another agent's server on the same machine.
+declare -a SERVER_PIDS=()
+stop_servers() {
+    local p
+    for p in "${SERVER_PIDS[@]:-}"; do
+        [[ -n "$p" ]] || continue
+        kill "$p" 2>/dev/null || true
+        wait "$p" 2>/dev/null || true
+    done
+    SERVER_PIDS=()
+}
+trap stop_servers EXIT
+trap 'stop_servers; exit 130' INT
+trap 'stop_servers; exit 143' TERM
+
 examples=()
 if [[ $# -gt 0 ]]; then
     for n in "$@"; do examples+=("$n"); done
@@ -92,17 +110,16 @@ run_cli_step() {
 }
 
 # Boot server and return its PID; pipe stderr to $2.
-boot_server() {
-    local app="$1" errlog="$2"
-    "$app" > "${errlog}.out" 2> "$errlog" &
-    echo $!
-}
-
-# Shut a server PID cleanly.
+# Shut a server PID cleanly and drop it from SERVER_PIDS.
 kill_server() {
-    local pid="$1"
+    local pid="$1" p
     kill "$pid" 2>/dev/null
     wait "$pid" 2>/dev/null
+    local -a keep=()
+    for p in "${SERVER_PIDS[@]:-}"; do
+        [[ -n "$p" && "$p" != "$pid" ]] && keep+=("$p")
+    done
+    SERVER_PIDS=("${keep[@]:-}")
 }
 
 # Run HTTP/Live step via curl. Uses $COOKIE_JAR for session persistence.
@@ -265,19 +282,24 @@ run_example() {
         port="$(jqor "$contract" .port 8000)"
         wait_ms="$(jqor "$contract" .startupWaitMs 2000)"
 
-        # Ensure the port is free before boot — any leftover server
-        # from a prior example would answer our curl and make every
-        # downstream contract see the wrong app's body.
-        local leftover
-        leftover="$(lsof -ti tcp:"$port" 2>/dev/null || true)"
-        if [[ -n "$leftover" ]]; then
-            kill -9 $leftover 2>/dev/null || true
-            sleep 1
+        # The port must be free before boot: a server already on it would
+        # answer our curl and every step would read the wrong app's body. It
+        # is not ours to kill (it may be another agent's), so the example
+        # fails and names it.
+        if lsof -ti tcp:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+            bad "port ${port} is already in use by another process"
+            rm -rf "$tmp"
+            fails+=("$name")
+            fail=$((fail+1))
+            return 0
         fi
 
         local errlog="${tmp}/server.err"
-        (cd "$dir" && "./sky-out/app" > "${errlog}.out" 2> "$errlog") &
+        # `exec`: the PID recorded is the app itself, not a subshell around it,
+        # so stopping it stops the server.
+        (cd "$dir" && exec "./sky-out/app" > "${errlog}.out" 2> "$errlog") &
         local pid=$!
+        SERVER_PIDS+=("$pid")
         local wait_s
         wait_s=$(awk -v ms="$wait_ms" 'BEGIN { printf "%.2f", ms/1000 }')
         # shellcheck disable=SC2086
@@ -308,17 +330,6 @@ run_example() {
             done
         fi
         kill_server "$pid" >/dev/null 2>&1
-        wait "$pid" 2>/dev/null || true
-        # Belt-and-braces: sometimes the child process is a shell
-        # wrapper and the sky-out/app binary keeps running on the
-        # port. Force-free the port after every example so the
-        # next contract starts clean.
-        local leftover2
-        leftover2="$(lsof -ti tcp:"$port" 2>/dev/null || true)"
-        if [[ -n "$leftover2" ]]; then
-            kill -9 $leftover2 2>/dev/null || true
-            sleep 1
-        fi
     fi
 
     rm -rf "$tmp"
