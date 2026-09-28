@@ -441,6 +441,14 @@ Sky.Http.Server bundle; `--tui` runs the Sky.Tui bundle. Both
 consume the same on-disk catalogue rendered to `.skycache/doc-out/`
 under the project root.
 
+**Which stdlib.** Inside the Sky repository (a directory with `sky-stdlib/`
+and `runtime-go/` above the working directory) `sky doc` reads the
+working-tree `sky-stdlib/`, so it shows edits that are not released yet.
+Anywhere else it reads the stdlib embedded in the `sky` binary. The first line
+of the output names the source: `stdlib: working tree (<repo>/sky-stdlib)` or
+`stdlib: embedded in this sky binary`. A record type alias is printed with its
+fields (`type alias Chunk = { data : String , … }`).
+
 The HTTP server (default `:8080`) renders:
 
 * **Per-module pages** with HM signatures, Markdown-rendered doc
