@@ -265,7 +265,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1336,
+      "expected_assertions": 1339,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -16444,8 +16444,8 @@
       "id": "tests/conformance",
       "modules_imported": 53,
       "path": "tests/conformance",
-      "refs_generous": 686,
-      "refs_qualified": 670,
+      "refs_generous": 687,
+      "refs_qualified": 671,
       "role": "Conformance",
       "sky_files": 41,
       "sky_toml_sections": []
