@@ -169,8 +169,21 @@ type Config
     | MobileConfig MobileOpts
     | TerminalConfig TerminalOpts
 
--- | Web-target (Sky.Live) scalar config. `port` defaults to 8080 and `csrf` to
--- `True`; the `Maybe` fields are unset by default. `store` is the session store
+-- | Web-target (Sky.Live) scalar config. The `Maybe` fields are unset by
+-- default, and an unset field leaves the setting to the environment and
+-- `sky.toml`.
+--
+-- `port` is `-1` in [`webDefaults`], which means "not set": the port then comes
+-- from `<PREFIX>_LIVE_PORT`, else `sky.toml`'s `[live] port` (8000 when that is
+-- absent). Any port `>= 0` is an explicit `Live.withPort`: it beats `sky.toml`,
+-- and an operator's `<PREFIX>_LIVE_PORT` still beats it. `0` asks for a free
+-- port ([`serve`] + [`address`]). The field stays an `Int` (a sentinel, not a
+-- `Maybe Int`) so every existing `{ webDefaults | port = 9000 }` keeps its type.
+--
+-- `csrf` is `True` in [`webDefaults`], which leaves the CSRF switch to
+-- `<PREFIX>_CSRF` / `sky.toml` (on by default). `csrf = False` turns the
+-- global CSRF middleware off, as `Sky.Config.withCsrf False` does; the
+-- operator's env var still wins. `store` is the session store
 -- (`"memory"` / `"sqlite:path"` / `"redis:url"` / `"postgres"`). Maps to
 -- `Live.withPort` / `withStore` / `withStatic` / `withStaticUrl` / `withTtl` /
 -- `withIdleEvict` / `withMaxBodyBytes` / `withInput` (`inputMode`). `embedded`
@@ -207,7 +220,7 @@ type alias Running =
 -- | The built-in [`WebOpts`] default.
 webDefaults : WebOpts
 webDefaults =
-    { port = 8080
+    { port = -1
     , store = Nothing
     , static = Nothing
     , staticUrl = Nothing
@@ -1147,6 +1160,24 @@ applyBase_ base boot =
     Task.andThen (\_ -> boot) (Config.apply (baseToConfig_ base))
 
 
+-- | [`applyBase_`] for the Sky.Live runners: also folds the web config's
+-- process-wide switches into the applied config. Only a NON-default value is
+-- applied (`csrf = False`), so the default leaves `sky.toml` and the env to
+-- decide, the same rule as `port`. Private.
+applyWebBase_ : WebOpts -> BaseConfig -> Task Error () -> Task Error ()
+applyWebBase_ w base boot =
+    Task.andThen (\_ -> boot) (Config.apply (webBaseToConfig_ w base))
+
+
+webBaseToConfig_ : WebOpts -> BaseConfig -> Config.Config
+webBaseToConfig_ w base =
+    if w.csrf then
+        baseToConfig_ base
+
+    else
+        Config.withCsrf False (baseToConfig_ base)
+
+
 -- | A `ViewString` app ([`cli`] / [`tui`]) renders a raw `String` and runs ONLY
 -- on the terminal targets. The web / desktop / mobile runners call this to
 -- refuse it at boot — loudly, before serving anything — mirroring how the
@@ -1173,7 +1204,10 @@ guardTerminalView_ vi boot =
 -- [`applyBase_`]).
 runLive : App HasFallback () page model msg key -> Task Error ()
 runLive (App a) =
-    applyBase_ a.base (guardTerminalView_ a.viewImpl (runLiveBoot_ (App a)))
+    applyWebBase_
+        (findWeb a.configs)
+        a.base
+        (guardTerminalView_ a.viewImpl (runLiveBoot_ (App a)))
 
 
 runLiveBoot_ : App HasFallback () page model msg key -> Task Error ()
@@ -1295,7 +1329,16 @@ liveConfig_ (App a) =
 
                         Nothing ->
                             withMaxBody_
-                withPort_ = Live.withPort w.port withInputMode_
+                -- `port < 0` is "not set" (webDefaults): no `Live.withPort`,
+                -- so sky.toml's `[live] port` applies. Forwarding the default
+                -- unconditionally made it an explicit builder value that beat
+                -- sky.toml, and `[live] port` had no effect on a Std.App app.
+                withPort_ =
+                    if w.port >= 0 then
+                        Live.withPort w.port withInputMode_
+
+                    else
+                        withInputMode_
                 withAnalytics_ =
                     case w.analytics of
 
@@ -1304,11 +1347,9 @@ liveConfig_ (App a) =
 
                         Nothing ->
                             withPort_
-                -- NOTE(std-app-config): `a.base` (log/database/telemetry) IS
-                -- now wired — [`runLive`] applies it at boot via [`applyBase_`]
-                -- through `rt.ApplyConfig`. `w.csrf` is still stored-but-not
-                -- threaded here: it maps to `Sky.Config.withCsrf`, which could be
-                -- folded into the same `applyBase_` path in a follow-up.
+                -- `a.base` (log/database/telemetry) and `w.csrf` are applied
+                -- at boot through `rt.ApplyConfig` by [`applyWebBase_`], not
+                -- here: both are process-wide switches, not Live.config fields.
                 withHead_ =
                     case a.head of
 
@@ -1390,11 +1431,11 @@ serve appVal =
     case appVal of
 
         App a ->
-            serveBoot_ appVal a.viewImpl a.base
+            serveBoot_ appVal a.viewImpl (findWeb a.configs) a.base
 
 
-serveBoot_ : App HasFallback () page model msg key -> ViewImpl model msg -> BaseConfig -> Task Error Running
-serveBoot_ appVal viewImpl base =
+serveBoot_ : App HasFallback () page model msg key -> ViewImpl model msg -> WebOpts -> BaseConfig -> Task Error Running
+serveBoot_ appVal viewImpl w base =
     case viewImpl of
 
         ViewString _ ->
@@ -1408,7 +1449,7 @@ serveBoot_ appVal viewImpl base =
                 Just cfg ->
                     Task.andThen
                         (\_ -> Live.serve (Live.withEmbedded cfg))
-                        (Config.apply (baseToConfig_ base))
+                        (Config.apply (webBaseToConfig_ w base))
 
                 Nothing ->
                     Task.fail

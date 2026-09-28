@@ -1,0 +1,49 @@
+module Main exposing (main)
+
+-- A `web` Std.App whose Sky.Live settings come from sky.toml. The test
+-- (std_app_flow.rs) builds it as is, then with `--CONFIG--` replaced by an
+-- explicit `App.withConfig` line, and checks which port each binary binds and
+-- whether the CSRF middleware is on.
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui
+
+type alias Model =
+    { n : Int }
+
+type Msg
+    = Bump
+
+type Page
+    = Home
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ model =
+    ( model, Cmd.none )
+
+
+view : Model -> Ui.Element Msg
+view _ =
+    Ui.text "live-config-ok"
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound Home
+        --CONFIG--
+
+
+main =
+    App.run appDef

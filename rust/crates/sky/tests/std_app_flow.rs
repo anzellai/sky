@@ -908,3 +908,113 @@ fn app_url_checks_on_web_and_is_read_statically_by_a_client_check() {
         "a client-target check must reject a non-static App.withAppUrl:\n{text}"
     );
 }
+
+fn live_config_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-live-config")
+}
+
+/// Build the live-config fixture with `--CONFIG--` replaced by `config`, and
+/// return the web binary.
+fn build_live_config(tag: &str, config: &str) -> (PathBuf, PathBuf) {
+    let dir = copy_fixture_to_temp(live_config_fixture_dir(), tag);
+    let main = dir.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(&main, src.replace("--CONFIG--", config)).unwrap();
+    let build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky build on the live-config fixture");
+    assert!(
+        build.status.success(),
+        "the live-config fixture ({tag}) must build:\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr),
+    );
+    let bin = dir.join(".skyapp").join("web").join("sky-out").join("app");
+    assert!(bin.exists(), "expected the web binary at {}", bin.display());
+    (dir, bin)
+}
+
+/// Run `bin` with `env`, wait until it reports listening on `port`, and return
+/// the response headers of `GET /`. Panics with the log when it never listens
+/// on `port` (for example because it bound another one).
+fn run_and_head(
+    dir: &std::path::Path,
+    bin: &std::path::Path,
+    env: &[(&str, &str)],
+    port: u16,
+) -> String {
+    let log_path = dir.join(format!("server-{port}.log"));
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut cmd = Command::new(bin);
+    cmd.current_dir(dir)
+        .env_remove("SKY_LIVE_PORT")
+        .env_remove("SKY_CSRF")
+        .stdout(log.try_clone().unwrap())
+        .stderr(log);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn().expect("spawn the live-config app");
+    let ready = wait_for_listening(&log_path, port, 60);
+    let head = if ready {
+        let url = format!("http://127.0.0.1:{port}/");
+        Command::new("curl")
+            .args(["-s", "-D", "-", "-o", "/dev/null", &url])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    if !ready {
+        let buf = std::fs::read_to_string(&log_path).unwrap_or_default();
+        panic!("the app never reported listening on :{port}\nlog:\n{buf}");
+    }
+    head
+}
+
+/// REGRESSION GATE: `[live] port` in sky.toml had no effect on a `Std.App`
+/// web app. `Std.App` forwarded `WebOpts.port` (default 8080) to
+/// `Live.withPort` unconditionally, so the default became an explicit builder
+/// value that beat the sky.toml port the generated init() seeds; every such
+/// app bound :8080. `WebOpts.csrf` was the other half of the class: stored,
+/// never applied, so `csrf = False` did nothing.
+///
+/// The precedence the fix must keep (docs/sky-toml.md "Precedence"):
+/// operator env > explicit `App.withConfig` > sky.toml > fallback.
+#[test]
+fn std_app_web_honours_sky_toml_port_and_explicit_web_config() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_guard = BUILD_LOCK.lock().unwrap();
+
+    // No port and no csrf in the app: sky.toml's port applies, CSRF is on.
+    let (dir, bin) = build_live_config("livecfg-toml", "");
+    let head = run_and_head(&dir, &bin, &[], 8792);
+    assert!(
+        head.contains("__sky_csrf"),
+        "CSRF is on by default: GET / must set the __sky_csrf cookie, headers:\n{head}"
+    );
+    // The operator's env var beats sky.toml.
+    run_and_head(&dir, &bin, &[("SKY_LIVE_PORT", "8793")], 8793);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // An explicit web config beats sky.toml, and `csrf = False` is applied.
+    let (dir, bin) = build_live_config(
+        "livecfg-explicit",
+        "|> App.withConfig (App.WebConfig { App.webDefaults | port = 8794, csrf = False })",
+    );
+    let head = run_and_head(&dir, &bin, &[], 8794);
+    assert!(
+        !head.contains("__sky_csrf"),
+        "`csrf = False` must turn the CSRF middleware off: GET / set the cookie anyway, headers:\n{head}"
+    );
+    // The operator's env var still beats the explicit web config.
+    run_and_head(&dir, &bin, &[("SKY_LIVE_PORT", "8795")], 8795);
+    let _ = std::fs::remove_dir_all(&dir);
+}

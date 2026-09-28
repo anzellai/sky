@@ -1014,6 +1014,10 @@ first):
    and `App.withBase …`; on the low-level runtimes, the underlying
    `Live.withPort` / `Live.withStore` / `Live.withStorePath` /
    `Live.withIdleEvict`.
+   A `WebOpts` field left at its `webDefaults` value is NOT a builder
+   call: `port = -1` (the default) means "not set", and `csrf = True` (the
+   default) leaves the switch to the layers below. So `[live] port` applies
+   to a `Std.App` web app that does not set a port.
 4. **`sky.toml`** defaults (compiled into the binary's
    `init()`; only set when the corresponding env var is unset).
 5. **Hardcoded runtime fallbacks** (e.g. port `8080`, TTL `30m`).

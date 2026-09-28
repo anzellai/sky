@@ -235,6 +235,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Migration
 
+- **A `Std.App` web app without a port setting now binds `sky.toml`'s
+  port (8000 by default), not 8080.** To keep 8080, set `[live] port = 8080`
+  in `sky.toml`, or `App.withConfig (App.WebConfig { App.webDefaults | port = 8080 })`.
+  `SKY_LIVE_PORT` still overrides both.
+
 - **AEAD encrypt is a Task.** In a `Task` chain, use the function directly.
   Where you need a `Result` (a pure helper, a test), run it:
 
@@ -871,6 +876,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`Std.App` web: `[live] port` in `sky.toml` had no effect, and
+  `WebOpts.csrf` did nothing.** `Std.App` passed `WebOpts.port` (default
+  8080) to `Live.withPort` on every build, so the default counted as an
+  explicit builder value and beat the port `sky.toml` seeds: every `App.app`
+  web app without `App.withConfig` bound :8080. `webDefaults.port` is now
+  `-1`, which means "not set": no `Live.withPort` is passed, and the port
+  comes from `<PREFIX>_LIVE_PORT`, then `[live] port`, then 8000 (the
+  `sky.toml` default, the same as a `Live.app`). An explicit
+  `{ webDefaults | port = n }` (`n >= 0`, `0` for a free port) still beats
+  `sky.toml`, and the operator's env var still beats both. The field stays
+  an `Int`, so existing record updates keep their type and no runtime
+  narrowing is added. The audit of the other `WebOpts` fields found one more
+  of the class: `csrf` was stored and never applied. `csrf = False` now turns
+  the CSRF middleware off (as `Sky.Config.withCsrf False`); the default
+  `True` leaves `<PREFIX>_CSRF` / `sky.toml` to decide. Every other field is
+  a `Maybe` that is forwarded only when set. (`sky-stdlib/Std/App.sky`,
+  `rust/crates/sky/tests/std_app_flow.rs`
+  `std_app_web_honours_sky_toml_port_and_explicit_web_config`,
+  `runtime-go/rt/std_app_window_test.go`.)
 - **`Cmd.toIsland`: a widget command is never lost silently (Sky.Live and
   Sky.Spa).** A flood of commands (400 in one update, in the
   `scripts/islands-e2e.sh` flood case) lost 384 of them on Sky.Live with
