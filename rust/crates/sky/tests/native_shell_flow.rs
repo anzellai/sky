@@ -873,6 +873,11 @@ fn android_release_is_signed_with_the_upload_key() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The emulator tests install the same package on one emulator: one at a
+/// time.
+#[cfg(unix)]
+static EMULATOR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The first AVD `emulator -list-avds` names.
 #[cfg(unix)]
 fn first_avd(home: &Path) -> Option<String> {
@@ -1007,6 +1012,7 @@ impl Drop for Emulator {
 #[test]
 #[ignore = "native emulator: needs Go + the Android SDK + a running emulator or an AVD (release gate-native-android)"]
 fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biometrics() {
+    let _emulator = EMULATOR_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let home = android_home();
     if !required(Need::Go, have_go()) || !required(Need::AndroidSdk, home.is_some()) {
         return;
@@ -1216,5 +1222,150 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
         let _ = std::fs::remove_dir_all(dir);
     }
     drop(emu);
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The centre of the first node in the emulator's UI whose `resource-id`
+/// ends with one of `ids`, from a uiautomator dump.
+#[cfg(unix)]
+fn ui_node_centre(emu: &Emulator, ids: &[&str]) -> Option<(i32, i32)> {
+    let _ = emu.adb(&["shell", "uiautomator", "dump", "/sdcard/sky-ui.xml"]);
+    let xml = String::from_utf8_lossy(&emu.adb(&["shell", "cat", "/sdcard/sky-ui.xml"]).stdout)
+        .into_owned();
+    for node in xml.split("<node ") {
+        let attr = |name: &str| -> Option<String> {
+            let key = format!("{name}=\"");
+            let i = node.find(&key)? + key.len();
+            Some(node[i..].split('"').next()?.to_string())
+        };
+        let Some(id) = attr("resource-id") else {
+            continue;
+        };
+        if !ids.iter().any(|want| id.ends_with(want)) {
+            continue;
+        }
+        // bounds="[x1,y1][x2,y2]"
+        let b = attr("bounds")?;
+        let nums: Vec<i32> = b
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if nums.len() == 4 {
+            return Some(((nums[0] + nums[2]) / 2, (nums[1] + nums[3]) / 2));
+        }
+    }
+    None
+}
+
+/// `Native.scanCode` at first launch waits for the camera prompt's answer.
+/// The shell asks for the declared run-time permissions when it starts, and
+/// the probe calls `scanCode` right after its secure-store round trip, while
+/// that prompt still shows. Android answers a second request made while a
+/// prompt shows at once with empty arrays, and the scanner read that as a
+/// denial: `Err PermissionDenied` before the user had answered, and the next
+/// launch scanned (found downstream on an Android 16 device). The shell's
+/// permission broker (`sky.perm.SkyPermissions`) now parks the scan until the
+/// start-up prompt is answered: "While using the app" opens the scanner (Back
+/// closes it, `Ok Nothing`), and "Don't allow" is the only way to
+/// `Err PermissionDenied`. The app is installed without `-g`, so the camera
+/// is not granted.
+#[cfg(unix)]
+#[test]
+#[ignore = "native emulator: needs Go + the Android SDK + a running emulator or an AVD (release gate-native-android)"]
+fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
+    let _emulator = EMULATOR_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = android_home();
+    if !required(Need::Go, have_go()) || !required(Need::AndroidSdk, home.is_some()) {
+        return;
+    }
+    let home = home.unwrap();
+    let home_s = home.to_string_lossy().into_owned();
+    let dir = scratch("android-first-launch");
+    probe_app(&dir, USAGES);
+    let port = free_port();
+    let port_s = port.to_string();
+    let (ok, out) = run(
+        &dir,
+        &["build", "--target", "mobile:android", "src/Main.sky"],
+        &[("PORT", &port_s), ("ANDROID_HOME", &home_s)],
+    );
+    assert!(ok, "the Android build failed:\n{out}");
+    let split = dir.join(".skyapp/mobile-android/.split");
+    let apk = split.join("frontend/sky-out/android/build/skyprobe.apk");
+    let emu = Emulator::attach_or_start(&home, first_avd(&home).as_deref());
+    if !required(Need::AndroidEmulator, emu.is_some()) {
+        return;
+    }
+    let emu = emu.unwrap();
+    assert!(emu.wait_booted(), "the emulator did not finish booting");
+    let mut failures = Vec::new();
+    // (the prompt button to press, the scan result it must lead to)
+    for (button, want) in [
+        ("permission_allow_foreground_only_button", "scan=cancelled"),
+        ("permission_deny_button", "scan=err:PermissionDenied"),
+    ] {
+        let _ = emu.adb(&["uninstall", "com.example.probe"]);
+        let inst = emu.adb(&["install", "-r", apk.to_str().unwrap()]);
+        assert!(
+            inst.status.success(),
+            "adb install: {}",
+            String::from_utf8_lossy(&inst.stderr)
+        );
+        let _ = emu.adb(&[
+            "shell",
+            "pm",
+            "revoke",
+            "com.example.probe",
+            "android.permission.CAMERA",
+        ]);
+        let backend = Backend::start(&split, port);
+        let _ = emu.adb(&[
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-n",
+            "com.example.probe/.MainActivity",
+        ]);
+        let secure = backend.probe_line("secure", 180);
+        // scanCode has been called; the prompt is still up, so it must not
+        // have answered yet.
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let early = backend.probe_line("scan", 1);
+        let tap = ui_node_centre(&emu, &[button]);
+        if let Some((x, y)) = tap {
+            let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+        }
+        if want == "scan=cancelled" {
+            // The scanner opens after Allow: Back closes it without a code.
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let _ = emu.adb(&["shell", "input", "keyevent", "KEYCODE_BACK"]);
+        }
+        let scan = backend.probe_line("scan", 60);
+        let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
+        let output = backend.output();
+        drop(backend);
+        if secure.as_deref() != Some("secure=ok:probe-value") {
+            failures.push(format!(
+                "{button}: the app did not start: {secure:?}\n{output}"
+            ));
+        } else if early.is_some() {
+            failures.push(format!(
+                "{button}: scanCode answered {early:?} while the camera prompt showed\n{output}"
+            ));
+        } else if tap.is_none() {
+            failures.push(format!(
+                "{button}: the camera prompt was not on screen\n{output}"
+            ));
+        } else if !scan.as_deref().is_some_and(|s| s.starts_with(want)) {
+            failures.push(format!(
+                "{button}: scanCode read {scan:?}, want {want}\n{output}"
+            ));
+        }
+    }
+    let _ = emu.adb(&["uninstall", "com.example.probe"]);
+    drop(emu);
+    let _ = std::fs::remove_dir_all(&dir);
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }

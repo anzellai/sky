@@ -341,7 +341,12 @@ list asks for all of them).
 
 Declare `Bundle.withUsage Bundle.Camera "…"`: iOS shows the text when it asks
 for the camera, and Android asks for CAMERA. The build refuses the call without
-it. A UPC-A code is reported as `Ean13` (its 13-digit form, with a leading 0) on
+it. On Android a scan started while the camera prompt shows (the app asks for
+its declared permissions when it starts, so a scan in `init` does) waits for
+the user's answer: Allow opens the scanner, and only Don't allow is `Err
+PermissionDenied`. The same rule holds for the page's camera and microphone
+(`getUserMedia`) and location requests. Android shows one permission prompt at
+a time, and the shell asks for a permission only when no prompt shows. A UPC-A code is reported as `Ean13` (its 13-digit form, with a leading 0) on
 both platforms, as Apple's Vision reports it.
 
 **Android and ZXing.** The Android scanner decodes with

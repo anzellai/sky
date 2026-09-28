@@ -1025,6 +1025,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   wasm client completes a Noise IK handshake and a transport round trip
   through two relay steps against a Go responder
   (`runtime-go/rt/noisewasm/responder`).
+- **Android: `Native.scanCode` at first launch waits for the camera prompt.**
+  The shell asks for the declared run-time permissions when it starts, and a
+  scan in `init` then asked for CAMERA again while that prompt showed. Android
+  answers such a request at once with empty arrays, which the scanner read as
+  a denial: `Err PermissionDenied` before the user answered, and the next
+  launch scanned (found downstream on an Android 16 device). Every
+  permission-gated operation now goes through one broker in the shell
+  (`sky.perm.SkyPermissions`): a held permission answers at once, otherwise
+  the caller waits for a prompt that covers it (joining the start-up request),
+  the shell asks only when no prompt shows, and only a real denial is
+  `PermissionDenied`. The same holds for the page's camera and microphone
+  requests (`getUserMedia`, which were granted in the page without the app
+  holding the permission) and for location (`onGeolocationPermissionsShowPrompt`
+  granted before the app held it). Test: `native_shell_flow.rs`
+  `android_emulator_scan_at_first_launch_waits_for_the_camera_prompt`
+  (installed without the grant; scanCode does not answer while the prompt
+  shows; "While using the app" opens the scanner, "Don't allow" is
+  `PermissionDenied`), in the emulator release gate.
 - **`Bundle.AssociatedDomain "applinks:…"` opens the app on the link's page,
   on Android and iOS.** On Android it did nothing: the manifest had no App
   Links filter. It now gets one `android:autoVerify` intent filter per

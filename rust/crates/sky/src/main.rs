@@ -5304,7 +5304,7 @@ fn android_runtime_request(perms: &[native_pkg::Declared]) -> String {
         .map(|p| format!("\"{p}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("        requestPermissions(new String[]{{{arr}}}, 1);\n")
+    format!("        sky.perm.SkyPermissions.requestAtStart(this, new String[]{{{arr}}});\n")
 }
 
 /// Build the MainActivity Java for the declared permissions: (extra imports, the
@@ -5322,13 +5322,13 @@ fn android_permission_java(perms: &[native_pkg::Declared]) -> (String, String, S
     if want_location {
         imports.push_str("\nimport android.webkit.GeolocationPermissions;");
         overrides.push_str(
-            "\n            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {\n                callback.invoke(origin, true, false);\n            }",
+            "\n            @Override public void onGeolocationPermissionsShowPrompt(final String origin, final GeolocationPermissions.Callback callback) {\n                // Wait for the location permission's answer (the start-up prompt may still show).\n                sky.perm.SkyPermissions.ensure(MainActivity.this, android.Manifest.permission.ACCESS_FINE_LOCATION, new sky.perm.SkyPermissions.Done() {\n                    @Override public void done(boolean granted) { callback.invoke(origin, granted, false); }\n                });\n            }",
         );
     }
     if want_media {
         imports.push_str("\nimport android.webkit.PermissionRequest;");
         overrides.push_str(
-            "\n            @Override public void onPermissionRequest(final PermissionRequest request) {\n                request.grant(request.getResources());\n            }",
+            "\n            @Override public void onPermissionRequest(final PermissionRequest request) {\n                // Grant the page's camera / microphone request once the app holds the\n                // matching permission; wait for the prompt's answer if it still shows.\n                sky.perm.SkyPermissions.ensureMedia(MainActivity.this, request);\n            }",
         );
     }
     let mut webchrome = format!(
@@ -5713,6 +5713,14 @@ fn build_android_apk(
     // Std.Native.scanCode: the camera scanner and its ZXing decoder, only for
     // an app that calls it (a pinned jar from Maven Central, verified by its
     // SHA-256 and cached); every other app gets a stub and no extra jar.
+    let perm_dir = root.join("app/src/main/java/sky/perm");
+    std::fs::create_dir_all(&perm_dir)
+        .map_err(|e| format!("create {}: {e}", perm_dir.display()))?;
+    std::fs::write(
+        perm_dir.join("SkyPermissions.java"),
+        ANDROID_PERMISSIONS_JAVA,
+    )
+    .map_err(|e| format!("write SkyPermissions.java: {e}"))?;
     let scan_dir = root.join("app/src/main/java/sky/scan");
     std::fs::create_dir_all(&scan_dir)
         .map_err(|e| format!("create {}: {e}", scan_dir.display()))?;
@@ -7167,7 +7175,7 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
-        sky.scan.SkyScanner.onPermissionResult(requestCode, results);
+        sky.perm.SkyPermissions.onResult(this, requestCode, permissions, results);
     }
 
     /** JS-reachable native capabilities. Method names are the JS API. */
@@ -7514,9 +7522,6 @@ public final class SkyScanner {
         void err(String message);
     }
 
-    /** The request code of the camera permission request (MainActivity). */
-    public static final int PERMISSION_REQUEST = 23721;
-
     private static SkyScanner current;
     private static SkyScanner pendingPermission;
 
@@ -7584,29 +7589,24 @@ public final class SkyScanner {
             reply.err("invalid: no code format to scan for");
             return;
         }
-        if (act.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            pendingPermission = s;
-            act.runOnUiThread(new Runnable() {
-                @Override public void run() {
-                    act.requestPermissions(new String[] {Manifest.permission.CAMERA}, PERMISSION_REQUEST);
+        // The camera permission: granted, or parked until the user answers the
+        // prompt (the app's start-up request or one asked for here). A scan
+        // started while the prompt shows waits for the answer instead of
+        // failing; only a real denial is `Err PermissionDenied`.
+        pendingPermission = s;
+        sky.perm.SkyPermissions.ensure(act, Manifest.permission.CAMERA,
+            new sky.perm.SkyPermissions.Done() {
+                @Override public void done(boolean granted) {
+                    synchronized (SkyScanner.class) {
+                        pendingPermission = null;
+                    }
+                    if (granted) {
+                        s.start();
+                    } else {
+                        s.finish(null, "denied: the user did not allow the camera");
+                    }
                 }
             });
-            return;
-        }
-        s.start();
-    }
-
-    /** MainActivity.onRequestPermissionsResult forwards here. */
-    public static synchronized boolean onPermissionResult(int requestCode, int[] results) {
-        if (requestCode != PERMISSION_REQUEST || pendingPermission == null) return false;
-        SkyScanner s = pendingPermission;
-        pendingPermission = null;
-        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-            s.start();
-        } else {
-            s.finish(null, "denied: the user did not allow the camera");
-        }
-        return true;
     }
 
     private void start() {
@@ -7828,6 +7828,172 @@ public final class SkyScanner {
 
 /// The `sky.scan.SkyScanner` of an app that does not call `Native.scanCode`:
 /// no camera code, no ZXing.
+/// The shell's run-time permission broker (`sky.perm.SkyPermissions`). Android
+/// shows one permission prompt at a time: a second `requestPermissions` while
+/// one shows is answered at once with empty arrays, which the scanner used to
+/// read as a denial, so `Native.scanCode` at first launch failed with
+/// `PermissionDenied` while the app's start-up prompt was still on screen.
+/// Every permission-gated operation now asks the broker, which answers at
+/// once when the permission is held and otherwise parks the caller until a
+/// prompt that covers the permission is answered, joining the start-up
+/// request when it is in flight and asking only when no prompt shows.
+const ANDROID_PERMISSIONS_JAVA: &str = r#"package sky.perm;
+
+import android.app.Activity;
+import android.content.pm.PackageManager;
+import android.webkit.PermissionRequest;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Run-time permissions for the native shell. Android shows one permission
+ * prompt at a time, and a request made while one shows is answered at once
+ * with empty arrays. So an operation never asks on its own: it calls
+ * `ensure`, which answers at once when the permission is held and otherwise
+ * waits for a prompt that covers it (the start-up request, or one asked for
+ * when no prompt shows). Only a real denial answers `false`. Generated by
+ * `sky build`; do not edit.
+ */
+public final class SkyPermissions {
+    /** The answer for one permission. */
+    public interface Done {
+        void done(boolean granted);
+    }
+
+    /** Request code → the permissions that request asks for (in flight). */
+    private static final Map<Integer, String[]> inFlight = new HashMap<>();
+    /** Permission → the callers waiting for its answer. */
+    private static final Map<String, List<Done>> waiting = new LinkedHashMap<>();
+    private static int nextCode = 23730;
+
+    private SkyPermissions() {}
+
+    private static boolean held(Activity act, String perm) {
+        return act.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** The shell's own start-up request (MainActivity.onCreate). */
+    public static void requestAtStart(Activity act, String[] perms) {
+        List<String> missing = new ArrayList<>();
+        for (String p : perms) {
+            if (!held(act, p)) missing.add(p);
+        }
+        if (missing.isEmpty()) return;
+        int code;
+        synchronized (SkyPermissions.class) {
+            code = nextCode++;
+            inFlight.put(code, missing.toArray(new String[0]));
+        }
+        act.requestPermissions(missing.toArray(new String[0]), code);
+    }
+
+    /** Answer `done` once `perm` is held or refused. */
+    public static void ensure(final Activity act, String perm, Done done) {
+        if (held(act, perm)) {
+            done.done(true);
+            return;
+        }
+        synchronized (SkyPermissions.class) {
+            List<Done> list = waiting.get(perm);
+            if (list == null) {
+                list = new ArrayList<>();
+                waiting.put(perm, list);
+            }
+            list.add(done);
+        }
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() { askForWaiting(act); }
+        });
+    }
+
+    /** A page's camera / microphone request (WebChromeClient.onPermissionRequest). */
+    public static void ensureMedia(final Activity act, final PermissionRequest request) {
+        final List<String> resources = new ArrayList<>();
+        final List<String> perms = new ArrayList<>();
+        for (String r : request.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) {
+                resources.add(r);
+                perms.add(android.Manifest.permission.CAMERA);
+            } else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) {
+                resources.add(r);
+                perms.add(android.Manifest.permission.RECORD_AUDIO);
+            }
+        }
+        if (perms.isEmpty()) {
+            request.deny();
+            return;
+        }
+        final boolean[] ok = {true};
+        final int[] left = {perms.size()};
+        for (String p : perms) {
+            ensure(act, p, new Done() {
+                @Override public void done(boolean granted) {
+                    boolean last;
+                    synchronized (ok) {
+                        ok[0] = ok[0] && granted;
+                        last = --left[0] == 0;
+                    }
+                    if (!last) return;
+                    act.runOnUiThread(new Runnable() {
+                        @Override public void run() {
+                            if (ok[0]) request.grant(resources.toArray(new String[0]));
+                            else request.deny();
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    /** MainActivity.onRequestPermissionsResult forwards every answer here. */
+    public static void onResult(Activity act, int requestCode, String[] perms, int[] results) {
+        List<Done> granted = new ArrayList<>();
+        List<Done> refused = new ArrayList<>();
+        synchronized (SkyPermissions.class) {
+            inFlight.remove(requestCode);
+            List<String> answered = new ArrayList<>();
+            for (int i = 0; i < perms.length && i < results.length; i++) {
+                answered.add(perms[i]);
+            }
+            for (String p : new ArrayList<>(waiting.keySet())) {
+                if (held(act, p)) {
+                    granted.addAll(waiting.remove(p));
+                } else if (answered.contains(p)) {
+                    refused.addAll(waiting.remove(p));
+                }
+                // Otherwise the permission is still in another prompt, or this
+                // answer was the empty one of a request made while a prompt
+                // showed: keep waiting.
+            }
+        }
+        for (Done d : granted) d.done(true);
+        for (Done d : refused) d.done(false);
+        askForWaiting(act);
+    }
+
+    /** Ask for every waited-for permission no prompt covers, when none shows. */
+    private static void askForWaiting(Activity act) {
+        String[] ask;
+        int code;
+        synchronized (SkyPermissions.class) {
+            if (!inFlight.isEmpty() || waiting.isEmpty()) return;
+            List<String> missing = new ArrayList<>();
+            for (String p : waiting.keySet()) {
+                if (!held(act, p)) missing.add(p);
+            }
+            if (missing.isEmpty()) return;
+            ask = missing.toArray(new String[0]);
+            code = nextCode++;
+            inFlight.put(code, ask);
+        }
+        act.requestPermissions(ask, code);
+    }
+}
+"#;
+
 const ANDROID_SCANNER_STUB_JAVA: &str = r#"package sky.scan;
 
 import android.app.Activity;
@@ -15366,6 +15532,28 @@ mod tests {
                 && webchrome.contains("onPermissionRequest")
         );
         assert!(runtime.contains("ACCESS_FINE_LOCATION") && runtime.contains("CAMERA"));
+        // Every request goes through the permission broker, so an operation
+        // that needs the permission joins the start-up prompt instead of
+        // asking again while it shows (Android answers that at once, empty).
+        assert!(
+            runtime.contains("sky.perm.SkyPermissions.requestAtStart(this"),
+            "{runtime}"
+        );
+        assert!(!runtime.contains("requestPermissions("), "{runtime}");
+        assert!(
+            webchrome.contains("SkyPermissions.ensure(")
+                && webchrome.contains("SkyPermissions.ensureMedia("),
+            "{webchrome}"
+        );
+        assert!(
+            !webchrome.contains("callback.invoke(origin, true"),
+            "{webchrome}"
+        );
+        assert!(
+            ANDROID_SCANNER_JAVA.contains("SkyPermissions.ensure(act, Manifest.permission.CAMERA")
+        );
+        assert!(!ANDROID_SCANNER_JAVA.contains("requestPermissions("));
+        assert!(ANDROID_MAIN_ACTIVITY.contains("SkyPermissions.onResult(this, requestCode"));
 
         // Notifications-only: no WebChromeClient plumbing, just the runtime request.
         let (i2, wc2, rt2) = android_permission_java(&declared(&["Notifications"]));
