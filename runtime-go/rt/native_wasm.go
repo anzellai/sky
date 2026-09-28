@@ -682,3 +682,154 @@ func Native_bridge(name any, payload any) any {
 		return Err[any, any](ErrFfi("native bridge: no handler registered for '" + n + "'"))
 	}
 }
+
+// jsRejectionText renders a Promise rejection value: a string as-is, an
+// Error's message, else JSON.
+func jsRejectionText(v js.Value) string {
+	switch {
+	case v.Type() == js.TypeString:
+		return v.String()
+	case v.Truthy() && v.Get("message").Type() == js.TypeString:
+		return v.Get("message").String()
+	case v.Truthy():
+		return js.Global().Get("JSON").Call("stringify", v).String()
+	default:
+		return "rejected"
+	}
+}
+
+// awaitShellPromise blocks the perform goroutine on a Promise from a shell
+// bridge and turns it into a nativeShellReply. Same channel shape as
+// blockOnJsPromise, but it keeps the rejection TEXT (the "<kind>: <message>"
+// the protocol carries) instead of mapping every rejection to one kind.
+func awaitShellPromise(p js.Value) nativeShellReply {
+	if !p.Truthy() || p.Type() != js.TypeObject || p.Get("then").Type() != js.TypeFunction {
+		return nativeShellReply{Present: true, Ok: false, Data: "the shell bridge returned no promise"}
+	}
+	ch := make(chan nativeShellReply, 1)
+	var onOk, onErr js.Func
+	cleanup := func() {
+		onOk.Release()
+		onErr.Release()
+	}
+	onOk = js.FuncOf(func(this js.Value, a []js.Value) any {
+		s := ""
+		if len(a) > 0 {
+			switch {
+			case a[0].Type() == js.TypeString:
+				s = a[0].String()
+			case a[0].Type() == js.TypeBoolean:
+				if a[0].Bool() {
+					s = "true"
+				} else {
+					s = "false"
+				}
+			case a[0].Truthy():
+				s = js.Global().Get("JSON").Call("stringify", a[0]).String()
+			}
+		}
+		ch <- nativeShellReply{Present: true, Ok: true, Data: s}
+		cleanup()
+		return nil
+	})
+	onErr = js.FuncOf(func(this js.Value, a []js.Value) any {
+		msg := "rejected"
+		if len(a) > 0 {
+			msg = jsRejectionText(a[0])
+		}
+		ch <- nativeShellReply{Present: true, Ok: false, Data: msg}
+		cleanup()
+		return nil
+	})
+	p.Call("then", onOk).Call("catch", onErr)
+	return <-ch
+}
+
+// nativeShellJS is the wasm transport for the native-shell protocol
+// (native_shell.go): the iOS reply bridge, the Android callback bridge, or the
+// macOS desktop shell's bound __skyNative, in that order. Present is false in
+// a plain browser, which the kernels turn into Err Unavailable.
+func nativeShellJS(op string, payload string) (reply nativeShellReply) {
+	defer func() {
+		// syscall/js turns a thrown JS exception into a Go panic.
+		if r := recover(); r != nil {
+			reply = nativeShellReply{Present: true, Ok: false, Data: fmt.Sprintf("%v", r)}
+		}
+	}()
+	global := js.Global()
+
+	// iOS: postMessage returns a Promise settled by the Swift replyHandler.
+	if webkit := global.Get("webkit"); webkit.Truthy() {
+		if mh := webkit.Get("messageHandlers"); mh.Truthy() {
+			if sky := mh.Get("skyNative"); sky.Truthy() &&
+				sky.Get("postMessage").Type() == js.TypeFunction {
+				msg := global.Get("Object").New()
+				msg.Set("type", op)
+				msg.Set("payload", payload)
+				return awaitShellPromise(sky.Call("postMessage", msg))
+			}
+		}
+	}
+
+	// Android: an async callback through window.__skyBridgeCb.
+	if sn := global.Get("SkyNative"); sn.Truthy() && sn.Get("call").Type() == js.TypeFunction {
+		reg := global.Get("__skyBridgeCb")
+		if !reg.Truthy() {
+			reg = global.Get("Object").New()
+			global.Set("__skyBridgeCb", reg)
+		}
+		bridgeSeq++
+		cbId := "cb" + strconv.Itoa(bridgeSeq)
+		ch := make(chan nativeShellReply, 1)
+		var resolver js.Func
+		resolver = js.FuncOf(func(this js.Value, a []js.Value) any {
+			ok := len(a) > 0 && a[0].Truthy()
+			data := ""
+			if len(a) > 1 && a[1].Type() == js.TypeString {
+				data = a[1].String()
+			}
+			reg.Delete(cbId)
+			resolver.Release()
+			ch <- nativeShellReply{Present: true, Ok: ok, Data: data}
+			return nil
+		})
+		reg.Set(cbId, resolver)
+		sn.Call("call", op, payload, cbId)
+		return <-ch
+	}
+
+	// macOS desktop shell: webview Bind returns a Promise.
+	if f := global.Get("__skyNative"); f.Type() == js.TypeFunction {
+		return awaitShellPromise(f.Invoke(op, payload))
+	}
+
+	return nativeShellReply{Present: false}
+}
+
+// Native_secureSet is the Std.Native.secureSet kernel
+// (`String -> Secret -> Task Error ()`). The value is revealed only here, at
+// the bridge, and only into the shell's secure store.
+func Native_secureSet(key any, value any) any {
+	k, v := AsString(key), secretReveal(value)
+	return func() any { return nativeSecureSetVia(nativeShellJS, k, v) }
+}
+
+// Native_secureGet is the Std.Native.secureGet kernel
+// (`String -> Task Error (Maybe Secret)`).
+func Native_secureGet(key any) any {
+	k := AsString(key)
+	return func() any { return nativeSecureGetVia(nativeShellJS, k) }
+}
+
+// Native_secureRemove is the Std.Native.secureRemove kernel.
+func Native_secureRemove(key any) any {
+	k := AsString(key)
+	return func() any { return nativeSecureRemoveVia(nativeShellJS, k) }
+}
+
+// Native_authenticate is the Std.Native.authenticate kernel
+// (`String -> Task Error Bool`).
+func Native_authenticate(reason any) any {
+	r := AsString(reason)
+	return func() any { return nativeAuthenticateVia(nativeShellJS, r) }
+}

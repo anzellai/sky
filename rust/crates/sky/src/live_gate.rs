@@ -70,6 +70,12 @@ pub enum Need {
     /// Reachable network. **The one need that is never required** — see
     /// [`required`].
     Network,
+    /// Full Xcode with the iOS SDKs, for the native-shell flow tests that build
+    /// the iOS shell with swiftc.
+    Xcode,
+    /// The Android SDK (build-tools + a platform) and a JDK, for the flow
+    /// tests that build the Android shell.
+    AndroidSdk,
 }
 
 impl Need {
@@ -86,6 +92,16 @@ impl Need {
             Need::Go => "install a Go toolchain (the compiler shells out to a real `go build`)",
             Need::Sqlite3 => "install the `sqlite3` command-line client",
             Need::Network => "unreachable network",
+            Need::Xcode => {
+                "install the full Xcode (App Store) and run `xcodebuild -downloadPlatform iOS` \
+                 once; `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --sdk \
+                 iphonesimulator --show-sdk-path` must succeed"
+            }
+            Need::AndroidSdk => {
+                "install the Android SDK (Android Studio, or the command-line tools with \
+                 `sdkmanager \"build-tools;35.0.0\" \"platforms;android-35\"`), set ANDROID_HOME, \
+                 and install a JDK (javac, keytool)"
+            }
         }
     }
 
@@ -95,6 +111,8 @@ impl Need {
             Need::Go => "a Go toolchain",
             Need::Sqlite3 => "the sqlite3 client",
             Need::Network => "network",
+            Need::Xcode => "Xcode with the iOS SDKs",
+            Need::AndroidSdk => "the Android SDK and a JDK",
         }
     }
 }

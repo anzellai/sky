@@ -187,6 +187,24 @@ rebuild. The app reports them at `/_sky/buildinfo` (with `source`: `git`,
 Your own `go build -ldflags "-X sky-app/rt.buildCommit=..."` (also `buildAt`,
 `skyVersion`) still wins, field by field. See `docs/observability.md`.
 
+### `sky package --release --target <t> [path]`
+
+Builds the store / distribution artefact for a native shell into
+`sky-out/release/`: a signed `.ipa` for `mobile:ios` (unsigned
+`-unsigned.ipa` without signing configured), a release `.apk` signed with your
+upload key plus an `.aab` when `bundletool` is on PATH for `mobile:android`, and
+a `.app` + `.dmg` for `desktop:mac`. It runs `sky build --target <t>` in release
+mode (device build, release signing, no web inspector).
+
+Signing comes from the environment only (`SKY_IOS_SIGN_IDENTITY`,
+`SKY_IOS_PROVISIONING_PROFILE`, `SKY_ANDROID_KEYSTORE`,
+`SKY_ANDROID_KEYSTORE_PASSWORD`, `SKY_ANDROID_KEY_ALIAS`,
+`SKY_ANDROID_KEY_PASSWORD`, `SKY_MACOS_SIGN_IDENTITY`; see
+`docs/sky-toml.md`). Before any build it refuses: no `--release` (exit 2), a
+target that is not a native shell, a local or plain-`http` backend address, a
+generic permission purpose string, missing Android signing, and an iOS identity
+without a provisioning profile. Guide: `docs/skyapp/native.md`.
+
 ### `sky spa-split <path> --out <dir> [--build | --target <t>]`
 
 The **explicit Sky.Spa auto-split** generator — the form of the split that

@@ -21,6 +21,10 @@ module Std.Native exposing
     , pickFile
     , pickImage
     , capturePhoto
+    , secureSet
+    , secureGet
+    , secureRemove
+    , authenticate
     , bridge
     )
 
@@ -38,6 +42,7 @@ module Std.Native exposing
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Secret exposing (Secret)
 
 -- | A geographic fix: `lat`/`lng` in degrees, `accuracy` in metres.
 type alias Coords =
@@ -240,6 +245,65 @@ pickImage =
 capturePhoto : () -> Task Error PickedFile
 capturePhoto =
     Ffi.kernel "Native_capturePhoto"
+
+
+-- | Store a secret `value` under a `key` in the device's SECURE store: the
+-- Keychain on iOS and macOS, an Android Keystore-backed AES-GCM key on Android
+-- (the value is encrypted with a key that never leaves the Keystore). Use it for
+-- a refresh token, a device key, a PIN-protected secret — anything that must not
+-- sit in `localStorage`. Replaces an existing value.
+--
+-- A plain browser has no secure store, so this is `Err Unavailable` there (and
+-- on a server or CLI build). Sky never falls back to `localStorage`: a value you
+-- asked to keep secret is never written somewhere that is not.
+--
+--     SaveToken token ->
+--         ( model, Cmd.perform (Native.secureSet "refresh" token) Saved )
+--
+-- The value is a `Secret` (wrap a string you hold with `Secret.fromString`), so
+-- it redacts itself in every log and print path. `Err InvalidInput` for an
+-- empty key or one longer than 256 characters.
+secureSet : String -> Secret -> Task Error ()
+secureSet =
+    Ffi.kernel "Native_secureSet"
+
+
+-- | Read the secret stored under a `key`: `Ok (Just secret)`, `Ok Nothing` when
+-- the key was never set, `Err Unavailable` without a native shell. A function
+-- (not a bare `Task`) so each call reads the CURRENT value. Unwrap it only where
+-- you use it, with `Secret.reveal`.
+secureGet : String -> Task Error (Maybe Secret)
+secureGet =
+    Ffi.kernel "Native_secureGet"
+
+
+-- | Delete the secret stored under a `key` (a no-op `Ok` if it was never set).
+secureRemove : String -> Task Error ()
+secureRemove =
+    Ffi.kernel "Native_secureRemove"
+
+
+-- | Ask the user to confirm it is them with the device's biometrics — Face ID or
+-- Touch ID (LocalAuthentication) on iOS and macOS, the system BiometricPrompt on
+-- Android. The `reason` is shown in the prompt ("Unlock your vault").
+--
+--   * `Ok True` — the user authenticated.
+--   * `Ok False` — the user presented a biometric that did not match, and the
+--     system gave up (a normal answer, not a fault; offer another way in).
+--   * `Err PermissionDenied` — the user (or the system) cancelled the prompt.
+--   * `Err Unavailable` — no biometric hardware, none enrolled, locked out after
+--     too many attempts, or no native shell (a plain browser, a server).
+--
+--     Unlock ->
+--         ( model, Cmd.perform (Native.authenticate "Unlock your vault") Unlocked )
+--
+-- iOS needs the Face ID purpose string and Android the USE_BIOMETRIC
+-- permission: declare both at once with
+-- `Bundle.withUsage Bundle.FaceId "Unlocks your vault."`. A build for either
+-- shell that calls `authenticate` without it fails and names that line.
+authenticate : String -> Task Error Bool
+authenticate =
+    Ffi.kernel "Native_authenticate"
 
 
 -- | Call a CUSTOM native capability the app registers itself — the extension

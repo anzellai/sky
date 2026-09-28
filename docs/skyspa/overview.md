@@ -373,6 +373,19 @@ the backend answered `/spa-boot.<hash>.js` with HTML, the browser refused to
 run it, and the page never became interactive. On v0.25.19, add
 `/spa-boot.*.js` to the paths the proxy serves from `dist/`, or upgrade.
 
+## Native device capabilities
+
+`Std.Native` capabilities are client effects: the auto-split keeps them in the
+wasm client, and on a native shell they reach the device through the shell's
+bridge. The secure store (`Native.secureSet` / `secureGet` / `secureRemove`)
+and the biometric prompt (`Native.authenticate`) have no web API, so in a plain
+browser they are `Err Unavailable`, never a `localStorage` fallback.
+`Secret.fromString` and `Secret.reveal` are pure and run in the client, so a
+client branch can use a secret it read from the device; `Secret.fromEnv` reads
+the server's environment and stays on the server. A `Secret` has no codec and
+never crosses the wire. Purpose strings, entitlements and `sky package
+--release`: [`docs/skyapp/native.md`](../skyapp/native.md).
+
 ## Honest limits
 
 These are real, current scope boundaries — not roadmap optimism:

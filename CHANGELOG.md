@@ -127,6 +127,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### ⚠ Breaking changes
 
+- **`Std.Bundle.Permission` has six new constructors** (`LocationAlways`,
+  `PhotoLibrary`, `Contacts`, `FaceId`, `LocalNetwork`, `Bluetooth`). A
+  `case` over `Permission` in app code must handle them.
+- **A native build refuses a capability without its permission.** `sky build`
+  / `sky check --target mobile:ios|mobile:android` fails when the app calls
+  `Native.authenticate` without `Bundle.FaceId`, `Native.capturePhoto` without
+  `Bundle.Camera`, or `Native.geolocation` without `Bundle.Location` /
+  `LocationAlways`. Before, the build succeeded and the OS denied the request
+  at run time. Add `|> Bundle.withUsage Bundle.<P> "<why>"`.
+- **A native build refuses a native fragment that is not a valid property
+  list or manifest fragment,** and one that sets a key Sky generates
+  (`CFBundleIdentifier`, the version keys, transport security) to another
+  value. Fragments used to be appended as text, whatever they held.
 - **`Std.PubSub.publish` reaches every running Sky.Live app.** It has no
   update loop, so it cannot name an app; it used to publish to the FIRST app
   that started in the process only. With `App.serve` a process can run
@@ -313,6 +326,52 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **Native shells: purpose strings, typed entitlements, secure storage,
+  biometrics and release packaging** (`docs/skyapp/native.md`).
+  - `Bundle.withUsage : Permission -> String -> Bundle -> Bundle` declares a
+    permission with the text the OS shows in its prompt. Each constructor
+    maps to its iOS / macOS `Info.plist` key and its Android permission; the
+    table is in the guide. `withPermission` keeps a generic text, which a
+    development build accepts and a release refuses (App Review rejects it).
+  - `Bundle.withEntitlement` with `KeychainAccessGroup`, `AppGroup`,
+    `AssociatedDomain`, `PushNotifications PushDevelopment|PushProduction` and
+    `ICloudContainer`: typed Apple entitlements, validated, written into the
+    signed app's `.entitlements`.
+  - `Bundle.withBuild : Int -> Bundle -> Bundle` sets the store build number
+    (CFBundleVersion, `android:versionCode`). It was always 1, so a second
+    store upload was refused.
+  - `Native.secureSet : String -> Secret -> Task Error ()`, `secureGet :
+    String -> Task Error (Maybe Secret)` and `secureRemove`: the Keychain on
+    iOS and macOS, an Android Keystore AES-256-GCM key on Android. With no
+    native shell (a browser, a server, Windows / Linux desktop) they are
+    `Err Unavailable`; there is no `localStorage` fallback. Decision: the value
+    is a `Secret`, per the typed-secrets rule, so it redacts itself in every
+    log path.
+  - `Native.authenticate : String -> Task Error Bool`: LocalAuthentication on
+    iOS and macOS, `BiometricPrompt` on Android 9+. Decision: `Ok False` is a
+    biometric that did not match (a normal answer), `Err PermissionDenied` a
+    cancel, `Err Unavailable` no hardware, none enrolled or locked out.
+  - `sky package --release --target mobile:ios|mobile:android|desktop:mac`
+    writes the store artefact to `sky-out/release/`: a signed `.ipa` built for
+    devices (`SKY_IOS_SIGN_IDENTITY` + `SKY_IOS_PROVISIONING_PROFILE`, else an
+    unsigned `-unsigned.ipa` with a note), a release `.apk` signed with the
+    upload key (`SKY_ANDROID_KEYSTORE`, `SKY_ANDROID_KEYSTORE_PASSWORD`,
+    `SKY_ANDROID_KEY_ALIAS`, optional `SKY_ANDROID_KEY_PASSWORD`) plus an
+    `.aab` when `bundletool` is on PATH, and a `.app` + `.dmg`
+    (`SKY_MACOS_SIGN_IDENTITY`, else signed ad hoc with a note). A release
+    turns off the web inspector, and refuses, before any build: the
+    development backend address or a local host, plain `http` (decision: a
+    release sends its session over https only), a generic purpose string,
+    missing Android signing, an iOS identity without a profile, and an
+    entitlement the provisioning profile does not grant. Desktop packaging is
+    macOS only (the desktop shell builds on macOS in this version).
+  - The simulator build is signed ad hoc with its entitlements, so the
+    Keychain works there.
+  - A recipe that scans a QR code in a widget island and draws one with
+    `Std.Qr` (`docs/skyapp/native.md`, checked by `scripts/doc-examples.sh`).
+  - The release workflow has a macOS gate, `gate-native`: it builds the iOS
+    shell for the simulator, installs and launches it, and packages and
+    verifies a signed Android release.
 - **`--format json` for `sky check`, `sky build`, `sky test` and `sky fmt
   --check`.** Stdout carries only NDJSON: one LSP-shaped `diagnostic` line per
   diagnostic (`file` relative to the project root, a 0-based `range`,
@@ -618,6 +677,37 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **Native fragments were merged as text, which produced invalid property
+  lists.** Two `native/ios/app.entitlements` files (the project's and a
+  library's), each a whole plist, became two XML documents in one file,
+  which `codesign` rejects; a key two sources set (a library's
+  `Info.plist.append` with `NSCameraUsageDescription` next to
+  `Bundle.withPermission Camera`) appeared twice in one `<dict>`. Fragments
+  are now read as trees and merged with a defined precedence (generated keys,
+  then the app's declarations, then the project's fragment, then each
+  dependency's): dictionaries merge by key, arrays are unioned, an override is
+  reported, and a conflict Sky cannot resolve is an error naming the fix.
+  `native/android/permissions.xml` fragments are merged the same way, so a
+  permission two sources declare appears once. (`rust/crates/sky/src/plist.rs`,
+  `xmlmini.rs`, `native_pkg.rs`.)
+- **A Sky.Spa app's native shell was named "frontend".** The shell is built
+  from the generated `.split/frontend` project, and the display name defaulted
+  to that directory's name. It is now the app's name.
+- **The iOS build did not find Xcode under a `DEVELOPER_DIR` without the iOS
+  SDK** (a Nix or similar dev shell exports one for a macOS-only SDK), and
+  reported "no iOS toolchain" on a machine whose Xcode works. The build now
+  tries `DEVELOPER_DIR`, then the standard Xcode install, and passes the one
+  with the iOS SDK to the build scripts.
+- **A rebuild could not replace a read-only precompressed file.** A
+  compressor keeps its input's permissions, and Go's `wasm_exec.js` is
+  read-only when GOROOT is (a Nix store), so the next build's brotli failed
+  with "Permission denied", the build said brotli was missing, and the
+  `.br` file stayed stale. The build now removes the old output first.
+- **Sky.Spa could not use a `Secret` the client holds.** `Secret.fromString`
+  and `Secret.reveal` were classified as server effects (fail-closed), so a
+  client branch that revealed a secret read from the device became a server
+  branch whose `Msg` needed a codec a `Secret` does not have. They are now
+  client-safe; `Secret.fromEnv` stays on the server.
 - **A dropped Sky.Live frame from a WebSocket subscription left the page
   diverged.** When an `onMessage` / `onClose` delivery produced a frame the
   session's SSE queue could not take, the frame was counted and dropped, but

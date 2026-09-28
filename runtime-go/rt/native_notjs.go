@@ -143,3 +143,34 @@ func Native_bridge(_ any, _ any) any {
 			"Native.bridge is a client-only capability (no native bridge in this runtime)"))
 	}
 }
+
+// nativeNoShellTransport is the transport of a runtime with no native shell
+// (a server or CLI build): nothing answers, so the secure-store and
+// biometric kernels return Err Unavailable after validating their arguments.
+func nativeNoShellTransport(string, string) nativeShellReply {
+	return nativeShellReply{Present: false}
+}
+
+// Native_secureSet on a non-client build: Err Unavailable. The secure store
+// is the device's, reached through the native shell from the wasm client
+// (native_wasm.go); a server writing a user's secret into ITS keychain would
+// be the wrong store.
+func Native_secureSet(key any, value any) any {
+	k, v := AsString(key), secretReveal(value)
+	return func() any { return nativeSecureSetVia(nativeNoShellTransport, k, v) }
+}
+
+func Native_secureGet(key any) any {
+	k := AsString(key)
+	return func() any { return nativeSecureGetVia(nativeNoShellTransport, k) }
+}
+
+func Native_secureRemove(key any) any {
+	k := AsString(key)
+	return func() any { return nativeSecureRemoveVia(nativeNoShellTransport, k) }
+}
+
+func Native_authenticate(reason any) any {
+	r := AsString(reason)
+	return func() any { return nativeAuthenticateVia(nativeNoShellTransport, r) }
+}

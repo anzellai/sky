@@ -1144,6 +1144,10 @@ fn the_release_workflow_is_the_full_suite() {
             "scripts/header-session-e2e.sh",
             "e2e: Sky.Live without cookies",
         ),
+        (
+            "--test native_shell_flow -- --ignored",
+            "the native shells on macOS: iOS simulator smoke + Android release",
+        ),
     ];
     let missing: Vec<String> = required
         .iter()

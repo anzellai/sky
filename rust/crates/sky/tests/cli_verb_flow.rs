@@ -13,7 +13,7 @@
 //! scaffolded files, so it has the same value on a bare CI runner as it does
 //! locally.
 //!
-//! Verbs covered here: `init`, `clean`, `watch` (argument validation),
+//! Verbs covered here: `init`, `clean`, `watch` (argument validation), `package` (the release refusals),
 //! `install`, `update`, `upgrade`, `db` (dispatch + `init`), and unknown-verb
 //! dispatch. `doctor` is owned by `doctor_flow.rs`, `doc` by `doc_flow.rs`,
 //! `add`/`remove` by `ffi_verb_flow.rs`, `db migrate/push` by `db_flow.rs`.
@@ -363,6 +363,91 @@ fn embed_on_run_is_refused_and_points_at_what_does_work() {
     assert!(
         out.contains("sky build --embed"),
         "the refusal must name the verb that does take --embed; got:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// package
+// ---------------------------------------------------------------------------
+
+/// `sky package --release` builds a store artefact, so it refuses — before any
+/// build, with the fix named — a release it cannot ship: no `--release`, a
+/// target that is not a native shell, a backend address that is the
+/// development default or plain http, and an Android release with no upload
+/// key. Every refusal here happens before a toolchain is needed.
+#[test]
+fn package_refuses_a_release_it_cannot_ship() {
+    let dir = scratch("package");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"shop\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        "module Main exposing (main)\n\nimport Std.Spa as Spa\n\nmain =\n    0\n",
+    )
+    .unwrap();
+    let package = |args: &[&str], env: &[(&str, &str)]| -> (i32, String) {
+        let mut cmd = Command::new(SKY);
+        cmd.arg("package")
+            .args(args)
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .env_remove("SKY_APP_URL")
+            .env_remove("SKY_ANDROID_KEYSTORE")
+            .env_remove("SKY_ANDROID_KEYSTORE_PASSWORD")
+            .env_remove("SKY_ANDROID_KEY_ALIAS")
+            .env_remove("SKY_PACKAGE_RELEASE");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("spawn sky package");
+        let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+        s.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.code().unwrap_or(-1), s)
+    };
+
+    let (code, out) = package(&["--target", "mobile:ios"], &[]);
+    assert_eq!(code, 2, "no --release is a usage error:\n{out}");
+    assert!(out.contains("--release"), "{out}");
+
+    let (code, out) = package(&["--release", "--target", "web"], &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("not a native shell"), "{out}");
+
+    let (code, out) = package(&["--release", "--target", "desktop:windows"], &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("macOS"), "{out}");
+
+    let (code, out) = package(&["--release", "--target", "mobile:ios"], &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("App.withAppUrl") && out.contains("SKY_APP_URL"),
+        "the development default address must be refused, naming the fix:\n{out}"
+    );
+
+    let (code, out) = package(
+        &["--release", "--target", "mobile:android"],
+        &[("SKY_APP_URL", "http://shop.example.test/")],
+    );
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("plain http"), "{out}");
+
+    let (code, out) = package(
+        &["--release", "--target", "mobile:android"],
+        &[("SKY_APP_URL", "https://shop.example.test/")],
+    );
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("SKY_ANDROID_KEYSTORE") && out.contains("upload key"),
+        "an Android release without signing must name the variables:\n{out}"
+    );
+    assert!(
+        !dir.join(".split").exists(),
+        "a refused release must not start a build"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
