@@ -997,14 +997,37 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   CFBundleDisplayName keep the name as written. An app with no `withName`
   takes its product name from the project name, as its display name already
   did.
-- **A Sky.Spa server branch that matches inside its Msg's argument is refused
-  by name.** The split sends the names a server arm binds and rebuilds the
-  Msg on the backend from them, so an arm such as `Report (Ok line) -> (model,
-  Cmd.perform (Log.println line) Reported)` became `update (Report p.line)`
-  and the backend failed to compile with a type error in generated code,
-  reported against the derived project. The split now stops with an error
-  that names the arm and the form that works (`Report value -> case value of
-  …`).
+- **A Sky.Spa server branch can match inside its Msg's arguments.** The split
+  sent the names a server arm binds and rebuilt the Msg on the backend from
+  them, so an arm such as `Report (Ok line) -> (model, Cmd.perform
+  (Log.println line) Reported)` became `update (Report p.line)` and the
+  backend failed to compile with a type error in generated code. The first
+  cut on this branch refused such an arm. The split now supports every
+  pattern shape: nested constructors, literals, tuples, records, `as`
+  bindings and wildcards. A constructor whose server arm matches inside an
+  argument, or that has more than one server arm, sends each whole argument
+  under a positional name: the client arm becomes `Report ((Ok line) as
+  spaArg0_)` and the backend runs `update (Report p.spaArg0_) m`, so the
+  app's own `case` picks the arm. Routing is per arm: a client arm of the
+  same constructor (`Report (Err _) -> ( { model | status = "failed" },
+  Cmd.none )`) stays in the client, and the backend takes the arm the client
+  took, because the arms keep their order and Sky patterns are pure. The
+  route's request and response are the union over the constructor's server
+  arms. A plain-name server arm keeps the named wire form, so an app that
+  split before builds the same code. A tuple-typed Msg argument now has a
+  wire codec too (a JSON object keyed `"0"`, `"1"`, …). `sky doc --diagram
+  wire` / `--api openapi` list one `/_rpc/<Msg>` endpoint per constructor
+  from the same routes, and `sky fuzz --target web:app` diffs such arms
+  (it skipped them before). The rule and the one remaining refusal are in
+  `docs/skyspa/auto-split.md` §22. (`rust/crates/project/src/spa_partition.rs`
+  `server_routes`; tests: `project/tests/spa_server_arm_args.rs`,
+  `spa_split_flow.rs`
+  `server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app`,
+  which builds `tests/fixtures/spa-arm-patterns` both ways and compares each
+  message over RPC with the Sky.Live app, and `fuzz_verb_flow.rs`.)
+- **`sky fuzz --target web:app src/Main.sky` read `web:app` as the entry
+  file** ("no such file: web:app"): the value of `--target`, `--iters` or
+  `--seed` given before the file was taken as the file.
 - **`sky add ./dir` works for a fresh local Go module.** A module whose
   `go.mod` declares a `go` line newer than the generated one (`go 1.26`
   against `go 1.25.0`), or requirements of its own, was not loadable after

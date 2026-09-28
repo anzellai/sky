@@ -1063,3 +1063,70 @@ Tests: `runtime-go/rt/spa_rpc_guard_test.go` (the guard, method-keyed CSRF
 exemptions, Secure over TLS, the topic check) and `spa_split_flow.rs`
 (`spa_rpc_origin_guard_and_sub_topic_authorisation`, a live backend built from
 `tests/fixtures/spa-sub-auth`).
+
+## 22. Server arms that match inside their Msg arguments (2026-09-28)
+
+A server arm may match inside the arguments of its message. Every pattern
+shape splits: a nested constructor (`Report (Ok line)`), an Int or String
+literal (`Pick 0`, `Named "admin"`), a tuple (`Pair ( 0, s )`), a record
+(`Take { id, label }`), an `as` binding (`Wrap ((Just n) as whole)`) and a
+wildcard (`Any _`).
+
+**The rule: each arm keeps its side, and a server arm sends the whole
+message.** The partition classifies each arm of `update`'s `case msg of`
+(`BranchVerdict::arm`). The client `update` keeps every arm in its source
+order. A client arm is copied as written. A server arm sends the message to
+`POST /_rpc/<Ctor>`, and the backend runs the app's own `update` on it. The
+backend takes the same arm the client took: every arm before it failed to
+match on the client, Sky patterns are pure, and the arms keep their order, so
+those arms fail on the backend too. There is one route per constructor
+(`spa_partition::server_routes`). Its request and response are the union of
+the I/O of the constructor's server arms, because any of them can be the arm
+that runs. A client arm of a server constructor adds nothing to the route: a
+message it matches never leaves the client.
+
+**Positional arguments.** A constructor sends its arguments positionally when
+one of its server arms matches inside an argument, or when it has more than
+one server arm (their binder names can differ). The client wraps each argument
+of each server arm in an `as` binding and sends the bound values:
+
+```text
+Report (Ok line) ->            client:  Report ((Ok line) as spaArg0_) ->
+                                            ( model, Spa.rpc … { spaArg0_ = spaArg0_ } … )
+                               backend: update (Report p.spaArg0_) m
+```
+
+The argument types are the constructor's declared types
+(`ArmShape::ctor_args`), instantiated at the `case` subject's type, and each
+gets a wire codec from the resolver (§15). A constructor whose only server arm
+binds plain names (`Report result ->`) keeps the named form
+(`update (Report p.result) m`), so the output for such an app is unchanged. A
+tuple argument has a codec since this change: a JSON object keyed by position
+(`{"0": …, "1": …}`), built with `Codec.object` / `Codec.field`.
+
+The wire diagram, the OpenAPI document and the differential fuzzer read the
+same routes. The fuzzer's harness writes the constructor's arms in order,
+diffs each server arm through the wire and answers `Ok ()` for a client arm.
+
+**What is still refused, and why.** A server arm cannot be split when the
+backend cannot rebuild its message from a request:
+
+- An argument whose type has no wire codec: a function, a data-carrying
+  union with no `Codec` binding, an anonymous record (the resolver's errors in
+  §15). The fix the error names is a `Codec <T>` binding or a named type.
+- An argument whose type is still a type variable after instantiation (a
+  polymorphic `Msg a` handled generically). No value of an unknown type can be
+  decoded. The error names the arm.
+
+The generator also fails closed when the `case` it rewrites does not have the
+arms the partition classified (it never guesses which arm runs where).
+
+Tests: `project/tests/spa_server_arm_args.rs` (every shape, the client arms
+kept, one route per constructor, the plain form unchanged);
+`spa_diff_harness` unit tests (a client arm keeps its place and is not
+diffed); `spa_split_flow.rs`
+`server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app`
+(the fixture `tests/fixtures/spa-arm-patterns` built as a Sky.Live app and as
+`web:app`, each message sent to both, the models compared); and
+`fuzz_verb_flow.rs`
+`the_split_oracle_diffs_server_arms_that_match_inside_their_arguments`.

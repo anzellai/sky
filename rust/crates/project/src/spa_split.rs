@@ -391,6 +391,39 @@ impl<'a> CodecResolver<'a> {
                 return Err(bare_union_no_codec_msg(tail, &render_ty(t)));
             }
         }
+        // (b''''') A TUPLE, as a JSON object keyed by position (`{"0": …,
+        // "1": …}`), built from the element codecs with `Codec.object` /
+        // `Codec.field` / `Codec.buildObject`. A tuple-typed Msg argument
+        // (`Pair ( Int, String )`) then crosses the wire with no app codec.
+        if let ty::Ty::Tuple(items) = t {
+            if items.len() >= 2 {
+                let mut elems = Vec::new();
+                for it in items {
+                    elems.push(self.resolve(it)?);
+                }
+                let n = elems.len();
+                let names: Vec<String> = (0..n).map(|i| format!("spaT{i}_")).collect();
+                let ctor = format!("(\\{} -> ( {} ))", names.join(" "), names.join(", "));
+                let mut codec = format!("(Codec.object {ctor}");
+                for (i, e) in elems.iter().enumerate() {
+                    let pat: Vec<&str> = (0..n)
+                        .map(|j| if j == i { names[i].as_str() } else { "_" })
+                        .collect();
+                    codec.push_str(&format!(
+                        " |> Codec.field \"{i}\" (\\( {} ) -> {}) {}",
+                        pat.join(", "),
+                        names[i],
+                        e.codec
+                    ));
+                }
+                codec.push_str(" |> Codec.buildObject)");
+                let surface: Vec<String> = elems.iter().map(|e| e.surface.clone()).collect();
+                return Ok(ResolvedCodec {
+                    codec,
+                    surface: format!("( {} )", surface.join(", ")),
+                });
+            }
+        }
         // (b'''') A STRUCTURAL record — the common case, because the solver
         // expands a record alias to an un-named `ty::Ty::Record` row. Recover the
         // nominal name by matching the field SET, then auto-derive `Codec.auto`.
@@ -2194,45 +2227,27 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // are pruned from the frontend below.
     let server_internal_names: HashSet<String> = report.server_internal.iter().cloned().collect();
 
-    // SERVER branches, keyed by ctor name, with their RPC I/O + typed Msg args.
-    let mut server: Vec<(String, BranchIo)> = Vec::new();
-    let mut server_args: HashMap<String, Vec<ModelFieldTy>> = HashMap::new();
+    // SERVER routes, one per Msg constructor with a server arm, with the RPC
+    // I/O (the union over that constructor's server arms) + the typed Msg args.
+    // Routing is per ARM (see `spa_partition::server_routes`): a client arm of
+    // the same constructor stays in the client, and a server arm whose pattern
+    // matches inside an argument sends each whole argument positionally.
+    let routes = spa_partition::server_routes(&report.branches, &server_internal_names)?;
+    let mut server: Vec<(String, BranchIo)> = routes
+        .iter()
+        .map(|r| (r.ctor.clone(), r.io.clone()))
+        .collect();
+    let server_args: HashMap<String, Vec<ModelFieldTy>> = routes
+        .iter()
+        .map(|r| (r.ctor.clone(), r.msg_arg_tys.clone()))
+        .collect();
+    let arm_routes = ArmRoutes::from_report(&report.branches, &routes);
     let mut client_names: Vec<String> = Vec::new();
-    for b in &report.branches {
+    for b in report.branches.iter().filter(|b| !b.server) {
         let name = ctor_name(&b.msg).to_string();
-        if server_internal_names.contains(&name) {
-            // Server-internal — settled server-side in its trigger's RPC; no wire
-            // route, no client arm. Deduped across its (Ok/Err) arms.
-            continue;
-        }
-        if b.server {
-            if b.matches_inside_msg_args {
-                return Err(format!(
-                    "the SERVER branch `{label}` of `update` matches inside its message's \
-                     arguments. A server branch runs on the backend from the message the \
-                     client sends, and the build rebuilds that message from the names the \
-                     branch binds, so bind each argument to a plain name and match it in \
-                     the branch:\n\n    {name} value ->\n        case value of\n            \
-                     …\n",
-                    label = b.msg
-                ));
-            }
-            let io =
-                b.io.clone()
-                    .ok_or_else(|| format!("server branch `{name}` has no derived RPC I/O"))?;
-            server.push((name.clone(), io));
-            server_args.insert(name, b.msg_arg_tys.clone());
-        } else {
+        if !server_internal_names.contains(&name) && !client_names.contains(&name) {
             client_names.push(name);
         }
-    }
-    // A Msg may have several arms (Ok/Err); keep ONE wire entry per ctor (a Msg
-    // is one RPC route). Robust to non-consecutive arms.
-    {
-        let mut seen: HashSet<String> = HashSet::new();
-        server.retain(|(n, _)| seen.insert(n.clone()));
-        let mut seen_c: HashSet<String> = HashSet::new();
-        client_names.retain(|n| seen_c.insert(n.clone()));
     }
     if server.is_empty() {
         notes.push("no SERVER branches — the frontend is fully client-local and the backend only serves static assets.".into());
@@ -3034,6 +3049,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         follow_here(entry),
         pure_whole_update && update_in_entry,
         &device_only,
+        &arm_routes,
     )?;
 
     // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
@@ -3209,6 +3225,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &model_field_names,
                 &client_result_map,
                 follow_here(*m),
+                &arm_routes,
             )?;
             // Bug #4b: a regenerated SIBLING `update` references `spaRpcError_`,
             // which the synthesis placed in the ENTRY. The sibling cannot import
@@ -6970,6 +6987,8 @@ fn gen_frontend(
     // `withClientCrypto`: the `Maybe` key fields the saved model writes as
     // `Nothing` (see [`device_only_fields`]).
     device_only: &[String],
+    // Per-arm routing of `update`'s case (see [`ArmRoutes`]).
+    arm_routes: &ArmRoutes,
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -7200,6 +7219,7 @@ fn gen_frontend(
             model_field_names,
             client_result,
             follow,
+            arm_routes,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -7310,6 +7330,46 @@ model in `view`."
     Ok(out)
 }
 
+/// Which arm of `update`'s `case msg of` runs where, for the regenerated
+/// client `update`. Built from the partition's per-arm verdicts; empty when the
+/// report carries no arm positions (then the head constructor decides).
+#[derive(Default)]
+pub(crate) struct ArmRoutes {
+    /// Server arm index → the positional pattern to write (a positional
+    /// route), or `None` to keep the source pattern.
+    server: HashMap<usize, Option<String>>,
+    /// Client arm indices.
+    client: HashSet<usize>,
+}
+
+impl ArmRoutes {
+    fn from_report(
+        branches: &[spa_partition::BranchVerdict],
+        routes: &[spa_partition::ServerRoute],
+    ) -> ArmRoutes {
+        let mut out = ArmRoutes::default();
+        for r in routes {
+            for a in &r.arms {
+                if let (Some(i), true) = (a.index, a.server) {
+                    out.server.insert(i, r.positional.then(|| a.pat.clone()));
+                }
+            }
+        }
+        for b in branches {
+            if let Some(a) = &b.arm {
+                if !out.server.contains_key(&a.index) {
+                    out.client.insert(a.index);
+                }
+            }
+        }
+        out
+    }
+
+    fn is_empty(&self) -> bool {
+        self.server.is_empty() && self.client.is_empty()
+    }
+}
+
 fn gen_frontend_update(
     // The module that DECLARES `update` — the ENTRY, or a SIBLING module (GAP-1).
     // `update` is read + rewritten from THIS file/src.
@@ -7340,6 +7400,8 @@ fn gen_frontend_update(
     // `Std.Native` import alias) + the server-tainted names (a client residual
     // may not use them).
     follow: Option<FollowHere<'_>>,
+    // Per-arm routing (server arm → positional pattern); empty → head rule.
+    arm_routes: &ArmRoutes,
 ) -> Result<String, String> {
     // Find update's ValueDecl → its `case msg of`.
     let update_val = file
@@ -7360,7 +7422,15 @@ fn gen_frontend_update(
     // the hook, keep the loud-log floor (model kept, perform site reports). The
     // presence flag is resolved by the caller against the ENTRY (see the param).
     let mut arms_out = String::new();
-    for arm in case.arms() {
+    let arm_count = case.arms().count();
+    if !arm_routes.is_empty() && arm_routes.server.len() + arm_routes.client.len() != arm_count {
+        return Err(format!(
+            "sky.spa: `update`'s `case` has {arm_count} arms but the analysis classified {}; \
+             the split cannot tell which arm runs where",
+            arm_routes.server.len() + arm_routes.client.len()
+        ));
+    }
+    for (arm_index, arm) in case.arms().enumerate() {
         let pat = arm.pattern().map(|p| p.syntax().clone());
         let head = pat.as_ref().and_then(first_upper);
         // SERVER-INTERNAL arm: dispatched only server-side (its ctor was pruned
@@ -7372,16 +7442,29 @@ fn gen_frontend_update(
         {
             continue;
         }
-        let is_server = head
+        let head_is_server = head
             .as_ref()
             .map(|h| server_ctors.contains(&h.as_str()))
             .unwrap_or(false);
+        let is_server = if arm_routes.is_empty() {
+            head_is_server
+        } else {
+            arm_routes.server.contains_key(&arm_index)
+        };
+        if is_server && !head_is_server {
+            return Err(format!(
+                "sky.spa: arm {arm_index} of `update` is a server arm, but its pattern names no \
+                 server constructor"
+            ));
+        }
         if is_server {
             let m = head.unwrap();
             let io = &server.iter().find(|(n, _)| *n == m).unwrap().1;
-            let pat_text = pat
-                .map(|p| slice(src, &p).to_string())
-                .unwrap_or_else(|| m.clone());
+            let positional = arm_routes.server.get(&arm_index).cloned().flatten();
+            let pat_text = positional.unwrap_or_else(|| {
+                pat.map(|p| slice(src, &p).to_string())
+                    .unwrap_or_else(|| m.clone())
+            });
             let req_codec = format!("{}ReqCodec", lower_first(&m));
             let resp_codec = format!("{}RespCodec", lower_first(&m));
             // Request payload — the shared client-leg build-req (also emitted by
@@ -7566,6 +7649,8 @@ fn render_module_client_subset(
     client_result: &HashMap<String, ClientResultInfo>,
     // SPA-3: the follow-up context seen from THIS module.
     follow: Option<FollowHere<'_>>,
+    // Per-arm routing of `update`'s case (see [`ArmRoutes`]).
+    arm_routes: &ArmRoutes,
 ) -> Result<String, String> {
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
@@ -7625,6 +7710,7 @@ fn render_module_client_subset(
             model_field_names,
             client_result,
             follow,
+            arm_routes,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -8374,6 +8460,7 @@ mod fix7_tests {
             &[],
             &HashMap::new(),
             None,
+            &ArmRoutes::default(),
         )
         .expect("gen_frontend_update")
     }

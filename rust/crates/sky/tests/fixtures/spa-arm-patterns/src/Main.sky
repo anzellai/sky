@@ -1,0 +1,150 @@
+module Main exposing (main)
+
+-- Server branches whose patterns match inside their Msg arguments: a nested
+-- constructor, Int and String literals, a tuple, a record, an `as` binding and
+-- a wildcard, with client and server arms of one constructor mixed. The same
+-- source builds as a Sky.Live app (`sky build`) and as a split Sky.Spa app
+-- (`sky build --target web:app`); spa_split_flow.rs drives both and compares.
+-- A server arm's status starts with `tag`, which reads the environment: only
+-- the server can compute it. `sky fuzz --target web:app` diffs the arms that
+-- do not chain a command.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.System as System
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Log as Log
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+type alias Item =
+    { id : Int
+    , label : String
+    }
+
+type alias Model =
+    { status : String }
+
+type Msg
+    = Report (Result Error String)
+    | Pick Int
+    | Named String
+    | Pair ( Int, String )
+    | Take Item
+    | Wrap (Maybe Int)
+    | Any (Maybe Int)
+    | Reported (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "ready" }, Cmd.none )
+
+
+tag : String -> String
+tag s =
+    System.getenvOr "SKY_ARM_TAG" "server" ++ " " ++ s
+
+
+logged : String -> Cmd Msg
+logged line =
+    Cmd.perform (Log.println ("ARM " ++ line)) Reported
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Report (Ok line) ->
+            ( { model | status = tag ("report " ++ line) }, Cmd.none )
+
+        Report (Err _) ->
+            ( { model | status = "report failed" }, Cmd.none )
+
+        Pick 0 ->
+            ( { model | status = tag "pick zero" }, Cmd.none )
+
+        Pick n ->
+            ( { model | status = tag ("pick " ++ String.fromInt n) }, Cmd.none )
+
+        Named "admin" ->
+            ( { model | status = tag "named admin" }, Cmd.none )
+
+        Named "guest" ->
+            ( { model | status = "named guest" }, Cmd.none )
+
+        Named other ->
+            ( { model | status = tag ("named " ++ other) }, Cmd.none )
+
+        Pair ( 0, s ) ->
+            ( { model | status = tag ("pair zero " ++ s) }, Cmd.none )
+
+        Pair ( n, _ ) ->
+            ( { model | status = "pair " ++ String.fromInt n }, Cmd.none )
+
+        Take { id, label } ->
+            ( { model | status = tag ("take " ++ String.fromInt id ++ " " ++ label)
+              }
+            , Cmd.none
+            )
+
+        Wrap ((Just n) as whole) ->
+            ( { model | status =
+                  tag
+                      ("wrap " ++ String.fromInt n ++ " "
+                          ++ Maybe.withDefault
+                                 ""
+                                 (Maybe.map String.fromInt whole))
+              }
+            , Cmd.none
+            )
+
+        Wrap Nothing ->
+            ( { model | status = "wrap nothing" }, Cmd.none )
+
+        Any _ ->
+            ( { model | status = tag "any" }, logged "any" )
+
+        Reported _ ->
+            ( model, Cmd.none )
+
+
+press : String -> Msg -> Element Msg
+press label msg =
+    Ui.button [] { onPress = Just msg, label = Ui.text label }
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("STATUS=" ++ model.status ++ "|")
+        , press "c0" (Report (Ok "a"))
+        , press "c1" (Pick 0)
+        , press "c2" (Pick 7)
+        , press "c3" (Named "admin")
+        , press "c4" (Named "guest")
+        , press "c5" (Named "bob")
+        , press "c6" (Pair ( 0, "x" ))
+        , press "c7" (Take { id = 3, label = "l" })
+        , press "c8" (Wrap (Just 5))
+        , press "c9" (Any Nothing)
+        , press "c10" (Any (Just 1))
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withNotFound ())

@@ -3642,8 +3642,22 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse().ok())
         .unwrap_or(20260912);
+    // The entry is the one argument that is neither a flag nor a flag's value:
+    // `sky fuzz --target web:app src/Main.sky` must not read `web:app` as the
+    // entry file.
+    let mut positional: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--target" | "--iters" | "--seed" => {
+                it.next();
+            }
+            s if s.starts_with("--") => {}
+            s => positional.push(s.to_string()),
+        }
+    }
     let file = match resolve_entry_arg(
-        &args.iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>(),
+        &positional,
         "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]  (or run inside a Sky app project)",
     ) {
         Ok(f) => f,
