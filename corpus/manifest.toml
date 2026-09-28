@@ -4461,7 +4461,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "terminal" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "{"data":"aGk=","from":0,"next":2,"dropped":false}|{"code":0,"signal":null}|N|N"
+stdout     = "{"data":"aGk=","from":0,"next":2,"dropped":false}|{"code":0,"signal":null}|N/N"
 
 [[case]]
 id         = "stdlib_edge/empty-terminal"

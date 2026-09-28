@@ -3599,7 +3599,7 @@ fn terminal_battery(edge: &str) -> Vec<Check> {
             s(
                 &["Terminal.init", "Terminal.process", "Terminal.exitStatus"],
                 "termFresh",
-                "N|N",
+                "N/N",
             ),
         ],
         "empty" => vec![s(
@@ -5419,7 +5419,7 @@ termFresh =
                 Nothing ->
                     "N"
     in
-    p ++ "|" ++ e
+    p ++ "/" ++ e
 "#
         }
         "qr" => {
