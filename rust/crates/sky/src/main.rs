@@ -4739,6 +4739,9 @@ fn package_macos_release(
     }
 
     // The .dmg: the .app next to an /Applications link, for drag-to-install.
+    // Packaging a macOS app runs on macOS only; the guard keeps the compiler
+    // itself building for Windows.
+    #[cfg(unix)]
     let _ = std::os::unix::fs::symlink("/Applications", stage.join("dmg/Applications"));
     let dmg = stage.join(format!("{}.dmg", id.exe_name));
     let st = Command::new("hdiutil")
@@ -10717,6 +10720,8 @@ impl WatchOpts {
 /// Terminate a spawned child, honouring `--kill-timeout` (SIGTERM grace before
 /// SIGKILL on Unix). A `timeout_ms` of 0 kills immediately (session teardown).
 fn terminate_child(mut child: std::process::Child, timeout_ms: u64) {
+    #[cfg(not(unix))]
+    let _ = timeout_ms;
     #[cfg(unix)]
     if timeout_ms > 0 {
         // Ask the child to exit cleanly first (SIGTERM), then wait up to the
