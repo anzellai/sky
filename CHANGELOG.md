@@ -343,7 +343,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   stops the build with an error naming it; a changed module path, or a Go
   module whose exported API changed since its surface was generated, is a
   build warning; `sky doctor` warns about a missing directory and about one
-  outside the repository. The LSP loads a Sky path dependency's modules too.
+  outside the repository. The LSP loads a Sky path dependency's modules too,
+  and `sky watch` rebuilds when a path dependency's sources change.
   (`rust/crates/project/src/path_deps.rs`,
   `rust/crates/sky/tests/path_deps_flow.rs`.)
 

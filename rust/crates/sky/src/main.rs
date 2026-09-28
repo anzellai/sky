@@ -9556,6 +9556,20 @@ fn cmd_watch(args: &[String]) -> ExitCode {
     for extra in &opts.extra_watch {
         roots.push(extra.clone());
     }
+    // Local path dependencies (`sky add ./dir`) are sources of this build too:
+    // a Sky package's `.sky` files, and a Go module's `.go` / `go.mod`.
+    let mut go_dep_roots: Vec<PathBuf> = Vec::new();
+    for d in project::path_deps::read_path_dependencies(&project_dir.join("sky.toml")) {
+        let dir = d.resolve(&project_dir);
+        if !dir.is_dir() {
+            continue;
+        }
+        let dir = dir.canonicalize().unwrap_or(dir);
+        if d.kind == project::path_deps::PathDepKind::Go {
+            go_dep_roots.push(dir.clone());
+        }
+        roots.push(dir);
+    }
     roots.sort();
     roots.dedup();
 
@@ -9564,7 +9578,11 @@ fn cmd_watch(args: &[String]) -> ExitCode {
         let tx = tx.clone();
         move |res: notify::Result<notify::Event>| {
             if let Ok(event) = res {
-                if event.paths.iter().any(|p| is_watched_change(p)) {
+                if event
+                    .paths
+                    .iter()
+                    .any(|p| is_watched_change(p) || is_go_dep_change(p, &go_dep_roots))
+                {
                     let _ = tx.send(());
                 }
             }
@@ -9812,6 +9830,17 @@ fn is_watched_change(path: &Path) -> bool {
     let is_sky = path.extension().and_then(|e| e.to_str()) == Some("sky");
     let is_toml = path.file_name().and_then(|n| n.to_str()) == Some("sky.toml");
     is_sky || is_toml
+}
+
+/// A `.go` file or `go.mod` inside a local Go path dependency (`sky add
+/// ./dir`): `sky watch` rebuilds on it, because the build compiles that
+/// directory as it is.
+fn is_go_dep_change(path: &Path, go_dep_roots: &[PathBuf]) -> bool {
+    if !go_dep_roots.iter().any(|r| path.starts_with(r)) {
+        return false;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    (name.ends_with(".go") && !name.ends_with("_test.go")) || name == "go.mod"
 }
 
 // ---- FFI verbs (add / remove / install / update) -------------------------
@@ -12483,6 +12512,20 @@ mod tests {
         assert!(!is_watched_change(Path::new("README.md")));
         assert!(!is_watched_change(Path::new("Cargo.toml")));
         assert!(!is_watched_change(Path::new("src/data.json")));
+    }
+
+    #[test]
+    fn go_path_dependency_sources_trigger_a_rebuild() {
+        let roots = vec![PathBuf::from("/w/greet")];
+        assert!(is_go_dep_change(Path::new("/w/greet/greet.go"), &roots));
+        assert!(is_go_dep_change(Path::new("/w/greet/sub/x.go"), &roots));
+        assert!(is_go_dep_change(Path::new("/w/greet/go.mod"), &roots));
+        assert!(!is_go_dep_change(
+            Path::new("/w/greet/greet_test.go"),
+            &roots
+        ));
+        assert!(!is_go_dep_change(Path::new("/w/greet/README.md"), &roots));
+        assert!(!is_go_dep_change(Path::new("/w/other/x.go"), &roots));
     }
 
     #[test]

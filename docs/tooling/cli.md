@@ -1123,7 +1123,8 @@ sky add ./libs/widgets  # has sky.toml or .sky sources → [dependencies] "widge
   are resolved against it at build time. An absolute argument is stored as
   given.
 - **Edits are picked up.** A changed function body is compiled by the next
-  build. A new or changed exported Go function is not callable until
+  build, and `sky watch` rebuilds when a path dependency's `.sky`, `.go` or
+  `go.mod` files change. A new or changed exported Go function is not callable until
   `sky install` re-inspects the module; until then the build warns that the
   module's exported API changed.
 - **Drift is reported.** A declared directory that no longer exists stops the
