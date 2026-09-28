@@ -478,8 +478,11 @@ Deterministic pipeline (all in the `project` + `ffi` crates):
   a present surface that no longer matches a fresh inspection (toolchain or
   dep-version moved on) is **refreshed** in place, not a hard error — `sky-ffi/`
   is a gitignored build artifact, not a committed reproducibility anchor, so
-  there is no committed byte-image to gate against. Unchanged surfaces are left
-  untouched. This is the fresh-clone / CI entry point (`sky build` then finds the
+  there is no committed byte-image to gate against. The comparison covers all
+  three files, not only `kernel.json`, and each file carries the generator's
+  surface format (`ffi::gen::SURFACE_FORMAT`): a surface with another stamp is
+  refreshed, and the build (which never runs the inspector) warns about it.
+  Unchanged surfaces are left untouched. This is the fresh-clone / CI entry point (`sky build` then finds the
   surface already present). *(The historical byte-diff-and-error behaviour only
   made sense when the surface was committed; §C.1's gitignore decision retired
   it.)*

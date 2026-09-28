@@ -119,7 +119,16 @@ expect_class "/usr/sbin/mDNSResponder" none
 # that would take the whole watchdog down, turning a missing reading into no
 # guard at all.
 stub="$(mktemp -d)"
-trap 'rm -rf "$stub"' EXIT
+guard_pid=""
+# Remove the stub and stop the watchdog this script starts below, on every
+# exit path, by its PID.
+cleanup() {
+    [[ -n "$guard_pid" ]] && kill -TERM "$guard_pid" 2>/dev/null
+    rm -rf "$stub"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 printf '#!/bin/sh\nexit 1\n' > "$stub/sysctl"
 chmod +x "$stub/sysctl"
 

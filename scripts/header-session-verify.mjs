@@ -30,6 +30,7 @@
 // Usage: node scripts/header-session-verify.mjs <app-binary> --port N [--cwd DIR]
 import pw from "playwright";
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -64,7 +65,7 @@ const env = {
   SKY_CSP: "strict",
 };
 delete env.SKY_LIVE_SESSION_TRANSPORT;
-const proc = spawn(APP, [], { cwd: CWD, env });
+const proc = guardChild(spawn(APP, [], { cwd: CWD, env }));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));

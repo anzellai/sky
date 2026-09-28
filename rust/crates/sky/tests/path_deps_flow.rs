@@ -175,6 +175,118 @@ fn go_module_path_dependency_add_build_edit_install_remove() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The Go toolchain's own language version (`go1.26.1` → `1.26.1`).
+fn toolchain_go_version() -> String {
+    let out = Command::new("go")
+        .args(["env", "GOVERSION"])
+        .output()
+        .expect("go env GOVERSION");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .trim_start_matches("go")
+        .to_string()
+}
+
+/// The shape a downstream project hit: a FRESH `sky init` project (no
+/// `sky-ffi/`, no other dependency) adding a local module that sits inside the
+/// project and declares the toolchain's own `go` line, newer than the
+/// generated go.mod's `go 1.25.0`. `require` + `replace` alone left Go
+/// refusing to load it ("updates to go.mod needed"), the inspector wrote
+/// `"functions": null`, and `sky add` reported a serde position instead of the
+/// cause while keeping the sky.toml entry. A second module carries a
+/// requirement of its own, the other way the wiring was not loadable.
+#[test]
+fn a_fresh_project_adds_a_local_module_with_a_newer_go_line() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let base = scratch("fresh");
+    let (ok, log) = run(&base, SKY, &["init", "app"]);
+    assert!(ok, "sky init:\n{log}");
+    let app = base.join("app");
+    assert!(!app.join("sky-ffi").exists());
+    let go_line = toolchain_go_version();
+    write(
+        &app.join("hello/go.mod"),
+        &format!("module example.local/hello\n\ngo {go_line}\n"),
+    );
+    write(
+        &app.join("hello/hello.go"),
+        "package hello\n\nfunc Greet(name string) string { return \"hello \" + name }\n",
+    );
+    // A requirement already in the runtime's module graph, so the test needs
+    // no network.
+    write(
+        &app.join("ids/go.mod"),
+        &format!(
+            "module example.local/ids\n\ngo {go_line}\n\nrequire github.com/google/uuid v1.6.0\n"
+        ),
+    );
+    write(
+        &app.join("ids/ids.go"),
+        "package ids\n\nimport \"github.com/google/uuid\"\n\n\
+func Zero() string { return uuid.Nil.String() }\n",
+    );
+
+    let (ok, log) = run(&app, SKY, &["add", "./hello"]);
+    assert!(ok, "sky add ./hello:\n{log}");
+    assert!(app.join("sky-ffi/hello.kernel.json").is_file(), "{log}");
+    let (ok, log) = run(&app, SKY, &["add", "./ids"]);
+    assert!(ok, "sky add ./ids:\n{log}");
+    assert!(app.join("sky-ffi/ids.kernel.json").is_file(), "{log}");
+    let toml = std::fs::read_to_string(app.join("sky.toml")).unwrap();
+    assert!(
+        toml.contains("\"example.local/hello\" = { path = \"./hello\" }")
+            && toml.contains("\"example.local/ids\" = { path = \"./ids\" }"),
+        "{toml}"
+    );
+
+    write(
+        &app.join("src/Main.sky"),
+        "module Main exposing (main)\n\n\
+import Example.Local.Hello as Hello\n\
+import Example.Local.Ids as Ids\n\
+import Sky.Core.Prelude exposing (..)\n\
+import Sky.Core.Result as Result\n\
+import Std.Log exposing (println)\n\n\n\
+main =\n    println ((Hello.greet \"sky\" |> Result.withDefault \"err\") ++ \" \" ++ (Ids.zero () |> Result.withDefault \"err\"))\n",
+    );
+    let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
+    assert!(ok, "build:\n{log}");
+    let (ok, out) = run(&app, app.join("sky-out/app").to_str().unwrap(), &[]);
+    assert!(
+        ok && out.contains("hello sky 00000000-0000-0000-0000-000000000000"),
+        "{out}"
+    );
+
+    // A module Go cannot load: `sky add` names Go's error and records nothing.
+    write(
+        &app.join("broken/go.mod"),
+        "module example.local/broken\n\ngo 1.22\n",
+    );
+    write(
+        &app.join("broken/broken.go"),
+        "package broken\n\nfunc F() string { return undefinedName }\n",
+    );
+    let before = std::fs::read_to_string(app.join("sky.toml")).unwrap();
+    let (ok, log) = run(&app, SKY, &["add", "./broken"]);
+    assert!(!ok, "{log}");
+    assert!(
+        log.contains("undefinedName"),
+        "the Go error is surfaced:\n{log}"
+    );
+    assert!(!log.contains("expected a sequence"), "{log}");
+    assert_eq!(
+        std::fs::read_to_string(app.join("sky.toml")).unwrap(),
+        before,
+        "a failed add leaves sky.toml as it was"
+    );
+    let go_mod = std::fs::read_to_string(app.join("sky-out/go.mod")).unwrap();
+    assert!(!go_mod.contains("example.local/broken"), "{go_mod}");
+    assert!(!app.join("sky-ffi/broken.kernel.json").exists());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn sky_package_path_dependency_resolves_against_the_project_root() {
     if !required(Need::Go, have_go()) {

@@ -8206,6 +8206,20 @@ main =
 
 // ---- doc -----------------------------------------------------------------
 
+/// One line naming the stdlib `sky doc` reads: inside the Sky repository it is
+/// the working-tree `sky-stdlib/` (so it shows unreleased edits), elsewhere the
+/// copy embedded in this `sky` binary.
+fn doc_stdlib_source_line(cwd: &Path, repo_root: &Path) -> String {
+    if project::repo_root_for(cwd).is_some() {
+        format!(
+            "stdlib: working tree ({})",
+            repo_root.join("sky-stdlib").display()
+        )
+    } else {
+        "stdlib: embedded in this sky binary".to_string()
+    }
+}
+
 /// `sky doc <Module>` — terminal docs for one module (exported bindings + type
 /// signatures + `-- |` summaries). `--list` enumerates every module.
 /// `--serve` / `--tui` are deferred (they spawn a bundled Sky app the bring-up
@@ -8284,6 +8298,7 @@ fn cmd_doc(args: &[String]) -> ExitCode {
             "Exported Sky doc-site to {dir}/ (landing + reference + m/*.html + {} guide page(s) + {lessons}-lesson tour)",
             guides.saturating_sub(1)
         );
+        println!("{}", doc_stdlib_source_line(&cwd, &repo_root));
         return ExitCode::SUCCESS;
     }
     let list = args.iter().any(|a| a == "--list");
@@ -8309,6 +8324,7 @@ fn cmd_doc(args: &[String]) -> ExitCode {
     }
 
     if list {
+        println!("{}", doc_stdlib_source_line(&cwd, &repo_root));
         println!("{}", project::list_modules(&repo_root, &project_dir));
         return ExitCode::SUCCESS;
     }
@@ -8318,6 +8334,7 @@ fn cmd_doc(args: &[String]) -> ExitCode {
     };
     match project::render_module(&repo_root, &project_dir, &module) {
         Ok(page) => {
+            println!("{}", doc_stdlib_source_line(&cwd, &repo_root));
             print!("{page}");
             ExitCode::SUCCESS
         }
@@ -8996,6 +9013,7 @@ fn cmd_doc_serve(port: u16) -> ExitCode {
         "sky doc: serving {} on http://127.0.0.1:{port} (Ctrl-C to stop)",
         doc_out.display()
     );
+    println!("sky doc: {}", doc_stdlib_source_line(&cwd, &repo_root));
     spawn_foreground(
         &out_dir,
         &[
@@ -9040,6 +9058,7 @@ fn cmd_doc_tui() -> ExitCode {
         }
     };
 
+    println!("sky doc: {}", doc_stdlib_source_line(&cwd, &repo_root));
     println!("sky doc: starting terminal browser (Ctrl-C to exit)...");
     spawn_foreground(
         &out_dir,

@@ -137,7 +137,41 @@ pub fn normalize(info: &mut PackageInfo) {
 
 /// Parse inspector stdout (single-object OR one element of the multi array).
 pub fn parse_one(json: &str) -> Result<PackageInfo, String> {
-    serde_json::from_str::<PackageInfo>(json).map_err(|e| format!("inspector JSON parse: {e}"))
+    serde_json::from_str::<PackageInfo>(json)
+        .map_err(|e| with_reported_errors(format!("inspector JSON parse: {e}"), json))
+}
+
+/// A report that does not match the model still names the REAL failure when it
+/// carries one: the inspector's own `errors` (a Go load error such as "updates
+/// to go.mod needed") is what the user needs, not the serde position of the
+/// field that tripped the parse. Collects every `errors` string from a single
+/// object or from each element of an array.
+fn with_reported_errors(parse_err: String, json: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return parse_err;
+    };
+    let objs: Vec<&serde_json::Value> = match &v {
+        serde_json::Value::Array(xs) => xs.iter().collect(),
+        other => vec![other],
+    };
+    let mut reported: Vec<String> = Vec::new();
+    for o in objs {
+        let pkg = o.get("pkg").and_then(|p| p.as_str()).unwrap_or("");
+        if let Some(errs) = o.get("errors").and_then(|e| e.as_array()) {
+            for e in errs.iter().filter_map(|e| e.as_str()) {
+                reported.push(if pkg.is_empty() {
+                    e.to_string()
+                } else {
+                    format!("{pkg}: {e}")
+                });
+            }
+        }
+    }
+    if reported.is_empty() {
+        parse_err
+    } else {
+        format!("inspector error: {}\n({parse_err})", reported.join("; "))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -302,8 +336,9 @@ fn run_inspector_on(
     let mut infos: Vec<PackageInfo> = if pkgs.len() == 1 {
         vec![parse_one(&stdout)?]
     } else {
-        serde_json::from_str::<Vec<PackageInfo>>(&stdout)
-            .map_err(|e| format!("inspector JSON array parse: {e}"))?
+        serde_json::from_str::<Vec<PackageInfo>>(&stdout).map_err(|e| {
+            with_reported_errors(format!("inspector JSON array parse: {e}"), &stdout)
+        })?
     };
     // Surface any inspector-reported per-package error.
     for info in &infos {
@@ -556,6 +591,30 @@ mod tests {
         assert_eq!(info.name, "uuid");
         assert!(info.functions.iter().any(|f| f.name == "NewString"));
         assert!(!info.implements.is_empty());
+    }
+
+    /// The shape an older inspector wrote for a package Go could not load: a
+    /// `null` list next to the real cause. The message must name the cause,
+    /// not only the serde position of the `null`.
+    #[test]
+    fn an_unparsable_report_still_names_the_inspector_errors() {
+        let json = r#"{
+  "pkg": "example.local/hello",
+  "name": "",
+  "functions": null,
+  "errors": ["load: go: updates to go.mod needed; to update it: go mod tidy"]
+}"#;
+        let e = parse_one(json).unwrap_err();
+        assert!(
+            e.contains("example.local/hello: load: go: updates to go.mod needed"),
+            "{e}"
+        );
+        assert!(e.contains("inspector JSON parse"), "{e}");
+        let arr = format!("[{json}]");
+        let e = with_reported_errors("array parse".into(), &arr);
+        assert!(e.contains("updates to go.mod needed"), "{e}");
+        // Nothing reported: the parse error alone.
+        assert_eq!(with_reported_errors("p".into(), "{}"), "p");
     }
 
     #[test]

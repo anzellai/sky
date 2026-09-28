@@ -42,6 +42,7 @@
 //          --mode canvas-live|canvas-spa|terminal [--cwd DIR]
 import pw from "playwright";
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { dirname } from "node:path";
 
 const { chromium } = pw;
@@ -68,7 +69,7 @@ try {
 } catch (_) {}
 
 const env = { ...process.env, PORT: String(PORT), SKY_LIVE_PORT: String(PORT), ENV: "development", SKY_CSP: "strict" };
-const proc = spawn(APP, [], { cwd: CWD, env });
+const proc = guardChild(spawn(APP, [], { cwd: CWD, env }));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));

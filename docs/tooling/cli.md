@@ -441,6 +441,14 @@ Sky.Http.Server bundle; `--tui` runs the Sky.Tui bundle. Both
 consume the same on-disk catalogue rendered to `.skycache/doc-out/`
 under the project root.
 
+**Which stdlib.** Inside the Sky repository (a directory with `sky-stdlib/`
+and `runtime-go/` above the working directory) `sky doc` reads the
+working-tree `sky-stdlib/`, so it shows edits that are not released yet.
+Anywhere else it reads the stdlib embedded in the `sky` binary. The first line
+of the output names the source: `stdlib: working tree (<repo>/sky-stdlib)` or
+`stdlib: embedded in this sky binary`. A record type alias is printed with its
+fields (`type alias Chunk = { data : String , … }`).
+
 The HTTP server (default `:8080`) renders:
 
 * **Per-module pages** with HM signatures, Markdown-rendered doc
@@ -673,7 +681,9 @@ Output lines: `  ok: <name>`, `  FAIL build: …`, `  FAIL go-build: …`,
 
 ### `sky test <file>`
 
-Run a Sky test module. See [`testing.md`](testing.md). `--format json` prints
+Run a Sky test module. Only that suite and the project modules it imports
+are built, so a type error in another suite under `tests/` does not stop it
+(`sky verify` runs every suite). See [`testing.md`](testing.md). `--format json` prints
 one `test` line per case and a summary with the case counts (see
 [Machine-readable output](#machine-readable-output---format-json)). A project with a
 `.env.test` file runs in **test mode**: outbound HTTP is mocked from
@@ -1154,8 +1164,11 @@ sky add ./libs/widgets  # has sky.toml or .sky sources → [dependencies] "widge
   under its module path; the build adds `require <module> v0.0.0` and
   `replace <module> => <absolute dir>` to the generated `go.mod` on **every**
   build (the build rewrites `go.mod` each time, so the wiring is re-applied
-  from `sky.toml`, never lost), and `sky add` inspects it for its FFI surface
-  like any Go dependency. Its functions return `Result Error a`. A `sky.toml` or
+  from `sky.toml`, never lost), then runs `go get <module>@v0.0.0` so the
+  module's own `go` line and requirements reach the generated `go.mod` and
+  `go.sum`. `sky add` inspects it for its FFI surface like any Go dependency,
+  and records it in `sky.toml` only when that succeeds: a module Go cannot
+  load leaves `sky.toml` unchanged and the error names Go's own message. Its functions return `Result Error a`. A `sky.toml` or
   `.sky` sources make it a Sky package, recorded under its `name` (else the
   directory name); every build loads its modules from its source root. A
   directory that is both is a Sky package; `--go` / `--sky` force the kind.
@@ -1193,8 +1206,11 @@ Regenerates the FFI surface from the declared dependencies. For each
 gitignored build artifact (not a committed reproducibility anchor), a present
 surface that no longer matches a fresh inspection — e.g. after a toolchain or
 dependency-version change — is simply **refreshed** in place (reported as
-`refreshed`), never a hard failure. Unchanged surfaces are left untouched
-(`verified`). For each `[dependencies]` entry it clones any Sky package that is
+`refreshed`), never a hard failure. All three files (`.kernel.json`, `.skyi`,
+`go/*_bindings.go`) are compared, and each carries a surface-format stamp: a
+surface written by a sky with another format (or none) is refreshed and named
+as such, and `sky build` warns about it until `sky install` runs. Unchanged
+surfaces are left untouched (`verified`). For each `[dependencies]` entry it clones any Sky package that is
 absent or whose pinned ref drifted. Idempotent.
 
 ### `sky update`

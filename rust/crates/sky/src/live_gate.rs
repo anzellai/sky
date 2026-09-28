@@ -76,6 +76,8 @@ pub enum Need {
     /// The Android SDK (build-tools + a platform) and a JDK, for the flow
     /// tests that build the Android shell.
     AndroidSdk,
+    /// Node.js, for the tests that run a `scripts/*.mjs` helper.
+    Node,
 }
 
 impl Need {
@@ -102,6 +104,9 @@ impl Need {
                  `sdkmanager \"build-tools;35.0.0\" \"platforms;android-35\"`), set ANDROID_HOME, \
                  and install a JDK (javac, keytool)"
             }
+            Need::Node => {
+                "install Node.js 20+ (the e2e harnesses under scripts/ are Node programs)"
+            }
         }
     }
 
@@ -113,6 +118,7 @@ impl Need {
             Need::Network => "network",
             Need::Xcode => "Xcode with the iOS SDKs",
             Need::AndroidSdk => "the Android SDK and a JDK",
+            Need::Node => "Node.js",
         }
     }
 }

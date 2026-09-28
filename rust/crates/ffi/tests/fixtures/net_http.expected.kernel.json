@@ -2,6 +2,7 @@
   "moduleName": "Net.Http",
   "kernelName": "Go_Http",
   "package": "net/http",
+  "surfaceFormat": 2,
   "functions": [
     {"name": "allowQuerySemicolons", "arity": 1, "skyType": "Handler@net/http -> Result Error Handler@net/http"},
     {"name": "canonicalHeaderKey", "arity": 1, "skyType": "String -> Result Error String"},

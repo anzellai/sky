@@ -30,6 +30,7 @@
 
 import { chromium } from "playwright";
 import { spawn, spawnSync } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,11 +56,11 @@ if (!existsSync(APP_BIN)) {
 }
 
 console.log("[probe] starting one-off Sky.Live boot for liveJS extraction…");
-const app = spawn(APP_BIN, [], {
+const app = guardChild(spawn(APP_BIN, [], {
   env: { ...process.env, SKY_LIVE_PORT: String(PORT) },
   cwd: EXAMPLE_DIR,
   stdio: ["ignore", "pipe", "pipe"],
-});
+}));
 app.stderr.on("data", (chunk) => process.stderr.write(`[app stderr] ${chunk}`));
 
 // Wait for boot. The Sky.Live banner logs to stdout on listen.

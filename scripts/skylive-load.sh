@@ -103,7 +103,9 @@ fi
 # Sky.Live server holds a port and its memory for the whole session.
 # ---------------------------------------------------------------------
 APP_LOG="$OUTDIR/app.log"
-( cd "$ROOT/$APP" && SKY_LIVE_PORT="$PORT" ./sky-out/app >| "$APP_LOG" 2>&1 ) &
+# `exec`: $! is the app itself, not a subshell around it, so the trap's kill
+# reaches the server.
+( cd "$ROOT/$APP" && SKY_LIVE_PORT="$PORT" exec ./sky-out/app >| "$APP_LOG" 2>&1 ) &
 APP_PID=$!
 cleanup() {
   [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null || true

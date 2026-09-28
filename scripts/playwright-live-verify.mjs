@@ -21,6 +21,7 @@
 
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,11 +140,11 @@ async function bootApp(appDir, port) {
     if (!existsSync(appPath)) {
         throw new Error(`No app binary at ${appPath}`);
     }
-    const proc = spawn(appPath, [], {
+    const proc = guardChild(spawn(appPath, [], {
         cwd: appDir,
         env: { ...process.env, SKY_LIVE_PORT: String(port), PORT: String(port) },
         stdio: ["ignore", "pipe", "pipe"],
-    });
+    }));
     let stderr = "";
     let stdout = "";
     proc.stdout.on("data", (b) => { stdout += b.toString(); });

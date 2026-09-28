@@ -87,7 +87,52 @@ fn doc_module_prints_signatures() {
         stdout.contains("filter :"),
         "doc output missing `filter` signature:\n{stdout}"
     );
+    // Outside the Sky repository the stdlib is the embedded copy, and the
+    // header says so.
+    assert_eq!(
+        stdout.lines().next(),
+        Some("stdlib: embedded in this sky binary"),
+        "{stdout}"
+    );
+
+    // A record type alias is printed with its fields, not as a bare name.
+    let out = Command::new(SKY)
+        .args(["doc", "Sky.Core.Process"])
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("type alias Chunk = { data : String , from : Int , next : Int"),
+        "record alias fields missing:\n{stdout}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Inside the Sky repository `sky doc` reads the working-tree stdlib (so it
+/// shows unreleased edits) and names it.
+#[test]
+fn doc_in_the_repository_names_the_working_tree_stdlib() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("repo root")
+        .to_path_buf();
+    let out = Command::new(SKY)
+        .args(["doc", "--list"])
+        .current_dir(&repo)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc --list");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    let first = stdout.lines().next().unwrap_or("");
+    assert!(
+        first.starts_with("stdlib: working tree (") && first.ends_with("sky-stdlib)"),
+        "{stdout}"
+    );
 }
 
 /// Minimal HTTP/1.0 GET over a raw TcpStream (avoids a curl / reqwest

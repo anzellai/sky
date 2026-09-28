@@ -19,6 +19,7 @@
 import pw from "playwright";
 const { chromium } = pw;
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { dirname, join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,11 +46,11 @@ try {
   process.exit(1);
 } catch (_) {}
 
-const proc = spawn(BACKEND, [], {
+const proc = guardChild(spawn(BACKEND, [], {
   cwd: dirname(dirname(BACKEND)),
   // ENV=development: the dev Console badge is on, as a developer sees the app.
   env: { ...process.env, PORT: String(PORT), SKY_DB_PATH: DB, ENV: "development" },
-});
+}));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));

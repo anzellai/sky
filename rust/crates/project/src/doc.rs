@@ -669,6 +669,29 @@ fn variant_text(v: &syntax::ast::UnionVariant) -> String {
         .join(" ")
 }
 
+/// `type alias Name params = <type>` on one line, with the body: a record alias
+/// shows its fields (`sky doc` used to print a bare `type alias Chunk`). Line
+/// comments inside the declaration are dropped, whitespace is collapsed.
+fn alias_signature(d: &syntax::ast::AliasDecl) -> String {
+    let text = d.syntax().text().to_string();
+    let code: Vec<&str> = text
+        .lines()
+        .map(|l| match l.find("--") {
+            Some(i) => &l[..i],
+            None => l,
+        })
+        .collect();
+    let sig = normalize_ws(&code.join(" "));
+    if sig.starts_with("type alias ") {
+        sig
+    } else {
+        // Leading trivia outside the declaration keyword: fall back to the name.
+        d.name()
+            .map(|n| format!("type alias {}", n.text()))
+            .unwrap_or_default()
+    }
+}
+
 fn render_source(src: &str) -> String {
     let parse = syntax::parse(src, FileId(0));
     let tree = parse.tree();
@@ -704,8 +727,8 @@ fn render_source(src: &str) -> String {
                 }
             }
             Decl::Alias(d) => {
-                if let Some(name) = d.name() {
-                    types.push(format!("type alias {}", name.text()));
+                if d.name().is_some() {
+                    types.push(alias_signature(&d));
                 }
             }
             Decl::Union(d) => {
@@ -842,7 +865,7 @@ fn module_symbols_with(src: &str, apply_exposing: bool) -> Vec<DocSym> {
             Decl::Alias(d) => {
                 if let Some(name) = d.name() {
                     let n = name.text().to_string();
-                    sigs.insert(n.clone(), format!("type alias {}", name.text()));
+                    sigs.insert(n.clone(), alias_signature(&d));
                     note(n, &mut order, &mut seen);
                 }
             }
@@ -1169,6 +1192,33 @@ mod tests {
         assert!(
             page.contains("type Color = Red | Green"),
             "union missing:\n{page}"
+        );
+    }
+
+    /// A record alias is printed with its fields (text, HTML and the
+    /// symbols manifest share this rendering). It used to print a bare
+    /// `type alias Chunk`.
+    #[test]
+    fn record_alias_renders_its_fields() {
+        let src = "module M exposing (Chunk, Pair)\n\n\
+                   -- | Output read from one stream.\n\
+                   type alias Chunk =\n    { data : String -- the bytes\n    , next : Int\n    }\n\n\
+                   type alias Pair a =\n    ( a, a )\n";
+        let page = render_source(src);
+        assert!(
+            page.contains("type alias Chunk = { data : String , next : Int }"),
+            "page:\n{page}"
+        );
+        assert!(
+            page.contains("type alias Pair a = ( a, a )"),
+            "page:\n{page}"
+        );
+        assert!(!page.contains("the bytes\n"), "a field comment is dropped");
+        let syms = module_symbols(src);
+        let chunk = syms.iter().find(|s| s.name == "Chunk").unwrap();
+        assert_eq!(
+            chunk.signature,
+            "type alias Chunk = { data : String , next : Int }"
         );
     }
 

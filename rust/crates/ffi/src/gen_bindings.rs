@@ -1352,6 +1352,7 @@ pub(crate) fn emit_go_file(kernel_name: &str, info: &PackageInfo) -> String {
         info.pkg
     ));
     lines.push(format!("// Re-run `sky add {}` to regenerate.", info.pkg));
+    lines.push(format!("// {}", crate::gen::surface_format_line()));
     lines.push("//".to_string());
     lines.push(
         "// Wrapper functions are in `package skyffi` (a dot-import of base `rt`) with names <Kernel>_<lowerFn>.".to_string(),

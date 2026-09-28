@@ -54,6 +54,8 @@ rm -f server/app.db server/app.db-* server/todos.db server/todos.db-* 2>/dev/nul
 ( cd server && ./sky-out/app ) >/tmp/spa-todos-server-$TODOS_PORT.log 2>&1 &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+trap 'kill "$SERVER_PID" 2>/dev/null; exit 130' INT
+trap 'kill "$SERVER_PID" 2>/dev/null; exit 143' TERM
 sleep 2
 
 echo "==> backend answers the shared-codec JSON (empty list to start):"

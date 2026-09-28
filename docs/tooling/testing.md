@@ -61,6 +61,10 @@ sky test tests/MyTest.sky
 cd tests && sky test Core/CoreTest.sky
 ```
 
+`sky test <file>` builds that suite and the project modules it imports, and
+nothing else: a type error in another suite under `tests/`, or in an app module
+the suite does not import, does not stop it. `sky verify` runs every suite.
+
 Exit code:
 
 - `0` — every test passed.

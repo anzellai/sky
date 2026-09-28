@@ -49,6 +49,7 @@
 // Exits 0 on success, non-zero on the first failed scenario.
 
 import { spawn, spawnSync } from 'child_process';
+import { guardChild } from "./lib/child-guard.mjs";
 import { chromium } from 'playwright';
 import { mkdirSync, existsSync, createWriteStream, readFileSync, readdirSync, statSync, rmSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -197,10 +198,10 @@ function bootServer(port, extraEnv, tag) {
     killPort(port);
     const logPath = path.join(ARTEFACT_DIR, `server-${tag}.log`);
     const logFh = createWriteStream(logPath);
-    const child = spawn(FIXTURE_BIN, [], {
+    const child = guardChild(spawn(FIXTURE_BIN, [], {
         cwd: FIXTURE_DIR,
         env: { ...process.env, SKY_LIVE_PORT: String(port), PORT: String(port), ...extraEnv },
-    });
+    }));
     child.stdout.pipe(logFh);
     child.stderr.pipe(logFh);
     return {

@@ -40,6 +40,7 @@
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
 import pw from "playwright";
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -59,10 +60,10 @@ const PORT = Number(arg("--port", "9240"));
 const BASE = `http://127.0.0.1:${PORT}`;
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const proc = spawn(APP, [], {
+const proc = guardChild(spawn(APP, [], {
   cwd: dirname(dirname(APP)),
   env: { ...process.env, SKY_LIVE_PORT: String(PORT), PORT: String(PORT), SKY_LIVE_STORE: "memory" },
-});
+}));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));
@@ -479,7 +480,7 @@ async function runRestart(browser) {
   let app = null;
   let restartLog = "";
   const start = async () => {
-    app = spawn(APP, [], { cwd: dirname(dirname(APP)), env });
+    app = guardChild(spawn(APP, [], { cwd: dirname(dirname(APP)), env }));
     app.stdout.on("data", (d) => (restartLog += d));
     app.stderr.on("data", (d) => (restartLog += d));
     for (let i = 0; i < 100; i++) {

@@ -23,6 +23,7 @@
 import pw from "playwright";
 const { chromium } = pw;
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { dirname } from "node:path";
 
 function arg(name, def) {
@@ -45,10 +46,10 @@ try {
   process.exit(1);
 } catch (_) {}
 
-const proc = spawn(BACKEND, [], {
+const proc = guardChild(spawn(BACKEND, [], {
   cwd: dirname(dirname(BACKEND)), // the backend dir: data/ and ../frontend/dist resolve from it
   env: { ...process.env, PORT: String(PORT) },
-});
+}));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));

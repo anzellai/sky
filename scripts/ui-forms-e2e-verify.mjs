@@ -21,6 +21,7 @@
 import pw from "playwright";
 const { chromium } = pw;
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { dirname } from "node:path";
 
 function arg(name, def) {
@@ -37,7 +38,7 @@ const PORT = Number(arg("--port", "9260"));
 const APP_DIR = dirname(dirname(APP));
 
 const env = { ...process.env, PORT: String(PORT), SKY_LIVE_PORT: String(PORT) };
-const proc = spawn(APP, [], { cwd: APP_DIR, env });
+const proc = guardChild(spawn(APP, [], { cwd: APP_DIR, env }));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));

@@ -267,3 +267,92 @@ fn build_failure_exits_2_not_1() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `sky test <file>` builds the named suite and the modules it imports, never
+/// every suite under `tests/`. A downstream project ran `sky test
+/// tests/GoodTest.sky` and got `BadTest`'s type error and exit 2, because the
+/// whole `tests/` tree was type-checked with the suite.
+#[test]
+fn a_named_suite_is_built_without_the_other_suites() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let (dir, _) = project("scoped", "tests/GoodTest.sky", "GoodTest");
+    let tests = dir.join("tests");
+    // GoodTest imports a helper under tests/: the imports ARE built.
+    std::fs::write(
+        tests.join("Helpers.sky"),
+        "module Helpers exposing (three)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\n\n\
+         three : Int\n\
+         three =\n    3\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("GoodTest.sky"),
+        "module GoodTest exposing (tests)\n\n\
+         import Helpers exposing (three)\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Test as Test exposing (Test)\n\n\n\
+         tests : List Test\n\
+         tests =\n    \
+         [ Test.test \"passes\" (\\_ -> Test.equal 3 three)\n    \
+         , Test.test \"fails\" (\\_ -> Test.equal 2 three)\n    \
+         ]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("BadTest.sky"),
+        "module BadTest exposing (tests)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Test as Test exposing (Test)\n\n\n\
+         tests : List Test\n\
+         tests =\n    \
+         [ Test.test \"bad\" (\\_ -> Test.equal 2 \"x\") ]\n",
+    )
+    .unwrap();
+
+    let (code, out, report) = run_test(&dir, Path::new("tests/GoodTest.sky"));
+    assert_eq!(code, 1, "one failing case → exit 1:\n{out}");
+    assert!(
+        !out.contains("BadTest"),
+        "another suite is not built:\n{out}"
+    );
+    assert!(out.contains("1 passed, 1 failed"), "{out}");
+    assert!(report.is_some(), "the suite ran:\n{out}");
+
+    // The same suite through `--format json`: its cases and exit code 1.
+    let json = Command::new(SKY)
+        .args(["test", "--format", "json", "tests/GoodTest.sky"])
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky test --format json");
+    assert_eq!(json.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&json.stdout);
+    let summary: serde_json::Value =
+        serde_json::from_str(stdout.lines().last().unwrap_or("{}")).unwrap();
+    assert_eq!(summary["kind"], "summary", "{stdout}");
+    assert_eq!(summary["passed"], 1, "{stdout}");
+    assert_eq!(summary["failed"], 1, "{stdout}");
+    assert_eq!(summary["errors"], 0, "{stdout}");
+    assert!(!stdout.contains("BadTest"), "{stdout}");
+
+    // The broken suite itself still fails to build: exit 2.
+    let _ = std::fs::remove_file(dir.join("report.json"));
+    let (code, out, report) = run_test(&dir, Path::new("tests/BadTest.sky"));
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("type mismatch"), "{out}");
+    assert!(report.is_none());
+
+    // `sky test` with no file names the usage and runs nothing: exit 2.
+    let bare = Command::new(SKY)
+        .arg("test")
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky test");
+    assert_eq!(bare.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&bare.stderr).contains("usage: sky test"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

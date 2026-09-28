@@ -20,6 +20,7 @@
 
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
+import { guardChild } from "./lib/child-guard.mjs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,11 +76,11 @@ mkdirSync(SNAP_DIR, { recursive: true });
 mkdirSync(DIFF_DIR, { recursive: true });
 
 let serverLog = "";
-const child = spawn(BIN, [], {
+const child = guardChild(spawn(BIN, [], {
     cwd: APP_DIR,
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, SKY_LIVE_PORT: String(PORT), SKY_DEV_BANNER: "off" },
-});
+}));
 child.stdout.on("data", (d) => { serverLog += d.toString(); });
 child.stderr.on("data", (d) => { serverLog += d.toString(); });
 

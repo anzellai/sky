@@ -171,6 +171,17 @@ GENFLAGS=( -remote-load )
 # run measures throughput only, and the memory question -- the one the
 # sizing table actually got wrong -- goes unanswered again.
 OBS_PID=""
+# The RSS observer runs in the background; stop it on every exit path (a
+# refused target, a failed level, Ctrl-C), by its exact PID.
+stop_observer() {
+    if [ -n "$OBS_PID" ]; then
+        kill "$OBS_PID" 2>/dev/null || true
+        wait "$OBS_PID" 2>/dev/null || true
+    fi
+}
+trap stop_observer EXIT
+trap 'stop_observer; exit 130' INT
+trap 'stop_observer; exit 143' TERM
 if [ -n "$PROJECT" ] && [ -n "$INSTANCE" ]; then
     NLEVELS="$(printf '%s\n' $CONCURRENCY | wc -l | tr -d ' ')"
     # Cover the whole sweep: every level, every repeat, plus ramp and slack.
@@ -229,6 +240,7 @@ done
 if [ -n "$OBS_PID" ]; then
     echo "==> waiting for the RSS observer to finish its window"
     wait "$OBS_PID" 2>/dev/null || true
+    OBS_PID=""
     echo
     [ -f "$OUTDIR/observer/summary.txt" ] && command cat "$OUTDIR/observer/summary.txt"
 fi

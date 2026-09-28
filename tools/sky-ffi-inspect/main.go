@@ -560,6 +560,9 @@ func walkPackage(requestedPath string, pkg *packages.Package) PackageInfo {
 // caller chooses based on the number of input pkg paths so the choice
 // is unambiguous.
 func emitInfoOrArray(results []PackageInfo, multi bool) {
+	for i := range results {
+		results[i] = withEmptyLists(results[i])
+	}
 	if multi {
 		b, err := json.MarshalIndent(results, "", "  ")
 		if err != nil {
@@ -1041,7 +1044,35 @@ func classifyEffect(results []Param) string {
 	return "pure"
 }
 
+// withEmptyLists replaces every nil slice in a report with an empty one, so
+// each list is written as `[]` and never as `null`. A package Go cannot load
+// has no functions, and the consumer reads `"functions": null` as a type error
+// that hides the real cause in `errors`.
+func withEmptyLists(info PackageInfo) PackageInfo {
+	if info.Functions == nil {
+		info.Functions = []Function{}
+	}
+	for i := range info.Functions {
+		if info.Functions[i].Params == nil {
+			info.Functions[i].Params = []Param{}
+		}
+		if info.Functions[i].Results == nil {
+			info.Functions[i].Results = []Param{}
+		}
+	}
+	for k, v := range info.Implements {
+		if v == nil {
+			info.Implements[k] = []string{}
+		}
+	}
+	if info.Errors == nil {
+		info.Errors = []string{}
+	}
+	return info
+}
+
 func emitInfo(info PackageInfo) {
+	info = withEmptyLists(info)
 	b, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {
 		emitError("marshal: " + err.Error())
@@ -1051,6 +1082,6 @@ func emitInfo(info PackageInfo) {
 }
 
 func emitError(msg string) {
-	b, _ := json.Marshal(PackageInfo{Errors: []string{msg}})
+	b, _ := json.Marshal(withEmptyLists(PackageInfo{Errors: []string{msg}}))
 	fmt.Println(string(b))
 }
