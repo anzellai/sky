@@ -257,3 +257,33 @@ behind a Task continuation (`step n = step (n - 1) |> Task.map f` evaluates
 construction time — that is ordinary strict recursion, the same as in Elm, and
 the docs say so. Left-nested chains cost heap proportional to their pending
 frames, which the semantics require.
+
+---
+
+## Results (recorded after implementation)
+
+Part A — `xtask coerce-floor`: `narrow` 13063 → 12171 (−892), 52 rows
+tightened, none raised, `adapter` 0. The emitted Go of all 75 projects was
+dumped with the change and with it reverted; the reverted build reproduced
+13063 exactly, and each of the 892 removed tokens sits in a hunk that reads
+`.OkValue` / `.ErrValue` / `.JustValue`, with no hunk adding a token. Blessed
+with that record in the golden header.
+
+Part B — measured on darwin/arm64 (M1), `go test ./rt/ -run '^$' -bench
+'BenchmarkTask' -benchmem -count=3`:
+
+| Benchmark | Before (`c651aafb`) | After |
+|---|---|---|
+| `andThen` recursion, 10^5 steps | 28.8–31.5 ms, 32.8 MB, 1,099,494 allocs | 7.6 ms, 16.0 MB, 399,746 allocs |
+| `andThen` recursion, 10^6 steps | fatal stack overflow | 75.8–76.5 ms, 160 MB, 3,999,747 allocs |
+| `Task.loop`, 10^6 steps | 126–128 ms, 184 MB, 6,999,497 allocs | 108–111 ms, 176 MB, 5,999,497 allocs |
+| `Task.sequence`, 10^5 tasks | 2.63–2.67 ms, 6.4 MB, 100,450 allocs | 0.57 ms, 1.6 MB, 110 allocs |
+
+Constant heap (`SKY_TASK_SOAK_SECONDS=10`): `Task.forever` 1.67 × 10^8
+iterations, live heap first half 3.71 MB / second half 3.71 MB; a recursive
+`andThen` service loop 1.23 × 10^8 iterations, 4.09 MB / 3.91 MB.
+
+I1–I10 all pass. The old `task_loop_test.go` control, which asserted that
+`andThen` recursion overflows a 1 MB stack, now asserts it for a nested force
+(a leaf thunk forcing the next step from inside itself), which must still
+overflow — so the cap is still proven tight.
