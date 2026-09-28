@@ -1108,6 +1108,39 @@ to case (HTML attribute names are lower case).
   of the session. A Sky.Spa server branch cannot send it (the backend logs
   `SpaIslandCommandOnServer`): return it from a client arm, for example the
   arm that handles the branch's follow-up Msg.
+- **Delivery contract: at least once in order, or an explicit resync.** A
+  command reaches the widget once and in the order it was sent, or the island
+  is resynced: the runtime destroys the widget, empties its element, mounts it
+  again from the current `props`, and sends the island event `resync` with
+  `{ "reason": "lost" | "restart" | "overflow" }`. A command is never lost
+  silently. Handle `resync` in `update` to send the widget the state it
+  needs again:
+
+  ```elm
+  Ui.island { name = "chart", id = "sales", props = props }
+      [ Ui.onIslandEvent "resync" (Decode.field "reason" Decode.string) ChartResynced ]
+  ```
+
+  `resync` is reserved: a widget's own `send("resync", ...)` is refused. How
+  it works on Sky.Live: every command carries a per-island sequence number,
+  and each SSE connection writes an `islandsync` map (the highest number it
+  sent or lost per island) on connect, at once after a full buffer dropped a
+  frame, and with every heartbeat (15 s). Before it writes the map it writes
+  every frame still buffered, so the map never claims a frame the tab has not
+  been given. The client resyncs an island whose next frame skips a number,
+  or whose map entry is above the last number it received, then ignores
+  frames at or below that point. This covers every place a command can be
+  lost: the session's ingress channel, a connection's buffer, the queue kept
+  while no tab is connected, its handover to a new connection, the buffer of
+  a connection that died, and a server restart (`restart`: a new session
+  epoch). On Sky.Spa commands never cross a network; the one loss is the
+  wait queue of an island that is not mounted overflowing (`overflow`,
+  resynced when it mounts). This was chosen over a lossless per-island queue
+  with backpressure: back-pressuring the producer would stall `update`
+  behind the slowest tab, and a queue cannot hold what a dying connection or
+  a restart takes with it, so detection was needed anyway. View patches
+  dropped under the same flood are repaired by the connection's full-body
+  resync, which the same drop triggers.
 - **No server authority.** The widget's state lives in the browser. The server
   sees only what the widget sends. A remount (a new id, a page reload, a lost
   session, a navigation away and back) starts again from `props`. So report
@@ -1118,8 +1151,10 @@ to case (HTML attribute names are lower case).
   Sky client files, and the widget must be a same-origin file: no inline
   script, no `eval`, no `new Function`.
 
-The regression gate is `scripts/islands-e2e.sh` (Sky.Live and Sky.Spa, under
-`SKY_CSP=strict`).
+The regression gates are `scripts/islands-e2e.sh` (Sky.Live and Sky.Spa,
+under `SKY_CSP=strict`, including a flood of 400 commands in one update),
+`live_island_delivery_test.go` (every server-side loss place is detected) and
+`island_delivery_js_test.go` (the client's gap handling, in node).
 
 ## Canvas — typed 2D scenes (`Std.Ui.Canvas`)
 

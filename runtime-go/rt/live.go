@@ -319,6 +319,9 @@ type liveSession struct {
 	// (a Std.Ui.Terminal replay) went to nobody. The next connection to
 	// register receives them, in order (bounded by islandPendingMax).
 	islandPending []sseFrame
+	// islands: Cmd.toIsland sequence numbers and delivery marks
+	// (live_island_delivery.go).
+	islands islandState
 	// Cancel function for any active subscription ticker. Re-created
 	// by setupSubscriptions on every dispatch (the old one is closed
 	// first); see also the session-wide `done` field which signals
@@ -916,6 +919,10 @@ func encodeSSEFrame(sess *liveSession, body string) string {
 type sseFrame struct {
 	event string
 	data  string
+	// island / g: a Cmd.toIsland frame's island id and its per-island
+	// sequence number (live_island_delivery.go); "" / 0 for other frames.
+	island string
+	g      int64
 }
 
 // sseConn is one live SSE connection of a session (Phase 1 fan-out).
@@ -943,6 +950,9 @@ type sseConn struct {
 	// stream. kickOnce guards the close.
 	kick     chan struct{}
 	kickOnce sync.Once
+	// islands: the Cmd.toIsland marks of this connection
+	// (live_island_delivery.go).
+	islands connIslands
 }
 
 // patchesEventEnvelope mirrors writeEventJSON's body so the wire
@@ -3833,19 +3843,14 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 		// SSE event "island" (island_core.go). The client queues it until the
 		// island with that id is mounted, so a command sent in the same update
 		// that first renders the island still arrives. Non-blocking like
-		// every producer: a full buffer drops the frame, counts it, and marks
-		// the connections out of sync (the resync re-renders; the widget keeps
-		// its state, but this command is lost).
+		// every producer; a command a full buffer drops is never lost
+		// silently: it is numbered, and the tab resyncs the island
+		// (live_island_delivery.go).
 		ic, ok := islandCmdOf(c)
-		if !ok || sess.sseCh == nil {
+		if !ok {
 			return
 		}
-		select {
-		case sess.sseCh <- sseFrame{event: "island", data: islandFrameData(ic)}:
-		default:
-			recordSseDrop(sess.currentSID())
-			sess.markAllConnsOutOfSync()
-		}
+		sess.pushIslandCmd(ic)
 	}
 }
 
@@ -4813,6 +4818,12 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if flusher != nil {
 		flusher.Flush()
 	}
+	// The widget-command baseline: what this tab should already have, per
+	// island (live_island_delivery.go). A reconnecting tab that missed
+	// commands resyncs those islands.
+	if err := writeSSEEvent(w, flusher, "islandsync", sess.islandSyncData("hello", sess.islandHelloBase(connID))); err != nil {
+		return
+	}
 
 	// Reconnect-resync: every fresh SSE connection re-renders the current
 	// view and pushes it as a full-body frame. Without this, a binary
@@ -4984,6 +4995,11 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 					flusher.Flush()
 				}
 			}
+			// A dropped widget command: the frames still buffered, then the
+			// sync map, so the tab resyncs the island at once.
+			if err := sess.writeIslandSync(w, flusher, connID, "drop"); err != nil {
+				return
+			}
 			sess.clearConnOutOfSync(connID)
 		case fr := <-sseOut:
 			// Escape newlines for SSE data lines. Cycle 3 P50a /
@@ -5017,6 +5033,10 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			if flusher != nil {
 				flusher.Flush()
+			}
+			// The keepalive check of the widget-command stream.
+			if err := sess.writeIslandSync(w, flusher, connID, "heartbeat"); err != nil {
+				return
 			}
 		}
 	}
@@ -5469,15 +5489,14 @@ func (s *liveSession) registerSSEConn(tab string) (uint64, chan sseFrame, chan s
 	id := s.sseConnSeq
 	ch := make(chan sseFrame, sseChanBuffer)
 	resync := make(chan struct{}, 1)
-	s.sseConns[id] = &sseConn{ch: ch, tab: tab, resync: resync, kick: make(chan struct{})}
-	// Widget commands pushed while no tab was connected go to this one.
-	for _, fr := range s.islandPending {
-		select {
-		case ch <- fr:
-		default:
-		}
+	c := &sseConn{ch: ch, tab: tab, resync: resync, kick: make(chan struct{})}
+	s.sseConns[id] = c
+	// Widget commands pushed while no tab was connected go to this one; a
+	// command that was lost meanwhile, or does not fit, resyncs its island.
+	if s.initConnIslandsLocked(c) {
+		c.outOfSync.Store(true)
+		signalResync(c)
 	}
-	s.islandPending = nil
 	return id, ch, resync
 }
 
@@ -5546,13 +5565,38 @@ func (s *liveSession) unregisterSSEConn(id uint64) {
 // to outside it so no send happens while sseConnMu is held.
 func (s *liveSession) fanOutFrame(fr sseFrame, exceptTab string) {
 	s.sseConnMu.Lock()
+	if fr.island != "" {
+		s.islandHandledLocked(fr.island, fr.g)
+	}
 	if len(s.sseConns) == 0 && fr.event == "island" {
-		// No tab is connected: keep the widget command for the next one.
+		// No tab is connected: keep the widget command for the next one. The
+		// queue is bounded; a command it gives up is recorded, so the next
+		// tab resyncs that island.
 		if len(s.islandPending) >= islandPendingMax {
+			if old := s.islandPending[0]; old.island != "" {
+				s.islandNoConnLostLocked(old.island, old.g)
+			}
 			s.islandPending = s.islandPending[1:]
 		}
 		s.islandPending = append(s.islandPending, fr)
 		s.sseConnMu.Unlock()
+		return
+	}
+	if fr.island != "" {
+		// A numbered widget command: delivered or dropped under each
+		// connection's island lock, so its sync map is exact.
+		var dropped []*sseConn
+		for _, c := range s.sseConns {
+			if !islandSendLocked(c, fr) {
+				dropped = append(dropped, c)
+			}
+		}
+		s.sseConnMu.Unlock()
+		for _, c := range dropped {
+			recordSseDrop(s.currentSID())
+			c.outOfSync.Store(true)
+			signalResync(c)
+		}
 		return
 	}
 	conns := make([]*sseConn, 0, len(s.sseConns))

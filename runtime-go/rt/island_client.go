@@ -30,6 +30,18 @@ package rt
 // A node that a patch moves out and back in the same task is still connected
 // when the observer runs, so it is not remounted. Commands for an island that
 // is not mounted yet wait in a bounded queue and are delivered on mount.
+//
+// Delivery contract: a command reaches the widget once and in order, or the
+// island is resynced: the runtime destroys the widget, empties its element,
+// mounts it again from the current props, and dispatches the island event
+// "resync" with {"reason": "lost" | "restart" | "overflow"} (the app can
+// decode it with Std.Ui.onIslandEvent "resync"; the name is reserved, a
+// widget cannot send it). On Sky.Live every command carries a per-island seq
+// and the server writes "islandsync" maps (live_island_delivery.go): a
+// command that skips a seq, or a map above the last seq received, is a lost
+// command. After a resync, commands at or below the resync point are stale
+// and ignored. A command pushed out of the bounded wait queue (an island that
+// is not mounted) resyncs that island when it mounts.
 const islandClientJS = `// Sky widget islands (runtime-go/rt/island_client.go): window.Sky.island.
 (function () {
   "use strict";
@@ -42,6 +54,7 @@ const islandClientJS = `// Sky widget islands (runtime-go/rt/island_client.go): 
   var defs = {};
   var live = [];
   var queues = {};
+  var seqs = {}, epoch = null, owed = {};
   function warn() {
     try {
       if (w.console && w.console.warn) {
@@ -77,19 +90,28 @@ const islandClientJS = `// Sky widget islands (runtime-go/rt/island_client.go): 
         warn("send(" + t + "): the data is not JSON; the event was dropped", e);
         return false;
       }
-      if (!el.isConnected || !el.__skyIsland) return false;
-      if (!hostReady) {
-        // The page's client has not bound its listeners yet (see hostReady):
-        // hold the event and dispatch it once it has.
-        if (held.length >= HMAX) {
-          held.shift();
-          warn("the page's client is not ready and", HMAX, "widget events are waiting; the oldest was dropped");
-        }
-        held.push([el, t, detail]);
-        return true;
+      if (t === "resync") {
+        warn("send(resync): the event name resync is reserved for the runtime; the event was dropped");
+        return false;
       }
-      return fire(el, t, detail);
+      return emit(el, t, detail);
     };
+  }
+  // emit dispatches a widget event, holding it until the page's client is
+  // ready (see hostReady).
+  function emit(el, t, detail) {
+    if (!el.isConnected || !el.__skyIsland) return false;
+    if (!hostReady) {
+      // The page's client has not bound its listeners yet (see hostReady):
+      // hold the event and dispatch it once it has.
+      if (held.length >= HMAX) {
+        held.shift();
+        warn("the page's client is not ready and", HMAX, "widget events are waiting; the oldest was dropped");
+      }
+      held.push([el, t, detail]);
+      return true;
+    }
+    return fire(el, t, detail);
   }
   function fire(el, t, detail) {
     var ev;
@@ -134,6 +156,43 @@ const islandClientJS = `// Sky widget islands (runtime-go/rt/island_client.go): 
     live.push(el);
     call(inst, "mount", [el, props(el), inst.send], "mount");
     flush(el);
+    var id = el.getAttribute(ID) || "";
+    if (owed[id]) {
+      var why = owed[id];
+      delete owed[id];
+      emit(el, "resync", { reason: why });
+    }
+  }
+  // resync remounts island id from its current props and tells the app, or,
+  // when it is not mounted, does so when it mounts.
+  function resync(id, why) {
+    var el = find(id);
+    if (!el || !el.__skyIsland) { owed[id] = why; return; }
+    warn("island", id, "missed a command (" + why + "); it is mounted again from its current props");
+    destroy(el);
+    while (el.firstChild) el.removeChild(el.firstChild);
+    owed[id] = why;
+    mount(el);
+  }
+  // sync takes an "islandsync" map from the server: {e: epoch, s: {id: seq}}.
+  function sync(m) {
+    if (!m || typeof m !== "object") return;
+    var s = m.s && typeof m.s === "object" ? m.s : {}, id;
+    if (typeof m.e === "string") {
+      if (epoch !== null && m.e !== epoch) {
+        // A new server process: its predecessor's buffers are gone.
+        var had = seqs;
+        seqs = {};
+        for (id in had) if (had[id] > 0) resync(id, "restart");
+      }
+      epoch = m.e;
+    }
+    for (id in s) {
+      var g = s[id];
+      if (typeof g !== "number") continue;
+      if (seqs[id] === undefined) seqs[id] = g;
+      else if (g > seqs[id]) { seqs[id] = g; resync(id, "lost"); }
+    }
   }
   function destroy(el) {
     var st = el.__skyIsland;
@@ -178,14 +237,23 @@ const islandClientJS = `// Sky widget islands (runtime-go/rt/island_client.go): 
     }
     return null;
   }
-  function command(id, name, payload) {
+  function command(id, name, payload, seq) {
     id = String(id);
+    if (typeof seq === "number" && seq > 0) {
+      var last = seqs[id];
+      if (last !== undefined) {
+        if (seq <= last) return;
+        if (seq > last + 1) { seqs[id] = seq; resync(id, "lost"); }
+      }
+      seqs[id] = seq;
+    }
     var el = find(id);
     if (el) { deliver(el, name, payload); return; }
     var q = queues[id] || (queues[id] = []);
     if (q.length >= QMAX) {
       q.shift();
-      warn("island", id, "is not mounted and has", QMAX, "commands waiting; the oldest was dropped");
+      owed[id] = "overflow";
+      warn("island", id, "is not mounted and has", QMAX, "commands waiting; the oldest was dropped, and the island is resynced when it mounts");
     }
     q.push([name, payload]);
   }
@@ -287,10 +355,12 @@ const islandClientJS = `// Sky widget islands (runtime-go/rt/island_client.go): 
     if (w.document) scan(w.document);
   };
   Sky.__islandCommand = command;
+  Sky.__islandSync = sync;
   Sky.__islandHostReady = markHostReady;
   Sky.__islands = {
     prefix: PREFIX, scan: scan, sweep: sweep, update: update, command: command,
-    pool: pool, adopt: adopt, saveFocus: saveFocus, restoreFocus: restoreFocus
+    pool: pool, adopt: adopt, saveFocus: saveFocus, restoreFocus: restoreFocus,
+    sync: sync, resync: resync
   };
   function start() {
     var d = w.document;

@@ -214,6 +214,31 @@ try {
     await waitFor(page, () => window.__islandLog.filter((x) => x === "command:setText").length === 2, null, "cmd2", 10000)
   );
 
+  // ── 6. a flood of commands: never lost silently ──
+  // One update sends the sink 400 commands and a final state, past every SSE
+  // buffer. The contract: each command arrives once and in order, or the
+  // island is resynced (remounted; the app's "resync" handler re-sends the
+  // state). Either way the sink ends showing state=400, and the page shows the
+  // model's flood=400 (the view patch the flood crowded out is recovered by
+  // the connection's resync).
+  await page.click('button:has-text("flood")');
+  const settled = await waitFor(page, () => /state=400/.test((document.querySelector(".sink-state") || {}).textContent || ""), null, "flood", 20000);
+  const flood = await page.evaluate(() => {
+    const runs = window.__sinkRuns;
+    const last = runs[runs.length - 1];
+    const inOrder = last.every((v, i) => v === i);
+    const m = /resyncs=(\d+)/.exec(document.body.innerText);
+    return { mounts: runs.length, items: last.length, inOrder, resyncs: m ? Number(m[1]) : -1, view: /flood=400/.test(document.body.innerText) };
+  });
+  check("after a flood of 400 commands the sink shows the final state", settled, JSON.stringify(flood));
+  check(
+    "no command was lost silently: all 400 in order, or the island was resynced and the app told",
+    (flood.resyncs === 0 && flood.mounts === 1 && flood.items === 400 && flood.inOrder) || (flood.resyncs >= 1 && flood.mounts >= 2),
+    JSON.stringify(flood)
+  );
+  check("the view patch the flood crowded out is on the page (flood=400)", flood.view, JSON.stringify(flood));
+  console.log(`info [${TAG}] flood: ${JSON.stringify(flood)}`);
+
   check("zero securitypolicyviolation events", violations.length === 0, violations.slice(0, 3).join(" | "));
   check("zero console errors", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
   if (MODE === "live") {

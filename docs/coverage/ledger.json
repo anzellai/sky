@@ -15287,8 +15287,8 @@
       "id": "apps:cli-verbs",
       "modules_imported": 54,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 357,
-      "refs_qualified": 333,
+      "refs_generous": 358,
+      "refs_qualified": 334,
       "role": "Layer2",
       "sky_files": 160,
       "sky_toml_sections": []

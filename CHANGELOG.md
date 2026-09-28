@@ -871,7 +871,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
-
+- **`Cmd.toIsland`: a widget command is never lost silently (Sky.Live and
+  Sky.Spa).** A flood of commands (400 in one update, in the
+  `scripts/islands-e2e.sh` flood case) lost 384 of them on Sky.Live with
+  nothing to tell the widget: the session's SSE buffer (16 frames) drops
+  frames when full, the view was repaired by the connection's resync, and
+  the widget kept stale state (a code editor that missed a `setValue`, a
+  chart that missed its data). Now every command carries a per-island
+  sequence number and each connection writes an `islandsync` map (the
+  highest number sent or lost per island) on connect, at once after a drop,
+  and with each heartbeat, after writing what is still buffered. The client
+  resyncs an island whose frames skip a number or whose map entry is above
+  what it received: the widget is destroyed, its element emptied, mounted
+  again from the current props, and the app gets the island event `resync`
+  (`{ reason }`: `lost`, `restart` after a server restart, `overflow` when
+  the wait queue of an unmounted island overflowed, the one loss on
+  Sky.Spa). The contract, "at least once in order, or an explicit resync",
+  is in `docs/skyui/overview.md` (Widget islands). A lossless queue with
+  backpressure was not chosen: it would stall `update` behind the slowest
+  tab and could not hold what a dying connection or a restart takes with it.
+  (`runtime-go/rt/live_island_delivery.go`, `island_client.go`,
+  `live_client_asset.go`; tests `live_island_delivery_test.go`,
+  `island_delivery_js_test.go` and the islands e2e flood case.)
 - **Runtime tests that needed Node.js or PostgreSQL skipped silently.**
   Eight `runtime-go/rt` tests that run the embedded browser clients under
   node, and nine that drive a real PostgreSQL, called `t.Skip` when the

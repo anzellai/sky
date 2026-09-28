@@ -2581,8 +2581,16 @@ function __skyOpenSSE() {
     var d = null;
     try { d = JSON.parse(e.data); } catch (_) {}
     if (d && typeof d.id === "string" && window.Sky && window.Sky.__islandCommand) {
-      window.Sky.__islandCommand(d.id, d.name, d.payload === undefined ? null : d.payload);
+      window.Sky.__islandCommand(d.id, d.name, d.payload === undefined ? null : d.payload, d.seq);
     }
+  });
+  // The widget-command sync map (live_island_delivery.go): an island whose
+  // commands were lost on the way is resynced (island_client.go).
+  __skySSE.addEventListener("islandsync", function(e) {
+    __skyLastSseAt = Date.now();
+    var d = null;
+    try { d = JSON.parse(e.data); } catch (_) {}
+    if (d && window.Sky && window.Sky.__islandSync) window.Sky.__islandSync(d);
   });
   // L12: a classified update panic in any dispatch path of this session.
   __skySSE.addEventListener("skyerror", function(e) {

@@ -157,6 +157,10 @@ type islandCmd struct {
 	ID      string          `json:"id"`
 	Name    string          `json:"name"`
 	Payload json.RawMessage `json:"payload"`
+	// Seq is the command's per-island sequence number on Sky.Live
+	// (live_island_delivery.go); 0 (omitted) on Sky.Spa, whose commands
+	// never cross a network.
+	Seq int64 `json:"seq,omitempty"`
 }
 
 // Cmd_toIsland builds the "island" command. Sky-side surface:
