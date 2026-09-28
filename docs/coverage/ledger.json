@@ -603,6 +603,12 @@
           "tests/conformance"
         ]
       },
+      "Sky.Core.Tuple": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
       "Sky.Core.Uuid": {
         "path": "tests/conformance",
         "units": [
@@ -697,13 +703,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1975,
-    "stdlib_modules": 101,
-    "surfaces_covered": 151,
-    "surfaces_covered_pct": 90.4,
+    "stdlib_entries": 1987,
+    "stdlib_modules": 102,
+    "surfaces_covered": 152,
+    "surfaces_covered_pct": 90.5,
     "surfaces_equal": 21,
-    "surfaces_stronger": 146,
-    "surfaces_total": 167,
+    "surfaces_stronger": 147,
+    "surfaces_total": 168,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -3564,14 +3570,25 @@
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "description": "the Sky.Core.File public API",
       "id": "stdlib.Sky.Core.File",
@@ -6561,6 +6578,34 @@
       },
       "description": "the Sky.Core.ToString public API",
       "id": "stdlib.Sky.Core.ToString",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Sky.Core.Tuple public API",
+      "id": "stdlib.Sky.Core.Tuple",
       "verdict": "stronger"
     },
     {
@@ -12520,7 +12565,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 8.9
+      "pct_of_denominator": 8.8
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12608,7 +12653,7 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 10,
+          "count": 8,
           "symbols": [
             "copy",
             "exists",
@@ -12616,10 +12661,8 @@
             "readDir",
             "readFileBytes",
             "readFileLimit",
-            "remove",
             "rename",
-            "tempDir",
-            "tempFile"
+            "tempDir"
           ]
         },
         "Sky.Core.Http": {
@@ -13580,8 +13623,8 @@
           ]
         }
       },
-      "count": 649,
-      "pct_of_denominator": 32.9
+      "count": 647,
+      "pct_of_denominator": 32.6
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13647,7 +13690,7 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 10,
+          "count": 8,
           "symbols": [
             "copy",
             "exists",
@@ -13655,10 +13698,8 @@
             "readDir",
             "readFileBytes",
             "readFileLimit",
-            "remove",
             "rename",
-            "tempDir",
-            "tempFile"
+            "tempDir"
           ]
         },
         "Sky.Core.Http": {
@@ -13792,10 +13833,11 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 12,
+          "count": 13,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
+            "Step",
             "andMap",
             "lazy",
             "map2",
@@ -14704,8 +14746,8 @@
           ]
         }
       },
-      "count": 728,
-      "pct_of_denominator": 36.9
+      "count": 727,
+      "pct_of_denominator": 36.6
     }
   },
   "units": [
@@ -15883,12 +15925,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 38,
+      "modules_imported": 40,
       "path": "tests/conformance",
-      "refs_generous": 526,
-      "refs_qualified": 517,
+      "refs_generous": 548,
+      "refs_qualified": 538,
       "role": "Conformance",
-      "sky_files": 31,
+      "sky_files": 33,
       "sky_toml_sections": []
     }
   ]

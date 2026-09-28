@@ -316,6 +316,79 @@ tests =
                           (Decode.decodeString
                               (Decode.list Decode.int)
                               (Encode.encode 0 (Encode.list Encode.int []))))))
+    -- ─── Decode.value / Encode.raw (v0.26.2) ───────────────────────
+    , Test.test
+          "Decode.value: an integer past 2^53 re-encodes exactly"
+          (\_ ->
+              Test.equal
+                  (Ok "{\"n\":9007199254740993}")
+                  (Decode.decodeString Decode.value "{\"n\":9007199254740993}"
+                      |> Result.map (Encode.encode 0)))
+    , Test.test
+          "Decode.value: a long decimal is not rounded through Float"
+          (\_ ->
+              Test.equal
+                  (Ok "[0.1000000000000000055511151231257827]")
+                  (Decode.decodeString
+                      Decode.value
+                      "[0.1000000000000000055511151231257827]"
+                      |> Result.map (Encode.encode 0)))
+    , Test.test
+          "Decode.value: a sub-document nests inside Encode.object"
+          (\_ ->
+              Test.equal
+                  (Ok "{\"kept\":{\"a\":[1,true,null]},\"v\":2}")
+                  (Decode.decodeString
+                      (Decode.field "meta" Decode.value)
+                      "{\"meta\":{\"a\":[1,true,null]}}"
+                      |> Result.map
+                             (\meta ->
+                                 Encode.encode
+                                     0
+                                     (Encode.object
+                                         [ ( "kept", meta )
+                                         , ( "v", Encode.int 2 )
+                                         ]))))
+    , Test.test
+          "Encode.raw: valid text embeds verbatim, key order kept"
+          (\_ ->
+              Test.equal
+                  (Ok "{\"doc\":{\"b\":1,\"a\":[12345678901234567890]}}")
+                  (Encode.raw "{\"b\":1,\"a\":[12345678901234567890]}"
+                      |> Result.map
+                             (\doc ->
+                                 Encode.encode
+                                     0
+                                     (Encode.object [ ( "doc", doc ) ]))))
+    , Test.test
+          "Encode.raw: truncated JSON is an Err"
+          (\_ -> Test.err (Encode.raw "{\"a\":"))
+    , Test.test
+          "Encode.raw: trailing garbage is an Err"
+          (\_ -> Test.err (Encode.raw "{\"a\":1} x"))
+    , Test.test
+          "Encode.raw: the empty string is an Err"
+          (\_ -> Test.err (Encode.raw ""))
+    , Test.test
+          "Encode.raw then Decode: the embedded document decodes back"
+          (\_ ->
+              Test.equal
+                  (Ok 42)
+                  (Encode.raw "{\"n\":42}" |> Result.map (Encode.encode 0)
+                      |> Result.andThen
+                             (Decode.decodeString (Decode.field "n" Decode.int))))
+    , Test.test
+          "Result.toMaybe (imported Sky.Core.Result): a failed decode is Nothing"
+          (\_ ->
+              Test.equal
+                  Nothing
+                  (Result.toMaybe (Decode.decodeString Decode.int "\"x\"")))
+    , Test.test
+          "Result.toMaybe (imported Sky.Core.Result): a decoded value is Just"
+          (\_ ->
+              Test.equal
+                  (Just 3)
+                  (Result.toMaybe (Decode.decodeString Decode.int "3")))
     ]
 
 

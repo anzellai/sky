@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 167 |
-| covered by the new corpus (>= Asserted) | 151 |
-| verdict `stronger` | 146 |
+| surfaces | 168 |
+| covered by the new corpus (>= Asserted) | 152 |
+| verdict `stronger` | 147 |
 | verdict `equal` | 21 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
-| stdlib modules (denominator) | 101 |
-| stdlib entries (denominator) | 1975 |
+| stdlib modules (denominator) | 102 |
+| stdlib entries (denominator) | 1987 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 8.9% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 728 | 36.9% |
-| symbols unreferenced under the generous rule | 649 | 32.9% |
+| stdlib modules imported by nothing | 9 | 8.8% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 727 | 36.6% |
+| symbols unreferenced under the generous rule | 647 | 32.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
 
 ### Surfaces with zero new cover
@@ -61,7 +61,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 23 |
-| stdlib modules owned by exactly one unit of any role | 18 |
+| stdlib modules owned by exactly one unit of any role | 19 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **2** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -162,7 +162,7 @@ None.
 | `stdlib.Sky.Core.Dict` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Encoding` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Error` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Sky.Core.File` | stdlib | None | Falsified | stronger |
+| `stdlib.Sky.Core.File` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Http` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Http.Stream` | stdlib | Runs | Runs | equal |
 | `stdlib.Sky.Core.Io` | stdlib | None | None | equal |
@@ -186,6 +186,7 @@ None.
 | `stdlib.Sky.Core.Task` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.ToString` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Sky.Core.Tuple` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.Uuid` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Core.WebSocket` | stdlib | None | Falsified | stronger |
 | `stdlib.Sky.Http.Middleware` | stdlib | None | Falsified | stronger |

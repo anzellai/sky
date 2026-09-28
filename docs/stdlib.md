@@ -133,7 +133,31 @@ id =
             println ("computation failed: " ++ Error.toString e) 
 ```
 
-`withDefault`, `map`, `andThen`, `mapError`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`. The `Result → Task` bridges live on `Task` (`Task.fromResult` / `Task.andThenResult`) — see [Result/Task bridges](../CLAUDE.md#resulttask-bridges).
+`withDefault`, `map`, `andThen`, `mapError`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `toMaybe`.
+
+`Result.toMaybe : Result e a -> Maybe a` turns `Ok a` into `Just a` and `Err _` into `Nothing`. It drops the error, so use it only where the reason for a failure does not matter. It works with or without `import Sky.Core.Result`.
+
+The `Result → Task` bridges live on `Task` (`Task.fromResult` / `Task.andThenResult`) — see [Result/Task bridges](../CLAUDE.md#resulttask-bridges).
+
+### `Tuple` — pairs (`Sky.Core.Tuple`)
+
+```elm
+import Sky.Core.Tuple as Tuple
+
+labelled = List.map (Tuple.pair "k") [ 1, 2 ]          -- [ ( "k", 1 ), ( "k", 2 ) ]
+shown = Tuple.mapBoth String.toUpper negate ( "a", 1 )  -- ( "A", -1 )
+```
+
+| Function | Type |
+|---|---|
+| `Tuple.pair` | `a -> b -> ( a, b )` |
+| `Tuple.first` | `( a, b ) -> a` |
+| `Tuple.second` | `( a, b ) -> b` |
+| `Tuple.mapFirst` | `(a -> x) -> ( a, b ) -> ( x, b )` |
+| `Tuple.mapSecond` | `(b -> y) -> ( a, b ) -> ( a, y )` |
+| `Tuple.mapBoth` | `(a -> x) -> (b -> y) -> ( a, b ) -> ( x, y )` |
+
+Pure Sky, no runtime kernel, so it needs the `import`. `fst` / `snd` from `Basics` stay available and are the same as `Tuple.first` / `Tuple.second`.
 
 ### `Math` — numerical functions
 
@@ -286,11 +310,13 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 | `Enc.list` | `(a -> Value) -> List a -> Value` |
 | `Enc.object` | `List (String, Value) -> Value` |
 | `Enc.encode` | `Int -> Value -> String` (indent param) |
+| `Enc.raw` | `String -> Result Error Value` — embed JSON text that is already serialised; invalid text is `Err InvalidInput` |
 
 | Decoder | Type |
 |---|---|
 | `Dec.decodeString` | `Decoder a -> String -> Result Error a` |
 | `Dec.string`, `Dec.int`, `Dec.float`, `Dec.bool` | primitive decoders |
+| `Dec.value` | `Decoder Value` — the JSON at this point, unchanged, as the `Value` type `Enc` uses (numbers keep their exact text) |
 | `Dec.field` | `String -> Decoder a -> Decoder a` |
 | `Dec.index` | `Int -> Decoder a -> Decoder a` |
 | `Dec.list` | `Decoder a -> Decoder (List a)` |
@@ -299,6 +325,8 @@ case Dec.decodeString (Dec.field "name" Dec.string) payload of
 | `Dec.succeed` / `Dec.fail` | constant decoders |
 | `Dec.oneOf` | try decoders in order |
 | `Dec.at` | `List String -> Decoder a -> Decoder a` (path traversal) |
+
+`Value` is one type shared by both modules: a `Dec.value` result nests in `Enc.object` / `Enc.list` and writes back with `Enc.encode`. `Enc.encode` has no error result, so the one `Value` JSON cannot hold — a NaN or infinite `Float` (`Math.nan`, `Math.inf`, a Float overflow) — raises the classified `JsonEncodeFailure` panic (a 500 for that request in a server, exit 1 in a CLI). It never returns an empty string. Check a Float you do not control with `Math.isNaN` first.
 
 For long records use the pipeline form:
 
@@ -438,6 +466,10 @@ main =
 | `Task.sequence` | `List (Task e a) -> Task e (List a)` | Run sequentially |
 | `Task.parallel` | `List (Task e a) -> Task e (List a)` | Run concurrently (goroutines); first error short-circuits |
 | `Task.lazy` | `(() -> a) -> Task e a` | Defer computation |
+| `Task.spawn` | `Task e a -> Task e ()` | Start a task on a background goroutine and return at once. Its result is discarded; a panic in it is recovered and written to the log as a classified panic line |
+| `Task.Step state a` | ADT | `Loop state \| Done a` — what a `Task.loop` step returns: go again with a new state, or stop with a result |
+| `Task.loop` | `(state -> Task e (Step state a)) -> state -> Task e a` | Stack-safe loop: run the step, then again on each `Loop` state, until `Done`. An `Err` stops it. Use this, not `andThen` recursion, for any loop that can run many times |
+| `Task.forever` | `Task e a -> Task e b` | Re-run a task until it fails, then fail with that error. Stack-safe. The free `b` says it never succeeds |
 | `Task.run` | `Task e a -> Result e a` | Force at the boundary |
 | `Task.fromResult` | `Result e a -> Task e a` | Bridge from Result |
 | `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain Result step after Task |
@@ -456,6 +488,27 @@ main =
 | `Task.retryWith` | `RetryPolicy e -> Task e a -> Task e a` | Drive task up to maxAttempts; first Ok wins, last Err otherwise |
 | `Task.map2` … `Task.map5` | `(a -> b -> c) -> Task e a -> Task e b -> Task e c` (…up to 5) | Combine N tasks with an N-ary function. Forces left to right, each task exactly once; a failure short-circuits the tasks to its right |
 | `Task.andMap` | `Task e a -> Task e (a -> b) -> Task e b` | Applicative application — VALUE first, FUNCTION second, matching `Maybe.andMap` / `Result.andMap`. Forces the function task first |
+
+
+**Loops: `Task.loop`, never `andThen` recursion.** Each `andThen` step nests Go frames. A loop written as recursion through `andThen` grows the Go stack every iteration, and by two million iterations the process dies with a fatal stack overflow that no error handler sees (`docs/KNOWN_LIMITATIONS.md`). `Task.loop` runs each step to completion before the next, so the stack stays flat at any iteration count:
+
+```elm
+import Sky.Core.Task as Task exposing (Step(..))
+
+countTo : Int -> Task Error Int
+countTo limit =
+    Task.loop (countStep limit) 0
+
+countStep : Int -> Int -> Task Error (Step Int Int)
+countStep limit n =
+    if n >= limit then
+        Task.succeed (Done n)
+
+    else
+        Task.succeed (Loop (n + 1))
+```
+
+`Loop` and `Done` come from `Sky.Core.Task`: import them with `exposing (Step(..))`, or write `Task.Loop` / `Task.Done` after `import Sky.Core.Task as Task`.
 
 ### `Cmd` / `Sub` — Sky.Live commands and subscriptions
 

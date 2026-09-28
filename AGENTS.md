@@ -29,11 +29,13 @@ silently.** A well-typed `10.0 / 0.0` has no answer Sky can represent (there is
 no `Inf`/`NaN` shape), so it raises a *classified* `DivisionByZero` — recovered
 per-request to a 500 in a server, or exit(1) + a structured log in a CLI — and
 is caught by the whole-app panic net (`docs/architecture/sky-stdlib-correctness.md`
-§2.9, the nine named panic classes). It is never a silent wrong value (integer
-`//`/`%` by zero *are* total and return 0, matching Elm). Code that divides by a
-value it does not control should zero-guard the divisor; a fallible
-`Maybe`-returning division is an offered convenience, not a soundness
-requirement. "No runtime panic" therefore means *no UNCLASSIFIED panic and no
+§2.9; `classifyPanic` in `runtime-go/rt/panic_recover.go` names the ten panic
+classes). It is never a silent wrong value (integer `//`/`%` by zero *are* total
+and return 0, matching Elm). `Json.Encode.encode` of a NaN or infinite `Float`
+fails the same way, as a classified `JsonEncodeFailure`, never an empty
+string. Code that divides by a value it does not control should zero-guard the
+divisor; a fallible `Maybe`-returning division is an offered convenience, not a
+soundness requirement. "No runtime panic" therefore means *no UNCLASSIFIED panic and no
 silent corruption* — the property a service actually needs.
 
 The compiler is the **Rust rewrite** (cargo workspace at `rust/`). The retired
@@ -128,6 +130,17 @@ nested `andThen`); and a local `bestEffort t = t |> Task.onError (\_ ->
 Task.succeed ())` / `unless cond t = if cond then Task.succeed () else t` for the
 two shapes the stdlib does not name. `templates/AGENTS.md` carries the worked
 before/after for scaffolded projects.
+
+**A Task loop that can run many times uses `Task.loop`, never `andThen`
+recursion.** Each `andThen` step nests Go frames, so a loop written as
+`step n = work |> Task.andThen (\_ -> step (n + 1))` grows the Go stack every
+iteration and, by two million iterations, kills the process with a fatal
+stack overflow that no error handler sees. `Task.loop step initial` runs each
+step to completion first: `step : state -> Task e (Step state a)` returns
+`Loop newState` to go again or `Done result` to stop, and the stack stays flat
+(`import Sky.Core.Task as Task exposing (Step(..))`). `Task.forever task` re-runs
+a task until it fails (a poller, a serve loop). A recursion that ends after a
+small, known number of steps is fine as it is.
 
 ## Writing a Sky app — interview first, then architect
 
@@ -689,10 +702,15 @@ These apply to any Sky code you write or any compiler change you make:
 - **Template + doc sync (non-negotiable).** When stdlib / syntax / Sky.Live APIs /
   CLI verbs change, update **this file**, `templates/CLAUDE.md` (+ `templates/AGENTS.md`),
   and the matching `docs/*` in the **same commit** (see the [Deep dives](#deep-dives)
-  table). Kernel-only module docs (`Std.Live`, `Std.Tui`, `Std.Jobs`, the
-  kernel-only `Sky.Http.Server` verbs) are hand-curated in
-  `rust/crates/project/src/kernel_api.rs`; the `kernel_api_covers_registered_kernel_functions`
-  gate fails CI on drift.
+  table). There is ONE doc source for every stdlib module, kernel-only ones
+  (`Std.Live`, `Std.Tui`, `Std.Jobs`, `Sky.Http.Server`) included: the `.sky`
+  file under `sky-stdlib/`. Its `name : Type` lines and `--` doc comments feed
+  the type checker, LSP hover and `sky doc` (`rust/crates/project/src/doc.rs`
+  renders from the `.sky` alone). Drift fails CI in `xtask kernel-members` (the
+  `hir` kernel tables match the runtime), `project/tests/kernel_surface.rs`
+  (each `Ffi.kernel` alias names a real `rt` function),
+  `kernel_signature_coverage.rs` (an advertised member has a signature) and
+  `kernel_signature_runtime_arity.rs` (the signature arity matches the runtime).
 - **Release = write the notes, then the version claims follow.** `CHANGELOG.md`'s
   newest `## vX.Y.Z` heading is the single source of truth for "what version is
   this". Files that state the CURRENT line — `README.md`'s status banner and this

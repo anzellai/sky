@@ -28,6 +28,34 @@ pub struct TestRun {
     pub note: String,
 }
 
+/// `sky test` exit status: every test passed.
+pub const EXIT_PASSED: u8 = 0;
+/// `sky test` exit status: the suite ran and at least one test failed (or the
+/// test binary itself died while running: a panic, a signal, a Go fatal error).
+pub const EXIT_TESTS_FAILED: u8 = 1;
+/// `sky test` exit status: no test ran. The suite did not build (a compile
+/// error, a `go build` failure, a suite module that did not resolve), or the
+/// runner could not start the test binary.
+pub const EXIT_NOT_RUN: u8 = 2;
+
+impl TestRun {
+    /// The process exit status `sky test` reports for this run — the contract
+    /// in `docs/tooling/testing.md`: 0 all passed, 1 tests failed, 2 nothing ran.
+    ///
+    /// A build failure used to leave `exit_code` as `None`, which the CLI
+    /// mapped to `ExitCode::FAILURE` (1), so CI could not tell "the tests
+    /// failed" from "the suite never compiled". Any non-zero exit from the test
+    /// binary is reported as 1 — a Go fatal error exits the binary with 2, and
+    /// passing that through would claim the BUILD failed.
+    pub fn exit_status(&self) -> u8 {
+        match self.exit_code {
+            Some(0) => EXIT_PASSED,
+            Some(_) => EXIT_TESTS_FAILED,
+            None => EXIT_NOT_RUN,
+        }
+    }
+}
+
 /// The name of the synthesised entry module + file (never a user's own module).
 const ENTRY_MODULE: &str = "SkyTestEntry__";
 
@@ -308,6 +336,29 @@ mod tests {
     fn runs_over_the_project_driver() {
         let s = run_stub(&["a\n", "b\nc\n"]);
         assert_eq!(s.files_analyzed, 2);
+    }
+
+    /// The exit-status contract: 0 pass, 1 test failure, 2 nothing ran. A build
+    /// failure (`exit_code == None`) used to surface as 1.
+    #[test]
+    fn exit_status_distinguishes_build_failure_from_test_failure() {
+        let run = |code: Option<i32>| TestRun {
+            exit_code: code,
+            ..TestRun::default()
+        };
+        assert_eq!(run(Some(0)).exit_status(), 0, "all tests passed");
+        assert_eq!(run(Some(1)).exit_status(), 1, "a test failed");
+        assert_eq!(
+            run(Some(2)).exit_status(),
+            1,
+            "the test binary died with Go's fatal exit 2: that is a failed run, not a build failure"
+        );
+        assert_eq!(run(Some(137)).exit_status(), 1, "killed by a signal");
+        assert_eq!(
+            run(None).exit_status(),
+            2,
+            "the suite never built, so no test ran"
+        );
     }
 
     #[test]

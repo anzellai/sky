@@ -26,6 +26,9 @@ module Sky.Core.Task exposing
     , parallelN
     , spawn
     , lazy
+    , Step(..)
+    , loop
+    , forever
     , ShouldRetry(..)
     , RetryPolicy
     , linearBackoff
@@ -153,6 +156,10 @@ parallelN =
 -- `parallel`, which runs every task on a child goroutine and blocks until all
 -- finish, `spawn` leaves the caller's goroutine free. When you need the result
 -- back, use `parallel` / `parallelN`.
+--
+-- A panic inside the spawned task does not stop the caller or the process. It
+-- is recovered and written to the log as a classified panic line (class,
+-- `errId`, hint), the same line a panic in `main` produces.
 spawn : Task e a -> Task e ()
 spawn =
     Ffi.kernel "Task_spawn"
@@ -164,6 +171,53 @@ spawn =
 lazy : (() -> a) -> Task e a
 lazy =
     Ffi.kernel "Task_lazy"
+
+-- ─── Stack-safe loops (v0.26.2) ────────────────────────────────────
+-- | One step of a `loop`: `Loop state` runs the step function again with
+-- the new state, `Done a` ends the loop with `a`.
+type Step state a
+    = Loop state
+    | Done a
+
+
+-- | `loop step initial` — run `step` on `initial`, then on each new state it
+-- returns in `Loop`, until it returns `Done a`; the loop then succeeds with
+-- `a`. An `Err` from any step ends the loop with that error.
+--
+-- Use this for every Task loop that can run for many iterations: a poller, a
+-- paginated fetch, a read-until-end loop. A loop written as plain recursion
+-- through `andThen` (`step n = work |> Task.andThen (\\_ -> step (n + 1))`)
+-- grows the Go stack by a few frames per iteration and, by two million
+-- iterations, kills the process with a fatal stack overflow that no
+-- error handler sees. `loop` runs each step to completion before the next,
+-- so its stack does not grow.
+--
+--     countTo : Int -> Task Error Int
+--     countTo limit =
+--         Task.loop
+--             (\\n ->
+--                 if n >= limit then
+--                     Task.succeed (Task.Done n)
+--                 else
+--                     Task.succeed (Task.Loop (n + 1))
+--             )
+--             0
+loop : (state -> Task e (Step state a)) -> state -> Task e a
+loop =
+    Ffi.kernel "Task_loop"
+
+
+-- | `forever task` — run `task` again and again until it fails, then fail
+-- with that error. The success type is free (`Task e b`) because a forever
+-- task never succeeds: stop it by returning an `Err` from `task` (for a clean
+-- stop, map that error back with `onError`). Stack-safe, like `loop`.
+--
+--     serveForever : Task Error ()
+--     serveForever =
+--         Task.forever handleOneRequest
+forever : Task e a -> Task e b
+forever =
+    Ffi.kernel "Task_forever"
 
 -- ─── Retry combinator (v0.15.44) ───────────────────────────────────
 -- | Predicate ADT for `RetryPolicy.shouldRetry`.  Encodes the two

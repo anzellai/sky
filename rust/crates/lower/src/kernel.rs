@@ -60,7 +60,7 @@ pub fn is_nullary_kernel_value(module: &str, func: &str) -> bool {
             | ("Uuid", "v4")
             | ("Uuid", "v7")
             | ("JsonEnc", "null")
-            | ("JsonDec", "string" | "int" | "float" | "bool")
+            | ("JsonDec", "string" | "int" | "float" | "bool" | "value")
             | ("Config", "string" | "int" | "float" | "bool")
             // `Sky.Config.default : Config` — the empty cross-cutting config
             // value (`func Config_default() any`). Shares the `Config_` runtime
@@ -260,6 +260,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Result", "combine", "rt.Result_combine"),
     ("Result", "traverse", "rt.Result_traverse"),
     ("Result", "andThenTask", "rt.Result_andThenTask"),
+    ("Result", "toMaybe", "rt.Result_toMaybe"),
     ("Task", "succeed", "rt.AnyTaskSucceed"),
     ("Task", "fail", "rt.AnyTaskFail"),
     ("Task", "map", "rt.Task_map"),
@@ -275,6 +276,8 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Task", "mapError", "rt.Task_mapError"),
     ("Task", "onError", "rt.Task_onError"),
     ("Task", "retryWith", "rt.Task_retryWith"),
+    ("Task", "loop", "rt.Task_loop"),
+    ("Task", "forever", "rt.Task_forever"),
     ("Cmd", "none", "rt.Cmd_none"),
     ("Cmd", "batch", "rt.Cmd_batch"),
     ("Cmd", "perform", "rt.Cmd_perform"),
@@ -524,11 +527,13 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("JsonEnc", "list", "rt.JsonEnc_list"),
     ("JsonEnc", "object", "rt.JsonEnc_object"),
     ("JsonEnc", "encode", "rt.JsonEnc_encode"),
+    ("JsonEnc", "raw", "rt.JsonEnc_raw"),
     ("JsonDec", "decodeString", "rt.JsonDec_decodeString"),
     ("JsonDec", "string", "rt.JsonDec_string"),
     ("JsonDec", "int", "rt.JsonDec_int"),
     ("JsonDec", "float", "rt.JsonDec_float"),
     ("JsonDec", "bool", "rt.JsonDec_bool"),
+    ("JsonDec", "value", "rt.JsonDec_value"),
     ("JsonDec", "field", "rt.JsonDec_field"),
     ("JsonDec", "index", "rt.JsonDec_index"),
     ("JsonDec", "list", "rt.JsonDec_list"),

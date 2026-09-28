@@ -434,6 +434,21 @@ func JsonEnc_object(pairs any) any {
 	return JsonValue{raw: obj}
 }
 
+// JsonEnc_raw : String -> Result Error Value — embed JSON text that is
+// already serialised (a stored document, a third-party payload) as a Value
+// without decoding it into Sky types first. The text is validated with
+// json.Valid and kept as a json.RawMessage, so `encode` writes it back as it
+// came (re-indented when `encode` indents) and numbers keep their exact text.
+// Invalid JSON is an `Err InvalidInput`, never a Value that would later
+// produce broken output.
+func JsonEnc_raw(s any) any {
+	text := AsString(s)
+	if !json.Valid([]byte(text)) {
+		return Err[any, any](ErrInvalidInput("Json.Encode.raw: the text is not valid JSON"))
+	}
+	return Ok[any, any](JsonValue{raw: json.RawMessage(text)})
+}
+
 func JsonEnc_encode(indent any, v any) any {
 	var val any
 	if jv, ok := v.(JsonValue); ok {
@@ -450,7 +465,15 @@ func JsonEnc_encode(indent any, v any) any {
 		b, err = json.Marshal(val)
 	}
 	if err != nil {
-		return ""
+		// A Value JSON cannot represent. Every tree the Json.Encode builders
+		// produce marshals, except a NaN or infinite Float (Encode.float of
+		// `Math.sqrt -1`, a Float overflow, …): JSON has no such number. This
+		// used to return "" — a silent wrong answer that a caller would send
+		// or store as if it were JSON. `encode : Int -> Value -> String` has
+		// no error channel, so the failure is a classified panic
+		// (JsonEncodeFailure, panic_recover.go): recovered per request to a
+		// 500 in a server, exit 1 with a structured log in a CLI.
+		panic("rt.JsonEnc_encode: cannot encode the value as JSON: " + err.Error())
 	}
 	return string(b)
 }
@@ -692,6 +715,18 @@ func JsonDec_string() any {
 			return Ok[any, any](s)
 		}
 		return Err[any, any](ErrDecode("expected String, got " + jsonValueKind(v)))
+	}}
+}
+
+// JsonDec_value : Decoder Value — the raw JSON tree at this point, as a Value
+// the Json.Encode side accepts (the same `Value` type). Nothing is converted:
+// the parse uses UseNumber (JsonDec_decodeString), so numbers stay
+// json.Number and keep their exact source text through a later `encode` — a
+// 2^53+ integer or a long decimal is not rounded through float64. Object keys
+// come back in sorted order when re-encoded (the parsed tree is a Go map).
+func JsonDec_value() any {
+	return JsonDecoder{run: func(v any) any {
+		return Ok[any, any](JsonValue{raw: v})
 	}}
 }
 

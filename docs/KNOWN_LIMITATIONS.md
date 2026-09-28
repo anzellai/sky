@@ -127,6 +127,31 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
    side. It is closed in the other direction instead: rejected at check
    time, so it can no longer reach the runtime at all.
 
+9. **Recursion through `Task.andThen` is not stack-safe.** Each `andThen`
+   step nests Go frames: `AnyTaskAndThen` forces the outer task and then the
+   continuation's task inside the same Go call. A Task loop written as plain
+   recursion,
+
+   ```elm
+   count n =
+       if n == 0 then Task.succeed 0
+       else Task.succeed n |> Task.andThen (\_ -> count (n - 1))
+   ```
+
+   grows the goroutine stack every iteration. At two million iterations
+   (measured with `count 2000000`) Go stops the process with the fatal
+   `goroutine stack exceeds 1000000000-byte limit`. That is not a panic: no
+   recover site sees it, no error handler runs, and the process exits.
+   Auto-TCO does not apply, because the recursive call is inside a lambda
+   that the runtime calls later, not in tail position of the function.
+   **Workaround (the supported form)**: write the loop with `Task.loop`
+   (v0.26.2), which runs each step to completion in a Go `for` loop, so the
+   stack stays flat at any iteration count; `Task.forever` for a loop that
+   only stops on an error. A recursion that ends after a small, known
+   number of steps is safe as it is. Making every `andThen` chain
+   stack-safe (a full Task trampoline) is a wider runtime change and is not
+   in this release.
+
 ## Sky.Spa
 
 Sky.Spa (client-side TEA compiled to wasm) is a supported feature; these are its

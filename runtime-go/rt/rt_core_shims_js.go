@@ -57,3 +57,10 @@ func LogRecoveredPanic(tag, context string, rec any) {
 
 // gobRegisterAll — gob session serialization is a server concern; no-op here.
 func gobRegisterAll(v any) {}
+
+// logClassifiedPanic — the classifier (panic_recover.go) is server-only; under
+// wasm a panic recovered off the main goroutine (Task.spawn) goes through the
+// same portable path as LogRecoveredPanic, so it is still logged, not dropped.
+func logClassifiedPanic(tag, context string, rec any) {
+	LogRecoveredPanic(tag, context, rec)
+}

@@ -202,7 +202,9 @@ fn failing_case_still_fails_the_run() {
     .unwrap();
 
     let (code, out, report) = run_test(&dir, &suite);
-    assert_ne!(code, 0, "a failing case must fail the run; output:\n{out}");
+    // Exactly 1: the documented "one or more tests failed" status, distinct from
+    // the 2 a build failure reports (docs/tooling/testing.md).
+    assert_eq!(code, 1, "a failing case must exit 1; output:\n{out}");
     let report = report.expect("sky test must write the SKY_TEST_JSON report");
     assert_eq!(report["failed"].as_i64(), Some(1), "report was {report}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -232,6 +234,36 @@ fn compile_error_in_a_relative_suite_path_is_reported_once() {
         out.matches("Undefined name: noSuchHelper").count(),
         1,
         "each compile error must be reported exactly once:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `sky test` exit statuses are a contract CI scripts branch on: 0 all passed,
+/// 1 a test failed, 2 the suite did not build so no test ran. A build failure
+/// used to exit 1 — indistinguishable from a failing test — because the runner
+/// left no exit code and the CLI mapped "none" to `ExitCode::FAILURE`.
+#[test]
+fn build_failure_exits_2_not_1() {
+    // A type error: the suite never compiles, so no test can run.
+    let (dir, _suite) = project("buildfail", "tests/FooTest.sky", "FooTest");
+    std::fs::write(
+        dir.join("tests").join("FooTest.sky"),
+        "module FooTest exposing (tests)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Test as Test exposing (Test)\n\n\
+         tests : List Test\n\
+         tests =\n    \
+         [ Test.test \"a\" (\\_ -> Test.equal 2 (1 + \"one\")) ]\n",
+    )
+    .unwrap();
+    let (code, out, report) = run_test(&dir, Path::new("tests/FooTest.sky"));
+    assert_eq!(
+        code, 2,
+        "a suite that does not build must exit 2 (nothing ran), not 1; output:\n{out}"
+    );
+    assert!(
+        report.is_none(),
+        "no test ran, so no per-case report may exist; got {report:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -1,0 +1,140 @@
+module TaskLoopConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for Sky.Core.Task.loop / Task.forever / Task.Step.
+--
+-- The defect these close: every `Task.andThen` step nests Go frames, so a
+-- loop written as plain `andThen` recursion dies after about a million steps
+-- with a FATAL Go stack overflow (no error handler sees it; the process
+-- exits). `Task.loop` runs each step to completion before the next, so the
+-- stack does not grow. The first case runs TWO MILLION steps: before
+-- `Task.loop` existed there was no way to write this loop in Sky that
+-- survived.
+--
+-- `Task.forever` runs its task until the task fails; the tests stop it with an
+-- Err and read back how many times it ran from a temp file.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task exposing (Step(..))
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Sky.Core.Error as Error
+import Sky.Test as Test exposing (Test)
+
+
+-- ─── Fixtures ──────────────────────────────────────────────────────
+-- Count up to `limit`, then finish with the count.
+countTo : Int -> Int -> Task Error (Step Int Int)
+countTo limit n =
+    if n >= limit then
+        Task.succeed (Done n)
+
+    else
+        Task.succeed (Loop (n + 1))
+
+-- A loop whose state is a record and whose result type differs from the
+-- state type: sum 1..n, finish with the sum as a String.
+type alias Acc =
+    { i : Int
+    , total : Int
+    }
+
+
+sumStep : Int -> Acc -> Task Error (Step Acc String)
+sumStep n acc =
+    if acc.i > n then
+        Task.succeed (Done (String.fromInt acc.total))
+
+    else
+        Task.succeed (Loop { i = acc.i + 1, total = acc.total + acc.i })
+
+
+-- Fails at state 3; a step after the failure would push the state past 3.
+failAt3 : Int -> Task Error (Step Int Int)
+failAt3 n =
+    if n == 3 then
+        Task.fail (Error.invalidInput "stopped at 3")
+
+    else
+        Task.succeed (Loop (n + 1))
+
+
+-- One `forever` tick: append a mark to the file, and fail once the file
+-- holds `stopAt` marks.
+tick : String -> Int -> Task Error ()
+tick path stopAt =
+    File.append path "x" |> Task.andThen (\_ -> File.readFile path)
+        |> Task.andThen
+               (\content ->
+                   if String.length content >= stopAt then
+                       Task.fail (Error.invalidInput "enough ticks")
+
+                   else
+                       Task.succeed ())
+
+
+-- Run `forever (tick …)`, then report how many ticks ran and the error that
+-- stopped it.
+foreverRun : Int -> Result Error ( Int, String )
+foreverRun stopAt =
+    Task.run (File.tempFile "sky-forever" |> Task.andThen (runTicks stopAt))
+
+
+runTicks : Int -> String -> Task Error ( Int, String )
+runTicks stopAt path =
+    File.writeFile path ""
+        |> Task.andThen (\_ -> Task.forever (tick path stopAt))
+        |> Task.onError (report path)
+
+
+-- Read the tick count back, remove the temp file, pair it with the error.
+report : String -> Error -> Task Error ( Int, String )
+report path e =
+    File.readFile path
+        |> Task.andThen
+               (\content ->
+                   File.remove path
+                       |> Task.map
+                              (\_ -> ( String.length content, Error.toString e )))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "loop: two million steps finish (constant stack)"
+          (\_ ->
+              Test.equal (Ok 2000000) (Task.run (Task.loop (countTo 2000000) 0)))
+    , Test.test
+          "loop: Done on the first step returns the initial value"
+          (\_ -> Test.equal (Ok 7) (Task.run (Task.loop (countTo 0) 7)))
+    , Test.test
+          "loop: record state, result type differs from the state type"
+          (\_ ->
+              Test.equal
+                  (Ok "5050")
+                  (Task.run (Task.loop (sumStep 100) { i = 1, total = 0 })))
+    , Test.test
+          "loop: an Err from a step ends the loop with that error"
+          (\_ ->
+              Test.expectErrorKind
+                  Error.InvalidInput
+                  (Task.run (Task.loop failAt3 0)))
+    , Test.test
+          "loop: the error is the failing step's own error"
+          (\_ ->
+              Test.equal
+                  (Err "InvalidInput: stopped at 3")
+                  (Task.run (Task.loop failAt3 0)
+                      |> Result.mapError Error.toString))
+    , Test.test
+          "forever: runs until the task fails, then fails with that error"
+          (\_ ->
+              Test.equal (Ok ( 5, "InvalidInput: enough ticks" )) (foreverRun 5))
+    , Test.test
+          "forever: a task that fails at once runs exactly once"
+          (\_ ->
+              Test.equal (Ok ( 1, "InvalidInput: enough ticks" )) (foreverRun 1))
+    ]
+
+
+main =
+    Test.runMain tests

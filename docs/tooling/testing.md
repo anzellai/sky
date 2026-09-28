@@ -65,7 +65,10 @@ Exit code:
 
 - `0` — every test passed.
 - `1` — one or more tests failed.
-- `2` — build failed before any test ran.
+- `2` — no test ran: the suite did not build (a compile error, a `go build`
+  failure, a suite module that did not resolve) or the test binary could not
+  start. A test binary that crashes WHILE running (a panic, a Go fatal error)
+  is a failed run and exits `1`, so `2` always means that no test result exists.
 
 Output format:
 

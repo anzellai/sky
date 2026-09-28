@@ -61,13 +61,27 @@ func LogPanicAndExit() {
 // a (mockable) stack trace, writes the structured log line.
 // Honours SKY_LOG_FORMAT=json when set.
 func emitPanicLog(r any, stack []byte) {
+	emitClassifiedPanicLog("sky.main", "top-level task", "Sky panic: ", r, stack)
+}
+
+// logClassifiedPanic logs a panic recovered OUTSIDE the main goroutine (a
+// `Task.spawn` goroutine, for one) through the same classified, errId-tagged
+// structured line as a top-level panic. The process keeps running: the caller
+// has already recovered. `context` names what was running.
+func logClassifiedPanic(tag, context string, r any) {
+	emitClassifiedPanicLog(tag, context, "Sky panic in "+context+": ", r, capturePanicStack())
+}
+
+// emitClassifiedPanicLog is the shared body of emitPanicLog and
+// logClassifiedPanic.
+func emitClassifiedPanicLog(tag, context, prefix string, r any, stack []byte) {
 	errId := newErrId()
 	rawMsg := fmt.Sprintf("%v", r)
 	kind, hint := classifyPanic(rawMsg)
 	// Production keeps the frame in .skylog/panic.log rather than in the
 	// aggregated log stream — same policy as every other recovery site
 	// (panic_log.go).
-	stackTail := panicStackForLog("sky.main", "top-level task", r, stack, 8)
+	stackTail := panicStackForLog(tag, context, r, stack, 8)
 
 	ctx := map[string]any{
 		"errId":      errId,
@@ -77,7 +91,7 @@ func emitPanicLog(r any, stack []byte) {
 		"stackFrame": stackTail,
 	}
 	logEmit(logLevelError, "error",
-		"Sky panic: "+kind+" (ref "+errId+") — "+hint,
+		prefix+kind+" (ref "+errId+") — "+hint,
 		ctx)
 }
 
@@ -116,6 +130,9 @@ func classifyPanic(msg string) (kind, hint string) {
 		strings.Contains(msg, "runtime error: nil"):
 		return "NilDereference",
 			"Tried to use a nil FFI value as if it were initialised. Most Go FFI bindings return `*T` — check for nil before using."
+	case strings.Contains(msg, "rt.JsonEnc_encode: cannot encode"):
+		return "JsonEncodeFailure",
+			"Json.Encode.encode was given a value JSON cannot represent: a NaN or infinite Float (`Math.nan`, `Math.inf`, `Math.sqrt` of a negative number, a Float overflow). JSON has no such number. Check the Float (`Math.isNaN`) before you encode it."
 	case strings.Contains(msg, "sky.Unreachable"),
 		strings.Contains(msg, "Ffi.kernel"):
 		return "CompilerBug",

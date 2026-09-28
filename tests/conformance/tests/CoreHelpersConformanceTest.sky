@@ -1,0 +1,96 @@
+module CoreHelpersConformanceTest exposing (main, tests)
+
+-- Behavioral conformance for the small core helpers added in v0.26.2:
+-- `Result.toMaybe` and the `Sky.Core.Tuple` module.
+--
+-- This suite deliberately does NOT import `Sky.Core.Result`: a bare
+-- `Result.toMaybe` resolves through the kernel qualifier to
+-- `rt.Result_toMaybe`. The imported path (the Sky definition in
+-- `Sky/Core/Result.sky`) is exercised by JsonConformanceTest, which imports
+-- `Sky.Core.Result as Result`. Both paths must agree.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Tuple as Tuple
+import Sky.Core.Error as Error
+import Sky.Test as Test exposing (Test)
+
+
+-- A Result whose Ok type is a record, so the Maybe that comes back is typed
+-- by the record, not by a primitive.
+type alias Point =
+    { x : Int
+    , y : Int
+    }
+
+
+parsePoint : String -> Result Error Point
+parsePoint s =
+    case String.split "," s of
+        [ a, b ] ->
+            case ( String.toInt a, String.toInt b ) of
+                ( Just x, Just y ) ->
+                    Ok { x = x, y = y }
+
+                _ ->
+                    Err (Error.invalidInput "not numbers")
+
+        _ ->
+            Err (Error.invalidInput "not a pair")
+
+
+tests : List Test
+tests =
+    [ -- ─── Result.toMaybe ────────────────────────────────────────
+      Test.test
+        "Result.toMaybe: Ok becomes Just"
+        (\_ -> Test.equal (Just 5) (Result.toMaybe (Ok 5)))
+    , Test.test
+        "Result.toMaybe: Err becomes Nothing"
+        (\_ -> Test.equal Nothing (Result.toMaybe (parsePoint "1;2")))
+    , Test.test
+        "Result.toMaybe: a record payload survives"
+        (\_ -> Test.equal (Just { x = 1, y = 2 }) (Result.toMaybe (parsePoint "1,2")))
+    , Test.test
+        "Result.toMaybe: in List.filterMap keeps only the Ok values"
+        (\_ ->
+            Test.equal
+                [ 3, 4 ]
+                (List.filterMap (\s -> Result.toMaybe (parsePoint s) |> Maybe.map (\p -> p.x + p.y)) [ "1,2", "x", "2,2" ])
+        )
+
+    -- ─── Sky.Core.Tuple ────────────────────────────────────────
+    , Test.test
+        "Tuple.pair builds a pair"
+        (\_ -> Test.equal ( 1, "one" ) (Tuple.pair 1 "one"))
+    , Test.test
+        "Tuple.pair partially applied, as a function value"
+        (\_ -> Test.equal [ ( "k", 1 ), ( "k", 2 ) ] (List.map (Tuple.pair "k") [ 1, 2 ]))
+    , Test.test
+        "Tuple.first / Tuple.second"
+        (\_ -> Test.equal ( "a", 2 ) ( Tuple.first ( "a", 1 ), Tuple.second ( "b", 2 ) ))
+    , Test.test
+        "Tuple.first agrees with Basics.fst, Tuple.second with snd"
+        (\_ -> Test.equal ( fst ( 7, "z" ), snd ( 7, "z" ) ) ( Tuple.first ( 7, "z" ), Tuple.second ( 7, "z" ) ))
+    , Test.test
+        "Tuple.mapFirst changes the type of the first element only"
+        (\_ -> Test.equal ( "1", True ) (Tuple.mapFirst String.fromInt ( 1, True )))
+    , Test.test
+        "Tuple.mapSecond changes the type of the second element only"
+        (\_ -> Test.equal ( 1, 3 ) (Tuple.mapSecond String.length ( 1, "abc" )))
+    , Test.test
+        "Tuple.mapBoth applies one function to each side"
+        (\_ -> Test.equal ( "A", -1 ) (Tuple.mapBoth String.toUpper negate ( "a", 1 )))
+    , Test.test
+        "Tuple helpers compose in a pipeline"
+        (\_ ->
+            Test.equal
+                ( 4, "xx" )
+                (( 2, "x" ) |> Tuple.mapFirst (\n -> n * 2) |> Tuple.mapSecond (\s -> s ++ s))
+        )
+    ]
+
+
+main =
+    Test.runMain tests

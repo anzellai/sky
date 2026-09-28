@@ -6683,6 +6683,23 @@ func Result_andThenTask(fn any, result any) any {
 	})
 }
 
+// Result_toMaybe : Result e a -> Maybe a — `Ok a` becomes `Just a`, `Err _`
+// becomes `Nothing` (the error is dropped on purpose; keep the Result when the
+// reason matters). Backs the qualifier path `Result.toMaybe` (no import); an
+// imported `Sky.Core.Result` uses the Sky definition, which agrees.
+func Result_toMaybe(result any) any {
+	tag, okV, _ := anyResultView(result)
+	if tag == 0 {
+		return Just[any](okV)
+	}
+	if tag < 0 {
+		// Only a Result reaches here in well-typed code; anything else is a
+		// compiler bug, reported loudly rather than guessed into a Just.
+		panic(fmt.Sprintf("rt.Coerce: expected a Result for Result.toMaybe, got %T", result))
+	}
+	return Nothing[any]()
+}
+
 // Task_sequence: run tasks in order, collect results as a list.
 // First error short-circuits.
 //
@@ -6789,12 +6806,21 @@ func Task_parallel(tasks any) any {
 // server has to run on a spawned goroutine while the main goroutine goes on to
 // open the window. `Task_parallel` cannot express that — it runs every branch on
 // a child goroutine and blocks the caller — which is why the webview used to
-// fault. A panic inside the spawned task is recovered so a background failure
-// never aborts the process; it surfaces through the task's own logging.
+// fault.
+//
+// A panic inside the spawned task is recovered, so a background failure never
+// aborts the process, and it is LOGGED through the classified panic log
+// (logClassifiedPanic: panic class, errId, hint and the production stack
+// policy). It used to be recovered by a bare `recover()` and dropped, so a
+// background server loop could die without a trace.
 func Task_spawn(t any) any {
 	return func() any {
 		go func() {
-			defer func() { _ = recover() }()
+			defer func() {
+				if r := recover(); r != nil {
+					logClassifiedPanic("sky.task", "Task.spawn", r)
+				}
+			}()
 			_ = SkyCall(t)
 		}()
 		return Ok[any, any](struct{}{})

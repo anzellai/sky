@@ -154,6 +154,7 @@ type Result e a = Ok a | Err e
 | `map2..5`      | `(a -> b -> ... -> z) -> Result e a -> ... -> Result e z` | `Result.sky` |
 | `andMap`       | `Result e a -> Result e (a -> b) -> Result e b`    | applicative `<*>` |
 | `combine`      | `List (Result e a) -> Result e (List a)`           | `Result.sky:199` |
+| `toMaybe`      | `Result e a -> Maybe a`                            | `Result.sky` + `rt.Result_toMaybe` |
 
 **Mathematical claims**:
 
@@ -172,6 +173,10 @@ type Result e a = Ok a | Err e
 * `combine` is short-circuit on first `Err` (`Result.sky:203`).
 * `map2..5` short-circuit on first `Err`; the first encountered `Err`'s
   value is preserved (later `Err`s discarded).
+* `toMaybe (Ok a) == Just a`, `toMaybe (Err e) == Nothing`. The Sky
+  definition (an imported `Sky.Core.Result`) and the runtime kernel (the bare
+  `Result.toMaybe` qualifier) agree; `CoreHelpersConformanceTest` pins the
+  kernel path and `JsonConformanceTest` the imported one.
 
 **Verification**: by inspection. The CLAUDE.md non-regression rule
 "no `Result String a` in public surfaces" is enforced by the compiler
@@ -520,6 +525,9 @@ exact runtime shape).
 | `run`             | `Task e a -> Result e a` (synchronous main-only)  |
 | `lazy`            | `(() -> Task e a) -> Task e a`                    |
 | `retryWith`       | `RetryPolicy e -> Task e a -> Task e a`           |
+| `loop`            | `(state -> Task e (Step state a)) -> state -> Task e a` |
+| `forever`         | `Task e a -> Task e b`                            |
+| `spawn`           | `Task e a -> Task e ()`                           |
 
 **Mathematical claims**:
 * **Monad laws** in `a`:
@@ -539,6 +547,23 @@ exact runtime shape).
     Bool)`. Builders: `linearBackoff`, `exponentialBackoff`,
     `withJitter`, `withMaxAttempts`, `withBaseMs`, `withKind`,
     `withRetryOn`.
+* **`loop` / `forever` (v0.26.2) — stack safety**:
+  * `loop step s0` runs `step s0`, then `step s1` for each `Loop s1`, and
+    succeeds with `a` at the first `Done a`. The first `Err e` from a step is
+    the result; no later step runs.
+  * CONSTANT STACK: the runtime (`runtime-go/rt/task_loop.go`) forces each
+    step to completion inside one Go `for` loop, so the goroutine stack depth
+    is that of one step, at any iteration count. `andThen` recursion does NOT
+    have this property (each step nests Go frames; `count 2000000` dies with
+    Go's fatal stack overflow) — `docs/KNOWN_LIMITATIONS.md` #9.
+  * `Step` is decoded by constructor NAME (`SkyName`), never by numeric tag.
+    A value that is not a `Step` is a classified `CoerceFailure` panic.
+  * `forever t` = `loop (\_ -> t |> map (\_ -> Loop ())) ()`: it re-runs `t`
+    until `t` fails and fails with that error; its success type is free.
+* **`spawn`**: forcing `spawn t` returns `Ok ()` at once and runs `t` on a new
+  goroutine. `t`'s result is discarded. A panic in `t` is recovered and
+  logged as a classified panic line (class, errId, hint; `logClassifiedPanic`
+  in `panic_recover.go`) — never silently dropped, never fatal to the parent.
 
 **Effect-boundary law**: every Task at the top of `main` MUST be
 forced — either by explicit `Task.run` (a one-shot CLI) or by the
@@ -556,7 +581,10 @@ per-request defer/recover. The Cmd.perform goroutine wraps
 `rt.SafeGo`.
 
 **Verification**: runtime tests in `runtime-go/rt/task_test.go`,
-`retry_test.go`. Examples 07-todo-cli and 18-job-queue exercise the
+`retry_test.go`, `task_loop_test.go` (2,000,000 steps under a 1 MB stack cap,
+flat heap, plus a child-process control proving `andThen` recursion overflows
+the same cap), `task_spawn_log_test.go`; Sky suite
+`tests/conformance/tests/TaskLoopConformanceTest.sky`. Examples 07-todo-cli and 18-job-queue exercise the
 two-level error pattern (correlation ID + structured log + user
 message).
 
@@ -596,6 +624,8 @@ message).
 | `Time`    | 76    | now/sleep/every/unixMillis/format*/timeString                | UTC by default; IANA zones via Std.Time |
 | `ToString` | 54   | `fromInt`/`fromFloat`/`fromBool`/`fromTime`                  | Naming-consistency aliases; zero runtime cost |
 | `Pure`    | 143   | uniform `() -> Task Error a` companion surface (v0.15.50+)   | Tail-call aliases; HM-portable |
+| `Tuple`   | 74    | `pair`/`first`/`second`/`mapFirst`/`mapSecond`/`mapBoth` (v0.26.2) | Pure Sky, total; `first == fst`, `second == snd` |
+| `Json.Encode` / `Json.Decode` | — | builders + decoders over one shared `Value` type; `Decode.value` (raw tree, `json.Number` keeps exact number text), `Encode.raw` (validated `json.RawMessage`) | Decode is total (`Result Error a`). `encode` is total except for a NaN/infinite Float, which is the classified `JsonEncodeFailure` panic (JSON has no such number; `encode` has no error result) — never a silent `""` |
 
 Algebraic correctness for these is uncontroversial. Effect-tier
 modules inherit Task's contract (failure surfaced; never panics in

@@ -260,6 +260,7 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
             "combine",
             "traverse",
             "andThenTask",
+            "toMaybe",
         ],
     ),
     (
@@ -294,6 +295,8 @@ pub const PRELUDE_QUALIFIERS: &[(&str, &[&str])] = &[
             "andThenResult",
             "mapError",
             "onError",
+            "loop",
+            "forever",
         ],
     ),
 ];
@@ -465,6 +468,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "combine",
             "traverse",
             "andThenTask",
+            "toMaybe",
         ],
     ),
     (
@@ -491,6 +495,8 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "mapError",
             "onError",
             "retryWith",
+            "loop",
+            "forever",
         ],
     ),
     (
@@ -731,7 +737,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
     (
         "JsonEnc",
         &[
-            "string", "int", "float", "bool", "null", "list", "object", "encode",
+            "string", "int", "float", "bool", "null", "list", "object", "encode", "raw",
         ],
     ),
     (
@@ -742,6 +748,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "int",
             "float",
             "bool",
+            "value",
             "field",
             "index",
             "list",

@@ -1,0 +1,67 @@
+-- | Sky.Core.Tuple — helpers for pairs `( a, b )` (Layer 3 Sky source).
+--
+-- The Elm `Tuple` module: build a pair, read either side, and map one or
+-- both sides.  Pure Sky, no runtime kernel.  Import it by name:
+--
+--     import Sky.Core.Tuple as Tuple
+--
+--     Tuple.pair 1 "one"                 -- ( 1, "one" )
+--     Tuple.mapFirst String.fromInt ( 1, "one" )  -- ( "1", "one" )
+--
+-- `fst` and `snd` in `Sky.Core.Basics` (auto-imported through the prelude)
+-- stay available and are the same functions as `first` and `second`.
+module Sky.Core.Tuple exposing (pair, first, second, mapFirst, mapSecond, mapBoth)
+
+
+-- | Build a pair.  Handy in a pipeline or as a function value:
+-- `List.map (Tuple.pair key) values`.
+pair : a -> b -> ( a, b )
+pair a b =
+    ( a, b )
+
+
+-- | The first element of a pair.
+first : ( a, b ) -> a
+first t =
+    case t of
+
+        ( a, _ ) ->
+            a
+
+
+-- | The second element of a pair.
+second : ( a, b ) -> b
+second t =
+    case t of
+
+        ( _, b ) ->
+            b
+
+
+-- | Apply a function to the first element; the second is unchanged.
+mapFirst : (a -> x) -> ( a, b ) -> ( x, b )
+mapFirst f t =
+    case t of
+
+        ( a, b ) ->
+            ( f a, b )
+
+
+-- | Apply a function to the second element; the first is unchanged.
+mapSecond : (b -> y) -> ( a, b ) -> ( a, y )
+mapSecond f t =
+    case t of
+
+        ( a, b ) ->
+            ( a, f b )
+
+
+-- | Apply one function to each element.
+--
+--     Tuple.mapBoth String.toUpper negate ( "a", 1 )  -- ( "A", -1 )
+mapBoth : (a -> x) -> (b -> y) -> ( a, b ) -> ( x, y )
+mapBoth f g t =
+    case t of
+
+        ( a, b ) ->
+            ( f a, g b )

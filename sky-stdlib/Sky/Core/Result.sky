@@ -21,6 +21,7 @@ module Sky.Core.Result exposing
     , map5
     , andMap
     , combine
+    , toMaybe
     )
 
 
@@ -226,3 +227,21 @@ reverseHelp list acc =
 
         x :: rest ->
             reverseHelp rest (x :: acc)
+
+
+-- | `toMaybe result` — `Ok a` becomes `Just a`, `Err _` becomes `Nothing`.
+-- The error is dropped, so use this only where the reason for a failure does
+-- not matter (an optional field, a best-effort lookup). Keep the `Result`
+-- when the caller must see why it failed.
+--
+--     Result.toMaybe (Ok 42)                      -- Just 42
+--     Result.toMaybe (Err Error.notFound)         -- Nothing
+toMaybe : Result e a -> Maybe a
+toMaybe result =
+    case result of
+
+        Ok x ->
+            Just x
+
+        Err _ ->
+            Nothing

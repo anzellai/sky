@@ -2,9 +2,10 @@
 --
 -- Builds a `Value` (opaque JSON tree) one piece at a time.  Call
 -- `encode indent value` at the end to serialise to a `String`.
-module Sky.Core.Json.Encode exposing (string, int, float, bool, null, list, object, encode)
+module Sky.Core.Json.Encode exposing (string, int, float, bool, null, list, object, encode, raw)
 
 import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
 
 
 -- | Encode a string as a JSON string value.
@@ -56,6 +57,29 @@ object =
 -- | `encode indent value` — serialise to a JSON string.  `indent`
 -- controls pretty-printing: `0` is compact, larger values use
 -- that many spaces per level.
+--
+-- Every `Value` the builders here make encodes, with one exception: a NaN or
+-- infinite `Float` (`Math.nan`, `Math.inf`, a Float overflow). JSON has no
+-- such number, and `encode` has no error result, so encoding one is a
+-- classified `JsonEncodeFailure` panic (a 500 for that request in a server,
+-- exit 1 with a structured log in a CLI), never a silent empty string.
+-- Check a Float you do not control with `Math.isNaN` before you encode it.
 encode : Int -> Value -> String
 encode =
     Ffi.kernel "JsonEnc_encode"
+
+
+-- | `raw text` — embed JSON text that is already serialised (a stored
+-- document, a payload from another service) as a `Value`, without decoding
+-- it into Sky types first.  The text is checked: invalid JSON is an
+-- `Err InvalidInput`, never a `Value` that would write broken output later.
+-- A valid document is kept as it came (key order and the exact text of
+-- every number), and `encode` re-indents it when it indents.
+--
+--     case Encode.raw "{\"b\":1,\"a\":2}" of
+--         Ok doc -> Encode.encode 0 (Encode.object [ ( "doc", doc ) ])
+--             -- {"doc":{"b":1,"a":2}}
+--         Err _ -> ""
+raw : String -> Result Error Value
+raw =
+    Ffi.kernel "JsonEnc_raw"

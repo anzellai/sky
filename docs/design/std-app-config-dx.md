@@ -257,9 +257,10 @@ runtime helpers. These are not config; they must survive deprecation as App
 functions.
 
 **Internalisation:** the per-shape modules keep their runtime code but their
-public `module … exposing` shrinks to kernel-internal, hand-curated in
-`rust/crates/project/src/kernel_api.rs` (the `kernel_api_covers_registered_kernel_functions`
-gate guards drift). Users import only `Std.App`.
+public `module … exposing` shrinks to kernel-internal, documented in their own
+`.sky` files (the one doc source for every stdlib module since `kernel_api.rs`
+was deleted; `xtask kernel-members` and `project/tests/kernel_surface.rs` guard
+drift). Users import only `Std.App`.
 
 ## 7. What the user writes (before → after)
 

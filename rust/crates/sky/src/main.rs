@@ -6388,15 +6388,14 @@ fn cmd_test(args: &[String]) -> ExitCode {
             if !run.note.is_empty() {
                 eprintln!("sky test: {}", run.note);
             }
-            match run.exit_code {
-                Some(0) => ExitCode::SUCCESS,
-                Some(n) => ExitCode::from(n as u8),
-                None => ExitCode::FAILURE,
-            }
+            // 0 all passed, 1 a test failed, 2 nothing ran (build failure).
+            ExitCode::from(run.exit_status())
         }
         Err(e) => {
+            // An I/O error before the build (the scratch dir, the synthesised
+            // entry): no test ran.
             eprintln!("sky test: {e}");
-            ExitCode::FAILURE
+            ExitCode::from(testrunner::EXIT_NOT_RUN)
         }
     }
 }

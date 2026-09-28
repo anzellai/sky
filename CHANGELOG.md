@@ -136,6 +136,21 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - **CSRF exemptions are keyed by method.** `Server.api "GET /x"` /
   `Live.api "GET /x"` no longer exempt `POST /x`.
 
+- **`sky test` exits 2 when the suite does not build.** It exited 1, the
+  same status as a failing test, so CI could not tell "a test failed" from
+  "nothing ran". Now: 0 every test passed, 1 a test failed (or the test
+  binary crashed while running, which includes a Go fatal error), 2 no test
+  ran (a compile error, a `go build` failure, a suite module that did not
+  resolve, or a test binary that could not start). A CI script that checks
+  for exit 1 to detect a broken build must check for 2
+  (`docs/tooling/testing.md`).
+- **`Json.Encode.encode` of a NaN or infinite `Float` fails loudly.** It
+  returned `""` (a silent wrong answer that code then sent or stored as
+  JSON). JSON has no such number and `encode : Int -> Value -> String` has no
+  error result, so it is now the classified `JsonEncodeFailure` panic: a 500
+  for that request in a server, exit 1 with a structured log line in a CLI.
+  Guard a Float you do not control with `Math.isNaN` before you encode it.
+
 ### Migration
 
 - **Stop keying your own data by the session cookie.** Code such as
@@ -199,6 +214,32 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - **`SKY_ALLOWED_HOSTS`** — extra Host names for the loopback dev listener
   and the default dev WebSocket origins (`docs/sky-toml.md`).
 
+- **`Task.loop`, `Task.Step` and `Task.forever`: stack-safe Task loops.**
+  `Task.loop : (state -> Task e (Step state a)) -> state -> Task e a` runs a
+  step, then again for each `Loop newState`, until `Done a`; an `Err` stops
+  it. The runtime runs each step to completion in a Go `for` loop, so the
+  stack stays flat at any iteration count. A loop written as recursion
+  through `Task.andThen` grows the Go stack every step and, at two million
+  iterations, stops the process with a fatal Go stack overflow that no error
+  handler sees (`docs/KNOWN_LIMITATIONS.md` #9). `Task.forever : Task e a ->
+  Task e b` re-runs a task until it fails. `Step` is decoded by constructor
+  name, never by tag. Import the constructors with
+  `import Sky.Core.Task as Task exposing (Step(..))`
+  (`runtime-go/rt/task_loop.go`, `task_loop_test.go`,
+  `tests/conformance/tests/TaskLoopConformanceTest.sky`).
+- **`Result.toMaybe : Result e a -> Maybe a`.** Works with and without
+  `import Sky.Core.Result`.
+- **`Sky.Core.Tuple`**: `pair`, `first`, `second`, `mapFirst`, `mapSecond`,
+  `mapBoth` (the Elm `Tuple` module). Pure Sky; import it as
+  `import Sky.Core.Tuple as Tuple`. `fst` / `snd` stay.
+- **`Json.Decode.value : Decoder Value`** — the JSON at a point, unchanged,
+  as the `Value` type `Json.Encode` uses, so an unmodelled part of a
+  document can be kept and written back. Numbers keep their exact text (an
+  integer past 2^53 is not rounded).
+- **`Json.Encode.raw : String -> Result Error Value`** — embed JSON text
+  that is already serialised. The text is validated; invalid JSON is
+  `Err InvalidInput`. Key order and number text are kept.
+
 ### Fixed
 
 - **`Server.withHeader` changed the response it was given.** It wrote into
@@ -247,6 +288,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   returned a Task from `Task.lazy`'s lambda and did not type-check; it now
   uses the form above (`rust/crates/ffi/src/gen.rs`,
   `skyi_describes_result_not_task`).
+
+- **`Task.spawn` dropped panics.** A panic in a spawned task was recovered
+  by a bare `recover()` and discarded, so a background loop could die with
+  no trace. It is now written to the log as a classified panic line (class,
+  errId, hint, and the production stack policy), the same line a panic in
+  `main` produces; the caller and the process keep running
+  (`runtime-go/rt/rt.go`, `panic_recover.go`, `task_spawn_log_test.go`).
+- **AGENTS.md named a deleted file as the home of kernel-only module docs.**
+  It said they were hand-curated in `rust/crates/project/src/kernel_api.rs`
+  under a `kernel_api_covers_registered_kernel_functions` gate; both were
+  deleted in v0.19. It now says the `.sky` file is the one doc source for
+  every stdlib module and names the gates that guard it.
 
 ## v0.26.1 — the app's own admins open the Sky Console, and `SKY_CONSOLE_AUTH=app` is closed (2026-09-27)
 

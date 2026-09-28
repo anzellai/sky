@@ -8,6 +8,7 @@ module Sky.Core.Json.Decode exposing
     , int
     , float
     , bool
+    , value
     , decodeString
     , field
     , at
@@ -47,6 +48,23 @@ float =
 bool : Decoder Bool
 bool =
     Ffi.kernel "JsonDec_bool"
+
+
+-- | The JSON at this point, unchanged, as a `Value` — the same type
+-- `Json.Encode` builds, so it can be stored and written back with
+-- `Encode.encode` or nested in `Encode.object` / `Encode.list`. Use it to keep
+-- a part of a document you do not model (a free-form `metadata` object, an
+-- extension field) and pass it on.
+--
+-- Numbers keep their exact text: an integer past 2^53 or a long decimal is
+-- not rounded on the way through. Object keys are written back in sorted
+-- order.
+--
+--     Decode.decodeString (Decode.field "meta" Decode.value) input
+--         |> Result.map (Encode.encode 0)
+value : Decoder Value
+value =
+    Ffi.kernel "JsonDec_value"
 
 
 -- ─── Entry point ───────────────────────────────────────────────────
