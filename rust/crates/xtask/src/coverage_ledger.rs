@@ -2964,7 +2964,6 @@ fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) ->
     }
 
     let mut dropped: Vec<String> = Vec::new();
-    let mut dropped: Vec<String> = Vec::new();
     for s in &led.surfaces {
         let now = s.new_max() as u8;
         if let Some(was) = before.get(&s.id) {
