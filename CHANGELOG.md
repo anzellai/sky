@@ -433,32 +433,78 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - **`Std.Ui.Terminal`: an interactive terminal element bound to a PTY
   process.** `Terminal.init id`, `Terminal.attach toMsg process`,
   `Terminal.update toMsg msg` and `Terminal.view toMsg terminal attrs` wire a
-  `Process.withPty` child to a built-in widget island: a small VT100 /
-  xterm renderer shipped inside the Sky client files (no script to load,
-  strict-CSP clean; cursor movement, 16 / 256 / true colours, erase,
-  scroll regions, the alternate screen, UTF-8 across chunks). The output is
-  read with `Process.readWithin` and sent to the widget with
-  `Cmd.toIsland` as base64 with its ring offsets; key presses and pastes go
-  to `Process.write`; the widget's measured size goes to `Process.resize`.
-  A remounted widget (a reload, a navigation back) asks for a repaint and
-  the terminal replays the output from the oldest byte the ring still
-  holds; a widget that sees output commands were lost on a dropped
-  connection asks for the same repaint. Sky.Live and the desktop window;
-  a Sky.Spa build (`web:app`, native client targets) refuses a program that
-  uses it, naming the reason (the PTY is on the server, and Sky.Spa cannot
-  send a widget command from a server branch). (`sky-stdlib/Std/Ui/
-  Terminal.sky`, `runtime-go/rt/island_terminal.go`,
+  `Process.withPty` child to a built-in widget island (no script to load,
+  strict-CSP clean). The terminal is emulated on the server: from the first
+  `Process.screen` call the runtime runs every output byte through a VT100 /
+  xterm screen as the process writes it (cursor movement, erase, insert and
+  delete, scroll regions, the alternate screen, 16 / 256 / true colours in
+  `;` and `:` forms, UTF-8 across reads, wide characters and combining marks,
+  DEC line drawing, titles, the bell, and DSR / DA replies to the program).
+  `Process.screen` returns screen-diff frames: scroll ops (a region moved by
+  N rows, and which lines went to the scrollback), changed row spans as runs
+  with their colours, the cursor, the title, the modes and the bell. Frames
+  are at least 16 ms apart, so a flood of output is one frame per paint at
+  most. The widget draws them on a `<canvas>`: one draw pass per animation
+  frame over the rows that changed, batched `fillRect` / `fillText` per run.
+  A transparent text layer over the canvas keeps mouse selection, copy and
+  screen readers working, a polite live region announces new rows, and the
+  mouse wheel scrolls the scrollback (1000 lines). A remount (a reload, a
+  navigation back) is repainted by one frame from the current screen and
+  its scrollback, not by replaying output bytes; every frame names the frame
+  it applies on top of, so a widget that lost one on the way asks for the
+  repaint, and a check frame after each burst finds a lost last frame
+  within a second. Key presses and pastes go to `Process.write` (bracketed
+  paste and cursor-keys modes honoured); the widget's measured size goes to
+  `Process.resize`, which resizes the server screen first. Sky.Live and the
+  desktop window; a Sky.Spa build (`web:app`, native client targets) refuses
+  a program that uses it, naming the reason. (`sky-stdlib/Std/Ui/
+  Terminal.sky`, `runtime-go/rt/term_screen.go`, `term_frame.go`,
+  `process_screen.go`, `island_terminal.go`,
   `rust/crates/project/src/spa_partition.rs`.)
+- **`Std.Ui.Terminal` design decisions, measured**
+  (`docs/perf/runs/terminal-20260928/`, method and figures there). The first
+  cut of this module rendered DOM `<span>` rows from the raw output sent as
+  base64 over SSE. Measured against it on four workloads (`yes` 4 MiB,
+  `seq 1 200000`, 300 `clear; ls -la` redraws, a 120 x 40 per-cell colour
+  stress): the byte stream lost its last SSE frames under a flood (a full
+  per-session SSE buffer drops island commands, and the widget had no way to
+  notice), so after `yes` the terminal stopped short of the end; the DOM
+  renderer spent 2.2 s of main thread on the `yes` stream and missed 83 of
+  91 animation frames on the colour stress. The canvas renderer on server
+  frames takes 34 ms from first frame to last paint on the same `yes` and
+  misses 6 of 92 frames on the colour stress, and every flood ends on the
+  right line; the wire carries 10x (`yes`), 6x (`seq`) and 52x (redraw) fewer
+  bytes before compression. Decisions: the DOM span renderer is removed
+  (the canvas was faster on every workload, and the text layer keeps
+  selection, copy and screen readers and is the fallback without a 2D
+  canvas); the raw-byte replay is removed (the screen is the source of
+  truth, so nothing needs the bytes again); `Terminal.encodeOutput` and
+  `Terminal.encodeExit` are removed with it (unreleased API).
+  **Binary frames were measured and not built:** the same frames in a
+  compact binary encoding, base64-encoded for SSE, are 35% smaller than JSON
+  on the colour stress uncompressed, but through a gzip stream flushed per
+  message (a compressing proxy on SSE) they save 4% on `yes` and are larger
+  on `seq` (+21%), the redraws (+45%) and the colour stress (+2%). Under the
+  10% threshold, a second (WebSocket) transport for terminal islands would
+  have to be proven against the strict CSP, proxies, reconnect and the
+  header-session transport for no measured saving, so frames stay JSON on
+  the island SSE channel.
 - **Tests:** conformance suites `UiTextWrapConformanceTest` (12) and
-  `UiCanvasConformanceTest` (19: the exact SVG, the pointer markers, the
-  terminal payloads); Go tests for the Braille cell golden, the text wrap,
-  the pointer runtime (node), the VT renderer (node), the scrollback replay
-  on a real PTY, and the widget-command queue; a Sky.Spa split test; and
-  `scripts/ui-canvas-terminal-e2e.sh` (Playwright under `SKY_CSP=strict`:
-  scene pointer events on Sky.Live and Sky.Spa, text wrapping, and a
-  terminal bound to `sh` that runs `echo hi`, follows a resize, survives a
-  dropped SSE connection and repaints after a reload), wired into the
-  release and nightly web gates.
+  `UiCanvasConformanceTest` (18: the exact SVG, the pointer markers, the
+  terminal element); Go tests for the Braille cell golden, the text wrap,
+  the pointer runtime (node), the server terminal screen against known
+  sequences and every frame applied to a model of the widget (random
+  sequences, resizes and floods), the widget in node (the op model, gap
+  detection, draw batching against a recording canvas, and Go-made frames
+  applied by the JS model), a real shell on a PTY (remount repaint, a ring
+  overflow, the check frame, resize), and the widget-command queue; a
+  Sky.Spa split test; and `scripts/ui-canvas-terminal-e2e.sh` (Playwright
+  under `SKY_CSP=strict`: scene pointer events on Sky.Live and Sky.Spa, text
+  wrapping, and a terminal bound to `sh` that draws `echo hi` on the canvas,
+  copies a selection, runs a full-screen redraw loop within its frame
+  budget, follows a resize, survives a dropped SSE connection and is
+  repainted after a reload by one frame), wired into the release and nightly
+  web gates.
 - **Native shells: purpose strings, typed entitlements, secure storage,
   biometrics and release packaging** (`docs/skyapp/native.md`).
   - `Bundle.withUsage : Permission -> String -> Bundle -> Bundle` declares a

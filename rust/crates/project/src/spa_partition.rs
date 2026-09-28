@@ -5507,6 +5507,7 @@ mod tests {
             ("Subprocess", "write"),
             ("Subprocess", "kill"),
             ("Subprocess", "resize"),
+            ("Subprocess", "screen"),
             ("Subprocess", "close"),
             ("Watch", "watch"),
             ("Watch", "next"),

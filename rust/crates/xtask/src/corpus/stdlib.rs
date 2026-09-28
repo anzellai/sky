@@ -360,8 +360,8 @@ pub const SURFACES: &[Surface] = &[
     ),
     // v0.27.0 Std.Ui.Canvas and Std.Ui.Terminal. A scene is asserted as the
     // SVG it renders (`Html.render (Canvas.toSvg …)`), which is exactly what
-    // every web backend draws; the terminal as the widget command payloads it
-    // sends (`Encode.encode 0 (Terminal.encodeOutput …)`). The expected
+    // every web backend draws; the terminal as the island element it renders
+    // (`Html.render (Ui.layout [] (Terminal.view …))`). The expected
     // markup follows the renderer's rules (attributes in name order, text
     // escaped), not an observation of it.
     sf2(
@@ -372,7 +372,7 @@ pub const SURFACES: &[Surface] = &[
     sf2(
         "terminal",
         "Std.Ui.Terminal",
-        &["Sky.Core.Json.Encode", "Sky.Core.Process"],
+        &["Std.Html as Html", "Std.Ui as Ui"],
     ),
 ];
 
@@ -3580,21 +3580,18 @@ fn canvas_battery(edge: &str) -> Vec<Check> {
 
 // --- Std.Ui.Terminal -------------------------------------------------------
 //
-// The widget command payloads: output bytes as standard base64 with their
-// ring offsets (keys in the order the payload builds them), and the
-// exit status with the other field null.
+// The pure surface: the element `Terminal.view` renders (the built-in
+// "sky-terminal" island with the terminal's id and its label in the props)
+// and a fresh terminal's state. The frames the widget draws come from the
+// runtime's screen emulator (an effect, `Process.screen`) and are asserted by
+// the Go tests `term_screen_test.go` / `island_terminal_test.go`.
 fn terminal_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
-            s(
-                &["Terminal.encodeOutput"],
-                "Encode.encode 0 (Terminal.encodeOutput { data = \"hi\", from = 0, next = 2, dropped = False, eof = False })",
-                "{\"data\":\"aGk=\",\"from\":0,\"next\":2,\"dropped\":false}",
-            ),
-            s(
-                &["Terminal.encodeExit"],
-                "Encode.encode 0 (Terminal.encodeExit (ExitCode 0))",
-                "{\"code\":0,\"signal\":null}",
+            bo(
+                &["Terminal.view", "Terminal.init"],
+                "String.contains \"data-sky-island=\\\"sky-terminal\\\"\" (termHtml \"shell\") && String.contains \"data-sky-island-id=\\\"shell\\\"\" (termHtml \"shell\")",
+                true,
             ),
             s(
                 &["Terminal.init", "Terminal.process", "Terminal.exitStatus"],
@@ -3602,25 +3599,25 @@ fn terminal_battery(edge: &str) -> Vec<Check> {
                 "N/N",
             ),
         ],
-        "empty" => vec![s(
-            &["Terminal.encodeOutput"],
-            "Encode.encode 0 (Terminal.encodeOutput { data = \"\", from = 5, next = 5, dropped = False, eof = True })",
-            "{\"data\":\"\",\"from\":5,\"next\":5,\"dropped\":false}",
+        "empty" => vec![bo(
+            &["Terminal.view"],
+            "String.contains \"data-sky-island=\\\"sky-terminal\\\"\" (termHtml \"\")",
+            true,
         )],
-        "boundary" => vec![s(
-            &["Terminal.encodeOutput"],
-            "Encode.encode 0 (Terminal.encodeOutput { data = \"x\", from = 1048576, next = 1048577, dropped = True, eof = False })",
-            "{\"data\":\"eA==\",\"from\":1048576,\"next\":1048577,\"dropped\":true}",
+        "boundary" => vec![bo(
+            &["Terminal.view"],
+            "String.contains \"skyisland-resize\" (termHtml \"t\") && String.contains \"skyisland-input\" (termHtml \"t\") && String.contains \"skyisland-ready\" (termHtml \"t\")",
+            true,
         )],
-        "unicode" => vec![s(
-            &["Terminal.encodeOutput"],
-            "Encode.encode 0 (Terminal.encodeOutput { data = \"é✓\", from = 0, next = 5, dropped = False, eof = False })",
-            "{\"data\":\"w6ninJM=\",\"from\":0,\"next\":5,\"dropped\":false}",
+        "unicode" => vec![bo(
+            &["Terminal.view"],
+            "String.contains \"Terminal 日本\" (termHtml \"日本\")",
+            true,
         )],
         "failure" => vec![s(
-            &["Terminal.encodeExit"],
-            "Encode.encode 0 (Terminal.encodeExit (Signalled 9))",
-            "{\"code\":null,\"signal\":9}",
+            &["Terminal.exitStatus"],
+            "termFresh",
+            "N/N",
         )],
         _ => vec![],
     }
@@ -5397,7 +5394,16 @@ sceneEvents node =
 "#
         }
         "terminal" => {
-            r#"termFresh : String
+            r#"type TermMsg
+    = TermMsg Terminal.Msg
+
+
+termHtml : String -> String
+termHtml id =
+    Html.render (Ui.layout [] (Terminal.view TermMsg (Terminal.init id) []))
+
+
+termFresh : String
 termFresh =
     let
         t =

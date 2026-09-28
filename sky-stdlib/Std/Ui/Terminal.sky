@@ -1,20 +1,24 @@
 -- | Std.Ui.Terminal — an interactive terminal element bound to a PTY process
 -- (v0.27.0, Sky.Live).
 --
--- The element is a widget island (`Ui.island`) with a built-in widget, a
--- small VT100 / xterm renderer that ships inside the Sky client files (no
+-- The element is a widget island (`Ui.island`) with a built-in widget that
+-- draws the terminal on a canvas and ships inside the Sky client files (no
 -- script to load, strict-CSP clean). The process is a `Sky.Core.Process`
--- spawned with `withPty`. This module wires the two together:
+-- spawned with `withPty`. The terminal itself is emulated on the server
+-- (`Process.screen`): the runtime runs every output byte through a VT100 /
+-- xterm screen as the process writes it, and the widget only draws what the
+-- screen says. This module wires the two together:
 --
---   * the process output streams to the widget: the terminal reads the
---     output with `Process.readWithin` and sends each chunk to the widget
---     with `Cmd.toIsland` (base64, with its ring offsets);
+--   * the screen streams to the widget as screen-diff frames: scrolls,
+--     changed row spans with their colours, the cursor, the title, the bell
+--     (`Process.screen`, then `Cmd.toIsland` "frame"). A flood of output is
+--     one frame per paint at most: the bytes in between coalesce;
 --   * a key press in the widget reaches `Process.write` as typed input;
 --   * a size change of the widget reaches `Process.resize`;
---   * a remount (a reload, a lost connection, a navigation back) repaints:
---     the widget asks for the scrollback and the terminal replays the
---     process output from the oldest byte its ring still holds (1 MiB by
---     default, `Process.withBufferSize`).
+--   * a remount (a reload, a lost connection, a navigation back) repaints
+--     from the current screen and its scrollback (the last 1000 lines), not
+--     by replaying the output bytes; a widget that sees a frame was lost on
+--     the way asks for the same repaint.
 --
 -- The app code is three calls: keep a `Terminal` in the model, forward its
 -- messages to `update`, and render `view`:
@@ -49,35 +53,21 @@
 --     view model =
 --         Terminal.view Term model.term [ Ui.height (Ui.px 400) ]
 --
--- No subscription is needed: the output is read by a chain of `Cmd.perform`
--- reads, not by `Process.events`, because a process read by an `events`
--- subscription cannot be read again from an offset, and the replay on a
--- remount needs exactly that.
+-- No subscription is needed: the screen is read by a chain of `Cmd.perform`
+-- reads.
 --
 -- Targets. Sky.Live (`--target web`, and the `desktop` window) is supported.
 -- A Sky.Spa build (`web:app` and the native client targets) refuses a
 -- program that uses this module: the PTY lives on the server, and Sky.Spa
 -- cannot send a widget command from a server branch. A terminal target
 -- renders the empty element.
-module Std.Ui.Terminal exposing
-    ( Terminal
-    , Msg
-    , init
-    , attach
-    , update
-    , view
-    , process
-    , exitStatus
-    , encodeOutput
-    , encodeExit
-    )
+module Std.Ui.Terminal exposing (Terminal, Msg, init, attach, update, view, process, exitStatus)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error exposing (Error)
-import Sky.Core.Encoding as Encoding
-import Sky.Core.Json.Encode as Encode exposing (Value)
+import Sky.Core.Json.Encode as Encode
 import Sky.Core.Json.Decode as Decode
-import Sky.Core.Process as Process exposing (Process, Chunk, ExitStatus(..), Stream(..))
+import Sky.Core.Process as Process exposing (Process, Screen, ExitStatus)
 import Std.Cmd as Cmd
 import Std.Ui as Ui exposing (Element, Attribute)
 
@@ -99,7 +89,7 @@ type Msg
     = Ready
     | Input String
     | Resized Int Int
-    | Read Int (Result Error Chunk)
+    | Frame Int (Result Error Screen)
     | Waited Int (Result Error ExitStatus)
     | Done (Result Error ())
 
@@ -130,8 +120,8 @@ exitStatus term =
 
 
 -- | Show `proc` in the terminal (a process spawned with `Process.withPty`).
--- The screen is cleared and the output streams from its first byte. When
--- the widget has already reported its size, the PTY is resized to it.
+-- The widget is repainted from the process's screen. When the widget has
+-- already reported its size, the PTY is resized to it.
 attach : (Msg -> msg) -> Process -> Terminal -> ( Terminal, Cmd msg )
 attach toMsg proc term =
     case term of
@@ -153,11 +143,7 @@ attach toMsg proc term =
                         []
             in
                 ( Terminal next
-                , Cmd.batch
-                      ([ Cmd.toIsland st.id "reset" (Encode.object [])
-                      , readCmd toMsg next.gen proc 0
-                      ]
-                          ++ resizeCmd)
+                , Cmd.batch (readCmd toMsg next True proc :: resizeCmd)
                 )
 
 
@@ -170,25 +156,18 @@ update toMsg msg term =
             case msg of
 
                 Ready ->
-                    -- A (re)mounted widget holds nothing: clear it and replay
-                    -- the output from the oldest byte the ring still holds. A
-                    -- new read generation retires the read in flight.
+                    -- A (re)mounted widget holds nothing: repaint it from the
+                    -- screen. A new generation retires the read in flight.
                     let
                         next = { st | gen = st.gen + 1 }
-                        replay =
-                            case st.proc of
-
-                                Just p ->
-                                    [ readCmd toMsg next.gen p 0 ]
-
-                                Nothing ->
-                                    []
                     in
-                        ( Terminal next
-                        , Cmd.batch
-                              (Cmd.toIsland st.id "reset" (Encode.object [])
-                                  :: replay)
-                        )
+                        case st.proc of
+
+                            Just p ->
+                                ( Terminal next, readCmd toMsg next True p )
+
+                            Nothing ->
+                                ( Terminal next, Cmd.none )
 
                 Input data ->
                     case st.proc of
@@ -221,10 +200,10 @@ update toMsg msg term =
                             Nothing ->
                                 ( next, Cmd.none )
 
-                Read gen result ->
+                Frame gen result ->
                     if gen /= st.gen then
-                        -- A read of an earlier generation (before a replay):
-                        -- its bytes are sent again by the current one.
+                        -- A read of an earlier generation: the current one
+                        -- repaints.
                         ( term
                         , Cmd.none
                         )
@@ -232,45 +211,37 @@ update toMsg msg term =
                     else
                         case ( result, st.proc ) of
 
-                            ( Ok chunk, Just p ) ->
+                            ( Ok screen, Just p ) ->
                                 let
-                                    output =
-                                        if chunk.data == "" then
-                                            []
-
-                                        else
+                                    frame =
+                                        if screen.changed then
                                             [ Cmd.toIsland
                                                   st.id
-                                                  "output"
-                                                  (encodeOutput chunk)
+                                                  "frame"
+                                                  screen.frame
                                             ]
+
+                                        else
+                                            []
                                     follow =
-                                        if chunk.eof then
+                                        if screen.eof then
                                             Cmd.perform
                                                 (Process.wait p)
                                                 (\r -> toMsg (Waited gen r))
 
                                         else
-                                            readCmd toMsg gen p chunk.next
+                                            readCmd toMsg st False p
                                 in
-                                    ( term, Cmd.batch (output ++ [ follow ]) )
+                                    ( term, Cmd.batch (frame ++ [ follow ]) )
 
                             _ ->
                                 ( term, Cmd.none )
 
-                Waited gen result ->
+                Waited _ result ->
                     case result of
 
                         Ok status ->
-                            if gen /= st.gen then
-                                ( Terminal { st | exit = Just status }
-                                , Cmd.none
-                                )
-
-                            else
-                                ( Terminal { st | exit = Just status }
-                                , Cmd.toIsland st.id "exit" (encodeExit status)
-                                )
+                            ( Terminal { st | exit = Just status }, Cmd.none )
 
                         Err _ ->
                             ( term, Cmd.none )
@@ -315,41 +286,13 @@ view toMsg term attrs =
                     ++ attrs)
 
 
--- Read the next output at `offset`: wait up to 20 s for bytes, so an idle
--- terminal costs one message every 20 s.
-readCmd : (Msg -> msg) -> Int -> Process -> Int -> Cmd msg
-readCmd toMsg gen p offset =
+-- Read the next screen frame for this widget: wait up to 20 s for a change,
+-- so an idle terminal costs one read every 20 s (a short check frame follows
+-- the last frame of a burst; see Process.screen).
+readCmd : (Msg -> msg) -> State -> Bool -> Process -> Cmd msg
+readCmd toMsg st full p =
     Cmd.perform
-        (Process.readWithin 20000 p Stdout offset)
-        (\r -> toMsg (Read gen r))
-
-
--- | The payload of the widget's "output" command for a chunk of process
--- output: `{ data, from, next, dropped }`, the bytes as base64 (a chunk may
--- end inside a UTF-8 character, and JSON cannot carry raw bytes) with their
--- ring offsets, so the widget writes each byte once; `dropped` says the ring
--- overwrote bytes before `from`, so a gap is expected (without it the widget
--- asks for a repaint). For custom wiring and tests.
-encodeOutput : Chunk -> Value
-encodeOutput chunk =
-    Encode.object
-        [ ( "data", Encode.string (Encoding.base64Encode chunk.data) )
-        , ( "from", Encode.int chunk.from )
-        , ( "next", Encode.int chunk.next )
-        , ( "dropped", Encode.bool chunk.dropped )
-        ]
-
-
--- | The payload of the widget's "exit" command: `{ code, signal }`, one of
--- them null.
-encodeExit : ExitStatus -> Value
-encodeExit status =
-    case status of
-
-        ExitCode code ->
-            Encode.object
-                [ ( "code", Encode.int code ), ( "signal", Encode.null ) ]
-
-        Signalled sig ->
-            Encode.object
-                [ ( "code", Encode.null ), ( "signal", Encode.int sig ) ]
+        (Process.screen
+            { view = st.id, gen = st.gen, full = full, waitMs = 20000 }
+            p)
+        (\r -> toMsg (Frame st.gen r))

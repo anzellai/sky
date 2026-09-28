@@ -3,103 +3,228 @@
 package rt
 
 import (
-	"encoding/base64"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-// The scrollback replay Std.Ui.Terminal relies on: a remounted widget holds
-// nothing, so the terminal reads the PTY output again from offset 0 and sends
-// it as base64 "output" commands. Asserted on a real shell on a PTY:
-//
-//   - the live reads and the replay from 0 return the same bytes, so the
-//     repainted screen is the screen the user saw (the `hi` line is there
-//     once);
-//   - the replay reads offsets the widget can dedupe: a chunk starts at the
-//     offset asked for and `next` is where the following read starts;
-//   - the base64 payload round-trips the bytes, a UTF-8 character included;
-//   - when the ring has overwritten the start, the replay reports `dropped`
-//     and starts at the oldest byte it still holds (the widget paints the
-//     tail).
-func TestTerminalScrollbackReplay(t *testing.T) {
-	c := procCmd{program: "/bin/sh", env: [][2]string{{"PS1", "$ "}}, pty: true, cols: 80, rows: 24}
-	id := spawnT(t, c)
-	procOk(t, procTask(t, Subprocess_write(id, "echo hi; printf 'caf\\303\\251\\n'\n")))
+// Process.screen (process_screen.go) on a real shell on a PTY: the frames
+// Std.Ui.Terminal sends its widget, applied to the widget model of
+// term_screen_test.go.
 
-	var live strings.Builder
-	off := 0
+type screenRead struct {
+	changed bool
+	frame   map[string]any
+	eof     bool
+}
+
+func readScreen(t *testing.T, id int, view string, gen int, full bool, ms int) screenRead {
+	t.Helper()
+	m := procOk(t, procTask(t, Subprocess_screen(id, view, gen, full, ms))).(map[string]any)
+	r := screenRead{changed: m["changed"].(bool), eof: m["eof"].(bool)}
+	if f, ok := m["frame"].(JsonValue).raw.(map[string]any); ok {
+		r.frame = f
+	}
+	return r
+}
+
+// follow applies frames to cl until the widget's text satisfies ok.
+func follow(t *testing.T, id int, view string, gen int, cl *termClient, ok func([]string) bool) {
+	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
-	for !strings.Contains(live.String(), "café\r\n") {
+	for {
+		text := make([]string, len(cl.grid))
+		for y, r := range cl.grid {
+			text[y] = cellsText(r)
+		}
+		if ok(text) {
+			return
+		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the shell never printed its output; got %q", live.String())
+			t.Fatalf("the screen never showed what was expected; the widget shows %q", text)
 		}
-		ch := readChunk(t, id, procStreamStdout, off)
-		if ch.from != off {
-			t.Fatalf("a live read asked for %d and started at %d", off, ch.from)
+		r := readScreen(t, id, view, gen, false, 2000)
+		if r.changed {
+			if err := cl.apply(r.frame); err != nil {
+				t.Fatal(err)
+			}
 		}
-		live.WriteString(ch.data)
-		off = ch.next
-	}
-	// Count "hi\r\n", not "\nhi\r\n": the PTY echoes the typed line at once,
-	// and the shell may print its prompt after that echo, so the output line
-	// can read "$ hi". The echoed input holds "hi;", never "hi\r\n".
-	if strings.Count(live.String(), "hi\r\n") != 1 {
-		t.Fatalf("the live output holds the hi line %d times: %q", strings.Count(live.String(), "hi\r\n"), live.String())
-	}
-
-	// The replay: from 0 to where the live reads got.
-	var replay strings.Builder
-	var payload []string
-	roff := 0
-	for roff < off {
-		ch := readChunk(t, id, procStreamStdout, roff)
-		if ch.dropped || ch.from != roff {
-			t.Fatalf("the replay read at %d gave from=%d dropped=%v", roff, ch.from, ch.dropped)
-		}
-		replay.WriteString(ch.data)
-		payload = append(payload, Encoding_base64Encode(ch.data).(string))
-		roff = ch.next
-	}
-	got := replay.String()
-	if len(got) < off || got[:off] != live.String() {
-		t.Fatalf("the replay differs from what the widget showed:\nlive   %q\nreplay %q", live.String(), got)
-	}
-	var decoded strings.Builder
-	for _, p := range payload {
-		b, err := base64.StdEncoding.DecodeString(p)
-		if err != nil {
-			t.Fatalf("an output payload is not base64: %v", err)
-		}
-		decoded.Write(b)
-	}
-	if decoded.String() != got {
-		t.Fatalf("the base64 payloads do not round-trip the bytes")
-	}
-	if !strings.Contains(decoded.String(), "caf\xc3\xa9") {
-		t.Fatalf("the UTF-8 bytes of é did not survive the payload: %q", decoded.String())
 	}
 }
 
-func TestTerminalScrollbackReplayAfterTheRingWrapped(t *testing.T) {
-	c := shCmd("i=0; while [ $i -lt 200 ]; do echo line$i; i=$((i+1)); done")
-	c.pty, c.cols, c.rows = true, 80, 24
-	c.ring = 256
+func hasLine(want string) func([]string) bool {
+	return func(text []string) bool {
+		for _, l := range text {
+			if strings.TrimRight(l, " ") == want {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func screenOf(t *testing.T, id int) *vtScreen {
+	t.Helper()
+	sc := handleOf(t, id).scr.Load()
+	if sc == nil {
+		t.Fatal("the process has no screen")
+	}
+	return sc.vt
+}
+
+// A shell's output reaches the widget as frames; a remount (a new
+// generation) repaints from the screen: the same rows and scrollback, the
+// line printed once; the read of the old generation returns at once.
+func TestTerminalScreenFollowsAShellAndRepaintsARemount(t *testing.T) {
+	c := procCmd{program: "/bin/sh", env: [][2]string{{"PS1", "$ "}}, pty: true, cols: 40, rows: 6}
 	id := spawnT(t, c)
-	exitStatus(t, id)
-	ch := readChunk(t, id, procStreamStdout, 0)
-	if !ch.dropped || ch.from == 0 {
-		t.Fatalf("a replay from 0 after the ring wrapped: from=%d dropped=%v", ch.from, ch.dropped)
+	cl := &termClient{}
+	r := readScreen(t, id, "t", 1, true, 1000)
+	if !r.changed || num(jsonRound(r.frame)["base"]) != -1 {
+		t.Fatalf("the first read must be a repaint: %+v", r)
 	}
-	var tail strings.Builder
-	tail.WriteString(ch.data)
-	off := ch.next
-	for !ch.eof {
-		ch = readChunk(t, id, procStreamStdout, off)
-		tail.WriteString(ch.data)
-		off = ch.next
+	if err := cl.apply(r.frame); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.HasSuffix(tail.String(), "line199\r\n") || len(tail.String()) > 256 {
-		t.Fatalf("the replayed tail is %d bytes ending %q", len(tail.String()), tail.String())
+	procOk(t, procTask(t, Subprocess_write(id, "for i in 1 2 3 4 5 6 7 8; do echo line$i; done; echo hi\n")))
+	follow(t, id, "t", 1, cl, hasLine("hi"))
+	sc := handleOf(t, id).scr.Load()
+	sc.mu.Lock()
+	cl.matches(t, sc.vt, "the live widget")
+	sc.mu.Unlock()
+	if len(cl.sb) == 0 {
+		t.Fatal("eight lines on a six-row screen must reach the scrollback")
 	}
+
+	// A read of generation 1 in flight ends when generation 2 starts.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var old screenRead
+	start := time.Now()
+	go func() {
+		defer wg.Done()
+		old = readScreen(t, id, "t", 1, false, 15000)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	fresh := &termClient{}
+	r = readScreen(t, id, "t", 2, true, 1000)
+	wg.Wait()
+	if old.changed || time.Since(start) > 5*time.Second {
+		t.Fatalf("the old generation's read must return at once with nothing: %+v after %v", old, time.Since(start))
+	}
+	if err := fresh.apply(r.frame); err != nil {
+		t.Fatal(err)
+	}
+	sc.mu.Lock()
+	fresh.matches(t, sc.vt, "the remounted widget")
+	sc.mu.Unlock()
+	all := append(append([]string{}, textOf(fresh.sb)...), textOf(fresh.grid)...)
+	if n := strings.Count(strings.Join(all, "\n")+"\n", "\nhi\n"); n != 1 {
+		t.Fatalf("the repaint shows the hi line %d times:\n%s", n, strings.Join(all, "\n"))
+	}
+	if stale := readScreen(t, id, "t", 1, false, 1000); stale.changed {
+		t.Fatal("a read of a retired generation must not produce a frame")
+	}
+}
+
+func textOf(rows [][]tcCell) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = cellsText(r)
+	}
+	return out
+}
+
+// The screen consumes every byte as the process writes it, so a ring far
+// smaller than the output (the reader fell behind by more than the ring)
+// still ends with the exact screen and scrollback, and the exit line. The
+// byte replay this replaced could only start from the ring's oldest byte:
+// its screen and scrollback would be those of the tail alone.
+func TestTerminalScreenIsExactWhenTheRingOverflows(t *testing.T) {
+	c := shCmd("sleep 0.3; i=1; while [ $i -le 3000 ]; do echo \"n$i\"; i=$((i+1)); done")
+	c.pty, c.cols, c.rows = true, 30, 8
+	c.ring = 4096
+	id := spawnT(t, c)
+	if r := readScreen(t, id, "t", 1, true, 0); !r.changed {
+		t.Fatal("the first read must be a repaint")
+	}
+	cl := &termClient{}
+	var eof bool
+	deadline := time.Now().Add(20 * time.Second)
+	for first := true; !eof; first = false {
+		if time.Now().After(deadline) {
+			t.Fatal("no eof")
+		}
+		r := readScreen(t, id, "t", 1, first, 5000)
+		if r.changed {
+			if err := cl.apply(r.frame); err != nil {
+				t.Fatal(err)
+			}
+		}
+		eof = r.eof
+	}
+	if ch := readChunk(t, id, procStreamStdout, 0); !ch.dropped {
+		t.Fatal("the test needs the ring to have overwritten the start")
+	}
+	var want strings.Builder
+	for i := 1; i <= 3000; i++ {
+		fmt.Fprintf(&want, "n%d\r\n", i)
+	}
+	want.WriteString("\r\n[process exited with code 0]\r\n")
+	ref := newVTScreen(30, 8)
+	ref.feedString(want.String())
+	eqT(t, "the screen", textOf(cl.grid), ref.text())
+	eqT(t, "the scrollback", textOf(cl.sb), ref.scrollbackText())
+	eqT(t, "the exit status", exitStatus(t, id), "ExitCode 0")
+}
+
+// After the last frame of a burst, a check frame restates the seq, so a
+// widget that lost that frame on the way finds out without new output.
+func TestTerminalScreenSendsACheckFrameAfterABurst(t *testing.T) {
+	c := procCmd{program: "/bin/sh", env: [][2]string{{"PS1", "$ "}}, pty: true, cols: 40, rows: 6}
+	id := spawnT(t, c)
+	cl := &termClient{}
+	r := readScreen(t, id, "t", 1, true, 1000)
+	_ = cl.apply(r.frame)
+	procOk(t, procTask(t, Subprocess_write(id, "echo x\n")))
+	follow(t, id, "t", 1, cl, hasLine("x"))
+	// Let the shell print its prompt, then read until the check frame.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("no check frame")
+		}
+		r = readScreen(t, id, "t", 1, false, 3000)
+		if !r.changed {
+			continue
+		}
+		f := jsonRound(r.frame)
+		if len(f["ops"].([]any)) == 0 {
+			eqT(t, "the check frame restates the seq", num(f["base"]), num(f["seq"]))
+			if err := cl.apply(r.frame); err != nil {
+				t.Fatalf("a widget that has every frame accepts the check: %v", err)
+			}
+			break
+		}
+		_ = cl.apply(r.frame)
+	}
+	if r = readScreen(t, id, "t", 1, false, 1200); r.changed {
+		t.Fatalf("one check frame per burst, then nothing: %v", r.frame)
+	}
+}
+
+// A resize reaches the screen before the process sees it, and the next
+// frame carries it.
+func TestTerminalScreenFollowsAResize(t *testing.T) {
+	c := procCmd{program: "/bin/sh", env: [][2]string{{"PS1", "$ "}}, pty: true, cols: 40, rows: 6}
+	id := spawnT(t, c)
+	cl := &termClient{}
+	r := readScreen(t, id, "t", 1, true, 1000)
+	_ = cl.apply(r.frame)
+	procOk(t, procTask(t, Subprocess_resize(id, 50, 9)))
+	procOk(t, procTask(t, Subprocess_write(id, "stty size\n")))
+	follow(t, id, "t", 1, cl, hasLine("9 50"))
+	eqT(t, "the widget size", []int{cl.cols, cl.rows}, []int{50, 9})
 }

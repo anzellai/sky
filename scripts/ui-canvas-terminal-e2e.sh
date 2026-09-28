@@ -14,9 +14,12 @@
 # events in scene units, a new shape patched into a live scene is an SVG
 # element (the Sky.Spa client created it in the HTML namespace before), a
 # click on a shape, two texts in a column are two lines and a long text wraps
-# in a narrow box; a terminal bound to `sh` prints `echo hi`, follows a
-# resize (`stty size`), survives a dropped SSE connection, and repaints its
-# scrollback after a reload. Zero policy violations or console errors.
+# in a narrow box; a terminal bound to `sh` draws on a canvas, prints `echo
+# hi` (text layer and lit canvas pixels), lets a mouse selection of `hi` be
+# copied, runs a full-screen redraw loop within its frame budget, follows a
+# resize (`stty size`), shows output written while the SSE connection was
+# down, and is repainted after a reload by one repaint frame from the
+# server's screen (no byte replay). Zero policy violations or console errors.
 #
 # Proven to FAIL on the Sky.Spa canvas case when the wasm renderer creates SVG
 # elements in the HTML namespace (the pre-fix renderer: the scene drew nothing
@@ -24,6 +27,9 @@
 # events sent from mount() were held until the page's client is ready and
 # before widget commands pushed with no SSE connection were kept for the next
 # one (the terminal stayed blank after a reload); PASSES on the fixed runtime.
+# The terminal cases FAIL (13 of them) on the DOM widget with the base64 byte
+# stream this replaced (f4e98f10): no canvas, no text layer, and a reload
+# replays "output" bytes instead of one repaint frame.
 #
 # Prereqs (all fail loudly): a fresh sky-out/sky, go, node + playwright, sh.
 set -euo pipefail

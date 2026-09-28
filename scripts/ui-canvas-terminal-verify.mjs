@@ -19,13 +19,21 @@
 //       wraps inside it and does not overflow.
 //
 //   --mode terminal  (fixture ui-terminal, Sky.Live)
-//     * the terminal widget mounts and reports a size;
-//     * typing `echo hi` + Enter shows the line `hi`;
+//     * the terminal widget mounts, reports a size and draws on a canvas;
+//     * typing `echo hi` + Enter shows the line `hi` in the text layer, and
+//       the canvas has lit pixels on that row;
+//     * a mouse drag over the row selects `hi`, and copy puts it on the
+//       clipboard;
+//     * a full-screen redraw loop (150 x `clear; ls -la /`) finishes within
+//       the frame budget: p95 animation-frame gap <= 50 ms, worst <= 250 ms,
+//       at most 25% of frames missed;
 //     * a narrower window resizes the widget, the PTY follows (`stty size`
 //       prints the widget's rows and columns);
-//     * after the SSE connection drops and comes back, typing still works;
-//     * a reload (a remount: the widget starts empty) repaints the
-//       scrollback: `hi` is back without typing it again.
+//     * output written while the SSE connection is down shows once it is
+//       back, and typing still works;
+//     * a reload (a remount: the widget starts empty) is repainted from the
+//       server's screen by a repaint frame (base -1), no byte replay: `hi`
+//       and `again` are back, each once.
 //
 // In every mode: zero securitypolicyviolation events, zero page errors, zero
 // console errors.
@@ -182,92 +190,184 @@ async function canvasCases(page) {
   );
 }
 
-// The terminal's text without its blank rows, for failure details.
+// The terminal's text: the widget's text layer (what a screen reader reads
+// and a selection copies), without its blank rows.
+const TL = '[data-sky-island="sky-terminal"] .sky-term-text';
 const termText = (page) =>
-  page.evaluate(() => {
-    const el = document.querySelector('[data-sky-island="sky-terminal"]');
+  page.evaluate((sel) => {
+    const el = document.querySelector(sel);
     return el ? el.innerText.split("\n").map((l) => l.trimEnd()).filter((l) => l).join("\n") : "";
-  });
+  }, TL);
+const lineShown = (page, re, ms) =>
+  waitFor(page, ([sel, src]) => new RegExp(src, "m").test((document.querySelector(sel) || {}).innerText || ""), [TL, re], ms);
 
-async function terminalCases(page, context) {
+// animationGaps records requestAnimationFrame gaps (ms) until stopped.
+async function startFrames(page) {
+  await page.evaluate(() => {
+    window.__gaps = [];
+    window.__rafOn = true;
+    let last = 0;
+    const f = (ts) => {
+      if (last) window.__gaps.push(ts - last);
+      last = ts;
+      if (window.__rafOn) requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  });
+}
+async function stopFrames(page) {
+  return page.evaluate(() => {
+    window.__rafOn = false;
+    return window.__gaps;
+  });
+}
+
+async function terminalCases(page, context, cdp) {
+  const T = '[data-sky-island="sky-terminal"]';
   check(
     "the terminal widget mounted and measured a size",
     await waitFor(
       page,
-      () => {
-        const el = document.querySelector('[data-sky-island="sky-terminal"]');
+      (s) => {
+        const el = document.querySelector(s);
         return el && el.getAttribute("data-term-ready") === "1" && Number(el.getAttribute("data-term-cols")) > 20;
       },
-      null,
+      T,
       15000
     )
   );
+  check("the widget draws on a canvas", (await page.evaluate((s) => document.querySelector(s).getAttribute("data-term-renderer"), T)) === "canvas");
   check("the process is attached", await waitFor(page, () => document.body.innerText.includes("status=running"), null, 15000), await text(page, "#status"));
-  check("the shell prompt shows", await waitFor(page, () => /\$\s*$/m.test((document.querySelector('[data-sky-island="sky-terminal"]') || {}).innerText || ""), null, 15000), JSON.stringify((await termText(page)).slice(-200)));
+  check("the shell prompt shows", await lineShown(page, "\\$\\s*$", 15000), JSON.stringify((await termText(page)).slice(-200)));
 
-  await page.click('[data-sky-island="sky-terminal"]');
+  await page.click(T);
   await page.keyboard.type("echo hi", { delay: 20 });
   await page.keyboard.press("Enter");
+  check("`echo hi` prints the line hi", await lineShown(page, "^hi\\s*$", 10000), JSON.stringify((await termText(page)).slice(-300)));
+  // The canvas drew it: the row of "hi" has pixels in the text colour.
+  const drawn = await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    const rows = Array.from(el.querySelectorAll(".sky-term-text > div"));
+    const y = rows.findIndex((r) => r.textContent.trimEnd() === "hi");
+    if (y < 0) return "no hi row";
+    const cv = el.querySelector("canvas"), ctx = cv.getContext("2d");
+    const dpr = cv.width / cv.clientWidth, rh = rows[y].getBoundingClientRect().height;
+    const img = ctx.getImageData(0, Math.floor(y * rh * dpr), Math.ceil(rh * 2 * dpr), Math.ceil(rh * dpr)).data;
+    let lit = 0;
+    for (let i = 0; i < img.length; i += 4) if (img[i] > 120 && img[i + 1] > 120 && img[i + 2] > 120) lit++;
+    return lit;
+  }, T);
+  check("the canvas drew the glyphs of hi", typeof drawn === "number" && drawn > 10, String(drawn));
+
+  // Copy: a mouse selection over the text layer selects the text, and copy
+  // puts it on the clipboard.
+  const box = await page.evaluate((s) => {
+    const rows = Array.from(document.querySelectorAll(s + " .sky-term-text > div"));
+    const r = rows.find((x) => x.textContent.trimEnd() === "hi");
+    if (!r) return null;
+    const b = r.getBoundingClientRect();
+    return { x: b.left, y: b.top + b.height / 2, h: b.height };
+  }, T);
+  if (box) {
+    await page.mouse.move(box.x + 1, box.y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.h * 3, box.y, { steps: 5 });
+    await page.mouse.up();
+  }
+  const selected = await page.evaluate(() => String(window.getSelection()));
+  check("a mouse drag over the row selects its text", /^hi\s*$/.test(selected), JSON.stringify(selected));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(() => document.execCommand("copy"));
+  const copied = await page.evaluate(() => navigator.clipboard.readText().catch((e) => "ERR " + e));
+  check("copy puts the selected text on the clipboard", /^hi\s*$/.test(copied), JSON.stringify(copied));
+
+  // A full-screen redraw loop: the page keeps painting.
+  await page.click(T);
+  await startFrames(page);
+  await page.keyboard.type("i=0; while [ $i -lt 150 ]; do clear; ls -la /; i=$((i+1)); done; echo DONE$((40+2))", { delay: 2 });
+  await page.keyboard.press("Enter");
+  const redrawn = await lineShown(page, "^DONE42\\s*$", 60000);
+  const gaps = await stopFrames(page);
+  gaps.sort((a, b) => a - b);
+  const p95 = gaps.length ? gaps[Math.floor(gaps.length * 0.95)] : 0;
+  const worst = gaps.length ? gaps[gaps.length - 1] : 0;
+  const dropped = gaps.reduce((n, g) => n + (g > 25 ? Math.round(g / 16.7) - 1 : 0), 0);
+  const share = gaps.length ? dropped / (gaps.length + dropped) : 1;
+  check("a full-screen redraw loop finishes", redrawn, JSON.stringify((await termText(page)).slice(-200)));
+  // The budget: 95% of animation frames within 50 ms, no gap over 250 ms,
+  // and at most a quarter of frames missed.
   check(
-    "`echo hi` prints the line hi",
-    await waitFor(page, () => /^hi\s*$/m.test(document.querySelector('[data-sky-island="sky-terminal"]').innerText), null, 10000),
-    JSON.stringify((await termText(page)).slice(-300))
+    "the redraw loop stays within the frame budget (p95 gap <= 50 ms, worst <= 250 ms, <= 25% frames missed)",
+    p95 <= 50 && worst <= 250 && share <= 0.25,
+    `frames ${gaps.length}, p95 ${p95.toFixed(1)} ms, worst ${worst.toFixed(1)} ms, missed ${(share * 100).toFixed(1)}%`
   );
+  console.log(`info [${TAG}] redraw loop: frames ${gaps.length}, p95 gap ${p95.toFixed(1)} ms, worst ${worst.toFixed(1)} ms, missed ${(share * 100).toFixed(1)}%`);
+  await page.keyboard.type("clear", { delay: 10 });
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(500);
+  await page.keyboard.type("echo hi", { delay: 10 });
+  await page.keyboard.press("Enter");
+  await lineShown(page, "^hi\\s*$", 10000);
 
   // Resize: a narrower window, a narrower widget, and the PTY follows.
-  const cols0 = await page.evaluate(() => Number(document.querySelector('[data-sky-island="sky-terminal"]').getAttribute("data-term-cols")));
+  const cols0 = await page.evaluate((s) => Number(document.querySelector(s).getAttribute("data-term-cols")), T);
   await page.setViewportSize({ width: 600, height: 900 });
   check(
     "a narrower window resizes the widget",
-    await waitFor(page, (c) => Number(document.querySelector('[data-sky-island="sky-terminal"]').getAttribute("data-term-cols")) < c, cols0, 10000),
-    `cols ${cols0} -> ${await page.evaluate(() => document.querySelector('[data-sky-island="sky-terminal"]').getAttribute("data-term-cols"))}`
+    await waitFor(page, ([s, c]) => Number(document.querySelector(s).getAttribute("data-term-cols")) < c, [T, cols0], 10000),
+    `cols ${cols0} -> ${await page.evaluate((s) => document.querySelector(s).getAttribute("data-term-cols"), T)}`
   );
   await page.waitForTimeout(500); // the resize event reaches Process.resize
-  const size = await page.evaluate(() => {
-    const el = document.querySelector('[data-sky-island="sky-terminal"]');
+  const size = await page.evaluate((s) => {
+    const el = document.querySelector(s);
     return el.getAttribute("data-term-rows") + " " + el.getAttribute("data-term-cols");
-  });
-  await page.click('[data-sky-island="sky-terminal"]');
+  }, T);
+  await page.click(T);
   await page.keyboard.type("stty size", { delay: 20 });
   await page.keyboard.press("Enter");
-  check(
-    "the PTY has the widget's size (stty size)",
-    await waitFor(page, (s) => new RegExp("^" + s + "\\s*$", "m").test(document.querySelector('[data-sky-island="sky-terminal"]').innerText), size, 10000),
-    `want "${size}"; ` + JSON.stringify((await termText(page)).slice(-300))
-  );
+  check("the PTY has the widget's size (stty size)", await lineShown(page, "^" + size + "\\s*$", 10000), `want "${size}"; ` + JSON.stringify((await termText(page)).slice(-300)));
 
-  // Drop the SSE connection, bring it back, and keep typing.
+  // Drop the SSE connection while output arrives, bring it back: the screen
+  // catches up (a lost frame is repainted from the server's screen).
+  await page.keyboard.type("sleep 1; echo later", { delay: 10 });
+  await page.keyboard.press("Enter");
   await context.setOffline(true);
-  await page.waitForTimeout(2500);
-  await context.setOffline(false);
   await page.waitForTimeout(3000);
-  await page.click('[data-sky-island="sky-terminal"]');
+  await context.setOffline(false);
+  check("output written while the connection was down shows after it returns", await lineShown(page, "^later\\s*$", 20000), JSON.stringify((await termText(page)).slice(-300)));
+  await page.waitForTimeout(500);
+  await page.click(T);
   await page.keyboard.type("echo again", { delay: 20 });
   await page.keyboard.press("Enter");
-  check(
-    "after the connection drops and returns, the terminal still works",
-    await waitFor(page, () => /^again\s*$/m.test(document.querySelector('[data-sky-island="sky-terminal"]').innerText), null, 20000),
-    JSON.stringify((await termText(page)).slice(-300))
-  );
+  check("after the connection drops and returns, the terminal still works", await lineShown(page, "^again\\s*$", 20000), JSON.stringify((await termText(page)).slice(-300)));
 
-  // A reload remounts the widget empty; the scrollback is replayed.
+  // A reload remounts the widget empty; it is repainted from the server's
+  // screen with ONE repaint frame (no byte replay).
+  let frames = [];
+  const onMsg = (e) => {
+    if (e.eventName === "island") frames.push(e.data);
+  };
+  cdp.on("Network.eventSourceMessageReceived", onMsg);
   await page.reload({ waitUntil: "load" });
   check(
-    "after a reload the scrollback is repainted (hi and again are back)",
+    "after a reload the screen is repainted (hi and again are back)",
     await waitFor(
       page,
-      () => {
-        const el = document.querySelector('[data-sky-island="sky-terminal"]');
-        if (!el) return false;
-        const t = el.innerText;
+      (sel) => {
+        const t = (document.querySelector(sel) || {}).innerText || "";
         return /^hi\s*$/m.test(t) && /^again\s*$/m.test(t);
       },
-      null,
+      TL,
       20000
     ),
     JSON.stringify((await termText(page)).slice(-400))
   );
-  check("the replay did not print the output twice", ((await termText(page)).match(/^hi\s*$/gm) || []).length === 1, JSON.stringify((await termText(page)).slice(-400)));
+  await page.waitForTimeout(300);
+  cdp.off("Network.eventSourceMessageReceived", onMsg);
+  const repaints = frames.filter((d) => /"base":-1/.test(d)).length;
+  check("the reload was one repaint frame from the screen state", repaints >= 1 && frames.every((d) => !/"name":"output"/.test(d)), `${frames.length} island messages, ${repaints} repaints`);
+  const all = await termText(page);
+  check("the repaint shows each line once", (all.match(/^again\s*$/gm) || []).length === 1, JSON.stringify(all.slice(-400)));
 }
 
 let browser;
@@ -298,6 +398,8 @@ try {
     );
   });
   const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Network.enable");
   let offline = false;
   page.on("console", (m) => {
     // A request that fails while the test holds the browser offline is the
@@ -312,7 +414,7 @@ try {
   };
 
   await page.goto(ORIGIN + "/", { waitUntil: "load" });
-  if (MODE === "terminal") await terminalCases(page, context);
+  if (MODE === "terminal") await terminalCases(page, context, cdp);
   else await canvasCases(page);
 
   check("zero securitypolicyviolation events", violations.length === 0, violations.slice(0, 3).join(" | "));
